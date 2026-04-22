@@ -6,12 +6,10 @@ build/
 .idea/
 compile_commands.json
 
-# Sub-repositories — each has its own git history.
-# Tracked separately at toolchain/, kernel/, user/, ports/.
-/toolchain/
-/kernel/
-/user/
-/ports/
+# Sub-repositories (toolchain/, kernel/, user/, ports/) are recorded as
+# gitlinks pointing at their current commit SHA. Promote to true submodules
+# (with .gitmodules) once remote URLs are available — see
+# scripts/setup-submodules.sh and .gitmodules.template.
 
 # Generated / scratch
 /musl-xv6/
