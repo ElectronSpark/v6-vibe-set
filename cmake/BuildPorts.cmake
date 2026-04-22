@@ -44,6 +44,9 @@ ExternalProject_Add(ports
 	                    -DCMAKE_RANLIB=${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-ranlib
 	                    -DXV6_SYSROOT=${XV6_SYSROOT}
 	                    -DXV6_PORT_CFLAGS=${_port_cflags}
+	                    -DPHASE2_LIB=${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase2/${XV6_TRIPLE}/lib
+	                    -DXV6_TOOLCHAIN_PREFIX=${XV6_TOOLCHAIN_PREFIX}
+	                    -DXV6_TRIPLE=${XV6_TRIPLE}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_ports_obj} -j${XV6_PARALLEL_JOBS}
 	INSTALL_COMMAND   ""
 	BUILD_ALWAYS      1)

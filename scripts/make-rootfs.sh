@@ -21,17 +21,40 @@ if [[ ! -d "${SYSROOT}/bin" ]]; then
 fi
 
 command -v mkfs.ext4 >/dev/null || { echo "make-rootfs: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
+command -v rsync    >/dev/null || { echo "make-rootfs: rsync not found"               >&2; exit 1; }
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 
-mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root}
+mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,usr,share}
 
-# Copy user binaries, stripping the xv6 "_" prefix on the way in.
+# 1. xv6-style user binaries: bin/_<name> -> /bin/<name>
 shopt -s nullglob
 for f in "${SYSROOT}/bin"/_*; do
     base="$(basename "$f")"
     cp "$f" "${STAGE}/bin/${base#_}"
+done
+# 2. Any other files in bin/ (no _ prefix) — copy verbatim, e.g. python3.12
+for f in "${SYSROOT}/bin"/*; do
+    base="$(basename "$f")"
+    [[ "${base}" == _* ]] && continue
+    cp -a "$f" "${STAGE}/bin/${base}"
+done
+shopt -u nullglob
+
+# 3. Mirror dynamic-linker tree subdirs verbatim if present, preserving
+#    symlinks/perms (these hold musl loader, libpython, stdlib, etc.).
+for sub in lib usr share etc; do
+    if [[ -d "${SYSROOT}/${sub}" ]]; then
+        rsync -aH "${SYSROOT}/${sub}/" "${STAGE}/${sub}/"
+    fi
+done
+
+# 4. Copy top-level regular files in sysroot/ (e.g. diag.py, test_flask.py)
+shopt -s nullglob
+for f in "${SYSROOT}"/*; do
+    [[ -f "$f" ]] || continue
+    cp -a "$f" "${STAGE}/$(basename "$f")"
 done
 shopt -u nullglob
 

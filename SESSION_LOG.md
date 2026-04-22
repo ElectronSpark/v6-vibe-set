@@ -179,12 +179,110 @@ bash scripts/run-qemu.sh x86_64 build-x86_64/kernel/kernel/kernel build-x86_64/f
 
 ## Outstanding / next session
 
-- **RISC-V toolchain + boot** — not started. Repeat with `--arch=riscv64`,
-  qemu `-machine virt`, OpenSBI as bootloader, etc.
+## 2026-04-22 — CPython 3.12 + Flask + SQLite reachable from host
+
+### Result
+
+The xv6 shell can now run `python /app.py` and serve a Flask app on
+0.0.0.0:8080. With QEMU host-forwarding, `curl http://127.0.0.1:18080/`
+from the host returns:
+
+```
+hello from xv6 / cpython 3.12.12+ / sqlite 3.52.1
+```
+
+`/api` returns a JSON document built from an in-memory SQLite database
+through SQLAlchemy / `_sqlite3.so`.
+
+The 17-import probe (`/test_flask.py`) passes for: `encodings, _socket,
+select, _ssl, _hashlib, ctypes, sqlite3, _sqlite3, jinja2, markupsafe,
+werkzeug, click, blinker, itsdangerous, flask, sqlalchemy,
+flask_sqlalchemy`.
+
+### How
+
+Pragmatic stage-and-mirror, not a from-scratch port — the reference
+xv6-tmp tree was built with the same `x86_64-xv6-linux-musl` triple, so
+its prebuilt artefacts are ABI-compatible with the umbrella toolchain.
+
+1. **`scripts/stage-cpython.sh`** (new) copies into `build-x86_64/sysroot`:
+   - `lib/libpython3.12.so.1.0`, `libpython3.so`, `libgcc_s.so.1`,
+     `libreadline.so.8.2`, `libncurses.so.6.4`, `libstdc++.so.6.0.33`,
+     `libffi.so.7.1.0` (+ canonical SONAME symlinks).
+   - `lib/python3.12/{lib-dynload,site-packages}` from the reference sysroot
+     (Flask, SQLAlchemy, Werkzeug, Jinja2, Click, Blinker, ItsDangerous,
+     MarkupSafe, NumPy, etc.) minus `*-312d-*.so`, `__pycache__`,
+     `test/`, `idlelib/`, `turtledemo/`.
+   - **stdlib `*.py` from `xv6-tmp/user/v6-cpython/Lib/`** — the reference
+     sysroot ships only `lib-dynload`+`site-packages`, the pure-python
+     stdlib lives in the cpython source tree. Override with `CPYTHON_LIB=…`.
+   - `bin/python3.12` and `bin/python` symlink.
+   - `share/terminfo/` so readline behaves at the prompt.
+   - `lib/libc.so` and `lib/ld-musl-x86_64.so.1` from our phase-2 musl.
+
+2. **`scripts/make-rootfs.sh`** extended:
+   - Now also rsyncs `lib/`, `usr/`, `share/`, `etc/` from the sysroot
+     into the staging tree, plus copies any top-level files (e.g.
+     `/app.py`, `/test_flask.py`, `/diag.py`).
+   - Image bumped to 256 MiB (`bash scripts/make-rootfs.sh
+     build-x86_64/sysroot build-x86_64/fs.img 256`).
+
+3. **`user/programs/sh/sh.c`** — `env_init()` now sets:
+   - `PYTHONHOME=/`
+   - `PYTHONPATH=/lib/python3.12:/lib/python3.12/site-packages`
+
+   The reference build had used `/usr/local`; we install at `/`.
+
+4. **`kernel/arch/x86_64/mm/vm.c`** — silenced the per-page
+   `freewalk: LEAK va=… pte=… pa=…` printf inside `__freewalk()`.
+   Each `python` exit produced ~2700 of those lines and completely
+   masked userspace stdout. The summary
+   `freewalk: WARNING: N leaked PTE(s) (pid X name)` from
+   `freewalk()` is kept.
+
+5. **`scripts/run-qemu.sh`** — added an explicit user-mode netdev with
+   hostfwd so the guest is reachable from the host:
+   ```
+   -netdev user,id=n0,hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001
+   -device e1000,netdev=n0
+   ```
+   Override the forwards via `HOSTFWD=…`.
+
+### Demo recipe
+
+```bash
+# one-time (after toolchain + kernel + user are built):
+bash scripts/stage-cpython.sh
+bash scripts/make-rootfs.sh build-x86_64/sysroot build-x86_64/fs.img 256
+
+# boot
+DISPLAY_MODE=nographic \
+  bash scripts/run-qemu.sh x86_64 \
+       build-x86_64/kernel/kernel/kernel build-x86_64/fs.img
+
+# inside xv6 shell:
+0:/# python /app.py &
+
+# from host:
+curl http://127.0.0.1:18080/      # => hello from xv6 / cpython … / sqlite …
+curl http://127.0.0.1:18080/api   # => [{"k":"a","v":1},...]
+```
+
+## Outstanding / next session
+
+- **Proper `ports/cpython` recipe** — the staging shortcut depends on the
+  external xv6-tmp tree. Convert to a real `ports/cpython/CMakeLists.txt`
+  that configures CPython 3.12 against our sysroot (`--prefix=/`,
+  `--with-system-ffi`, `--with-openssl=…`) and installs into
+  `build-x86_64/sysroot/`.
+- **`ports/openssl`, `ports/sqlite`, `ports/zlib` (already started),
+  `ports/ncurses`, `ports/readline`, `ports/libffi`** — same pattern,
+  needed once cpython is built from source.
+- Run the cpython test suite under xv6 to find latent kernel bugs
+  (the `freewalk: LEAK` warnings still fire — they are real PTE leaks
+  in `exec()` cleanup paths).
+- **RISC-V toolchain + boot** — not started.
 - Wire `scripts/make-rootfs.sh` into `cmake/BuildImage.cmake` so the
   `image` target produces fs.img automatically.
-- Decide fate of `scripts/make-initrd.sh` and `scripts/make-image.sh`
-  (remove or repurpose).
-- Move host `mkfs.xv6fs` build out of the kernel tree (currently built
-  ad-hoc against xv6-tmp during this session, only used for the
-  abandoned xv6fs path).
+- Decide fate of `scripts/make-initrd.sh` and `scripts/make-image.sh`.
+- Move host `mkfs.xv6fs` build out of the kernel tree.

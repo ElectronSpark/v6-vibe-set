@@ -25,7 +25,7 @@ include(BuildImage)          # initrd, boot image, qemu
 
 # Convenience aggregate: `cmake --build . --target world`
 add_custom_target(world
-	DEPENDS toolchain kernel user ports image)
+	DEPENDS toolchain kernel user ports image rootfs)
 
 # Default target prints help.
 add_custom_target(help-targets
@@ -35,6 +35,7 @@ add_custom_target(help-targets
 	COMMAND ${CMAKE_COMMAND} -E echo "  ports      cross-build all ports into ${XV6_SYSROOT}"
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel     cross-build kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  image      build bootable image / initrd"
+	COMMAND ${CMAKE_COMMAND} -E echo "  rootfs     build ext4 fs.img from sysroot (boot disk)"
 	COMMAND ${CMAKE_COMMAND} -E echo "  qemu       boot image in qemu (see scripts/run-qemu.sh)"
 	COMMAND ${CMAKE_COMMAND} -E echo "  world      everything above")
 

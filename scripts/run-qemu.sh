@@ -39,12 +39,18 @@ case "${ARCH}" in
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial stdio)
                 fi
+                # User-mode net w/ explicit hostfwd so a guest server on
+                # 8080 is reachable from the host on 18080. Override
+                # via HOSTFWD env (full -netdev user fragment).
+                HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
                 exec qemu-system-x86_64 \
                         -machine pc -cpu qemu64,+pcid -smp 2 -m 256M \
                         "${DISPLAY_ARGS[@]}" \
                         -kernel "${KERNEL}" \
                         -drive file="${FSIMG}",if=none,format=raw,id=x0 \
                         -device virtio-blk-pci,drive=x0 \
+                        -netdev user,id=n0,${HOSTFWD} \
+                        -device e1000,netdev=n0 \
                         -append "root=/dev/disk0" \
                         ${QEMU_EXTRA}
                 ;;
