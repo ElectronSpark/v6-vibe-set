@@ -1,0 +1,40 @@
+# GENERATED — written by the umbrella after the cross toolchain is built.
+# Consumed by user/ and ports/ ExternalProjects. Do not edit by hand;
+# changes will be overwritten on the next configure.
+
+set(CMAKE_SYSTEM_NAME       Linux)
+set(CMAKE_SYSTEM_PROCESSOR  @XV6_ARCH@)
+
+set(_xv6_tc_prefix          "@XV6_TOOLCHAIN_PREFIX@")
+set(_xv6_triple             "@XV6_TRIPLE@")
+
+set(CMAKE_SYSROOT           "@XV6_SYSROOT@")
+set(CMAKE_FIND_ROOT_PATH    "@XV6_SYSROOT@")
+set(CMAKE_STAGING_PREFIX    "@XV6_SYSROOT@/usr")
+
+# Force find_* to look only in the sysroot for libraries/headers.
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+
+set(CMAKE_C_COMPILER        "${_xv6_tc_prefix}/bin/${_xv6_triple}-gcc")
+set(CMAKE_CXX_COMPILER      "${_xv6_tc_prefix}/bin/${_xv6_triple}-g++")
+set(CMAKE_ASM_COMPILER      "${_xv6_tc_prefix}/bin/${_xv6_triple}-gcc")
+set(CMAKE_AR                "${_xv6_tc_prefix}/bin/${_xv6_triple}-ar"      CACHE FILEPATH "")
+set(CMAKE_RANLIB            "${_xv6_tc_prefix}/bin/${_xv6_triple}-ranlib"  CACHE FILEPATH "")
+set(CMAKE_STRIP             "${_xv6_tc_prefix}/bin/${_xv6_triple}-strip"   CACHE FILEPATH "")
+set(CMAKE_OBJCOPY           "${_xv6_tc_prefix}/bin/${_xv6_triple}-objcopy" CACHE FILEPATH "")
+set(CMAKE_OBJDUMP           "${_xv6_tc_prefix}/bin/${_xv6_triple}-objdump" CACHE FILEPATH "")
+set(CMAKE_LINKER            "${_xv6_tc_prefix}/bin/${_xv6_triple}-ld"      CACHE FILEPATH "")
+set(CMAKE_NM                "${_xv6_tc_prefix}/bin/${_xv6_triple}-nm"      CACHE FILEPATH "")
+
+# pkg-config: ports use it; point it at the sysroot.
+set(ENV{PKG_CONFIG_DIR} "")
+set(ENV{PKG_CONFIG_LIBDIR} "@XV6_SYSROOT@/usr/lib/pkgconfig:@XV6_SYSROOT@/usr/share/pkgconfig")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "@XV6_SYSROOT@")
+
+# Don't try to run target binaries on the host.
+set(CMAKE_CROSSCOMPILING TRUE)
+set(CMAKE_C_COMPILER_WORKS  TRUE)
+set(CMAKE_CXX_COMPILER_WORKS TRUE)

@@ -1,0 +1,19 @@
+build-*/
+build/
+*.swp
+*.swo
+.vscode/
+.idea/
+compile_commands.json
+
+# Sub-repositories — each has its own git history.
+# Tracked separately at toolchain/, kernel/, user/, ports/.
+/toolchain/
+/kernel/
+/user/
+/ports/
+
+# Generated / scratch
+/musl-xv6/
+*.log
+
