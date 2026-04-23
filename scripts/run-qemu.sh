@@ -65,14 +65,29 @@ case "${ARCH}" in
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
                 #
-                # For GTK, use grab-on-hover so the cursor is captured
-                # by the guest as soon as the pointer enters the QEMU
-                # window — without it the user has to click first, which
-                # makes wlcomp appear unresponsive to mouse input.
+                # GTK input notes:
+                #   - grab-on-hover=on    Capture pointer + keyboard as soon
+                #                         as the host cursor enters the QEMU
+                #                         canvas. Without this, GTK does not
+                #                         reliably deliver pointer/button
+                #                         events to QEMU's canvas widget on
+                #                         GNOME/Wayland and clicks are lost.
+                #   - show-cursor=off     Hide the host pointer inside the
+                #                         window so only wlcomp's guest
+                #                         cursor sprite is visible. While
+                #                         grabbed, the host cursor would
+                #                         otherwise freeze in place anyway.
+                # Press Ctrl-Alt-G to release the grab.
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
-                        DISPLAY_ARGS=(-display gtk,grab-on-hover=on -serial mon:stdio)
+                        # Plain GTK display (click to grab, Ctrl-Alt-G to
+                        # release). vmmouse provides absolute coords
+                        # without needing a grab; click-to-grab also
+                        # forwards scroll-wheel axis events that GTK's
+                        # grab-on-hover mode silently drops on Wayland.
+                        DISPLAY_ARGS=(-display gtk
+                                      -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
                 fi
@@ -89,7 +104,7 @@ case "${ARCH}" in
                 # PCID is required by the kernel's ASID code path.
                 CPU_ARGS=(-cpu qemu64,+pcid)
                 exec qemu-system-x86_64 \
-                        -machine pc -smp 2 -m 256M \
+                        -machine pc,vmport=on -smp 2 -m 256M \
                         "${KVM_ARGS[@]}" "${CPU_ARGS[@]}" \
                         "${DISPLAY_ARGS[@]}" \
                         -debugcon file:/tmp/xv6-debugcon.log \
