@@ -16,15 +16,16 @@ set(_ports_src "${CMAKE_SOURCE_DIR}/ports")
 set(_ports_obj "${XV6_BUILD_ROOT}/ports")
 file(MAKE_DIRECTORY "${_ports_obj}")
 
-# Common port CFLAGS — the musl --sysroot incantation matching what
-# xv6-tmp uses for static-musl ports.
+# Common port CFLAGS — ports build full userspace against the cross
+# toolchain's built-in musl sysroot, plus -isystem into XV6_SYSROOT
+# so inter-port headers (e.g. zlib.h for libpng) resolve.
 if(XV6_ARCH STREQUAL "riscv64")
 	set(_port_arch_cflags "-march=rv64gc -mabi=lp64d -mcmodel=medany")
 else()
 	set(_port_arch_cflags "")
 endif()
 set(_port_cflags
-	"--sysroot=${XV6_SYSROOT} -O2 -fPIC -nostdinc -ffreestanding"
+	"-O2 -fPIC"
 	" ${_port_arch_cflags}"
 	" -isystem ${XV6_SYSROOT}/include")
 string(REPLACE ";" "" _port_cflags "${_port_cflags}")
@@ -32,7 +33,7 @@ string(REPLACE ";" "" _port_cflags "${_port_cflags}")
 ExternalProject_Add(ports
 	PREFIX            ${XV6_BUILD_ROOT}/ports-driver
 	STAMP_DIR         ${XV6_STAMP_DIR}/ports
-	DEPENDS           tc-musl
+	DEPENDS           toolchain
 	SOURCE_DIR        ${_ports_src}
 	BINARY_DIR        ${_ports_obj}
 	DOWNLOAD_COMMAND  ""

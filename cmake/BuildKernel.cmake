@@ -27,7 +27,7 @@ file(MAKE_DIRECTORY "${_kernel_obj}")
 ExternalProject_Add(kernel
 	PREFIX            ${XV6_BUILD_ROOT}/kernel-driver
 	STAMP_DIR         ${XV6_STAMP_DIR}/kernel
-	DEPENDS           tc-gcc-stage1
+	DEPENDS           toolchain
 	SOURCE_DIR        ${_kernel_src}
 	BINARY_DIR        ${_kernel_obj}
 	DOWNLOAD_COMMAND  ""

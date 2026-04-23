@@ -25,7 +25,7 @@ include(BuildImage)          # initrd, boot image, qemu
 
 # Convenience aggregate: `cmake --build . --target world`
 add_custom_target(world
-	DEPENDS toolchain kernel user ports image rootfs)
+	DEPENDS toolchain kernel user ports rootfs)
 
 # Default target prints help.
 add_custom_target(help-targets

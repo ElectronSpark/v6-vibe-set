@@ -2,7 +2,7 @@
 #
 # Consumes:
 #   ${XV6_SYSROOT}        — populated by user + ports
-#   ${XV6_KERNEL_ARTIFACTS}/kernel/kernel
+#   ${XV6_KERNEL_ARTIFACTS}/build/kernel/kernel
 #
 # Produces:
 #   ${XV6_BUILD_ROOT}/fs.img          — primary ext4 rootfs (boots in qemu)
@@ -57,7 +57,7 @@ add_custom_target(image  DEPENDS ${_image})
 add_custom_target(qemu
 	COMMAND ${CMAKE_SOURCE_DIR}/scripts/run-qemu.sh
 	            ${XV6_ARCH}
-	            ${XV6_KERNEL_ARTIFACTS}/kernel/kernel
+	            ${XV6_KERNEL_ARTIFACTS}/build/kernel/kernel
 	            ${_fsimg}
 	DEPENDS kernel rootfs
 	USES_TERMINAL

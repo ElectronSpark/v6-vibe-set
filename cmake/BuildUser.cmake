@@ -26,7 +26,7 @@ file(MAKE_DIRECTORY "${_user_obj}")
 ExternalProject_Add(user
 	PREFIX            ${XV6_BUILD_ROOT}/user-driver
 	STAMP_DIR         ${XV6_STAMP_DIR}/user
-	DEPENDS           tc-gcc-stage1
+	DEPENDS           toolchain
 	SOURCE_DIR        ${_user_src}
 	BINARY_DIR        ${_user_obj}
 	DOWNLOAD_COMMAND  ""
