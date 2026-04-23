@@ -17,10 +17,12 @@ QEMU_EXTRA="${QEMU_EXTRA:-}"
 case "${ARCH}" in
         riscv64)
                 DISPLAY_MODE="${DISPLAY_MODE:-nographic}"
+                # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
+                # passes Ctrl-C through to the guest instead of killing qemu).
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
-                        DISPLAY_ARGS=(-nographic)
+                        DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 else
-                        DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial stdio)
+                        DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
                 fi
                 exec qemu-system-riscv64 \
                         -machine virt -cpu rv64 -smp 2 -m 256M \
@@ -34,10 +36,12 @@ case "${ARCH}" in
                 ;;
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
+                # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
+                # passes Ctrl-C through to the guest instead of killing qemu).
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
-                        DISPLAY_ARGS=(-nographic)
+                        DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 else
-                        DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial stdio)
+                        DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
                 fi
                 # User-mode net w/ explicit hostfwd so a guest server on
                 # 8080 is reachable from the host on 18080. Override
