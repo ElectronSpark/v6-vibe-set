@@ -58,6 +58,15 @@ for f in "${SYSROOT}"/*; do
 done
 shopt -u nullglob
 
+# 5. Apply the in-tree rootfs overlay (e.g. /etc/startup) on top of
+#    everything staged so far. Path is resolved relative to this script
+#    so it works regardless of the caller's cwd.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+OVERLAY="${SCRIPT_DIR}/../rootfs-overlay"
+if [[ -d "${OVERLAY}" ]]; then
+    rsync -aH "${OVERLAY}/" "${STAGE}/"
+fi
+
 rm -f "${OUT}"
 truncate -s "${SIZE_MB}M" "${OUT}"
 mkfs.ext4 -F -L xv6root -d "${STAGE}" "${OUT}" >/dev/null

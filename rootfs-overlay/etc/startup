@@ -1,0 +1,7 @@
+# /etc/startup — services launched by init at boot.
+#
+# One command per line; lines beginning with '#' are comments.
+# Tokens are split on whitespace; no quoting or shell expansion.
+# Each entry is fork()+exec()'d as an independent process.
+
+/bin/desktop
