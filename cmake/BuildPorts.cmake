@@ -27,6 +27,7 @@ endif()
 set(_port_cflags
 	"-O2 -fPIC"
 	" ${_port_arch_cflags}"
+	" -DHAVE_CTIME_R=1"
 	" -isystem ${XV6_SYSROOT}/include")
 string(REPLACE ";" "" _port_cflags "${_port_cflags}")
 
