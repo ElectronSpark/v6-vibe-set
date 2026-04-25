@@ -2,6 +2,10 @@
 	path = toolchain
 	url = https://github.com/ElectronSpark/xv6-toolchain.git
 	branch = master
+[submodule "kernel"]
+	path = kernel
+	url = git@github.com:ElectronSpark/xv6-riscv-lab.git
+	branch = v6-kernel
 [submodule "ports"]
 	path = ports
 	url = git@github.com:ElectronSpark/v6-ports.git
