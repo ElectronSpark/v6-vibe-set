@@ -46,6 +46,37 @@ Phases 1, 2, 3 (template) are **done**. This file tracks what's left.
   configures cleanly. Actual end-to-end build is hours-long and
   needs the host prereqs (gmp, mpfr, mpc, expat dev) — left to CI.
 
+## Image / GUI bring-up ✅
+
+- `scripts/make-rootfs.sh` is wired into `cmake/BuildImage.cmake` as the
+  `rootfs` target; it builds `fs.img` from the populated sysroot.
+- The rootfs builder mirrors `bin/`, `lib/`, `usr/`, `share/`, `etc/`,
+  top-level sysroot files, and `rootfs-overlay/`, then stages the musl
+  loader/libc and GCC runtime shared libraries from the phase-2 toolchain.
+- Default x86_64 image size is 1536 MiB for the current GUI, Python, and
+  ports payload.
+- `rootfs-overlay/etc/startup` starts `/bin/desktop`; the Wayland port
+  stages `desktop` and rebuilds patched `wlcomp` as static binaries so
+  the GUI reaches a stable desktop in QEMU GTK. NetSurf launch points are
+  inert until the browser is stable.
+- QEMU GUI input prefers the kernel VMware absolute pointer path and falls
+  back to PS/2 relative packets. A polling drain backs up delivery, and
+  `scripts/run-qemu.sh` requests
+  `-display gtk,grab-on-hover=on` so pointer movement is delivered without
+  requiring a fragile click-to-grab sequence.
+- The internal file manager reads directories directly with
+  `opendir()`/`readdir()`/`stat()` and avoids overlapping title/path
+  formatting during directory navigation.
+- GTK/Wayland runtime data is staged into the sysroot: xkeyboard-config
+  under `/share/X11/xkb` and the Adwaita/default cursor theme under
+  `/share/icons`, matching the paths compiled into libxkbcommon and
+  libwayland-cursor.
+- The kernel routes musl `SYS_fallocate` (990) to a compatibility stub that
+  returns `-EOPNOTSUPP`; Wayland cursor SHM setup then falls back to
+  `ftruncate()`, avoiding the GTK cursor-theme assertion seen during NetSurf
+  startup.
+- `user/programs/mousetest/` provides a small `/dev/mouse` diagnostic.
+
 ## Phase 2.5 — musl-linked user programs (DEFERRED)
 
 `xv6-tmp/user/CMakeLists.txt` defines an `add_musl_program()` family

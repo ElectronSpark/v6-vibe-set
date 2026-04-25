@@ -2,7 +2,7 @@
 
 Umbrella for building a self-hosted xv6-derived OS: cross toolchain,
 kernel, essential userland, ported third-party software, and bootable
-image / qemu launcher — all driven from a single top-level CMake.
+ext4 root image / qemu launcher - all driven from a single top-level CMake.
 
 ## Layout
 
@@ -35,13 +35,30 @@ The umbrella is the only place that knows how to wire them together.
 | sub-repo     | state                                                              |
 |--------------|--------------------------------------------------------------------|
 | `toolchain/` | **populated**: two-phase GCC+musl build script + xv6 musl overlay |
-| `kernel/`    | **populated** from xv6-tmp; configures + starts compiling          |
-| `user/`      | **populated**: 62 xv6-native programs + userlib, configures        |
-| `ports/`     | **populated**: zlib vendored + built end-to-end, template for rest |
+| `kernel/`    | **populated** from xv6-tmp; x86_64 boots in QEMU                   |
+| `user/`      | **populated**: ~60 xv6-native programs + userlib                   |
+| `ports/`     | **populated**: GUI/Python/NetSurf stack in progress                |
 
 The umbrella `CMakeLists.txt` + `cmake/Build*.cmake` wire all four
 together. Phase 2.5 (musl-linked user programs) and Phase 3 expansion
 (remaining ~59 ports) are queued in [MIGRATION.md](MIGRATION.md).
+
+Current x86_64 bring-up reaches the Wayland desktop (`/bin/desktop` ->
+`wlcomp`) from an ext4 rootfs mounted over virtio-blk. The desktop and
+compositor are rebuilt as static binaries by `port-wayland`, so the GUI
+does not depend on dynamic loader state during early session startup.
+The VMware absolute pointer path is the preferred QEMU input path, with
+PS/2 relative packets retained as fallback; `launch-gui.sh` uses GTK
+grab-on-hover so pointer motion reaches the guest as soon as the host
+pointer enters the window. The `rootfs` target builds
+`build-x86_64/fs.img`; `qemu` boots it with GTK display and user-mode
+networking.
+
+Launch the current x86_64 GUI image with one command:
+
+```sh
+./scripts/launch-gui.sh
+```
 
 ## Quick start
 
@@ -52,7 +69,7 @@ together. Phase 2.5 (musl-linked user programs) and Phase 3 expansion
 # configure for riscv64 in an out-of-tree build dir
 cmake -S . -B build-riscv64 -DXV6_ARCH=riscv64
 
-# build everything (toolchain → sysroot → user + ports → kernel → image)
+# build everything (toolchain -> sysroot -> user + ports -> kernel -> rootfs)
 cmake --build build-riscv64 -j
 ```
 

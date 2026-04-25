@@ -12,7 +12,7 @@
 set(_initrd "${XV6_BUILD_ROOT}/initrd.cpio.gz")
 set(_image  "${XV6_BUILD_ROOT}/boot.img")
 set(_fsimg  "${XV6_BUILD_ROOT}/fs.img")
-set(_fsimg_size_mb "256" CACHE STRING "Size of fs.img in MiB")
+set(_fsimg_size_mb "1536" CACHE STRING "Size of fs.img in MiB")
 
 # ---------------------------------------------------------------------
 # Primary path: ext4 rootfs built from the populated sysroot.
@@ -23,6 +23,7 @@ add_custom_command(
 	OUTPUT  ${_fsimg}
 	COMMAND ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
 	            ${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb}
+	            ${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase2/${XV6_TRIPLE}/lib
 	DEPENDS user ports
 	COMMENT "Building ext4 rootfs ${_fsimg} (${_fsimg_size_mb} MiB) from ${XV6_SYSROOT}")
 

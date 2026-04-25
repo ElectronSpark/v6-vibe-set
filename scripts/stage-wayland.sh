@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stage-wayland.sh — pragmatic staging from xv6-tmp's prebuilt sysroot.
+# stage-wayland.sh - pragmatic staging from xv6-tmp's prebuilt sysroot.
 #
 # Copies the prebuilt wlcomp Wayland compositor and desktop session
 # manager binaries from a reference sysroot into ${DEST_SYSROOT}.
@@ -29,8 +29,16 @@ if [[ ! -x "${REF}/bin/desktop" ]]; then
     exit 1
 fi
 
-install -d "${DEST}/bin"
+install -d "${DEST}/bin" "${DEST}/lib"
 install -m 0755 "${REF}/bin/wlcomp"  "${DEST}/bin/wlcomp"
 install -m 0755 "${REF}/bin/desktop" "${DEST}/bin/desktop"
+
+# wlcomp has DT_NEEDED libffi.so.7. Stage it (and any sonames it follows)
+# from the reference sysroot so the runtime loader can resolve it.
+shopt -s nullglob
+for f in "${REF}/lib"/libffi.so*; do
+    cp -a "$f" "${DEST}/lib/$(basename "$f")"
+done
+shopt -u nullglob
 
 echo "stage-wayland: installed wlcomp + desktop into ${DEST}/bin"

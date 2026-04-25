@@ -81,12 +81,10 @@ case "${ARCH}" in
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
-                        # Plain GTK display (click to grab, Ctrl-Alt-G to
-                        # release). vmmouse provides absolute coords
-                        # without needing a grab; click-to-grab also
-                        # forwards scroll-wheel axis events that GTK's
-                        # grab-on-hover mode silently drops on Wayland.
-                        DISPLAY_ARGS=(-display gtk
+                        # Forward pointer motion as soon as the host cursor
+                        # enters the GTK window.  Relying on click-to-grab can
+                        # leave the guest cursor apparently frozen on Wayland.
+                        DISPLAY_ARGS=(-display gtk,grab-on-hover=on
                                       -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
