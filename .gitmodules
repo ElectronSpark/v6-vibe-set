@@ -1,4 +1,4 @@
 [submodule "toolchain"]
 	path = toolchain
-	url = https://github.com/riscv/riscv-gnu-toolchain
+	url = https://github.com/ElectronSpark/xv6-toolchain.git
 	branch = master
