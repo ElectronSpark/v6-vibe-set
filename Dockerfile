@@ -1,0 +1,74 @@
+FROM ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        bison \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        e2fsprogs \
+        file \
+        flex \
+        gawk \
+        git \
+        libexpat1-dev \
+        libgmp-dev \
+        libmpc-dev \
+        libmpfr-dev \
+        make \
+        ninja-build \
+        pkg-config \
+        python3 \
+        qemu-system-x86 \
+        rsync \
+        tar \
+        texinfo \
+        unzip \
+        wget \
+        xz-utils \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/xv6-os
+
+FROM base AS build
+
+ARG XV6_ARCH=x86_64
+ARG XV6_PARALLEL_JOBS=2
+ARG BUILD_TARGET=world
+ARG BUILD_DIR=/build/xv6-os
+
+COPY . /src/xv6-os
+
+RUN test -f toolchain/scripts/build_gcc_toolchain.sh \
+    && test -f kernel/CMakeLists.txt \
+    && test -f user/CMakeLists.txt \
+    && test -f ports/CMakeLists.txt
+
+RUN cmake -S /src/xv6-os -B "${BUILD_DIR}" \
+        -G Ninja \
+        -DXV6_ARCH="${XV6_ARCH}" \
+        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}"
+
+RUN cmake --build "${BUILD_DIR}" --target "${BUILD_TARGET}"
+
+FROM base AS dev
+
+ARG XV6_ARCH=x86_64
+ARG XV6_PARALLEL_JOBS=2
+ARG BUILD_DIR=/build/xv6-os
+
+COPY . /src/xv6-os
+
+RUN cmake -S /src/xv6-os -B "${BUILD_DIR}" \
+        -G Ninja \
+        -DXV6_ARCH="${XV6_ARCH}" \
+        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}"
+
+WORKDIR /src/xv6-os
+
+CMD ["bash"]
