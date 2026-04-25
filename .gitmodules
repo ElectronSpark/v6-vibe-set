@@ -2,3 +2,11 @@
 	path = toolchain
 	url = https://github.com/ElectronSpark/xv6-toolchain.git
 	branch = master
+[submodule "ports"]
+	path = ports
+	url = git@github.com:ElectronSpark/v6-ports.git
+	branch = v6-port
+[submodule "user"]
+	path = user
+	url = git@github.com:ElectronSpark/v6-user.git
+	branch = v6-port
