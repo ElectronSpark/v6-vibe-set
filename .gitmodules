@@ -1,16 +1,16 @@
 [submodule "toolchain"]
 	path = toolchain
-	url = https://github.com/ElectronSpark/xv6-toolchain.git
+	url = https://github.com/ElectronSpark/v6-toolchain.git
 	branch = master
 [submodule "kernel"]
 	path = kernel
-	url = git@github.com:ElectronSpark/xv6-riscv-lab.git
+	url = https://github.com/ElectronSpark/xv6-riscv-lab.git
 	branch = v6-kernel
 [submodule "ports"]
 	path = ports
-	url = git@github.com:ElectronSpark/v6-ports.git
+	url = https://github.com/ElectronSpark/v6-ports.git
 	branch = v6-port
 [submodule "user"]
 	path = user
-	url = git@github.com:ElectronSpark/v6-user.git
+	url = https://github.com/ElectronSpark/v6-user.git
 	branch = v6-port
