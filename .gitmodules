@@ -1,0 +1,4 @@
+[submodule "toolchain"]
+	path = toolchain
+	url = git@github.com:ElectronSpark/xv6-toolchain.git
+	branch = master
