@@ -13,14 +13,19 @@ fi
 ARCH="$1"; KERNEL="$2"; FSIMG="$3"
 
 QEMU_EXTRA="${QEMU_EXTRA:-}"
+QEMU_CPUS="${QEMU_CPUS:-6}"
+QEMU_MEMORY="${QEMU_MEMORY:-4G}"
+QEMU_CPU="${QEMU_CPU:-qemu64}"
+QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
+QEMU_MACHINE="${QEMU_MACHINE:-pc,vmport=on}"
+QEMU_NET="${QEMU_NET:-1}"
+QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 
 # ──────────────────────────────────────────────────────────────────────
-# KVM enablement.  Currently OPT-IN (USE_KVM=1) because the kernel
-# trips a kernel-mode #GP under KVM that does not reproduce on TCG —
-# almost certainly a swapgs / syscall / iretq path that TCG accepts
-# leniently but real CPU semantics (enforced by KVM) reject.  Fixing
-# the kernel is tracked separately; until then we stay on TCG by
-# default.  Set USE_KVM=1 to try KVM anyway.
+# KVM enablement.  Currently OPT-IN (USE_KVM=1) because the kernel can
+# lock up under KVM after userspace starts, while the same image runs
+# under TCG.  Fixing the kernel is tracked separately; until then we
+# stay on TCG by default.  Set USE_KVM=1 to try KVM anyway.
 # ──────────────────────────────────────────────────────────────────────
 USE_KVM="${USE_KVM:-0}"
 KVM_ARGS=()
@@ -36,7 +41,13 @@ if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         fi
         if [[ -r /dev/kvm && -w /dev/kvm ]]; then
                 KVM_ARGS=(-enable-kvm)
-                echo "run-qemu: using KVM acceleration (kernel currently #GPs under KVM — see scripts/run-qemu.sh)" >&2
+                echo "run-qemu: using KVM acceleration (kernel may lock up under KVM — see scripts/run-qemu.sh)" >&2
+        fi
+fi
+
+if [[ "${QEMU_NETSURF}" == "0" || ("${QEMU_NETSURF}" == "auto" && ${#KVM_ARGS[@]} -gt 0) ]]; then
+        if [[ " ${QEMU_APPEND} " != *" netsurf="* ]]; then
+                QEMU_APPEND="${QEMU_APPEND} netsurf=0"
         fi
 fi
 
@@ -89,20 +100,30 @@ case "${ARCH}" in
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
                 fi
-                # User-mode net w/ explicit hostfwd so a guest server on
-                # 8080 is reachable from the host on 18080. Override
-                # via HOSTFWD env (full -netdev user fragment).
-                HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
+                NET_ARGS=()
+                if [[ "${QEMU_NET}" == "1" ]]; then
+                        # User-mode net w/ explicit hostfwd so a guest server on
+                        # 8080 is reachable from the host on 18080. Override
+                        # via HOSTFWD env (full -netdev user fragment).
+                        HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
+                        NET_ARGS=(-netdev user,id=n0,${HOSTFWD}
+                                  -device e1000,netdev=n0)
+                else
+                        NET_ARGS=(-net none)
+                fi
                 # The kernel does not enable OSXSAVE in CR4, so any
                 # CPU feature that requires XSAVE state (AVX, AVX2, ...)
                 # will #UD on first use.  Under -cpu host KVM advertises
                 # those via CPUID and musl's IFUNC dispatch picks the
-                # AVX memcpy/strcmp paths — which then fault.  Pin the
-                # CPU model to qemu64,+pcid in BOTH KVM and TCG modes;
-                # PCID is required by the kernel's ASID code path.
-                CPU_ARGS=(-cpu qemu64,+pcid)
+                # AVX memcpy/strcmp paths — which then fault.  Keep the
+                # CPU model conservative in BOTH KVM and TCG modes.
+                # KVM exposes hardware PCID when requested, which currently
+                # sends the kernel down a lockup-prone ASID/PCID path after
+                # userspace starts.  Override with QEMU_CPU=qemu64,+pcid when
+                # debugging that path directly.
+                CPU_ARGS=(-cpu "${QEMU_CPU}")
                 exec qemu-system-x86_64 \
-                        -machine pc,vmport=on -smp 2 -m 256M \
+                        -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}" \
                         "${KVM_ARGS[@]}" "${CPU_ARGS[@]}" \
                         "${DISPLAY_ARGS[@]}" \
                         -debugcon file:/tmp/xv6-debugcon.log \
@@ -110,9 +131,8 @@ case "${ARCH}" in
                         -kernel "${KERNEL}" \
                         -drive file="${FSIMG}",if=none,format=raw,id=x0 \
                         -device virtio-blk-pci,drive=x0 \
-                        -netdev user,id=n0,${HOSTFWD} \
-                        -device e1000,netdev=n0 \
-                        -append "root=/dev/disk0" \
+                        "${NET_ARGS[@]}" \
+                        -append "${QEMU_APPEND}" \
                         ${QEMU_EXTRA}
                 ;;
         *)

@@ -40,6 +40,7 @@ ExternalProject_Add(user
 	                    -DARCH=${_user_arch}
 	                    -DCMAKE_INSTALL_PREFIX=${XV6_SYSROOT}
 	                    -DOPT_LEVEL=2
+	CMAKE_CACHE_ARGS  -DCMAKE_INSTALL_PREFIX:PATH=${XV6_SYSROOT}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_user_obj} -j${XV6_PARALLEL_JOBS}
 	INSTALL_COMMAND   ${CMAKE_COMMAND} --install ${_user_obj}
 	BUILD_ALWAYS      1)
