@@ -49,12 +49,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/container-xv6-command.sh /usr/local/bin/xv6-command
+COPY scripts/container-hints.sh /usr/local/bin/xv6-hints
 RUN chmod 0755 /usr/local/bin/xv6-command \
+    && chmod 0755 /usr/local/bin/xv6-hints \
     && ln -s xv6-command /usr/local/bin/xv6-toolchain \
     && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
-    && ln -s xv6-command /usr/local/bin/xv6-qemu-nokvm
+    && ln -s xv6-command /usr/local/bin/xv6-qemu-nokvm \
+    && printf '\n# xv6 command hints\nif [[ $- == *i* && -r /usr/local/bin/xv6-hints ]]; then\n    . /usr/local/bin/xv6-hints\nfi\n' >> /etc/bash.bashrc
 
 WORKDIR /src/xv6-os
 
