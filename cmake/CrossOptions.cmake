@@ -5,6 +5,7 @@
 #
 # Inputs (cache):
 #   XV6_ARCH        : riscv64 | x86_64
+#   XV6_PREBUILT_TOOLCHAIN_PREFIX : optional prebuilt toolchain root
 #
 # Outputs (cache, parent scope):
 #   XV6_TRIPLE              GNU triple, e.g. riscv64-xv6-linux-musl
@@ -35,7 +36,13 @@ endif()
 
 set(XV6_BUILD_ROOT       "${CMAKE_BINARY_DIR}")
 set(XV6_SYSROOT          "${XV6_BUILD_ROOT}/sysroot")
-set(XV6_TOOLCHAIN_PREFIX "${XV6_BUILD_ROOT}/toolchain")
+set(XV6_PREBUILT_TOOLCHAIN_PREFIX "" CACHE PATH
+	"Optional prebuilt toolchain root containing <arch>/phase1 and <arch>/phase2")
+if(XV6_PREBUILT_TOOLCHAIN_PREFIX)
+	get_filename_component(XV6_TOOLCHAIN_PREFIX "${XV6_PREBUILT_TOOLCHAIN_PREFIX}" ABSOLUTE)
+else()
+	set(XV6_TOOLCHAIN_PREFIX "${XV6_BUILD_ROOT}/toolchain")
+endif()
 # The build_gcc_toolchain.sh script lays out binaries as
 # ${PREFIX}/${arch}/phase{1,2}/bin. Phase 2 is the full C/C++ compiler;
 # Phase 1 (static bootstrap) is enough for kernel/user (xv6-native).
@@ -67,8 +74,11 @@ set(XV6_PARALLEL_JOBS "${_jobs}" CACHE STRING "Parallelism for nested builds")
 
 file(MAKE_DIRECTORY
 	"${XV6_SYSROOT}"
-	"${XV6_TOOLCHAIN_PREFIX}"
 	"${XV6_STAMP_DIR}"
 	"${XV6_KERNEL_ARTIFACTS}"
 	"${XV6_DOWNLOAD_DIR}"
 	"${XV6_BUILD_ROOT}/cmake")
+
+if(NOT XV6_PREBUILT_TOOLCHAIN_PREFIX)
+	file(MAKE_DIRECTORY "${XV6_TOOLCHAIN_PREFIX}")
+endif()

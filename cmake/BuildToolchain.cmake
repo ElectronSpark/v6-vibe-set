@@ -27,6 +27,46 @@ set(_tc_src "${CMAKE_SOURCE_DIR}/toolchain")
 set(_tc_log "${XV6_BUILD_ROOT}/toolchain-build")
 file(MAKE_DIRECTORY "${_tc_log}")
 
+if(XV6_PREBUILT_TOOLCHAIN_PREFIX)
+	foreach(_tc_required
+		"${XV6_TOOLCHAIN_BIN_PHASE1}/${XV6_TRIPLE}-gcc"
+		"${XV6_TOOLCHAIN_BIN_PHASE1}/${XV6_TRIPLE}-ld"
+		"${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-gcc"
+		"${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-g++")
+		if(NOT EXISTS "${_tc_required}")
+			message(FATAL_ERROR
+				"Prebuilt toolchain is missing ${_tc_required}. "
+				"Expected layout: ${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase{1,2}/bin/${XV6_TRIPLE}-*")
+		endif()
+	endforeach()
+
+	configure_file(
+		${CMAKE_SOURCE_DIR}/cmake/Toolchain.cmake.in
+		${XV6_CROSS_TOOLCHAIN_FILE}
+		@ONLY)
+
+	add_custom_target(tc-phase1
+		COMMAND ${CMAKE_COMMAND} -E echo "Using prebuilt phase-1 toolchain at ${XV6_TOOLCHAIN_BIN_PHASE1}"
+		VERBATIM)
+	add_custom_target(tc-binutils   DEPENDS tc-phase1)
+	add_custom_target(tc-gcc-stage1 DEPENDS tc-phase1)
+	add_custom_target(tc-musl       DEPENDS tc-phase1)
+
+	add_custom_target(tc-phase2
+		COMMAND ${CMAKE_COMMAND} -E echo "Using prebuilt phase-2 toolchain at ${XV6_TOOLCHAIN_BIN}"
+		DEPENDS tc-phase1
+		VERBATIM)
+	add_custom_target(tc-gcc-stage2 DEPENDS tc-phase2)
+
+	add_custom_target(tc-emit-toolchain-file
+		COMMAND ${CMAKE_COMMAND} -E touch ${XV6_CROSS_TOOLCHAIN_FILE}
+		BYPRODUCTS ${XV6_CROSS_TOOLCHAIN_FILE}
+		COMMENT    "Cross CMake toolchain file at ${XV6_CROSS_TOOLCHAIN_FILE}")
+
+	add_custom_target(toolchain DEPENDS tc-phase2 tc-emit-toolchain-file)
+	return()
+endif()
+
 set(_tc_script "${_tc_src}/scripts/build_gcc_toolchain.sh")
 if(NOT EXISTS "${_tc_script}")
 	message(FATAL_ERROR
