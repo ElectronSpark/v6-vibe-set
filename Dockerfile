@@ -48,6 +48,14 @@ RUN apt-get update \
     && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2' \
     && rm -rf /var/lib/apt/lists/*
 
+COPY scripts/container-xv6-command.sh /usr/local/bin/xv6-command
+RUN chmod 0755 /usr/local/bin/xv6-command \
+    && ln -s xv6-command /usr/local/bin/xv6-toolchain \
+    && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
+    && ln -s xv6-command /usr/local/bin/xv6-user-ports \
+    && ln -s xv6-command /usr/local/bin/xv6-images \
+    && ln -s xv6-command /usr/local/bin/xv6-qemu-nokvm
+
 WORKDIR /src/xv6-os
 
 FROM base AS build
