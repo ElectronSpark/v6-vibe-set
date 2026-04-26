@@ -22,6 +22,7 @@ RUN apt-get update \
         gettext \
         libexpat1-dev \
         libgmp-dev \
+        libltdl-dev \
         libtool \
         m4 \
         libmpc-dev \
