@@ -4,6 +4,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        adwaita-icon-theme \
+        autoconf \
+        automake \
+        autopoint \
         bash \
         bison \
         build-essential \
@@ -15,11 +19,15 @@ RUN apt-get update \
         flex \
         gawk \
         git \
+        gettext \
         libexpat1-dev \
         libgmp-dev \
+        libtool \
+        m4 \
         libmpc-dev \
         libmpfr-dev \
         make \
+        meson \
         ninja-build \
         pkg-config \
         python3 \
@@ -29,6 +37,7 @@ RUN apt-get update \
         texinfo \
         unzip \
         wget \
+        xkb-data \
         xz-utils \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
