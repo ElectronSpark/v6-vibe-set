@@ -13,14 +13,17 @@ RUN apt-get update \
         build-essential \
         ca-certificates \
         cmake \
+        cpio \
         curl \
         e2fsprogs \
         file \
         flex \
         gawk \
+        gperf \
         git \
         gettext \
         libexpat1-dev \
+        libgdk-pixbuf2.0-bin \
         libgmp-dev \
         libltdl-dev \
         libtool \
@@ -32,6 +35,7 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
         python3 \
+        python3-pip \
         qemu-system-x86 \
         rsync \
         tar \
@@ -41,6 +45,7 @@ RUN apt-get update \
         xkb-data \
         xz-utils \
         zlib1g-dev \
+    && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2' \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src/xv6-os
