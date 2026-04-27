@@ -1,6 +1,6 @@
 # xv6-os Skills Index
 
-Current source is authoritative. Use `/home/es/xv6/xv6-tmp` docs as historical/reference material only; when they conflict with `/home/es/xv6-os`, prefer the current repo, especially for x86_64/QEMU boot, timers, interrupts, devices, and e1000.
+Current source is authoritative. Treat any local `xv6-tmp` checkout as historical/reference material only; when it conflicts with `/home/es/xv6-os`, prefer the current repo, especially for x86_64/QEMU boot, timers, interrupts, devices, and e1000.
 
 The authoritative skill files for this repo live in `.github/skills`. `.codex/skills` entries are redirects only; migrate durable content into `.github/skills` and update this index.
 

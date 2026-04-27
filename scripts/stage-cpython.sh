@@ -2,20 +2,23 @@
 # stage-cpython.sh — stage a prebuilt CPython 3.12 + Flask/SQLite stack
 # from a reference sysroot into our build sysroot.
 #
-# This is a pragmatic shortcut: the reference tree (xv6-tmp/build-x86/sysroot)
-# was built by the older monolithic xv6-tmp build with the same
-# x86_64-xv6-linux-musl toolchain we use today, so the binaries are ABI
-# compatible. The proper "build CPython under ports/" recipe is still TODO.
+# This is a pragmatic shortcut for staging a prebuilt reference sysroot.
+# The proper "build CPython under ports/" recipe is still TODO.
 #
 # Usage:
 #   stage-cpython.sh [reference_sysroot] [dest_sysroot] [phase2_lib_dir]
 #
-# Defaults assume invocation from the xv6-os/ repo root.
+# Defaults assume invocation from the xv6-os/ repo root, but the reference
+# sysroot must be passed explicitly or supplied via REF_SYSROOT.
 set -euo pipefail
 
-REF="${1:-/home/es/xv6/xv6-tmp/build-x86/sysroot}"
+REF="${1:-${REF_SYSROOT:-}}"
 DST="${2:-build-x86_64/sysroot}"
 PHASE2_LIB="${3:-build-toolchain-x86_64/x86_64/phase2/x86_64-xv6-linux-musl/lib}"
+if [[ -z "${REF}" ]]; then
+    echo "stage-cpython: reference sysroot required (argument or REF_SYSROOT)" >&2
+    exit 1
+fi
 
 if [[ ! -d "${REF}/lib/python3.12" ]]; then
     echo "stage-cpython: reference sysroot missing python3.12 at ${REF}" >&2
@@ -75,7 +78,7 @@ rsync -aH \
 # 3b. Python stdlib (.py source) — the reference sysroot only ships
 #     lib-dynload + site-packages, not the pure-Python stdlib. We pull
 #     it from the cpython source tree that the reference build used.
-CPYTHON_LIB="${CPYTHON_LIB:-/home/es/xv6/xv6-tmp/user/v6-cpython/Lib}"
+CPYTHON_LIB="${CPYTHON_LIB:-ports/cpython/src/Lib}"
 if [[ -d "${CPYTHON_LIB}" ]]; then
     rsync -a \
         --exclude='__pycache__/' \

@@ -116,7 +116,7 @@ argument-hint: 'Describe the GUI/compositor symptom'
 - `run-qemu.sh` can append `netsurf=0` using `QEMU_NETSURF=0`, or automatically under KVM with `QEMU_NETSURF=auto`.
 - When NetSurf is launched by `wlcomp`, it creates `/.netsurf/Choices`, redirects stdout/stderr to `/tmp/app_log.txt`, and supplies Wayland, GTK, certificate, and debug environment variables.
 - NetSurf launch setup writes `/.netsurf/Choices` with the local welcome page and certificate bundle.
-- WebKit/MiniBrowser is currently staged by `ports/webkit` from the reference `xv6-tmp` sysroot. Runtime requires MiniBrowser, `WebKitNetworkProcess`, `WebKitWebProcess`, WebKit/JSC shared libraries, the injected bundle, and the GIO OpenSSL module.
+- WebKit/MiniBrowser staging is optional and explicit. Runtime requires MiniBrowser, `WebKitNetworkProcess`, `WebKitWebProcess`, WebKit/JSC shared libraries, the injected bundle, and the GIO OpenSSL module; provide those through `XV6_WEBKIT_REF_SYSROOT` or a populated repo-local `ports/webkit/sysroot`.
 - When MiniBrowser is launched by `wlcomp`, it supplies Wayland/GTK variables plus `GIO_MODULE_DIR=/lib/gio/modules`, `GIO_USE_TLS=openssl`, `WEBKIT_EXEC_PATH=/libexec/webkit2gtk-4.1`, `WEBKIT_INJECTED_BUNDLE_PATH=/lib/webkit2gtk-4.1/injected-bundle`, `SOUP_FORCE_HTTP1=1`, and a local default URL.
 - Debug launch failures by identifying which path was supposed to launch: boot autostart from `desktop.c`, a compositor icon/menu action, or a manual shell command.
 - For boot autostart, inspect `/proc/cmdline`, desktop startup output, `/tmp/wayland-0.lock`, and whether `/bin/netsurf` appears in process listings before assuming the browser crashed.

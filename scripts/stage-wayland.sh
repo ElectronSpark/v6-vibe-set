@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# stage-wayland.sh - pragmatic staging from xv6-tmp's prebuilt sysroot.
+# stage-wayland.sh - pragmatic staging from a prebuilt reference sysroot.
 #
 # Copies the prebuilt wlcomp Wayland compositor and desktop session
 # manager binaries from a reference sysroot into ${DEST_SYSROOT}.
@@ -14,11 +14,20 @@
 #   /dev/mouse (ps2mouse.c)
 #
 # Usage:  stage-wayland.sh <ref_sysroot> <dest_sysroot>
-# Default ref:  /home/es/xv6/xv6-tmp/build-x86/sysroot
+# Or set REF_SYSROOT=<ref_sysroot> and pass only <dest_sysroot>.
 set -euo pipefail
 
-REF="${1:-/home/es/xv6/xv6-tmp/build-x86/sysroot}"
-DEST="${2:?usage: $0 <ref_sysroot> <dest_sysroot>}"
+if [[ $# -ge 2 ]]; then
+    REF="$1"
+    DEST="$2"
+else
+    REF="${REF_SYSROOT:-}"
+    DEST="${1:-}"
+fi
+if [[ -z "${REF}" || -z "${DEST}" ]]; then
+    echo "usage: $0 <ref_sysroot> <dest_sysroot>  (or REF_SYSROOT=<ref> $0 <dest>)" >&2
+    exit 1
+fi
 
 if [[ ! -x "${REF}/bin/wlcomp" ]]; then
     echo "stage-wayland: ${REF}/bin/wlcomp not found" >&2
