@@ -47,6 +47,7 @@ This skill is provisional. It records lessons from recent build and container ex
 - **Submodule invisibility**: the parent points at commits that have not been pushed from `kernel` or `ports`.
 - **Partial Docker success**: the base image builds, but the image/rootfs target fails later in project-specific phases.
 - **Build/runtime mismatch**: a successful build is tested against an older running QEMU session.
+- **Stale rootfs image**: sysroot binaries can be newer than `/bin/*` inside `build-x86_64/fs.img`; verify with `debugfs` or dump the image binary and run `strings` before trusting a runtime test.
 
 ## Submodule Commit Rule
 

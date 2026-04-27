@@ -21,15 +21,13 @@ file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 # This is what scripts/run-qemu.sh actually boots, and what the
 # session demo (Python + Flask) depends on.
 # ---------------------------------------------------------------------
-add_custom_command(
-	OUTPUT  ${_fsimg}
+add_custom_target(rootfs
 	COMMAND ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
 	            ${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb}
 	            ${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase2/${XV6_TRIPLE}/lib
 	DEPENDS user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
+	BYPRODUCTS ${_fsimg}
 	COMMENT "Building ext4 rootfs ${_fsimg} (${_fsimg_size_mb} MiB) from ${XV6_SYSROOT}")
-
-add_custom_target(rootfs DEPENDS ${_fsimg})
 
 # ---------------------------------------------------------------------
 # Legacy initrd / boot-image path (unused by current run-qemu.sh, but
