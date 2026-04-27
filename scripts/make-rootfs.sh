@@ -203,6 +203,7 @@ cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
 Type=Application
 Name=WebKit
 Exec=/libexec/webkit2gtk-4.1/MiniBrowser
+Arg=https://www.google.com/
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
