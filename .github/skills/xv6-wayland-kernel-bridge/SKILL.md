@@ -119,6 +119,10 @@ argument-hint: 'Describe the GUI/compositor symptom'
 - `run-qemu.sh` can append `netsurf=0` using `QEMU_NETSURF=0`, or automatically under KVM with `QEMU_NETSURF=auto`.
 - When NetSurf is launched by `wlcomp`, it creates `/.netsurf/Choices`, redirects stdout/stderr to `/tmp/app_log.txt`, and supplies Wayland, GTK, certificate, and debug environment variables.
 - The generated compositor rewrites NetSurf homepage to local `file:///share/netsurf/welcome.html` and removes the old local web-server wait loop.
+- Debug launch failures by identifying which path was supposed to launch: boot autostart from `desktop.c`, a compositor icon/menu action, or a manual shell command.
+- For boot autostart, inspect `/proc/cmdline`, desktop startup output, `/tmp/wayland-0.lock`, and whether `/bin/netsurf` appears in process listings before assuming the browser crashed.
+- For compositor launchers, inspect generated `wlcomp.c` because CMake may have replaced Browser entries with `NULL`, menu separators, or `break` statements.
+- If NetSurf starts and exits, read `/tmp/app_log.txt` before changing Wayland, GTK, network, or kernel code.
 - Do not debug browser crashes as kernel freezes until the compositor/event loop, Wayland environment, `/tmp/app_log.txt`, and `netsurf=0` behavior have been checked.
 
 ## Kernel Interface Dependencies

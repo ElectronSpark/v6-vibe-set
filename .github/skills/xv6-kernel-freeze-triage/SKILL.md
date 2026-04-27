@@ -24,8 +24,8 @@ argument-hint: 'Describe the freeze symptom or paste xv6-freeze output'
 ## Procedure
 
 1. Check for stale runtime processes before interpreting a capture:
-   - Look for `qemu-system-x86_64`, `gdb ... kernel`, and `attach-gdb`.
-   - Confirm the running QEMU command uses the rebuilt `build-x86_64/kernel/build/kernel/kernel` and current `build-x86_64/fs.img`.
+	- Look for `qemu-system-x86_64`, `gdb ... kernel`, and `attach-gdb`.
+	- Confirm the running QEMU command uses the rebuilt `build-x86_64/kernel/kernel.elf` and current `build-x86_64/fs.img`.
 2. For a fresh debug boot, use the repository scripts:
    - `QEMU_GDB=1 QEMU_GDB_WAIT=1 USE_KVM=1 bash scripts/launch-gui.sh`
    - `bash scripts/attach-gdb.sh` from a shell, not from inside GDB.
@@ -54,5 +54,5 @@ argument-hint: 'Describe the freeze symptom or paste xv6-freeze output'
 ## Validation
 
 - Validate GDB helper syntax with the built kernel symbols:
-  `gdb -q -nx build-x86_64/kernel/build/kernel/kernel -x scripts/xv6.gdb -batch -ex 'help xv6-freeze'`
+  `gdb -q -nx build-x86_64/kernel/kernel.elf -x scripts/xv6.gdb -batch -ex 'help xv6-freeze'`
 - Rebuild the kernel/image through the project build integration when available, then restart QEMU before retesting.

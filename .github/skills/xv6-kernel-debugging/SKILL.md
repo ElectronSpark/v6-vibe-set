@@ -27,10 +27,13 @@ argument-hint: 'Describe the debugging artifact or diagnostic failure'
 2. For freezes, use `xv6-kernel-freeze-triage` first, then route to subsystem skills from the capture.
 3. If C structs used by assembly change, regenerate/check offsets before debugging runtime symptoms.
 4. For GDB stub bugs, inspect architecture register encoding and memory access safety.
-5. Keep debug helpers read-oriented unless there is a clear reason to call kernel functions from GDB.
+5. For missing in-kernel backtrace symbols, verify the booted ELF is `build-x86_64/kernel/kernel.elf`, not the plain `build-x86_64/kernel/build/kernel/kernel`.
+6. Confirm embedded symbols with `readelf -S -W build-x86_64/kernel/kernel.elf`: `.ksymbols` should be nonzero `PROGBITS`, and `.ksymbols_idx` should be `NOBITS`.
+7. Keep debug helpers read-oriented unless there is a clear reason to call kernel functions from GDB.
 
 ## Pitfalls
 
 - Stale QEMU sessions can invalidate every capture after a rebuild.
 - Backtrace quality depends on architecture unwinder assumptions and symbols.
 - Generated offsets are a contract between C and assembly, not documentation only.
+- The kernel subproject still builds a plain `kernel` ELF; umbrella flows must build `kernel_all` and boot/install `kernel_with_symbols_elf` as `kernel.elf`.

@@ -36,6 +36,8 @@ This skill is a moving debug notebook for GUI runtime behavior. It is not ground
 - Split every GUI symptom into producer, wait path, consumer, and renderer. For cursor freezes, that means mouse IRQ/ring, cdev poll/kqueue, compositor read loop, and framebuffer update.
 - Always compare source intent with generated compositor output before changing kernel code.
 - Keep browser/client effects separate from base desktop effects. Disable NetSurf for kernel freeze triage unless the browser is the experiment.
+- For NetSurf launch failures, separate the two launchers first: `desktop.c` autostart at session boot and `wlcomp.c` desktop/menu launchers after the compositor is running.
+- Capture the browser contract before changing code: `/proc/cmdline`, generated `wlcomp.c`, `/tmp/app_log.txt`, `WAYLAND_DISPLAY`, `GDK_BACKEND`, `XDG_RUNTIME_DIR`, `HOME`, and whether `/tmp/wayland-0.lock` exists.
 - Use a healthy control sample. A running compositor should periodically appear in framebuffer work, outer epoll waits, or input processing depending on where it is interrupted.
 - If input is queued but not consumed, first ask whether readiness is level-correct and whether the compositor reaches its drain point.
 - If rendering continues but interaction fails, focus on input routing, focus state, pointer/keyboard protocol delivery, or client state rather than framebuffer.
@@ -48,6 +50,9 @@ This skill is a moving debug notebook for GUI runtime behavior. It is not ground
 - **ABI mismatch suspicion**: input packet layout is blamed before checking whether user space is actually reading events.
 - **Nested wait confusion**: the internal Wayland event-loop fd and outer compositor epoll fd can be mistaken for the same wait.
 - **Render/input conflation**: framebuffer activity proves drawing progress, not necessarily input delivery or client focus correctness.
+- **Launcher path mismatch**: boot autostart may be disabled by `netsurf=0` while the compositor icon/menu launcher is separately disabled by generated `wlcomp.c` rewrites.
+- **Silent browser exit**: stdout/stderr redirection to `/tmp/app_log.txt` can hide the useful failure unless the log is copied or read from inside xv6.
+- **Environment drift**: GTK/Wayland clients can fail before mapping a surface if `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `GDK_BACKEND`, or `HOME` are missing or inconsistent.
 
 ## Pitfalls
 

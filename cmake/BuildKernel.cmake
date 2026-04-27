@@ -43,9 +43,10 @@ ExternalProject_Add(kernel
 	                    -DARCH=${_kernel_arch}
 	                    -DPLATFORM=qemu
 	                    -DOPT_LEVEL=2
-	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_kernel_obj} -j${XV6_PARALLEL_JOBS} --target kernel
-	INSTALL_COMMAND   ${CMAKE_COMMAND} -E copy
-	                    ${_kernel_obj}/kernel
+	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_kernel_obj} -j${XV6_PARALLEL_JOBS} --target kernel_all
+	INSTALL_COMMAND   ${CMAKE_COMMAND} -E rm -rf ${XV6_KERNEL_ARTIFACTS}/kernel.elf
+	          COMMAND ${CMAKE_COMMAND} -E copy
+	                    ${_kernel_obj}/kernel/kernel_with_symbols_elf
 	                    ${XV6_KERNEL_ARTIFACTS}/kernel.elf
 	BUILD_ALWAYS      1
 	BUILD_BYPRODUCTS  ${XV6_KERNEL_ARTIFACTS}/kernel.elf)

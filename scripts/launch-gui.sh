@@ -18,6 +18,7 @@ fi
 
 kernel_candidates=(
     "${KERNEL:-}"
+    "${BUILD_DIR}/kernel/kernel.elf"
     "${BUILD_DIR}/kernel/build/kernel/kernel"
     "${BUILD_DIR}/kernel/kernel/kernel"
 )
