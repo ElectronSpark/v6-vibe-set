@@ -104,6 +104,18 @@ cat > "${STAGE}/etc/shells" <<'EOF'
 /bin/sh
 EOF
 
+# Keep OpenSSL/GIO TLS clients on the same trust roots as NetSurf. OpenSSL's
+# built-in OPENSSLDIR is /etc/ssl, so stage the bundle there for programs that
+# do not receive an explicit SSL_CERT_FILE.
+mkdir -p "${STAGE}/etc/ssl/certs"
+if [[ -f "${STAGE}/share/netsurf/ca-bundle" ]]; then
+    cp -a "${STAGE}/share/netsurf/ca-bundle" "${STAGE}/etc/ssl/certs/ca-certificates.crt"
+    ln -sf certs/ca-certificates.crt "${STAGE}/etc/ssl/cert.pem"
+elif [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
+    cp -a /etc/ssl/certs/ca-certificates.crt "${STAGE}/etc/ssl/certs/ca-certificates.crt"
+    ln -sf certs/ca-certificates.crt "${STAGE}/etc/ssl/cert.pem"
+fi
+
 mkdir -p "${STAGE}/root/.ssh" "${STAGE}/root/Desktop" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
 chmod 0700 "${STAGE}/root/.ssh"
 chmod 0755 "${STAGE}/var/empty"
