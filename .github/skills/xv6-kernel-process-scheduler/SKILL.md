@@ -20,6 +20,12 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 - Async work: `workqueue.c`, `kernel/kernel/inc/proc/workqueue*.h`.
 - Signals and futexes: `signal.c`, `sys_signal.c`, `futex.c`.
 
+## WebKit/Multi-Threaded Process Symptom
+
+- When a GUI app freezes after its main thread exits, check whether the thread-group leader is `ZOMBIE` while other threads with the same `TGID` remain `INTERRUPTIBLE`, `WAKENING`, or `RUNNING`.
+- This can leave parent `waitpid(pid, WNOHANG)` unable to reap the process yet, while user-visible state such as Wayland surfaces and helper processes still exists.
+- For WebKit, expect helper processes such as `WebKitNetworkPr` and `WebKitWebProces` to survive separately from the MiniBrowser UI thread group unless the launcher/compositor kills the process group.
+
 ## Workflow
 
 1. Use `xv6-threads` or equivalent dumps to classify each thread as runnable, running, sleeping, zombie, or stopped.
