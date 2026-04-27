@@ -30,6 +30,24 @@ This skill is provisional. It records lessons from recent build and container ex
    - `cmake --build build-x86_64 --target kernel -j2`
 6. If VS Code CMake Tools configure fails but the existing tree builds, record both facts; do not treat one as proof that the other path is broken.
 
+## Methodology
+
+- Debug reproducibility as a dependency graph problem, not a file-copy problem. Check targets, byproducts, stamps, cache variables, and submodule SHAs together.
+- Compare dirty working-tree builds against a clean clone by naming every intentional difference: copied toolchain, preseeded stamps, local submodule commit, Docker image, and generator.
+- Use dry runs before expensive builds to see what the graph believes is missing.
+- Keep host and container evidence separate. A path that exists on the host may be absent, mounted differently, or cached differently inside Docker.
+- When skipping a build phase, prove both sides: the final executable byproducts exist and the build graph no longer schedules that phase.
+- Commit and push submodules before treating a top-level commit as reproducible.
+
+## Common Problems
+
+- **Toolchain directory fallacy**: copied compiler binaries exist, but Ninja still rebuilds because stamps or expected byproducts are missing.
+- **Cache mismatch**: CMake was configured before the copied toolchain or with a different build root.
+- **Generator mismatch**: Makefile and Ninja build trees are compared without accounting for different target graphs.
+- **Submodule invisibility**: the parent points at commits that have not been pushed from `kernel` or `ports`.
+- **Partial Docker success**: the base image builds, but the image/rootfs target fails later in project-specific phases.
+- **Build/runtime mismatch**: a successful build is tested against an older running QEMU session.
+
 ## Submodule Commit Rule
 
 - Commit changed submodules first, then commit the parent repo so the parent records real submodule SHAs.

@@ -31,6 +31,24 @@ This skill is a moving debug notebook for GUI runtime behavior. It is not ground
 5. Treat a blocked internal Wayland kqueue with outer input queued as an event-wait/timer problem until proven otherwise.
 6. Promote stable findings back to `xv6-wayland-kernel-bridge`, `xv6-kernel-event-wait`, or `xv6-kernel-input` after validation.
 
+## Methodology
+
+- Split every GUI symptom into producer, wait path, consumer, and renderer. For cursor freezes, that means mouse IRQ/ring, cdev poll/kqueue, compositor read loop, and framebuffer update.
+- Always compare source intent with generated compositor output before changing kernel code.
+- Keep browser/client effects separate from base desktop effects. Disable NetSurf for kernel freeze triage unless the browser is the experiment.
+- Use a healthy control sample. A running compositor should periodically appear in framebuffer work, outer epoll waits, or input processing depending on where it is interrupted.
+- If input is queued but not consumed, first ask whether readiness is level-correct and whether the compositor reaches its drain point.
+- If rendering continues but interaction fails, focus on input routing, focus state, pointer/keyboard protocol delivery, or client state rather than framebuffer.
+
+## Common Problems
+
+- **Generated-source drift**: `ports/wayland/src/wlcomp.c` says one thing while `build-x86_64/ports/wayland/wlcomp-build/wlcomp.c` runs another.
+- **Sleep workaround trap**: replacing event waits with sleeps can make the GUI appear alive while hiding readiness bugs.
+- **Browser noise**: NetSurf, networking, DNS, TLS, and GTK startup can obscure base compositor problems.
+- **ABI mismatch suspicion**: input packet layout is blamed before checking whether user space is actually reading events.
+- **Nested wait confusion**: the internal Wayland event-loop fd and outer compositor epoll fd can be mistaken for the same wait.
+- **Render/input conflation**: framebuffer activity proves drawing progress, not necessarily input delivery or client focus correctness.
+
 ## Pitfalls
 
 - Do not fix GUI freezes by replacing `epoll_wait` with sleeps as a final answer; that can hide kernel readiness bugs.

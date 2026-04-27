@@ -26,6 +26,24 @@ This skill is intentionally provisional. It is not ground truth, may be incomple
 5. Convert one hypothesis into one small test or patch, then retest with a fresh VM when the kernel or image changed.
 6. Promote stable conclusions into the relevant source-derived skill only after the behavior is reproduced or explained by current source.
 
+## Methodology
+
+- Keep a hypothesis ledger: one line for evidence, one line for interpretation, one line for the next test.
+- Prefer falsifiable questions over broad explanations. Example: ask whether `wlcomp` is blocked in a syscall before deciding the compositor is frozen.
+- Change only one layer per experiment when possible: kernel wait path, generated compositor, QEMU launch flags, image/rootfs, or toolchain/build graph.
+- Treat a successful workaround as a diagnostic result first. Only promote it to a fix after explaining why it works.
+- Re-run the smallest capture that can disprove the current theory before widening the search.
+- When a theory crosses subsystems, name the handoff explicitly: producer, readiness notification, waiter, timeout, scheduler, or user-space consumer.
+
+## Common Problems
+
+- **Stale runtime**: QEMU is still running an older kernel or rootfs after a rebuild.
+- **Mixed captures**: evidence from KVM and non-KVM runs, or from different submodule commits, is combined as if it came from one run.
+- **Symptom tunneling**: the first visible symptom, such as cursor freeze, is mistaken for the failing subsystem without checking the event path.
+- **Overfitting to one stack**: a backtrace from one CPU is treated as the whole system state.
+- **Hidden timeout behavior**: timed waits show unclear channels and can masquerade as ordinary sleeps.
+- **Patch pile-up**: several plausible fixes are applied together, making validation impossible.
+
 ## Evidence Labels
 
 - **Observed**: directly captured from current source/runtime.

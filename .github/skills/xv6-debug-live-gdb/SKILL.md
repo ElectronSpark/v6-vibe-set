@@ -32,6 +32,24 @@ This skill captures current live-debugging practice. It is not ground truth and 
    - `xv6-timers`
 6. After a healthy sample, continue the VM with `c` unless you need it paused for inspection.
 
+## Methodology
+
+- Start every live-debug session by proving which binary is running. A precise GDB capture from the wrong VM is worse than no capture.
+- Use broad captures once, then narrow helpers repeatedly. `xv6-freeze` gives the map; `xv6-syscall`, `xv6-kqueue`, `xv6-input`, and `xv6-timers` test specific theories.
+- Sample the same target more than once before calling it stuck. A rendering loop, timer path, or network path may be caught in a hot function by chance.
+- Prefer saved trapframe arguments over source assumptions when debugging syscalls.
+- Keep GDB interaction low-impact: interrupt, inspect, then continue unless the VM must remain paused.
+- Write down whether the sample is a freeze capture, a healthy control sample, or a post-patch validation sample.
+
+## Common Problems
+
+- **Paused-at-reset confusion**: `QEMU_GDB_WAIT=1` leaves the VM stopped until GDB runs `c`.
+- **Wrong thread interpretation**: GDB's selected thread is a QEMU host thread, not automatically the xv6 process of interest.
+- **Concatenated commands**: sending multiple GDB commands in one terminal input can turn `wlcomp` plus the next command into one invalid selector.
+- **False stuck samples**: one interrupt during framebuffer copy, timer tick, or idle loop is not enough to prove a freeze.
+- **Unpublished helper drift**: `scripts/xv6.gdb` and kernel structs can get out of sync; helper failures may be tooling bugs.
+- **Forgotten continue**: leaving GDB paused can look like a VM hang from the GUI side.
+
 ## Interpretation Notes
 
 - `wlcomp` in framebuffer `ioctl` during repeated samples usually means the compositor is rendering, not stuck in internal event wait.

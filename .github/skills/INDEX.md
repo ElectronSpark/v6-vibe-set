@@ -35,12 +35,12 @@ Current source is authoritative. Use `/home/es/xv6/xv6-tmp` docs as historical/r
 
 ## Fluid Debugging Skills
 
-These skills are deliberately provisional. They are not ground truth, may be incomplete, and can become deprecated without notice. Use them for active debugging practice, live-capture workflows, and hypotheses that are not yet stable enough to promote into source-derived module skills.
+These skills are deliberately provisional methodology playbooks. They are not ground truth, may be incomplete, and can become deprecated without notice. Use them for active debugging practice, common failure patterns, live-capture workflows, and hypotheses that are not yet stable enough to promote into source-derived module skills.
 
-- `xv6-debug-fluid-triage`: uncertainty-first triage for evolving symptoms and hypotheses.
-- `xv6-debug-live-gdb`: live QEMU/GDB sampling, stale VM checks, and post-patch runtime validation.
-- `xv6-debug-build-repro`: fresh clone, Docker, copied toolchain, stamps, CMake/Ninja, and submodule reproducibility.
-- `xv6-debug-gui-runtime`: fluid GUI runtime observations before they become stable Wayland/kernel bridge guidance.
+- `xv6-debug-fluid-triage`: uncertainty-first methodology, evidence labels, and common hypothesis traps.
+- `xv6-debug-live-gdb`: live QEMU/GDB sampling method, stale VM checks, and recurring capture mistakes.
+- `xv6-debug-build-repro`: reproducibility methodology for fresh clones, Docker, copied toolchains, stamps, CMake/Ninja, and submodules.
+- `xv6-debug-gui-runtime`: GUI debugging method for producer/waiter/consumer/renderer splits and recurring compositor traps.
 
 ## Routing Hints
 
