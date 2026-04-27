@@ -24,6 +24,7 @@ GDB_BT="${GDB_BT:-0}"
 
 kernel_candidates=(
     "${KERNEL:-}"
+    "${BUILD_DIR}/kernel/kernel.elf"
     "${BUILD_DIR}/kernel/build/kernel/kernel"
     "${BUILD_DIR}/kernel/kernel/kernel"
 )
@@ -40,6 +41,11 @@ if [[ -z "${KERNEL_PATH}" ]]; then
     echo "attach-gdb: kernel image not found. Tried:" >&2
     printf '  %s\n' "${kernel_candidates[@]}" >&2
     exit 1
+fi
+
+if [[ -z "${KERNEL:-}" && "${KERNEL_PATH}" != "${BUILD_DIR}/kernel/kernel.elf" ]]; then
+    echo "attach-gdb: warning: using plain kernel artifact without embedded backtrace symbols: ${KERNEL_PATH}" >&2
+    echo "attach-gdb: build the umbrella kernel target to install: ${BUILD_DIR}/kernel/kernel.elf" >&2
 fi
 
 if ! command -v "${GDB_BIN}" >/dev/null 2>&1; then

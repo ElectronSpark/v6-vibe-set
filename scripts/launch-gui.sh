@@ -37,6 +37,11 @@ if [[ -z "${KERNEL_PATH}" ]]; then
     exit 1
 fi
 
+if [[ -z "${KERNEL:-}" && "${KERNEL_PATH}" != "${BUILD_DIR}/kernel/kernel.elf" ]]; then
+    echo "launch-gui: warning: using plain kernel artifact without embedded backtrace symbols: ${KERNEL_PATH}" >&2
+    echo "launch-gui: build the umbrella kernel target to install: ${BUILD_DIR}/kernel/kernel.elf" >&2
+fi
+
 if [[ ! -f "${FSIMG}" ]]; then
     echo "launch-gui: rootfs image not found: ${FSIMG}" >&2
     echo "launch-gui: build/regenerate it with: cmake --build ${BUILD_DIR} --target rootfs" >&2
