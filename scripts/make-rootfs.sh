@@ -27,7 +27,7 @@ command -v rsync    >/dev/null || { echo "make-rootfs: rsync not found"         
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 
-mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,usr,share}
+mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,usr,share,var}
 
 # 1. xv6-style user binaries: bin/_<name> -> /bin/<name>
 shopt -s nullglob
@@ -68,6 +68,84 @@ if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
 
+# 5b. Runtime configuration expected by network clients and OpenSSH.
+cat > "${STAGE}/etc/hosts" <<'EOF'
+127.0.0.1 localhost
+EOF
+
+cat > "${STAGE}/etc/resolv.conf" <<'EOF'
+nameserver 10.0.2.3
+EOF
+
+cat > "${STAGE}/etc/passwd" <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+sshd:x:74:74:Privilege-separated SSH:/var/empty:/bin/false
+guest:x:1000:1000:Guest User:/home/guest:/bin/sh
+nobody:x:65534:65534:Nobody:/nonexistent:/bin/false
+EOF
+
+cat > "${STAGE}/etc/group" <<'EOF'
+root:x:0:root
+wheel:x:10:root
+sshd:x:74:
+guest:x:1000:guest
+nogroup:x:65534:
+EOF
+
+cat > "${STAGE}/etc/shadow" <<'EOF'
+root::20517:0:99999:7:::
+sshd:!:20517:0:99999:7:::
+guest:!:20517:0:99999:7:::
+nobody:!:20517:0:99999:7:::
+EOF
+chmod 0600 "${STAGE}/etc/shadow"
+
+cat > "${STAGE}/etc/shells" <<'EOF'
+/bin/sh
+EOF
+
+mkdir -p "${STAGE}/root/.ssh" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
+chmod 0700 "${STAGE}/root/.ssh"
+chmod 0755 "${STAGE}/var/empty"
+
+if command -v ssh-keygen >/dev/null 2>&1; then
+    ssh-keygen -t ed25519 -f "${STAGE}/etc/ssh/ssh_host_ed25519_key" -N "" -q 2>/dev/null || true
+    ssh-keygen -t rsa -b 2048 -f "${STAGE}/etc/ssh/ssh_host_rsa_key" -N "" -q 2>/dev/null || true
+    ssh-keygen -t ecdsa -b 256 -f "${STAGE}/etc/ssh/ssh_host_ecdsa_key" -N "" -q 2>/dev/null || true
+else
+    echo "make-rootfs: warning: host ssh-keygen not found; SSH host keys were not generated" >&2
+fi
+
+cat > "${STAGE}/etc/ssh/sshd_config" <<'EOF'
+Port 22
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+SyslogFacility AUTH
+LogLevel INFO
+UseDNS no
+PrintMotd no
+Compression no
+X11Forwarding no
+GatewayPorts no
+TCPKeepAlive yes
+Subsystem sftp /bin/sftp
+AcceptEnv LANG LC_*
+EOF
+
+cat > "${STAGE}/etc/ssh/ssh_config" <<'EOF'
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+EOF
+
 # 6. Stage the musl dynamic linker / libc into /lib so dynamically linked
 #    binaries (vim, python3, netsurf, desktop, ...) can exec.  musl ships a
 #    single ELF that serves as both ld.so and libc.so; install it under its
@@ -102,5 +180,50 @@ fi
 rm -f "${OUT}"
 truncate -s "${SIZE_MB}M" "${OUT}"
 mkfs.ext4 -F -L xv6root -d "${STAGE}" "${OUT}" >/dev/null
+
+if command -v debugfs >/dev/null 2>&1; then
+    debugfs -w "${OUT}" <<'EOF' >/dev/null 2>&1 || true
+set_inode_field /var uid 0
+set_inode_field /var gid 0
+set_inode_field /var/empty uid 0
+set_inode_field /var/empty gid 0
+set_inode_field /var/empty mode 040755
+set_inode_field /root uid 0
+set_inode_field /root gid 0
+set_inode_field /root/.ssh uid 0
+set_inode_field /root/.ssh gid 0
+set_inode_field /root/.ssh mode 040700
+set_inode_field /etc uid 0
+set_inode_field /etc gid 0
+set_inode_field /etc/passwd uid 0
+set_inode_field /etc/passwd gid 0
+set_inode_field /etc/group uid 0
+set_inode_field /etc/group gid 0
+set_inode_field /etc/shadow uid 0
+set_inode_field /etc/shadow gid 0
+set_inode_field /etc/shadow mode 0100600
+set_inode_field /etc/ssh uid 0
+set_inode_field /etc/ssh gid 0
+set_inode_field /etc/ssh/ssh_config uid 0
+set_inode_field /etc/ssh/ssh_config gid 0
+set_inode_field /etc/ssh/sshd_config uid 0
+set_inode_field /etc/ssh/sshd_config gid 0
+set_inode_field /etc/ssh/ssh_host_ed25519_key uid 0
+set_inode_field /etc/ssh/ssh_host_ed25519_key gid 0
+set_inode_field /etc/ssh/ssh_host_ed25519_key mode 0100600
+set_inode_field /etc/ssh/ssh_host_ed25519_key.pub uid 0
+set_inode_field /etc/ssh/ssh_host_ed25519_key.pub gid 0
+set_inode_field /etc/ssh/ssh_host_rsa_key uid 0
+set_inode_field /etc/ssh/ssh_host_rsa_key gid 0
+set_inode_field /etc/ssh/ssh_host_rsa_key mode 0100600
+set_inode_field /etc/ssh/ssh_host_rsa_key.pub uid 0
+set_inode_field /etc/ssh/ssh_host_rsa_key.pub gid 0
+set_inode_field /etc/ssh/ssh_host_ecdsa_key uid 0
+set_inode_field /etc/ssh/ssh_host_ecdsa_key gid 0
+set_inode_field /etc/ssh/ssh_host_ecdsa_key mode 0100600
+set_inode_field /etc/ssh/ssh_host_ecdsa_key.pub uid 0
+set_inode_field /etc/ssh/ssh_host_ecdsa_key.pub gid 0
+EOF
+fi
 
 echo "make-rootfs: wrote ${OUT} (${SIZE_MB} MiB ext4, label=xv6root) from ${SYSROOT}"
