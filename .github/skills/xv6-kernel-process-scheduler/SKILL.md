@@ -25,6 +25,10 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 - When a GUI app freezes after its main thread exits, check whether the thread-group leader is `ZOMBIE` while other threads with the same `TGID` remain `INTERRUPTIBLE`, `WAKENING`, or `RUNNING`.
 - This can leave parent `waitpid(pid, WNOHANG)` unable to reap the process yet, while user-visible state such as Wayland surfaces and helper processes still exists.
 - For WebKit, expect helper processes such as `WebKitNetworkPr` and `WebKitWebProces` to survive separately from the MiniBrowser UI thread group unless the launcher/compositor kills the process group.
+- Fatal signal handling and killed-on-trap-return paths should terminate the whole thread group with `thread_group_exit()`, not plain `exit()`. Plain per-thread exit can strand a multi-threaded GUI process with a zombie leader and live sibling threads.
+- Treat `exit()` itself as a lifecycle backstop: if a user thread-group leader reaches plain per-thread exit while `live_threads > 1`, promote it to `thread_group_exit()` so obscure fatal callers cannot strand the process.
+- The wait/reap path must honor delayed thread-group leaders: a zombie group leader is not reapable until its `thread_group->live_threads` count reaches zero. Otherwise the parent can destroy the leader while same-TGID workers continue running.
+- Audit unusual fatal paths, not just syscall `exit_group`: failed `sys_sigreturn()` / signal-frame restore, killed-at-usertrap-return, and signal default termination should all route through `thread_group_exit()` for user thread groups.
 
 ## Workflow
 
