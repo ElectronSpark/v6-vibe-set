@@ -1,4 +1,4 @@
 interface:
-  display_name: "xv6 OS Debugging"
-  short_description: "Debug xv6 GUI, ports, rootfs, and symbols"
-  default_prompt: "Use $xv6-os-debugging to debug this xv6 GUI or port issue."
+  display_name: "xv6 OS Debugging Redirect"
+  short_description: "Redirects to .github/skills/xv6-os-debugging"
+  default_prompt: "Use .github/skills/xv6-os-debugging/SKILL.md; keep .codex skill files as redirects only."

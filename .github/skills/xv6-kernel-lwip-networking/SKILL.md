@@ -27,9 +27,11 @@ argument-hint: 'Describe the lwIP/socket/protocol symptom'
 3. For socket bugs, follow file/VFS socket integration and poll readiness as well as lwIP state.
 4. For DHCP/DNS, inspect timers and packet RX together.
 5. For daemon issues, verify service startup, socket creation, and kernel thread scheduling.
+6. For browser fetch failures, prove the user-space layer first: NetSurf should be built with curl/OpenSSL, `/etc/resolv.conf` should exist in the rootfs, and QEMU user networking normally exposes DNS at `10.0.2.3`.
 
 ## Pitfalls
 
 - lwIP uses kernel memory and synchronization through the xv6 port; allocator or sleep bugs can look like protocol bugs.
 - Socket readiness crosses lwIP, VFS, and kqueue/epoll.
 - Do not debug e1000 RX in lwIP until packet handoff is proven.
+- A GUI browser error page can mean DNS/TLS/user-space config failed even when lwIP accepted `socket()` calls.

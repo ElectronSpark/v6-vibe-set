@@ -2,6 +2,12 @@
 
 Current source is authoritative. Use `/home/es/xv6/xv6-tmp` docs as historical/reference material only; when they conflict with `/home/es/xv6-os`, prefer the current repo, especially for x86_64/QEMU boot, timers, interrupts, devices, and e1000.
 
+The authoritative skill files for this repo live in `.github/skills`. `.codex/skills` entries are redirects only; migrate durable content into `.github/skills` and update this index.
+
+## Repo Workflow Skill
+
+- `xv6-os-debugging`: repo-level workflow for QEMU, kernel symbols, GUI/Wayland ports, NetSurf, OpenSSL/OpenSSH, rootfs images, and nested submodule commit/push rules.
+
 ## Kernel Module Skills
 
 - `xv6-kernel-arch-platform`: arch boot, MMU, platform, SMP, IPI, trapframe ABI.
