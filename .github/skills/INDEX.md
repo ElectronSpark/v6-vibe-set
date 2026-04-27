@@ -33,9 +33,20 @@ Current source is authoritative. Use `/home/es/xv6/xv6-tmp` docs as historical/r
 - `xv6-kernel-network-e1000`: focused QEMU e1000 RX/TX and timer/IRQ hotspot triage.
 - `xv6-wayland-kernel-bridge`: compositor/kernel boundary, generated `wlcomp.c`, input/event loop regressions.
 
+## Fluid Debugging Skills
+
+These skills are deliberately provisional. They are not ground truth, may be incomplete, and can become deprecated without notice. Use them for active debugging practice, live-capture workflows, and hypotheses that are not yet stable enough to promote into source-derived module skills.
+
+- `xv6-debug-fluid-triage`: uncertainty-first triage for evolving symptoms and hypotheses.
+- `xv6-debug-live-gdb`: live QEMU/GDB sampling, stale VM checks, and post-patch runtime validation.
+- `xv6-debug-build-repro`: fresh clone, Docker, copied toolchain, stamps, CMake/Ninja, and submodule reproducibility.
+- `xv6-debug-gui-runtime`: fluid GUI runtime observations before they become stable Wayland/kernel bridge guidance.
+
 ## Routing Hints
 
 - GUI input freezes: start with `xv6-wayland-kernel-bridge`, then `xv6-kernel-input`, `xv6-kernel-event-wait`, and `xv6-kernel-timers`.
+- Ambiguous or changing debug evidence: start with `xv6-debug-fluid-triage`, then promote stable conclusions into the matching module skill.
+- Fresh build or container reproducibility failures: start with `xv6-debug-build-repro`, then route to `xv6-kernel-build-init` once the failure is stable.
 - All CPUs idle or KVM hangs: start with `xv6-kernel-freeze-triage`.
 - CPU0 stuck in network RX: use `xv6-kernel-network-e1000`, then `xv6-kernel-network-devices`.
 - Open/read/write/path bugs: use `xv6-kernel-vfs-core`, then the matching filesystem or device skill.
