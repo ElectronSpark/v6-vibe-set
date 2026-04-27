@@ -18,6 +18,8 @@ argument-hint: 'Describe the GUI/compositor symptom'
 ## Overall Design
 
 - `/etc/startup` starts `/bin/desktop`; `desktop` forks `/bin/wlcomp`, waits for `/tmp/wayland-0.lock`, checks `/proc/cmdline` for `netsurf=0`, and optionally forks `/bin/netsurf` with `WAYLAND_DISPLAY=wayland-0`, `GDK_BACKEND=wayland`, and `XDG_RUNTIME_DIR=/tmp`.
+- GUI-session terminal shells are launched by `wlcomp` as `sh --gui-session`. The shell seeds Wayland/GTK/XDG/NetSurf certificate environment variables into its own env table so GUI apps launched from the desktop terminal inherit the active session without extra parameters.
+- Native shell sessions that do not have `XV6_GUI_SESSION=wayland`, `XDG_RUNTIME_DIR`, and `WAYLAND_DISPLAY` refuse known GUI-only commands such as `netsurf`, `MiniBrowser`, `wlcomp`, and `desktop`; serial, ssh, and telnet shells should not start GUI-only programs.
 - `wlcomp` is both a Wayland compositor and a small desktop shell. It owns `/dev/fb0`, `/dev/mouse`, `/dev/kbd`, the Wayland socket, internal desktop windows, client surface state, app launchers, and the final render loop.
 - The compositor implements `wl_compositor`, `wl_shm`, `wl_seat`, `wl_output`, `xdg_wm_base`, minimal `xdg_popup`, and a stub `wl_data_device_manager` for GTK compatibility.
 - Rendering is direct software composition into `g_fb_buf`, then one `FB_GPU_BLIT` ioctl to `/dev/fb0` per frame.
