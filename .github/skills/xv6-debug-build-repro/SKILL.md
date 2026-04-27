@@ -48,6 +48,7 @@ This skill is provisional. It records lessons from recent build and container ex
 - **Partial Docker success**: the base image builds, but the image/rootfs target fails later in project-specific phases.
 - **Build/runtime mismatch**: a successful build is tested against an older running QEMU session.
 - **Stale rootfs image**: sysroot binaries can be newer than `/bin/*` inside `build-x86_64/fs.img`; verify with `debugfs` or dump the image binary and run `strings` before trusting a runtime test.
+- **Reference WebKit runtime**: the current WebKitGTK port is staged by `ports/webkit` from `XV6_WEBKIT_REF_SYSROOT` (default `/home/es/xv6/xv6-tmp/build-x86/sysroot`). Fresh clones without that reference sysroot will skip WebKit staging with a warning until a native WebKit build is wired in. `scripts/make-rootfs.sh` must copy `libexec/` as well as `lib/`, because MiniBrowser and the WebKit helper processes live under `/libexec/webkit2gtk-4.1`.
 
 ## Submodule Commit Rule
 

@@ -27,7 +27,7 @@ command -v rsync    >/dev/null || { echo "make-rootfs: rsync not found"         
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 
-mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,usr,share,var}
+mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,libexec,usr,share,var}
 
 # 1. xv6-style user binaries: bin/_<name> -> /bin/<name>
 shopt -s nullglob
@@ -45,7 +45,7 @@ shopt -u nullglob
 
 # 3. Mirror dynamic-linker tree subdirs verbatim if present, preserving
 #    symlinks/perms (these hold musl loader, libpython, stdlib, etc.).
-for sub in lib usr share etc; do
+for sub in lib libexec usr share etc; do
     if [[ -d "${SYSROOT}/${sub}" ]]; then
         rsync -aH "${SYSROOT}/${sub}/" "${STAGE}/${sub}/"
     fi
