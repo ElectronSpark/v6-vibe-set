@@ -3,7 +3,11 @@
 #
 # Boots the kernel + xv6fs disk image in qemu-system-<arch>.
 # Set DISPLAY_MODE=gtk|sdl|nographic (default gtk on x86_64, nographic on riscv64).
-# Override QEMU_EXTRA in env for extra args (e.g. -gdb tcp::1234 -S).
+# Debugging:
+#   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
+#   QEMU_GDB_PORT=2159      Use a different GDB stub port.
+#   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
+#   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -20,6 +24,26 @@ QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
 QEMU_MACHINE="${QEMU_MACHINE:-pc,vmport=on}"
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
+QEMU_GDB="${QEMU_GDB:-0}"
+QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
+QEMU_GDB_WAIT="${QEMU_GDB_WAIT:-0}"
+QEMU_GDB_ARGS=()
+
+if [[ "${QEMU_GDB}" == "1" ]]; then
+        QEMU_GDB_ARGS=(-gdb "tcp::${QEMU_GDB_PORT}")
+        if [[ "${QEMU_GDB_WAIT}" == "1" ]]; then
+                QEMU_GDB_ARGS+=(-S)
+        fi
+        echo "run-qemu: GDB stub listening on tcp::${QEMU_GDB_PORT}" >&2
+        if [[ "${QEMU_GDB_WAIT}" == "1" ]]; then
+                echo "run-qemu: VM is paused at reset; continue from GDB with: c" >&2
+        fi
+        if [[ "${ARCH}" == "x86_64" ]]; then
+                echo "run-qemu: attach with:" >&2
+                echo "  gdb ${KERNEL} -ex 'target remote :${QEMU_GDB_PORT}'" >&2
+                echo "run-qemu: after a freeze, press Ctrl-C in GDB, then run: thread apply all bt" >&2
+        fi
+fi
 
 # ──────────────────────────────────────────────────────────────────────
 # KVM enablement.  Currently OPT-IN (USE_KVM=1) because the kernel can
@@ -69,6 +93,7 @@ case "${ARCH}" in
                         -global virtio-mmio.force-legacy=false \
                         -drive file="${FSIMG}",if=none,format=raw,id=x0 \
                         -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+                        "${QEMU_GDB_ARGS[@]}" \
                         ${QEMU_EXTRA}
                 ;;
         x86_64)
@@ -133,6 +158,7 @@ case "${ARCH}" in
                         -device virtio-blk-pci,drive=x0 \
                         "${NET_ARGS[@]}" \
                         -append "${QEMU_APPEND}" \
+                        "${QEMU_GDB_ARGS[@]}" \
                         ${QEMU_EXTRA}
                 ;;
         *)
