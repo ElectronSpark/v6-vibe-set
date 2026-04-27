@@ -104,9 +104,108 @@ cat > "${STAGE}/etc/shells" <<'EOF'
 /bin/sh
 EOF
 
-mkdir -p "${STAGE}/root/.ssh" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
+mkdir -p "${STAGE}/root/.ssh" "${STAGE}/root/Desktop" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
 chmod 0700 "${STAGE}/root/.ssh"
 chmod 0755 "${STAGE}/var/empty"
+
+cat > "${STAGE}/root/Desktop/terminal.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Terminal
+X-XV6-Builtin=terminal
+IconChar=>
+IconColor=0xFF3D6E9E
+EOF
+
+cat > "${STAGE}/root/Desktop/files.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Files
+X-XV6-Builtin=files
+IconChar=F
+IconColor=0xFFA67C52
+EOF
+
+cat > "${STAGE}/root/Desktop/info.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Info
+X-XV6-Builtin=sysinfo
+IconChar=i
+IconColor=0xFF3DA67C
+EOF
+
+cat > "${STAGE}/root/Desktop/calc.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Calc
+X-XV6-Builtin=calc
+IconChar=C
+IconColor=0xFF7C3DA6
+EOF
+
+cat > "${STAGE}/root/Desktop/network.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Network
+X-XV6-Builtin=network
+IconChar=N
+IconColor=0xFF3DA6A6
+EOF
+
+cat > "${STAGE}/root/Desktop/settings.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Settings
+X-XV6-Builtin=settings
+IconChar=S
+IconColor=0xFF7B7B7B
+EOF
+
+cat > "${STAGE}/root/Desktop/monitor.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Monitor
+X-XV6-Builtin=monitor
+IconChar=M
+IconColor=0xFFA63D7C
+EOF
+
+cat > "${STAGE}/root/Desktop/3ddemo.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=3D Demo
+X-XV6-Builtin=3ddemo
+IconChar=3
+IconColor=0xFF6EA63D
+EOF
+
+cat > "${STAGE}/root/Desktop/editor.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Editor
+X-XV6-Builtin=editor
+IconChar=V
+IconColor=0xFFA65C3D
+EOF
+
+cat > "${STAGE}/root/Desktop/browser.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Browser
+Exec=/bin/netsurf
+IconChar=W
+IconColor=0xFF3D6E9E
+EOF
+
+cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=WebKit
+Exec=/libexec/webkit2gtk-4.1/MiniBrowser
+IconChar=K
+IconColor=0xFF9B59B6
+EOF
 
 if command -v ssh-keygen >/dev/null 2>&1; then
     ssh-keygen -t ed25519 -f "${STAGE}/etc/ssh/ssh_host_ed25519_key" -N "" -q 2>/dev/null || true
