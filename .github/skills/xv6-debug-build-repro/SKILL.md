@@ -54,6 +54,7 @@ This skill is provisional. It records lessons from recent build and container ex
 - **Stale rootfs image**: sysroot binaries can be newer than `/bin/*` inside `build-x86_64/fs.img`; verify with `debugfs` or dump the image binary and run `strings` before trusting a runtime test.
 - **Optional WebKit runtime**: `ports/webkit` stages MiniBrowser/WebKit only from an explicit `XV6_WEBKIT_REF_SYSROOT` CMake/env setting, or from the repo-local `ports/webkit/sysroot` if populated. Fresh clones without a WebKit runtime skip staging and remove stale WebKit files; `scripts/make-rootfs.sh` must copy `libexec/` as well as `lib/` when a runtime is present, because MiniBrowser and the WebKit helper processes live under `/libexec/webkit2gtk-4.1`. When intentionally testing a reference runtime, the environment variable should override a stale cached CMake value.
 - **No external WebKit dependency**: container builds should not rely on `/home/es/xv6/xv6-tmp` or any host-only WebKit sysroot. A cache value of `/src/xv6-os/ports/webkit/sysroot` is repo-local; if that directory is absent or lacks WebKitGTK, `port-webkit` should complete by skipping runtime staging.
+- **Host/container WebKit parity**: the umbrella `cmake/BuildPorts.cmake` should pass `XV6_WEBKIT_REF_SYSROOT=${CMAKE_SOURCE_DIR}/ports/webkit/sysroot` into the nested `ports` configure. Otherwise an old host `build-x86_64/ports/CMakeCache.txt` can keep pointing at `/home/es/xv6/xv6-tmp` while the container build correctly skips WebKit, causing different rootfs contents.
 
 ## Submodule Commit Rule
 

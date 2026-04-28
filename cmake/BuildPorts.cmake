@@ -16,6 +16,10 @@ set(_ports_src "${CMAKE_SOURCE_DIR}/ports")
 set(_ports_obj "${XV6_BUILD_ROOT}/ports")
 file(MAKE_DIRECTORY "${_ports_obj}")
 
+set(XV6_WEBKIT_REF_SYSROOT
+	"${_ports_src}/webkit/sysroot"
+	CACHE PATH "Optional repo-local WebKitGTK xv6 runtime sysroot to stage")
+
 # Common port CFLAGS — ports build full userspace against the cross
 # toolchain's built-in musl sysroot, plus -isystem into XV6_SYSROOT
 # so inter-port headers (e.g. zlib.h for libpng) resolve.
@@ -49,6 +53,7 @@ ExternalProject_Add(ports
 	                    -DPHASE2_LIB=${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase2/${XV6_TRIPLE}/lib
 	                    -DXV6_TOOLCHAIN_PREFIX=${XV6_TOOLCHAIN_PREFIX}
 	                    -DXV6_TRIPLE=${XV6_TRIPLE}
+	                    -DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_ports_obj} -j${XV6_PARALLEL_JOBS}
 	INSTALL_COMMAND   ""
 	BUILD_ALWAYS      1)
