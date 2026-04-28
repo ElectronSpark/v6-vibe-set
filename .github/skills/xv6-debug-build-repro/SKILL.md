@@ -29,6 +29,10 @@ This skill is provisional. It records lessons from recent build and container ex
 5. For kernel-only validation in the existing workspace, prefer the known configured tree:
    - `cmake --build build-x86_64 --target kernel -j2`
 6. If VS Code CMake Tools configure fails but the existing tree builds, record both facts; do not treat one as proof that the other path is broken.
+7. To validate that all non-toolchain programs build in Docker without an outside repo, run the dev image and mount the local prebuilt toolchain read-only:
+   - `docker run --rm --workdir /src/xv6-os -e XV6_SOURCE_DIR=/src/xv6-os -e XV6_BUILD_DIR=/src/xv6-os/build-x86_64-container-prebuilt -e XV6_ARCH=x86_64 -e XV6_PARALLEL_JOBS=2 -e XV6_PREBUILT_TOOLCHAIN_PREFIX=/opt/xv6-prebuilt-toolchain -v /home/es/xv6-os:/src/xv6-os -v /home/es/xv6-os/build-toolchain-x86_64:/opt/xv6-prebuilt-toolchain:ro xv6-os:dev-validate bash -lc 'cmake -S /src/xv6-os -B /src/xv6-os/build-x86_64-container-prebuilt -G Ninja -DXV6_ARCH=x86_64 -DXV6_PARALLEL_JOBS=2 -DXV6_PREBUILT_TOOLCHAIN_PREFIX=/opt/xv6-prebuilt-toolchain && cmake --build /src/xv6-os/build-x86_64-container-prebuilt --target toolchain -j2 && cmake --build /src/xv6-os/build-x86_64-container-prebuilt --target world -j2'`
+   - After it finishes, verify `fs.img`, `kernel/kernel.elf`, `.ksymbols`, `.ksymbols_idx`, and expected staged programs such as `bin/wlcomp`, `bin/netsurf`, `bin/ssh`, and `bin/openssl`.
+   - Confirm the build tree did not create `build-x86_64-container-prebuilt/toolchain`, proving the toolchain phase was skipped rather than rebuilt.
 
 ## Methodology
 
@@ -49,6 +53,7 @@ This skill is provisional. It records lessons from recent build and container ex
 - **Build/runtime mismatch**: a successful build is tested against an older running QEMU session.
 - **Stale rootfs image**: sysroot binaries can be newer than `/bin/*` inside `build-x86_64/fs.img`; verify with `debugfs` or dump the image binary and run `strings` before trusting a runtime test.
 - **Optional WebKit runtime**: `ports/webkit` stages MiniBrowser/WebKit only from an explicit `XV6_WEBKIT_REF_SYSROOT` CMake/env setting, or from the repo-local `ports/webkit/sysroot` if populated. Fresh clones without a WebKit runtime skip staging and remove stale WebKit files; `scripts/make-rootfs.sh` must copy `libexec/` as well as `lib/` when a runtime is present, because MiniBrowser and the WebKit helper processes live under `/libexec/webkit2gtk-4.1`. When intentionally testing a reference runtime, the environment variable should override a stale cached CMake value.
+- **No external WebKit dependency**: container builds should not rely on `/home/es/xv6/xv6-tmp` or any host-only WebKit sysroot. A cache value of `/src/xv6-os/ports/webkit/sysroot` is repo-local; if that directory is absent or lacks WebKitGTK, `port-webkit` should complete by skipping runtime staging.
 
 ## Submodule Commit Rule
 
