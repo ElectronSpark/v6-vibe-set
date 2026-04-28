@@ -93,7 +93,8 @@ This stage keeps the existing kernel ABI and does not add dependencies.
 ## Stage 2: Strengthen The Framebuffer ABI
 
 - [x] Add framebuffer present counters for full-screen vs partial blits.
-- [ ] Batch multiple damage rectangles if a single union becomes too large.
+- [x] Batch multiple damage rectangles instead of always presenting one large
+  union; collapse back to a union only when that is cheaper.
 - [x] Validate `FB_GPU_BLIT` source pitch and bounds more strictly.
 - [ ] Consider an mmap path for framebuffer-backed staging buffers if ioctl copies
   remain a bottleneck.
@@ -106,6 +107,9 @@ Current status:
 - `_fbstat` prints those counters inside xv6.
 - The boot LFB pattern is shown only with `fbtest=1`; normal GUI boots start
   from a black framebuffer.
+- `wlcomp` defaults to damage-driven presentation without a periodic full-screen
+  repair pass.  Set `XV6_WLCOMP_REPAIR_MS=<n>` only when deliberately bounding
+  suspected missed-damage artifacts during triage.
 
 ## Stage 3: Software OpenGL Compatibility
 
@@ -113,7 +117,7 @@ Current status:
   acceleration.
 - [x] Prefer a small OSMesa/TinyGL-style path first: render GL into a memory
   surface, then expose that surface to Wayland as SHM.
-- [ ] Provide minimal `libGL` or `libEGL` loader stubs only for the APIs the first
+- [x] Provide minimal `libGL` or `libEGL` loader stubs only for the APIs the first
   demo/client needs.
 - [x] Add a simple GL smoke app that draws a rotating triangle into a Wayland
   surface.
@@ -123,19 +127,24 @@ framebuffer.
 
 Current status:
 
-- `/bin/glsmoke` is a no-dependency Wayland SHM client with a tiny GL-shaped
-  software raster path and rotating triangle smoke scene.
+- `/bin/glsmoke` is a no-dependency Wayland client that creates an EGL display,
+  EGL window surface, GLES2-style context, and rotating triangle smoke scene
+  through repo-local `libEGL.a` and `libGLESv2.a` compatibility libraries.
 - The desktop launcher includes `GL Smoke`.
-- This is API-shape validation, not Mesa-compatible OpenGL, EGL, or hardware
-  acceleration.
+- This is API-shape validation, not Mesa-compatible EGL/OpenGL or hardware
+  acceleration.  The compatibility libraries intentionally implement only the
+  calls used by the smoke client.
+- Fresh VM validation reached `glsmoke: EGL 1.4, GL OpenGL ES 2.0 xv6-compat`;
+  repeated short runs exited cleanly and `_fbstat` showed partial blits
+  advancing with no rejected blits.
 
 Exit criteria before calling this stage complete:
 
-- [ ] A tiny `libGL`/`libEGL` compatibility surface exists for the smoke client,
+- [x] A tiny `libGL`/`libEGL` compatibility surface exists for the smoke client,
   even if it is software-only.
 - [ ] The smoke client can create/destroy its context repeatedly without leaking
   processes, file descriptors, or SHM buffers.
-- [ ] The plan clearly marks the software path as a compatibility shim, not full
+- [x] The plan clearly marks the software path as a compatibility shim, not full
   OpenGL.
 
 ## Stage 4: Real GPU Buffer Infrastructure
