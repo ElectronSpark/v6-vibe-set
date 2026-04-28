@@ -16,6 +16,8 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [x] Narrow WebKit/MiniBrowser exit tracing so serial output stays usable.
 - [x] Enlarge MiniBrowser/GTK UI text for the xv6 1024x768 desktop.
 - [x] Boot desktop with `webkit=1` and complete a user-observed visual smoke pass.
+- [x] Headless desktop boot with `webkit=1` reached
+  `wlcomp: client title: Google` and survived a short idle smoke run.
 
 ## Build And Test Checkpoint
 
@@ -23,6 +25,7 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [x] `cmake --build build-x86_64 --target webkit-runtime-check -j2`
 - [x] Guest `webkitabitest`
 - [x] Guest `webkitnettest`
+- [x] Headless `webkit=1` MiniBrowser autostart reached the Google page title.
 - [x] No Yocto or other new external dependency was added.
 
 ## Remaining Validation Ladder
@@ -30,8 +33,8 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [ ] Launch MiniBrowser specifically to `about:blank`.
 - [ ] Load local HTML in MiniBrowser.
 - [ ] Load plain HTTP in MiniBrowser.
-- [ ] Load HTTPS through GLib/GIO/OpenSSL.
-- [ ] Load `https://www.google.com/`.
+- [x] Load HTTPS through GLib/GIO/OpenSSL.
+- [x] Load `https://www.google.com/`.
 - [ ] Submit a Google search with JavaScript enabled.
 - [ ] Navigate repeatedly for several minutes.
 - [ ] Close and reopen MiniBrowser.
