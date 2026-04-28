@@ -210,6 +210,7 @@ IconChar=W
 IconColor=0xFF3D6E9E
 EOF
 
+if [[ -x "${STAGE}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
 cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -219,6 +220,9 @@ Arg=https://www.google.com/
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
+else
+    rm -f "${STAGE}/root/Desktop/webkit.desktop"
+fi
 
 if command -v ssh-keygen >/dev/null 2>&1; then
     ssh-keygen -t ed25519 -f "${STAGE}/etc/ssh/ssh_host_ed25519_key" -N "" -q 2>/dev/null || true
