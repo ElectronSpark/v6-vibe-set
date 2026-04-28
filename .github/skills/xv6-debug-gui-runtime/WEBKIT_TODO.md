@@ -1,7 +1,8 @@
 # WebKit TODO
 
 This file is now the short, current checklist.  The retired WebKit source
-override map lives in `WEBKIT_GAP_MAP.md`.
+override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
+`GPU_OPENGL_PLAN.md`.
 
 ## Current Status
 

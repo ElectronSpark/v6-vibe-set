@@ -1,4 +1,8 @@
-# WebKitGTK Override Retirement Map
+# Archived WebKitGTK Override Retirement Map
+
+This is a historical record, not the active WebKit task plan.  Keep active
+WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL work in
+`GPU_OPENGL_PLAN.md`.
 
 The repo no longer carries WebKitGTK source overrides under
 `ports/webkit/overrides/webkitgtk-2.42.5`; the active override count is `0`.

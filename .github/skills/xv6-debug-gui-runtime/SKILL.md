@@ -10,7 +10,11 @@ argument-hint: 'Describe the GUI symptom and latest runtime observation'
 
 This skill is a moving debug notebook for GUI runtime behavior. It is not ground truth and can become deprecated without notice. Prefer current generated `wlcomp.c`, kernel source, and the stable `xv6-wayland-kernel-bridge` skill when they conflict.
 
-For the longer WebKit gap-retirement checklist, see `WEBKIT_TODO.md` in this same skill directory.  For GPU/OpenGL staging, see `GPU_OPENGL_PLAN.md`.
+Current companion docs in this directory:
+
+- `WEBKIT_TODO.md`: active WebKit validation checklist.
+- `WEBKIT_GAP_MAP.md`: archived WebKitGTK override-retirement notes.
+- `GPU_OPENGL_PLAN.md`: active GPU/OpenGL plan and gap tracker.
 
 ## When to Use
 
