@@ -22,6 +22,7 @@ The authoritative skill files for this repo live in `.github/skills`. `.codex/sk
 - `xv6-kernel-input`: PS/2 keyboard/mouse, vmmouse, input rings, cdev poll readiness.
 - `xv6-kernel-network-devices`: netdev, e1000, platform NICs, RX/TX, `/dev/netconf`.
 - `xv6-kernel-vfs-core`: paths, mounts, fdtable, files, dentries, inodes, special fds.
+- `xv6-kernel-vfs-data-io`: regular-file data I/O separation, generic VFS/page-cache mapping, readahead, writeback, mmap faults, and xv6fs/ext4fs data path migration.
 - `xv6-kernel-filesystems`: tmpfs, xv6fs, devtmpfs, procfs, ext4/lwext4.
 - `xv6-kernel-event-wait`: kqueue, epoll, poll callbacks, readiness, timed event waits.
 - `xv6-kernel-lwip-networking`: lwIP port, sockets, DHCP/DNS/TCP/UDP, network daemons.
