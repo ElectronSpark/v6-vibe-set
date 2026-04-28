@@ -66,6 +66,15 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - GTK Wayland shared memory needs a tmpfs-backed `/tmp`; ext4-backed `/tmp` can make `ftruncate()` growth fail.
 - On xv6, prefer libc wrappers for port syscalls when available. Raw Linux syscall numbers from upstream headers may not match xv6 musl.
 - If the taskbar lacks a NetSurf button, inspect xdg toplevel app-id/title handling before assuming the surface never mapped.
+- For Wayland EOF noise, clean client disconnects should be silent. Keep logs for socket errors, nonzero child exits, and signal kills.
+
+## WebKit and VM Faults
+
+- A healthy WebKit smoke boot reaches `wlcomp: client title: WebKitGTK MiniBrowser`, then usually a page title such as `Google`.
+- Musl clean exits often show PCs near `_Exit` or `__clone`; do not treat them as faults unless paired with `fatal page fault`, a coredump, or nonzero status.
+- `vma_alloc: FAIL unaligned va=...` after WebKit or `brk()` activity is suspicious. Check that mmap free-range search uses page-aligned bounds and that byte-precise heap break values are not fed directly to VMA allocation.
+- For unaligned `mprotect`, `munmap`, `msync`, `madvise`, and `mremap` ranges, normalize by rounding the start down and the end up so the covered byte interval is not truncated.
+- `MAP_FIXED` addresses should remain page-aligned; reject unaligned fixed mappings instead of silently rounding them to a different address.
 
 ## Submodules
 
