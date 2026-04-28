@@ -120,7 +120,7 @@ case "${ARCH}" in
                         # Forward pointer motion as soon as the host cursor
                         # enters the GTK window.  Relying on click-to-grab can
                         # leave the guest cursor apparently frozen on Wayland.
-                        DISPLAY_ARGS=(-display gtk,grab-on-hover=on
+                        DISPLAY_ARGS=(-display gtk,grab-on-hover=on,show-cursor=off
                                       -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)

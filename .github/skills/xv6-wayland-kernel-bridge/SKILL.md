@@ -128,6 +128,7 @@ argument-hint: 'Describe the GUI/compositor symptom'
 
 - `/dev/fb0`: must support `FBIOGET_VSCREENINFO`, `FB_GPU_BLIT`, and any tested `FBIOPUT_VSCREENINFO` path. A bad pitch/geometry update corrupts all compositor drawing.
 - `/dev/mouse`: must deliver records matching compositor ABI, support nonblocking reads, provide `.poll` readiness, and wake epoll/kqueue when events are queued.
+- QEMU GTK launches should use `grab-on-hover=on,show-cursor=off` for xv6 GUI validation. This captures pointer events as soon as the host cursor enters the VM window and avoids a frozen host cursor being mistaken for the guest compositor cursor.
 - `/dev/kbd`: must deliver records matching compositor ABI, support nonblocking reads, provide `.poll` readiness, and wake epoll/kqueue when events are queued.
 - AF_UNIX sockets and libwayland: the Wayland display socket must provide readiness compatible with libwayland's event-loop FD.
 - kqueue/epoll bridge: readiness must be level-correct enough for cdevs and sockets; missed rechecks can strand data until another producer event arrives.
