@@ -16,9 +16,19 @@ set(_ports_src "${CMAKE_SOURCE_DIR}/ports")
 set(_ports_obj "${XV6_BUILD_ROOT}/ports")
 file(MAKE_DIRECTORY "${_ports_obj}")
 
+if(DEFINED ENV{XV6_WEBKIT_REF_SYSROOT})
+	set(_webkit_ref_sysroot_default "$ENV{XV6_WEBKIT_REF_SYSROOT}")
+else()
+	set(_webkit_ref_sysroot_default "${_ports_src}/webkit/sysroot")
+endif()
 set(XV6_WEBKIT_REF_SYSROOT
-	"${_ports_src}/webkit/sysroot"
+	"${_webkit_ref_sysroot_default}"
 	CACHE PATH "Optional repo-local WebKitGTK xv6 runtime sysroot to stage")
+if(DEFINED ENV{XV6_WEBKIT_REF_SYSROOT}
+   AND NOT XV6_WEBKIT_REF_SYSROOT STREQUAL _webkit_ref_sysroot_default)
+	set(XV6_WEBKIT_REF_SYSROOT "${_webkit_ref_sysroot_default}" CACHE PATH
+		"Optional repo-local WebKitGTK xv6 runtime sysroot to stage" FORCE)
+endif()
 
 # Common port CFLAGS — ports build full userspace against the cross
 # toolchain's built-in musl sysroot, plus -isystem into XV6_SYSROOT
@@ -42,7 +52,9 @@ ExternalProject_Add(ports
 	SOURCE_DIR        ${_ports_src}
 	BINARY_DIR        ${_ports_obj}
 	DOWNLOAD_COMMAND  ""
-	CONFIGURE_COMMAND ${CMAKE_COMMAND}
+	CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+	                    XV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT}
+	                  ${CMAKE_COMMAND}
 	                    -S ${_ports_src}
 	                    -B ${_ports_obj}
 	                    -DCMAKE_C_COMPILER=${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-gcc

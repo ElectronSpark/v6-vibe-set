@@ -50,7 +50,7 @@ add_custom_command(
 	COMMENT "Building boot image ${_image}")
 
 add_custom_target(initrd DEPENDS ${_initrd})
-add_custom_target(image  DEPENDS ${_image})
+add_custom_target(image DEPENDS ${_image} rootfs)
 
 # ---------------------------------------------------------------------
 # qemu boot — uses fs.img (the rootfs target).
