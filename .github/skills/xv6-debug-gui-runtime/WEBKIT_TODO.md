@@ -20,6 +20,9 @@ override map lives in `WEBKIT_GAP_MAP.md`.
   `wlcomp: client title: Google` and survived a short idle smoke run.
 - [x] Remove the repo WebKitGTK source override files; active override count is
   `0`.
+- [x] Fresh host rebuild after override retirement passed `image` and
+  `webkit-runtime-check`, then KVM WebKit validation reached Google Search,
+  GitHub, YouTube, and xv6-public GitHub pages.
 
 ## Build And Test Checkpoint
 
@@ -30,6 +33,9 @@ override map lives in `WEBKIT_GAP_MAP.md`.
 - [x] Headless `webkit=1` MiniBrowser autostart reached the Google page title.
 - [x] Fresh container rebuild after removing `xv6-os-dev`, `xv6-os-base:local`,
   and `build-x86_64`; `xv6-images` and `webkit-runtime-check` passed.
+- [x] Fresh host rebuild after removing `build-x86_64`;
+  `cmake --build build-x86_64 --target image webkit-runtime-check -j2`
+  passed.
 - [x] `ports/webkit/apply-xv6-overrides.sh` is a clean no-op when no source
   overrides are present.
 - [x] No Yocto or other new external dependency was added.
@@ -41,11 +47,12 @@ override map lives in `WEBKIT_GAP_MAP.md`.
 - [ ] Load plain HTTP in MiniBrowser.
 - [x] Load HTTPS through GLib/GIO/OpenSSL.
 - [x] Load `https://www.google.com/`.
-- [ ] Submit a Google search with JavaScript enabled.
-- [ ] Navigate repeatedly for several minutes.
+- [x] Submit a Google search with JavaScript enabled.
+- [x] Navigate repeatedly for several minutes.
 - [ ] Close and reopen MiniBrowser.
-- [ ] Leave MiniBrowser idle long enough to catch delayed freezes.
+- [x] Leave MiniBrowser idle long enough to catch delayed freezes.
 - [x] Repeat the validation after a fresh container build.
+- [x] Repeat the validation after a fresh host build with KVM.
 
 ## Patch Retirement Rule
 

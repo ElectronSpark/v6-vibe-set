@@ -48,6 +48,11 @@ These checks passed before the source overrides were removed:
   removing the previous container/image/build directory.
 - Headless desktop WebKit smoke: `webkit=1` reached the Google page title and
   survived a short idle run.
+- Fresh host rebuild after override retirement: removed `build-x86_64`, rebuilt
+  `image` plus `webkit-runtime-check`, launched KVM with
+  `root=/dev/disk0 netsurf=0 webkit=1`, reached Google, submitted an `xv6`
+  Google search, navigated through GitHub, YouTube, and xv6-public GitHub pages,
+  and remained responsive for several minutes.
 
 ## Remaining Proof Work
 
