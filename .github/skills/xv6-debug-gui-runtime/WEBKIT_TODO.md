@@ -1,7 +1,7 @@
 # WebKit TODO
 
-This file is now the short, current checklist.  Kernel-side details and the
-override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
+This file is now the short, current checklist.  The retired WebKit source
+override map lives in `WEBKIT_GAP_MAP.md`.
 
 ## Current Status
 
@@ -18,6 +18,8 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [x] Boot desktop with `webkit=1` and complete a user-observed visual smoke pass.
 - [x] Headless desktop boot with `webkit=1` reached
   `wlcomp: client title: Google` and survived a short idle smoke run.
+- [x] Remove the repo WebKitGTK source override files; active override count is
+  `0`.
 
 ## Build And Test Checkpoint
 
@@ -28,6 +30,8 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [x] Headless `webkit=1` MiniBrowser autostart reached the Google page title.
 - [x] Fresh container rebuild after removing `xv6-os-dev`, `xv6-os-base:local`,
   and `build-x86_64`; `xv6-images` and `webkit-runtime-check` passed.
+- [x] `ports/webkit/apply-xv6-overrides.sh` is a clean no-op when no source
+  overrides are present.
 - [x] No Yocto or other new external dependency was added.
 
 ## Remaining Validation Ladder
@@ -46,17 +50,18 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 ## Patch Retirement Rule
 
 - [x] Do not remove a WebKit override until the corresponding kernel/ABI reproducer passes.
-- [ ] Rebuild WebKit from clean source plus remaining overrides.
+- [x] Retire the repo-carried WebKitGTK source override files.
+- [ ] Rebuild WebKit from clean upstream source without repo overrides.
 - [ ] Re-run the validation ladder.
-- [ ] Retire only the overrides proven unnecessary by the rebuilt browser.
-- [ ] Record the kernel/source commit and passing test for each retired override.
+- [ ] Record any new source fixes as a real in-tree port or explicit patch
+  series if the clean rebuild exposes missing xv6 behavior.
 
 ## Active Policy Gaps
 
-- `AF_UNIX SOCK_SEQPACKET` is still an intentional skip; WebKit keeps the
-  `SOCK_STREAM` IPC override for this pass.
+- `AF_UNIX SOCK_SEQPACKET` is still an intentional skip; the current staged
+  runtime uses the already-validated stream IPC path.
 - JSC stays interpreter-only until executable-memory and architecture coherency
   testing is expanded.
 - Disk network cache remains guarded until the full MiniBrowser ladder passes.
-- WebKit sandbox/namespace overrides stay because xv6 does not provide Linux
-  namespace, seccomp, or bubblewrap primitives.
+- WebKit sandbox/namespace support remains a product/kernel policy gap because
+  xv6 does not provide Linux namespace, seccomp, or bubblewrap primitives.
