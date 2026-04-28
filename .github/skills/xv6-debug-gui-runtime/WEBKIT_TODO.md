@@ -26,6 +26,8 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [x] Guest `webkitabitest`
 - [x] Guest `webkitnettest`
 - [x] Headless `webkit=1` MiniBrowser autostart reached the Google page title.
+- [x] Fresh container rebuild after removing `xv6-os-dev`, `xv6-os-base:local`,
+  and `build-x86_64`; `xv6-images` and `webkit-runtime-check` passed.
 - [x] No Yocto or other new external dependency was added.
 
 ## Remaining Validation Ladder
@@ -39,7 +41,7 @@ override-to-kernel mapping live in `WEBKIT_GAP_MAP.md`.
 - [ ] Navigate repeatedly for several minutes.
 - [ ] Close and reopen MiniBrowser.
 - [ ] Leave MiniBrowser idle long enough to catch delayed freezes.
-- [ ] Repeat the validation after a fresh container build.
+- [x] Repeat the validation after a fresh container build.
 
 ## Patch Retirement Rule
 
