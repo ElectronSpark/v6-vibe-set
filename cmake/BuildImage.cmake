@@ -63,3 +63,9 @@ add_custom_target(qemu
 	DEPENDS kernel rootfs
 	USES_TERMINAL
 	COMMENT "Booting ${XV6_ARCH} kernel in qemu")
+
+add_custom_target(webkit-runtime-check
+	COMMAND ${CMAKE_SOURCE_DIR}/scripts/validate-webkit-runtime.sh
+	            ${XV6_SYSROOT} ${_fsimg}
+	DEPENDS rootfs
+	COMMENT "Validating staged WebKitGTK runtime in sysroot and fs.img")
