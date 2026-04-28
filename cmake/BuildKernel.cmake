@@ -50,3 +50,9 @@ ExternalProject_Add(kernel
 	                    ${XV6_KERNEL_ARTIFACTS}/kernel.elf
 	BUILD_ALWAYS      1
 	BUILD_BYPRODUCTS  ${XV6_KERNEL_ARTIFACTS}/kernel.elf)
+
+add_custom_target(kernel-sparse
+	COMMAND ${CMAKE_COMMAND} --build ${_kernel_obj} -j${XV6_PARALLEL_JOBS} --target kernel-sparse
+	DEPENDS kernel
+	COMMENT "Run sparse over the configured kernel compile database"
+	VERBATIM)

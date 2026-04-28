@@ -29,6 +29,13 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - If backtraces show missing symbols, inspect the kernel artifact passed to QEMU and GDB before chasing runtime unwind code.
 - Prefer the ELF kernel with symbols for GDB and the boot artifact with embedded symbols for QEMU.
 
+## Kernel Static Analysis
+
+- Use `cmake --build build-x86_64 --target kernel-sparse -j2` to run Sparse over the kernel compile database.
+- The Sparse target is a developer-time check: it uses `kernel/scripts/run_sparse.py`, enables `__CHECKER__`, and activates lock/context annotations from `compiler.h`.
+- Fresh containers include the `sparse` host package. On a host without it, install `sparse` or run with `SPARSE=/path/to/sparse`.
+- Sparse context annotations currently cover spinlocks, page locks, page ref unlocked helpers, and RCU read sections. Use this before long GUI/WebKit VM runs when changing pcache, VM, RCU, or page-table code.
+
 ## NetSurf, TLS, and Fetch Errors
 
 - NetSurf is expected to build with:

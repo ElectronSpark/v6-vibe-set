@@ -38,6 +38,7 @@ RUN apt-get update \
         python3-pip \
         qemu-system-x86 \
         rsync \
+        sparse \
         tar \
         texinfo \
         unzip \
