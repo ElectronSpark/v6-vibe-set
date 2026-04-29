@@ -333,6 +333,9 @@ Current checkpoint:
   Mesa mappings near `UVMTOP` are unmapped before `freewalk()`.
 - [x] Added `mesaglsmoke`, a Mesa-backed Wayland client that renders with real
   Mesa softpipe and presents through an xv6 GPU BO imported by `wlcomp`.
+- [x] Extended `mesaglsmoke` with repeated lifecycle and resize coverage:
+  `--loops=N` recreates the whole Wayland/EGL client, and `--resize-every=N`
+  recreates the Mesa pbuffer plus xv6 GPU BO while running.
 - [ ] Add the xv6 Mesa winsys/platform glue and switch the local GL smoke path
   from the repo shim to Mesa EGL.
 
@@ -346,7 +349,8 @@ Exit criteria:
 - [ ] Context create/destroy, surface resize, buffer swap, and close/reopen loops
   survive without leaked processes, file descriptors, mappings, or buffers.
   Surfaceless create/readback/destroy is currently clean; window-system surfaces
-  still need the winsys/compositor path.
+  still need the winsys/compositor path.  The interim readback path has passed
+  `mesaglsmoke --frames=12 --loops=3 --resize-every=4`.
 - [ ] Texture, shader, FBO, depth/stencil, blending, viewport, and scissor smoke
   tests exist before calling the API lane broadly useful.
 
