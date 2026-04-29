@@ -12,8 +12,9 @@ This is the active GPU/OpenGL plan.  WebKit runtime validation lives in
 The repo does **not** have complete OpenGL support yet.  What exists today is a
 software, GL-shaped smoke path that proves we can render a simple 3D scene into
 a memory buffer and present it through Wayland SHM.  It is useful for validating
-the GUI path, but it is not Mesa-compatible OpenGL, not hardware accelerated,
-and not enough for arbitrary OpenGL applications.
+the GUI path.  The ports tree now also has a Mesa softpipe/EGL/GLESv2 build
+checkpoint, but it is not wired to an xv6 winsys/compositor buffer path yet, is
+not hardware accelerated, and is not enough for arbitrary OpenGL applications.
 
 The concrete gaps are:
 
@@ -27,12 +28,14 @@ The concrete gaps are:
 - Wayland now has a small xv6-private GPU-buffer import path for framebuffer BO
   handles, but not standard `linux-dmabuf`, modifiers, fences, or multi-plane
   buffer negotiation.
-- No EGL/GLX/WGL platform layer.  Clients cannot create real GL contexts or
-  swap buffers through an EGL surface tied to Wayland.
-- No Mesa winsys/driver integration.  Mesa cannot target xv6 buffers or submit
-  rendering work to an xv6 GPU backend.
-- No full `libGL`/`libEGL` ABI.  The current smoke path is intentionally tiny
-  and only covers the API shape needed by the demo.
+- Mesa softpipe now builds as a port with EGL/GLESv2 and Wayland/surfaceless
+  enabled, but there is not yet an xv6 Mesa winsys/platform path that targets
+  xv6 graphics buffers or compositor imports.
+- Surfaceless Mesa EGL runtime validation now works inside the VM, including
+  context creation and readback.  Window-system surfaces, buffer swaps, resize,
+  and compositor-buffer teardown are still not wired to Mesa.
+- No full `libGL` ABI yet.  The current Mesa checkpoint packages `libEGL` and
+  `libGLESv2`; classic `libGL` remains tied to later GLX/dispatch decisions.
 - No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
   blending correctness, or conformance coverage beyond the simple smoke scene.
 - No WebKit accelerated compositing path.  WebKit still runs in the current
@@ -295,27 +298,49 @@ Exit criteria:
 
 ## Stage 5A: Mesa Software EGL Lane
 
-- [ ] Build Mesa only after the kernel buffer ABI and Wayland buffer import path
+- [x] Build Mesa only after the kernel buffer ABI and Wayland buffer import path
   exist.
 - [ ] Start with software rasterization using xv6 buffer objects.
 - [ ] Add a minimal EGL platform/winsys layer that can create a Wayland surface,
   bind an xv6 graphics buffer, and present through the compositor import path.
-- [ ] Provide `libEGL`, `libGLESv2`/`libGL` packaging only after the ABI is stable
-  enough for repeated client startup/shutdown.
-- [ ] Prefer Mesa softpipe first.  Consider llvmpipe only if the thread/runtime
+- [x] Provide initial `libEGL` and `libGLESv2` packaging for the surfaceless
+  Mesa checkpoint.  Full `libGL` stays gated on later GLX/dispatch decisions.
+- [x] Prefer Mesa softpipe first.  Consider llvmpipe only if the thread/runtime
   and compiler assumptions fit xv6.
 - [ ] Keep this lane usable as the fallback whenever accelerated 3D is disabled
   or unavailable.
 
+Current checkpoint:
+
+- [x] Added `libdrm` core as a Meson port and built it into the xv6 sysroot.
+- [x] Added Mesa upstream as a port, configured for Wayland/surfaceless EGL,
+  GLESv2, OpenGL core sources, Gallium softpipe, no LLVM, no Vulkan, no GLX, and
+  no hardware Gallium drivers.
+- [x] Added per-port Meson C++ flags so Mesa can force-include the existing xv6
+  `std::mutex` compatibility layer without applying that C++ header to C
+  sources.
+- [x] `cmake --build build-x86_64/ports --target port-mesa -j2` completes and
+  installs `libEGL.so.1.0.0`, `libGLESv2.so.2.0.0`,
+  `libgallium-26.2.0-devel.so`, EGL/GLES/GL headers, and pkg-config metadata.
+- [x] Added `mesaeglinfo`, an xv6-local surfaceless EGL/GLES probe, to the
+  Wayland port.  It reports Mesa softpipe, clears/reads a pbuffer pixel, and
+  exits cleanly in a VM.
+- [x] Fixed VM teardown iteration over high-address maple-tree gaps so dynamic
+  Mesa mappings near `UVMTOP` are unmapped before `freewalk()`.
+- [ ] Add the xv6 Mesa winsys/platform glue and switch the local GL smoke path
+  from the repo shim to Mesa EGL.
+
 Exit criteria:
 
-- [ ] `eglinfo` or an xv6-local EGL smoke test reports a real context.
+- [x] `eglinfo` or an xv6-local EGL smoke test reports a real context.
 - [ ] A basic Mesa software renderer can draw through EGL into an imported
   compositor buffer.
 - [ ] The GL smoke app can switch from the repo-local shim to EGL without changing
   its rendering code.
 - [ ] Context create/destroy, surface resize, buffer swap, and close/reopen loops
   survive without leaked processes, file descriptors, mappings, or buffers.
+  Surfaceless create/readback/destroy is currently clean; window-system surfaces
+  still need the winsys/compositor path.
 - [ ] Texture, shader, FBO, depth/stencil, blending, viewport, and scissor smoke
   tests exist before calling the API lane broadly useful.
 

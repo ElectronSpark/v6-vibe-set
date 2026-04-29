@@ -35,6 +35,7 @@ RUN apt-get update \
         ninja-build \
         pkg-config \
         python3 \
+        python3-mako \
         python3-pip \
         qemu-system-x86 \
         rsync \
