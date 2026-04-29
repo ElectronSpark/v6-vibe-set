@@ -18,10 +18,12 @@ not hardware accelerated, and is not enough for arbitrary OpenGL applications.
 
 The concrete gaps are:
 
-- The kernel has an initial virtio-gpu/virgl command-submission probe and a tiny
-  `/dev/fb0` virgl ioctl ABI, but it is still not a DRM/KMS driver: no general
-  resource create/map ABI for virgl, no command-buffer validation beyond the
-  one-page submit shape, and no async interrupt-driven fence wait path.
+- The kernel has an initial virtio-gpu/virgl command-submission path and a small
+  `/dev/fb0` virgl ioctl ABI for capsets, contexts, mapped 3D resources,
+  transfer-to/from-host, command submission, and fence query/wait.  It is still
+  not a DRM/KMS driver: command-buffer validation is intentionally narrow, the
+  fence ABI is synchronous at the syscall boundary, and Mesa is not yet wired to
+  this ABI as a virgl winsys.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
   handle import/export, but it is still not a DRM/dmabuf ABI: no standard
   Wayland dmabuf protocol and no virtio resource backing per BO.  It has
@@ -422,13 +424,15 @@ Exit criteria:
 - [x] Add initial virgl command submit and virtio fence completion smoke
   coverage.
 - [x] Add user-visible virgl command submission with fence query/wait semantics.
-- [ ] Replace synchronous fence completion with an async interrupt-driven fence
+- [x] Replace synchronous fence completion with an async interrupt-driven fence
   wait path.
 - [x] Build or port the userspace pieces needed by Mesa's virgl Gallium driver.
+- [x] Add mapped virgl resource create/destroy plus transfer-to/from-host
+  coverage as the kernel ABI foundation for Mesa's virgl winsys.
 - [ ] Wire Mesa virgl to the xv6 graphics-buffer/winsys layer without bypassing
   the compositor import model.
-- [ ] Support QEMU `virtio-gpu-gl`/virglrenderer as the first accelerated target.
-- [ ] Keep the Mesa software EGL lane as a runtime fallback when virgl is absent
+- [x] Support QEMU `virtio-gpu-gl`/virglrenderer as the first accelerated target.
+- [x] Keep the Mesa software EGL lane as a runtime fallback when virgl is absent
   or fails initialization.
 
 Current checkpoint:
@@ -437,6 +441,30 @@ Current checkpoint:
   exposed discovery counters through `fbstat`.
 - [x] Updated `scripts/run-qemu.sh` so `QEMU_GPU=virtio-gpu-gl` automatically
   enables `gtk,gl=on` when using the GTK display backend.
+- [x] Added interrupt-backed virtio-gpu queue completion with a bounded polling
+  fallback and exposed `virtio_irq_completions`/`virtio_poll_fallbacks` through
+  `fbstat`.  A KVM `QEMU_GPU=virtio-gpu-gl` boot plus `virgltest` reported
+  `virtio_irq_completions 1207`, `virtio_poll_fallbacks 0`,
+  `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Added `FB_GPU_VIRGL_GET_CAPS` so Mesa's xv6 virgl winsys can fetch the
+  selected virgl capset payload instead of relying on kernel-private probing.
+  KVM `QEMU_GPU=virtio-gpu-gl` validation reported
+  `virgltest: ctx=2 fence=3 signaled=3 capset=1 version=1 size=308` with
+  `virtio_failures 0`, `virtio_timeouts 0`, and `virtio_poll_fallbacks 0`.
+- [x] Added mapped virgl resource ioctls:
+  `FB_GPU_VIRGL_RESOURCE_CREATE`, `FB_GPU_VIRGL_RESOURCE_DESTROY`,
+  `FB_GPU_VIRGL_TRANSFER_TO_HOST`, and `FB_GPU_VIRGL_TRANSFER_FROM_HOST`.
+  Resources are backed by kernel-owned page arrays, mapped into the caller, and
+  attached to the optional virgl context before use.  `_virgltest` now validates
+  capset fetch, context create, 16x16 BGRA resource create/map, upload,
+  download/readback, NOP submit, fence wait, resource destroy, and context
+  destroy.  A KVM `QEMU_GPU=virtio-gpu-gl` run reported
+  `virgltest: ctx=2 res=4 map=140737479696384 fence=3 signaled=3 capset=1 version=1 size=308`;
+  `fbstat` reported `virtio_commands 69`, `virtio_transfers 21`,
+  `virtio_contexts 4`, `virtio_submits 2`, `virtio_fences 2`,
+  `virtio_resources 1`, `virtio_failures 0`, `virtio_timeouts 0`,
+  `virtio_irq_completions 69`, and `virtio_poll_fallbacks 0`.  The single live
+  resource is the persistent scanout.
 - [ ] Investigate GTK/virtio-gpu-gl display scaling and pointer mapping: the
   current GUI window can appear scaled down, while the guest cursor only reaches
   part of the upper-left area and moves slower than the host cursor.  This is a
