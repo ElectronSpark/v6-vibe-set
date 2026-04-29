@@ -7,6 +7,9 @@
 #   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
 #   QEMU_GDB_PORT=2159      Use a different GDB stub port.
 #   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
+#   QEMU_GPU=bochs          GPU model: bochs, virtio-gpu,
+#                           virtio-gpu-primary, virtio-gpu-gl,
+#                           virtio-gpu-gl-primary, or none.
 #   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
 
@@ -24,6 +27,7 @@ QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
 QEMU_MACHINE="${QEMU_MACHINE:-pc,vmport=on}"
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
+QEMU_GPU="${QEMU_GPU:-bochs}"
 QEMU_GDB="${QEMU_GDB:-0}"
 QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 QEMU_GDB_WAIT="${QEMU_GDB_WAIT:-0}"
@@ -136,6 +140,30 @@ case "${ARCH}" in
                 else
                         NET_ARGS=(-net none)
                 fi
+                GPU_ARGS=()
+                case "${QEMU_GPU}" in
+                        bochs)
+                                ;;
+                        virtio-gpu)
+                                GPU_ARGS=(-device virtio-gpu-pci)
+                                ;;
+                        virtio-gpu-primary)
+                                GPU_ARGS=(-vga none -device virtio-gpu-pci)
+                                ;;
+                        virtio-gpu-gl)
+                                GPU_ARGS=(-device virtio-gpu-gl-pci)
+                                ;;
+                        virtio-gpu-gl-primary)
+                                GPU_ARGS=(-vga none -device virtio-gpu-gl-pci)
+                                ;;
+                        none)
+                                GPU_ARGS=(-vga none)
+                                ;;
+                        *)
+                                echo "unsupported QEMU_GPU: ${QEMU_GPU}" >&2
+                                exit 2
+                                ;;
+                esac
                 # The kernel does not enable OSXSAVE in CR4, so any
                 # CPU feature that requires XSAVE state (AVX, AVX2, ...)
                 # will #UD on first use.  Under -cpu host KVM advertises
@@ -156,6 +184,7 @@ case "${ARCH}" in
                         -kernel "${KERNEL}" \
                         -drive file="${FSIMG}",if=none,format=raw,id=x0 \
                         -device virtio-blk-pci,drive=x0 \
+                        "${GPU_ARGS[@]}" \
                         "${NET_ARGS[@]}" \
                         -append "${QEMU_APPEND}" \
                         "${QEMU_GDB_ARGS[@]}" \

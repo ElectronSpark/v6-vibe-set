@@ -20,8 +20,9 @@ The concrete gaps are:
 - No kernel GPU driver with command submission.  `/dev/fb0` only exposes mode
   query/set, fill, blit, and stats; it does not expose virtio-gpu/DRM-style
   resources, command queues, contexts, or fences.
-- No GPU buffer-object ABI.  There is no kernel-managed graphics buffer with
-  allocation, mmap, lifetime ownership, sharing, or synchronization semantics.
+- Only a first-pass, process-local GPU buffer-object ABI.  It supports
+  create/map/fill/present/munmap validation, but not cross-process sharing,
+  virtio resource backing, export/import handles, or synchronization semantics.
 - No zero-copy Wayland GPU buffer import.  The compositor accepts SHM buffers,
   but it does not support `linux-dmabuf` or an xv6-private equivalent for GPU
   buffers.
@@ -130,31 +131,38 @@ Current status:
 - `/bin/glsmoke` is a no-dependency Wayland client that creates an EGL display,
   EGL window surface, GLES2-style context, and rotating triangle smoke scene
   through repo-local `libEGL.a` and `libGLESv2.a` compatibility libraries.
-- The desktop launcher includes `GL Smoke`.
+- The desktop launcher includes `GL Smoke` and supports boot-time stress knobs:
+  `glsmoke_frames=<n>` and `glsmoke_loops=<n>`.
 - This is API-shape validation, not Mesa-compatible EGL/OpenGL or hardware
   acceleration.  The compatibility libraries intentionally implement only the
   calls used by the smoke client.
 - Fresh VM validation reached `glsmoke: EGL 1.4, GL OpenGL ES 2.0 xv6-compat`;
   repeated short runs exited cleanly and `_fbstat` showed partial blits
   advancing with no rejected blits.
+- A fresh KVM rootfs boot with
+  `glsmoke=1 glsmoke_frames=5 glsmoke_loops=3` completed three independent
+  Wayland/EGL/GLES create-render-destroy cycles:
+  `glsmoke[0..2]: complete frames=5 status=0`, with no matching panic, fatal
+  fault, warning, leak, or failed-operation log lines.
 
 Exit criteria before calling this stage complete:
 
 - [x] A tiny `libGL`/`libEGL` compatibility surface exists for the smoke client,
   even if it is software-only.
-- [ ] The smoke client can create/destroy its context repeatedly without leaking
+- [x] The smoke client can create/destroy its context repeatedly without leaking
   processes, file descriptors, or SHM buffers.
 - [x] The plan clearly marks the software path as a compatibility shim, not full
   OpenGL.
 
 ## Stage 4: Real GPU Buffer Infrastructure
 
-- [ ] Choose the first real backend: virtio-gpu is the preferred QEMU target;
+- [x] Choose the first real backend: virtio-gpu is the preferred QEMU target;
   Bochs framebuffer remains the fallback display-only path.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
-- [ ] Add buffer-object allocation, mmap, lifetime, and sharing semantics.
-- [ ] Define a small xv6 graphics-buffer ioctl ABI before attempting Mesa winsys
+- [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
+- [ ] Add buffer sharing/export/import semantics.
+- [x] Define a small xv6 graphics-buffer ioctl ABI before attempting Mesa winsys
   integration.
 - [ ] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
   copying rendered buffers through SHM.
@@ -166,9 +174,35 @@ Exit criteria before calling this stage complete:
 - [ ] Add a buffer import path in `wlcomp`, initially xv6-private if
   `linux-dmabuf` is too much surface area.
 
+Current status:
+
+- `scripts/run-qemu.sh` accepts `QEMU_GPU=bochs|virtio-gpu|virtio-gpu-primary|virtio-gpu-gl|virtio-gpu-gl-primary|none`.
+  `bochs` remains the default; `virtio-gpu` attaches a sidecar virtio-gpu PCI
+  device while preserving the working Bochs `/dev/fb0` fallback.
+- The x86 PCI scan recognizes virtio-gpu transitional and modern PCI IDs and
+  logs BARs, IRQ routing, and virtio PCI cap offsets.  This is discovery only:
+  the driver deliberately still says `driver pending`.
+- Fresh KVM validation with `QEMU_GPU=virtio-gpu` detected `1af4:1050`, logged
+  the virtio-gpu common/notify/ISR/device caps, registered Bochs `/dev/fb0`, and
+  completed a `glsmoke` frame-limited run.
+- `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
+  `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
+  releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
+  through the existing framebuffer blit path.  This is intentionally a small
+  ABI seed, not a shareable dmabuf/virtio resource yet.
+- `wlcomp` uses `FB_GPU_BO_CREATE` for its compositor backbuffer when available
+  and presents damage with `FB_GPU_BO_PRESENT`; it falls back to malloc plus
+  `FB_GPU_BLIT` on older kernels.
+- `_gpubuftest` validates repeated create/fill/present/munmap cycles.  A
+  headless KVM run completed 6 cycles and `_fbstat` reported `bo_allocs 6`,
+  `bo_presents 6`, and `rejected_blits 0`.
+- A headless KVM compositor boot logged
+  `wlcomp: using fb GPU buffer addr=... size=3145728 pitch=4096` and completed a
+  `glsmoke` frame-limited run.
+
 Exit criteria:
 
-- [ ] A userspace test can allocate a graphics buffer, mmap/fill it, submit it
+- [x] A userspace test can allocate a graphics buffer, mmap/fill it, submit it
   to the display path, and release it without leaks.
 - [ ] The compositor can import at least one kernel graphics buffer without
   copying through wl_shm.
