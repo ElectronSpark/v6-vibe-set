@@ -168,6 +168,9 @@ Exit criteria before calling this stage complete:
   resource to scanout 0, flushing it, and detaching scanout before unref.
 - [x] Keep a persistent scanout-sized virtio-gpu resource alive after boot,
   backed by contiguous buddy pages and bound to scanout 0.
+- [x] Mirror `/dev/fb0` damage into the persistent virtio-gpu resource and
+  submit transfer/flush for framebuffer writes, blits, fills, copy-rects, and
+  buffer-object presents.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
@@ -222,6 +225,14 @@ Current status:
   `virtio_failures 0`, `virtio_timeouts 0`, `virtio_resources 1`,
   `virtio_resource_bytes 4096000`, `virtio_transfers 2`, `virtio_flushes 2`,
   and `virtio_scanouts 3`.
+- `/dev/fb0` damage is now mirrored into that persistent virtio-gpu resource.
+  The bridge copies the damaged rectangle from the Bochs linear framebuffer into
+  virtio backing and submits transfer/flush for writes, blits, fills,
+  copy-rects, mode clears, and buffer-object presents.  A validated headless KVM
+  compositor boot showed `virtio_commands 35`, `virtio_failures 0`,
+  `virtio_timeouts 0`, `virtio_resources 1`, `virtio_transfers 13`, and
+  `virtio_flushes 13`, confirming runtime presents are reaching the virtio-gpu
+  command path.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
