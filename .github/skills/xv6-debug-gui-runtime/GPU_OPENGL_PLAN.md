@@ -18,9 +18,10 @@ not hardware accelerated, and is not enough for arbitrary OpenGL applications.
 
 The concrete gaps are:
 
-- No kernel GPU driver with command submission.  `/dev/fb0` only exposes mode
-  query/set, fill, blit, and stats; it does not expose virtio-gpu/DRM-style
-  resources, command queues, or contexts.
+- The kernel has an initial virtio-gpu/virgl command-submission probe and a tiny
+  `/dev/fb0` virgl ioctl ABI, but it is still not a DRM/KMS driver: no general
+  resource create/map ABI for virgl, no command-buffer validation beyond the
+  one-page submit shape, and no async interrupt-driven fence wait path.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
   handle import/export, but it is still not a DRM/dmabuf ABI: no standard
   Wayland dmabuf protocol and no virtio resource backing per BO.  It has
@@ -29,15 +30,19 @@ The concrete gaps are:
   handles, but not standard `linux-dmabuf`, modifiers, fences, or multi-plane
   buffer negotiation.
 - Mesa softpipe now builds as a port with EGL/GLESv2 and Wayland/surfaceless
-  enabled, but there is not yet an xv6 Mesa winsys/platform path that targets
-  xv6 graphics buffers or compositor imports.
+  enabled.  The software Wayland EGL path now allocates xv6 framebuffer BOs
+  directly and presents them through the compositor import protocol.
 - Surfaceless Mesa EGL runtime validation now works inside the VM, including
-  context creation and readback.  Window-system surfaces, buffer swaps, resize,
-  and compositor-buffer teardown are still not wired to Mesa.
+  context creation and readback.
 - A first Mesa-to-compositor smoke path now exists: `mesaglsmoke` renders with
   Mesa softpipe into a surfaceless pbuffer, reads pixels back into an xv6 GPU
   BO, and presents that BO through the compositor import path.  This is still a
   copy/readback path, not a Mesa-native winsys or zero-copy swapchain.
+- A Mesa-native Wayland EGL smoke path now exists: `mesawlegl` uses
+  `wl_egl_window`, `eglCreateWindowSurface`, and `eglSwapBuffers` with Mesa
+  softpipe.  It validates Mesa window-system surfaces, swaps, resize, and
+  teardown while using xv6 GPU BO imports instead of Mesa's stock `wl_shm`
+  presentation path.
 - No full `libGL` ABI yet.  The current Mesa checkpoint packages `libEGL` and
   `libGLESv2`; classic `libGL` remains tied to later GLX/dispatch decisions.
 - No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
@@ -46,9 +51,10 @@ The concrete gaps are:
   software/low-feature profile; GPU compositing should stay disabled until
   buffer sharing, EGL, and repeated navigation/close tests are stable.
 
-The next meaningful milestone is **not** "more demo rendering"; it is a small
-graphics-buffer ABI plus a Wayland import path.  Without that, any OpenGL work
-remains a software compatibility shim copied through SHM.
+The next meaningful milestone is API breadth and lifecycle hardening on top of
+the xv6 BO-backed Mesa Wayland path, followed by the accelerated virtio-gpu/virgl
+lane.  Demo rendering alone is not enough; each new feature needs create,
+resize, swap, close, and fallback coverage.
 
 ## Two-Lane Goal: Correct API And Accelerated 3D
 
@@ -68,6 +74,13 @@ The shared foundation for both lanes is:
 - A compositor import path for those buffers, separate from `wl_shm`.
 - Repeated create/draw/resize/close validation so buffer and process lifetime
   bugs are caught before enabling WebKit acceleration.
+
+Integration rule: prefer upstream external-library semantics as the forcing
+function.  If Mesa, libdrm, Wayland, or another graphics component needs an OS
+contract that xv6 lacks, fix or extend the kernel/userspace ABI rather than
+papering over the gap with fragile library-local behavior.  Local shims are
+acceptable as probes and bootstraps, but durable GPU/OpenGL support should make
+the OS fit the graphics stack.
 
 Do not build the accelerated lane first.  Without the graphics-buffer ABI,
 Wayland import path, and software Mesa/EGL lane, virgl has no clean presentation
@@ -305,13 +318,13 @@ Exit criteria:
 - [x] Build Mesa only after the kernel buffer ABI and Wayland buffer import path
   exist.
 - [x] Start with software rasterization using xv6 buffer objects.
-- [ ] Add a minimal EGL platform/winsys layer that can create a Wayland surface,
+- [x] Add a minimal EGL platform/winsys layer that can create a Wayland surface,
   bind an xv6 graphics buffer, and present through the compositor import path.
 - [x] Provide initial `libEGL` and `libGLESv2` packaging for the surfaceless
   Mesa checkpoint.  Full `libGL` stays gated on later GLX/dispatch decisions.
 - [x] Prefer Mesa softpipe first.  Consider llvmpipe only if the thread/runtime
   and compiler assumptions fit xv6.
-- [ ] Keep this lane usable as the fallback whenever accelerated 3D is disabled
+- [x] Keep this lane usable as the fallback whenever accelerated 3D is disabled
   or unavailable.
 
 Current checkpoint:
@@ -339,9 +352,49 @@ Current checkpoint:
 - [x] Switched the desktop `glsmoke=1` launcher to run the Mesa-backed
   `/bin/mesaglsmoke` by default.  The old no-dependency shim remains available
   with `glsmoke=1 glsmoke_compat=1`.
-- [ ] Add the xv6 Mesa winsys/platform glue so `eglCreateWindowSurface` and
-  swap/present use xv6 graphics buffers directly instead of the current
-  surfaceless render plus readback copy.
+- [x] Added `mesawlegl`, a Mesa-native Wayland EGL smoke client using
+  `wl_egl_window`, `eglCreateWindowSurface`, and `eglSwapBuffers`.  A validated
+  KVM run completed
+  `mesawlegl --frames=8 --loops=2 --resize-every=2`; Mesa reported
+  `OpenGL ES 3.1 Mesa 26.2.0-devel` with `renderer=softpipe`, and `fbstat`
+  showed `rejected_blits 0`.
+- [x] Added a boot-time launcher selector for the native path:
+  `glsmoke=1 glsmoke_native=1` runs `/bin/mesawlegl`, while plain `glsmoke=1`
+  still runs `/bin/mesaglsmoke` and `glsmoke_compat=1` still runs the local shim.
+  A validated KVM boot with
+  `glsmoke=1 glsmoke_native=1 glsmoke_frames=4 glsmoke_loops=1 glsmoke_resize_every=2`
+  launched `mesawlegl` from `/bin/desktop` and exited with `status=0`.
+  `mesawlegl` defaults `LIBGL_ALWAYS_SOFTWARE=1` and
+  `MESA_LOADER_DRIVER_OVERRIDE=softpipe` so the software-lane smoke test avoids
+  non-fatal Mesa loader fallback warnings; a follow-up KVM boot with
+  `glsmoke_frames=2` showed the clean softpipe startup line and `status=0`.
+- [x] Wired Mesa's software Wayland buffer allocator to prefer the xv6 private
+  GPU-buffer protocol when available.  The same native `mesawlegl` path now
+  renders through Mesa's `eglCreateWindowSurface`/`eglSwapBuffers` flow while
+  allocating `/dev/fb0` BOs and exporting them to `wlcomp`; a validated KVM run
+  completed
+  `glsmoke=1 glsmoke_native=1 glsmoke_frames=4 glsmoke_loops=1 glsmoke_resize_every=2`
+  with `fbstat` at `bo_allocs 5`, `bo_imports 4`, `bo_handles 1`, and
+  `rejected_blits 0`.  The lone live BO is the compositor backbuffer.
+- [x] Fixed xv6 BO-backed Mesa buffer release so resize/discard defers BO
+  destruction until the compositor sends `wl_buffer.release`; this keeps the
+  Wayland ownership contract intact for imported buffers.
+- [x] Revalidated the BO-backed native Mesa Wayland path after the release fix
+  with a KVM boot running
+  `glsmoke=1 glsmoke_native=1 glsmoke_frames=8 glsmoke_loops=3 glsmoke_resize_every=2`.
+  All three `mesawlegl` loops completed with `status=0`; `fbstat` reported
+  `bo_allocs 25`, `bo_imports 24`, `bo_presents 112`, `bo_handles 1`,
+  `rejected_blits 0`, and `ps` showed no lingering `mesawlegl` process.
+- [x] Extended `mesawlegl` into the software-lane API smoke test.  Its default
+  path now compiles two shader programs, renders through a VBO into an FBO color
+  texture with a packed depth/stencil renderbuffer, then samples that texture to
+  the Wayland EGL window using blending, viewport, and scissor state before
+  `eglSwapBuffers`.
+- [x] Revalidated the API smoke path in KVM with
+  `glsmoke=1 glsmoke_native=1 glsmoke_frames=8 glsmoke_loops=3 glsmoke_resize_every=2`.
+  All three loops reported `native-wayland api-smoke` and `status=0`; `fbstat`
+  reported `bo_allocs 25`, `bo_imports 24`, `bo_presents 67`, `bo_handles 1`,
+  `rejected_blits 0`, and `ps` showed no lingering `mesawlegl` process.
 
 Exit criteria:
 
@@ -350,26 +403,102 @@ Exit criteria:
   compositor buffer.
 - [x] The desktop GL smoke launcher can run the Mesa-backed path by default,
   while retaining the repo-local shim behind `glsmoke_compat=1`.
-- [ ] Context create/destroy, surface resize, buffer swap, and close/reopen loops
+- [x] Context create/destroy, surface resize, buffer swap, and close/reopen loops
   survive without leaked processes, file descriptors, mappings, or buffers.
-  Surfaceless create/readback/destroy is currently clean; window-system surfaces
-  still need the winsys/compositor path.  The interim readback path has passed
-  `mesaglsmoke --frames=12 --loops=3 --resize-every=4`.
-- [ ] Texture, shader, FBO, depth/stencil, blending, viewport, and scissor smoke
+  Surfaceless create/readback/destroy is currently clean.  The interim xv6 BO
+  readback path has passed `mesaglsmoke --frames=12 --loops=3 --resize-every=4`,
+  and Mesa's BO-backed native Wayland surface path has passed
+  `mesawlegl --frames=8 --loops=3 --resize-every=2` with no stale client
+  process and only the compositor backbuffer BO live afterward.
+- [x] Texture, shader, FBO, depth/stencil, blending, viewport, and scissor smoke
   tests exist before calling the API lane broadly useful.
 
 ## Stage 5B: Accelerated 3D Lane
 
-- [ ] Extend the virtio-gpu driver beyond 2D resources to query capsets needed by
+- [x] Extend the virtio-gpu driver beyond 2D resources to query capsets needed by
   virgl.
-- [ ] Add 3D context creation/destruction, context attach, resource association,
-  command submit, and fence completion.
-- [ ] Build or port the userspace pieces needed by Mesa's virgl Gallium driver.
+- [x] Add 3D context creation/destruction plus context resource attach/detach
+  smoke coverage.
+- [x] Add initial virgl command submit and virtio fence completion smoke
+  coverage.
+- [x] Add user-visible virgl command submission with fence query/wait semantics.
+- [ ] Replace synchronous fence completion with an async interrupt-driven fence
+  wait path.
+- [x] Build or port the userspace pieces needed by Mesa's virgl Gallium driver.
 - [ ] Wire Mesa virgl to the xv6 graphics-buffer/winsys layer without bypassing
   the compositor import model.
 - [ ] Support QEMU `virtio-gpu-gl`/virglrenderer as the first accelerated target.
 - [ ] Keep the Mesa software EGL lane as a runtime fallback when virgl is absent
   or fails initialization.
+
+Current checkpoint:
+
+- [x] Added virtio-gpu `GET_CAPSET_INFO`/`GET_CAPSET` probing in the kernel and
+  exposed discovery counters through `fbstat`.
+- [x] Updated `scripts/run-qemu.sh` so `QEMU_GPU=virtio-gpu-gl` automatically
+  enables `gtk,gl=on` when using the GTK display backend.
+- [ ] Investigate GTK/virtio-gpu-gl display scaling and pointer mapping: the
+  current GUI window can appear scaled down, while the guest cursor only reaches
+  part of the upper-left area and moves slower than the host cursor.  This is a
+  display/input correctness bug, separate from virgl command support.
+  A kernel-side display-domain mismatch was fixed by making the virtio-gpu
+  fallback scanout use the active `/dev/fb0` mode (`1024x768`) instead of a
+  hardcoded `640x480` sidecar; this still needs visual pointer confirmation.
+- [x] Validated plain `QEMU_GPU=virtio-gpu` in KVM: the kernel logged
+  `capsets=0`, `virtio_gpu: no 3D capsets advertised`, and `fbstat` reported
+  `virtio_capsets 0`, `virtio_virgl 0`, with no virtio failures or timeouts.
+- [x] Validated `QEMU_GPU=virtio-gpu-gl` in KVM: the kernel logged
+  `features0=0x30000003 scanouts=1 capsets=2`,
+  `capset[0] id=1 version=1 size=308`, and
+  `virtio_gpu: virgl capset ready id=1 version=1 size=308`; `fbstat` reported
+  `virtio_capsets 2`, `virtio_virgl 1`, `virtio_virgl_version 1`,
+  `virtio_virgl_size 308`, with no virtio failures or timeouts.
+- [x] Validated `QEMU_GPU=virtio-gpu-gl` context/resource smoke in KVM: the
+  kernel logged `virtio_gpu: 3D context smoke ok ctx=1 capset=1 resource=1`.
+  `fbstat` reported `virtio_contexts 2`, `virtio_resources 1`,
+  `virtio_failures 0`, and `virtio_timeouts 0`; the remaining live resource is
+  the persistent scanout.
+- [x] Added and validated a minimal `SUBMIT_3D` NOP command with
+  `VIRTIO_GPU_FLAG_FENCE`.  KVM boot logged
+  `virtio_gpu: 3D context smoke ok ctx=1 capset=1 resource=1 fence=2`; `fbstat`
+  reported `virtio_submits 1`, `virtio_fences 1`, `virtio_last_fence 2`,
+  `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Fixed the virtio-gpu scanout fallback for `virtio-gpu-gl`: when
+  `GET_DISPLAY_INFO` does not advertise an enabled scanout, the persistent
+  virtio resource now follows the active Bochs `/dev/fb0` resolution.  KVM boot
+  now logs `virtio_gpu: using fb0 mode 1024x768 for scanout fallback` and
+  `persistent scanout resource=3 size=1024x768`.
+- [x] Added a minimal `/dev/fb0` virgl userspace ABI:
+  `FB_GPU_VIRGL_CTX_CREATE`, `FB_GPU_VIRGL_CTX_DESTROY`,
+  `FB_GPU_VIRGL_SUBMIT`, and `FB_GPU_VIRGL_FENCE`.  The first submit ABI accepts
+  one page of virgl command dwords and returns the completed virtio fence id.
+- [x] Added `_virgltest`, a guest smoke test that creates a virgl context,
+  submits a virgl NOP, waits/queries the fence, and destroys the context.
+  Validated under `QEMU_GPU=virtio-gpu-gl` with `virgltest: ctx=2 fence=3
+  signaled=3`; `fbstat` reported `virtio_contexts 4`, `virtio_submits 2`,
+  `virtio_fences 2`, `virtio_last_fence 3`, `virtio_failures 0`, and
+  `virtio_timeouts 0`.
+- [x] Validated the no-virgl fallback path under plain `QEMU_GPU=virtio-gpu`:
+  `_virgltest` failed cleanly at `FB_GPU_VIRGL_CTX_CREATE`, while `fbstat`
+  reported `virtio_capsets 0`, `virtio_virgl 0`, `virtio_submits 0`,
+  `virtio_fences 0`, `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Enabled Mesa's upstream `virgl` Gallium driver alongside `softpipe` in the
+  Mesa port.  `cmake --build build-x86_64/ports --target port-mesa -j2`
+  completed and installed the rebuilt `libgallium-26.2.0-devel.so`,
+  `libEGL.so.1.0.0`, and `libGLESv2.so.2.0.0`.  This proves the Mesa virgl
+  userspace code now builds for xv6; runtime acceleration still needs an xv6
+  virgl winsys/resource ABI instead of Mesa's stock DRM/vtest paths.
+- [x] Revalidated the Mesa software fallback after adding the virgl driver to
+  the Mesa build.  A KVM boot with
+  `QEMU_GPU=virtio-gpu glsmoke=1 glsmoke_native=1 glsmoke_frames=4
+  glsmoke_loops=1 glsmoke_resize_every=2` completed `mesawlegl` with
+  `renderer=softpipe native-wayland api-smoke`; `fbstat` reported
+  `bo_allocs 5`, `bo_imports 4`, `bo_handles 1`, `rejected_blits 0`,
+  `virtio_failures 0`, and `virtio_timeouts 0`, and `ps` showed no lingering
+  `mesawlegl` process.
+- [ ] Re-run the pointer lower-right visual check after the scanout fallback
+  fix.  A later screenshot was not a valid confirmation because the host cursor
+  was not moved during that run.
 
 Exit criteria:
 

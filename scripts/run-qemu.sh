@@ -32,6 +32,14 @@ QEMU_GDB="${QEMU_GDB:-0}"
 QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 QEMU_GDB_WAIT="${QEMU_GDB_WAIT:-0}"
 QEMU_GDB_ARGS=()
+QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1024}"
+QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-768}"
+QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
+QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
+
+if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
+        QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
+fi
 
 if [[ "${QEMU_GDB}" == "1" ]]; then
         QEMU_GDB_ARGS=(-gdb "tcp::${QEMU_GDB_PORT}")
@@ -120,11 +128,14 @@ case "${ARCH}" in
                 # Press Ctrl-Alt-G to release the grab.
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
+                elif [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]]; then
+                        DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=on,show-cursor=off,full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT}"
+                                      -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         # Forward pointer motion as soon as the host cursor
                         # enters the GTK window.  Relying on click-to-grab can
                         # leave the guest cursor apparently frozen on Wayland.
-                        DISPLAY_ARGS=(-display gtk,grab-on-hover=on,show-cursor=off
+                        DISPLAY_ARGS=(-display "gtk,grab-on-hover=on,show-cursor=off,full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT}"
                                       -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
@@ -145,16 +156,16 @@ case "${ARCH}" in
                         bochs)
                                 ;;
                         virtio-gpu)
-                                GPU_ARGS=(-device virtio-gpu-pci)
+                                GPU_ARGS=(-device "virtio-gpu-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-primary)
-                                GPU_ARGS=(-vga none -device virtio-gpu-pci)
+                                GPU_ARGS=(-vga none -device "virtio-gpu-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-gl)
-                                GPU_ARGS=(-device virtio-gpu-gl-pci)
+                                GPU_ARGS=(-device "virtio-gpu-gl-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-gl-primary)
-                                GPU_ARGS=(-vga none -device virtio-gpu-gl-pci)
+                                GPU_ARGS=(-vga none -device "virtio-gpu-gl-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         none)
                                 GPU_ARGS=(-vga none)
