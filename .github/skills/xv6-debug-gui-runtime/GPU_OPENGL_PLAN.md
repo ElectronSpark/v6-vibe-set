@@ -23,9 +23,9 @@ The concrete gaps are:
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
   handle import/export, but it is still not a DRM/dmabuf ABI: no Wayland client
   buffer protocol, no virtio resource backing per BO, and no fence/sync model.
-- No zero-copy Wayland GPU buffer import.  The compositor accepts SHM buffers,
-  but it does not support `linux-dmabuf` or an xv6-private equivalent for GPU
-  buffers.
+- Wayland now has a small xv6-private GPU-buffer import path for framebuffer BO
+  handles, but not standard `linux-dmabuf`, modifiers, fences, or multi-plane
+  buffer negotiation.
 - No EGL/GLX/WGL platform layer.  Clients cannot create real GL contexts or
   swap buffers through an EGL surface tied to Wayland.
 - No Mesa winsys/driver integration.  Mesa cannot target xv6 buffers or submit
@@ -178,7 +178,7 @@ Exit criteria before calling this stage complete:
   page-backed mappings.
 - [x] Define a small xv6 graphics-buffer ioctl ABI before attempting Mesa winsys
   integration.
-- [ ] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
+- [x] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
   copying rendered buffers through SHM.
 - [ ] Add explicit synchronization or a simple fence model once clients can render
   asynchronously.
@@ -248,6 +248,16 @@ Current status:
 - `wlcomp` uses `FB_GPU_BO_CREATE` for its compositor backbuffer when available
   and presents damage with `FB_GPU_BO_PRESENT`; it falls back to malloc plus
   `FB_GPU_BLIT` on older kernels.
+- `wlcomp` advertises a small `xv6_gpu_buffer_manager` Wayland global.  Clients
+  can allocate an exportable `/dev/fb0` BO, render into their caller-local
+  mapping, and create a `wl_buffer` from the handle; the compositor imports that
+  handle into its own VM with `FB_GPU_BO_IMPORT` and composites from the shared
+  pages without `wl_shm`.
+- The xv6 EGL/GLES smoke shim now prefers the private GPU-buffer protocol and
+  falls back to `wl_shm` if unavailable.  A validated headless KVM run with
+  `glsmoke=1 glsmoke_frames=5 glsmoke_loops=2` completed both loops; `_fbstat`
+  reported `bo_allocs 3`, `bo_imports 2`, `bo_presents 26`, `bo_handles 1`, and
+  `rejected_blits 0`.
 - `_gpubuftest` validates repeated create/fill/present/munmap cycles.  A
   headless KVM run completed 6 cycles and `_fbstat` reported `bo_allocs 6`,
   `bo_presents 6`, and `rejected_blits 0`.
@@ -259,7 +269,7 @@ Exit criteria:
 
 - [x] A userspace test can allocate a graphics buffer, mmap/fill it, submit it
   to the display path, and release it without leaks.
-- [ ] The compositor can import at least one kernel graphics buffer without
+- [x] The compositor can import at least one kernel graphics buffer without
   copying through wl_shm.
 - [ ] Repeated open/close and resize tests do not leave stale buffers or pinned
   mappings.
