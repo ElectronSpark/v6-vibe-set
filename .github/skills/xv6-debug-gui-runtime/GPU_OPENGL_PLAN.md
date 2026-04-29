@@ -174,7 +174,7 @@ Exit criteria before calling this stage complete:
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
-- [ ] Add buffer sharing/export/import semantics.
+- [x] Add initial buffer handle export/import semantics for framebuffer BOs.
 - [x] Define a small xv6 graphics-buffer ioctl ABI before attempting Mesa winsys
   integration.
 - [ ] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
@@ -184,7 +184,7 @@ Exit criteria before calling this stage complete:
 - [x] Add observability: buffer counts, bytes allocated, blit/import counts,
   command/fence counters, and clear error reporting in `_fbstat` or a sibling
   graphics diagnostic tool.
-- [ ] Add a buffer import path in `wlcomp`, initially xv6-private if
+- [x] Add a buffer import path in `wlcomp`, initially xv6-private if
   `linux-dmabuf` is too much surface area.
 
 Current status:
@@ -233,6 +233,15 @@ Current status:
   `virtio_timeouts 0`, `virtio_resources 1`, `virtio_transfers 13`, and
   `virtio_flushes 13`, confirming runtime presents are reaching the virtio-gpu
   command path.
+- `/dev/fb0` now assigns stable handles to graphics BOs, supports
+  `FB_GPU_BO_IMPORT` metadata queries, accepts handle-based `FB_GPU_BO_PRESENT`,
+  and releases handles through `FB_GPU_BO_DESTROY`.  `wlcomp` uses the handle
+  path for its compositor backbuffer, while pointer-based blit/present remains
+  available as fallback.  A validated headless KVM run completed
+  `gpubuftest 4`; `/bin/fbstat` showed `bo_allocs 5`, `bo_presents 27`,
+  `bo_handles 1`, `bo_imports 4`, `rejected_blits 0`, `virtio_failures 0`, and
+  `virtio_timeouts 0`.  The remaining live BO handle is the compositor
+  backbuffer.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
