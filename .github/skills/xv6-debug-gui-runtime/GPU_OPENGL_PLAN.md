@@ -174,7 +174,7 @@ Exit criteria before calling this stage complete:
   copying rendered buffers through SHM.
 - [ ] Add explicit synchronization or a simple fence model once clients can render
   asynchronously.
-- [ ] Add observability: buffer counts, bytes allocated, blit/import counts,
+- [x] Add observability: buffer counts, bytes allocated, blit/import counts,
   command/fence counters, and clear error reporting in `_fbstat` or a sibling
   graphics diagnostic tool.
 - [ ] Add a buffer import path in `wlcomp`, initially xv6-private if
@@ -200,6 +200,12 @@ Current status:
 - The same boot now also logs
   `virtio_gpu: resource smoke ok resource=1 size=32x32 bytes=4096`, proving the
   transport can submit the basic 2D resource lifecycle to QEMU.
+- The virtio-gpu driver tracks resource IDs, backing bytes, live resource count,
+  command completions, failures, timeouts, transfers, and flushes.  `fbstat`
+  reports these alongside the existing Bochs framebuffer counters; a validated
+  virtio-gpu boot showed `virtio_commands 6`, `virtio_failures 0`,
+  `virtio_timeouts 0`, `virtio_resources 0`, `virtio_transfers 1`, and
+  `virtio_flushes 1`.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
