@@ -166,6 +166,8 @@ Exit criteria before calling this stage complete:
   unref.
 - [x] Validate basic virtio-gpu scanout programming by binding the smoke
   resource to scanout 0, flushing it, and detaching scanout before unref.
+- [x] Keep a persistent scanout-sized virtio-gpu resource alive after boot,
+  backed by contiguous buddy pages and bound to scanout 0.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
@@ -212,6 +214,14 @@ Current status:
   showed `virtio_commands 8`, `virtio_failures 0`, `virtio_timeouts 0`,
   `virtio_resources 0`, `virtio_transfers 1`, `virtio_flushes 1`, and
   `virtio_scanouts 2`.
+- The virtio-gpu driver now supports multi-page contiguous resource backing via
+  the buddy allocator and leaves a persistent 1280x800 scanout resource attached
+  after the smoke cycle.  A validated headless KVM boot logged
+  `virtio_gpu: persistent scanout resource=2 size=1280x800 bytes=4096000
+  alloc=4194304`; `/bin/fbstat` then reported `virtio_commands 13`,
+  `virtio_failures 0`, `virtio_timeouts 0`, `virtio_resources 1`,
+  `virtio_resource_bytes 4096000`, `virtio_transfers 2`, `virtio_flushes 2`,
+  and `virtio_scanouts 3`.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
