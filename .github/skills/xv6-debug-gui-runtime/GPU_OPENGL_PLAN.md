@@ -20,9 +20,9 @@ The concrete gaps are:
 - No kernel GPU driver with command submission.  `/dev/fb0` only exposes mode
   query/set, fill, blit, and stats; it does not expose virtio-gpu/DRM-style
   resources, command queues, contexts, or fences.
-- Only a first-pass, process-local GPU buffer-object ABI.  It supports
-  create/map/fill/present/munmap validation, but not cross-process sharing,
-  virtio resource backing, export/import handles, or synchronization semantics.
+- The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
+  handle import/export, but it is still not a DRM/dmabuf ABI: no Wayland client
+  buffer protocol, no virtio resource backing per BO, and no fence/sync model.
 - No zero-copy Wayland GPU buffer import.  The compositor accepts SHM buffers,
   but it does not support `linux-dmabuf` or an xv6-private equivalent for GPU
   buffers.
@@ -174,7 +174,8 @@ Exit criteria before calling this stage complete:
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
-- [x] Add initial buffer handle export/import semantics for framebuffer BOs.
+- [x] Add framebuffer BO handle export/import semantics with real shared
+  page-backed mappings.
 - [x] Define a small xv6 graphics-buffer ioctl ABI before attempting Mesa winsys
   integration.
 - [ ] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
@@ -233,20 +234,17 @@ Current status:
   `virtio_timeouts 0`, `virtio_resources 1`, `virtio_transfers 13`, and
   `virtio_flushes 13`, confirming runtime presents are reaching the virtio-gpu
   command path.
-- `/dev/fb0` now assigns stable handles to graphics BOs, supports
-  `FB_GPU_BO_IMPORT` metadata queries, accepts handle-based `FB_GPU_BO_PRESENT`,
-  and releases handles through `FB_GPU_BO_DESTROY`.  `wlcomp` uses the handle
-  path for its compositor backbuffer, while pointer-based blit/present remains
-  available as fallback.  A validated headless KVM run completed
-  `gpubuftest 4`; `/bin/fbstat` showed `bo_allocs 5`, `bo_presents 27`,
+- `/dev/fb0` BOs are now kernel-owned page arrays with stable handles.
+  `FB_GPU_BO_CREATE` maps the pages into the creator, `FB_GPU_BO_IMPORT` maps the
+  same pages into the importer, `FB_GPU_BO_PRESENT` reads directly from BO pages
+  by byte offset, and `FB_GPU_BO_DESTROY` drops only the handle while live VM
+  mappings continue to be released by normal `munmap()`/exit teardown.
+  Pointer-based blit/present remains available as fallback.  A validated
+  headless KVM run completed `gpubuftest 4`, including writes through the
+  imported mapping; `/bin/fbstat` showed `bo_allocs 5`, `bo_presents 41`,
   `bo_handles 1`, `bo_imports 4`, `rejected_blits 0`, `virtio_failures 0`, and
   `virtio_timeouts 0`.  The remaining live BO handle is the compositor
   backbuffer.
-- `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
-  `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
-  releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
-  through the existing framebuffer blit path.  This is intentionally a small
-  ABI seed, not a shareable dmabuf/virtio resource yet.
 - `wlcomp` uses `FB_GPU_BO_CREATE` for its compositor backbuffer when available
   and presents damage with `FB_GPU_BO_PRESENT`; it falls back to malloc plus
   `FB_GPU_BLIT` on older kernels.
