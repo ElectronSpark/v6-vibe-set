@@ -34,6 +34,10 @@ The concrete gaps are:
 - Surfaceless Mesa EGL runtime validation now works inside the VM, including
   context creation and readback.  Window-system surfaces, buffer swaps, resize,
   and compositor-buffer teardown are still not wired to Mesa.
+- A first Mesa-to-compositor smoke path now exists: `mesaglsmoke` renders with
+  Mesa softpipe into a surfaceless pbuffer, reads pixels back into an xv6 GPU
+  BO, and presents that BO through the compositor import path.  This is still a
+  copy/readback path, not a Mesa-native winsys or zero-copy swapchain.
 - No full `libGL` ABI yet.  The current Mesa checkpoint packages `libEGL` and
   `libGLESv2`; classic `libGL` remains tied to later GLX/dispatch decisions.
 - No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
@@ -300,7 +304,7 @@ Exit criteria:
 
 - [x] Build Mesa only after the kernel buffer ABI and Wayland buffer import path
   exist.
-- [ ] Start with software rasterization using xv6 buffer objects.
+- [x] Start with software rasterization using xv6 buffer objects.
 - [ ] Add a minimal EGL platform/winsys layer that can create a Wayland surface,
   bind an xv6 graphics buffer, and present through the compositor import path.
 - [x] Provide initial `libEGL` and `libGLESv2` packaging for the surfaceless
@@ -327,13 +331,15 @@ Current checkpoint:
   exits cleanly in a VM.
 - [x] Fixed VM teardown iteration over high-address maple-tree gaps so dynamic
   Mesa mappings near `UVMTOP` are unmapped before `freewalk()`.
+- [x] Added `mesaglsmoke`, a Mesa-backed Wayland client that renders with real
+  Mesa softpipe and presents through an xv6 GPU BO imported by `wlcomp`.
 - [ ] Add the xv6 Mesa winsys/platform glue and switch the local GL smoke path
   from the repo shim to Mesa EGL.
 
 Exit criteria:
 
 - [x] `eglinfo` or an xv6-local EGL smoke test reports a real context.
-- [ ] A basic Mesa software renderer can draw through EGL into an imported
+- [x] A basic Mesa software renderer can draw through EGL into an imported
   compositor buffer.
 - [ ] The GL smoke app can switch from the repo-local shim to EGL without changing
   its rendering code.
