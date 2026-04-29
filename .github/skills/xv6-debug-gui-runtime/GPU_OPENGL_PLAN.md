@@ -158,6 +158,9 @@ Exit criteria before calling this stage complete:
 
 - [x] Choose the first real backend: virtio-gpu is the preferred QEMU target;
   Bochs framebuffer remains the fallback display-only path.
+- [x] Add a minimal virtio-gpu PCI transport driver that negotiates features,
+  initializes the control queue, reads device config, and issues
+  `GET_DISPLAY_INFO`.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
@@ -179,12 +182,18 @@ Current status:
 - `scripts/run-qemu.sh` accepts `QEMU_GPU=bochs|virtio-gpu|virtio-gpu-primary|virtio-gpu-gl|virtio-gpu-gl-primary|none`.
   `bochs` remains the default; `virtio-gpu` attaches a sidecar virtio-gpu PCI
   device while preserving the working Bochs `/dev/fb0` fallback.
-- The x86 PCI scan recognizes virtio-gpu transitional and modern PCI IDs and
-  logs BARs, IRQ routing, and virtio PCI cap offsets.  This is discovery only:
-  the driver deliberately still says `driver pending`.
+- The x86 PCI scan recognizes virtio-gpu transitional and modern PCI IDs, stores
+  discovery data, and logs BARs, IRQ routing, and virtio PCI cap offsets.
+- `kernel/virtio_gpu.c` now initializes the modern PCI transport for sidecar
+  virtio-gpu, maps common/notify/ISR/device config capabilities, brings up queue
+  0, and queries display information.  Bochs `/dev/fb0` is still the active
+  display fallback.
 - Fresh KVM validation with `QEMU_GPU=virtio-gpu` detected `1af4:1050`, logged
   the virtio-gpu common/notify/ISR/device caps, registered Bochs `/dev/fb0`, and
   completed a `glsmoke` frame-limited run.
+- A fresh headless boot with `QEMU_GPU=virtio-gpu QEMU_NET=0` logged
+  `virtio_gpu: initialized queues=2 features0=0x30000002 scanouts=1 capsets=0`
+  and `virtio_gpu: display info ok scanout0=1280x800+0+0`.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
