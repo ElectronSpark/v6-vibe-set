@@ -336,16 +336,20 @@ Current checkpoint:
 - [x] Extended `mesaglsmoke` with repeated lifecycle and resize coverage:
   `--loops=N` recreates the whole Wayland/EGL client, and `--resize-every=N`
   recreates the Mesa pbuffer plus xv6 GPU BO while running.
-- [ ] Add the xv6 Mesa winsys/platform glue and switch the local GL smoke path
-  from the repo shim to Mesa EGL.
+- [x] Switched the desktop `glsmoke=1` launcher to run the Mesa-backed
+  `/bin/mesaglsmoke` by default.  The old no-dependency shim remains available
+  with `glsmoke=1 glsmoke_compat=1`.
+- [ ] Add the xv6 Mesa winsys/platform glue so `eglCreateWindowSurface` and
+  swap/present use xv6 graphics buffers directly instead of the current
+  surfaceless render plus readback copy.
 
 Exit criteria:
 
 - [x] `eglinfo` or an xv6-local EGL smoke test reports a real context.
 - [x] A basic Mesa software renderer can draw through EGL into an imported
   compositor buffer.
-- [ ] The GL smoke app can switch from the repo-local shim to EGL without changing
-  its rendering code.
+- [x] The desktop GL smoke launcher can run the Mesa-backed path by default,
+  while retaining the repo-local shim behind `glsmoke_compat=1`.
 - [ ] Context create/destroy, surface resize, buffer swap, and close/reopen loops
   survive without leaked processes, file descriptors, mappings, or buffers.
   Surfaceless create/readback/destroy is currently clean; window-system surfaces
