@@ -1,0 +1,5 @@
+80:text/html:*.html
+80:text/html:*.htm
+50:text/plain:*.txt
+50:application/javascript:*.js
+50:text/css:*.css

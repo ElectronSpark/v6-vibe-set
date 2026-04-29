@@ -1,0 +1,5 @@
+text/html:*.html
+text/html:*.htm
+text/plain:*.txt
+application/javascript:*.js
+text/css:*.css

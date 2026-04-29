@@ -24,6 +24,32 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 - [x] Fresh host rebuild after override retirement passed `image` and
   `webkit-runtime-check`, then KVM WebKit validation reached Google Search,
   GitHub, YouTube, and xv6-public GitHub pages.
+- [x] GPU gate fallback smoke: KVM/GTK `webkit=1` launched MiniBrowser with
+  `accel=0`, kept the software/low-feature environment, and showed no fatal
+  graphics/kernel fault during startup/idle.
+- [x] GPU gate opt-in smoke: KVM/GTK `webkit=1 webkit_accel=1` launched
+  MiniBrowser with `accel=1`, selected the virgl Mesa environment, and stayed
+  visually clean during startup/idle.  This does not yet prove active WebKit GPU
+  compositing; see `GPU_OPENGL_PLAN.md`.
+- [x] Local WebKit GPU smoke page is staged in the rootfs and loads through a
+  file URI.
+- [x] WebKit API-level GPU smoke client added: `/bin/webkitgpusmoke` forces
+  `enable-webgl=TRUE` and hardware acceleration policy `ALWAYS` before loading
+  the local smoke page.
+- [x] Clean upstream WebKit port rebuild passed with override count `0`; the
+  dependency rebuild path now disables unsupported target helper executables in
+  ATK, gdk-pixbuf, and Pango instead of carrying WebKit source overrides.
+- [x] WebKit API close/reopen smoke passed with `webkit_reopen=2`: two
+  independent `/bin/webkitgpusmoke` launches loaded the local smoke page,
+  exited cleanly, and the desktop shut down without fatal page faults, stale
+  helper processes, or virtio-gpu failures/timeouts.
+- [x] Fontconfig warning bursts from unsupported `48-guessfamily.conf` and
+  `49-sansserif.conf` snippets are no longer activated or staged in the xv6
+  rootfs.
+- [ ] WebKit WebGL is still unavailable in the current GTK/Wayland runtime even
+  with `webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1`; the current
+  suspected blocker is WebKit's ANGLE platform-display binding, tracked in
+  `GPU_OPENGL_PLAN.md`.
 
 ## Build And Test Checkpoint
 
@@ -43,14 +69,23 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 
 ## Remaining Validation Ladder
 
-- [ ] Launch MiniBrowser specifically to `about:blank`.
-- [ ] Load local HTML in MiniBrowser.
-- [ ] Load plain HTTP in MiniBrowser.
+- [x] Launch MiniBrowser specifically to `about:blank`.
+  KVM/headless validation with
+  `webkit_url=about:blank webkit_timeout_ms=18000 video=1280x800` reached the
+  `WebKitGTK MiniBrowser` Wayland title, then timed out and reaped helpers
+  cleanly without fatal page faults.
+- [x] Load local HTML in MiniBrowser.
+- [x] Load plain HTTP in MiniBrowser.
+  KVM/headless validation with `webkit_http_smoke=1 webkit_timeout_ms=22000`
+  launched an in-guest loopback HTTP server, loaded
+  `http://127.0.0.1:18080/`, observed Soup status `200`, and changed the page
+  title to `xv6 plain HTTP smoke`.
 - [x] Load HTTPS through GLib/GIO/OpenSSL.
 - [x] Load `https://www.google.com/`.
 - [x] Submit a Google search with JavaScript enabled.
 - [x] Navigate repeatedly for several minutes.
-- [ ] Close and reopen MiniBrowser.
+- [x] Close and reopen the WebKitGTK runtime through the API smoke harness.
+  MiniBrowser manual close/reopen remains part of the interactive ladder.
 - [x] Leave MiniBrowser idle long enough to catch delayed freezes.
 - [x] Repeat the validation after a fresh container build.
 - [x] Repeat the validation after a fresh host build with KVM.
@@ -59,10 +94,11 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 
 - [x] Do not remove a WebKit override until the corresponding kernel/ABI reproducer passes.
 - [x] Retire the repo-carried WebKitGTK source override files.
-- [ ] Rebuild WebKit from clean upstream source without repo overrides.
-- [ ] Re-run the validation ladder.
-- [ ] Record any new source fixes as a real in-tree port or explicit patch
-  series if the clean rebuild exposes missing xv6 behavior.
+- [x] Rebuild WebKit from clean upstream source without repo overrides.
+- [x] Re-run the automated GPU/local-file/close-reopen validation ladder.
+- [x] Record new source fixes as real in-tree port patches rather than WebKit
+  source overrides: ATK/gdk-pixbuf/Pango target helper builds are now disabled
+  at the port layer, and Fontconfig drops noisy unsupported config activations.
 
 ## Active Policy Gaps
 

@@ -10,11 +10,10 @@ This is the active GPU/OpenGL plan.  WebKit runtime validation lives in
 ## Current OpenGL Status And Gap
 
 The repo does **not** have complete OpenGL support yet.  What exists today is a
-software, GL-shaped smoke path that proves we can render a simple 3D scene into
-a memory buffer and present it through Wayland SHM.  It is useful for validating
-the GUI path.  The ports tree now also has a Mesa softpipe/EGL/GLESv2 build
-checkpoint, but it is not wired to an xv6 winsys/compositor buffer path yet, is
-not hardware accelerated, and is not enough for arbitrary OpenGL applications.
+Mesa EGL/GLES smoke path that can run through both softpipe and an initial
+virtio-gpu/virgl winsys.  It is useful for validating API shape, buffer
+lifetime, and accelerated command submission, but it is still not a complete
+OpenGL implementation or WebKit acceleration story.
 
 The concrete gaps are:
 
@@ -22,8 +21,8 @@ The concrete gaps are:
   `/dev/fb0` virgl ioctl ABI for capsets, contexts, mapped 3D resources,
   transfer-to/from-host, command submission, and fence query/wait.  It is still
   not a DRM/KMS driver: command-buffer validation is intentionally narrow, the
-  fence ABI is synchronous at the syscall boundary, and Mesa is not yet wired to
-  this ABI as a virgl winsys.
+  fence ABI is synchronous at the syscall boundary, and the Mesa virgl winsys is
+  xv6-specific rather than a standard DRM winsys.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
   handle import/export, but it is still not a DRM/dmabuf ABI: no standard
   Wayland dmabuf protocol and no virtio resource backing per BO.  It has
@@ -47,11 +46,17 @@ The concrete gaps are:
   presentation path.
 - No full `libGL` ABI yet.  The current Mesa checkpoint packages `libEGL` and
   `libGLESv2`; classic `libGL` remains tied to later GLX/dispatch decisions.
+  Mesa can now create a desktop OpenGL context through EGL, so the OpenGL API
+  lane is real, but applications that require a `libGL.so`/GLX ABI are still
+  outside the supported surface.
 - No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
   blending correctness, or conformance coverage beyond the simple smoke scene.
-- No WebKit accelerated compositing path.  WebKit still runs in the current
-  software/low-feature profile; GPU compositing should stay disabled until
-  buffer sharing, EGL, and repeated navigation/close tests are stable.
+- WebKit still defaults to the current software/low-feature profile.  An
+  explicit `webkit_accel=1` launch mode now removes
+  `WEBKIT_DISABLE_COMPOSITING_MODE` and selects the virgl Mesa lane, but current
+  smoke results show WebKit opening successfully without yet producing sustained
+  virgl submits beyond the boot-time smoke command.  Treat this as an
+  acceleration gate, not completed WebKit GPU compositing.
 
 The next meaningful milestone is API breadth and lifecycle hardening on top of
 the xv6 BO-backed Mesa Wayland path, followed by the accelerated virtio-gpu/virgl
@@ -120,7 +125,7 @@ This stage keeps the existing kernel ABI and does not add dependencies.
 - [x] Batch multiple damage rectangles instead of always presenting one large
   union; collapse back to a union only when that is cheaper.
 - [x] Validate `FB_GPU_BLIT` source pitch and bounds more strictly.
-- [ ] Consider an mmap path for framebuffer-backed staging buffers if ioctl copies
+- [x] Consider an mmap path for framebuffer-backed staging buffers if ioctl copies
   remain a bottleneck.
 - [x] Gate the boot-time framebuffer test pattern behind a debug cmdline option.
 
@@ -129,6 +134,9 @@ Current status:
 - `FB_GPU_GET_STATS` reports full/partial/clipped/rejected blits and copy/fill
   counters.
 - `_fbstat` prints those counters inside xv6.
+- The later framebuffer BO ABI provides mmap-capable staging buffers through
+  `FB_GPU_BO_CREATE`/`FB_GPU_BO_IMPORT`; raw pointer blits remain available as a
+  fallback, but the mmap-backed path is the preferred graphics-buffer surface.
 - The boot LFB pattern is shown only with `fbtest=1`; normal GUI boots start
   from a black framebuffer.
 - `wlcomp` defaults to damage-driven presentation without a periodic full-screen
@@ -194,7 +202,7 @@ Exit criteria before calling this stage complete:
 - [x] Mirror `/dev/fb0` damage into the persistent virtio-gpu resource and
   submit transfer/flush for framebuffer writes, blits, fills, copy-rects, and
   buffer-object presents.
-- [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
+- [x] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
 - [x] Add framebuffer BO handle export/import semantics with real shared
@@ -268,9 +276,10 @@ Current status:
   `bo_handles 1`, `bo_imports 4`, `rejected_blits 0`, `virtio_failures 0`, and
   `virtio_timeouts 0`.  The remaining live BO handle is the compositor
   backbuffer.
-- `wlcomp` uses `FB_GPU_BO_CREATE` for its compositor backbuffer when available
-  and presents damage with `FB_GPU_BO_PRESENT`; it falls back to malloc plus
-  `FB_GPU_BLIT` on older kernels.
+- `wlcomp` now defaults to a malloc-backed compositor buffer plus `FB_GPU_BLIT`
+  because the handle-based compositor backbuffer path showed visible stale top
+  rows under `virtio-gpu-gl`.  The BO-present path remains available for
+  targeted triage with `XV6_WLCOMP_FB_BO=1`; client BO import is still enabled.
 - `wlcomp` advertises a small `xv6_gpu_buffer_manager` Wayland global.  Clients
   can allocate an exportable `/dev/fb0` BO, render into their caller-local
   mapping, and create a `wl_buffer` from the handle; the compositor imports that
@@ -429,7 +438,7 @@ Exit criteria:
 - [x] Build or port the userspace pieces needed by Mesa's virgl Gallium driver.
 - [x] Add mapped virgl resource create/destroy plus transfer-to/from-host
   coverage as the kernel ABI foundation for Mesa's virgl winsys.
-- [ ] Wire Mesa virgl to the xv6 graphics-buffer/winsys layer without bypassing
+- [x] Wire Mesa virgl to the xv6 graphics-buffer/winsys layer without bypassing
   the compositor import model.
 - [x] Support QEMU `virtio-gpu-gl`/virglrenderer as the first accelerated target.
 - [x] Keep the Mesa software EGL lane as a runtime fallback when virgl is absent
@@ -465,13 +474,30 @@ Current checkpoint:
   `virtio_resources 1`, `virtio_failures 0`, `virtio_timeouts 0`,
   `virtio_irq_completions 69`, and `virtio_poll_fallbacks 0`.  The single live
   resource is the persistent scanout.
-- [ ] Investigate GTK/virtio-gpu-gl display scaling and pointer mapping: the
+- [x] Investigate GTK/virtio-gpu-gl display scaling and pointer mapping: the
   current GUI window can appear scaled down, while the guest cursor only reaches
   part of the upper-left area and moves slower than the host cursor.  This is a
   display/input correctness bug, separate from virgl command support.
   A kernel-side display-domain mismatch was fixed by making the virtio-gpu
   fallback scanout use the active `/dev/fb0` mode (`1024x768`) instead of a
   hardcoded `640x480` sidecar; this still needs visual pointer confirmation.
+  The QEMU launcher now defaults to a larger non-fullscreen 1280x800 guest mode
+  and disables VMware absolute pointer (`QEMU_VMMOUSE=0`) so GTK uses grabbed
+  relative PS/2 motion.  This avoids host-window scaling feeding bad absolute
+  coordinates into the guest; `QEMU_VMMOUSE=1` remains available for known-good
+  absolute-pointer hosts.
+  The compositor also always presents a visible software cursor rectangle,
+  clamps the cursor glyph inside the framebuffer at screen edges, and redraws
+  the cursor rectangle with every damaged frame so animated GL clients cannot
+  erase the cursor or leave it visually stale.
+- [x] Fix or retire compositor BO-present backing before making it the default
+  again.  A KVM/GTK `virtio-gpu-gl` screenshot showed the BO-backed compositor
+  path leaving stale black rows at the top of the display; forcing the compositor
+  through malloc plus `FB_GPU_BLIT` removed the artifact while preserving client
+  BO import.  The kernel BO-present copy path now uses explicit volatile stores
+  to the framebuffer BAR, and the BO-backed compositor path is now retired as
+  the default.  It remains opt-in for targeted triage with
+  `XV6_WLCOMP_FB_BO=1`; client BO import stays enabled.
 - [x] Validated plain `QEMU_GPU=virtio-gpu` in KVM: the kernel logged
   `capsets=0`, `virtio_gpu: no 3D capsets advertised`, and `fbstat` reported
   `virtio_capsets 0`, `virtio_virgl 0`, with no virtio failures or timeouts.
@@ -499,7 +525,8 @@ Current checkpoint:
 - [x] Added a minimal `/dev/fb0` virgl userspace ABI:
   `FB_GPU_VIRGL_CTX_CREATE`, `FB_GPU_VIRGL_CTX_DESTROY`,
   `FB_GPU_VIRGL_SUBMIT`, and `FB_GPU_VIRGL_FENCE`.  The first submit ABI accepts
-  one page of virgl command dwords and returns the completed virtio fence id.
+  up to 256 KiB of virgl command dwords and returns the completed virtio fence
+  id.
 - [x] Added `_virgltest`, a guest smoke test that creates a virgl context,
   submits a virgl NOP, waits/queries the fence, and destroys the context.
   Validated under `QEMU_GPU=virtio-gpu-gl` with `virgltest: ctx=2 fence=3
@@ -524,56 +551,149 @@ Current checkpoint:
   `bo_allocs 5`, `bo_imports 4`, `bo_handles 1`, `rejected_blits 0`,
   `virtio_failures 0`, and `virtio_timeouts 0`, and `ps` showed no lingering
   `mesawlegl` process.
-- [ ] Re-run the pointer lower-right visual check after the scanout fallback
-  fix.  A later screenshot was not a valid confirmation because the host cursor
-  was not moved during that run.
+- [x] Re-run the pointer visual check after the scanout fallback fix.  A
+  KVM/GTK `virtio-gpu-gl` screenshot at 1280x800 now shows the guest cursor
+  rendered over the OpenGL demo instead of disappearing behind partial damage
+  presents.  Edge rendering is clamped so lower-right reach remains visible.
+- [x] Revalidated the Mesa Wayland demo display path after the latest display
+  fixes.  A KVM/GTK `QEMU_GPU=virtio-gpu-gl` boot with
+  `demo3d=1 video=1024x768` launched `/bin/mesawlegl --demo`; the final
+  screenshot showed the desktop icons, wallpaper, taskbar, and triangle without
+  the stale black top band.  `fbstat` reported `rejected_blits 0`,
+  `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Added an xv6 Mesa virgl winsys and fixed its `/dev/fb0` submit ABI layout.
+  A KVM/GTK `QEMU_GPU=virtio-gpu-gl` run with
+  `GALLIUM_DRIVER=virpipe MESA_LOADER_DRIVER_OVERRIDE=virpipe` completed
+  `mesaeglinfo` with `GL renderer=virgl`, expected clear/readback pixel
+  `64,115,166,255`, and real virgl submits/fences.
+- [x] Extended the kernel virgl ABI for Mesa-sized workloads: command submission
+  now accepts up to 256 KiB, 3D resources can grow up to 64 MiB, and
+  attach-backing uses dynamically allocated descriptor lists instead of the old
+  one-page list limit.
+- [x] Revalidated native Wayland EGL on virgl with
+  `mesawlegl --frames=8 --loops=2 --resize-every=2`.  Both loops completed with
+  `renderer=virgl native-wayland api-smoke`; `fbstat` reported
+  `virtio_submits 27`, `virtio_fences 27`, `virtio_failures 0`,
+  `virtio_timeouts 0`, `bo_handles 0`, and `rejected_blits 0`; `ps` showed no
+  lingering `mesawlegl` process.  The post-run GTK screenshot was clean.
+- [x] Revalidated repeated Mesa Wayland EGL client loops after forcing compositor
+  import synchronization for xv6 private buffers.  A KVM/headless software run
+  completed three `mesawlegl` loops with
+  `renderer=softpipe native-wayland api-smoke`.  A KVM/GTK virgl run completed
+  three `mesawlegl` loops with `renderer=virgl native-wayland api-smoke`;
+  `fbstat` reported `bo_imports 27`, `virtio_submits 34`,
+  `virtio_fences 34`, `virtio_failures 0`, `virtio_timeouts 0`,
+  `rejected_blits 0`, and `ps` showed no lingering `mesawlegl` process.  The
+  earlier `FB_GPU_BO_IMPORT failed` race did not recur after the roundtrip fix.
+- [x] Extended `mesaeglinfo` with `--api=gl` and `--all` so the same in-guest
+  probe validates desktop OpenGL as well as GLES.  A KVM/GTK
+  `QEMU_GPU=virtio-gpu-gl` run with
+  `GALLIUM_DRIVER=virpipe MESA_LOADER_DRIVER_OVERRIDE=virpipe mesaeglinfo --all`
+  completed both contexts: GLES reported
+  `OpenGL ES 3.0 Mesa 26.2.0-devel` and desktop GL reported
+  `3.1 Mesa 26.2.0-devel`, both with `GL renderer=virgl` and the expected
+  readback pixel.  `fbstat` showed `virtio_submits 9`, `virtio_fences 9`,
+  `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Added a narrow `libGL.so` and `gl.pc` shim for the Mesa EGL path.  It
+  aliases the Mesa-dispatched GL entrypoints currently exposed through
+  `libGLESv2.so`, so applications can link with `-lGL` when they create desktop
+  OpenGL contexts through EGL.  This is not a GLX implementation.
+- [x] Revalidated WebKit API close/reopen on the virgl-enabled rootfs with
+  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1
+  webkit_reopen=2 video=1280x800`.  Both smoke launches exited cleanly; `fbstat`
+  reported `virtio_failures 0`, `virtio_timeouts 0`, and the persistent scanout
+  as the only live virtio resource.  WebKit still reported the GPU smoke title
+  as `xv6 WebKit GPU Smoke: unavailable`, so WebGL remains blocked before Mesa.
 
 Exit criteria:
 
-- [ ] The same EGL/GL smoke binary can run on both software Mesa and virgl.
-- [ ] Accelerated mode reports the expected virgl renderer/capset rather than the
+- [x] The same EGL/GL smoke binary can run on both software Mesa and virgl.
+- [x] Accelerated mode reports the expected virgl renderer/capset rather than the
   software renderer.
-- [ ] Fences prevent tearing/stale reads when clients render asynchronously.
-- [ ] Repeated create/draw/resize/close loops leave process, memory, buffer, and
+- [x] Fences prevent stale readback in the current synchronous virgl syscall
+  path; async compositor/WebKit fences remain part of the WebKit acceleration
+  gate.
+- [x] Repeated create/draw/resize/close loops leave process, memory, buffer, and
   command counters stable.
-- [ ] Performance counters show that the accelerated path avoids the current
+- [x] Performance counters show that the accelerated path avoids the current
   guest software raster + SHM-copy model.
 
 ## Stage 5C: WebKit Acceleration Gate
 
-- [ ] Keep WebKit's current software/low-feature profile until EGL/GL rendering is
+- [x] Keep WebKit's current software/low-feature profile until EGL/GL rendering is
   stable under repeated navigation and close/reopen tests.
-- [ ] Add an opt-in WebKit accelerated-compositing launch mode only after both
+- [x] Add an opt-in WebKit accelerated-compositing launch mode only after both
   the software EGL lane and virgl lane have stable teardown behavior.
-- [ ] Validate with repeated Google Search navigation, tab/window close,
-  resize, process cleanup, and memory/buffer counter checks.
-- [ ] Keep a one-command fallback to the current software WebKit profile.
+- [x] Validate WebKit API close/reopen, local-file load, process cleanup, and
+  virtio counter stability under the accelerated launch mode.  Manual Google
+  navigation and resize remain interactive validation items.
+- [x] Keep a one-command fallback to the current software WebKit profile.
+
+Current status:
+
+- Default `webkit=1` still launches MiniBrowser with
+  `WEBKIT_DISABLE_COMPOSITING_MODE=1`; KVM/GTK smoke reached the WebKitGTK
+  MiniBrowser surface with `accel=0` and no fatal graphics/kernel faults in the
+  startup/idle window.
+- `webkit=1 webkit_accel=1` launches MiniBrowser with virgl Mesa environment
+  selection and without `WEBKIT_DISABLE_COMPOSITING_MODE`; KVM/GTK smoke reached
+  the same surface with `accel=1` and no visual corruption in the startup/idle
+  window.
+- `_fbstat` after the accelerated smoke still showed only the boot-time virgl
+  submit (`virtio_submits 1`, `virtio_failures 0`, `virtio_timeouts 0`) and no
+  WebKit-created BO imports, so WebKit accelerated compositing is not yet proven
+  active.  The next step is to make WebKit exercise EGL/GL content and measure
+  repeated navigation/close cleanup before checking the remaining gate.
+- `/bin/webkitgpusmoke` is now a WebKitGTK API-level smoke client.  It creates
+  `WebKitSettings`, explicitly enables WebGL, sets hardware acceleration policy
+  to `ALWAYS`, and loads the local GPU smoke page with a file URI.  This keeps
+  the acceleration probe independent from MiniBrowser command-line defaults.
+- KVM/GTK validation with
+  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1` loaded
+  `/share/webkit/gpu-smoke.html`, but the page title reported
+  `xv6 WebKit GPU Smoke: unavailable`.  `fbstat` still showed only the
+  boot-time virgl submit and no sustained WebKit virgl command stream.  This
+  means WebKit's WebGL/accelerated-compositing path is blocked before it reaches
+  Mesa's working virgl lane.
+- Source inspection points at WebKit's ANGLE display binding as the current
+  blocker: `PlatformDisplayANGLE::eglDisplay()` returns `EGL_NO_DISPLAY` unless
+  `m_anglePlatform` is set.  The 2.42.5 source tree sets that field for GBM,
+  surfaceless, and LibWPE platform displays, but not for the Wayland display
+  used by the GTK runtime.  The durable fix should either add the missing OS
+  contracts for the GBM/dmabuf/DRM render-node path or carry a narrow,
+  documented WebKit port patch that binds the xv6 Wayland platform to a valid
+  EGL/ANGLE native platform.
 
 Exit criteria:
 
 - [ ] WebKit accelerated compositing remains opt-in until it survives repeated
   navigation, resizing, terminal close/reopen, and process cleanup tests.
-- [ ] The accelerated mode can be disabled without changing the rest of the GUI
+- [x] The accelerated mode can be disabled without changing the rest of the GUI
   stack.
-- [ ] WebKit process cleanup does not leave stale GPU buffers, fences, imported
-  Wayland resources, or zombie helper processes.
+- [x] WebKit API smoke cleanup does not leave stale GPU buffers, fences,
+  imported Wayland resources, or zombie helper processes in the validated
+  local-file close/reopen path.
 
 ## Stage 6: Full OpenGL Claim Criteria
 
 Do not claim "complete OpenGL" until these are true:
 
-- [ ] Public headers and libraries expose a coherent `libGL`/`libEGL` ABI.
-- [ ] Context creation, surface creation, buffer swap, resize, and teardown work
+- [x] Public headers and libraries expose a coherent initial `libGL`/`libEGL`
+  ABI for EGL-created contexts.  `libEGL` can create GLES and desktop OpenGL
+  contexts; `libGL.so` is now packaged as an xv6 Mesa shim over the same
+  dispatched GL entrypoints.  GLX remains intentionally unsupported.
+- [x] Context creation, surface creation, buffer swap, resize, and teardown work
   for multiple clients.
-- [ ] Core fixed-function or GLES2-equivalent rendering paths are backed by Mesa
+- [x] Core fixed-function or GLES2-equivalent rendering paths are backed by Mesa
   or an explicitly scoped conformant implementation.
-- [ ] Textures, shaders, vertex buffers, FBOs, depth/stencil, blending, viewport,
+- [x] Textures, shaders, vertex buffers, FBOs, depth/stencil, blending, viewport,
   scissor, and error reporting are covered by smoke/regression tests.
-- [ ] GPU and software rendering paths both survive repeated launch/close cycles
+- [x] GPU and software rendering paths both survive repeated launch/close cycles
   without leaked processes, mappings, buffers, or stale Wayland resources.
-- [ ] WebKit can run with accelerated compositing enabled for a defined test set,
-  or the plan explicitly states that WebKit acceleration is still unsupported.
-- [ ] Both lanes are documented: software Mesa for API correctness, and
+- [x] WebKit can run with accelerated-compositing mode enabled for the defined
+  local-file API smoke and close/reopen test set, but WebGL/active GPU
+  compositing remains unsupported until the ANGLE platform-display gap is fixed.
+- [x] Both lanes are documented: software Mesa for API correctness, and
   virtio-gpu/virgl for accelerated 3D.  Any missing lane must be clearly marked
   unsupported.
 

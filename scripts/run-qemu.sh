@@ -10,6 +10,8 @@
 #   QEMU_GPU=bochs          GPU model: bochs, virtio-gpu,
 #                           virtio-gpu-primary, virtio-gpu-gl,
 #                           virtio-gpu-gl-primary, or none.
+#   QEMU_VMMOUSE=0          Disable VMware absolute pointer by default; set 1
+#                           to opt back into vmport/vmmouse absolute input.
 #   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
 
@@ -24,7 +26,14 @@ QEMU_CPUS="${QEMU_CPUS:-6}"
 QEMU_MEMORY="${QEMU_MEMORY:-4G}"
 QEMU_CPU="${QEMU_CPU:-qemu64}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
-QEMU_MACHINE="${QEMU_MACHINE:-pc,vmport=on}"
+QEMU_VMMOUSE="${QEMU_VMMOUSE:-0}"
+if [[ -z "${QEMU_MACHINE:-}" ]]; then
+        if [[ "${QEMU_VMMOUSE}" == "1" ]]; then
+                QEMU_MACHINE="pc,vmport=on"
+        else
+                QEMU_MACHINE="pc,vmport=off"
+        fi
+fi
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 QEMU_GPU="${QEMU_GPU:-bochs}"
@@ -32,8 +41,8 @@ QEMU_GDB="${QEMU_GDB:-0}"
 QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 QEMU_GDB_WAIT="${QEMU_GDB_WAIT:-0}"
 QEMU_GDB_ARGS=()
-QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1024}"
-QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-768}"
+QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1280}"
+QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-800}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 
@@ -114,6 +123,11 @@ case "${ARCH}" in
                 # passes Ctrl-C through to the guest instead of killing qemu).
                 #
                 # GTK input notes:
+                #   - QEMU_VMMOUSE=0      Use grabbed relative PS/2 motion by
+                #                         default.  Absolute vmmouse is useful
+                #                         for some hosts, but with scaled GTK
+                #                         canvases it can map only into the
+                #                         guest's upper-left region.
                 #   - grab-on-hover=on    Capture pointer + keyboard as soon
                 #                         as the host cursor enters the QEMU
                 #                         canvas. Without this, GTK does not
