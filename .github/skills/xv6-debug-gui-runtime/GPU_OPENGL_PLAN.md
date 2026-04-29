@@ -161,6 +161,9 @@ Exit criteria before calling this stage complete:
 - [x] Add a minimal virtio-gpu PCI transport driver that negotiates features,
   initializes the control queue, reads device config, and issues
   `GET_DISPLAY_INFO`.
+- [x] Validate the first virtio-gpu 2D resource command sequence:
+  create-resource-2d, attach-backing, transfer-to-host-2d, resource-flush, and
+  unref.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
@@ -194,6 +197,9 @@ Current status:
 - A fresh headless boot with `QEMU_GPU=virtio-gpu QEMU_NET=0` logged
   `virtio_gpu: initialized queues=2 features0=0x30000002 scanouts=1 capsets=0`
   and `virtio_gpu: display info ok scanout0=1280x800+0+0`.
+- The same boot now also logs
+  `virtio_gpu: resource smoke ok resource=1 size=32x32 bytes=4096`, proving the
+  transport can submit the basic 2D resource lifecycle to QEMU.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
