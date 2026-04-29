@@ -481,15 +481,18 @@ Current checkpoint:
   A kernel-side display-domain mismatch was fixed by making the virtio-gpu
   fallback scanout use the active `/dev/fb0` mode (`1024x768`) instead of a
   hardcoded `640x480` sidecar; this still needs visual pointer confirmation.
-  The QEMU launcher now defaults to a larger non-fullscreen 1280x800 guest mode
-  and disables VMware absolute pointer (`QEMU_VMMOUSE=0`) so GTK uses grabbed
-  relative PS/2 motion.  This avoids host-window scaling feeding bad absolute
-  coordinates into the guest; `QEMU_VMMOUSE=1` remains available for known-good
-  absolute-pointer hosts.
+  The QEMU launcher now defaults to a larger non-fullscreen 1280x800 guest mode,
+  VMware absolute pointer input (`QEMU_VMMOUSE=1`), GTK grab-on-hover, and a
+  hidden host cursor.  With the guest and GTK canvas using the same fixed mode,
+  vmmouse avoids the frozen/slow relative-PS/2 behavior seen on GNOME/Wayland
+  hosts; `QEMU_VMMOUSE=0` remains available for targeted relative-input triage.
   The compositor also always presents a visible software cursor rectangle,
-  clamps the cursor glyph inside the framebuffer at screen edges, and redraws
-  the cursor rectangle with every damaged frame so animated GL clients cannot
-  erase the cursor or leave it visually stale.
+  clamps the cursor glyph inside the framebuffer at screen edges, ignores client
+  cursor buffers for now, and redraws the cursor rectangle with every damaged
+  frame so animated GL clients cannot erase the cursor or leave stale cursor
+  fragments.  A default KVM/GTK `virtio-gpu-gl` boot with WebKit over the GL
+  demo showed Google on top, one visible guest cursor, no cursor debris, and
+  active text entry in the browser address bar.
 - [x] Fix or retire compositor BO-present backing before making it the default
   again.  A KVM/GTK `virtio-gpu-gl` screenshot showed the BO-backed compositor
   path leaving stale black rows at the top of the display; forcing the compositor
