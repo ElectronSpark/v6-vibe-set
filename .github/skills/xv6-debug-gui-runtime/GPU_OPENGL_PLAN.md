@@ -259,6 +259,16 @@ Current status:
   `glsmoke=1 glsmoke_frames=5 glsmoke_loops=2` completed both loops; `_fbstat`
   reported `bo_allocs 3`, `bo_imports 2`, `bo_presents 26`, `bo_handles 1`, and
   `rejected_blits 0`.
+- `glsmoke` can now stress BO-backed EGL surface resize churn with
+  `--resize-every=N`; the desktop launcher exposes this as
+  `glsmoke_resize_every=<n>`.  The resize path recreates the EGL surface over
+  alternating window sizes while keeping the Wayland toplevel/context alive,
+  which exercises compositor import release and BO destroy/recreate behavior.
+  A validated KVM run with
+  `glsmoke=1 glsmoke_frames=8 glsmoke_loops=2 glsmoke_resize_every=2` left
+  `_fbstat` at `bo_handles 1`, `bo_allocs 6`, `bo_imports 5`,
+  `bo_presents 71`, and `rejected_blits 0`; the one remaining handle is the
+  compositor backbuffer.
 - `/dev/fb0` now assigns a monotonic completed fence to each handle-based
   `FB_GPU_BO_PRESENT` and exposes `FB_GPU_BO_FENCE` for query/wait semantics.
   This is still synchronous because BO presents complete before the ioctl
@@ -280,7 +290,7 @@ Exit criteria:
   to the display path, and release it without leaks.
 - [x] The compositor can import at least one kernel graphics buffer without
   copying through wl_shm.
-- [ ] Repeated open/close and resize tests do not leave stale buffers or pinned
+- [x] Repeated open/close and resize tests do not leave stale buffers or pinned
   mappings.
 
 ## Stage 5A: Mesa Software EGL Lane
