@@ -19,10 +19,11 @@ The concrete gaps are:
 
 - No kernel GPU driver with command submission.  `/dev/fb0` only exposes mode
   query/set, fill, blit, and stats; it does not expose virtio-gpu/DRM-style
-  resources, command queues, contexts, or fences.
+  resources, command queues, or contexts.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
-  handle import/export, but it is still not a DRM/dmabuf ABI: no Wayland client
-  buffer protocol, no virtio resource backing per BO, and no fence/sync model.
+  handle import/export, but it is still not a DRM/dmabuf ABI: no standard
+  Wayland dmabuf protocol and no virtio resource backing per BO.  It has
+  synchronous present fences, but not async GPU completion fences.
 - Wayland now has a small xv6-private GPU-buffer import path for framebuffer BO
   handles, but not standard `linux-dmabuf`, modifiers, fences, or multi-plane
   buffer negotiation.
@@ -180,7 +181,7 @@ Exit criteria before calling this stage complete:
   integration.
 - [x] Add Wayland `linux-dmabuf` or a simpler xv6-private buffer protocol to avoid
   copying rendered buffers through SHM.
-- [ ] Add explicit synchronization or a simple fence model once clients can render
+- [x] Add explicit synchronization or a simple fence model once clients can render
   asynchronously.
 - [x] Add observability: buffer counts, bytes allocated, blit/import counts,
   command/fence counters, and clear error reporting in `_fbstat` or a sibling
@@ -258,6 +259,14 @@ Current status:
   `glsmoke=1 glsmoke_frames=5 glsmoke_loops=2` completed both loops; `_fbstat`
   reported `bo_allocs 3`, `bo_imports 2`, `bo_presents 26`, `bo_handles 1`, and
   `rejected_blits 0`.
+- `/dev/fb0` now assigns a monotonic completed fence to each handle-based
+  `FB_GPU_BO_PRESENT` and exposes `FB_GPU_BO_FENCE` for query/wait semantics.
+  This is still synchronous because BO presents complete before the ioctl
+  returns, but it gives Mesa/Wayland integration a stable synchronization shape
+  to build on before true async virtio/virgl fences exist.  A validated KVM run
+  completed `glsmoke=1 glsmoke_frames=5 glsmoke_loops=2` and `gpubuftest 4`;
+  `_fbstat` showed `bo_fences 34`, `bo_fence_waits 4`, `bo_imports 6`,
+  `bo_handles 1`, and `rejected_blits 0`.
 - `_gpubuftest` validates repeated create/fill/present/munmap cycles.  A
   headless KVM run completed 6 cycles and `_fbstat` reported `bo_allocs 6`,
   `bo_presents 6`, and `rejected_blits 0`.
