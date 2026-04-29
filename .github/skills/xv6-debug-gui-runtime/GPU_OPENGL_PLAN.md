@@ -164,6 +164,8 @@ Exit criteria before calling this stage complete:
 - [x] Validate the first virtio-gpu 2D resource command sequence:
   create-resource-2d, attach-backing, transfer-to-host-2d, resource-flush, and
   unref.
+- [x] Validate basic virtio-gpu scanout programming by binding the smoke
+  resource to scanout 0, flushing it, and detaching scanout before unref.
 - [ ] Add a virtio-gpu or DRM/KMS-style kernel driver with resource creation,
   attach backing, transfer, flush, and basic mode/display handling.
 - [x] Add first-pass buffer-object allocation, mmap, and lifetime semantics.
@@ -206,6 +208,10 @@ Current status:
   virtio-gpu boot showed `virtio_commands 6`, `virtio_failures 0`,
   `virtio_timeouts 0`, `virtio_resources 0`, `virtio_transfers 1`, and
   `virtio_flushes 1`.
+- Basic scanout programming is wired into the smoke sequence.  A validated boot
+  showed `virtio_commands 8`, `virtio_failures 0`, `virtio_timeouts 0`,
+  `virtio_resources 0`, `virtio_transfers 1`, `virtio_flushes 1`, and
+  `virtio_scanouts 2`.
 - `/dev/fb0` now exposes `FB_GPU_BO_CREATE` and `FB_GPU_BO_PRESENT`.
   `FB_GPU_BO_CREATE` returns a page-backed process-local mapping that userspace
   releases with `munmap()`, while `FB_GPU_BO_PRESENT` submits that mapping
