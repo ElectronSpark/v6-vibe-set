@@ -492,7 +492,10 @@ Current checkpoint:
   frame so animated GL clients cannot erase the cursor or leave stale cursor
   fragments.  A default KVM/GTK `virtio-gpu-gl` boot with WebKit over the GL
   demo showed Google on top, one visible guest cursor, no cursor debris, and
-  active text entry in the browser address bar.
+  active text entry in the browser address bar.  A follow-up KVM/GTK
+  `virtio-gpu-gl` run drove pointer motion across the animated Mesa Wayland EGL
+  demo through QMP and captured a 1280x800 screenshot with a single clean cursor,
+  no stale pointer fragments, and no GL-display corruption.
 - [x] Fix or retire compositor BO-present backing before making it the default
   again.  A KVM/GTK `virtio-gpu-gl` screenshot showed the BO-backed compositor
   path leaving stale black rows at the top of the display; forcing the compositor
