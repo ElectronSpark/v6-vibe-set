@@ -19,8 +19,9 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 - [x] Boot desktop with `webkit=1` and complete a user-observed visual smoke pass.
 - [x] Headless desktop boot with `webkit=1` reached
   `wlcomp: client title: Google` and survived a short idle smoke run.
-- [x] Remove the repo WebKitGTK source override files; active override count is
-  `0`.
+- [x] Keep the WebKitGTK source overrides narrow and reproducible.  Active
+  overrides now live under `ports/webkit/overrides/webkitgtk-2.42.5/` and are
+  applied with `ports/webkit/apply-xv6-overrides.sh` for clean source rebuilds.
 - [x] Fresh host rebuild after override retirement passed `image` and
   `webkit-runtime-check`, then KVM WebKit validation reached Google Search,
   GitHub, YouTube, and xv6-public GitHub pages.
@@ -46,10 +47,16 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 - [x] Fontconfig warning bursts from unsupported `48-guessfamily.conf` and
   `49-sansserif.conf` snippets are no longer activated or staged in the xv6
   rootfs.
-- [ ] WebKit WebGL is still unavailable in the current GTK/Wayland runtime even
-  with `webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1`; the current
-  suspected blocker is WebKit's ANGLE platform-display binding, tracked in
-  `GPU_OPENGL_PLAN.md`.
+- [x] KVM/GTK `virtio-gpu-gl` validation with
+  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1
+  webkit_timeout_ms=25000 video=1280x800` loaded and visibly painted the local
+  WebKit render-smoke page, changed the page title to `xv6 WebKit GPU Smoke`,
+  timed out cleanly, and showed no fatal page faults, coredumps, panics,
+  `vma_alloc` warnings, or virtio-gpu failures.
+- [ ] WebKit WebGL/active accelerated compositing remains unavailable in the
+  current GTK/Wayland runtime even with `webkit_accel=1`; the current suspected
+  blocker is WebKit's ANGLE/dmabuf platform-display and backing-store path,
+  tracked in `GPU_OPENGL_PLAN.md`.
 
 ## Build And Test Checkpoint
 
@@ -63,8 +70,8 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 - [x] Fresh host rebuild after removing `build-x86_64`;
   `cmake --build build-x86_64 --target image webkit-runtime-check -j2`
   passed.
-- [x] `ports/webkit/apply-xv6-overrides.sh` is a clean no-op when no source
-  overrides are present.
+- [x] `ports/webkit/apply-xv6-overrides.sh` can apply the repo-carried
+  WebKitGTK 2.42.5 overrides to a clean source checkout.
 - [x] No Yocto or other new external dependency was added.
 
 ## Remaining Validation Ladder
@@ -93,12 +100,14 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 ## Patch Retirement Rule
 
 - [x] Do not remove a WebKit override until the corresponding kernel/ABI reproducer passes.
-- [x] Retire the repo-carried WebKitGTK source override files.
-- [x] Rebuild WebKit from clean upstream source without repo overrides.
+- [x] Retire stale broad WebKitGTK source override files.
+- [x] Rebuild WebKit from a clean upstream source tree plus the current narrow
+  repo-carried overrides.
 - [x] Re-run the automated GPU/local-file/close-reopen validation ladder.
-- [x] Record new source fixes as real in-tree port patches rather than WebKit
-  source overrides: ATK/gdk-pixbuf/Pango target helper builds are now disabled
-  at the port layer, and Fontconfig drops noisy unsupported config activations.
+- [x] Record new source fixes as durable repo state rather than an untracked
+  external checkout: ATK/gdk-pixbuf/Pango target helper builds are disabled at
+  the port layer, Fontconfig drops noisy unsupported config activations, and
+  WebKit source fixes live under `ports/webkit/overrides/webkitgtk-2.42.5/`.
 
 ## Active Policy Gaps
 

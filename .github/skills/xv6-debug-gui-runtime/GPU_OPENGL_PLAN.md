@@ -51,12 +51,13 @@ The concrete gaps are:
   outside the supported surface.
 - No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
   blending correctness, or conformance coverage beyond the simple smoke scene.
-- WebKit still defaults to the current software/low-feature profile.  An
-  explicit `webkit_accel=1` launch mode now removes
-  `WEBKIT_DISABLE_COMPOSITING_MODE` and selects the virgl Mesa lane, but current
-  smoke results show WebKit opening successfully without yet producing sustained
-  virgl submits beyond the boot-time smoke command.  Treat this as an
-  acceleration gate, not completed WebKit GPU compositing.
+- WebKit still runs on the current software GTK drawing path by default.  An
+  explicit `webkit_accel=1` launch mode selects the virgl Mesa environment, but
+  the xv6 port now keeps WebKitGTK accelerated compositing disabled unless
+  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is explicitly set.  The latest KVM/GTK
+  smoke visibly paints local WebKit content without fatal faults; true WebKit
+  WebGL/accelerated backing-store support remains gated on the ANGLE/dmabuf
+  platform-display path.
 
 The next meaningful milestone is API breadth and lifecycle hardening on top of
 the xv6 BO-backed Mesa Wayland path, followed by the accelerated virtio-gpu/virgl
@@ -641,34 +642,36 @@ Current status:
   `WEBKIT_DISABLE_COMPOSITING_MODE=1`; KVM/GTK smoke reached the WebKitGTK
   MiniBrowser surface with `accel=0` and no fatal graphics/kernel faults in the
   startup/idle window.
-- `webkit=1 webkit_accel=1` launches MiniBrowser with virgl Mesa environment
-  selection and without `WEBKIT_DISABLE_COMPOSITING_MODE`; KVM/GTK smoke reached
-  the same surface with `accel=1` and no visual corruption in the startup/idle
-  window.
+- `webkit=1 webkit_accel=1` launches WebKit with virgl Mesa environment
+  selection, but the WebKitGTK xv6 port now keeps accelerated compositing off in
+  normal xv6 mode because no GTK accelerated backing store is available yet.
+  Forced compositing is reserved for explicit experiments with
+  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1`.
 - `_fbstat` after the accelerated smoke still showed only the boot-time virgl
   submit (`virtio_submits 1`, `virtio_failures 0`, `virtio_timeouts 0`) and no
   WebKit-created BO imports, so WebKit accelerated compositing is not yet proven
   active.  The next step is to make WebKit exercise EGL/GL content and measure
   repeated navigation/close cleanup before checking the remaining gate.
 - `/bin/webkitgpusmoke` is now a WebKitGTK API-level smoke client.  It creates
-  `WebKitSettings`, explicitly enables WebGL, sets hardware acceleration policy
-  to `ALWAYS`, and loads the local GPU smoke page with a file URI.  This keeps
-  the acceleration probe independent from MiniBrowser command-line defaults.
+  `WebKitSettings`, explicitly enables WebGL, requests hardware acceleration
+  policy `ALWAYS`, and loads the local smoke page with a file URI.  In xv6's
+  default missing-GL-bridge mode, WebKit maps that request back to software
+  drawing so the render path stays visible and stable.
 - KVM/GTK validation with
-  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1` loaded
-  `/share/webkit/gpu-smoke.html`, but the page title reported
-  `xv6 WebKit GPU Smoke: unavailable`.  `fbstat` still showed only the
-  boot-time virgl submit and no sustained WebKit virgl command stream.  This
-  means WebKit's WebGL/accelerated-compositing path is blocked before it reaches
-  Mesa's working virgl lane.
-- Source inspection points at WebKit's ANGLE display binding as the current
-  blocker: `PlatformDisplayANGLE::eglDisplay()` returns `EGL_NO_DISPLAY` unless
-  `m_anglePlatform` is set.  The 2.42.5 source tree sets that field for GBM,
-  surfaceless, and LibWPE platform displays, but not for the Wayland display
-  used by the GTK runtime.  The durable fix should either add the missing OS
-  contracts for the GBM/dmabuf/DRM render-node path or carry a narrow,
-  documented WebKit port patch that binds the xv6 Wayland platform to a valid
-  EGL/ANGLE native platform.
+  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1
+  webkit_timeout_ms=25000 video=1280x800` loaded and visibly painted
+  `/share/webkit/gpu-smoke.html`; the page title reached
+  `xv6 WebKit GPU Smoke`, the desktop timed out and shut down cleanly, and the
+  log contained no fatal page faults, coredumps, panics, `vma_alloc` warnings,
+  or virtio-gpu failures.
+- WebKit WebGL/active accelerated compositing is still blocked before it reaches
+  Mesa's working virgl lane.  Source inspection points at the GTK WebKit path's
+  missing ANGLE/dmabuf/display contract: the upstream 2.42.5 code has GBM,
+  surfaceless, and LibWPE paths, but xv6 currently lacks the DRM render-node,
+  dmabuf, modifier, and fence contracts WebKitGTK expects for the accelerated
+  backing store.  The durable fix should extend xv6 toward that OS contract
+  rather than pretending the software drawing path is full WebKit GPU
+  compositing.
 
 Exit criteria:
 
@@ -696,9 +699,11 @@ Do not claim "complete OpenGL" until these are true:
   scissor, and error reporting are covered by smoke/regression tests.
 - [x] GPU and software rendering paths both survive repeated launch/close cycles
   without leaked processes, mappings, buffers, or stale Wayland resources.
-- [x] WebKit can run with accelerated-compositing mode enabled for the defined
-  local-file API smoke and close/reopen test set, but WebGL/active GPU
-  compositing remains unsupported until the ANGLE platform-display gap is fixed.
+- [x] WebKit can run the defined local-file API smoke and close/reopen test set
+  under the virgl-capable launch environment, with accelerated compositing
+  intentionally mapped back to the software drawing path.  WebGL/active GPU
+  compositing remains unsupported until the ANGLE/dmabuf platform-display gap is
+  fixed.
 - [x] Both lanes are documented: software Mesa for API correctness, and
   virtio-gpu/virgl for accelerated 3D.  Any missing lane must be clearly marked
   unsupported.

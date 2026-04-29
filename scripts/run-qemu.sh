@@ -11,7 +11,7 @@
 #                           virtio-gpu-primary, virtio-gpu-gl,
 #                           virtio-gpu-gl-primary, or none.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer by default.
-#                           Set 0 to force relative PS/2 input.
+#                           Set 0 to force grabbed relative PS/2 input.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
@@ -51,6 +51,8 @@ QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
 QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
+QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
+QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
 
 if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
         QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
@@ -130,10 +132,10 @@ case "${ARCH}" in
                 #
                 # GTK input notes:
                 #   - QEMU_VMMOUSE=1      Use QEMU's absolute vmmouse path by
-                #                         default.  With the guest fixed at the
-                #                         GTK window's 1280x800 mode, this is
-                #                         more reliable than relative PS/2 on
-                #                         GNOME/Wayland hosts.
+                #                         default.  With zoom-to-fit disabled
+                #                         and the guest video mode fixed, this
+                #                         gives reliable full-screen pointer
+                #                         mapping on GTK.
                 #   - grab-on-hover=on    Capture pointer + keyboard as soon
                 #                         as the host cursor enters the canvas;
                 #                         without this, GTK may keep motion
@@ -145,13 +147,13 @@ case "${ARCH}" in
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]]; then
-                        DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT}"
+                        DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
                                       -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         # Forward pointer motion as soon as the host cursor
                         # enters the GTK window.  Relying on click-to-grab can
                         # leave the guest cursor apparently frozen on Wayland.
-                        DISPLAY_ARGS=(-display "gtk,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT}"
+                        DISPLAY_ARGS=(-display "gtk,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
                                       -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
