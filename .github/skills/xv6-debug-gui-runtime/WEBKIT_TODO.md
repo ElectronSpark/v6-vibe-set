@@ -53,6 +53,13 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   WebKit render-smoke page, changed the page title to `xv6 WebKit GPU Smoke`,
   timed out cleanly, and showed no fatal page faults, coredumps, panics,
   `vma_alloc` warnings, or virtio-gpu failures.
+- [x] Forced WebKit WebGL smoke no longer leaks virgl process resources:
+  KVM/GTK `virtio-gpu-gl` with
+  `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_webgl_smoke=1
+  webkit_timeout_ms=35000 video=1280x800` reaches
+  `xv6 WebKit WebGL Smoke`, times out cleanly, reaps WebKit helper processes,
+  and leaves only the persistent scanout live (`virtio_resources 1`,
+  `virtio_timeouts 0`).
 - [ ] WebKit WebGL/active accelerated compositing remains unavailable in the
   current GTK/Wayland runtime even with `webkit_accel=1`; the current suspected
   blocker is WebKit's ANGLE/dmabuf platform-display and backing-store path,

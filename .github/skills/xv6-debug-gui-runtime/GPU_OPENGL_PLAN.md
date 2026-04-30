@@ -22,7 +22,9 @@ The concrete gaps are:
   transfer-to/from-host, command submission, and fence query/wait.  It is still
   not a DRM/KMS driver: command-buffer validation is intentionally narrow, the
   fence ABI is synchronous at the syscall boundary, and the Mesa virgl winsys is
-  xv6-specific rather than a standard DRM winsys.
+  xv6-specific rather than a standard DRM winsys.  User-created virgl contexts
+  and resources are now owned by thread group and are released on `/dev/fb0`
+  close and last-thread process exit.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
   handle import/export, but it is still not a DRM/dmabuf ABI: no standard
   Wayland dmabuf protocol and no virtio resource backing per BO.  It has
@@ -611,6 +613,14 @@ Current checkpoint:
   reported `virtio_failures 0`, `virtio_timeouts 0`, and the persistent scanout
   as the only live virtio resource.  WebKit still reported the GPU smoke title
   as `xv6 WebKit GPU Smoke: unavailable`, so WebGL remains blocked before Mesa.
+- [x] Hardened WebKit/virgl teardown after forced WebKit WebGL experiments:
+  `/dev/fb0` now tracks virgl contexts/resources by owner thread group and
+  reclaims them on fd close and last-thread process exit.  The forced KVM/GTK
+  WebKit WebGL smoke reaches the local `xv6 WebKit WebGL Smoke` page and shuts
+  down without stale helper processes; post-timeout `fbstat` showed
+  `virtio_timeouts 0`, `virtio_resources 1`, and
+  `virtio_resource_bytes 4096000`, meaning only the persistent scanout remains.
+  The page still does not transition to the WebGL success title.
 
 Exit criteria:
 
@@ -664,6 +674,13 @@ Current status:
   `xv6 WebKit GPU Smoke`, the desktop timed out and shut down cleanly, and the
   log contained no fatal page faults, coredumps, panics, `vma_alloc` warnings,
   or virtio-gpu failures.
+- KVM/GTK validation with forced compositing and the local WebGL smoke
+  (`webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_webgl_smoke=1
+  webkit_timeout_ms=35000 video=1280x800`) now reaches the page title
+  `xv6 WebKit WebGL Smoke`, produces virgl submits/fences without
+  `SUBMIT_3D` timeouts, kills WebKit helper processes at timeout, and leaves
+  only the persistent scanout resource live.  This is a cleanup/lifetime pass,
+  not a WebGL availability pass.
 - WebKit WebGL/active accelerated compositing is still blocked before it reaches
   Mesa's working virgl lane.  Source inspection points at the GTK WebKit path's
   missing ANGLE/dmabuf/display contract: the upstream 2.42.5 code has GBM,
