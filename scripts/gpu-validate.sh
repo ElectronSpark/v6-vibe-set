@@ -41,6 +41,33 @@ reject_log()
     fi
 }
 
+validate_launch_contract()
+{
+    local dry
+
+    dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-gpu-gl \
+        QEMU_INPUT=virtio QEMU_NET=0 QEMU_APPEND="${APPEND_BASE}" \
+        bash scripts/run-qemu.sh x86_64 \
+        "${BUILD_DIR}/kernel/kernel.elf" "${BUILD_DIR}/fs.img")"
+    printf '%s\n' "${dry}" >>"${LOG}"
+    grep -q -- '-display gtk,gl=on' <<<"${dry}" ||
+        fail "GTK/GL display contract missing"
+    grep -q -- 'zoom-to-fit=off' <<<"${dry}" ||
+        fail "GTK launch must not scale the guest canvas"
+    grep -q -- 'full-screen=off' <<<"${dry}" ||
+        fail "GTK launch must stay windowed"
+    grep -q -- 'show-menubar=off' <<<"${dry}" ||
+        fail "GTK menubar must stay hidden for deterministic geometry"
+    grep -q -- 'show-tabs=off' <<<"${dry}" ||
+        fail "GTK tabs must stay hidden for deterministic geometry"
+    grep -q -- 'virtio-gpu-gl-pci,xres=1280,yres=800' <<<"${dry}" ||
+        fail "virtio-gpu-gl geometry contract missing"
+    grep -q -- 'virtio-tablet-pci' <<<"${dry}" ||
+        fail "virtio tablet input contract missing"
+    grep -q -- 'video=1280x800' <<<"${dry}" ||
+        fail "guest video mode contract missing"
+}
+
 run_substrate()
 {
     command -v expect >/dev/null 2>&1 ||
@@ -87,6 +114,9 @@ send "mesawlegl --frames=6 --loops=1 --resize-every=3 &\r"
 wait_prompt
 send "mesaglsmoke --frames=6 --loops=1 --resize-every=3 &\r"
 wait_prompt
+send "mouseinject 65535 65535\r"
+expect -re {mouseinject: absolute x=65535 y=65535}
+wait_prompt
 set saw_mesawlegl 0
 set saw_mesaglsmoke 0
 while { !(\$saw_mesawlegl && \$saw_mesaglsmoke) } {
@@ -129,6 +159,9 @@ EOF
         "multi-client mesawlegl completion"
     require_log 'mesaglsmoke\[[0-9]+\]: complete frames=6 status=0' \
         "multi-client mesaglsmoke completion"
+    require_log 'mouseinject: absolute x=65535 y=65535' \
+        "input injection while GPU clients are active"
+    require_log 'virtio_input: initialized' "virtio-tablet input device"
     require_log 'gpubuftest: completed 3 buffer cycles' \
         "graphics buffer/fence cycles"
     require_log 'gpubuftest: render fd ownership verified' \
@@ -228,6 +261,7 @@ if [[ "${GPU_VALIDATE_BUILD:-0}" == "1" ]]; then
     cmake --build "${BUILD_DIR}" --target rootfs -j"${GPU_VALIDATE_JOBS:-2}" | tee -a "${LOG}"
 fi
 
+validate_launch_contract
 run_substrate
 if [[ "${GPU_VALIDATE_VISIBLE_3D:-0}" == "1" ]]; then
     run_visible_3d

@@ -1041,19 +1041,31 @@ synchronization contract.
     callbacks on that present-fence readiness.  This is a synchronous fence
     model today, but the compositor contract is now completion-driven instead
     of sleep-driven.
-- [ ] Evaluate direct scanout for simple fullscreen buffers.
+- [x] Evaluate direct scanout for simple fullscreen buffers.
   - If a single fullscreen client buffer matches scanout format/stride, test
     presenting it without software composition.
   - Fall back cleanly when overlays/direct scanout are unavailable.
+  - 2026-04-30 update: the current compositor cannot enable direct scanout as
+    a normal path yet because the taskbar, menu, internal windows, and
+    compositor-owned cursor are all software overlays.  Bypassing composition
+    would make those disappear unless hardware cursor/overlay planes or an
+    explicit fullscreen-no-overlays mode is added.  Direct scanout is therefore
+    deferred as a measured future optimization; the GPU-present BO path remains
+    the supported acceleration lane and falls back cleanly to software blit.
 
 ### 7F. Harden KVM/GTK Display And Input As GPU Acceptance Gates
 
-- [ ] Make display geometry deterministic.
+- [x] Make display geometry deterministic.
   - Non-fullscreen GTK should show the full 1280x800 guest without scaling the
     guest canvas down.
   - The guest cursor must reach all four edges with `virtio-tablet-pci`.
   - QEMU launch defaults should prevent host-window resize from changing the
     validation surface.
+  - 2026-04-30 update: `scripts/run-qemu.sh` now has a dry-run contract and
+    `scripts/gpu-validate.sh` rejects drift from the deterministic KVM/GTK
+    launch shape: GTK windowed mode, `zoom-to-fit=off`, menubar/tabs hidden,
+    `virtio-gpu-gl-pci,xres=1280,yres=800`, guest `video=1280x800`, and
+    `virtio-tablet-pci` absolute input.
 - [x] Reduce blink/flicker in the compositor path.
   - Avoid full-screen damage for pointer motion and ordinary button edges.
   - Add counters/logging for full-damage causes and present mode.
@@ -1063,9 +1075,15 @@ synchronization contract.
     frame count, presented rects/pixels, full-screen frames, union collapses,
     acquire-fence blocked frames, full-damage reasons, and present mode
     (`bo-present` versus `user-blit`).
-- [ ] Prove input remains responsive while GPU work is active.
+- [x] Prove input remains responsive while GPU work is active.
   - Run the 3D demo, move pointer continuously, open/close Terminal, and verify
     the compositor still processes input if a GPU client stalls or exits.
+  - 2026-04-30 update: `/dev/mouse` accepts a test-only `struct mouse_event`
+    write and `/bin/mouseinject` injects absolute cursor events.  The GPU
+    validator now injects a bottom-right absolute pointer event while
+    `mesawlegl` and `mesaglsmoke` are swapping concurrently, requires the
+    virtio-tablet device to initialize, and still requires both GPU clients and
+    object-accounting checks to complete.
 
 ### 7G. Native GPU Validation Before Toolkits
 
@@ -1114,11 +1132,15 @@ synchronization contract.
 
 ### 7H. Toolkit And Browser Consumers Come After The Substrate
 
-- [ ] Use GTK/WebKit only as late-stage consumers of the GPU substrate.
+- [x] Use GTK/WebKit only as late-stage consumers of the GPU substrate.
   - Default browser stability remains important, but it is not the next GPU
     architecture step.
   - Forced WebGL/accelerated compositing should stay disabled unless explicitly
     testing the lower contracts from Stages 7A-7E.
+  - 2026-04-30 update: Stage 7 validation now gates the kernel/libdrm/GBM,
+    dmabuf, Mesa Wayland EGL, virgl visible-demo, and input/geometry contracts
+    before any WebKit consumer lane.  `WEBKIT_TODO.md` keeps WebKit WebGL
+    instability separate from this substrate queue.
 - [ ] When revisiting WebKit, require it to use the same buffer-sharing and fence
   path as other clients.
   - No env-var-only acceleration claim.

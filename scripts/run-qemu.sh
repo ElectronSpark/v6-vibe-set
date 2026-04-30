@@ -18,6 +18,7 @@
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
 #                           Hide the host cursor and use the guest cursor.
+#   QEMU_DRY_RUN=1          Print the resolved qemu command and exit.
 #   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
 
@@ -219,21 +220,29 @@ case "${ARCH}" in
                 # userspace starts.  Override with QEMU_CPU=qemu64,+pcid when
                 # debugging that path directly.
                 CPU_ARGS=(-cpu "${QEMU_CPU}")
-                exec qemu-system-x86_64 \
-                        -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}" \
-                        "${KVM_ARGS[@]}" "${CPU_ARGS[@]}" \
-                        "${DISPLAY_ARGS[@]}" \
-                        -debugcon file:/tmp/xv6-debugcon.log \
-                        -global isa-debugcon.iobase=0xe9 \
-                        -kernel "${KERNEL}" \
-                        -drive file="${FSIMG}",if=none,format=raw,id=x0 \
-                        -device virtio-blk-pci,drive=x0 \
-                        "${GPU_ARGS[@]}" \
-                        "${INPUT_ARGS[@]}" \
-                        "${NET_ARGS[@]}" \
-                        -append "${QEMU_APPEND}" \
-                        "${QEMU_GDB_ARGS[@]}" \
-                        ${QEMU_EXTRA}
+                QEMU_CMD=(qemu-system-x86_64
+                        -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}"
+                        "${KVM_ARGS[@]}" "${CPU_ARGS[@]}"
+                        "${DISPLAY_ARGS[@]}"
+                        -debugcon file:/tmp/xv6-debugcon.log
+                        -global isa-debugcon.iobase=0xe9
+                        -kernel "${KERNEL}"
+                        -drive file="${FSIMG}",if=none,format=raw,id=x0
+                        -device virtio-blk-pci,drive=x0
+                        "${GPU_ARGS[@]}"
+                        "${INPUT_ARGS[@]}"
+                        "${NET_ARGS[@]}"
+                        -append "${QEMU_APPEND}"
+                        "${QEMU_GDB_ARGS[@]}")
+                if [[ -n "${QEMU_EXTRA}" ]]; then
+                        read -r -a QEMU_EXTRA_ARGS <<< "${QEMU_EXTRA}"
+                        QEMU_CMD+=("${QEMU_EXTRA_ARGS[@]}")
+                fi
+                if [[ "${QEMU_DRY_RUN:-0}" == "1" ]]; then
+                        printf '%s\n' "${QEMU_CMD[*]}"
+                        exit 0
+                fi
+                exec "${QEMU_CMD[@]}"
                 ;;
         *)
                 echo "unsupported arch: ${ARCH}" >&2
