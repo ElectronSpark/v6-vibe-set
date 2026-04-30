@@ -29,9 +29,11 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   `accel=0`, kept the software/low-feature environment, and showed no fatal
   graphics/kernel fault during startup/idle.
 - [x] GPU gate opt-in smoke: KVM/GTK `webkit=1 webkit_accel=1` launched
-  MiniBrowser with `accel=1`, selected the virgl Mesa environment, and stayed
-  visually clean during startup/idle.  This does not yet prove active WebKit GPU
-  compositing; see `GPU_OPENGL_PLAN.md`.
+  MiniBrowser with `accel=1`, initialized virtio-gpu/virgl, selected the virgl
+  Mesa environment, and stayed visually clean during startup/idle.  This is the
+  safe hybrid mode: GPU device and Mesa/virgl are enabled, while WebKit content
+  presentation remains on the coordinated software drawing path until the GTK
+  accelerated backing-store contract is implemented.
 - [x] Local WebKit GPU smoke page is staged in the rootfs and loads through a
   file URI.
 - [x] WebKit API-level GPU smoke client added: `/bin/webkitgpusmoke` forces
@@ -60,14 +62,40 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   `xv6 WebKit WebGL Spherical Poly: webgl ready` and then
   `xv6 WebKit WebGL Spherical Poly: webgl spherical poly`, proving a WebGL
   context and first rendered frame.
+- [x] Fix the compositor-side WebKit launch regression where `wlcomp` treated a
+  normal waitable launcher child as authority to kill the whole process group
+  and destroy matching Wayland clients.  Normal reap now only frees the launcher
+  tracking slot; explicit close/force-close remains responsible for client
+  teardown.
+- [x] KVM/GTK `virtio-gpu-gl` WebKit GPU-mode validation reaches real Google
+  HTTPS paths with virgl capsets available and `webkit_accel=1`.  With
+  `webkit_url=https://www.google.com/robots.txt`, the page reaches
+  `load-finished`, `readyState=complete`, and visibly paints Google text.  With
+  the default Google Search compatibility endpoint
+  (`https://www.google.com/search?q=xv6&gbv=1`), MiniBrowser reaches the
+  `Google Search` title, completes the first document, and then follows Google's
+  expected anti-automation redirect.  This validates the safe hybrid GPU-mode
+  baseline, not active WebKit accelerated backing-store presentation.
+- [x] Remove `WEBKIT_XV6_SKIP_INITIAL_EMPTY_RENDER=1` from the accelerated
+  MiniBrowser environment.  With the skip still set, the Google surface stayed
+  transparent/dark; without it, WebKit paints its page surface.  The accepted
+  GPU-mode launcher now keeps WebKitGTK accelerated compositing disabled because
+  forced backing-store presentation is still blank/crash-prone.
+- [x] Hot-patch the currently staged WebKit runtime for the
+  `ConnectionUnix.cpp` full-length attachment-bearing `sendmsg()` result.  The
+  source override remains in-tree for the next clean WebKit runtime rebuild.
 - [ ] Forced WebKit WebGL is not stable yet.  The current blocker is a later
   WebKit/UI process crash after the first rendered frame.  Track the fix,
   repeated close/reopen validation, and the remaining accelerated-compositing
   contract in `GPU_OPENGL_PLAN.md`.
-- [ ] Active WebKit accelerated compositing is still experimental.  The suspected
-  durable blocker remains WebKitGTK's ANGLE/dmabuf platform-display and
+- [ ] Rebuild or restage the WebKitGTK runtime from source with the current
+  `ConnectionUnix.cpp` override so the binary hot patch is no longer needed.
+- [ ] Active WebKit accelerated compositing is still experimental.  The durable
+  blocker is WebKitGTK's ANGLE/dmabuf platform-display and GTK accelerated
   backing-store contract, which xv6 must either implement or bridge with
-  matching lifetime/fence semantics.
+  matching lifetime/fence semantics.  Forcing the path today can load the DOM
+  but leaves the web content blank, and stale runtimes can crash in
+  `webkitWebViewBaseDraw()` when the accelerated backing store is null.
 
 ## Build And Test Checkpoint
 
@@ -93,6 +121,11 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   `_fbstat` virgl/BO counters and no stale helper processes.
 - [ ] Manual MiniBrowser browsing remains stable with the default software
   profile after the forced-WebGL changes.
+  2026-04-30 KVM/GTK `webkit=1 video=1280x800` autostart reached
+  `wlcomp: client title: WebKitGTK MiniBrowser`, `client app_id: MiniBrowser`,
+  launched both WebKit helper processes, and stayed in the MiniBrowser manual
+  main loop without a fatal kernel or graphics fault.  It did not reach the
+  Google title in the short smoke window.
 - [x] Launch MiniBrowser specifically to `about:blank`.
   KVM/headless validation with
   `webkit_url=about:blank webkit_timeout_ms=18000 video=1280x800` reached the
@@ -107,6 +140,12 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 - [x] Load HTTPS through GLib/GIO/OpenSSL.
 - [x] Load `https://www.google.com/`.
 - [x] Submit a Google search with JavaScript enabled.
+- [x] Launch Google with `webkit_accel=1` and virgl enabled.  The validated safe
+  GPU-mode URLs are `https://www.google.com/robots.txt` for visible painted
+  Google content and `https://www.google.com/search?q=xv6&gbv=1` for the
+  default Google Search compatibility path.  The modern Google homepage and
+  forced WebKit accelerated backing store remain separate compatibility/stress
+  targets.
 - [x] Navigate repeatedly for several minutes.
 - [x] Close and reopen the WebKitGTK runtime through the API smoke harness.
   MiniBrowser manual close/reopen remains part of the interactive ladder.

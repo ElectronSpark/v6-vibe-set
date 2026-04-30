@@ -55,14 +55,26 @@ The concrete gaps are:
   Linux DRM render-node discovery remain outside the supported surface.
 - Shader, texture, VBO, FBO, depth/stencil, blending, viewport, scissor, resize,
   and teardown paths have smoke coverage, but not conformance coverage.
-- WebKit still runs on the current software GTK drawing path by default.  An
-  explicit `webkit_accel=1` launch mode selects the virgl Mesa environment, but
-  the normal xv6 profile keeps WebKitGTK accelerated compositing disabled unless
-  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is explicitly set.
+- WebKit still runs on the current GTK software presentation path.  An explicit
+  `webkit_accel=1` launch mode selects the virgl Mesa environment while keeping
+  WebKitGTK accelerated compositing disabled; forcing WebKit's accelerated
+  backing store is reserved for experiments with
+  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` because the current GTK/Wayland backing
+  store cannot present that path correctly yet.
 - Forced WebKit WebGL is no longer blocked before Mesa: the current smoke page
   reaches a WebGL context and the first rendered frame title.  It is not stable
   yet: a later UI/WebKit process crash has been observed, and active accelerated
   compositing still lacks WebKitGTK's expected dmabuf/render-node/fence contract.
+- The safe WebKit GPU-mode baseline is now "GPU device and virgl enabled,
+  WebKit presented through the coordinated software drawing area."  In a
+  KVM/GTK `virtio-gpu-gl` VM, `webkit=1 webkit_accel=1` confirms virgl capsets
+  and the 3D context smoke at boot, launches MiniBrowser with the virgl Mesa
+  environment, and loads real Google HTTPS documents.  `robots.txt` reaches
+  `load-finished`/`readyState=complete` and visibly paints page text; the Google
+  Search compatibility endpoint reaches the `Google Search` title,
+  `load-finished`, and then Google's anti-automation redirect.  Forced WebKit
+  accelerated backing-store presentation still produces blank content or UI
+  crashes, so it is not the accepted default.
 - The 3D demo is a real Mesa/virgl scene, but its spherical symmetric faceted
   object currently has a visual mesh/culling flaw that must be fixed before the
   demo is accepted as the visual validation target.
@@ -711,8 +723,10 @@ Exit criteria:
 
 - [x] Keep WebKit's current software/low-feature profile until EGL/GL rendering is
   stable under repeated navigation and close/reopen tests.
-- [x] Add an opt-in WebKit accelerated-compositing launch mode only after both
-  the software EGL lane and virgl lane have stable teardown behavior.
+- [x] Add an opt-in WebKit GPU-mode launch after both the software EGL lane and
+  virgl lane have stable teardown behavior.  The accepted mode currently means
+  virgl/Mesa environment plus software WebKit presentation; forced WebKitGTK
+  accelerated backing-store presentation remains experimental.
 - [x] Validate WebKit API close/reopen, local-file load, process cleanup, and
   virtio counter stability under the accelerated launch mode.  Manual Google
   navigation and resize remain interactive validation items.
@@ -720,6 +734,11 @@ Exit criteria:
 - [ ] Keep the normal MiniBrowser profile stable while forced WebGL work is in
   progress; regressions in ordinary `webkit=1` browsing block the acceleration
   gate.
+  2026-04-30 note: the latest ordinary `webkit=1` regression was not a GPU
+  rendering fault.  `wlcomp` was killing the tracked launcher process group and
+  destroying same-pid Wayland clients during normal child reap.  That path has
+  been narrowed so ordinary reap only clears launcher tracking; explicit
+  close/force-close still owns teardown.
 - [ ] Make the forced WebKit WebGL smoke stable after the first rendered frame:
   no UI process SIGSEGV, no helper coredumps, no stale virgl contexts/resources,
   and no compositor freeze.
@@ -736,12 +755,32 @@ Current status:
 - Default `webkit=1` still launches MiniBrowser with
   `WEBKIT_DISABLE_COMPOSITING_MODE=1`; KVM/GTK smoke reached the WebKitGTK
   MiniBrowser surface with `accel=0` and no fatal graphics/kernel faults in the
-  startup/idle window.
+  startup/idle window.  A fresh 2026-04-30 KVM/GTK boot with
+  `virtio-gpu-gl`, network, `webkit=1`, and `video=1280x800` again reached the
+  WebKitGTK MiniBrowser surface after the launcher-reap fix; the remaining
+  ordinary-profile gap is page progress beyond the initial Google URI/title
+  state, not process launch.
 - `webkit=1 webkit_accel=1` launches WebKit with virgl Mesa environment
-  selection, but the WebKitGTK xv6 port now keeps accelerated compositing off in
-  normal xv6 mode because no GTK accelerated backing store is available yet.
-  Forced compositing is reserved for explicit experiments with
-  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1`.
+  selection, but the WebKitGTK xv6 port now keeps accelerated compositing off
+  because no GTK accelerated backing store is available yet.  This hybrid mode
+  is the current safe default for "GPU VM + WebKit": virtio-gpu/virgl is
+  initialized and usable, while WebKit content is presented through the
+  coordinated software drawing area.
+- 2026-04-30 validation: KVM/GTK `virtio-gpu-gl` with
+  `webkit=1 webkit_accel=1 video=1280x800` and
+  `webkit_url=https://www.google.com/robots.txt` reached virgl capset discovery,
+  `virtio_gpu: 3D context smoke ok`, `MiniBrowser pid=... accel=1`,
+  `load-finished`, `readyState=complete`, and visibly painted Google
+  `robots.txt` text.  The same mode with
+  `webkit_url=https://www.google.com/search?q=xv6&gbv=1` reached the
+  `Google Search` title, completed the first search document, and then followed
+  Google's expected anti-automation redirect.
+- Forced compositing with `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is reserved for
+  explicit experiments.  The current failure mode is known: the WebKit DOM can
+  load, but the content area stays blank if WebKit enters accelerated
+  compositing without a presentable GTK accelerated backing store; stale runtime
+  builds can also crash in `webkitWebViewBaseDraw()` when that backing store is
+  null.
 - `_fbstat` after the accelerated smoke still showed only the boot-time virgl
   submit (`virtio_submits 1`, `virtio_failures 0`, `virtio_timeouts 0`) and no
   WebKit-created BO imports, so WebKit accelerated compositing is not yet proven
