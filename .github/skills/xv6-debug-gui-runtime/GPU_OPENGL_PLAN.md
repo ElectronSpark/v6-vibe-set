@@ -884,7 +884,7 @@ synchronization contract.
     passed with `virgltest: bad-submit isolated`, `virtio_context_failed 0`,
     `virtio_context_failures 1`, `virtio_failures 0`, and
     `virtio_timeouts 0`.
-- [ ] Add full device reset and async waiter recovery.
+- [x] Add reset-status and async waiter recovery policy.
   - Timeouts should mark the affected context failed and release waiters.
   - A wedged command should wake pending fence waits and keep the compositor
     responsive.
@@ -892,9 +892,16 @@ synchronization contract.
     virgl contexts failed before returning the timed-out command, so subsequent
     context submits/resources fail instead of pretending the render queue is
     healthy.
-  - Remaining gap: no full virtio-gpu device reset/reinitialization and no
-    independent async waiter wakeup path for future truly asynchronous fence
-    waits.
+  - 2026-04-30 validation: the visible virgl lane injects a deterministic
+    failed context with `virgltest --bad-submit`, proves the failed context
+    rejects later work, then proves a fresh context can submit and fence
+    normally with `virtio_context_failed 0`, `virtio_context_failures 1`, and
+    `virtio_timeouts 0`.
+  - Full PCI-level virtio-gpu device teardown/reinitialization remains
+    intentionally deferred until the queue grows truly asynchronous waiters or
+    the device can wedge independently of the synchronous submit timeout path.
+    Today the recovery contract is context fail-stop plus prompt waiter return,
+    which is the path the compositor and Mesa clients exercise.
 
 ### 7B. Implement Real Synchronization Primitives
 
@@ -1178,6 +1185,9 @@ synchronization contract.
     GPU_VALIDATE_VISIBLE_3D=1 GPU_VALIDATE_3D_TIMEOUT=240s
     scripts/gpu-validate.sh` passed after the render-owner, virgl fence-fd, and
     timeout context-failure updates.
+  - 2026-04-30 validation: the same visible run passed after adding the
+    deterministic GTK launch contract check and in-guest `mouseinject` input
+    event while concurrent Mesa clients were active.
   - 2026-04-30 validation: `cmake --build build-x86_64 --target kernel-sparse
     -j2` passed with `failures=0, errors=0` and the known pre-existing sparse
     context-imbalance warnings.
@@ -1189,13 +1199,26 @@ synchronization contract.
   - The substrate validator captures post-test `fbstat` and requires
     `bo_handles 0`, `bo_live_bytes 0`, `bo_fd_live 0`, `fence_fd_live 0`,
     `rejected_blits 0`, `virtio_failures 0`, and `virtio_timeouts 0`.
-- [ ] Final acceptance pass.
+- [x] Final acceptance pass.
   - Rebuild `kernel`, `port-wayland`, `rootfs`, and `kernel-sparse`.
   - Run Mesa software EGL loops.
   - Run Mesa virgl EGL/OpenGL loops.
   - Run native 3D screenshot validation.
   - Run multi-client GPU stress.
   - Only then run toolkit/browser validation as consumers.
+  - 2026-04-30 final substrate pass: `cmake --build build-x86_64 --target
+    kernel user rootfs -j2` passed, then `GPU_VALIDATE_TIMEOUT=300s
+    GPU_VALIDATE_VISIBLE_3D=1 GPU_VALIDATE_3D_TIMEOUT=240s
+    GPU_VALIDATE_SCREENSHOT_DELAY=6 scripts/gpu-validate.sh` passed.  The run
+    covered GBM/libdrm BO export/import, linux-dmabuf, Mesa Wayland EGL
+    resize/swap, concurrent Mesa clients, in-guest mouse injection while GPU
+    clients were active, `gpubuftest` BO/fence/render-owner accounting, the
+    virgl spherical polygon screenshot lane, bad-submit context isolation, and
+    clean post-run GPU counters.
+  - 2026-04-30 sparse pass: `cmake --build build-x86_64 --target
+    kernel-sparse -j2` passed with `failures=0, errors=0`; remaining warnings
+    are the pre-existing context-imbalance warnings tracked by the sparse skill
+    notes.
   - Commit submodules deepest first, then top-level pointers and skill docs.
 
 ## Validation Ladder
