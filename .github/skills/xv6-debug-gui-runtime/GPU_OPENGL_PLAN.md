@@ -786,6 +786,14 @@ Current status:
   MiniBrowser with `accel=1`; Google `robots.txt` reached `load-finished` and
   `readyState=complete`, and `/tmp/xv6-fore-shot.png` visibly showed the
   Google text in the WebKitGTK window.
+- 2026-04-30 follow-up: a manual navigation to YouTube changed the WebKit title
+  but did not reach a finished load.  QEMU and the guest kernel kept running,
+  so this is tracked as a heavy WebKit page responsiveness gap rather than a
+  virtio-gpu halt.  The current default MiniBrowser profile keeps JavaScript
+  enabled for Google compatibility, allows explicit `webkit_js=0` low-script
+  experiments, and lets desktop/menu-launched MiniBrowser sessions use
+  `webkit_timeout_ms=<ms>` as an explicit recovery guard while keeping normal
+  browsing at no launcher timeout.
 - Forced compositing with `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is reserved for
   explicit experiments.  The current failure mode is known: the WebKit DOM can
   load, but the content area stays blank if WebKit enters accelerated

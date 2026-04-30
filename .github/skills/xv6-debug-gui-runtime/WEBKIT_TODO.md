@@ -126,6 +126,13 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   launched both WebKit helper processes, and stayed in the MiniBrowser manual
   main loop without a fatal kernel or graphics fault.  It did not reach the
   Google title in the short smoke window.
+  2026-04-30 update: a manual YouTube navigation reproduced an apparent browser
+  freeze after title update while QEMU and the guest kernel remained running.
+  Default MiniBrowser keeps JavaScript enabled for Google compatibility, exposes
+  `webkit_js=0` for explicit low-script experiments, and desktop/menu launches
+  honor `webkit_timeout_ms=<ms>` as an explicit recovery guard.  The normal
+  default remains no launcher timeout so healthy loaded pages are not closed
+  while the browser is idle.
 - [x] Launch MiniBrowser specifically to `about:blank`.
   KVM/headless validation with
   `webkit_url=about:blank webkit_timeout_ms=18000 video=1280x800` reached the
