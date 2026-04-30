@@ -220,6 +220,16 @@ Arg=https://www.google.com/
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
+elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]]; then
+cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=WebKit
+Exec=/bin/webkitgpusmoke
+Arg=file:///share/webkit/gpu-smoke.html
+IconChar=K
+IconColor=0xFF9B59B6
+EOF
 else
     rm -f "${STAGE}/root/Desktop/webkit.desktop"
 fi

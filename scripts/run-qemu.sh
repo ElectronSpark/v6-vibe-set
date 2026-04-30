@@ -10,8 +10,10 @@
 #   QEMU_GPU=bochs          GPU model: bochs, virtio-gpu,
 #                           virtio-gpu-primary, virtio-gpu-gl,
 #                           virtio-gpu-gl-primary, or none.
-#   QEMU_VMMOUSE=1          Enable VMware absolute pointer by default.
-#                           Set 0 to force grabbed relative PS/2 input.
+#   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default is
+#                           grabbed relative PS/2 input because vmport
+#                           absolute coordinates are host/GTK-version fragile.
+#   QEMU_INPUT=virtio       Add a virtio tablet for absolute host pointer input.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
@@ -30,7 +32,8 @@ QEMU_CPUS="${QEMU_CPUS:-6}"
 QEMU_MEMORY="${QEMU_MEMORY:-4G}"
 QEMU_CPU="${QEMU_CPU:-qemu64}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
-QEMU_VMMOUSE="${QEMU_VMMOUSE:-1}"
+QEMU_VMMOUSE="${QEMU_VMMOUSE:-0}"
+QEMU_INPUT="${QEMU_INPUT:-virtio}"
 if [[ -z "${QEMU_MACHINE:-}" ]]; then
         if [[ "${QEMU_VMMOUSE}" == "1" ]]; then
                 QEMU_MACHINE="pc,vmport=on"
@@ -131,11 +134,11 @@ case "${ARCH}" in
                 # passes Ctrl-C through to the guest instead of killing qemu).
                 #
                 # GTK input notes:
-                #   - QEMU_VMMOUSE=1      Use QEMU's absolute vmmouse path by
-                #                         default.  With zoom-to-fit disabled
-                #                         and the guest video mode fixed, this
-                #                         gives reliable full-screen pointer
-                #                         mapping on GTK.
+                #   - QEMU_VMMOUSE=0      Use grabbed PS/2 relative motion by
+                #                         default. QEMU's vmmouse remains
+                #                         available with QEMU_VMMOUSE=1, but
+                #                         has shown host/GTK-version dependent
+                #                         coordinate stalls.
                 #   - grab-on-hover=on    Capture pointer + keyboard as soon
                 #                         as the host cursor enters the canvas;
                 #                         without this, GTK may keep motion
@@ -193,6 +196,18 @@ case "${ARCH}" in
                                 exit 2
                                 ;;
                 esac
+                INPUT_ARGS=()
+                case "${QEMU_INPUT}" in
+                        virtio)
+                                INPUT_ARGS=(-device virtio-tablet-pci)
+                                ;;
+                        ps2|none)
+                                ;;
+                        *)
+                                echo "unsupported QEMU_INPUT: ${QEMU_INPUT}" >&2
+                                exit 2
+                                ;;
+                esac
                 # The kernel does not enable OSXSAVE in CR4, so any
                 # CPU feature that requires XSAVE state (AVX, AVX2, ...)
                 # will #UD on first use.  Under -cpu host KVM advertises
@@ -214,6 +229,7 @@ case "${ARCH}" in
                         -drive file="${FSIMG}",if=none,format=raw,id=x0 \
                         -device virtio-blk-pci,drive=x0 \
                         "${GPU_ARGS[@]}" \
+                        "${INPUT_ARGS[@]}" \
                         "${NET_ARGS[@]}" \
                         -append "${QEMU_APPEND}" \
                         "${QEMU_GDB_ARGS[@]}" \

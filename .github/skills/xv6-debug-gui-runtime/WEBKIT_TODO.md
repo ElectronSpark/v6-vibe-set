@@ -53,17 +53,21 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
   WebKit render-smoke page, changed the page title to `xv6 WebKit GPU Smoke`,
   timed out cleanly, and showed no fatal page faults, coredumps, panics,
   `vma_alloc` warnings, or virtio-gpu failures.
-- [x] Forced WebKit WebGL smoke no longer leaks virgl process resources:
+- [x] Forced WebKit WebGL now reaches Mesa instead of failing as unavailable:
   KVM/GTK `virtio-gpu-gl` with
   `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_webgl_smoke=1
-  webkit_timeout_ms=35000 video=1280x800` reaches
-  `xv6 WebKit WebGL Smoke`, times out cleanly, reaps WebKit helper processes,
-  and leaves only the persistent scanout live (`virtio_resources 1`,
-  `virtio_timeouts 0`).
-- [ ] WebKit WebGL/active accelerated compositing remains unavailable in the
-  current GTK/Wayland runtime even with `webkit_accel=1`; the current suspected
-  blocker is WebKit's ANGLE/dmabuf platform-display and backing-store path,
-  tracked in `GPU_OPENGL_PLAN.md`.
+  webkit_timeout_ms=0 video=1280x800` has reached
+  `xv6 WebKit WebGL Spherical Poly: webgl ready` and then
+  `xv6 WebKit WebGL Spherical Poly: webgl spherical poly`, proving a WebGL
+  context and first rendered frame.
+- [ ] Forced WebKit WebGL is not stable yet.  The current blocker is a later
+  WebKit/UI process crash after the first rendered frame.  Track the fix,
+  repeated close/reopen validation, and the remaining accelerated-compositing
+  contract in `GPU_OPENGL_PLAN.md`.
+- [ ] Active WebKit accelerated compositing is still experimental.  The suspected
+  durable blocker remains WebKitGTK's ANGLE/dmabuf platform-display and
+  backing-store contract, which xv6 must either implement or bridge with
+  matching lifetime/fence semantics.
 
 ## Build And Test Checkpoint
 
@@ -83,6 +87,12 @@ override map lives in `WEBKIT_GAP_MAP.md`; GPU/OpenGL work lives in
 
 ## Remaining Validation Ladder
 
+- [ ] Forced WebKit WebGL smoke can stay open, animate, close, and reap helpers
+  without a fatal page fault or coredump.
+- [ ] Forced WebKit WebGL smoke survives repeated close/reopen with stable
+  `_fbstat` virgl/BO counters and no stale helper processes.
+- [ ] Manual MiniBrowser browsing remains stable with the default software
+  profile after the forced-WebGL changes.
 - [x] Launch MiniBrowser specifically to `about:blank`.
   KVM/headless validation with
   `webkit_url=about:blank webkit_timeout_ms=18000 video=1280x800` reached the

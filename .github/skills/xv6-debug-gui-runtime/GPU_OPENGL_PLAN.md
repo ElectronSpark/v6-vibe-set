@@ -9,11 +9,12 @@ This is the active GPU/OpenGL plan.  WebKit runtime validation lives in
 
 ## Current OpenGL Status And Gap
 
-The repo does **not** have complete OpenGL support yet.  What exists today is a
-Mesa EGL/GLES smoke path that can run through both softpipe and an initial
-virtio-gpu/virgl winsys.  It is useful for validating API shape, buffer
-lifetime, and accelerated command submission, but it is still not a complete
-OpenGL implementation or WebKit acceleration story.
+The repo has a real Mesa EGL/OpenGL path now, with both software Mesa and
+virtio-gpu/virgl acceleration working for xv6-native smoke clients.  It should
+no longer be described as only an API-shape shim.  It is still **not** complete
+desktop OpenGL or complete WebKit GPU acceleration: GLX is unsupported, WebKit's
+active accelerated compositing path is still experimental, and the user-visible
+3D/WebKit validation has open correctness and stability bugs.
 
 The concrete gaps are:
 
@@ -26,12 +27,14 @@ The concrete gaps are:
   and resources are now owned by thread group and are released on `/dev/fb0`
   close and last-thread process exit.
 - The framebuffer BO ABI now has kernel-owned pages, caller-local mappings, and
-  handle import/export, but it is still not a DRM/dmabuf ABI: no standard
-  Wayland dmabuf protocol and no virtio resource backing per BO.  It has
-  synchronous present fences, but not async GPU completion fences.
-- Wayland now has a small xv6-private GPU-buffer import path for framebuffer BO
-  handles, but not standard `linux-dmabuf`, modifiers, fences, or multi-plane
-  buffer negotiation.
+  handle import/export.  It has a narrow PRIME-like fd import/export contract
+  and enough single-plane `linux-dmabuf` import for linear ARGB/XRGB buffers,
+  but it is still not a complete DRM/dmabuf ABI: no modifier negotiation beyond
+  linear, no virtio resource backing per BO, and no async GPU completion fences.
+- Wayland now has both a small xv6-private GPU-buffer import path and a
+  standard `zwp_linux_dmabuf_v1` import path for single-plane linear
+  ARGB8888/XRGB8888 buffers.  It still lacks multi-plane negotiation and
+  standard explicit-sync release fences.
 - Mesa softpipe now builds as a port with EGL/GLESv2 and Wayland/surfaceless
   enabled.  The software Wayland EGL path now allocates xv6 framebuffer BOs
   directly and presents them through the compositor import protocol.
@@ -46,25 +49,93 @@ The concrete gaps are:
   softpipe.  It validates Mesa window-system surfaces, swaps, resize, and
   teardown while using xv6 GPU BO imports instead of Mesa's stock `wl_shm`
   presentation path.
-- No full `libGL` ABI yet.  The current Mesa checkpoint packages `libEGL` and
-  `libGLESv2`; classic `libGL` remains tied to later GLX/dispatch decisions.
-  Mesa can now create a desktop OpenGL context through EGL, so the OpenGL API
-  lane is real, but applications that require a `libGL.so`/GLX ABI are still
-  outside the supported surface.
-- No shader/compiler pipeline, texture completeness, FBOs, depth/stencil,
-  blending correctness, or conformance coverage beyond the simple smoke scene.
+- `libGL.so` exists as an EGL-backed Mesa dispatch shim and Mesa can create both
+  GLES and desktop OpenGL contexts through EGL.  This is a usable OpenGL lane for
+  EGL clients, not a GLX implementation.  Applications that require X11/GLX or
+  Linux DRM render-node discovery remain outside the supported surface.
+- Shader, texture, VBO, FBO, depth/stencil, blending, viewport, scissor, resize,
+  and teardown paths have smoke coverage, but not conformance coverage.
 - WebKit still runs on the current software GTK drawing path by default.  An
   explicit `webkit_accel=1` launch mode selects the virgl Mesa environment, but
-  the xv6 port now keeps WebKitGTK accelerated compositing disabled unless
-  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is explicitly set.  The latest KVM/GTK
-  smoke visibly paints local WebKit content without fatal faults; true WebKit
-  WebGL/accelerated backing-store support remains gated on the ANGLE/dmabuf
-  platform-display path.
+  the normal xv6 profile keeps WebKitGTK accelerated compositing disabled unless
+  `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is explicitly set.
+- Forced WebKit WebGL is no longer blocked before Mesa: the current smoke page
+  reaches a WebGL context and the first rendered frame title.  It is not stable
+  yet: a later UI/WebKit process crash has been observed, and active accelerated
+  compositing still lacks WebKitGTK's expected dmabuf/render-node/fence contract.
+- The 3D demo is a real Mesa/virgl scene, but its spherical symmetric faceted
+  object currently has a visual mesh/culling flaw that must be fixed before the
+  demo is accepted as the visual validation target.
+- KVM/GTK display and input are still part of the GPU acceptance surface.  Past
+  regressions included a too-small host window, guest/host scale mismatch, and
+  a non-moving cursor.  These must remain explicit validation gates, not side
+  observations.
 
-The next meaningful milestone is API breadth and lifecycle hardening on top of
-the xv6 BO-backed Mesa Wayland path, followed by the accelerated virtio-gpu/virgl
-lane.  Demo rendering alone is not enough; each new feature needs create,
-resize, swap, close, and fallback coverage.
+The next meaningful milestone is not "turn on GPU for WebKit" and not
+"make MiniBrowser happier."  The latest VM checks show a larger, more
+fundamental GPU integration gap:
+
+- xv6-native Mesa clients can use virgl and present through the current
+  xv6-private buffer path.
+- The desktop compositor still composites in software into `/dev/fb0`, then
+  mirrors damaged rectangles into the virtio-gpu scanout path.
+- Higher-level consumers such as GTK/WebKit expose the missing contracts, but
+  they should not drive the next steps directly.  First make xv6 expose a
+  coherent GPU device model, buffer-sharing model, synchronization model, and
+  compositor import model that Mesa and Wayland can use normally.
+
+The plan below is therefore centered on **fundamental GPU acceleration support**:
+kernel GPU objects, render/display device separation, libdrm/GBM-compatible
+userspace contracts, dmabuf-style sharing, explicit fences, Wayland import, and
+event-loop-safe presentation.  WebKit remains only a later validation workload.
+Demo rendering alone is not enough; each new feature needs create, resize, swap,
+close, crash, fallback, and resource-cleanup coverage.
+
+## Reframed GPU Integration Gap
+
+Do not call the stack "fully GPU accelerated" until these layers are connected:
+
+1. **Kernel graphics object model**
+   - Current: `/dev/fb0` owns simple page-backed BOs, a private virgl submit ABI,
+     synchronous fences, and a persistent scanout mirror.
+   - Gap: no DRM-like object namespace, render node, PRIME/dmabuf fd export,
+     modifiers, explicit sync objects, pollable fences, per-client GPU address
+     space, or robust GPU reset/error recovery.
+
+2. **Userspace graphics API**
+   - Current: Mesa EGL/GLES/desktop-GL contexts work for xv6-native clients
+     through the private virgl winsys and xv6 GPU BO path.
+   - Gap: no GLX, no standard libdrm/GBM device contract, no upstream Mesa
+     winsys compatibility, and limited conformance coverage.
+
+3. **Wayland/compositor buffer path**
+   - Current: `wlcomp` supports `wl_shm` plus an xv6-private BO import protocol.
+     It then software-composites into a framebuffer backing store.
+   - Gap: no multi-plane `linux-dmabuf`, no non-linear modifiers, no standard
+     explicit-sync release fences, no direct scanout/overlay path, and no GPU
+     composition.  Client BO import avoids some copies, but the compositor is
+     still the final software blender.
+
+4. **Display scheduling and composition**
+   - Current: the compositor is a software blender that writes a framebuffer and
+     mirrors damaged regions into the persistent virtio-gpu scanout.
+   - Gap: no GPU composition path, no page-flip/atomic commit model, no
+     compositor-side GPU command queue ownership, no vsync/page-flip completion
+     event, and no timeout/recovery path when a GPU operation stalls.
+
+5. **Higher-level toolkit/browser consumers**
+   - Current: GTK/WebKit are useful stressors because they naturally expect
+     dmabuf/GBM/EGL/fence behavior.
+   - Gap: they should remain acceptance tests until the lower graphics stack
+     exists.  Browser-specific workarounds must not substitute for a real OS GPU
+     contract.
+
+6. **Validation and recovery**
+   - Current: screenshot and log checks exist, and native Mesa demos validate
+     virgl renderer selection.
+   - Gap: no automated long-running GUI stress that combines cursor motion,
+     multiple GPU clients, terminal open/close, resize, close/reopen, stalled
+     submits, coredump detection, and post-run GPU resource accounting.
 
 ## Two-Lane Goal: Correct API And Accelerated 3D
 
@@ -83,7 +154,7 @@ The shared foundation for both lanes is:
   synchronization semantics.
 - A compositor import path for those buffers, separate from `wl_shm`.
 - Repeated create/draw/resize/close validation so buffer and process lifetime
-  bugs are caught before enabling WebKit acceleration.
+  bugs are caught before enabling higher-level toolkit acceleration.
 
 Integration rule: prefer upstream external-library semantics as the forcing
 function.  If Mesa, libdrm, Wayland, or another graphics component needs an OS
@@ -611,8 +682,9 @@ Current checkpoint:
   `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1
   webkit_reopen=2 video=1280x800`.  Both smoke launches exited cleanly; `fbstat`
   reported `virtio_failures 0`, `virtio_timeouts 0`, and the persistent scanout
-  as the only live virtio resource.  WebKit still reported the GPU smoke title
-  as `xv6 WebKit GPU Smoke: unavailable`, so WebGL remains blocked before Mesa.
+  as the only live virtio resource.  That older non-WebGL render smoke did not
+  prove WebKit GPU compositing; newer forced-WebGL validation below reaches a
+  WebGL context and first frame, but is not stable yet.
 - [x] Hardened WebKit/virgl teardown after forced WebKit WebGL experiments:
   `/dev/fb0` now tracks virgl contexts/resources by owner thread group and
   reclaims them on fd close and last-thread process exit.  The forced KVM/GTK
@@ -620,7 +692,7 @@ Current checkpoint:
   down without stale helper processes; post-timeout `fbstat` showed
   `virtio_timeouts 0`, `virtio_resources 1`, and
   `virtio_resource_bytes 4096000`, meaning only the persistent scanout remains.
-  The page still does not transition to the WebGL success title.
+  This was a cleanup checkpoint before the newer WebGL success-title run.
 
 Exit criteria:
 
@@ -645,6 +717,19 @@ Exit criteria:
   virtio counter stability under the accelerated launch mode.  Manual Google
   navigation and resize remain interactive validation items.
 - [x] Keep a one-command fallback to the current software WebKit profile.
+- [ ] Keep the normal MiniBrowser profile stable while forced WebGL work is in
+  progress; regressions in ordinary `webkit=1` browsing block the acceleration
+  gate.
+- [ ] Make the forced WebKit WebGL smoke stable after the first rendered frame:
+  no UI process SIGSEGV, no helper coredumps, no stale virgl contexts/resources,
+  and no compositor freeze.
+- [ ] Decide and implement the durable WebKitGTK accelerated-surface contract:
+  either teach xv6 enough dmabuf/render-node/fence behavior for WebKitGTK's
+  expected path, or keep a clearly named xv6-private bridge with the same
+  lifetime and synchronization semantics.
+- [ ] Add a repeated WebKit GPU validation loop that covers local WebGL load,
+  resize, terminal open/close while WebKit is foreground/background, browser
+  close/reopen, and post-run `_fbstat`/process cleanup.
 
 Current status:
 
@@ -674,21 +759,23 @@ Current status:
   `xv6 WebKit GPU Smoke`, the desktop timed out and shut down cleanly, and the
   log contained no fatal page faults, coredumps, panics, `vma_alloc` warnings,
   or virtio-gpu failures.
-- KVM/GTK validation with forced compositing and the local WebGL smoke
-  (`webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_webgl_smoke=1
-  webkit_timeout_ms=35000 video=1280x800`) now reaches the page title
-  `xv6 WebKit WebGL Smoke`, produces virgl submits/fences without
-  `SUBMIT_3D` timeouts, kills WebKit helper processes at timeout, and leaves
-  only the persistent scanout resource live.  This is a cleanup/lifetime pass,
-  not a WebGL availability pass.
-- WebKit WebGL/active accelerated compositing is still blocked before it reaches
-  Mesa's working virgl lane.  Source inspection points at the GTK WebKit path's
-  missing ANGLE/dmabuf/display contract: the upstream 2.42.5 code has GBM,
-  surfaceless, and LibWPE paths, but xv6 currently lacks the DRM render-node,
-  dmabuf, modifier, and fence contracts WebKitGTK expects for the accelerated
-  backing store.  The durable fix should extend xv6 toward that OS contract
-  rather than pretending the software drawing path is full WebKit GPU
-  compositing.
+- KVM/GTK validation with forced compositing and the local WebGL smoke now gets
+  past the old "WebGL unavailable" blocker: the page title has reached
+  `xv6 WebKit WebGL Spherical Poly: webgl ready` and then
+  `xv6 WebKit WebGL Spherical Poly: webgl spherical poly`, proving that WebKit
+  created a WebGL context and reached the first rendered frame through Mesa.
+  This is a partial availability pass, not a stability pass.
+- A later forced-WebGL run crashed in the WebKit/UI process after the first
+  frame.  That crash is now the primary WebKit GPU blocker.  Treat any
+  `fatal page fault`, coredump, WebKit helper leak, stale virgl resource, or
+  compositor/input freeze as a failed acceleration-gate run.
+- Source inspection still points at the GTK WebKit path's missing
+  ANGLE/dmabuf/display contract as the durable accelerated-compositing gap: the
+  upstream 2.42.5 code has GBM, surfaceless, and LibWPE paths, but xv6 lacks the
+  DRM render-node, dmabuf, modifier, and async fence contracts WebKitGTK expects
+  for an accelerated backing store.  The durable fix should extend xv6 toward
+  that OS contract rather than pretending the software drawing path is full
+  WebKit GPU compositing.
 
 Exit criteria:
 
@@ -716,26 +803,397 @@ Do not claim "complete OpenGL" until these are true:
   scissor, and error reporting are covered by smoke/regression tests.
 - [x] GPU and software rendering paths both survive repeated launch/close cycles
   without leaked processes, mappings, buffers, or stale Wayland resources.
-- [x] WebKit can run the defined local-file API smoke and close/reopen test set
-  under the virgl-capable launch environment, with accelerated compositing
-  intentionally mapped back to the software drawing path.  WebGL/active GPU
-  compositing remains unsupported until the ANGLE/dmabuf platform-display gap is
-  fixed.
+- [ ] WebKit can run the defined local-file API smoke, close/reopen test set,
+  and forced-WebGL smoke under the virgl-capable launch environment without
+  fatal faults.  Local non-WebGL smoke is clean; forced WebGL now reaches the
+  first rendered frame but still has a crash to fix before this can be checked.
 - [x] Both lanes are documented: software Mesa for API correctness, and
   virtio-gpu/virgl for accelerated 3D.  Any missing lane must be clearly marked
   unsupported.
 
+## Stage 7: Fundamental GPU Acceleration Queue
+
+This is the active execution queue for the next GPU push.  It deliberately
+focuses below MiniBrowser/WebKit.  Browser acceleration becomes meaningful only
+after the kernel, Mesa, and compositor expose a normal GPU buffer and
+synchronization contract.
+
+### 7A. Define A DRM-Like Kernel Object Model
+
+- [x] Split display and render responsibilities.
+  - Keep `/dev/fb0` as a compatibility framebuffer.
+  - Initial kernel slice added `/dev/gpu0` as a render-facing facade for BO,
+    virgl context/resource/submit/fence, and stats ioctls.
+  - Ownership is thread-group aware and BO/virgl resources are reclaimed at
+    thread-group exit; ordinary `/dev/fb0` close no longer destroys render
+    resources out from under layered userspace.
+  - 2026-04-30 update: `/dev/gpu0` now allocates a per-open render-owner
+    cookie.  BO handles, imported BO handles, virgl contexts, and virgl
+    resources created through that fd are tagged with the render owner and are
+    reclaimed when the render fd closes; a second `/dev/gpu0` fd in the same
+    process cannot destroy the first fd's handle.  `/dev/fb0` remains the
+    compatibility display path.
+  - `/bin/gpubuftest --render-owner` validates fd-scoped BO ownership and
+    verifies that an exported BO fd can still be imported after the creator
+    render fd closes.
+- [x] Replace ad hoc BO integer handles with fd-like shareable objects.
+  - Initial kernel slice added `FB_GPU_BO_EXPORT_FD` and
+    `FB_GPU_BO_IMPORT_FD`; an exported BO fd holds its own BO reference and can
+    be imported/mapped independently of the creator's `/dev/fb0` fd.
+  - `/bin/gpubuftest` now validates export/import-fd accounting and close
+    cleanup.
+  - A process should be able to allocate a graphics object, mmap it, export a
+    capability, import it in another process, and close it independently.
+  - The exported object must not depend on a still-open `/dev/fb0` fd in the
+    creator.
+  - 2026-04-29 update: `FB_GPU_BO_IMPORT_FD` now returns a caller-local BO
+    handle as well as the mapping metadata, so PRIME-style fd import can produce
+    a handle that userspace later destroys independently.
+  - Remaining gap: not yet a full dmabuf object with modifiers, standard
+    Wayland import, or upstream DRM fd metadata queries.
+- [x] Add robust object accounting.
+  - Current counters include live/peak framebuffer BO handles and bytes,
+    handle imports, BO fd exports/imports/live/peak, fence waits, fence fd
+    exports/queries/live/peak/poll-ready checks, `/dev/gpu0`
+    opens/live opens/ioctls, virtio contexts, resources, bytes, submits,
+    fences, failures, timeouts, IRQ completions, and poll fallbacks.
+  - `_fbstat` prefers `/dev/gpu0` and prints those counters.
+  - 2026-04-29 KVM validation after `/bin/gpubuftest 3` showed
+    `bo_fd_live 0`, `bo_fd_peak 2`, `fence_fd_live 0`, `fence_fd_peak 3`,
+    `fence_fd_polls 3`, and `fence_fd_poll_ready 3`.
+  - 2026-04-29 update: fd-imported BO handles now participate in the same
+    live/peak accounting and explicit destroy path as creator handles.
+  - Remaining gap: forced cleanup counts and richer reset status.
+- [x] Add per-context reset/error policy.
+  - A bad userspace submit should fail the client submit, not freeze the
+    compositor or kernel.
+  - Initial kernel slice marks a virgl user context failed when its submit path
+    returns an error; later submits, context-bound resource creation, and
+    transfers tied to that failed context return `EIO` while context/resource
+    destroy remains available for cleanup.
+  - `_fbstat` now exposes `virtio_context_failed` and
+    `virtio_context_failures`.  2026-04-29 non-3D KVM validation kept both at
+    `0` after buffer/fence smoke, with `virtio_failures 0` and
+    `virtio_timeouts 0`.
+  - 2026-04-30 update: `FB_GPU_VIRGL_SUBMIT_FORCE_FAIL` gives the guest a
+    deterministic fault-injection path without sending undefined command
+    streams to QEMU.  `/bin/virgltest --bad-submit` now proves that the failed
+    context rejects later submits and context-bound resource creation, remains
+    destroyable, and does not poison a fresh virgl context.
+  - 2026-04-30 validation: `GPU_VALIDATE_VISIBLE_3D=1 scripts/gpu-validate.sh`
+    passed with `virgltest: bad-submit isolated`, `virtio_context_failed 0`,
+    `virtio_context_failures 1`, `virtio_failures 0`, and
+    `virtio_timeouts 0`.
+- [ ] Add full device reset and async waiter recovery.
+  - Timeouts should mark the affected context failed and release waiters.
+  - A wedged command should wake pending fence waits and keep the compositor
+    responsive.
+  - 2026-04-30 update: virtio-gpu command timeout handling now marks all live
+    virgl contexts failed before returning the timed-out command, so subsequent
+    context submits/resources fail instead of pretending the render queue is
+    healthy.
+  - Remaining gap: no full virtio-gpu device reset/reinitialization and no
+    independent async waiter wakeup path for future truly asynchronous fence
+    waits.
+
+### 7B. Implement Real Synchronization Primitives
+
+- [x] Promote the current synchronous fence numbers into explicit fence objects.
+  - Initial kernel slice added `FB_GPU_FENCE_EXPORT_FD` and
+    `FB_GPU_FENCE_QUERY`; a BO present fence can now be exported as a custom fd
+    object, queried, waited, and closed independently of the BO handle.
+  - Fence fds implement `poll(2)` readiness for `POLLIN`/`POLLRDNORM` once the
+    target fence is signaled.
+  - `/bin/gpubuftest` validates fence fd export/query/poll/close accounting.
+    2026-04-29 KVM validation showed three BO cycles with
+    `bo_handles 0`, `bo_live_bytes 0`, `fence_fd_exports 3`,
+    `fence_fd_queries 3`, `virtio_failures 0`, and `virtio_timeouts 0`.
+  - 2026-04-30 update: virgl submit fences now have the same explicit custom-fd
+    shape via `FB_GPU_VIRGL_FENCE_EXPORT_FD` and
+    `FB_GPU_VIRGL_FENCE_QUERY_FD`; `/bin/virgltest` exports a submit fence,
+    waits/queries it through the fd, and closes it during the visible virgl
+    validation lane.
+  - Fences now have query, wait, close, and poll/select readiness semantics for
+    the currently synchronous BO-present and virgl-submit completion model.
+  - Remaining gap moved to reset/recovery: waits are not backed by a fully
+    asynchronous scheduler/waitqueue yet, so a wedged device still needs the
+    Stage 7A reset and waiter recovery work.
+- [x] Add acquire/release fence plumbing to buffer import.
+  - Producers must not overwrite a buffer until the compositor releases it.
+  - The compositor must not sample a buffer before the producer's acquire fence
+    is signaled.
+  - The private `xv6_gpu_buffer_manager` protocol is now version 2 and accepts
+    `create_buffer_with_fence(handle, width, height, stride, format, fd)`.
+    `wlcomp` polls the acquire fence fd before sampling, defers
+    `wl_buffer.release` and frame callbacks until the fence is consumed, and
+    keeps damaging the scene while a buffer is fence-blocked.
+  - Rebuilt `port-wayland` after advertising the v2 global so clients can bind
+    the fence-capable request.
+  - Release is still represented by `wl_buffer.release`; standard explicit-sync
+    release fence objects are tracked under Stage 7D.
+- [x] Add validation for stuck fences.
+  - A guest test should intentionally wait on completed, pending, invalid, and
+    timed-out fences and prove no spinlock or event-loop stalls occur.
+  - `/bin/gpubuftest` now exports a deliberately future fence fd, verifies
+    zero-timeout `poll(2)` reports it as not-ready, verifies
+    `FB_GPU_FENCE_QUERY | FB_GPU_FENCE_WAIT` fails immediately instead of
+    blocking, and closes the fd to prove accounting returns to zero.
+  - 2026-04-29 validation: `scripts/gpu-validate.sh` passed with the expanded
+    fence coverage; post-run `fbstat` still required zero live BO/fence fd
+    objects and zero virtio failures/timeouts.
+  - 2026-04-30 update: multi-client Mesa stress exposed that fence fd release
+    accounting is asynchronous through the VFS close path (`close` removes the
+    descriptor, then RCU/workqueue cleanup runs the custom file release hook).
+    The validator now lets that deferred cleanup quiesce before sampling
+    `fbstat`, and the expanded run still requires `fence_fd_live 0`.
+
+### 7C. Move Toward libdrm/GBM Semantics
+
+- [x] Decide whether xv6 will provide a small real `libdrm` backend or a
+  compatibility subset with the same externally visible semantics.
+  - Minimum operations: open render device, create dumb/linear BO, mmap BO,
+    export/import prime-like handle, create fence/sync object, submit command,
+    query caps.
+  - Keep the API narrow, but make it look like the contracts Mesa and toolkits
+    already understand.
+  - Decision: provide a narrow xv6 compatibility subset first, backed by
+    `/dev/gpu0`, with fd/handle import-export semantics aligned with libdrm
+    PRIME calls.  Durable kernel semantics take priority over library-only
+    hacks when a graphics API expects a real OS contract.
+  - KVM substrate validation passed with `/bin/gbmtest`: backend `xv6-gbm`,
+    linear BO create/map/export/import/destroy completed.
+- [x] Add a GBM-compatible allocation surface.
+  - Support linear ARGB/XRGB buffers first.
+  - Report modifiers honestly: start with linear/invalid only.
+  - Add width/height/stride/format metadata and lifetime rules that match GBM
+    expectations.
+  - Added `ports/xv6-gbm`: a minimal `libgbm.a`, `gbm.h`, `gbm.pc`, and
+    `/bin/gbmtest` for linear ARGB/XRGB BO create/map/export/import/destroy.
+  - Follow-up `gpubuftest 3` and `fbstat` showed `bo_handles 0`,
+    `bo_live_bytes 0`, `bo_fd_live 0`, `fence_fd_live 0`,
+    `rejected_blits 0`, `virtio_failures 0`, and `virtio_timeouts 0`.
+- [x] Teach Mesa's xv6 winsys to prefer the libdrm/GBM-like path.
+  - The current private virgl winsys should become an implementation detail or
+    fallback, not the only acceleration path.
+  - Native Mesa tests must still pass on both software and virgl lanes.
+  - Mesa's xv6 virgl winsys now opens `/dev/gpu0` first and falls back to
+    `/dev/fb0`; libdrm `drmOpen*`, render-device name, and PRIME handle/fd
+    helpers now route to the xv6 render-device/BO-fd ABI.
+  - KVM/GTK `QEMU_GPU=virtio-gpu-gl` validation with
+    `glsmoke=1 glsmoke_accel=1 glsmoke_frames=4 glsmoke_loops=1` reported
+    `renderer=virgl buffer=xv6-gpu-bo` and completed with `status=0`.
+
+### 7D. Add Standard Wayland Buffer Import
+
+- [x] Implement enough `linux-dmabuf` semantics for single-plane buffers.
+  - Advertise ARGB8888/XRGB8888 and linear modifier first.
+  - Import must validate dimensions, stride, format, ownership, and fences.
+  - Import failure must report a protocol error to the client, not hang the
+    compositor.
+  - `wlcomp` now advertises `zwp_linux_dmabuf_v1` version 3, accepts one
+    linear plane, imports the supplied fd through `FB_GPU_BO_IMPORT_FD`, wraps
+    the mapped BO as a `wl_buffer`, and destroys the imported local handle when
+    the Wayland buffer is released.
+  - `/bin/dmabufsmoke` validates GBM BO allocation, PRIME fd export,
+    `linux-dmabuf` create-immed import, compositor presentation, and process
+    cleanup.
+  - 2026-04-29 KVM validation passed with `/bin/dmabufsmoke`; follow-up
+    `/bin/fbstat` showed `bo_allocs 1`, `bo_fd_exports 1`,
+    `bo_fd_imports 1`, `bo_handles 0`, `bo_live_bytes 0`, `bo_fd_live 0`,
+    `fence_fd_live 0`, `rejected_blits 0`, `virtio_failures 0`, and
+    `virtio_timeouts 0`.
+- [x] Keep the xv6-private buffer protocol as a bootstrap fallback.
+  - Document which dmabuf semantics it lacks.
+  - Do not add new clients that depend only on the private protocol unless the
+    standard path is impossible for that milestone.
+  - The private protocol remains for early xv6 clients and acquire-fence probes.
+    It lacks dmabuf global discovery, modifier negotiation, multi-plane buffer
+    description, and standard explicit-sync release-fence events, so new generic
+    clients should prefer `zwp_linux_dmabuf_v1`.
+- [x] Add release-fence behavior to compositor presentation.
+  - After compositing or direct scanout, signal/release buffers precisely.
+  - Stress with multiple clients swapping at once.
+  - 2026-04-30 update: `wlcomp` now queues `wl_buffer.release` events and
+    gates them on the framebuffer BO's present fence.  Replaced buffers and
+    current committed buffers share the same release queue; the compositor sends
+    frame callbacks only after acquire fences and the latest present fence are
+    ready.
+  - 2026-04-30 validation: `scripts/gpu-validate.sh` and
+    `GPU_VALIDATE_VISIBLE_3D=1 GPU_VALIDATE_3D_TIMEOUT=180s
+    scripts/gpu-validate.sh` both passed after the release-fence queue change.
+
+### 7E. Move From Software Composition Toward GPU Presentation
+
+- [x] Separate compositor rendering from final scanout.
+  - Keep software composition as the fallback.
+  - Add a GPU composition path or at least GPU-assisted blit/copy path that can
+    be measured independently from CPU blending.
+  - Current implementation renders into compositor-owned backing memory.  When
+    `XV6_WLCOMP_FB_BO=1` is enabled, that backing is an xv6 GPU BO and the
+    compositor presents only damaged rectangles from that BO with
+    `FB_GPU_BO_PRESENT`; otherwise it falls back to user-memory `FB_GPU_BLIT`.
+    Damage stats report the active present mode as `bo-present` or `user-blit`.
+- [x] Add page-flip/commit completion semantics.
+  - The display path should have a completion event or fence so animation and
+    input are not paced by blind sleeps or synchronous flushes.
+  - `FB_GPU_BO_PRESENT` returns a present fence, `FB_GPU_BO_FENCE` reports the
+    latest signaled present fence, and `wlcomp` gates buffer release and frame
+    callbacks on that present-fence readiness.  This is a synchronous fence
+    model today, but the compositor contract is now completion-driven instead
+    of sleep-driven.
+- [ ] Evaluate direct scanout for simple fullscreen buffers.
+  - If a single fullscreen client buffer matches scanout format/stride, test
+    presenting it without software composition.
+  - Fall back cleanly when overlays/direct scanout are unavailable.
+
+### 7F. Harden KVM/GTK Display And Input As GPU Acceptance Gates
+
+- [ ] Make display geometry deterministic.
+  - Non-fullscreen GTK should show the full 1280x800 guest without scaling the
+    guest canvas down.
+  - The guest cursor must reach all four edges with `virtio-tablet-pci`.
+  - QEMU launch defaults should prevent host-window resize from changing the
+    validation surface.
+- [x] Reduce blink/flicker in the compositor path.
+  - Avoid full-screen damage for pointer motion and ordinary button edges.
+  - Add counters/logging for full-damage causes and present mode.
+  - 2026-04-29 update: pointer motion remains rect-damaged, ordinary present
+    behavior is damage-rect driven, and `wlcomp` now has quiet-by-default
+    instrumentation controlled by `XV6_WLCOMP_STATS_MS`.  When enabled it logs
+    frame count, presented rects/pixels, full-screen frames, union collapses,
+    acquire-fence blocked frames, full-damage reasons, and present mode
+    (`bo-present` versus `user-blit`).
+- [ ] Prove input remains responsive while GPU work is active.
+  - Run the 3D demo, move pointer continuously, open/close Terminal, and verify
+    the compositor still processes input if a GPU client stalls or exits.
+
+### 7G. Native GPU Validation Before Toolkits
+
+- [x] Keep `/bin/mesaglsmoke --demo` as the primary visible 3D validation app.
+  - 2026-04-29: KVM/GTK `virtio-gpu-gl` validation logged
+    `renderer=virgl buffer=xv6-gpu-bo spherical-poly-demo`; the QEMU monitor
+    screenshot showed the faceted spherical polygon in a compositor-framed
+    window with an `x` close button.
+- [x] Add a no-regression test command for native 3D.
+  - Boot `QEMU_GPU=virtio-gpu-gl glsmoke=1 glsmoke_demo=1 glsmoke_accel=1
+    video=1280x800`.
+  - Capture a QEMU monitor screenshot and fail the run if the scene is blank,
+    offscreen, missing its close button, or logs `fatal page fault`, `panic`,
+    `virtio_failures`, or `virtio_timeouts`.
+  - `scripts/gpu-validate.sh` now has `GPU_VALIDATE_VISIBLE_3D=1`, which runs
+    the default substrate lane, then launches a GTK/KVM `virtio-gpu-gl` VM with
+    the spherical polygon demo, waits for the virgl renderer marker, captures a
+    QEMU monitor `screendump`, runs `virgltest --bad-submit`, captures
+    `fbstat`, and rejects crash/failure markers.
+  - 2026-04-30 validation: `GPU_VALIDATE_VISIBLE_3D=1 scripts/gpu-validate.sh`
+    passed, logged `renderer=virgl buffer=xv6-gpu-bo spherical-poly-demo`, and
+    wrote `build-x86_64/gpu-validate.ppm` as a 1280x800 screenshot.
+  - 2026-04-30 update: the visible lane now sends guest commands one at a time
+    instead of a semicolon-packed shell line, because xv6 `sh` does not execute
+    that packed command sequence reliably.
+- [x] Keep `/bin/mesawlegl` as the EGL-window validation lane.
+  - It should remain separate from the prettier demo so regressions in
+    `wl_egl_window`, resize, swap, and teardown are visible.
+  - `scripts/gpu-validate.sh` now runs
+    `mesawlegl --frames=4 --loops=1 --resize-every=2` in its default substrate
+    lane and requires `complete frames=4 status=0`.
+  - 2026-04-29 validation: the script passed with `renderer=softpipe
+    native-wayland api-smoke`, covering Mesa Wayland EGL window creation,
+    resize, swap, teardown, and the standard compositor import path without
+    invoking WebKit.
+- [x] Add multi-client Mesa stress.
+  - Run two Mesa clients swapping simultaneously.
+  - Resize one while the other animates.
+  - Kill one client mid-frame and prove object cleanup and compositor input
+    continue.
+  - `scripts/gpu-validate.sh` now runs `mesawlegl` and `mesaglsmoke`
+    concurrently with resize churn, waits for both completion markers, then
+    runs `gpubuftest 3` and post-quiesce `fbstat`.
+  - 2026-04-30 validation: `scripts/gpu-validate.sh` passed with the
+    multi-client lane and clean post-run object accounting.
+
+### 7H. Toolkit And Browser Consumers Come After The Substrate
+
+- [ ] Use GTK/WebKit only as late-stage consumers of the GPU substrate.
+  - Default browser stability remains important, but it is not the next GPU
+    architecture step.
+  - Forced WebGL/accelerated compositing should stay disabled unless explicitly
+    testing the lower contracts from Stages 7A-7E.
+- [ ] When revisiting WebKit, require it to use the same buffer-sharing and fence
+  path as other clients.
+  - No env-var-only acceleration claim.
+  - No broad browser-specific workaround that bypasses the GPU object model.
+
+### 7I. Automated Acceptance
+
+- [x] Add a host-side GPU validation script.
+  - Launch KVM/GTK with monitor socket and debugcon.
+  - Wait for known GPU/compositor log markers.
+  - Capture screenshot.
+  - Grep for `panic`, `fatal page fault`, `SIGABRT`, coredump, virtio failures,
+    rejected graphics operations, and stuck fence waits.
+  - Added `scripts/gpu-validate.sh`.  Its default substrate lane launches a
+    KVM `virtio-gpu` VM, waits for the shell prompt with `expect`, runs
+    `gbmtest`, `dmabufsmoke`, `mesawlegl`, concurrent `mesawlegl` plus
+    `mesaglsmoke`, and `gpubuftest 3`, captures post-quiesce `fbstat`, shuts
+    down, and fails on crash markers, rejected blits, leaked BO/fence fd
+    objects, or virtio failures/timeouts.  Optional `GPU_VALIDATE_VISIBLE_3D=1`
+    runs the
+    GTK/virgl demo lane and attempts a monitor `screendump`.
+  - 2026-04-29 validation: `scripts/gpu-validate.sh` passed and wrote
+    `build-x86_64/gpu-validate.log`.
+  - 2026-04-30 validation: `scripts/gpu-validate.sh` passed after adding the
+    multi-client Mesa stress lane.
+  - 2026-04-30 validation: `GPU_VALIDATE_VISIBLE_3D=1
+    GPU_VALIDATE_3D_TIMEOUT=180s scripts/gpu-validate.sh` passed with the
+    forced virgl context-failure/recovery check and clean visible-lane
+    accounting.
+  - 2026-04-30 update: the substrate lane is marker-and-prompt synchronized,
+    runs `/bin/gpubuftest --render-owner`, and the visible lane validates
+    `FB_GPU_VIRGL_FENCE_EXPORT_FD`/`FB_GPU_VIRGL_FENCE_QUERY_FD` through
+    `/bin/virgltest`.
+  - 2026-04-30 validation: `GPU_VALIDATE_TIMEOUT=300s
+    GPU_VALIDATE_VISIBLE_3D=1 GPU_VALIDATE_3D_TIMEOUT=240s
+    scripts/gpu-validate.sh` passed after the render-owner, virgl fence-fd, and
+    timeout context-failure updates.
+  - 2026-04-30 validation: `cmake --build build-x86_64 --target kernel-sparse
+    -j2` passed with `failures=0, errors=0` and the known pre-existing sparse
+    context-imbalance warnings.
+- [x] Add guest-side graphics counter snapshots.
+  - Capture `_fbstat`/`_gpustat` before and after native 3D, multi-client Mesa,
+    compositor stress, and toolkit smoke.
+  - Track live BO handles, imports, contexts/resources, fence counts, failures,
+    and timeouts.
+  - The substrate validator captures post-test `fbstat` and requires
+    `bo_handles 0`, `bo_live_bytes 0`, `bo_fd_live 0`, `fence_fd_live 0`,
+    `rejected_blits 0`, `virtio_failures 0`, and `virtio_timeouts 0`.
+- [ ] Final acceptance pass.
+  - Rebuild `kernel`, `port-wayland`, `rootfs`, and `kernel-sparse`.
+  - Run Mesa software EGL loops.
+  - Run Mesa virgl EGL/OpenGL loops.
+  - Run native 3D screenshot validation.
+  - Run multi-client GPU stress.
+  - Only then run toolkit/browser validation as consumers.
+  - Commit submodules deepest first, then top-level pointers and skill docs.
+
 ## Validation Ladder
 
-- Rebuild `port-wayland`, `image`, and `webkit-runtime-check`.
-- Boot KVM with `root=/dev/disk0 netsurf=0 webkit=1`.
+- Rebuild `kernel`, `port-wayland`, `rootfs` or `image`, and
+  `webkit-runtime-check`.
+- Boot KVM with `QEMU_GPU=virtio-gpu-gl` and a deterministic 1280x800 guest
+  mode.
 - Confirm idle desktop does not constantly full-blit.
 - Move the cursor and verify reduced blinking.
 - Open internal windows, drag/resize them, and verify redraw correctness.
-- Run MiniBrowser through Google Search and repeated navigation.
-- Add GL smoke tests only after the software GL path exists.
+- Run multiple native Mesa clients through repeated launch, resize, swap, close,
+  and forced-exit cycles before testing browsers or other toolkits.
 - For every OpenGL milestone, run repeated create/draw/resize/close loops and
   compare process, buffer, framebuffer, and memory counters before and after.
 - For the API lane, run the same tests with acceleration disabled.
 - For the accelerated lane, run the same tests under QEMU `virtio-gpu-gl` and
   confirm the renderer/capset indicates virgl rather than software fallback.
+- For the visual demo lane, capture a QEMU monitor screenshot and inspect the
+  actual pixels before marking the object/display/cursor fix complete.
+- For toolkit/browser consumers, require them to use the same buffer-sharing and
+  fence path as native Mesa clients, with clean close/reopen, no coredump, and
+  stable post-run graphics counters before calling the consumer gate complete.

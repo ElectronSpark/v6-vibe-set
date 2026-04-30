@@ -269,6 +269,10 @@ class Xv6Input(gdb.Command):
             "dbg_mouse_ringpush",
             "dbg_mouse_reads",
             "dbg_mouse_reads_ok",
+            "dbg_vmmouse_status_err",
+            "dbg_vmmouse_partial",
+            "dbg_vmmouse_abs_reqs",
+            "dbg_vmmouse_fallbacks",
             "vmmouse_available",
         ]
         print("Mouse counters:")
