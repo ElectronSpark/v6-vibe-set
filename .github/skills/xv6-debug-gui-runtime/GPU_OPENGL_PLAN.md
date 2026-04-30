@@ -75,6 +75,10 @@ The concrete gaps are:
   `load-finished`, and then Google's anti-automation redirect.  Forced WebKit
   accelerated backing-store presentation still produces blank content or UI
   crashes, so it is not the accepted default.
+- `glsmoke=1 webkit=1` is now a valid combined validation mode.  The desktop
+  launcher runs the Mesa/virgl GL smoke client as a preflight, waits for it to
+  exit, then continues into the WebKit network wait and MiniBrowser launch
+  instead of treating GL smoke and WebKit as mutually exclusive startup modes.
 - The 3D demo is a real Mesa/virgl scene, but its spherical symmetric faceted
   object currently has a visual mesh/culling flaw that must be fixed before the
   demo is accepted as the visual validation target.
@@ -775,6 +779,13 @@ Current status:
   `webkit_url=https://www.google.com/search?q=xv6&gbv=1` reached the
   `Google Search` title, completed the first search document, and then followed
   Google's expected anti-automation redirect.
+- 2026-04-30 combined validation: KVM/GTK `virtio-gpu-gl` with
+  `glsmoke=1 glsmoke_accel=1 webkit=1 webkit_accel=1
+  webkit_url=https://www.google.com/robots.txt` first completed
+  `mesaglsmoke` with `renderer=virgl buffer=xv6-gpu-bo`, then launched
+  MiniBrowser with `accel=1`; Google `robots.txt` reached `load-finished` and
+  `readyState=complete`, and `/tmp/xv6-fore-shot.png` visibly showed the
+  Google text in the WebKitGTK window.
 - Forced compositing with `WEBKIT_XV6_FORCE_COMPOSITING_MODE=1` is reserved for
   explicit experiments.  The current failure mode is known: the WebKit DOM can
   load, but the content area stays blank if WebKit enters accelerated
