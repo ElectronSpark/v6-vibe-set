@@ -1006,6 +1006,10 @@ synchronization contract.
     `/dev/gpu0`, with fd/handle import-export semantics aligned with libdrm
     PRIME calls.  Durable kernel semantics take priority over library-only
     hacks when a graphics API expects a real OS contract.
+  - 2026-04-30 update: the ports Meson wrapper can now opt into
+    `MESON_DEFAULT_LIBRARY`; `ports/libdrm` uses `both`, staging
+    `libdrm.so.2.133.0` plus SONAME symlinks alongside `libdrm.a`, so runtime
+    EGL/GBM/toolkit probes no longer see a static-only DRM userspace library.
   - KVM substrate validation passed with `/bin/gbmtest`: backend `xv6-gbm`,
     linear BO create/map/export/import/destroy completed.
 - [x] Add a GBM-compatible allocation surface.
