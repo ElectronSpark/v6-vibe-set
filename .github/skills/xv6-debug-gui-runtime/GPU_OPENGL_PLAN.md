@@ -1015,6 +1015,10 @@ synchronization contract.
     expectations.
   - Added `ports/xv6-gbm`: a minimal `libgbm.a`, `gbm.h`, `gbm.pc`, and
     `/bin/gbmtest` for linear ARGB/XRGB BO create/map/export/import/destroy.
+  - 2026-04-30 update: `ports/xv6-gbm` now also installs `libgbm.so.1.0.0`
+    with `libgbm.so.1`/`libgbm.so` symlinks, so runtime clients and probes
+    that expect a dynamic GBM library can resolve the xv6 GBM compatibility
+    layer from the staged sysroot and rootfs.
   - Follow-up `gpubuftest 3` and `fbstat` showed `bo_handles 0`,
     `bo_live_bytes 0`, `bo_fd_live 0`, `fence_fd_live 0`,
     `rejected_blits 0`, `virtio_failures 0`, and `virtio_timeouts 0`.
