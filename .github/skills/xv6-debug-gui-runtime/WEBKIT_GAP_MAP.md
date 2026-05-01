@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 21 WebKitGTK source override files under
+The repo currently carries 20 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -21,6 +21,9 @@ the staged browser binary.
   should expose `std::thread`, `std::mutex`, `std::condition_variable`, and
   `std::call_once` from libstdc++ instead of relying on WebKit-side worker
   suppression.
+- The GTK platform CMake install-path override was removed.  Runtime layout is
+  now owned by the WebKit port staging recipe rather than by patched WebKit
+  source build files.
 
 ## Remaining Override Categories
 
@@ -31,8 +34,6 @@ the staged browser binary.
 - Google/YouTube compatibility shims in MiniBrowser source-application patches.
 - CSS/style engine assertion guards that need a smaller reproducer before they
   can be moved into an OS or toolchain fix.
-- Build/install path edits that should move into the WebKit port recipe rather
-  than a source override.
 
 ## Current Validation Boundary
 
