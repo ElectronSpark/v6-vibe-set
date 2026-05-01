@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 18 WebKitGTK source override files under
+The repo currently carries 17 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -27,6 +27,10 @@ the staged browser binary.
 - WebKit's C++/GLib one-time initialization overrides were removed after the
   target compiler was rebuilt with POSIX-threaded libstdc++ and target
   `std::thread`/`std::call_once` probes linked successfully.
+- The WebCore `PlatformDisplay` surfaceless xv6 fallback override was removed;
+  xv6 now provides a real Wayland/EGL path through the Mesa/libdrm/GBM
+  compatibility stack, with surfaceless kept as a Mesa test lane rather than a
+  WebKit source patch.
 
 ## Remaining Override Categories
 
