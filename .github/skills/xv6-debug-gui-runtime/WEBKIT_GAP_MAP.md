@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 5 WebKitGTK source override files under
+The repo currently carries 4 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -62,13 +62,15 @@ the staged browser binary.
   acceleration policy handling.
 - The WebKit GTK preferences override was removed, restoring upstream default
   accelerated-compositing preference computation.
+- The WebCore frame-view override was removed, restoring upstream compositing
+  layer update scheduling on the accelerated MiniBrowser path.
 
 ## Remaining Override Categories
 
 - GTK accelerated-surface, dmabuf/render-node, and compositing lifetime gaps.
 - Google/YouTube compatibility shims in MiniBrowser source-application patches.
-- Remaining WebCore page/load lifecycle guards that need focused reproducers
-  before they can be moved into an OS or toolchain fix.
+- Remaining WebCore/PlatformDisplay glue that needs WebGL-focused validation
+  before it can be moved into an OS, Mesa, or toolchain fix.
 
 ## Current Validation Boundary
 
