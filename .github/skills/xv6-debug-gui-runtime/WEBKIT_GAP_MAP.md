@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 16 WebKitGTK source override files under
+The repo currently carries 15 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -35,10 +35,13 @@ the staged browser binary.
   upstream GLib `SOCK_STREAM` IPC path and validates large split messages,
   nonblocking readiness, `SCM_RIGHTS`, descriptor lifetime, and fd pressure in
   `webkitabitest`, instead of forcing WebKit source to use `SOCK_SEQPACKET`.
+- The generic IPC scheduling/async-reply tolerance override was removed.  xv6
+  now treats missed async replies as a WebKit/runtime logic issue rather than
+  a kernel ABI escape hatch; the kernel side is covered by the AF_UNIX and
+  process-lifetime tests.
 
 ## Remaining Override Categories
 
-- WebKit IPC scheduling and async-reply tolerance.
 - GTK accelerated-surface, dmabuf/render-node, and compositing lifetime gaps.
 - Google/YouTube compatibility shims in MiniBrowser source-application patches.
 - CSS/style engine assertion guards that need a smaller reproducer before they
