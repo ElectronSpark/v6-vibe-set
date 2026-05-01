@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 17 WebKitGTK source override files under
+The repo currently carries 16 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -31,10 +31,14 @@ the staged browser binary.
   xv6 now provides a real Wayland/EGL path through the Mesa/libdrm/GBM
   compatibility stack, with surfaceless kept as a Mesa test lane rather than a
   WebKit source patch.
+- The Unix IPC transport override was removed.  xv6 now keeps WebKit on the
+  upstream GLib `SOCK_STREAM` IPC path and validates large split messages,
+  nonblocking readiness, `SCM_RIGHTS`, descriptor lifetime, and fd pressure in
+  `webkitabitest`, instead of forcing WebKit source to use `SOCK_SEQPACKET`.
 
 ## Remaining Override Categories
 
-- WebKit IPC scheduling, seqpacket buffering, and async-reply tolerance.
+- WebKit IPC scheduling and async-reply tolerance.
 - GTK accelerated-surface, dmabuf/render-node, and compositing lifetime gaps.
 - Google/YouTube compatibility shims in MiniBrowser source-application patches.
 - CSS/style engine assertion guards that need a smaller reproducer before they
