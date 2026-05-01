@@ -1,35 +1,42 @@
-# Archived WebKitGTK Override Retirement Map
+# WebKitGTK Override Retirement Map
 
-This is a historical record, not the active WebKit task plan.  Keep active
-WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL work in
-`GPU_OPENGL_PLAN.md`.
+Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
+work in `GPU_OPENGL_PLAN.md`.
 
-The repo no longer carries WebKitGTK source overrides under
-`ports/webkit/overrides/webkitgtk-2.42.5`; the active override count is `0`.
-The current WebKit path stays functional by staging the repo-local prebuilt
-runtime from `ports/webkit/sysroot`.
+The repo currently carries 21 WebKitGTK source override files under
+`ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
+still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
+removing an override retires source rebuild debt but does not by itself rebuild
+the staged browser binary.
 
-## Retired Override Set
+## Recently Retired Overrides
 
-The retired set contained 32 files covering MiniBrowser UI/runtime settings,
-WebKit IPC, helper-process logging, network/cache policy, shared memory, JSC
-feature policy, sandbox policy, and GTK build options.  Those files were
-removed from the source tree after the kernel/user reproducer pass and the
-fresh container runtime validation.
+- GCrypt secure-memory initialization is back on the upstream path after xv6
+  gained `mlock2`, `mlockall`, `munlock`, and `munlockall` syscall aliases.
+- WebKit shared memory is back on the upstream `memfd_create` path after xv6
+  gained native x86/generic memfd syscall numbers and the toolchain exposes the
+  corresponding `__NR_*` aliases.
+- ANGLE's worker-thread source override was removed after the toolchain recipe
+  switched full GCC/libstdc++ builds to POSIX threads.  A rebuilt toolchain
+  should expose `std::thread`, `std::mutex`, `std::condition_variable`, and
+  `std::call_once` from libstdc++ instead of relying on WebKit-side worker
+  suppression.
 
-Retired override categories:
+## Remaining Override Categories
 
-- Debug-only crash/helper/process logs.
-- MiniBrowser UI and runtime settings.
-- AF_UNIX stream IPC and `SCM_RIGHTS` workarounds.
-- Shared-memory and memfd handling workarounds.
-- Network cache, libsoup/GIO/OpenSSL, and loader guards.
-- No-sandbox, no-acceleration, and interpreter-only JSC policy settings.
-- GTK/WebKit build option edits.
+- C++/GLib one-time initialization fallbacks until the rebuilt POSIX-threaded
+  libstdc++ is validated against WebKit startup.
+- WebKit IPC scheduling, seqpacket buffering, and async-reply tolerance.
+- GTK accelerated-surface, dmabuf/render-node, and compositing lifetime gaps.
+- Google/YouTube compatibility shims in MiniBrowser source-application patches.
+- CSS/style engine assertion guards that need a smaller reproducer before they
+  can be moved into an OS or toolchain fix.
+- Build/install path edits that should move into the WebKit port recipe rather
+  than a source override.
 
 ## Current Validation Boundary
 
-The removal only retires the repo source override files.  It does not claim
+Override removal only retires repo source override files.  It does not claim
 that an upstream WebKitGTK source rebuild is already functional without porting
 work.  The supported runtime path remains:
 
@@ -40,26 +47,22 @@ work.  The supported runtime path remains:
 
 ## Reproducer Coverage
 
-These checks passed before the source overrides were removed:
+These checks cover the kernel/toolchain side of the retirement work:
 
 - `webkitabitest`: AF_UNIX stream IPC, nonblocking readiness, `SOCK_CLOEXEC`,
   multi-fd `SCM_RIGHTS`, fd lifetime, memfd/shared mmap, VFS cache-shape,
-  waitpid, timerfd, random devices, and executable-memory policy.
+  waitpid, timerfd, random devices, executable-memory policy, memory-locking
+  aliases, and native `memfd_create` aliases.
 - `webkitnettest`: nonblocking TCP connect, `SO_ERROR`, send/recv, and parallel
   loopback TCP pressure.
 - `webkit-runtime-check`: staged runtime present in sysroot and `fs.img`.
-- Fresh container rebuild: `xv6-images` and `webkit-runtime-check` passed after
-  removing the previous container/image/build directory.
-- Headless desktop WebKit smoke: `webkit=1` reached the Google page title and
-  survived a short idle run.
-- Fresh host rebuild after override retirement: removed `build-x86_64`, rebuilt
-  `image` plus `webkit-runtime-check`, launched KVM with
-  `root=/dev/disk0 netsurf=0 webkit=1`, reached Google, submitted an `xv6`
-  Google search, navigated through GitHub, YouTube, and xv6-public GitHub pages,
-  and remained responsive for several minutes.
+- KVM/GTK WebKit smoke: `webkit=1 webkit_accel=1` reached the Google title and
+  `load-finished` with virgl initialized.
 
 ## Remaining Proof Work
 
+- Rebuild the local toolchain with POSIX-threaded libstdc++ and prove
+  `std::thread`/`std::call_once` with a target compile and guest smoke.
 - Build WebKitGTK from clean upstream source without repo overrides.
 - Re-run local HTML, HTTP, HTTPS, Google search, repeated navigation,
   close/reopen, and long-idle MiniBrowser validation.
