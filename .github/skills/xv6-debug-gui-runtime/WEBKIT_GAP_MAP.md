@@ -4,10 +4,11 @@ Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
 The repo currently carries 0 WebKitGTK source override files under
-`ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
-still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
-this retires repo source override debt but does not by itself prove a fresh
-upstream WebKitGTK source rebuild.
+`ports/webkit/overrides`, and `ports/webkit/apply-xv6-overrides.sh` no longer
+mutates WebKitGTK source trees.  The current runnable WebKit path still stages
+the repo-local prebuilt runtime from `ports/webkit/sysroot`, so this retires
+repo source patch debt but does not by itself prove that the staged binaries
+were produced from a clean upstream WebKitGTK source rebuild.
 
 ## Recently Retired Overrides
 
@@ -73,19 +74,21 @@ upstream WebKitGTK source rebuild.
 - The WebKit GLib process-pool and GTK accelerated-backing-store overrides were
   removed together, restoring upstream dmabuf/render-node parameter setup and
   accelerated backing-store creation.
+- The residual inline patch logic in `apply-xv6-overrides.sh` was removed; the
+  script is now a no-op source-tree validator.
 
 ## Remaining Port Categories
 
-- Google/YouTube compatibility shims in MiniBrowser source-application patches.
-- Fresh upstream WebKitGTK source rebuild work against the xv6 sysroot.
+- Replace the staged WebKitGTK runtime with binaries built from clean upstream
+  source against the xv6 sysroot.
 - Long-run accelerated-surface, dmabuf/render-node, and compositing lifetime
   validation under real browser workloads.
 
 ## Current Validation Boundary
 
-Override removal only retires repo source override files.  It does not claim
-that an upstream WebKitGTK source rebuild is already functional without porting
-work.  The supported runtime path remains:
+Patch removal retires repo source override files and inline source mutations.
+It does not prove that the currently staged prebuilt WebKitGTK runtime is free
+of historical local changes.  The supported runtime path remains:
 
 - stage `ports/webkit/sysroot` into the xv6 sysroot;
 - verify required MiniBrowser/WebKit helper binaries and libraries with
@@ -110,7 +113,7 @@ These checks cover the kernel/toolchain side of the retirement work:
 
 - Rebuild the local toolchain with POSIX-threaded libstdc++ and prove
   `std::thread`/`std::call_once` with a target compile and guest smoke.
-- Build WebKitGTK from clean upstream source without repo overrides.
+- Build WebKitGTK from clean upstream source without repo patches.
 - Re-run local HTML, HTTP, HTTPS, Google search, repeated navigation,
   close/reopen, and long-idle MiniBrowser validation.
 - If clean source fails, add narrowly scoped fixes to a real in-tree port source
