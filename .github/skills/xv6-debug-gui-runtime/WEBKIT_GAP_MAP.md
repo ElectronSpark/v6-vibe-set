@@ -3,11 +3,11 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 2 WebKitGTK source override files under
+The repo currently carries 0 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
-removing an override retires source rebuild debt but does not by itself rebuild
-the staged browser binary.
+this retires repo source override debt but does not by itself prove a fresh
+upstream WebKitGTK source rebuild.
 
 ## Recently Retired Overrides
 
@@ -70,14 +70,16 @@ the staged browser binary.
 - The WebKit GTK web-view-base override was removed, restoring upstream
   accelerated-backing-store call sites instead of carrying UIProcess null
   guards around missing backing-store creation.
+- The WebKit GLib process-pool and GTK accelerated-backing-store overrides were
+  removed together, restoring upstream dmabuf/render-node parameter setup and
+  accelerated backing-store creation.
 
-## Remaining Override Categories
+## Remaining Port Categories
 
-- GTK accelerated-surface, dmabuf/render-node, and compositing lifetime gaps.
 - Google/YouTube compatibility shims in MiniBrowser source-application patches.
-- Remaining WebKit GTK accelerated-surface and process-pool hooks that need
-  dmabuf/render-node lifetime work before they can be moved into OS, Mesa, or
-  toolchain fixes.
+- Fresh upstream WebKitGTK source rebuild work against the xv6 sysroot.
+- Long-run accelerated-surface, dmabuf/render-node, and compositing lifetime
+  validation under real browser workloads.
 
 ## Current Validation Boundary
 
