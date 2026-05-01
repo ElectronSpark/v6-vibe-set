@@ -3,7 +3,7 @@
 Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
 work in `GPU_OPENGL_PLAN.md`.
 
-The repo currently carries 8 WebKitGTK source override files under
+The repo currently carries 7 WebKitGTK source override files under
 `ports/webkit/overrides/webkitgtk-2.42.5`.  The current runnable WebKit path
 still stages the repo-local prebuilt runtime from `ports/webkit/sysroot`, so
 removing an override retires source rebuild debt but does not by itself rebuild
@@ -56,6 +56,8 @@ the staged browser binary.
   policy checks for substitute-data loads.
 - The WebKit UIProcess page-proxy override was removed, restoring upstream
   request dispatch for normal and deferred process-launch loads.
+- The WebKit WebProcess page override was removed, restoring upstream drawing
+  area accelerated-compositing entry and substitute-data load dispatch.
 
 ## Remaining Override Categories
 
