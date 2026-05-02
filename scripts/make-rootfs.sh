@@ -187,7 +187,8 @@ cat > "${STAGE}/root/Desktop/3ddemo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=3D Demo
-X-XV6-Builtin=3ddemo
+Exec=/bin/mesaglsmoke
+Arg=--demo
 IconChar=3
 IconColor=0xFF6EA63D
 EOF
