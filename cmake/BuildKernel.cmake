@@ -43,6 +43,9 @@ ExternalProject_Add(kernel
 	                    -DARCH=${_kernel_arch}
 	                    -DPLATFORM=qemu
 	                    -DOPT_LEVEL=2
+	                    -DCMAKE_C_COMPILER=${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-gcc
+	                    -DCMAKE_ASM_COMPILER=${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-gcc
+	                    -DCMAKE_LINKER=${XV6_TOOLCHAIN_BIN}/${XV6_TRIPLE}-ld
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_kernel_obj} -j${XV6_PARALLEL_JOBS} --target kernel_all
 	INSTALL_COMMAND   ${CMAKE_COMMAND} -E rm -rf ${XV6_KERNEL_ARTIFACTS}/kernel.elf
 	          COMMAND ${CMAKE_COMMAND} -E copy
