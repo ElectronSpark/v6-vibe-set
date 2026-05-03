@@ -168,12 +168,41 @@ case "${ARCH}" in
                 fi
                 NET_ARGS=()
                 if [[ "${QEMU_NET}" == "1" ]]; then
-                        # User-mode net w/ explicit hostfwd so a guest server on
-                        # 8080 is reachable from the host on 18080. Override
-                        # via HOSTFWD env (full -netdev user fragment).
-                        HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
-                        NET_ARGS=(-netdev user,id=n0,${HOSTFWD}
-                                  -device e1000,netdev=n0)
+                        # Backend selection:
+                        #   QEMU_NET_BACKEND=user (default) — user-mode SLIRP
+                        #     NAT.  Caps at ~30-40 Mbit/s aggregate (single-
+                        #     threaded host TCP stack).  Convenient: no host
+                        #     setup, hostfwd works.
+                        #   QEMU_NET_BACKEND=tap — bridge to a pre-existing
+                        #     tap device (QEMU_NET_TAP_IFNAME, default
+                        #     "tap0").  Bypasses SLIRP entirely; expect
+                        #     1-10 Gbit/s.  Requires the host to have already
+                        #     created and configured the tap device (see
+                        #     scripts/setup-tap.sh) and the QEMU binary to
+                        #     have permission to open it.
+                        case "${QEMU_NET_BACKEND:-user}" in
+                                user)
+                                        # User-mode net w/ explicit hostfwd so a
+                                        # guest server on 8080 is reachable from
+                                        # the host on 18080. Override via
+                                        # HOSTFWD env (full -netdev user
+                                        # fragment).
+                                        HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
+                                        NET_ARGS=(-netdev user,id=n0,${HOSTFWD}
+                                                  -device e1000,netdev=n0)
+                                        ;;
+                                tap)
+                                        QEMU_NET_TAP_IFNAME="${QEMU_NET_TAP_IFNAME:-tap0}"
+                                        QEMU_NET_TAP_SCRIPT="${QEMU_NET_TAP_SCRIPT:-no}"
+                                        QEMU_NET_TAP_DOWN="${QEMU_NET_TAP_DOWN:-no}"
+                                        NET_ARGS=(-netdev "tap,id=n0,ifname=${QEMU_NET_TAP_IFNAME},script=${QEMU_NET_TAP_SCRIPT},downscript=${QEMU_NET_TAP_DOWN}"
+                                                  -device e1000,netdev=n0)
+                                        ;;
+                                *)
+                                        echo "unsupported QEMU_NET_BACKEND: ${QEMU_NET_BACKEND}" >&2
+                                        exit 1
+                                        ;;
+                        esac
                 else
                         NET_ARGS=(-net none)
                 fi
