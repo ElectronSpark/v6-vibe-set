@@ -79,12 +79,16 @@ if [[ "${QEMU_GDB}" == "1" ]]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────────
-# KVM enablement.  Currently OPT-IN (USE_KVM=1) because the kernel can
-# lock up under KVM after userspace starts, while the same image runs
-# under TCG.  Fixing the kernel is tracked separately; until then we
-# stay on TCG by default.  Set USE_KVM=1 to try KVM anyway.
+# KVM enablement.  Prefer hardware acceleration on x86_64 when the host
+# exposes /dev/kvm; set USE_KVM=0 to force TCG for deterministic debugging.
 # ──────────────────────────────────────────────────────────────────────
-USE_KVM="${USE_KVM:-0}"
+if [[ -z "${USE_KVM:-}" ]]; then
+        if [[ "${ARCH}" == "x86_64" && -e /dev/kvm ]]; then
+                USE_KVM=1
+        else
+                USE_KVM=0
+        fi
+fi
 KVM_ARGS=()
 if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
@@ -98,7 +102,7 @@ if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         fi
         if [[ -r /dev/kvm && -w /dev/kvm ]]; then
                 KVM_ARGS=(-enable-kvm)
-                echo "run-qemu: using KVM acceleration (kernel may lock up under KVM — see scripts/run-qemu.sh)" >&2
+                echo "run-qemu: using KVM acceleration" >&2
         fi
 fi
 
