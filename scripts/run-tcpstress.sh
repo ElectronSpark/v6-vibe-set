@@ -53,9 +53,13 @@ HOST_LOG="${LOG_PATH%.log}.host.log"
 
 # SLIRP guest gateway — fixed address that means "the host running QEMU".
 GUEST_HOST_IP="10.0.2.2"
+# Skip DHCP via kernel cmdline so the test boots in seconds.  10.0.2.15 is
+# QEMU SLIRP's default guest address; for TAP we use 192.168.78.20.
+GUEST_IP_OPT="ip=10.0.2.15/255.255.255.0/10.0.2.2"
 NET_BACKEND="${TCPSTRESS_NET_BACKEND:-user}"
 if [[ "${NET_BACKEND}" == "tap" ]]; then
     GUEST_HOST_IP="${TCPSTRESS_TAP_HOST_IP:-192.168.78.1}"
+    GUEST_IP_OPT="ip=192.168.78.20/255.255.255.0/${GUEST_HOST_IP}"
 fi
 
 # Total connections the host server will see across all forks.
@@ -147,9 +151,11 @@ trap 'rm -f "${DRIVE_SCRIPT}" "${INPUT_PIPE}"; kill -9 "${HOST_PID}" 2>/dev/null
     printf '/bin/tcpstress %s %d %d %d %d\n' \
         "${GUEST_HOST_IP}" "${HOST_PORT}" "${PARALLEL}" "${PAYLOAD}" "${ITERS}"
     # Give tcpstress a chance to actually run before queuing more input.
-    sleep $(( TIMEOUT_SECS - BOOT_GRACE - 10 ))
+    POST_SLEEP=$(( TIMEOUT_SECS - BOOT_GRACE - 4 ))
+    [ "${POST_SLEEP}" -lt 1 ] && POST_SLEEP=1
+    sleep "${POST_SLEEP}"
     printf '/bin/shutdown\n'
-    sleep 5
+    sleep 1
 ) >"${INPUT_PIPE}" &
 WRITER_PID=$!
 
@@ -161,7 +167,7 @@ DISPLAY_MODE=nographic \
 QEMU_NET=1 \
 QEMU_NET_BACKEND="${NET_BACKEND}" \
 QEMU_GPU=none \
-QEMU_APPEND="root=/dev/disk0 netsurf=0 webkit=0 video=80x25" \
+QEMU_APPEND="root=/dev/disk0 netsurf=0 webkit=0 video=80x25 ${GUEST_IP_OPT}" \
 timeout "${TIMEOUT_SECS}" \
     bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}" \
     <"${INPUT_PIPE}" \
