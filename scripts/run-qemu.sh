@@ -189,14 +189,14 @@ case "${ARCH}" in
                                         # fragment).
                                         HOSTFWD="${HOSTFWD:-hostfwd=tcp::18080-:8080,hostfwd=tcp::15001-:5001}"
                                         NET_ARGS=(-netdev user,id=n0,${HOSTFWD}
-                                                  -device e1000,netdev=n0)
+                                                  -device "${QEMU_NET_MODEL:-e1000},netdev=n0")
                                         ;;
                                 tap)
                                         QEMU_NET_TAP_IFNAME="${QEMU_NET_TAP_IFNAME:-tap0}"
                                         QEMU_NET_TAP_SCRIPT="${QEMU_NET_TAP_SCRIPT:-no}"
                                         QEMU_NET_TAP_DOWN="${QEMU_NET_TAP_DOWN:-no}"
                                         NET_ARGS=(-netdev "tap,id=n0,ifname=${QEMU_NET_TAP_IFNAME},script=${QEMU_NET_TAP_SCRIPT},downscript=${QEMU_NET_TAP_DOWN}"
-                                                  -device e1000,netdev=n0)
+                                                  -device "${QEMU_NET_MODEL:-e1000},netdev=n0")
                                         ;;
                                 *)
                                         echo "unsupported QEMU_NET_BACKEND: ${QEMU_NET_BACKEND}" >&2
