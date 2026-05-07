@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 MP4 MSE probe</title>
+<video id="v" muted autoplay playsinline controls width="640" height="360"></video>
+<pre id="out"></pre>
+<script>
+(async () => {
+  const out = document.getElementById("out");
+  const video = document.getElementById("v");
+  const params = new URLSearchParams(location.search);
+  const asset = params.get("asset") || "test-mse.mp4";
+  const repeats = Number(params.get("repeats") || "3");
+  const candidates = [
+    'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+    'video/mp4; codecs="avc1.4D401E, mp4a.40.2"',
+    'video/mp4; codecs="avc1.42E01E"',
+    'video/mp4; codecs="avc1.4D401E"',
+    "video/mp4"
+  ];
+  const lines = [];
+  function log(line) {
+    lines.push(line);
+    console.log("MSE-MP4 " + line);
+    out.textContent = lines.join("\n");
+  }
+  function ranges(r) {
+    const a = [];
+    for (let i = 0; i < r.length; i++)
+      a.push(r.start(i).toFixed(3) + "-" + r.end(i).toFixed(3));
+    return a.join("|");
+  }
+  function state(tag) {
+    log(tag + " paused=" + video.paused + " ready=" + video.readyState +
+      " network=" + video.networkState + " time=" + video.currentTime.toFixed(3) +
+      " duration=" + video.duration + " buffered=" + ranges(video.buffered) +
+      " error=" + (video.error ? video.error.code : 0));
+  }
+  for (const ev of ["loadstart", "loadedmetadata", "loadeddata", "canplay",
+    "playing", "waiting", "stalled", "timeupdate", "pause", "ended", "error"])
+    video.addEventListener(ev, () => state("event:" + ev));
+  try {
+    const type = candidates.find(t => MediaSource.isTypeSupported(t));
+    log("asset=" + asset + " type=" + type + " repeats=" + repeats);
+    if (!type)
+      throw new Error("no supported MP4 MSE type");
+    const response = await fetch(asset);
+    const bytes = await response.arrayBuffer();
+    log("fetched status=" + response.status + " bytes=" + bytes.byteLength);
+    const mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    await new Promise((resolve, reject) => {
+      mediaSource.addEventListener("sourceopen", resolve, { once: true });
+      mediaSource.addEventListener("error", reject, { once: true });
+    });
+    const sourceBuffer = mediaSource.addSourceBuffer(type);
+    for (let i = 0; i < repeats; i++) {
+      if (i)
+        sourceBuffer.timestampOffset = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : i * 2;
+      await new Promise((resolve, reject) => {
+        sourceBuffer.addEventListener("updateend", resolve, { once: true });
+        sourceBuffer.addEventListener("error", reject, { once: true });
+        sourceBuffer.appendBuffer(bytes);
+      });
+      log("append" + i + " buffered=" + ranges(video.buffered));
+    }
+    const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 2;
+    mediaSource.duration = end + 0.25;
+    mediaSource.endOfStream();
+    state("before-play");
+    await video.play();
+    log("play-promise=resolved");
+    const start = video.currentTime;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      state("tick" + i);
+    }
+    log("RESULT " + (video.currentTime > start + 4 && !video.error ? "pass" : "fail"));
+  } catch (e) {
+    log("RESULT fail exception=" + e.name + ":" + e.message);
+  }
+})();
+</script>

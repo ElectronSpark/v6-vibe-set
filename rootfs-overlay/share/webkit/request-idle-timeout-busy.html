@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 request idle timeout busy</title>
+<pre id="log">boot</pre>
+<script>
+(function () {
+  var logNode = document.getElementById("log");
+  var events = [];
+  function log(msg) {
+    events.push(msg);
+    logNode.textContent = events.join("\n");
+    console.log("XV6-FIXTURE " + msg);
+  }
+
+  window.__xv6Fixture = { name: "request-idle-timeout-busy", events: events };
+
+  log("requestIdleCallback=" + typeof window.requestIdleCallback);
+
+  if (typeof window.requestIdleCallback !== "function") {
+    document.body.dataset.result = "fail";
+    log("RESULT fail missing-requestIdleCallback");
+    return;
+  }
+
+  var callbackRan = false;
+  var callbackDidTimeout = false;
+  var callbackRemaining = -1;
+
+  window.requestIdleCallback(function (deadline) {
+    callbackRan = true;
+    callbackDidTimeout = !!deadline.didTimeout;
+    callbackRemaining = Math.floor(deadline.timeRemaining());
+    log("idle:start didTimeout=" + callbackDidTimeout + " remaining=" + callbackRemaining);
+  }, { timeout: 150 });
+
+  var start = Date.now();
+  while (Date.now() - start < 650) {
+    Math.sqrt(Date.now());
+  }
+  log("busy:done elapsed=" + (Date.now() - start));
+
+  window.setTimeout(function () {
+    if (callbackRan && callbackDidTimeout && callbackRemaining === 0) {
+      document.body.dataset.result = "pass";
+      log("RESULT pass");
+    } else {
+      document.body.dataset.result = "fail";
+      log("RESULT fail ran=" + callbackRan + " didTimeout=" + callbackDidTimeout +
+          " remaining=" + callbackRemaining);
+    }
+  }, 500);
+})();
+</script>

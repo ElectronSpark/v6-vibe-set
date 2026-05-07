@@ -1,0 +1,149 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 streaming MSE loop probe</title>
+<video id="v" muted autoplay playsinline controls width="640" height="360"></video>
+<pre id="out"></pre>
+<script>
+(async () => {
+  const out = document.getElementById("out");
+  const video = document.getElementById("v");
+  const params = new URLSearchParams(location.search);
+  const target = Math.min(Math.max(Number(params.get("target")) || 75, 10), 180);
+  const initial = Math.min(Math.max(Number(params.get("initial")) || 8, 2), 64);
+  const lead = Math.min(Math.max(Number(params.get("lead")) || 18, 4), 60);
+  const pressure = Math.min(Math.max(Number(params.get("pressure")) || 0, 0), 16);
+  if (params.get("muted") === "0")
+    video.muted = false;
+  const lines = [];
+  let running = true;
+  let appending = false;
+  let appended = 0;
+  function log(line) {
+    lines.push(line);
+    if (lines.length > 160)
+      lines.shift();
+    console.log("MSE-STREAM " + line);
+    out.textContent = lines.join("\n");
+  }
+  function ranges(r) {
+    const a = [];
+    for (let i = 0; i < r.length; i++)
+      a.push(r.start(i).toFixed(3) + "-" + r.end(i).toFixed(3));
+    return a.join("|");
+  }
+  function bufferEnd() {
+    const r = video.buffered;
+    return r.length ? r.end(r.length - 1) : 0;
+  }
+  function state(tag) {
+    log(tag + " paused=" + video.paused + " ready=" + video.readyState +
+      " network=" + video.networkState + " time=" + video.currentTime.toFixed(3) +
+      " duration=" + video.duration.toFixed(3) + " buffered=" +
+      ranges(video.buffered) + " error=" + (video.error ? video.error.code : 0));
+  }
+  async function pressureLoop(id) {
+    let n = 0;
+    while (running) {
+      try {
+        const response = await fetch("google-js-load.html?stream=" + id +
+          "&n=" + n + "&t=" + Date.now(), { cache: "no-store" });
+        await response.arrayBuffer();
+      } catch (e) {
+        log("pressure" + id + " error=" + e.name);
+      }
+      n++;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  function cpuPulse() {
+    if (!running)
+      return;
+    const deadline = Date.now() + 8;
+    let x = 0;
+    while (Date.now() < deadline)
+      x = (x * 33 + Math.sqrt(x + 17)) % 65521;
+    setTimeout(cpuPulse, 6);
+  }
+  function once(target, name) {
+    return new Promise((resolve, reject) => {
+      target.addEventListener(name, resolve, { once: true });
+      target.addEventListener("error", reject, { once: true });
+    });
+  }
+  for (const ev of ["loadstart", "loadedmetadata", "loadeddata", "canplay",
+    "playing", "waiting", "stalled", "timeupdate", "pause", "ended", "error"])
+    video.addEventListener(ev, () => state("event:" + ev));
+  try {
+    const audioType = 'audio/webm; codecs="opus"';
+    const videoType = 'video/webm; codecs="vp9,opus"';
+    log("supported audio=" + MediaSource.isTypeSupported(audioType) +
+      " video=" + MediaSource.isTypeSupported(videoType) + " target=" +
+      target + " initial=" + initial + " lead=" + lead + " pressure=" + pressure);
+    if (!MediaSource.isTypeSupported(audioType) || !MediaSource.isTypeSupported(videoType))
+      throw new Error("required MSE types unsupported");
+    for (let i = 0; i < pressure; i++)
+      pressureLoop(i);
+    if (pressure)
+      cpuPulse();
+    const [audioResponse, videoResponse] = await Promise.all([
+      fetch("test-mse-audio.webm"),
+      fetch("test-mse.webm")
+    ]);
+    const [audioBytes, videoBytes] = await Promise.all([
+      audioResponse.arrayBuffer(),
+      videoResponse.arrayBuffer()
+    ]);
+    log("fetched audio=" + audioResponse.status + "/" + audioBytes.byteLength +
+      " video=" + videoResponse.status + "/" + videoBytes.byteLength);
+    const mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    await once(mediaSource, "sourceopen");
+    const audioBuffer = mediaSource.addSourceBuffer(audioType);
+    const videoBuffer = mediaSource.addSourceBuffer(videoType);
+    const audioDuration = 2.0;
+    const videoDuration = 2.0505;
+    const appendOne = async () => {
+      if (appending)
+        return;
+      appending = true;
+      audioBuffer.timestampOffset = appended * audioDuration;
+      audioBuffer.appendBuffer(audioBytes);
+      await once(audioBuffer, "updateend");
+      videoBuffer.timestampOffset = appended * videoDuration;
+      videoBuffer.appendBuffer(videoBytes);
+      await once(videoBuffer, "updateend");
+      appended++;
+      mediaSource.duration = Math.max(appended * audioDuration,
+        appended * videoDuration) + 0.25;
+      log("append" + appended + " lead=" +
+        (bufferEnd() - video.currentTime).toFixed(3) + " buffered=" +
+        ranges(video.buffered));
+      appending = false;
+    };
+    for (let i = 0; i < initial; i++)
+      await appendOne();
+    state("before-play");
+    await video.play();
+    log("play-promise=resolved");
+    const watchdog = setInterval(async () => {
+      if (!running || appending || mediaSource.readyState !== "open")
+        return;
+      if (bufferEnd() - video.currentTime < lead && bufferEnd() < target + lead)
+        await appendOne();
+    }, 250);
+    while (video.currentTime < target && !video.error) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      state("tick");
+    }
+    running = false;
+    clearInterval(watchdog);
+    if (mediaSource.readyState === "open")
+      mediaSource.endOfStream();
+    state("final");
+    log("RESULT " + (video.currentTime >= target && !video.error ? "pass" : "fail"));
+  } catch (e) {
+    running = false;
+    log("RESULT fail exception=" + e.name + ":" + e.message);
+  }
+})();
+</script>
