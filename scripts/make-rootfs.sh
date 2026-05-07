@@ -9,12 +9,51 @@
 # The sysroot is expected to be the install tree produced by `cmake --build user
 # --target install`, i.e. it contains bin/_<progname> binaries.  The leading
 # underscore is stripped when staging into the image (xv6 convention).
+#
+# Set ROOTFS_OVERLAY=/path/to/overlay to use an alternate overlay directory for
+# one-off diagnostic images.  The default is the repository's rootfs-overlay.
 set -euo pipefail
 
 SYSROOT="${1:?usage: $0 <sysroot_dir> <out_img> [size_mb] [musl_libdir]}"
 OUT="${2:?usage: $0 <sysroot_dir> <out_img> [size_mb] [musl_libdir]}"
 SIZE_MB="${3:-64}"
 MUSL_LIBDIR="${4:-}"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
+find_musl_libdir() {
+    shopt -s nullglob
+    local musl_candidates=(
+        "${REPO_ROOT}"/build-toolchain-*/*/phase2/*-xv6-linux-musl/lib
+        "${REPO_ROOT}"/build-*/*/phase2/*-xv6-linux-musl/lib
+        "${REPO_ROOT}"/build-*/toolchain/*/phase2/*-xv6-linux-musl/lib
+    )
+    shopt -u nullglob
+    local candidate
+    for candidate in "${musl_candidates[@]}"; do
+        if [[ -f "${candidate}/libc.so" ]] &&
+           compgen -G "${candidate}/ld-musl-*.so.1" >/dev/null; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [[ -n "${MUSL_LIBDIR}" ]] &&
+   { [[ ! -d "${MUSL_LIBDIR}" ]] ||
+     [[ ! -f "${MUSL_LIBDIR}/libc.so" ]] ||
+     ! compgen -G "${MUSL_LIBDIR}/ld-musl-*.so.1" >/dev/null; }; then
+    echo "make-rootfs: warning: invalid musl libdir '${MUSL_LIBDIR}', rediscovering" >&2
+    MUSL_LIBDIR=""
+fi
+
+if [[ -z "${MUSL_LIBDIR}" ]]; then
+    if discovered_musl="$(find_musl_libdir)"; then
+        MUSL_LIBDIR="${discovered_musl}"
+    fi
+fi
 
 if [[ ! -d "${SYSROOT}/bin" ]]; then
     echo "make-rootfs: ${SYSROOT}/bin not found - did you run 'cmake --build user --target install'?" >&2
@@ -59,11 +98,10 @@ for f in "${SYSROOT}"/*; do
 done
 shopt -u nullglob
 
-# 5. Apply the in-tree rootfs overlay (e.g. /etc/startup) on top of
-#    everything staged so far. Path is resolved relative to this script
-#    so it works regardless of the caller's cwd.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-OVERLAY="${SCRIPT_DIR}/../rootfs-overlay"
+# 5. Apply the rootfs overlay (e.g. /etc/startup) on top of everything staged
+#    so far. Path is resolved relative to this script so the default works
+#    regardless of the caller's cwd.
+OVERLAY="${ROOTFS_OVERLAY:-${SCRIPT_DIR}/../rootfs-overlay}"
 if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
@@ -302,6 +340,17 @@ if [[ -n "${MUSL_LIBDIR}" && -d "${MUSL_LIBDIR}" ]]; then
         done
     fi
     shopt -u nullglob
+fi
+
+if [[ ! -e "${STAGE}/lib/ld-musl-x86_64.so.1" ]]; then
+    if command -v readelf >/dev/null 2>&1 &&
+       find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null |
+       xargs -0 -r readelf -l 2>/dev/null |
+       grep -q 'Requesting program interpreter: /lib/ld-musl-x86_64.so.1'; then
+        echo "make-rootfs: missing /lib/ld-musl-x86_64.so.1 for dynamically linked binaries" >&2
+        echo "make-rootfs: pass the musl libdir or keep build-toolchain-* under the repo root" >&2
+        exit 1
+    fi
 fi
 
 rm -f "${OUT}"

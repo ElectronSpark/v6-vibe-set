@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 youtube idle scheduler</title>
+<pre id="log">boot</pre>
+<script>
+(function () {
+  var logNode = document.getElementById("log");
+  var events = [];
+  function log(msg) {
+    events.push(msg);
+    logNode.textContent = events.join("\n");
+    console.log("XV6-FIXTURE " + msg);
+  }
+
+  window.__xv6Fixture = { name: "youtube-idle-scheduler", events: events };
+
+  function finish() {
+    var idle = document.body.dataset.idle === "yes";
+    var schedulerLow = document.body.dataset.schedulerLow === "yes";
+    var schedulerHigh = document.body.dataset.schedulerHigh === "yes";
+    var schedulerImmediate = document.body.dataset.schedulerImmediate === "yes";
+    if (idle && schedulerLow && schedulerHigh && schedulerImmediate) {
+      document.body.dataset.result = "pass";
+      log("RESULT pass");
+    } else {
+      document.body.dataset.result = "fail";
+      log("RESULT fail idle=" + idle + " low=" + schedulerLow +
+          " high=" + schedulerHigh + " immediate=" + schedulerImmediate);
+    }
+  }
+
+  log("requestIdleCallback=" + typeof window.requestIdleCallback +
+      " cancelIdleCallback=" + typeof window.cancelIdleCallback +
+      " requestAnimationFrame=" + typeof window.requestAnimationFrame);
+
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(function (deadline) {
+      document.body.dataset.idle = "yes";
+      log("idle:start didTimeout=" + deadline.didTimeout +
+          " remaining=" + Math.floor(deadline.timeRemaining()));
+    }, { timeout: 500 });
+  } else {
+    document.body.dataset.idle = "missing";
+    log("idle:missing");
+  }
+
+  function MiniScheduler() {
+    this.queues = { 8: [], 5: [], 4: [], 3: [], 2: [], 1: [], 0: [] };
+    this.jobs = {};
+    this.nextId = 1;
+    this.timer = 0;
+    this.raf = typeof window.requestAnimationFrame === "function";
+    this.ric = typeof window.requestIdleCallback === "function" &&
+        typeof window.cancelIdleCallback === "function";
+  }
+  MiniScheduler.prototype.addJob = function (job, priority, delay) {
+    var self = this;
+    var id = this.nextId++;
+    log("scheduler:addJob id=" + id + " priority=" + priority + " delay=" + delay);
+    if (delay !== undefined) {
+      window.setTimeout(function () {
+        self.enqueue(id, job, priority);
+      }, delay || 0);
+    } else {
+      this.enqueue(id, job, priority);
+    }
+    return id;
+  };
+  MiniScheduler.prototype.addImmediateJob = function (job) {
+    log("scheduler:addImmediateJob");
+    job();
+  };
+  MiniScheduler.prototype.enqueue = function (id, job, priority) {
+    this.jobs[id] = job;
+    this.queues[priority].push(id);
+    log("scheduler:enqueue id=" + id + " priority=" + priority);
+    this.start();
+  };
+  MiniScheduler.prototype.bestMode = function () {
+    if (this.queues[8].length && this.raf)
+      return "raf";
+    for (var p = 5; p >= 1; p--) {
+      if (this.queues[p].length)
+        return this.raf ? "raf" : "timeout";
+    }
+    return this.queues[0].length ? "idle" : "";
+  };
+  MiniScheduler.prototype.start = function () {
+    var self = this;
+    if (this.timer)
+      return;
+    var mode = this.bestMode();
+    log("scheduler:start mode=" + mode);
+    if (mode === "idle") {
+      if (this.ric) {
+        this.timer = window.requestIdleCallback(function () {
+          self.timer = 0;
+          self.drain(0);
+        }, { timeout: 3000 });
+      } else {
+        this.timer = window.setTimeout(function () {
+          self.timer = 0;
+          self.drain(0);
+        }, 300);
+      }
+    } else if (mode === "raf") {
+      this.timer = window.requestAnimationFrame(function () {
+        self.timer = 0;
+        self.drain(1);
+      });
+    } else if (mode === "timeout") {
+      this.timer = window.setTimeout(function () {
+        self.timer = 0;
+        self.drain(1);
+      }, 1);
+    }
+  };
+  MiniScheduler.prototype.drain = function (minPriority) {
+    log("scheduler:drain min=" + minPriority);
+    for (var p = 8; p >= minPriority; p--) {
+      while (this.queues[p] && this.queues[p].length) {
+        var id = this.queues[p].shift();
+        var job = this.jobs[id];
+        delete this.jobs[id];
+        if (job) {
+          log("scheduler:job:start id=" + id + " priority=" + p);
+          job();
+          log("scheduler:job:end id=" + id);
+        }
+      }
+    }
+    if (this.bestMode())
+      this.start();
+  };
+
+  var scheduler = new MiniScheduler();
+  scheduler.addImmediateJob(function () {
+    document.body.dataset.schedulerImmediate = "yes";
+    log("immediate-job");
+  });
+  scheduler.addJob(function () {
+    document.body.dataset.schedulerHigh = "yes";
+    log("high-job");
+  }, 1, 10);
+  scheduler.addJob(function () {
+    document.body.dataset.schedulerLow = "yes";
+    log("low-job");
+  }, 0, 10);
+
+  setTimeout(finish, 1200);
+})();
+</script>

@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>redirect under load fixture</title>
+<script>
+window.__xv6Fixture = { steps: [], errors: [] };
+function mark(step, detail) {
+    const entry = step + ":" + Date.now() + (detail ? ":" + detail : "");
+    window.__xv6Fixture.steps.push(entry);
+    console.log("XV6-REDIRLOAD " + entry);
+}
+window.addEventListener("error", event => {
+    const target = event.target;
+    const resource = target && (target.currentSrc || target.src || target.href) || "";
+    const detail = (event.message || event.type || "error") + "@" + resource + ":" + (event.lineno || 0);
+    window.__xv6Fixture.errors.push(detail);
+    console.log("XV6-REDIRLOAD error:" + detail);
+}, true);
+window.addEventListener("unhandledrejection", event => {
+    const detail = String(event.reason || "rejection");
+    window.__xv6Fixture.errors.push(detail);
+    console.log("XV6-REDIRLOAD rejection:" + detail);
+});
+mark("head-start");
+</script>
+<link rel="stylesheet" href="https://www.youtube.com/s/_/ytmainappweb/_/ss/k=ytmainappweb.kevlar_base._ZwQQnC4UeY.L.B1.O/am=AAAABAACwQQ/d=0/rs=AGKMywEaLbpqHlfTWQGCPc2TeDmwb06dsQ">
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/custom-elements-es5-adapter.vflset/custom-elements-es5-adapter.js"></script>
+<script>mark("after-custom-elements");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/webcomponents-sd.vflset/webcomponents-sd.js"></script>
+<script>mark("after-webcomponents");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/web-animations-next-lite.min.vflset/web-animations-next-lite.min.js"></script>
+<script>mark("after-web-animations");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/intersection-observer.min.vflset/intersection-observer.min.js"></script>
+<script>mark("after-intersection-observer");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/scheduler.vflset/scheduler.js"></script>
+<script>mark("after-scheduler");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/spf.vflset/spf.js"></script>
+<script>mark("after-spf");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/network.vflset/network.js"></script>
+<script>mark("after-network");</script>
+<script src="https://www.youtube.com/s/desktop/2279fdfc/jsbin/www-i18n-constants-en_US.vflset/www-i18n-constants.js"></script>
+<script>mark("after-i18n");</script>
+<script src="https://www.youtube.com/s/_/ytmainappweb/_/js/k=ytmainappweb.kevlar_base.en_US.spofGxkI9nw.es5.O/am=AAAABAAAgQQ/d=1/rs=AGKMywHenI7jFp94KyArysZOaNumYNok2Q/m=kevlar_base_module,kevlar_main_module,kevlar_base_sync_mod_chunk"></script>
+<script>
+mark("after-main-app");
+function churn(round) {
+    for (let i = 0; i < 200; i++) {
+        const div = document.createElement("div");
+        div.className = "xv6-redirload-token";
+        div.textContent = "token-" + round + "-" + i;
+        document.body.appendChild(div);
+    }
+    if (round < 20)
+        setTimeout(() => churn(round + 1), 0);
+}
+function triggerRedirects() {
+    mark("redirects-start");
+    for (let i = 0; i < 4; i++) {
+        const img = new Image();
+        img.onload = () => mark("img-load", String(i));
+        img.onerror = () => mark("img-error", String(i));
+        img.src = "https://googleads.g.doubleclick.net/pagead/id?xv6_fixture=" + Date.now() + "_" + i;
+        document.body.appendChild(img);
+    }
+    const frame = document.createElement("iframe");
+    frame.onload = () => mark("iframe-load");
+    frame.src = "https://googleads.g.doubleclick.net/pagead/id?xv6_iframe=" + Date.now();
+    document.body.appendChild(frame);
+}
+Promise.resolve().then(() => mark("microtask"));
+setTimeout(() => churn(0), 0);
+setTimeout(triggerRedirects, 50);
+setTimeout(() => mark("timeout-1000"), 1000);
+</script>
+<body>
+<main>
+  <h1>redirect under load fixture</h1>
+  <p id="status">Loaded</p>
+</main>
+</body>

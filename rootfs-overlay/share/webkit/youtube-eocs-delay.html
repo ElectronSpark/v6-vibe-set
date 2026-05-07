@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 youtube eocs delay</title>
+<pre id="log">boot</pre>
+<script>
+(function () {
+  var logNode = document.getElementById("log");
+  var events = [];
+  function log(msg) {
+    events.push(msg);
+    logNode.textContent = events.join("\n");
+    console.log("XV6-FIXTURE " + msg);
+  }
+
+  function Scheduler() {
+    this.nextId = 1;
+  }
+  Scheduler.prototype.addJob = function (job, priority, delay) {
+    var id = this.nextId++;
+    log("addJob id=" + id + " priority=" + priority + " delay=" + delay);
+    setTimeout(function () {
+      log("job:start id=" + id);
+      try {
+        job();
+        log("job:end id=" + id);
+      } catch (e) {
+        log("job:throw id=" + id + " " + e.name + ":" + e.message);
+      }
+    }, delay || 0);
+    return id;
+  };
+
+  function Signals(scheduler) {
+    this.scheduler = scheduler;
+    this.signals = [];
+    this.parkedJobs = new Map();
+    this.parkedProcessors = new Map();
+  }
+  Signals.prototype.seen = function (sig) {
+    return this.signals.indexOf(sig) >= 0;
+  };
+  Signals.prototype.parkOrScheduleJob = function (job, priority, sig, delay) {
+    log("parkOrScheduleJob sig=" + sig + " seen=" + this.seen(sig) + " delay=" + delay);
+    if (this.seen(sig)) {
+      this.scheduler.addJob(job, priority, delay);
+      return;
+    }
+    var jobs = this.parkedJobs.get(sig);
+    if (!jobs) {
+      jobs = [];
+      this.parkedJobs.set(sig, jobs);
+    }
+    jobs.push({ job: job, priority: priority, delay: delay });
+  };
+  Signals.prototype.addListener = function (sig, cb) {
+    log("addListener sig=" + sig + " seen=" + this.seen(sig));
+    var processors = this.parkedProcessors.get(sig);
+    if (!processors) {
+      processors = [];
+      this.parkedProcessors.set(sig, processors);
+    }
+    processors.push(cb);
+  };
+  Signals.prototype.processSignal = function (sig) {
+    var jobs = this.parkedJobs.get(sig) || [];
+    var processors = this.parkedProcessors.get(sig) || [];
+    log("processSignal " + sig + " jobs=" + jobs.length + " processors=" + processors.length);
+    if (this.seen(sig))
+      return;
+    this.parkedJobs.delete(sig);
+    this.parkedProcessors.delete(sig);
+    for (var i = 0; i < jobs.length; i++)
+      this.scheduler.addJob(jobs[i].job, jobs[i].priority, jobs[i].delay);
+    for (var j = 0; j < processors.length; j++)
+      processors[j]();
+    this.signals.push(sig);
+  };
+
+  var scheduler = new Scheduler();
+  var signals = new Signals(scheduler);
+  window.__xv6Fixture = { name: "youtube-eocs-delay", events: events };
+
+  signals.parkOrScheduleJob(function () {
+    log("eocs-trigger");
+    signals.processSignal("eocs");
+  }, 10, "eor", 10);
+
+  signals.parkOrScheduleJob(function () {
+    log("eocs-job");
+    document.body.dataset.eocsJob = "yes";
+  }, 2, "eocs");
+
+  signals.addListener("eocs", function () {
+    log("eocs-listener");
+    document.body.dataset.eocsListener = "yes";
+  });
+
+  signals.processSignal("eor");
+
+  setTimeout(function () {
+    if (document.body.dataset.eocsJob === "yes" &&
+        document.body.dataset.eocsListener === "yes") {
+      document.body.dataset.result = "pass";
+      log("RESULT pass");
+    } else {
+      document.body.dataset.result = "fail";
+      log("RESULT fail job=" + (document.body.dataset.eocsJob || "no") +
+          " listener=" + (document.body.dataset.eocsListener || "no"));
+    }
+  }, 250);
+})();
+</script>

@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 lifecycle jobset signal</title>
+<pre id="log">boot</pre>
+<script>
+(function () {
+  var logNode = document.getElementById("log");
+  var events = [];
+  function log(msg) {
+    events.push(msg);
+    logNode.textContent = events.join("\n");
+    console.log("XV6-FIXTURE " + msg);
+  }
+
+  function Signals() {
+    this.signals = [];
+    this.parkedJobs = new Map();
+  }
+  Signals.prototype.seen = function (sig) {
+    return this.signals.indexOf(sig) >= 0;
+  };
+  Signals.prototype.parkOrScheduleJob = function (job, priority, sig, delay) {
+    log("parkOrScheduleJob sig=" + sig + " seen=" + this.seen(sig) + " delay=" + delay);
+    if (this.seen(sig)) {
+      scheduler.addJob(job, priority, delay);
+      return;
+    }
+    var jobs = this.parkedJobs.get(sig);
+    if (!jobs) {
+      jobs = [];
+      this.parkedJobs.set(sig, jobs);
+    }
+    jobs.push({ job: job, priority: priority, delay: delay });
+  };
+  Signals.prototype.processSignal = function (sig) {
+    log("processSignal " + sig);
+    if (this.seen(sig))
+      return;
+    this.signals.push(sig);
+    var jobs = this.parkedJobs.get(sig) || [];
+    this.parkedJobs.delete(sig);
+    jobs.forEach(function (entry) {
+      scheduler.addJob(entry.job, entry.priority, entry.delay);
+    });
+  };
+
+  var scheduler = {
+    nextId: 1,
+    addJob: function (job, priority, delay) {
+      var id = this.nextId++;
+      log("addJob id=" + id + " priority=" + priority + " delay=" + delay);
+      setTimeout(function () {
+        log("job:start id=" + id);
+        try {
+          job();
+          log("job:end id=" + id);
+        } catch (e) {
+          log("job:throw id=" + id + " " + e.name + ":" + e.message);
+        }
+      }, delay || 0);
+      return id;
+    },
+    cancelJob: function (id) {
+      log("cancelJob id=" + id);
+    }
+  };
+
+  function JobSet(payloads) {
+    var self = this;
+    this.payloads = payloads;
+    this.completed = new Promise(function (resolve) {
+      self.resolveCompleted = resolve;
+    });
+    payloads.forEach(function (payload, index) {
+      var wrapper = function () {
+        payload.job();
+        payload.processed = true;
+        log("payload:processed index=" + index);
+        if (payloads.every(function (p) { return p.processed === true; })) {
+          log("jobset:resolve");
+          self.resolveCompleted();
+        }
+      };
+      payload.jobId = scheduler.addJob(wrapper, payload.priority, payload.delay);
+    });
+  }
+
+  var signals = new Signals();
+  signals.processSignal("ci");
+
+  (async function initLifecycle() {
+    log("lifecycle:init:start");
+    var set = new JobSet([{
+      priority: 3,
+      job: function () { log("scheduled-plugin"); }
+    }]);
+    await set.completed;
+    log("lifecycle:init:after-await");
+    signals.parkOrScheduleJob(function () {
+      log("rendering-transition");
+      document.body.dataset.result = "pass";
+    }, 10, "ci");
+  })();
+
+  setTimeout(function () {
+    if (document.body.dataset.result === "pass")
+      log("RESULT pass");
+    else
+      log("RESULT fail");
+  }, 250);
+})();
+</script>

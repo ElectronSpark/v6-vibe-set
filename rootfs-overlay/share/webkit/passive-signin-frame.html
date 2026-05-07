@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>xv6 passive signin frame fixture</title>
+<script>
+window.xv6Fixture = { steps: [], errors: [] };
+function step(name) {
+  window.xv6Fixture.steps.push(name + ":" + Date.now());
+  console.log("XV6-PASSIVE " + name + ":" + Date.now());
+}
+window.addEventListener("error", event => {
+  const message = (event && event.message) || "error";
+  window.xv6Fixture.errors.push(message);
+  console.log("XV6-PASSIVE error:" + message);
+});
+window.addEventListener("DOMContentLoaded", () => step("domcontentloaded"));
+window.addEventListener("load", () => step("load"));
+</script>
+</head>
+<body>
+<main>Passive sign-in frame fixture</main>
+<iframe id="passive"
+  sandbox="allow-same-origin allow-forms allow-popups allow-scripts"
+  src="https://accounts.google.com/ServiceLogin?service=youtube&amp;uilel=3&amp;passive=true&amp;continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den%26next%3D%252Fsignin_passive%26feature%3Dpassive&amp;hl=en"></iframe>
+</body>
+</html>

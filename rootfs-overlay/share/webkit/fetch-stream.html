@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 fetch stream probe</title>
+<script>
+(async () => {
+  const out = [];
+  function log(line) {
+    out.push(line);
+    console.log("FETCH-STREAM " + line);
+    if (document.body)
+      document.body.textContent = out.join("\n");
+  }
+  try {
+    log("ReadableStream=" + typeof ReadableStream);
+    log("fetch=" + typeof fetch);
+    const response = await fetch("media-codecs.html?cachebust=" + Date.now());
+    log("status=" + response.status + " ok=" + response.ok + " body=" + Object.prototype.toString.call(response.body));
+    log("getReader=" + (response.body && typeof response.body.getReader));
+    if (!response.body || typeof response.body.getReader !== "function") {
+      log("RESULT fail no-body-reader");
+      return;
+    }
+    const reader = response.body.getReader();
+    let total = 0;
+    let chunks = 0;
+    for (;;) {
+      const item = await reader.read();
+      if (item.done)
+        break;
+      chunks++;
+      total += item.value ? item.value.byteLength : 0;
+      log("chunk=" + chunks + " size=" + (item.value ? item.value.byteLength : -1) + " total=" + total);
+      if (chunks > 20)
+        break;
+    }
+    log("RESULT " + (total > 0 ? "pass" : "fail") + " chunks=" + chunks + " total=" + total);
+  } catch (e) {
+    log("RESULT fail exception=" + e.name + ":" + e.message);
+  }
+})();
+</script>

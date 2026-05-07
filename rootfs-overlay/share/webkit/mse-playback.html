@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 MSE playback probe</title>
+<video id="v" muted autoplay playsinline controls width="640" height="360"></video>
+<pre id="out"></pre>
+<script>
+(async () => {
+  const out = document.getElementById("out");
+  const video = document.getElementById("v");
+  const params = new URLSearchParams(location.search);
+  if (params.get("muted") === "0")
+    video.muted = false;
+  const lines = [];
+  function log(line) {
+    lines.push(line);
+    console.log("MSE-PROBE " + line);
+    out.textContent = lines.join("\n");
+  }
+  function state(tag) {
+    log(tag + " paused=" + video.paused + " ready=" + video.readyState +
+      " network=" + video.networkState + " time=" + video.currentTime.toFixed(3) +
+      " duration=" + video.duration + " error=" + (video.error ? video.error.code : 0));
+  }
+  try {
+    log("MediaSource=" + typeof MediaSource);
+    const type = MediaSource.isTypeSupported('video/webm;codecs="vp9,opus"') ?
+      'video/webm;codecs="vp9,opus"' : 'video/webm;codecs="opus"';
+    const asset = type.indexOf("vp9") >= 0 ? "test-mse.webm" : "test-mse-audio.webm";
+    log("type=" + type + " supported=" + MediaSource.isTypeSupported(type) + " asset=" + asset);
+    const response = await fetch(asset);
+    const bytes = await response.arrayBuffer();
+    log("fetched status=" + response.status + " bytes=" + bytes.byteLength);
+    const mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    await new Promise((resolve, reject) => {
+      mediaSource.addEventListener("sourceopen", resolve, { once: true });
+      mediaSource.addEventListener("error", reject, { once: true });
+    });
+    log("sourceopen readyState=" + mediaSource.readyState);
+    const sourceBuffer = mediaSource.addSourceBuffer(type);
+    await new Promise((resolve, reject) => {
+      sourceBuffer.addEventListener("updateend", resolve, { once: true });
+      sourceBuffer.addEventListener("error", reject, { once: true });
+      sourceBuffer.appendBuffer(bytes);
+    });
+    log("append updateend buffered=" + (video.buffered.length ? video.buffered.end(0).toFixed(3) : "none"));
+    mediaSource.endOfStream();
+    state("before-play");
+    try {
+      await video.play();
+      log("play-promise=resolved");
+    } catch (e) {
+      log("play-promise=rejected " + e.name + ":" + e.message);
+    }
+    let last = video.currentTime;
+    for (let i = 0; i < 12; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      state("tick" + i);
+    }
+    log("RESULT " + (video.currentTime > last + 0.5 && !video.error ? "pass" : "fail"));
+  } catch (e) {
+    log("RESULT fail exception=" + e.name + ":" + e.message);
+  }
+})();
+</script>

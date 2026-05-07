@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 parser yield probe</title>
+<style>
+  body { font: 16px sans-serif; margin: 24px; }
+  #status { padding: 12px; border: 1px solid #999; }
+</style>
+<div id="status">starting</div>
+<script>
+window.__xv6Fixture = { steps: [], errors: [] };
+function mark(step) {
+  window.__xv6Fixture.steps.push(step + ":" + Date.now());
+  console.log("XV6-FIXTURE " + step);
+}
+window.addEventListener("error", function(e) {
+  window.__xv6Fixture.errors.push(String(e.message || e.type));
+  console.error("XV6-FIXTURE-ERROR " + String(e.message || e.type));
+});
+mark("head-script");
+</script>
+<script>
+for (let i = 0; i < 1800; i++) {
+  document.write("<section class='chunk'><span>token-" + i + "</span><em>" + (i * 17) + "</em></section>");
+}
+mark("document-write-done");
+</script>
+<script>
+customElements.define("xv6-yield-item", class extends HTMLElement {
+  connectedCallback() {
+    this.textContent = "custom element ready";
+    mark("custom-connected");
+  }
+});
+</script>
+<xv6-yield-item></xv6-yield-item>
+<script>
+Promise.resolve().then(function() {
+  mark("microtask-1");
+  return Promise.resolve();
+}).then(function() {
+  mark("microtask-2");
+});
+setTimeout(function() {
+  document.getElementById("status").textContent = "timer fired";
+  mark("timeout-0");
+}, 0);
+setTimeout(function() {
+  document.body.setAttribute("data-xv6-fixture-ready", "yes");
+  mark("timeout-1000");
+}, 1000);
+mark("tail-script");
+</script>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>xv6 google th script fixture</title>
+  <script>
+  window.__xv6Fixture = { started: Date.now(), events: [] };
+  function mark(name, extra) {
+    window.__xv6Fixture.events.push({ name, extra: extra || "", time: Date.now() });
+    console.log("XV6-FIXTURE " + name + " " + (extra || ""));
+  }
+  mark("head");
+  </script>
+  <script
+    src="https://www.google.com/js/th/yqOMqMYRWkkqf4l8pyNeJmWa9uQrA2AcMbOqoN_XdQg.js"
+    onload="mark('google-th-load')"
+    onerror="mark('google-th-error')"></script>
+</head>
+<body>
+  <main id="status">google th script fixture</main>
+  <script>
+  mark("body");
+  window.addEventListener("load", function () {
+    mark("window-load", document.readyState);
+    document.getElementById("status").textContent = "loaded";
+  });
+  </script>
+</body>
+</html>

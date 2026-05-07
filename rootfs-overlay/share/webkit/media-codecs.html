@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 media codecs</title>
+<pre id="log">boot</pre>
+<script>
+(function () {
+  var logNode = document.getElementById("log");
+  var events = [];
+
+  function log(msg) {
+    events.push(msg);
+    logNode.textContent = events.join("\n");
+    console.log("XV6-FIXTURE " + msg);
+  }
+
+  function q(s) {
+    return "\"" + s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"") + "\"";
+  }
+
+  window.__xv6Fixture = { name: "media-codecs", events: events };
+
+  var video = document.createElement("video");
+  var audio = document.createElement("audio");
+  var types = [
+    "video/mp4",
+    "video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"",
+    "video/mp4; codecs=\"avc1.4D401E, mp4a.40.2\"",
+    "video/webm",
+    "video/webm; codecs=\"vp8, vorbis\"",
+    "video/webm; codecs=\"vp9, opus\"",
+    "audio/mp4",
+    "audio/mp4; codecs=\"mp4a.40.2\"",
+    "audio/webm",
+    "audio/webm; codecs=\"opus\"",
+    "audio/ogg; codecs=\"vorbis\""
+  ];
+
+  log("video.canPlayType=" + typeof video.canPlayType);
+  log("video.play=" + typeof video.play);
+  log("video.readyState=" + video.readyState + " networkState=" + video.networkState);
+  log("MediaSource=" + typeof window.MediaSource);
+  log("mediaCapabilities=" + typeof navigator.mediaCapabilities);
+
+  var playable = false;
+  types.forEach(function (type) {
+    var media = type.indexOf("audio/") === 0 ? audio : video;
+    var canPlay = "";
+    var mse = "missing";
+    try {
+      canPlay = media.canPlayType(type);
+    } catch (e) {
+      canPlay = "throw:" + e.name;
+    }
+    try {
+      if (window.MediaSource && typeof window.MediaSource.isTypeSupported === "function")
+        mse = String(window.MediaSource.isTypeSupported(type));
+    } catch (e) {
+      mse = "throw:" + e.name;
+    }
+    if (canPlay === "probably" || canPlay === "maybe" || mse === "true")
+      playable = true;
+    log("type=" + q(type) + " canPlayType=" + q(canPlay) + " mse=" + q(mse));
+  });
+
+  if (navigator.mediaCapabilities && typeof navigator.mediaCapabilities.decodingInfo === "function") {
+    navigator.mediaCapabilities.decodingInfo({
+      type: "media-source",
+      video: {
+        contentType: "video/webm; codecs=\"vp9\"",
+        width: 640,
+        height: 360,
+        bitrate: 800000,
+        framerate: 30
+      },
+      audio: {
+        contentType: "audio/webm; codecs=\"opus\"",
+        channels: "2",
+        bitrate: 96000,
+        samplerate: 48000
+      }
+    }).then(function (info) {
+      log("decodingInfo supported=" + info.supported +
+          " smooth=" + info.smooth + " powerEfficient=" + info.powerEfficient);
+    }).catch(function (e) {
+      log("decodingInfo throw=" + e.name);
+    });
+  }
+
+  window.setTimeout(function () {
+    document.body.dataset.result = playable ? "pass" : "fail";
+    log("RESULT " + (playable ? "pass" : "fail") + " playable=" + playable);
+  }, 500);
+})();
+</script>
