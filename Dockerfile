@@ -36,7 +36,9 @@ RUN apt-get update \
         pkg-config \
         python3 \
         python3-mako \
+        python3-packaging \
         python3-pip \
+        python3-yaml \
         qemu-system-x86 \
         rsync \
         sparse \
