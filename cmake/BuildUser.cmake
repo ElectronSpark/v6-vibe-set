@@ -9,7 +9,9 @@
 # Naming translation: umbrella XV6_ARCH=riscv64 -> sub-repo ARCH=riscv.
 #
 # user/ depends on the cross gcc but NOT on musl (xv6-native programs
-# are -nostdlib + userlib + custom syscall stubs).
+# are -nostdlib + userlib + custom syscall stubs).  Linux ABI probes are
+# built separately with the host compiler and host libc, then staged into
+# the same sysroot for VM tests.
 
 include(ExternalProject)
 
@@ -22,6 +24,17 @@ endif()
 set(_user_src "${CMAKE_SOURCE_DIR}/user")
 set(_user_obj "${XV6_BUILD_ROOT}/user")
 file(MAKE_DIRECTORY "${_user_obj}")
+
+if(_user_arch STREQUAL "x86_64")
+	find_program(_linux_host_cc NAMES cc gcc clang REQUIRED)
+	set(_user_install_command
+		${CMAKE_COMMAND} --install ${_user_obj}
+		COMMAND ${CMAKE_COMMAND} -E env HOST_CC=${_linux_host_cc}
+			${CMAKE_SOURCE_DIR}/scripts/build-linux-host-probes.sh ${XV6_SYSROOT})
+else()
+	set(_user_install_command
+		${CMAKE_COMMAND} --install ${_user_obj})
+endif()
 
 ExternalProject_Add(user
 	PREFIX            ${XV6_BUILD_ROOT}/user-driver
@@ -42,5 +55,5 @@ ExternalProject_Add(user
 	                    -DOPT_LEVEL=2
 	CMAKE_CACHE_ARGS  -DCMAKE_INSTALL_PREFIX:PATH=${XV6_SYSROOT}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_user_obj} -j${XV6_PARALLEL_JOBS}
-	INSTALL_COMMAND   ${CMAKE_COMMAND} --install ${_user_obj}
+	INSTALL_COMMAND   ${_user_install_command}
 	BUILD_ALWAYS      1)

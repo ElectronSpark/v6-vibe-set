@@ -11,6 +11,11 @@ BUILD_DIR="${XV6_BUILD_DIR:-/src/xv6-os/build-${ARCH}}"
 JOBS="${XV6_PARALLEL_JOBS:-2}"
 PREBUILT_HOST="${XV6_PREBUILT_TOOLCHAIN_HOST:-${ROOT}/build-toolchain-${ARCH}}"
 PREBUILT_CONTAINER="${XV6_PREBUILT_TOOLCHAIN_PREFIX:-/opt/xv6-prebuilt-toolchain}"
+has_prebuilt=0
+
+if [[ -d "${PREBUILT_HOST}" ]]; then
+    has_prebuilt=1
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "enter-container: docker is not installed or not on PATH" >&2
@@ -34,11 +39,6 @@ create_container() {
         -e XV6_PARALLEL_JOBS="${JOBS}"
         -v "${ROOT}:/src/xv6-os"
     )
-
-    has_prebuilt=0
-    if [[ -d "${PREBUILT_HOST}" ]]; then
-        has_prebuilt=1
-    fi
 
     if [[ "${has_prebuilt}" == "1" ]]; then
         docker_args+=(
