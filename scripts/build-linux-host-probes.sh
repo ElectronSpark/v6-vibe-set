@@ -11,6 +11,23 @@ STARTUP_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_startup_probe.c"
 RUNTIME_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_runtime_probe.c"
 STACK_GUARD_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_stack_guard_probe.c"
 HOST_SH_SRC="${REPO_ROOT}/user/programs/sh/sh.c"
+HOST_USER_PROGRAMS=(
+    cat
+    cp
+    echo
+    find
+    grep
+    kill
+    ln
+    mkdir
+    mv
+    ps
+    rm
+    sleep
+    sync
+    wc
+    xargs
+)
 
 mkdir -p "${OUT_DIR}"
 
@@ -25,6 +42,27 @@ mkdir -p "${OUT_DIR}"
 
 "${HOST_CC}" -Wall -Wextra -O2 -g -DUSE_NCURSES_SHELL "${HOST_SH_SRC}" \
     -lncurses -o "${OUT_DIR}/host-sh"
+
+build_host_user_program() {
+    local name="$1"
+    shift
+
+    "${HOST_CC}" -Wall -Wextra -O2 -g -DHOST_LIBC_PROGRAM \
+        -I"${REPO_ROOT}/user/lib" -I"${REPO_ROOT}/user" \
+        "${REPO_ROOT}/user/programs/${name}/${name}.c" "$@" \
+        -o "${OUT_DIR}/${name}"
+}
+
+for name in "${HOST_USER_PROGRAMS[@]}"; do
+    case "${name}" in
+        cp|mv|rm)
+            build_host_user_program "${name}" "${REPO_ROOT}/user/lib/fsutil.c"
+            ;;
+        *)
+            build_host_user_program "${name}"
+            ;;
+    esac
+done
 
 if "${HOST_CC}" -Wall -Wextra -O2 -g -static "${STARTUP_SRC}" \
     -o "${OUT_DIR}/linux-host-startup-static"; then
