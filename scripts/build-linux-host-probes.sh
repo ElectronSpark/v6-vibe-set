@@ -10,6 +10,8 @@ OUT_DIR="${SYSROOT}/bin"
 STARTUP_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_startup_probe.c"
 RUNTIME_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_runtime_probe.c"
 STACK_GUARD_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_stack_guard_probe.c"
+NCURSES_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_ncurses_probe.c"
+READLINE_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_readline_probe.c"
 HOST_SH_SRC="${REPO_ROOT}/user/programs/sh/sh.c"
 HOST_USER_PROGRAMS=(
     cat
@@ -31,6 +33,10 @@ HOST_USER_PROGRAMS=(
 
 mkdir -p "${OUT_DIR}"
 
+"${SCRIPT_DIR}/build-linux-host-libs.sh" "${SYSROOT}"
+
+rm -f "${OUT_DIR}/_sh" "${OUT_DIR}/host-sh"
+
 "${HOST_CC}" -Wall -Wextra -O2 -g "${STARTUP_SRC}" \
     -o "${OUT_DIR}/linux-host-startup-dynamic"
 
@@ -40,8 +46,19 @@ mkdir -p "${OUT_DIR}"
 "${HOST_CC}" -Wall -Wextra -O2 -g -fstack-protector-all \
     "${STACK_GUARD_SRC}" -o "${OUT_DIR}/linux-host-stack-guard-dynamic"
 
-"${HOST_CC}" -Wall -Wextra -O2 -g -DUSE_NCURSES_SHELL "${HOST_SH_SRC}" \
-    -lncurses -o "${OUT_DIR}/host-sh"
+"${HOST_CC}" -Wall -Wextra -O2 -g -I"${SYSROOT}/include" \
+    -L"${SYSROOT}/lib" -Wl,-rpath,/lib -DUSE_NCURSES_SHELL \
+    "${HOST_SH_SRC}" -lncurses -ltinfo -o "${OUT_DIR}/sh"
+ln -sf sh "${OUT_DIR}/host-sh"
+
+"${HOST_CC}" -Wall -Wextra -O2 -g -I"${SYSROOT}/include" \
+    -L"${SYSROOT}/lib" -Wl,-rpath,/lib "${NCURSES_SRC}" \
+    -lncurses -ltinfo -o "${OUT_DIR}/linux-host-ncurses-dynamic"
+
+"${HOST_CC}" -Wall -Wextra -O2 -g -I"${SYSROOT}/include" \
+    -L"${SYSROOT}/lib" -Wl,-rpath,/lib "${READLINE_SRC}" \
+    -lreadline -lhistory -lncurses -ltinfo \
+    -o "${OUT_DIR}/linux-host-readline-dynamic"
 
 build_host_user_program() {
     local name="$1"
