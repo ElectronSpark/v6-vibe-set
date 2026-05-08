@@ -27,8 +27,13 @@ VFS_NAMES = {
     "pwritev", "preadv2", "pwritev2", "readv", "writev", "chdir",
     "openat", "mkdirat", "mknodat",
     "unlinkat", "linkat", "symlinkat", "readlinkat", "renameat",
-    "faccessat", "fchmod", "fchmodat", "fchown", "fchownat", "fsync",
-    "fdatasync", "pipe", "pipe2",
+    "faccessat", "fchmod", "fchmodat", "fchmodat2", "fchown", "fchownat",
+    "fsync", "fdatasync", "pipe", "pipe2", "truncate", "fchdir",
+    "rmdir", "creat", "chmod", "chown", "lchown", "utime", "utimes",
+    "futimesat", "openat2", "close_range", "copy_file_range",
+    "readahead", "sync_file_range", "syncfs",
+    "inotify_init", "inotify_init1", "inotify_add_watch",
+    "inotify_rm_watch",
 }
 
 HANDLER_ALIASES = {
@@ -43,6 +48,13 @@ HANDLER_ALIASES = {
     "getdents": {"sys_getdents", "sys_getdents_compat"},
     "getdents64": {"sys_getdents"},
     "newfstatat": {"sys_vfs_fstatat"},
+    "close_range": {"sys_vfs_close_range"},
+    "copy_file_range": {"sys_vfs_copy_file_range"},
+    "creat": {"sys_vfs_creat"},
+    "fchmodat2": {"sys_vfs_fchmodat"},
+    "openat2": {"sys_vfs_openat2"},
+    "utime": {"sys_utime"},
+    "utimes": {"sys_utimes"},
     "recvmsg": {"sys_recvmsg"},
     "recvfrom": {"sys_recvfrom"},
     "sendmsg": {"sys_sendmsg"},
@@ -63,6 +75,18 @@ HANDLER_ALIASES = {
     "rt_sigtimedwait": {"sys_sigwait", "sys_rt_sigtimedwait"},
     "umount2": {"sys_umount"},
     "wait4": {"sys_waitpid", "sys_wait"},
+    "setxattr": {"sys_vfs_xattr_not_supported"},
+    "lsetxattr": {"sys_vfs_xattr_not_supported"},
+    "fsetxattr": {"sys_vfs_xattr_not_supported"},
+    "getxattr": {"sys_vfs_xattr_not_supported"},
+    "lgetxattr": {"sys_vfs_xattr_not_supported"},
+    "fgetxattr": {"sys_vfs_xattr_not_supported"},
+    "listxattr": {"sys_vfs_xattr_not_supported"},
+    "llistxattr": {"sys_vfs_xattr_not_supported"},
+    "flistxattr": {"sys_vfs_xattr_not_supported"},
+    "removexattr": {"sys_vfs_xattr_not_supported"},
+    "lremovexattr": {"sys_vfs_xattr_not_supported"},
+    "fremovexattr": {"sys_vfs_xattr_not_supported"},
 }
 
 STRUCT_RISK = {
@@ -76,7 +100,8 @@ STRUCT_RISK = {
     "preadv2", "pselect6", "pwritev", "pwritev2", "readv", "recvfrom",
     "recvmsg", "rt_sigaction", "rt_sigpending", "rt_sigqueueinfo",
     "rt_sigsuspend", "rt_sigtimedwait", "sendmsg", "sendmmsg", "sendto",
-    "setgroups", "setrlimit", "setsockopt", "sigaltstack", "stat",
+    "sched_getattr", "sched_setattr", "setgroups", "setrlimit",
+    "setsockopt", "signalfd", "signalfd4", "sigaltstack", "stat",
     "statfs", "statx", "sysinfo", "timerfd_gettime", "timerfd_settime",
     "uname", "writev",
 }

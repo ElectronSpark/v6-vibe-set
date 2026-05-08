@@ -31,7 +31,7 @@ add_custom_target(world
 add_custom_target(help-targets
 	COMMAND ${CMAKE_COMMAND} -E echo "Top-level targets:"
 	COMMAND ${CMAKE_COMMAND} -E echo "  toolchain  build cross binutils+gcc+musl into ${XV6_SYSROOT}"
-	COMMAND ${CMAKE_COMMAND} -E echo "  user       cross-build essential userland into ${XV6_SYSROOT}"
+	COMMAND ${CMAKE_COMMAND} -E echo "  user       cross-build xv6 userland; on x86_64 also stage host-libc Linux probes"
 	COMMAND ${CMAKE_COMMAND} -E echo "  ports      cross-build all ports into ${XV6_SYSROOT}"
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel     cross-build kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel-sparse  run sparse lock/context checks for kernel"

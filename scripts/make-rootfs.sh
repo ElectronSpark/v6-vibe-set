@@ -353,6 +353,50 @@ if [[ ! -e "${STAGE}/lib/ld-musl-x86_64.so.1" ]]; then
     fi
 fi
 
+stage_host_glibc() {
+    [[ "${STAGE_HOST_GLIBC:-0}" == "1" ]] || return 0
+    command -v readelf >/dev/null 2>&1 || {
+        echo "make-rootfs: warning: readelf not found; cannot stage host glibc" >&2
+        return 0
+    }
+    command -v ldd >/dev/null 2>&1 || {
+        echo "make-rootfs: warning: ldd not found; cannot stage host glibc" >&2
+        return 0
+    }
+
+    local exe interp lib
+    while IFS= read -r -d '' exe; do
+        interp="$(
+            readelf -l "$exe" 2>/dev/null |
+            sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p'
+        )" || true
+        [[ "${interp}" == "/lib64/ld-linux-x86-64.so.2" ]] || continue
+
+        if [[ -e "${interp}" ]]; then
+            mkdir -p "${STAGE}$(dirname "${interp}")"
+            cp -L "${interp}" "${STAGE}${interp}"
+            chmod 0755 "${STAGE}${interp}"
+        else
+            echo "make-rootfs: warning: host loader missing: ${interp}" >&2
+        fi
+
+        while IFS= read -r lib; do
+            [[ -n "${lib}" && -e "${lib}" ]] || continue
+            mkdir -p "${STAGE}$(dirname "${lib}")"
+            cp -L "${lib}" "${STAGE}${lib}"
+            chmod 0755 "${STAGE}${lib}" 2>/dev/null || true
+        done < <(
+            ldd "$exe" 2>/dev/null |
+            awk '
+                /=> \// { print $3; next }
+                /^[[:space:]]*\// { print $1; next }
+            '
+        )
+    done < <(find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null)
+}
+
+stage_host_glibc
+
 rm -f "${OUT}"
 truncate -s "${SIZE_MB}M" "${OUT}"
 mkfs.ext4 -F -L xv6root -d "${STAGE}" "${OUT}" >/dev/null
