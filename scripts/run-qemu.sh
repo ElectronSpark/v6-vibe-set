@@ -7,9 +7,15 @@
 #   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
 #   QEMU_GDB_PORT=2159      Use a different GDB stub port.
 #   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
-#   QEMU_GPU=bochs          GPU model: bochs, virtio-gpu,
+#   QEMU_GPU=auto           GPU model: auto, bochs, virtio-gpu,
 #                           virtio-gpu-primary, virtio-gpu-gl,
-#                           virtio-gpu-gl-primary, or none.
+#                           virtio-gpu-gl-primary, virtio-vga-gl-primary,
+#                           or none.
+#   QEMU_VIRTIO_GPU_BLOB=auto
+#                           Enable virtio-gpu blob resources with hostmem when
+#                           /dev/udmabuf is available on this launcher path.
+#   QEMU_VIRTIO_GPU_HOSTMEM=256M
+#                           Host-visible memory size for blob resources.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default is
 #                           grabbed relative PS/2 input because vmport
 #                           absolute coordinates are host/GTK-version fragile.
@@ -44,13 +50,15 @@ if [[ -z "${QEMU_MACHINE:-}" ]]; then
 fi
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
-QEMU_GPU="${QEMU_GPU:-bochs}"
+QEMU_GPU="${QEMU_GPU:-auto}"
 QEMU_GDB="${QEMU_GDB:-0}"
 QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 QEMU_GDB_WAIT="${QEMU_GDB_WAIT:-0}"
 QEMU_GDB_ARGS=()
 QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1280}"
 QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-800}"
+QEMU_VIRTIO_GPU_BLOB="${QEMU_VIRTIO_GPU_BLOB:-auto}"
+QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-256M}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -135,6 +143,16 @@ case "${ARCH}" in
                 ;;
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
+                if [[ "${QEMU_GPU}" == "auto" ]]; then
+                        if [[ "${DISPLAY_MODE}" != "nographic" ]] &&
+                           qemu-system-x86_64 -device help 2>/dev/null |
+                                grep -q 'virtio-gpu-gl-pci'; then
+                                QEMU_GPU="virtio-gpu-gl-primary"
+                        else
+                                QEMU_GPU="bochs"
+                        fi
+                        echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
+                fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
                 #
@@ -207,6 +225,22 @@ case "${ARCH}" in
                         NET_ARGS=(-net none)
                 fi
                 GPU_ARGS=()
+                gpu_gl_opts="xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}"
+                if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "auto" ]]; then
+                        if [[ -e /dev/udmabuf ]]; then
+                                QEMU_VIRTIO_GPU_BLOB=1
+                        else
+                                QEMU_VIRTIO_GPU_BLOB=0
+                        fi
+                fi
+                if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" ]]; then
+                        if [[ ! -e /dev/udmabuf ]]; then
+                                echo "run-qemu: QEMU_VIRTIO_GPU_BLOB=1 needs /dev/udmabuf on this launcher path." >&2
+                                echo "run-qemu: this host does not expose it; use QEMU_VIRTIO_GPU_BLOB=0." >&2
+                                exit 2
+                        fi
+                        gpu_gl_opts+=",blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM}"
+                fi
                 case "${QEMU_GPU}" in
                         bochs)
                                 ;;
@@ -217,10 +251,25 @@ case "${ARCH}" in
                                 GPU_ARGS=(-vga none -device "virtio-gpu-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-gl)
-                                GPU_ARGS=(-device "virtio-gpu-gl-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl-primary)
-                                GPU_ARGS=(-vga none -device "virtio-gpu-gl-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                # Keep Bochs as the visible primary console
+                                # and attach virtio-gpu-gl for accelerated
+                                # render nodes.  On WSLg/GTK, primary GL
+                                # scanout devices can expose virgl to the
+                                # guest while leaving the host window black.
+                                GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
+                                ;;
+                        virtio-vga-gl-primary)
+                                # Experimental direct GL scanout path.  This
+                                # removes the Bochs VGA fallback and asks QEMU
+                                # to make the virgl device the visible primary
+                                # adapter.  It can reduce host-side display
+                                # indirection on native Linux, but xv6 needs
+                                # virtio-gpu scanout/fb support for the
+                                # desktop to start.
+                                GPU_ARGS=(-vga none -device "virtio-vga-gl,${gpu_gl_opts}")
                                 ;;
                         none)
                                 GPU_ARGS=(-vga none)
