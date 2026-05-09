@@ -22,6 +22,7 @@ RUN apt-get update \
         gperf \
         git \
         gettext \
+        glib-networking \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
         libgmp-dev \
