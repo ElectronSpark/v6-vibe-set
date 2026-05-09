@@ -23,9 +23,11 @@ RUN apt-get update \
         git \
         gettext \
         glib-networking \
+        libevdev2 \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
         libgmp-dev \
+        libsecret-1-0 \
         libltdl-dev \
         libtool \
         m4 \
