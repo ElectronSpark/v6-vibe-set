@@ -16,16 +16,19 @@ set(_fsimg_size_mb "1536" CACHE STRING "Size of fs.img in MiB")
 file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
 
+set(_rootfs_deps user ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh)
+set(_rootfs_command
+	${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
+		${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb})
+
 # ---------------------------------------------------------------------
 # Primary path: ext4 rootfs built from the populated sysroot.
 # This is what scripts/run-qemu.sh actually boots, and what the
 # session demo (Python + Flask) depends on.
 # ---------------------------------------------------------------------
 add_custom_target(rootfs
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
-	            ${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb}
-	            ${XV6_TOOLCHAIN_PREFIX}/${XV6_ARCH}/phase2/${XV6_TRIPLE}/lib
-	DEPENDS user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
+	COMMAND ${_rootfs_command}
+	DEPENDS ${_rootfs_deps}
 	BYPRODUCTS ${_fsimg}
 	COMMENT "Building ext4 rootfs ${_fsimg} (${_fsimg_size_mb} MiB) from ${XV6_SYSROOT}")
 

@@ -9,14 +9,6 @@ NAME="${XV6_CONTAINER_NAME:-xv6-os-dev}"
 ARCH="${XV6_ARCH:-x86_64}"
 BUILD_DIR="${XV6_BUILD_DIR:-/src/xv6-os/build-${ARCH}}"
 JOBS="${XV6_PARALLEL_JOBS:-2}"
-PREBUILT_HOST="${XV6_PREBUILT_TOOLCHAIN_HOST:-${ROOT}/build-toolchain-${ARCH}}"
-PREBUILT_CONTAINER="${XV6_PREBUILT_TOOLCHAIN_PREFIX:-/opt/xv6-prebuilt-toolchain}"
-has_prebuilt=0
-
-if [[ -d "${PREBUILT_HOST}" ]]; then
-    has_prebuilt=1
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
     echo "enter-container: docker is not installed or not on PATH" >&2
     exit 1
@@ -39,13 +31,6 @@ create_container() {
         -e XV6_PARALLEL_JOBS="${JOBS}"
         -v "${ROOT}:/src/xv6-os"
     )
-
-    if [[ "${has_prebuilt}" == "1" ]]; then
-        docker_args+=(
-            -e XV6_PREBUILT_TOOLCHAIN_PREFIX="${PREBUILT_CONTAINER}"
-            -v "${PREBUILT_HOST}:${PREBUILT_CONTAINER}:ro"
-        )
-    fi
 
     docker_args+=("${IMAGE}" sleep infinity)
     docker "${docker_args[@]}" >/dev/null
@@ -75,10 +60,6 @@ exec_args=(
     -e XV6_ARCH="${ARCH}"
     -e XV6_PARALLEL_JOBS="${JOBS}"
 )
-
-if [[ "${has_prebuilt}" == "1" ]]; then
-    exec_args+=(-e XV6_PREBUILT_TOOLCHAIN_PREFIX="${PREBUILT_CONTAINER}")
-fi
 
 exec_args+=("${NAME}" "${container_command[@]}")
 exec docker "${exec_args[@]}"

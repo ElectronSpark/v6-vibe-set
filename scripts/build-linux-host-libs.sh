@@ -9,6 +9,10 @@ HOST_AR="${HOST_AR:-ar}"
 HOST_RANLIB="${HOST_RANLIB:-ranlib}"
 SYSROOT="${1:-${REPO_ROOT}/build-x86_64/sysroot}"
 BUILD_ROOT="${BUILD_ROOT:-${REPO_ROOT}/build-x86_64/host-glibc-libs}"
+HOST_LIB_CFLAGS="${HOST_LIB_CFLAGS:--O2 -g}"
+HOST_LIB_CPPFLAGS="${HOST_LIB_CPPFLAGS:-}"
+HOST_LIB_LDFLAGS="${HOST_LIB_LDFLAGS:-}"
+READLINE_TERMCAP_LIBS="${READLINE_TERMCAP_LIBS:--lncurses}"
 
 SYSROOT="$(mkdir -p "${SYSROOT}" && cd "${SYSROOT}" && pwd)"
 BUILD_ROOT="$(mkdir -p "${BUILD_ROOT}" && cd "${BUILD_ROOT}" && pwd)"
@@ -34,6 +38,9 @@ copy_source_tree "${NCURSES_SRC}" "${NCURSES_BUILD}"
 (
     cd "${NCURSES_BUILD}"
     CC="${HOST_CC}" AR="${HOST_AR}" RANLIB="${HOST_RANLIB}" \
+    CFLAGS="${HOST_LIB_CFLAGS}" \
+    CPPFLAGS="${HOST_LIB_CPPFLAGS}" \
+    LDFLAGS="${HOST_LIB_LDFLAGS}" \
         ./configure \
             --prefix=/usr \
             --libdir=/lib \
@@ -61,9 +68,9 @@ copy_source_tree "${READLINE_SRC}" "${READLINE_BUILD}"
 (
     cd "${READLINE_BUILD}"
     CC="${HOST_CC}" AR="${HOST_AR}" RANLIB="${HOST_RANLIB}" \
-    CPPFLAGS="-I${SYSROOT}/include" \
-    LDFLAGS="-L${SYSROOT}/lib" \
-    bash_cv_termcap_lib=libncurses \
+    CFLAGS="${HOST_LIB_CFLAGS}" \
+    CPPFLAGS="${HOST_LIB_CPPFLAGS} -I${SYSROOT}/include" \
+    LDFLAGS="${HOST_LIB_LDFLAGS} -L${SYSROOT}/lib -Wl,-rpath,/lib" \
         ./configure \
             --prefix=/usr \
             --libdir=/lib \
@@ -71,8 +78,8 @@ copy_source_tree "${READLINE_SRC}" "${READLINE_BUILD}"
             --enable-shared \
             --enable-static \
             --with-curses
-    make -j"${HOST_LIB_JOBS:-2}" SHLIB_LIBS="-L${SYSROOT}/lib -lncurses"
-    make DESTDIR="${SYSROOT}" install SHLIB_LIBS="-L${SYSROOT}/lib -lncurses"
+    make -j"${HOST_LIB_JOBS:-2}" SHLIB_LIBS="-L${SYSROOT}/lib -Wl,-rpath,/lib ${READLINE_TERMCAP_LIBS}"
+    make DESTDIR="${SYSROOT}" install SHLIB_LIBS="-L${SYSROOT}/lib -Wl,-rpath,/lib ${READLINE_TERMCAP_LIBS}"
 )
 
 mkdir -p "${SYSROOT}/lib/pkgconfig"

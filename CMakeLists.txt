@@ -1,39 +1,31 @@
 # xv6-os — top-level orchestrator.
 #
 # Responsibilities:
-#   1. Validate XV6_ARCH and define the per-arch sysroot/install layout.
-#   2. Drive the four sub-projects via ExternalProject_Add with a real
-#      dependency graph (toolchain → user/ports/kernel).
-#   3. Drive image / initrd / qemu targets that consume the cross-built
-#      artifacts.
-#
-# This CMakeLists is HOST-side. The cross toolchain file produced by the
-# toolchain build is consumed by the user/ and ports/ ExternalProjects,
-# which re-enter CMake in cross mode.
+#   1. Validate the supported architecture and define the sysroot layout.
+#   2. Build/stage x86_64 Linux ABI userland with the host compiler + glibc.
+#   3. Drive kernel, rootfs, image, and qemu targets from those artifacts.
 
 cmake_minimum_required(VERSION 3.22)
 project(xv6_os NONE)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-include(CrossOptions)        # XV6_ARCH, paths, triple, sysroot
-include(BuildToolchain)      # toolchain target (binutils + gcc + musl)
-include(BuildKernel)         # kernel target (native Make, CROSS_COMPILE=...)
-include(BuildUser)           # user target (cross CMake)
-include(BuildPorts)          # ports target (cross CMake, per-port chain)
+include(CrossOptions)        # XV6_ARCH, paths, sysroot
+include(BuildKernel)         # kernel target
+include(BuildUser)           # user target
+include(BuildPorts)          # optional ports target
 include(BuildImage)          # initrd, boot image, qemu
 
 # Convenience aggregate: `cmake --build . --target world`
 add_custom_target(world
-	DEPENDS toolchain kernel user ports rootfs)
+	DEPENDS kernel user rootfs)
 
 # Default target prints help.
 add_custom_target(help-targets
 	COMMAND ${CMAKE_COMMAND} -E echo "Top-level targets:"
-	COMMAND ${CMAKE_COMMAND} -E echo "  toolchain  build cross binutils+gcc+musl into ${XV6_SYSROOT}"
-	COMMAND ${CMAKE_COMMAND} -E echo "  user       cross-build xv6 userland; on x86_64 also stage host-libc Linux probes"
-	COMMAND ${CMAKE_COMMAND} -E echo "  ports      cross-build all ports into ${XV6_SYSROOT}"
-	COMMAND ${CMAKE_COMMAND} -E echo "  kernel     cross-build kernel"
+	COMMAND ${CMAKE_COMMAND} -E echo "  user       build x86_64 userland with host compiler/glibc"
+	COMMAND ${CMAKE_COMMAND} -E echo "  ports      build host-glibc ports into the sysroot"
+	COMMAND ${CMAKE_COMMAND} -E echo "  kernel     build kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel-sparse  run sparse lock/context checks for kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  image      build bootable image / initrd"
 	COMMAND ${CMAKE_COMMAND} -E echo "  rootfs     build ext4 fs.img from sysroot (boot disk)"
@@ -42,7 +34,4 @@ add_custom_target(help-targets
 	VERBATIM)
 
 message(STATUS "xv6-os configured for arch: ${XV6_ARCH}")
-message(STATUS "  triple        : ${XV6_TRIPLE}")
 message(STATUS "  sysroot       : ${XV6_SYSROOT}")
-message(STATUS "  toolchain bin : ${XV6_TOOLCHAIN_BIN}")
-message(STATUS "  cross cmake   : ${XV6_CROSS_TOOLCHAIN_FILE}")

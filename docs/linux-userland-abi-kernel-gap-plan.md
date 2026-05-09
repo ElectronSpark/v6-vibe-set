@@ -9,26 +9,44 @@ This plan is the kernel-side continuation of:
 Scope: x86_64 Linux user/kernel ABI compatibility for Linux-style executables.
 RISC-V is intentionally out of scope here.
 
-Generated audit status at the time this plan was written:
+Current direction: x86_64 user programs are host-glibc Linux executables.
+The repo-local xv6 toolchain and musl libc override are no longer part of the
+normal x86_64 build, rootfs, or audit path. Legacy/private xv6 interfaces are
+not compatibility targets for host-built userland; new work must use Linux
+syscall numbers, Linux libc headers, and the staged host dynamic loader.
 
-- `native-ok`: 179
+Current generated audit status:
+
+- `native-ok`: 302
 - `struct-risk`: 71
-- `unsupported-ok`: 123
+- `unsupported-ok`: 0
 - `native-missing`: 0
 - `wrong-dispatch`: 0
 - `unsupported-bad`: 0
 
-Semantic audit status:
+Current semantic audit status:
 
-- `compatible-by-inspection`: 90
-- `probed-compatible-core`: 112
-- `semantic-partial`: 48
-- `unsupported-enosys`: 123
+- `compatible-by-inspection`: 180
+- `probed-compatible-core`: 193
+
+Current host-userland build status:
+
+- The x86_64 `user` target builds every `user/programs/*` program with the
+  host compiler and host glibc.
+- `/bin/sh` is the host-built shell; the old `_sh`/`host-sh` split is gone.
+- `scripts/make-rootfs.sh` stages the host glibc loader/runtime and rejects
+  musl-linked payloads.
+- `scripts/linux_abi_audit.py` no longer consumes or reports musl-xv6 syscall
+  mappings.
+- The GUI launcher defaults to the Bochs framebuffer path for `QEMU_GPU=auto`.
+  Virgl/GTK GL remains available by setting `QEMU_GPU=virtio-gpu-gl-primary`
+  explicitly, but it is no longer the default because host EGL/Zink failures
+  can produce a black QEMU window while the guest compositor is running.
 
 The important conclusion is that syscall dispatch is no longer the main
 blocker. The remaining work is behavioral ABI compatibility: Linux struct
 layouts, flags, errno values, process/thread semantics, ELF startup state,
-procfs, socket/event semantics, and unsupported syscall coverage.
+procfs, and socket/event semantics.
 
 ## Current Kernel Difference Summary
 
@@ -95,6 +113,10 @@ Differences vs Linux:
   when applications require specific feature bits.
 - `AT_SYSINFO_EHDR` is still absent; keep that policy explicit unless vdso
   support is added.
+- Larger desktop applications and libraries are not fully host-glibc yet:
+  Mesa/GTK/WebKit/NetSurf clients such as `/bin/mesaglsmoke` and `/bin/netsurf`
+  still come from the existing xv6 musl port toolchain and remain the next
+  desktop migration layer.
 - Host-built static and dynamic glibc startup probes now reach `main()`,
   validate auxv/procfs, and exit cleanly in the VM.
 - Static glibc exit/fini is fixed by clearing the x86_64 entry `%rdx`
@@ -105,6 +127,16 @@ Differences vs Linux:
 - `user/programs/sh/sh.c` has a host-glibc build path staged as `host-sh`;
   it uses the native loader/libc, raw Linux `getdents64`, and `fork()` for
   glibc-safe child execution.
+- The core desktop session programs are now host-glibc executables:
+  `/bin/desktop`, `/bin/wlcomp`, and `/bin/glsmoke` request the staged native
+  `/lib64/ld-linux-x86-64.so.2`. A fresh KVM/network VM boot on `/tmp/xv6.img`
+  reached `wlcomp: entering main loop`; running host-glibc `/bin/glsmoke` with
+  `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0` mapped a Wayland toplevel
+  and reported `EGL 1.4, GL OpenGL ES 2.0 xv6-compat`.
+- A fresh `/tmp/xv6-linux-abi.img` boot with KVM and networking reaches
+  `wlcomp: entering main loop` on the framebuffer path. QEMU `screendump`
+  produced a 1280x800 image with 1159 colors, proving the desktop is painted
+  rather than stuck on a black framebuffer.
 
 Fix plan:
 
@@ -724,7 +756,7 @@ For every phase:
    - dynamic glibc with staged `/lib64/ld-linux-x86-64.so.2`;
    - raw-syscall no-libc probes.
 5. Refresh rootfs:
-   `scripts/make-rootfs.sh build-x86_64/sysroot /tmp/xv6-linux-abi.img 1536 build-x86_64/toolchain/x86_64/phase2/x86_64-xv6-linux-musl/lib`
+   `scripts/make-rootfs.sh build-x86_64/sysroot /tmp/xv6-linux-abi.img 1536`
 6. Boot:
    `FSIMG=/tmp/xv6-linux-abi.img USE_KVM=1 QEMU_NET=1 bash scripts/launch-gui.sh`
 7. Validate:

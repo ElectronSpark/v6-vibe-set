@@ -4,4 +4,4 @@
 # Tokens are split on whitespace; no quoting or shell expansion.
 # Each entry is fork()+exec()'d as an independent process.
 
-GST_PLUGIN_SYSTEM_PATH_1_0=/lib/gstreamer-1.0:/usr/lib/gstreamer-1.0 GST_PLUGIN_PATH_1_0=/usr/lib/gstreamer-1.0:/lib/gstreamer-1.0 GST_PLUGIN_SCANNER_1_0=/libexec/gstreamer-1.0/gst-plugin-scanner /bin/desktop
+GDK_GL=disable GDK_RENDERING=image WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_GST_DISABLE_GL_SINK=1 GST_PLUGIN_SYSTEM_PATH_1_0=/lib/gstreamer-1.0:/usr/lib/gstreamer-1.0 GST_PLUGIN_PATH_1_0=/usr/lib/gstreamer-1.0:/lib/gstreamer-1.0 GST_PLUGIN_SCANNER_1_0=/libexec/gstreamer-1.0/gst-plugin-scanner /bin/desktop
