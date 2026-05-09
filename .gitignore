@@ -15,3 +15,5 @@ compile_commands.json
 /musl-xv6/
 *.log
 
+# Local Docker WebKit runtime context; large binary payload, never commit.
+/.docker-webkit-ref-sysroot/

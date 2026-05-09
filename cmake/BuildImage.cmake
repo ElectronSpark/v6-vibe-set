@@ -16,7 +16,7 @@ set(_fsimg_size_mb "1536" CACHE STRING "Size of fs.img in MiB")
 file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
 
-set(_rootfs_deps user ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh)
+set(_rootfs_deps user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh)
 set(_rootfs_command
 	${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
 		${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb})

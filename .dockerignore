@@ -12,6 +12,8 @@ cmake-build-*/
 *.a
 *.so
 *.so.*
+!.docker-webkit-ref-sysroot/**/*.so
+!.docker-webkit-ref-sysroot/**/*.so.*
 *.img
 *.iso
 *.cpio
