@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# setup-submodules.sh — convert the four bundled subdirs into proper
-# git submodules. Run this AFTER you push each subdir as its own repo
-# and edit .gitmodules.template with real URLs.
+# setup-submodules.sh - initialize the three nested submodules.
 #
-# Idempotent: skips already-tracked submodules.
+# Idempotent: safe to rerun after cloning or after submodule URL changes.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

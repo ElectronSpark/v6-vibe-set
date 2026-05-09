@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-IMAGE="${XV6_CONTAINER_IMAGE:-xv6-os-base:local}"
+IMAGE="${XV6_CONTAINER_IMAGE:-xv6-os-dev}"
 NAME="${XV6_CONTAINER_NAME:-xv6-os-dev}"
 ARCH="${XV6_ARCH:-x86_64}"
 BUILD_DIR="${XV6_BUILD_DIR:-/src/xv6-os/build-${ARCH}}"
@@ -16,7 +16,7 @@ fi
 
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
     echo "enter-container: image ${IMAGE} not found; build it with:" >&2
-    echo "  docker build --target base -t ${IMAGE} ${ROOT}" >&2
+    echo "  docker build --target dev -t ${IMAGE} ${ROOT}" >&2
     exit 1
 fi
 

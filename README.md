@@ -86,6 +86,9 @@ and `rootfs`:
 cmake --build build-x86_64 --target kernel rootfs -j2
 ```
 
+See `scripts/README.md` for the maintained helper scripts and what generated
+artifacts should stay out of the repository.
+
 ## Docker
 
 Build the development image:
