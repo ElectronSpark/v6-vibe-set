@@ -8,6 +8,7 @@ cmake-build-*/
 **/CMakeFiles/
 **/CMakeCache.txt
 **/cmake_install.cmake
+ports/webkit/sysroot/
 *.o
 *.a
 *.so

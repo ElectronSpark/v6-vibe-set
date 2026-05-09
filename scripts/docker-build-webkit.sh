@@ -6,7 +6,8 @@ usage() {
 usage: scripts/docker-build-webkit.sh <webkit-ref-sysroot> [docker-build-args...]
 
 Build the Docker image with a local host-glibc WebKit runtime available to
-CMake, without committing or uploading that runtime to GitHub.
+CMake, without committing or uploading that runtime to GitHub. The repository
+does not contain ports/webkit/sysroot; pass that runtime explicitly here.
 
 Environment:
   IMAGE_TAG             Docker image tag (default: xv6-os-webkit)
