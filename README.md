@@ -86,6 +86,11 @@ and `rootfs`:
 cmake --build build-x86_64 --target kernel rootfs -j2
 ```
 
+The build-local sysroot is always `${build_dir}/sysroot`. Do not set
+`XV6_SYSROOT` to a path outside the CMake build directory; configure will reject
+that so generated runtimes and downloaded dependency caches do not spill into
+the source tree or another checkout.
+
 See `scripts/README.md` for the maintained helper scripts and what generated
 artifacts should stay out of the repository.
 
