@@ -32,7 +32,6 @@ required_sysroot=(
 )
 
 optional_sysroot=(
-    "lib/gio/modules/libgioopenssl.so"
     "lib/pkgconfig/webkit2gtk-4.1.pc"
     "lib/pkgconfig/webkit2gtk-web-extension-4.1.pc"
     "lib/pkgconfig/javascriptcoregtk-4.1.pc"
@@ -58,6 +57,16 @@ for rel in "${optional_sysroot[@]}"; do
 done
 
 if ((missing)); then
+    exit 1
+fi
+
+if [[ ! -e "${sysroot}/lib/gio/modules/libgioopenssl.so" &&
+      ! -e "${sysroot}/lib/gio/modules/libgiognutls.so" ]]; then
+    echo "webkit-runtime-check: missing GIO TLS backend module; HTTPS will be unavailable" >&2
+    exit 1
+fi
+if [[ ! -e "${sysroot}/lib/gio/modules/giomodule.cache" ]]; then
+    echo "webkit-runtime-check: missing GIO module cache for TLS backend" >&2
     exit 1
 fi
 
@@ -146,8 +155,28 @@ elf_exports_symbol() {
 
     [[ -e "${elf}" ]] || return 1
     nm -D "${elf}" 2>/dev/null |
-        awk '{ print $3 }' |
-        grep -x "${symbol}" >/dev/null
+        awk -v symbol="${symbol}" '$3 == symbol { found = 1 } END { exit !found }'
+}
+
+elf_exports_symbol_prefix() {
+    local elf="$1"
+    local prefix="$2"
+
+    [[ -e "${elf}" ]] || return 1
+    nm -D "${elf}" 2>/dev/null |
+        awk -v prefix="${prefix}" 'index($3, prefix) == 1 { found = 1 } END { exit !found }'
+}
+
+elf_has_undefined_symbol() {
+    local elf="$1"
+    local symbol="$2"
+
+    [[ -e "${elf}" ]] || return 1
+    nm -D "${elf}" 2>/dev/null |
+        awk -v symbol="${symbol}" '
+            ($1 == "U" && $2 == symbol) || ($2 == "U" && $3 == symbol) { found = 1 }
+            END { exit !found }
+        '
 }
 
 elf_needs_soname() {
@@ -201,29 +230,25 @@ if command -v nm >/dev/null 2>&1 &&
     gdk_exports_x11=0
     gdk_needs_cairo_xlib=0
     cairo_exports_xlib=0
-    if nm -D "${sysroot}/lib/libwebkit2gtk-4.1.so.0" 2>/dev/null |
-       awk '$1 == "U" { print $2 } $2 == "U" { print $3 }' |
-       grep -x 'gdk_x11_cursor_get_xcursor' >/dev/null; then
+    if elf_has_undefined_symbol "${sysroot}/lib/libwebkit2gtk-4.1.so.0" \
+       "gdk_x11_cursor_get_xcursor"; then
         webkit_needs_gdk_x11=1
     fi
-    if nm -D "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null |
-       awk '{ print $3 }' |
-       grep -x 'gdk_x11_cursor_get_xcursor' >/dev/null; then
+    if elf_exports_symbol "${sysroot}/lib/libgdk-3.so.0" \
+       "gdk_x11_cursor_get_xcursor"; then
         gdk_exports_x11=1
     fi
     if ((webkit_needs_gdk_x11 && !gdk_exports_x11)); then
         echo "webkit-runtime-check: libwebkit2gtk needs GDK X11 symbols but staged libgdk-3.so.0 does not export them" >&2
         exit 1
     fi
-    if nm -D "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null |
-       awk '$1 == "U" { print $2 } $2 == "U" { print $3 }' |
-       grep -x 'cairo_xlib_surface_get_display' >/dev/null; then
+    if elf_has_undefined_symbol "${sysroot}/lib/libgdk-3.so.0" \
+       "cairo_xlib_surface_get_display"; then
         gdk_needs_cairo_xlib=1
     fi
     if [[ -e "${sysroot}/lib/libcairo.so.2" ]] &&
-       nm -D "${sysroot}/lib/libcairo.so.2" 2>/dev/null |
-       awk '{ print $3 }' |
-       grep -x 'cairo_xlib_surface_get_display' >/dev/null; then
+       elf_exports_symbol "${sysroot}/lib/libcairo.so.2" \
+       "cairo_xlib_surface_get_display"; then
         cairo_exports_xlib=1
     fi
     if ((gdk_needs_cairo_xlib && !cairo_exports_xlib)); then
@@ -238,34 +263,72 @@ if command -v nm >/dev/null 2>&1 &&
     harfbuzz_exports_alloc=0
     gtk_needs_pangocairo_private=0
     pangocairo_exports_private=0
-    if nm -D "${sysroot}/lib/libgtk-3.so.0" 2>/dev/null |
-       awk '$1 == "U" { print $2 } $2 == "U" { print $3 }' |
-       grep -x 'hb_calloc' >/dev/null; then
+    if elf_has_undefined_symbol "${sysroot}/lib/libgtk-3.so.0" "hb_calloc"; then
         gtk_needs_harfbuzz_alloc=1
     fi
     if [[ -e "${sysroot}/lib/libharfbuzz.so.0" ]] &&
-       nm -D "${sysroot}/lib/libharfbuzz.so.0" 2>/dev/null |
-       awk '{ print $3 }' |
-       grep -x 'hb_calloc' >/dev/null; then
+       elf_exports_symbol "${sysroot}/lib/libharfbuzz.so.0" "hb_calloc"; then
         harfbuzz_exports_alloc=1
     fi
     if ((gtk_needs_harfbuzz_alloc && !harfbuzz_exports_alloc)); then
         echo "webkit-runtime-check: libgtk-3 needs HarfBuzz allocator symbols but staged libharfbuzz.so.0 does not export them" >&2
         exit 1
     fi
-    if nm -D "${sysroot}/lib/libgtk-3.so.0" 2>/dev/null |
-       awk '$1 == "U" { print $2 } $2 == "U" { print $3 }' |
-       grep -x '_pango_cairo_font_get_hex_box_scaled_font' >/dev/null; then
+    if elf_has_undefined_symbol "${sysroot}/lib/libgtk-3.so.0" \
+       "_pango_cairo_font_get_hex_box_scaled_font"; then
         gtk_needs_pangocairo_private=1
     fi
     if [[ -e "${sysroot}/lib/libpangocairo-1.0.so.0" ]] &&
-       nm -D "${sysroot}/lib/libpangocairo-1.0.so.0" 2>/dev/null |
-       awk '{ print $3 }' |
-       grep -x '_pango_cairo_font_get_hex_box_scaled_font' >/dev/null; then
+       elf_exports_symbol "${sysroot}/lib/libpangocairo-1.0.so.0" \
+       "_pango_cairo_font_get_hex_box_scaled_font"; then
         pangocairo_exports_private=1
     fi
     if ((gtk_needs_pangocairo_private && !pangocairo_exports_private)); then
         echo "webkit-runtime-check: libgtk-3 needs PangoCairo private symbols but staged libpangocairo-1.0.so.0 does not export them" >&2
+        exit 1
+    fi
+fi
+
+if command -v nm >/dev/null 2>&1 &&
+   command -v readelf >/dev/null 2>&1 &&
+   [[ -e "${sysroot}/lib/libwebkit2gtk-4.1.so.0" &&
+      -e "${sysroot}/lib/libharfbuzz.so.0" ]]; then
+    webkit_needs_png=0
+    png_interposer=0
+    minibrowser_preloads_png=0
+    png_interposer_libs=(
+        "libgdk-3.so.0"
+        "libcairo.so.2"
+        "libharfbuzz.so.0"
+    )
+    if readelf -dW "${sysroot}/lib/libwebkit2gtk-4.1.so.0" 2>/dev/null |
+       grep -q 'Shared library: \[libpng16\.so\.16\]'; then
+        webkit_needs_png=1
+    fi
+    if [[ -f "${sysroot}/bin/desktop" ]] &&
+       grep -q 'LD_PRELOAD=.*/libpng16\.so\.16' \
+           "${sysroot}/bin/desktop"; then
+        minibrowser_preloads_png=1
+    fi
+    if [[ -f "${sysroot}/bin/wlcomp" ]] &&
+       grep -q 'LD_PRELOAD=.*/libpng16\.so\.16' \
+           "${sysroot}/bin/wlcomp"; then
+        minibrowser_preloads_png=1
+    fi
+    if ((webkit_needs_png)); then
+        for png_interposer_lib in "${png_interposer_libs[@]}"; do
+            if [[ -e "${sysroot}/lib/${png_interposer_lib}" ]] &&
+               elf_exports_symbol_prefix "${sysroot}/lib/${png_interposer_lib}" "png_"; then
+                if ((minibrowser_preloads_png)); then
+                    echo "webkit-runtime-check: warning: ${png_interposer_lib} exports png_* symbols; MiniBrowser preloads libpng16 first" >&2
+                else
+                    echo "webkit-runtime-check: ${png_interposer_lib} exports png_* symbols while WebKit needs libpng16.so.16" >&2
+                    png_interposer=1
+                fi
+            fi
+        done
+    fi
+    if ((png_interposer)); then
         exit 1
     fi
 fi

@@ -18,6 +18,8 @@ endif()
 set(XV6_WEBKIT_REF_SYSROOT
 	"${_webkit_ref_sysroot_default}"
 	CACHE PATH "Optional host-glibc WebKitGTK runtime sysroot to stage")
+set(XV6_WEBKIT_STRICT_STAGE OFF
+	CACHE BOOL "Fail port-webkit when the selected runtime sysroot is incomplete")
 if(DEFINED ENV{XV6_WEBKIT_REF_SYSROOT}
    AND NOT XV6_WEBKIT_REF_SYSROOT STREQUAL _webkit_ref_sysroot_default)
 	set(XV6_WEBKIT_REF_SYSROOT "${_webkit_ref_sysroot_default}" CACHE PATH
@@ -60,6 +62,7 @@ ExternalProject_Add(ports
 	                    -DXV6_PORT_CFLAGS=${_port_cflags}
 	                    -DXV6_PORT_CROSS=OFF
 	                    -DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT}
+	                    -DXV6_WEBKIT_STRICT_STAGE=${XV6_WEBKIT_STRICT_STAGE}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_ports_obj} -j${XV6_PARALLEL_JOBS}
 	INSTALL_COMMAND   ""
 	BUILD_ALWAYS      1)

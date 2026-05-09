@@ -70,6 +70,7 @@ ARG XV6_ARCH=x86_64
 ARG XV6_PARALLEL_JOBS=2
 ARG BUILD_TARGET=world
 ARG BUILD_DIR=/build/xv6-os
+ARG XV6_WEBKIT_REF_SYSROOT=
 
 COPY . /src/xv6-os
 
@@ -77,10 +78,16 @@ RUN test -f kernel/CMakeLists.txt \
     && test -f user/CMakeLists.txt \
     && test -f ports/CMakeLists.txt
 
-RUN cmake -S /src/xv6-os -B "${BUILD_DIR}" \
+RUN set -eux; \
+    webkit_args=""; \
+    if [ -n "${XV6_WEBKIT_REF_SYSROOT}" ]; then \
+        webkit_args="-DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT} -DXV6_WEBKIT_STRICT_STAGE=ON"; \
+    fi; \
+    cmake -S /src/xv6-os -B "${BUILD_DIR}" \
         -G Ninja \
         -DXV6_ARCH="${XV6_ARCH}" \
-        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}"
+        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}" \
+        ${webkit_args}
 
 RUN cmake --build "${BUILD_DIR}" --target "${BUILD_TARGET}"
 
@@ -89,13 +96,20 @@ FROM base AS dev
 ARG XV6_ARCH=x86_64
 ARG XV6_PARALLEL_JOBS=2
 ARG BUILD_DIR=/build/xv6-os
+ARG XV6_WEBKIT_REF_SYSROOT=
 
 COPY . /src/xv6-os
 
-RUN cmake -S /src/xv6-os -B "${BUILD_DIR}" \
+RUN set -eux; \
+    webkit_args=""; \
+    if [ -n "${XV6_WEBKIT_REF_SYSROOT}" ]; then \
+        webkit_args="-DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT} -DXV6_WEBKIT_STRICT_STAGE=ON"; \
+    fi; \
+    cmake -S /src/xv6-os -B "${BUILD_DIR}" \
         -G Ninja \
         -DXV6_ARCH="${XV6_ARCH}" \
-        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}"
+        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}" \
+        ${webkit_args}
 
 WORKDIR /src/xv6-os
 
