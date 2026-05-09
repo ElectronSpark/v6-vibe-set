@@ -23,6 +23,11 @@ RUN apt-get update \
         git \
         gettext \
         glib-networking \
+        gstreamer1.0-libav \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-tools \
         libevdev2 \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
@@ -60,8 +65,11 @@ COPY scripts/container-hints.sh /usr/local/bin/xv6-hints
 RUN chmod 0755 /usr/local/bin/xv6-command \
     && chmod 0755 /usr/local/bin/xv6-hints \
     && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
+    && ln -s xv6-command /usr/local/bin/xv6-build \
+    && ln -s xv6-command /usr/local/bin/xv6-help \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
+    && ln -s xv6-command /usr/local/bin/xv6-launch-nokvm \
     && ln -s xv6-command /usr/local/bin/xv6-qemu-nokvm \
     && printf '\n# xv6 command hints\nif [[ $- == *i* && -r /usr/local/bin/xv6-hints ]]; then\n    . /usr/local/bin/xv6-hints\nfi\n' >> /etc/bash.bashrc
 
@@ -116,4 +124,4 @@ RUN set -eux; \
 
 WORKDIR /src/xv6-os
 
-CMD ["bash"]
+CMD ["xv6-help"]

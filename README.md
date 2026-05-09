@@ -52,25 +52,93 @@ window. The `rootfs` target builds
 `build-x86_64/fs.img`; `qemu` boots it with GTK display and user-mode
 networking.
 
-Launch the current x86_64 GUI image with one command:
+## Build and launch
+
+These are the commands to use from a clean checkout. The root filesystem image
+is generated from the staged sysroot; no prebuilt sysroot is meant to live in
+the repository.
 
 ```sh
+# fetch sub-repos
+git submodule update --init --recursive
+
+# configure
+cmake -S . -B build-x86_64 -G Ninja -DXV6_ARCH=x86_64 -DXV6_PARALLEL_JOBS=2
+
+# build the OS: kernel, host-glibc userland, ports, and ext4 rootfs
+cmake --build build-x86_64 --target world -j2
+
+# launch the GUI OS
 ./scripts/launch-gui.sh
 ```
 
-## Quick start
+For a headless/non-KVM launch, use the CMake QEMU target:
 
 ```sh
-# fetch sub-repos (after editing scripts/setup-submodules.sh URLs)
-./scripts/setup-submodules.sh
+USE_KVM=0 DISPLAY_MODE=nographic cmake --build build-x86_64 --target qemu
+```
 
-# configure for x86_64 in an out-of-tree build dir
-cmake -S . -B build-x86_64 -DXV6_ARCH=x86_64
+The QEMU launcher reads `build-x86_64/kernel/kernel.elf` and
+`build-x86_64/fs.img` by default. If either file is missing, rebuild `kernel`
+and `rootfs`:
 
-# build the kernel, host-glibc userland, ports, and rootfs
-cmake --build build-x86_64 --target kernel user -j2
-cmake --build build-x86_64/ports -j2
+```sh
+cmake --build build-x86_64 --target kernel rootfs -j2
+```
+
+## Docker
+
+Build the development image:
+
+```sh
+docker build --target dev -t xv6-os-dev .
+```
+
+Running the image with no command prints usage:
+
+```sh
+docker run --rm xv6-os-dev
+```
+
+Build the full OS in the container:
+
+```sh
+docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-build
+```
+
+Launch the OS from the container without KVM:
+
+```sh
+docker run --rm -it \
+  -v "$PWD":/src/xv6-os \
+  -e DISPLAY_MODE=nographic \
+  xv6-os-dev xv6-launch-nokvm
+```
+
+For WebKitGTK, provide a host-glibc WebKit runtime sysroot explicitly. The repo
+does not commit `ports/webkit/sysroot`:
+
+```sh
+scripts/docker-build-webkit.sh /path/to/host-glibc-webkit-sysroot
+```
+
+The Docker image installs the GStreamer media packages needed by WebKit video
+playback (`gstreamer1.0-libav`, base/good/bad plugins, and tools). During the
+ports build, `ports/webkit/stage-webkit-runtime.sh` stages those installed
+packages, or downloads the same packages into a build-local cache, then copies
+the needed runtime files into the generated sysroot. Those downloaded packages,
+codec libraries, and generated sysroots remain build artifacts and should not be
+committed.
+
+## Useful targets
+
+```sh
+cmake --build build-x86_64 --target help-targets
+cmake --build build-x86_64 --target kernel -j2
+cmake --build build-x86_64 --target user -j2
+cmake --build build-x86_64 --target ports -j2
 cmake --build build-x86_64 --target rootfs -j2
+cmake --build build-x86_64 --target webkit-runtime-check -j2
 ```
 
 ## Standalone sub-repo builds

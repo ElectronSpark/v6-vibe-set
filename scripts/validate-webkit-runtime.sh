@@ -28,6 +28,21 @@ required_sysroot=(
     "lib/libwebkit2gtk-4.1.so"
     "lib/libjavascriptcoregtk-4.1.so"
     "lib/webkit2gtk-4.1/injected-bundle/libwebkit2gtkinjectedbundle.so"
+    "libexec/gstreamer-1.0/gst-plugin-scanner"
+    "bin/gst-inspect-1.0"
+    "bin/gst-launch-1.0"
+    "bin/gst-typefind-1.0"
+    "lib/gstreamer-1.0/libgstcoreelements.so"
+    "lib/gstreamer-1.0/libgsttypefindfunctions.so"
+    "lib/gstreamer-1.0/libgstplayback.so"
+    "lib/gstreamer-1.0/libgstisomp4.so"
+    "lib/gstreamer-1.0/libgstmatroska.so"
+    "lib/gstreamer-1.0/libgstlibav.so"
+    "lib/gstreamer-1.0/libgstvpx.so"
+    "lib/gstreamer-1.0/libgstopus.so"
+    "lib/gstreamer-1.0/libgstogg.so"
+    "lib/gstreamer-1.0/libgstvideoconvertscale.so"
+    "lib/gstreamer-1.0/libgstaudioconvert.so"
     "share/glib-2.0/schemas/gschemas.compiled"
 )
 
@@ -107,11 +122,23 @@ check_webkit_elf_closure() {
         "${sysroot}/lib/libwebkit2gtk-4.1.so.0"
         "${sysroot}/lib/libjavascriptcoregtk-4.1.so.0"
         "${sysroot}/lib/webkit2gtk-4.1/injected-bundle/libwebkit2gtkinjectedbundle.so"
+        "${sysroot}/libexec/gstreamer-1.0/gst-plugin-scanner"
     )
     declare -A seen_elf=()
 
+    for plugin_dir in "${sysroot}/lib/gstreamer-1.0" "${sysroot}/usr/lib/gstreamer-1.0"; do
+        if [[ -d "${plugin_dir}" ]]; then
+            while IFS= read -r -d '' elf; do
+                [[ -n "${seen_elf[${elf}]:-}" ]] && continue
+                seen_elf["${elf}"]=1
+                queue+=("${elf}")
+            done < <(find "${plugin_dir}" -maxdepth 1 -type f -name '*.so' -print0)
+        fi
+    done
+
     for elf in "${roots[@]}"; do
         [[ -e "${elf}" ]] || continue
+        [[ -n "${seen_elf[${elf}]:-}" ]] && continue
         seen_elf["${elf}"]=1
         queue+=("${elf}")
     done
@@ -351,6 +378,21 @@ if [[ -n "${fsimg}" ]]; then
         "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess"
         "/lib/libwebkit2gtk-4.1.so"
         "/lib/libjavascriptcoregtk-4.1.so"
+        "/libexec/gstreamer-1.0/gst-plugin-scanner"
+        "/bin/gst-inspect-1.0"
+        "/bin/gst-launch-1.0"
+        "/bin/gst-typefind-1.0"
+        "/lib/gstreamer-1.0/libgstcoreelements.so"
+        "/lib/gstreamer-1.0/libgsttypefindfunctions.so"
+        "/lib/gstreamer-1.0/libgstplayback.so"
+        "/lib/gstreamer-1.0/libgstisomp4.so"
+        "/lib/gstreamer-1.0/libgstmatroska.so"
+        "/lib/gstreamer-1.0/libgstlibav.so"
+        "/lib/gstreamer-1.0/libgstvpx.so"
+        "/lib/gstreamer-1.0/libgstopus.so"
+        "/lib/gstreamer-1.0/libgstogg.so"
+        "/lib/gstreamer-1.0/libgstvideoconvertscale.so"
+        "/lib/gstreamer-1.0/libgstaudioconvert.so"
         "/lib/libharfbuzz.so.0"
         "/lib/libpango-1.0.so.0"
         "/lib/libpangocairo-1.0.so.0"
