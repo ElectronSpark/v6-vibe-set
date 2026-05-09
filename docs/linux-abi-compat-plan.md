@@ -1,5 +1,11 @@
 # Linux x86_64 ABI Compatibility Plan
 
+Current x86_64 direction: host-built Linux userland is the only normal
+compatibility target. The x86_64 build uses the host compiler, host glibc
+headers, and staged `/lib64/ld-linux-x86-64.so.2`; repo-local musl/toolchain
+syscall overrides and private xv6 user ABI compatibility are legacy-only and
+out of the default path.
+
 ## Goal
 
 Make x86_64 xv6 compatible with Linux-style executables by treating the
@@ -353,8 +359,7 @@ After the kernel accepts Linux native numbers:
 2. Keep private xv6-only syscalls in the 1200+ range.
 3. Remove libc behavior overrides that only exist because the kernel lacked
    Linux ABI behavior.
-4. Rebuild the toolchain.
-5. Rebuild userland and ports.
+4. Rebuild host-glibc userland and ports.
 
 Build commands:
 
@@ -366,7 +371,7 @@ cmake --build build-x86_64/ports --target port-wayland -j2
 Refresh rootfs:
 
 ```sh
-scripts/make-rootfs.sh build-x86_64/sysroot /tmp/xv6-linux-abi.img 1536 build-x86_64/toolchain/x86_64/phase2/x86_64-xv6-linux-musl/lib
+scripts/make-rootfs.sh build-x86_64/sysroot /tmp/xv6-linux-abi.img 1536
 ```
 
 ## Phase 7: Validate Linux-Style Executable Compatibility
@@ -389,7 +394,10 @@ Use three validation tiers.
 
 ### Tier 3: Desktop Applications
 
-- Wayland compositor.
+- Wayland compositor. Core session coverage now includes host-glibc
+  `/bin/desktop`, `/bin/wlcomp`, and `/bin/glsmoke` using
+  `/lib64/ld-linux-x86-64.so.2`; `/bin/glsmoke` maps in the VM against
+  `wayland-0` and reports the xv6 EGL/GLES compatibility renderer.
 - GTK.
 - WebKit MiniBrowser.
 - YouTube page load.

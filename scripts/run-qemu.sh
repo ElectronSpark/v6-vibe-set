@@ -144,13 +144,12 @@ case "${ARCH}" in
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
-                        if [[ "${DISPLAY_MODE}" != "nographic" ]] &&
-                           qemu-system-x86_64 -device help 2>/dev/null |
-                                grep -q 'virtio-gpu-gl-pci'; then
-                                QEMU_GPU="virtio-gpu-gl-primary"
-                        else
-                                QEMU_GPU="bochs"
-                        fi
+                        # Keep the default launcher on the simple framebuffer
+                        # path.  GTK/virgl setup is host-sensitive: when EGL
+                        # setup fails, QEMU can open a black window even though
+                        # the guest compositor is running.  Use an explicit
+                        # QEMU_GPU=virtio-gpu-gl-primary for virgl tests.
+                        QEMU_GPU="bochs"
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
@@ -294,9 +293,9 @@ case "${ARCH}" in
                 # The kernel does not enable OSXSAVE in CR4, so any
                 # CPU feature that requires XSAVE state (AVX, AVX2, ...)
                 # will #UD on first use.  Under -cpu host KVM advertises
-                # those via CPUID and musl's IFUNC dispatch picks the
-                # AVX memcpy/strcmp paths — which then fault.  Keep the
-                # CPU model conservative in BOTH KVM and TCG modes.
+                # those via CPUID and libc IFUNC dispatch can pick AVX
+                # memcpy/strcmp paths — which then fault.  Keep the CPU model
+                # conservative in BOTH KVM and TCG modes.
                 # KVM exposes hardware PCID when requested, which currently
                 # sends the kernel down a lockup-prone ASID/PCID path after
                 # userspace starts.  Override with QEMU_CPU=qemu64,+pcid when

@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for sub in toolchain kernel user ports; do
+for sub in kernel user ports; do
 	d="${ROOT}/${sub}"
 	if [[ ! -d "${d}" ]]; then
 		echo "missing: ${d}" >&2
@@ -26,8 +26,8 @@ done
 echo
 echo "Next steps:"
 echo "  1. Push each sub-repo to a remote:"
-echo "       cd toolchain && git remote add origin <url> && git push -u origin main"
-echo "     (repeat for kernel, user, ports)"
+echo "       cd kernel && git remote add origin <url> && git push -u origin main"
+echo "     (repeat for user, ports)"
 echo "  2. Edit .gitmodules.template — replace REPLACE_ME with each remote URL."
-echo "  3. From umbrella root: rm -rf {toolchain,kernel,user,ports}"
+echo "  3. From umbrella root: rm -rf {kernel,user,ports}"
 echo "                          ./scripts/setup-submodules.sh"

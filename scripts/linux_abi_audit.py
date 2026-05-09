@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 LINUX_UNISTD = Path("/usr/include/x86_64-linux-gnu/asm/unistd_64.h")
 KERNEL_SYSCALL_H = ROOT / "kernel/kernel/inc/syscall.h"
 X86_DISPATCH = ROOT / "kernel/arch/x86_64/irq/syscall.c"
-MUSL_SYSCALL_H = ROOT / "toolchain/musl-xv6/arch/x86_64/bits/syscall.h.in"
 ABI_TEST = ROOT / "user/programs/linuxsyscallabitest/linuxsyscallabitest.c"
 OUT_CSV = ROOT / "docs/linux-abi-audit.csv"
 OUT_MD = ROOT / "docs/linux-abi-audit.md"
@@ -204,14 +203,6 @@ def macro_names_for_number(defines: dict[str, int], nr: int) -> list[str]:
     return sorted(name for name, value in defines.items() if value == nr)
 
 
-def musl_mapping_for(name: str, musl_defines: dict[str, int]) -> str:
-    keys = [f"SYS_{name}"]
-    if name == "stat":
-        keys.append("SYS_newfstatat")
-    found = [f"{key}={musl_defines[key]}" for key in keys if key in musl_defines]
-    return ";".join(found)
-
-
 def test_covers(name: str, nr: int, test_text: str) -> str:
     macro = f"LINUX_NR_{name.upper()}"
     if macro in test_text or re.search(rf"\b{nr}\b", test_text):
@@ -252,7 +243,6 @@ def classify(
 def write_outputs() -> None:
     linux_rows = parse_linux_unistd(LINUX_UNISTD)
     kernel_defines = active_defines(KERNEL_SYSCALL_H)
-    musl_defines = active_defines(MUSL_SYSCALL_H)
     dispatch = parse_dispatch(X86_DISPATCH, kernel_defines)
     legacy_aliases = parse_legacy_aliases(X86_DISPATCH, kernel_defines)
     handlers = parse_sys_handlers()
@@ -274,7 +264,6 @@ def write_outputs() -> None:
             "dispatch_macros": ";".join(macro for macro, _ in entries),
             "dispatch_handlers": ";".join(handler for _, handler in entries),
             "kernel_macros_at_number": ";".join(macro_names_for_number(kernel_defines, nr)),
-            "musl_mapping": musl_mapping_for(name, musl_defines),
             "legacy_alias_if_enabled": legacy,
             "test_covered": test_covers(name, nr, test_text),
             "notes": notes,
@@ -301,8 +290,8 @@ def write_outputs() -> None:
         f"- Linux syscall table: `{LINUX_UNISTD}`",
         f"- Kernel syscall numbers: `{KERNEL_SYSCALL_H.relative_to(ROOT)}`",
         f"- x86 dispatcher: `{X86_DISPATCH.relative_to(ROOT)}`",
-        f"- musl-xv6 syscall header: `{MUSL_SYSCALL_H.relative_to(ROOT)}`",
         f"- Runtime ABI test: `{ABI_TEST.relative_to(ROOT)}`",
+        "- Userland libc: host glibc staged with `/lib64/ld-linux-x86-64.so.2`; repo-local libc/toolchain mappings are removed from the x86_64 path.",
         "",
         "## Summary",
         "",
@@ -351,21 +340,20 @@ def write_outputs() -> None:
         "",
         "## Full Table",
         "",
-        "| Nr | Linux name | Status | Dispatch | Kernel macros | musl-xv6 mapping | Legacy alias | Test | Notes |",
-        "|---:|---|---|---|---|---|---|---|---|",
+        "| Nr | Linux name | Status | Dispatch | Kernel macros | Legacy alias | Test | Notes |",
+        "|---:|---|---|---|---|---|---|---|",
     ])
     for row in rows:
         dispatch_cell = row["dispatch_handlers"]
         if row["dispatch_macros"]:
             dispatch_cell = f"{row['dispatch_macros']} -> {row['dispatch_handlers']}"
         lines.append(
-            "| {number} | `__NR_{linux_name}` | `{status}` | {dispatch} | {kernel} | {musl} | {legacy} | {test} | {notes} |".format(
+            "| {number} | `__NR_{linux_name}` | `{status}` | {dispatch} | {kernel} | {legacy} | {test} | {notes} |".format(
                 number=row["number"],
                 linux_name=row["linux_name"],
                 status=row["status"],
                 dispatch=dispatch_cell or "",
                 kernel=row["kernel_macros_at_number"],
-                musl=row["musl_mapping"],
                 legacy=row["legacy_alias_if_enabled"],
                 test=row["test_covered"],
                 notes=row["notes"],

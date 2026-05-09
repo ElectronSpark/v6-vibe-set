@@ -1,59 +1,24 @@
 #!/usr/bin/env bash
-# make-rootfs.sh - build an ext4 root filesystem image from the cross-installed
-# sysroot.  The kernel mounts this image as the root filesystem on virtio-blk
+# make-rootfs.sh - build an ext4 root filesystem image from the staged sysroot.
+# The kernel mounts this image as the root filesystem on virtio-blk
 # (root=/dev/disk0).
 #
 # Usage:
-#   make-rootfs.sh <sysroot_dir> <out_img> [size_mb] [musl_libdir]
+#   make-rootfs.sh <sysroot_dir> <out_img> [size_mb]
 #
-# The sysroot is expected to be the install tree produced by `cmake --build user
-# --target install`, i.e. it contains bin/_<progname> binaries.  The leading
-# underscore is stripped when staging into the image (xv6 convention).
+# The sysroot is expected to contain host-glibc Linux userland under bin/,
+# lib/, lib64/, libexec/, usr/, share/, and etc/.
 #
 # Set ROOTFS_OVERLAY=/path/to/overlay to use an alternate overlay directory for
 # one-off diagnostic images.  The default is the repository's rootfs-overlay.
 set -euo pipefail
 
-SYSROOT="${1:?usage: $0 <sysroot_dir> <out_img> [size_mb] [musl_libdir]}"
-OUT="${2:?usage: $0 <sysroot_dir> <out_img> [size_mb] [musl_libdir]}"
+SYSROOT="${1:?usage: $0 <sysroot_dir> <out_img> [size_mb]}"
+OUT="${2:?usage: $0 <sysroot_dir> <out_img> [size_mb]}"
 SIZE_MB="${3:-64}"
-MUSL_LIBDIR="${4:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-
-find_musl_libdir() {
-    shopt -s nullglob
-    local musl_candidates=(
-        "${REPO_ROOT}"/build-toolchain-*/*/phase2/*-xv6-linux-musl/lib
-        "${REPO_ROOT}"/build-*/*/phase2/*-xv6-linux-musl/lib
-        "${REPO_ROOT}"/build-*/toolchain/*/phase2/*-xv6-linux-musl/lib
-    )
-    shopt -u nullglob
-    local candidate
-    for candidate in "${musl_candidates[@]}"; do
-        if [[ -f "${candidate}/libc.so" ]] &&
-           compgen -G "${candidate}/ld-musl-*.so.1" >/dev/null; then
-            printf '%s\n' "${candidate}"
-            return 0
-        fi
-    done
-    return 1
-}
-
-if [[ -n "${MUSL_LIBDIR}" ]] &&
-   { [[ ! -d "${MUSL_LIBDIR}" ]] ||
-     [[ ! -f "${MUSL_LIBDIR}/libc.so" ]] ||
-     ! compgen -G "${MUSL_LIBDIR}/ld-musl-*.so.1" >/dev/null; }; then
-    echo "make-rootfs: warning: invalid musl libdir '${MUSL_LIBDIR}', rediscovering" >&2
-    MUSL_LIBDIR=""
-fi
-
-if [[ -z "${MUSL_LIBDIR}" ]]; then
-    if discovered_musl="$(find_musl_libdir)"; then
-        MUSL_LIBDIR="${discovered_musl}"
-    fi
-fi
 
 if [[ ! -d "${SYSROOT}/bin" ]]; then
     echo "make-rootfs: ${SYSROOT}/bin not found - did you run 'cmake --build user --target install'?" >&2
@@ -83,7 +48,7 @@ done
 shopt -u nullglob
 
 # 3. Mirror dynamic-linker tree subdirs verbatim if present, preserving
-#    symlinks/perms (these hold musl loader, libpython, stdlib, etc.).
+#    symlinks/perms (these hold the host loader, libpython, stdlib, etc.).
 for sub in lib libexec usr share etc; do
     if [[ -d "${SYSROOT}/${sub}" ]]; then
         rsync -aH "${SYSROOT}/${sub}/" "${STAGE}/${sub}/"
@@ -249,6 +214,13 @@ IconChar=W
 IconColor=0xFF3D6E9E
 EOF
 
+is_webkit_placeholder() {
+    local path="$1"
+    [[ -f "${path}" ]] || return 1
+    head -n 4 "${path}" 2>/dev/null |
+        grep -q 'no host-glibc WebKitGTK runtime staged'
+}
+
 if [[ -x "${STAGE}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
 cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
@@ -259,7 +231,8 @@ Arg=https://www.google.com/
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
-elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]]; then
+elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]] &&
+     ! is_webkit_placeholder "${STAGE}/bin/webkitgpusmoke"; then
 cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -311,50 +284,15 @@ Host *
     LogLevel ERROR
 EOF
 
-# 6. Stage the musl dynamic linker / libc into /lib so dynamically linked
-#    binaries (vim, python3, netsurf, desktop, ...) can exec.  musl ships a
-#    single ELF that serves as both ld.so and libc.so; install it under its
-#    canonical PT_INTERP name and symlink libc.so to it.
-if [[ -n "${MUSL_LIBDIR}" && -d "${MUSL_LIBDIR}" ]]; then
-    shopt -s nullglob
-    # libc.so is the actual ELF; ld-musl-<arch>.so.1 is a symlink to it.
-    # Copy libc.so first, then materialize the canonical PT_INTERP name as
-    # a real file (cp -L on the symlink) so the loader exists in the image
-    # even when /lib symlinks aren't resolvable at exec time.
-    if [[ -f "${MUSL_LIBDIR}/libc.so" ]]; then
-        cp -a "${MUSL_LIBDIR}/libc.so" "${STAGE}/lib/libc.so"
-    fi
-    for ld in "${MUSL_LIBDIR}"/ld-musl-*.so.1; do
-        cp -L "$ld" "${STAGE}/lib/$(basename "$ld")"
-        chmod 0755 "${STAGE}/lib/$(basename "$ld")"
-    done
-    # Stage gcc runtime libs (libatomic, libgcc_s, libstdc++) needed by
-    # dynamically linked C/C++ binaries like netsurf.  These live in
-    # ${triple}/lib64 (sibling of MUSL_LIBDIR) in our toolchain layout.
-    _gcc_libdir="$(dirname "${MUSL_LIBDIR}")/lib64"
-    if [[ -d "${_gcc_libdir}" ]]; then
-        for so in "${_gcc_libdir}"/libatomic.so* \
-                  "${_gcc_libdir}"/libgcc_s.so* \
-                  "${_gcc_libdir}"/libstdc++.so*; do
-            cp -a "$so" "${STAGE}/lib/$(basename "$so")"
-        done
-    fi
-    shopt -u nullglob
-fi
-
-if [[ ! -e "${STAGE}/lib/ld-musl-x86_64.so.1" ]]; then
-    if command -v readelf >/dev/null 2>&1 &&
-       find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null |
-       xargs -0 -r readelf -l 2>/dev/null |
-       grep -q 'Requesting program interpreter: /lib/ld-musl-x86_64.so.1'; then
-        echo "make-rootfs: missing /lib/ld-musl-x86_64.so.1 for dynamically linked binaries" >&2
-        echo "make-rootfs: pass the musl libdir or keep build-toolchain-* under the repo root" >&2
-        exit 1
-    fi
+if command -v readelf >/dev/null 2>&1 &&
+   find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null |
+   xargs -0 -r readelf -l 2>/dev/null |
+   grep -q 'Requesting program interpreter: /lib/ld-musl-'; then
+    echo "make-rootfs: musl-linked executable found; rebuild it with host glibc" >&2
+    exit 1
 fi
 
 stage_host_glibc() {
-    [[ "${STAGE_HOST_GLIBC:-0}" == "1" ]] || return 0
     command -v readelf >/dev/null 2>&1 || {
         echo "make-rootfs: warning: readelf not found; cannot stage host glibc" >&2
         return 0
@@ -366,36 +304,104 @@ stage_host_glibc() {
 
     local exe interp lib
     while IFS= read -r -d '' exe; do
+        readelf -h "$exe" >/dev/null 2>&1 || continue
         interp="$(
             readelf -l "$exe" 2>/dev/null |
             sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p'
         )" || true
-        [[ "${interp}" == "/lib64/ld-linux-x86-64.so.2" ]] || continue
+        if [[ -n "${interp}" && "${interp}" != "/lib64/ld-linux-x86-64.so.2" ]]; then
+            continue
+        fi
 
         if [[ -e "${interp}" ]]; then
             mkdir -p "${STAGE}$(dirname "${interp}")"
             cp -L "${interp}" "${STAGE}${interp}"
             chmod 0755 "${STAGE}${interp}"
-        else
+        elif [[ -n "${interp}" ]]; then
             echo "make-rootfs: warning: host loader missing: ${interp}" >&2
         fi
 
         while IFS= read -r lib; do
             [[ -n "${lib}" && -e "${lib}" ]] || continue
-            mkdir -p "${STAGE}$(dirname "${lib}")"
-            cp -L "${lib}" "${STAGE}${lib}"
-            chmod 0755 "${STAGE}${lib}" 2>/dev/null || true
+            [[ "${lib}" == "${STAGE}/"* ]] && continue
+            stage_host_path "${lib}"
         done < <(
-            ldd "$exe" 2>/dev/null |
+            LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/usr/lib:${STAGE}/lib/x86_64-linux-gnu:${STAGE}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+                ldd "$exe" 2>/dev/null |
             awk '
                 /=> \// { print $3; next }
                 /^[[:space:]]*\// { print $1; next }
             '
         )
-    done < <(find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null)
+    done < <(find "${STAGE}/bin" "${STAGE}/libexec" "${STAGE}/lib" "${STAGE}/usr/lib" \
+        -type f \( -perm -111 -o -name '*.so' -o -name '*.so.*' \) \
+        -print0 2>/dev/null)
+}
+
+stage_has_sysroot_library() {
+    local src="$1"
+    local base
+
+    base="$(basename "${src}")"
+    case "${base}" in
+        *.so|*.so.*) ;;
+        *) return 1 ;;
+    esac
+
+    for dir in "${STAGE}/lib" "${STAGE}/usr/lib" "${STAGE}/lib64"; do
+        [[ -e "${dir}/${base}" ]] && return 0
+    done
+    return 1
+}
+
+stage_host_path() {
+    local src="$1"
+    [[ -e "${src}" ]] || return 0
+    if stage_has_sysroot_library "${src}" && [[ ! -e "${STAGE}${src}" ]]; then
+        return 0
+    fi
+    mkdir -p "${STAGE}$(dirname "${src}")"
+    cp -L "${src}" "${STAGE}${src}"
+    chmod 0755 "${STAGE}${src}" 2>/dev/null || true
+}
+
+stage_ldd_dependencies() {
+    local obj="$1"
+    command -v ldd >/dev/null 2>&1 || return 0
+    while IFS= read -r lib; do
+        [[ -n "${lib}" && -e "${lib}" ]] || continue
+        stage_host_path "${lib}"
+    done < <(
+        LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/usr/lib:${STAGE}/lib/x86_64-linux-gnu:${STAGE}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            ldd "${obj}" 2>/dev/null |
+        awk '
+            /=> \// { print $3; next }
+            /^[[:space:]]*\// { print $1; next }
+        '
+    )
+}
+
+stage_mesa_runtime() {
+    local path
+    shopt -s nullglob
+
+    for path in \
+        /usr/lib/x86_64-linux-gnu/libEGL_mesa.so* \
+        /usr/lib/x86_64-linux-gnu/dri/swrast_dri.so \
+        /usr/lib/x86_64-linux-gnu/dri/kms_swrast_dri.so; do
+        stage_host_path "${path}"
+        stage_ldd_dependencies "${path}"
+    done
+
+    for path in /usr/share/glvnd/egl_vendor.d/*.json; do
+        stage_host_path "${path}"
+    done
+
+    shopt -u nullglob
 }
 
 stage_host_glibc
+stage_mesa_runtime
 
 rm -f "${OUT}"
 truncate -s "${SIZE_MB}M" "${OUT}"

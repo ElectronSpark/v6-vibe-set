@@ -56,7 +56,6 @@ COPY scripts/container-xv6-command.sh /usr/local/bin/xv6-command
 COPY scripts/container-hints.sh /usr/local/bin/xv6-hints
 RUN chmod 0755 /usr/local/bin/xv6-command \
     && chmod 0755 /usr/local/bin/xv6-hints \
-    && ln -s xv6-command /usr/local/bin/xv6-toolchain \
     && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
@@ -74,8 +73,7 @@ ARG BUILD_DIR=/build/xv6-os
 
 COPY . /src/xv6-os
 
-RUN test -f toolchain/scripts/build_gcc_toolchain.sh \
-    && test -f kernel/CMakeLists.txt \
+RUN test -f kernel/CMakeLists.txt \
     && test -f user/CMakeLists.txt \
     && test -f ports/CMakeLists.txt
 
