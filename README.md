@@ -123,7 +123,7 @@ docker run --rm -it \
 ```
 
 For an interactive GUI boot with WebKit/video acceleration, run the container
-with the host display, KVM, and GPU render nodes exposed:
+with the host display, KVM, GPU render nodes, and udmabuf exposed:
 
 ```sh
 docker run --rm -it \
@@ -135,12 +135,30 @@ docker run --rm -it \
   -e XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
   --device /dev/kvm \
   --device /dev/dri \
+  --device /dev/udmabuf \
   xv6-os-dev bash
 ```
 
-Inside that shell, build and launch with `DISPLAY_MODE=gtk USE_KVM=1`. If
-`/dev/dri` is not present, QEMU falls back to Mesa llvmpipe software GL; the VM
-will still boot, but browser video can jitter on CPU-rendered frames.
+Inside that shell, run `xv6-check-gui-accel`, then build and launch with
+`DISPLAY_MODE=gtk USE_KVM=1`. If `/dev/dri` is not present, QEMU falls back to
+Mesa llvmpipe software GL; the VM will still boot, but browser video can jitter
+on CPU-rendered frames. If `/dev/udmabuf` is not present, the launcher disables
+virtio-gpu blob hostmem. On hosts where the kernel module is available, create
+that device before starting Docker with:
+
+```sh
+sudo modprobe udmabuf
+```
+
+The `scripts/enter-container.sh` helper forwards `/dev/kvm`, `/dev/dri`,
+`/dev/udmabuf`, and the host display socket automatically when they exist at
+container creation time.
+
+For fail-fast accelerated launches, add:
+
+```sh
+QEMU_REQUIRE_HOST_DRI=1 QEMU_REQUIRE_UDMABUF=1 ./scripts/launch-gui.sh
+```
 
 For WebKitGTK, provide a host-glibc WebKit runtime sysroot explicitly. The repo
 does not commit `ports/webkit/sysroot`:

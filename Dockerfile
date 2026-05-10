@@ -31,6 +31,10 @@ RUN apt-get update \
         libevdev2 \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
+        libegl1 \
+        libgbm1 \
+        libgl1 \
+        libgl1-mesa-dri \
         libgmp-dev \
         libsecret-1-0 \
         libltdl-dev \
@@ -47,7 +51,10 @@ RUN apt-get update \
         python3-packaging \
         python3-pip \
         python3-yaml \
+        mesa-utils \
+        qemu-system-gui \
         qemu-system-x86 \
+        libvirglrenderer1 \
         rsync \
         sparse \
         tar \
@@ -62,8 +69,10 @@ RUN apt-get update \
 
 COPY scripts/container-xv6-command.sh /usr/local/bin/xv6-command
 COPY scripts/container-hints.sh /usr/local/bin/xv6-hints
+COPY scripts/check-gui-accel.sh /usr/local/bin/xv6-check-gui-accel
 RUN chmod 0755 /usr/local/bin/xv6-command \
     && chmod 0755 /usr/local/bin/xv6-hints \
+    && chmod 0755 /usr/local/bin/xv6-check-gui-accel \
     && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
     && ln -s xv6-command /usr/local/bin/xv6-build \
     && ln -s xv6-command /usr/local/bin/xv6-help \
