@@ -49,6 +49,12 @@ Environment:
   DISPLAY_MODE                   qemu display, default for launch: nographic
   XV6_WEBKIT_REF_SYSROOT         optional mounted WebKitGTK runtime sysroot
 
+GUI acceleration:
+  For DISPLAY_MODE=gtk with virgl/WebKit video, run Docker with --device /dev/dri
+  and --device /dev/kvm plus your host DISPLAY/WAYLAND_DISPLAY socket mounted.
+  Without /dev/dri, QEMU uses software GL (llvmpipe), which can make video
+  playback jitter even on a fast host CPU.
+
 WebKit runtime note:
   The repository does not carry ports/webkit/sysroot. To include WebKitGTK,
   provide a host-glibc runtime sysroot through XV6_WEBKIT_REF_SYSROOT or use

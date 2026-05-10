@@ -123,6 +123,26 @@ docker run --rm -it \
   xv6-os-dev xv6-launch-nokvm
 ```
 
+For an interactive GUI boot with WebKit/video acceleration, run the container
+with the host display, KVM, and GPU render nodes exposed:
+
+```sh
+docker run --rm -it \
+  -v "$PWD":/src/xv6-os \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -e DISPLAY="$DISPLAY" \
+  -e WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+  -v "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" \
+  -e XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+  --device /dev/kvm \
+  --device /dev/dri \
+  xv6-os-dev bash
+```
+
+Inside that shell, build and launch with `DISPLAY_MODE=gtk USE_KVM=1`. If
+`/dev/dri` is not present, QEMU falls back to Mesa llvmpipe software GL; the VM
+will still boot, but browser video can jitter on CPU-rendered frames.
+
 For WebKitGTK, provide a host-glibc WebKit runtime sysroot explicitly. The repo
 does not commit `ports/webkit/sysroot`:
 
