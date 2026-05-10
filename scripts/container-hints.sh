@@ -13,6 +13,8 @@ xv6 container commands:
   xv6-user-ports    compile user programs and all ports
   xv6-images        build fs.img, initrd.cpio.gz, and boot.img
   xv6-launch-nokvm  boot x86_64 in QEMU with USE_KVM=0
+  xv6-check-gui-accel
+                    check KVM, DRI, and udmabuf passthrough for GUI video
   xv6-help          print full usage
 
 Useful environment:
@@ -22,7 +24,11 @@ Useful environment:
   DISPLAY_MODE=nographic|gtk|sdl
   XV6_WEBKIT_REF_SYSROOT=/path/to/host-glibc-webkit-sysroot
 
+For smooth WebKit video in Docker, pass --device /dev/kvm, --device /dev/dri,
+and --device /dev/udmabuf, then run xv6-check-gui-accel inside the container.
+
 Host shortcut:
   scripts/enter-container.sh
+  It forwards KVM, DRI, udmabuf, and host display sockets when they exist.
 
 HINTS

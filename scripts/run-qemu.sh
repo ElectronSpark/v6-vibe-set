@@ -16,6 +16,10 @@
 #                           /dev/udmabuf is available on this launcher path.
 #   QEMU_VIRTIO_GPU_HOSTMEM=256M
 #                           Host-visible memory size for blob resources.
+#   QEMU_REQUIRE_HOST_DRI=0 Fail instead of warning when an accelerated GTK
+#                           GPU launch cannot see host /dev/dri.
+#   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
+#                           requested but /dev/udmabuf is unavailable.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
 #                           pointer-grab scaling ambiguity.
@@ -60,6 +64,8 @@ QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1280}"
 QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-800}"
 QEMU_VIRTIO_GPU_BLOB="${QEMU_VIRTIO_GPU_BLOB:-auto}"
 QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-256M}"
+QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
+QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -123,6 +129,34 @@ if [[ "${QEMU_NETSURF}" == "0" || ("${QEMU_NETSURF}" == "auto" && ${#KVM_ARGS[@]
         fi
 fi
 
+host_dri_available() {
+        local node
+
+        for node in /dev/dri/renderD* /dev/dri/card*; do
+                [[ -e "${node}" ]] || continue
+                if [[ -r "${node}" && -w "${node}" ]]; then
+                        return 0
+                fi
+        done
+        return 1
+}
+
+host_dri_exists() {
+        local node
+
+        for node in /dev/dri/renderD* /dev/dri/card*; do
+                [[ -e "${node}" ]] && return 0
+        done
+        return 1
+}
+
+print_host_gpu_hint() {
+        echo "run-qemu: expose host GPU acceleration before expecting smooth WebKit video:" >&2
+        echo "run-qemu:   bare host: ensure /dev/dri/renderD* is present and accessible" >&2
+        echo "run-qemu:   docker: add --device /dev/dri and, for blobs, --device /dev/udmabuf" >&2
+        echo "run-qemu:   optional host setup for blobs: sudo modprobe udmabuf" >&2
+}
+
 case "${ARCH}" in
         riscv64)
                 DISPLAY_MODE="${DISPLAY_MODE:-nographic}"
@@ -161,9 +195,16 @@ case "${ARCH}" in
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]] &&
-                   ! compgen -G "/dev/dri/renderD*" >/dev/null &&
-                   ! compgen -G "/dev/dri/card*" >/dev/null; then
-                        echo "run-qemu: warning: no host /dev/dri node detected; GTK/virgl will use software GL (llvmpipe), so WebKit video may jitter" >&2
+                   ! host_dri_available; then
+                        if host_dri_exists; then
+                                echo "run-qemu: warning: host /dev/dri nodes exist but are not readable/writable; GTK/virgl will use software GL (llvmpipe)" >&2
+                        else
+                                echo "run-qemu: warning: no host /dev/dri node detected; GTK/virgl will use software GL (llvmpipe), so WebKit video may jitter" >&2
+                        fi
+                        print_host_gpu_hint
+                        if [[ "${QEMU_REQUIRE_HOST_DRI}" == "1" ]]; then
+                                exit 2
+                        fi
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
@@ -239,19 +280,23 @@ case "${ARCH}" in
                 GPU_ARGS=()
                 gpu_gl_opts="xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}"
                 if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "auto" ]]; then
-                        if [[ -e /dev/udmabuf ]]; then
+                        if [[ -r /dev/udmabuf && -w /dev/udmabuf ]]; then
                                 QEMU_VIRTIO_GPU_BLOB=1
                         else
                                 QEMU_VIRTIO_GPU_BLOB=0
                         fi
                 fi
                 if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" ]]; then
-                        if [[ ! -e /dev/udmabuf ]]; then
+                        if [[ ! -r /dev/udmabuf || ! -w /dev/udmabuf ]]; then
                                 echo "run-qemu: QEMU_VIRTIO_GPU_BLOB=1 needs /dev/udmabuf on this launcher path." >&2
-                                echo "run-qemu: this host does not expose it; use QEMU_VIRTIO_GPU_BLOB=0." >&2
+                                print_host_gpu_hint
                                 exit 2
                         fi
                         gpu_gl_opts+=",blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM}"
+                elif [[ "${QEMU_REQUIRE_UDMABUF}" == "1" ]]; then
+                        echo "run-qemu: QEMU_REQUIRE_UDMABUF=1 but /dev/udmabuf is unavailable." >&2
+                        print_host_gpu_hint
+                        exit 2
                 fi
                 case "${QEMU_GPU}" in
                         bochs)

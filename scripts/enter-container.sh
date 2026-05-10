@@ -20,6 +20,34 @@ if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
     exit 1
 fi
 
+append_host_device() {
+    local path="$1"
+
+    if [[ -e "${path}" ]]; then
+        docker_args+=(--device "${path}")
+    fi
+}
+
+append_host_display() {
+    if [[ -n "${DISPLAY:-}" ]]; then
+        docker_args+=(-e "DISPLAY=${DISPLAY}")
+        if [[ -d /tmp/.X11-unix ]]; then
+            docker_args+=(-v /tmp/.X11-unix:/tmp/.X11-unix)
+        fi
+    fi
+
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+        docker_args+=(-e "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}")
+        if [[ -n "${WAYLAND_DISPLAY:-}" &&
+              -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ]]; then
+            docker_args+=(
+                -e "WAYLAND_DISPLAY=${WAYLAND_DISPLAY}"
+                -v "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
+            )
+        fi
+    fi
+}
+
 create_container() {
     local docker_args=(
         create
@@ -31,6 +59,11 @@ create_container() {
         -e XV6_PARALLEL_JOBS="${JOBS}"
         -v "${ROOT}:/src/xv6-os"
     )
+
+    append_host_device /dev/kvm
+    append_host_device /dev/dri
+    append_host_device /dev/udmabuf
+    append_host_display
 
     docker_args+=("${IMAGE}" sleep infinity)
     docker "${docker_args[@]}" >/dev/null

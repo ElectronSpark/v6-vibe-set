@@ -37,9 +37,13 @@ Build the OS:
 Launch the OS:
   xv6-launch-nokvm    build kernel/rootfs, then boot QEMU with USE_KVM=0
   xv6-qemu-nokvm      alias for xv6-launch-nokvm
+  xv6-check-gui-accel check host/container KVM, DRI, and udmabuf devices
 
 Shell:
   docker run --rm -it <image> bash
+  scripts/enter-container.sh starts/reuses a writable helper container and, at
+  creation time, forwards /dev/kvm, /dev/dri, /dev/udmabuf, and host display
+  sockets when they exist.
 
 Environment:
   XV6_SOURCE_DIR                 source checkout, default: current repo or /src/xv6-os
@@ -50,10 +54,11 @@ Environment:
   XV6_WEBKIT_REF_SYSROOT         optional mounted WebKitGTK runtime sysroot
 
 GUI acceleration:
-  For DISPLAY_MODE=gtk with virgl/WebKit video, run Docker with --device /dev/dri
-  and --device /dev/kvm plus your host DISPLAY/WAYLAND_DISPLAY socket mounted.
-  Without /dev/dri, QEMU uses software GL (llvmpipe), which can make video
-  playback jitter even on a fast host CPU.
+  For DISPLAY_MODE=gtk with virgl/WebKit video, run Docker with --device /dev/dri,
+  --device /dev/udmabuf, and --device /dev/kvm plus your host display socket
+  mounted. Without /dev/dri, QEMU uses software GL (llvmpipe), which can make
+  video playback jitter even on a fast host CPU. Without /dev/udmabuf,
+  virtio-gpu blob hostmem stays disabled.
 
 WebKit runtime note:
   The repository does not carry ports/webkit/sysroot. To include WebKitGTK,
