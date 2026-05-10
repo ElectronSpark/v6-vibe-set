@@ -24,6 +24,7 @@ RUN apt-get update \
         gettext \
         glib-networking \
         gstreamer1.0-libav \
+        gstreamer1.0-gl \
         gstreamer1.0-plugins-bad \
         gstreamer1.0-plugins-base \
         gstreamer1.0-plugins-good \
