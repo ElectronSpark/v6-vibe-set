@@ -144,13 +144,23 @@ case "${ARCH}" in
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
-                        # Keep the default launcher on the simple framebuffer
-                        # path.  GTK/virgl setup is host-sensitive: when EGL
-                        # setup fails, QEMU can open a black window even though
-                        # the guest compositor is running.  Use an explicit
-                        # QEMU_GPU=virtio-gpu-gl-primary for virgl tests.
-                        QEMU_GPU="bochs"
+                        # Keep plain GUI boots on the simple framebuffer path,
+                        # but WebKit acceleration needs the displayed fb0 to be
+                        # the virtio-gpu scanout.  Otherwise every video frame
+                        # lands in virgl and is then copied through Bochs VGA.
+                        if [[ "${DISPLAY_MODE}" == "gtk" &&
+                              ( " ${QEMU_APPEND} " == *" webkit_accel=1 "* ||
+                                " ${QEMU_APPEND} " == *" glsmoke_accel=1 "* ) ]]; then
+                                QEMU_GPU="virtio-vga-gl-primary"
+                        else
+                                QEMU_GPU="bochs"
+                        fi
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
+                fi
+                if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]] &&
+                   ! compgen -G "/dev/dri/renderD*" >/dev/null &&
+                   ! compgen -G "/dev/dri/card*" >/dev/null; then
+                        echo "run-qemu: warning: no host /dev/dri node detected; GTK/virgl will use software GL (llvmpipe), so WebKit video may jitter" >&2
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
@@ -253,11 +263,11 @@ case "${ARCH}" in
                                 GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl-primary)
-                                # Keep Bochs as the visible primary console
-                                # and attach virtio-gpu-gl for accelerated
-                                # render nodes.  On WSLg/GTK, primary GL
-                                # scanout devices can expose virgl to the
-                                # guest while leaving the host window black.
+                                # Compatibility alias for the historical
+                                # two-adapter setup: Bochs remains the visible
+                                # console while virtio-gpu-gl supplies render
+                                # nodes.  For smoother WebKit video, prefer
+                                # QEMU_GPU=virtio-vga-gl-primary.
                                 GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
                                 ;;
                         virtio-vga-gl-primary)
