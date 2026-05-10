@@ -16,10 +16,11 @@
 #                           /dev/udmabuf is available on this launcher path.
 #   QEMU_VIRTIO_GPU_HOSTMEM=256M
 #                           Host-visible memory size for blob resources.
-#   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default is
-#                           grabbed relative PS/2 input because vmport
-#                           absolute coordinates are host/GTK-version fragile.
+#   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
+#                           path is the virtio tablet, which avoids host GTK
+#                           pointer-grab scaling ambiguity.
 #   QEMU_INPUT=virtio       Add a virtio tablet for absolute host pointer input.
+#   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
@@ -65,6 +66,8 @@ QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
 QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
 QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
 QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
+QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
+QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
 
 if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
         QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
@@ -166,11 +169,11 @@ case "${ARCH}" in
                 # passes Ctrl-C through to the guest instead of killing qemu).
                 #
                 # GTK input notes:
-                #   - QEMU_VMMOUSE=0      Use grabbed PS/2 relative motion by
-                #                         default. QEMU's vmmouse remains
-                #                         available with QEMU_VMMOUSE=1, but
-                #                         has shown host/GTK-version dependent
-                #                         coordinate stalls.
+                #   - QEMU_INPUT=virtio   Use QEMU's absolute virtio tablet by
+                #                         default so host window scaling does not
+                #                         distort pointer-to-guest coordinates.
+                #   - QEMU_VMMOUSE=1      VMware absolute pointer remains
+                #                         available for explicit debugging.
                 #   - grab-on-hover=on    Capture pointer + keyboard as soon
                 #                         as the host cursor enters the canvas;
                 #                         without this, GTK may keep motion
@@ -330,8 +333,19 @@ case "${ARCH}" in
                         QEMU_CMD+=("${QEMU_EXTRA_ARGS[@]}")
                 fi
                 if [[ "${QEMU_DRY_RUN:-0}" == "1" ]]; then
+                        if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                                printf 'GDK_SCALE=%q GDK_DPI_SCALE=%q ' \
+                                        "${QEMU_GTK_GDK_SCALE}" \
+                                        "${QEMU_GTK_GDK_DPI_SCALE}"
+                        fi
                         printf '%s\n' "${QEMU_CMD[*]}"
                         exit 0
+                fi
+                if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                        exec env \
+                                GDK_SCALE="${QEMU_GTK_GDK_SCALE}" \
+                                GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE}" \
+                                "${QEMU_CMD[@]}"
                 fi
                 exec "${QEMU_CMD[@]}"
                 ;;

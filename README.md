@@ -43,12 +43,11 @@ Current x86_64 bring-up reaches the Wayland desktop (`/bin/desktop` ->
 `wlcomp`) from an ext4 rootfs mounted over virtio-blk. The desktop and
 compositor are rebuilt as static binaries by `port-wayland`, so the GUI
 does not depend on dynamic loader state during early session startup.
-The default QEMU GUI path uses grabbed PS/2 relative mouse motion because it
-continues to work when GTK constrains or scales the host window.  VMware
-absolute pointer support is still available with `QEMU_VMMOUSE=1` for hosts
-where absolute mapping is known-good.  `launch-gui.sh` uses GTK grab-on-hover
-so pointer motion reaches the guest as soon as the host pointer enters the
-window. The `rootfs` target builds
+The default QEMU GUI path uses a virtio tablet for absolute pointer input and
+forces QEMU's GTK process to `GDK_SCALE=1`/`GDK_DPI_SCALE=1`, keeping the guest
+framebuffer and host window at a predictable 1:1 scale.  VMware absolute pointer
+support is still available with `QEMU_VMMOUSE=1` for debugging.  The `rootfs`
+target builds
 `build-x86_64/fs.img`; `qemu` boots it with GTK display and user-mode
 networking.
 
