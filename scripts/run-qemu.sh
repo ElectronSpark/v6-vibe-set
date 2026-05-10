@@ -20,6 +20,13 @@
 #                           GPU launch cannot see host /dev/dri.
 #   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
 #                           requested but /dev/udmabuf is unavailable.
+#   QEMU_HOST_GL=auto       Host OpenGL provider. auto selects WSL D3D12 when
+#                           /dev/dxg and Mesa d3d12 are available. Set
+#                           default to leave Mesa selection alone.
+#   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
+#                           The default keeps Bochs VGA visible and attaches a
+#                           separate virgl GPU for WebKit acceleration; SDL can
+#                           be forced for direct virtio scanout experiments.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
 #                           pointer-grab scaling ambiguity.
@@ -66,6 +73,8 @@ QEMU_VIRTIO_GPU_BLOB="${QEMU_VIRTIO_GPU_BLOB:-auto}"
 QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-256M}"
 QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
 QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
+QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
+QEMU_WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY:-gtk}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -132,12 +141,32 @@ fi
 host_dri_available() {
         local node
 
-        for node in /dev/dri/renderD* /dev/dri/card*; do
+        for node in /dev/dri/renderD*; do
                 [[ -e "${node}" ]] || continue
-                if [[ -r "${node}" && -w "${node}" ]]; then
+                if [[ -r "${node}" && -w "${node}" ]] &&
+                   ! host_dri_node_is_known_software "${node}"; then
                         return 0
                 fi
         done
+        return 1
+}
+
+host_dri_node_is_known_software() {
+        local node="$1"
+        local name
+        local sysdev
+
+        name="$(basename -- "${node}")"
+        sysdev="$(readlink -f "/sys/class/drm/${name}/device" 2>/dev/null || true)"
+        case "${sysdev}" in
+                */vgem|*/vgem/*)
+                        return 0
+                        ;;
+        esac
+        if [[ -r "/sys/class/drm/${name}/device/uevent" ]] &&
+           grep -Eq '(^|=)(vgem|VKMS|vkms)($|=)' "/sys/class/drm/${name}/device/uevent" 2>/dev/null; then
+                return 0
+        fi
         return 1
 }
 
@@ -150,9 +179,44 @@ host_dri_exists() {
         return 1
 }
 
+host_dri_has_known_software() {
+        local node
+
+        for node in /dev/dri/renderD* /dev/dri/card*; do
+                [[ -e "${node}" ]] || continue
+                if host_dri_node_is_known_software "${node}"; then
+                        return 0
+                fi
+        done
+        return 1
+}
+
+host_dri_has_render_node() {
+        local node
+
+        for node in /dev/dri/renderD*; do
+                [[ -e "${node}" ]] && return 0
+        done
+        return 1
+}
+
+host_is_wsl() {
+        grep -qi microsoft /proc/version 2>/dev/null
+}
+
+host_wsl_d3d12_available() {
+        host_is_wsl || return 1
+        [[ -e /dev/dxg ]] || return 1
+        [[ -e /usr/lib/x86_64-linux-gnu/dri/d3d12_dri.so ]] || return 1
+        [[ -e /usr/lib/wsl/lib/libd3d12.so ]] || return 1
+        [[ -e /usr/lib/wsl/lib/libdxcore.so ]] || return 1
+        return 0
+}
+
 print_host_gpu_hint() {
         echo "run-qemu: expose host GPU acceleration before expecting smooth WebKit video:" >&2
-        echo "run-qemu:   bare host: ensure /dev/dri/renderD* is present and accessible" >&2
+        echo "run-qemu:   bare host: ensure a hardware /dev/dri/renderD* is readable/writable" >&2
+        echo "run-qemu:   WSL2: ensure /dev/dxg exists; QEMU_HOST_GL=auto will use Mesa D3D12 with SDL" >&2
         echo "run-qemu:   docker: add --device /dev/dri and, for blobs, --device /dev/udmabuf" >&2
         echo "run-qemu:   optional host setup for blobs: sudo modprobe udmabuf" >&2
 }
@@ -180,6 +244,35 @@ case "${ARCH}" in
                 ;;
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
+                QEMU_ENV_ARGS=()
+                HOST_GL_MODE="${QEMU_HOST_GL}"
+                if [[ "${HOST_GL_MODE}" == "auto" ]]; then
+                        if host_wsl_d3d12_available; then
+                                HOST_GL_MODE="wsl-d3d12"
+                        else
+                                HOST_GL_MODE="default"
+                        fi
+                fi
+                case "${HOST_GL_MODE}" in
+                        default)
+                                ;;
+                        wsl-d3d12)
+                                if ! host_wsl_d3d12_available; then
+                                        echo "run-qemu: QEMU_HOST_GL=wsl-d3d12 requested, but /dev/dxg or Mesa d3d12 is missing" >&2
+                                        exit 2
+                                fi
+                                QEMU_ENV_ARGS+=(
+                                        SDL_VIDEODRIVER=x11
+                                        MESA_LOADER_DRIVER_OVERRIDE=d3d12
+                                        GALLIUM_DRIVER=d3d12
+                                        LIBGL_ALWAYS_SOFTWARE=0
+                                )
+                                ;;
+                        *)
+                                echo "unsupported QEMU_HOST_GL: ${QEMU_HOST_GL}" >&2
+                                exit 2
+                                ;;
+                esac
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
                         # Keep plain GUI boots on the simple framebuffer path,
                         # but WebKit acceleration needs the displayed fb0 to be
@@ -194,10 +287,20 @@ case "${ARCH}" in
                         fi
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
                 fi
-                if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]] &&
+                if [[ "${HOST_GL_MODE}" == "wsl-d3d12" && "${QEMU_GPU}" == *"-gl"* &&
+                      "${DISPLAY_MODE}" == "gtk" ]]; then
+                        echo "run-qemu: WSL D3D12 host GL selected; switching display gtk -> ${QEMU_WSL_GL_DISPLAY} for virgl" >&2
+                        DISPLAY_MODE="${QEMU_WSL_GL_DISPLAY}"
+                fi
+                if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* &&
+                      "${HOST_GL_MODE}" != "wsl-d3d12" ]] &&
                    ! host_dri_available; then
-                        if host_dri_exists; then
-                                echo "run-qemu: warning: host /dev/dri nodes exist but are not readable/writable; GTK/virgl will use software GL (llvmpipe)" >&2
+                        if host_dri_has_known_software; then
+                                echo "run-qemu: warning: host /dev/dri is software-only (for example vgem); GTK/virgl will use llvmpipe and may freeze under WebKit video" >&2
+                        elif host_dri_has_render_node; then
+                                echo "run-qemu: warning: host /dev/dri render nodes exist but are not readable/writable; GTK/virgl will use software GL (llvmpipe)" >&2
+                        elif host_dri_exists; then
+                                echo "run-qemu: warning: host /dev/dri nodes exist but no render node is usable; GTK/virgl will use software GL (llvmpipe)" >&2
                         else
                                 echo "run-qemu: warning: no host /dev/dri node detected; GTK/virgl will use software GL (llvmpipe), so WebKit video may jitter" >&2
                         fi
@@ -227,6 +330,9 @@ case "${ARCH}" in
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]]; then
                         DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
+                                      -serial mon:stdio)
+                elif [[ "${DISPLAY_MODE}" == "sdl" && "${QEMU_GPU}" == *"-gl"* ]]; then
+                        DISPLAY_ARGS=(-display "sdl,gl=on,show-cursor=${QEMU_GTK_SHOW_CURSOR}"
                                       -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         # Forward pointer motion as soon as the host cursor
@@ -378,6 +484,9 @@ case "${ARCH}" in
                         QEMU_CMD+=("${QEMU_EXTRA_ARGS[@]}")
                 fi
                 if [[ "${QEMU_DRY_RUN:-0}" == "1" ]]; then
+                        if [[ ${#QEMU_ENV_ARGS[@]} -gt 0 ]]; then
+                                printf '%q ' "${QEMU_ENV_ARGS[@]}"
+                        fi
                         if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                                 printf 'GDK_SCALE=%q GDK_DPI_SCALE=%q ' \
                                         "${QEMU_GTK_GDK_SCALE}" \
@@ -388,11 +497,12 @@ case "${ARCH}" in
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         exec env \
+                                "${QEMU_ENV_ARGS[@]}" \
                                 GDK_SCALE="${QEMU_GTK_GDK_SCALE}" \
                                 GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE}" \
                                 "${QEMU_CMD[@]}"
                 fi
-                exec "${QEMU_CMD[@]}"
+                exec env "${QEMU_ENV_ARGS[@]}" "${QEMU_CMD[@]}"
                 ;;
         *)
                 echo "unsupported arch: ${ARCH}" >&2
