@@ -20,13 +20,18 @@
 #                           GPU launch cannot see host /dev/dri.
 #   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
 #                           requested but /dev/udmabuf is unavailable.
+#   QEMU_CPU=auto           Use host CPU features under KVM and qemu64 under TCG.
 #   QEMU_HOST_GL=auto       Host OpenGL provider. auto selects WSL D3D12 when
 #                           /dev/dxg and Mesa d3d12 are available. Set
 #                           default to leave Mesa selection alone.
 #   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
 #                           The default keeps Bochs VGA visible and attaches a
-#                           separate virgl GPU for WebKit acceleration; SDL can
-#                           be forced for direct virtio scanout experiments.
+#                           separate virgl GPU for WebKit acceleration.
+#   QEMU_ALLOW_WSL_SDL_GL=0 SDL GL presents a black QEMU window on WSLg/D3D12
+#                           on tested hosts, so virgl launches are switched
+#                           back to GTK unless this is set to 1.
+#   QEMU_WSL_SDL_VIDEODRIVER=wayland
+#                           SDL backend to use on WSL when SDL is selected.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
 #                           pointer-grab scaling ambiguity.
@@ -49,7 +54,7 @@ ARCH="$1"; KERNEL="$2"; FSIMG="$3"
 QEMU_EXTRA="${QEMU_EXTRA:-}"
 QEMU_CPUS="${QEMU_CPUS:-6}"
 QEMU_MEMORY="${QEMU_MEMORY:-4G}"
-QEMU_CPU="${QEMU_CPU:-qemu64}"
+QEMU_CPU="${QEMU_CPU:-auto}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
 QEMU_VMMOUSE="${QEMU_VMMOUSE:-0}"
 QEMU_INPUT="${QEMU_INPUT:-virtio}"
@@ -75,6 +80,8 @@ QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
 QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
 QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
 QEMU_WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY:-gtk}"
+QEMU_ALLOW_WSL_SDL_GL="${QEMU_ALLOW_WSL_SDL_GL:-0}"
+QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-wayland}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -129,6 +136,13 @@ if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         if [[ -r /dev/kvm && -w /dev/kvm ]]; then
                 KVM_ARGS=(-enable-kvm)
                 echo "run-qemu: using KVM acceleration" >&2
+        fi
+fi
+if [[ "${QEMU_CPU}" == "auto" ]]; then
+        if [[ "${ARCH}" == "x86_64" && ${#KVM_ARGS[@]} -gt 0 ]]; then
+                QEMU_CPU="host"
+        else
+                QEMU_CPU="qemu64"
         fi
 fi
 
@@ -216,7 +230,7 @@ host_wsl_d3d12_available() {
 print_host_gpu_hint() {
         echo "run-qemu: expose host GPU acceleration before expecting smooth WebKit video:" >&2
         echo "run-qemu:   bare host: ensure a hardware /dev/dri/renderD* is readable/writable" >&2
-        echo "run-qemu:   WSL2: ensure /dev/dxg exists; QEMU_HOST_GL=auto will use Mesa D3D12 with SDL" >&2
+        echo "run-qemu:   WSL2: ensure /dev/dxg exists; QEMU_HOST_GL=auto will use Mesa D3D12 with GTK" >&2
         echo "run-qemu:   docker: add --device /dev/dri and, for blobs, --device /dev/udmabuf" >&2
         echo "run-qemu:   optional host setup for blobs: sudo modprobe udmabuf" >&2
 }
@@ -262,7 +276,6 @@ case "${ARCH}" in
                                         exit 2
                                 fi
                                 QEMU_ENV_ARGS+=(
-                                        SDL_VIDEODRIVER=x11
                                         MESA_LOADER_DRIVER_OVERRIDE=d3d12
                                         GALLIUM_DRIVER=d3d12
                                         LIBGL_ALWAYS_SOFTWARE=0
@@ -287,10 +300,27 @@ case "${ARCH}" in
                         fi
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
                 fi
-                if [[ "${HOST_GL_MODE}" == "wsl-d3d12" && "${QEMU_GPU}" == *"-gl"* &&
-                      "${DISPLAY_MODE}" == "gtk" ]]; then
-                        echo "run-qemu: WSL D3D12 host GL selected; switching display gtk -> ${QEMU_WSL_GL_DISPLAY} for virgl" >&2
-                        DISPLAY_MODE="${QEMU_WSL_GL_DISPLAY}"
+                if [[ "${HOST_GL_MODE}" == "wsl-d3d12" && "${QEMU_GPU}" == *"-gl"* ]]; then
+                        if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                                WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY}"
+                                if [[ "${WSL_GL_DISPLAY}" == "sdl" &&
+                                      "${QEMU_ALLOW_WSL_SDL_GL}" != "1" ]]; then
+                                        echo "run-qemu: QEMU_WSL_GL_DISPLAY=sdl is disabled because SDL GL presents a black window on WSLg/D3D12; using gtk (set QEMU_ALLOW_WSL_SDL_GL=1 to force)" >&2
+                                        WSL_GL_DISPLAY="gtk"
+                                fi
+                                if [[ "${DISPLAY_MODE}" != "${WSL_GL_DISPLAY}" ]]; then
+                                        echo "run-qemu: WSL D3D12 host GL selected; switching display gtk -> ${WSL_GL_DISPLAY} for virgl" >&2
+                                fi
+                                DISPLAY_MODE="${WSL_GL_DISPLAY}"
+                        elif [[ "${DISPLAY_MODE}" == "sdl" &&
+                                "${QEMU_ALLOW_WSL_SDL_GL}" != "1" ]]; then
+                                echo "run-qemu: SDL GL presents a black window on WSLg/D3D12; switching display sdl -> gtk (set QEMU_ALLOW_WSL_SDL_GL=1 to force)" >&2
+                                DISPLAY_MODE="gtk"
+                        fi
+                fi
+                if [[ "${HOST_GL_MODE}" == "wsl-d3d12" &&
+                      "${DISPLAY_MODE}" == "sdl" ]]; then
+                        QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* &&
                       "${HOST_GL_MODE}" != "wsl-d3d12" ]] &&
@@ -454,16 +484,10 @@ case "${ARCH}" in
                                 exit 2
                                 ;;
                 esac
-                # The kernel does not enable OSXSAVE in CR4, so any
-                # CPU feature that requires XSAVE state (AVX, AVX2, ...)
-                # will #UD on first use.  Under -cpu host KVM advertises
-                # those via CPUID and libc IFUNC dispatch can pick AVX
-                # memcpy/strcmp paths — which then fault.  Keep the CPU model
-                # conservative in BOTH KVM and TCG modes.
-                # KVM exposes hardware PCID when requested, which currently
-                # sends the kernel down a lockup-prone ASID/PCID path after
-                # userspace starts.  Override with QEMU_CPU=qemu64,+pcid when
-                # debugging that path directly.
+                # KVM can expose the real host feature set; the x86 FPU path
+                # enables OSXSAVE and saves XSAVE-managed state, so host SIMD
+                # features are useful for WebKit/codec-heavy workloads.  TCG
+                # keeps the conservative qemu64 fallback via QEMU_CPU=auto.
                 CPU_ARGS=(-cpu "${QEMU_CPU}")
                 QEMU_CMD=(qemu-system-x86_64
                         -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}"
