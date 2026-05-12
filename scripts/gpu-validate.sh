@@ -48,7 +48,7 @@ validate_launch_contract()
     dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-gpu-gl \
         QEMU_INPUT=virtio QEMU_NET=0 QEMU_APPEND="${APPEND_BASE}" \
         bash scripts/run-qemu.sh x86_64 \
-        "${BUILD_DIR}/kernel/kernel.elf" "${BUILD_DIR}/fs.img")"
+        "${BUILD_DIR}/kernel/build/kernel/xv6.bin" "${BUILD_DIR}/fs.img")"
     printf '%s\n' "${dry}" >>"${LOG}"
     grep -q -- '-display gtk,gl=on' <<<"${dry}" ||
         fail "GTK/GL display contract missing"

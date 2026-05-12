@@ -10,6 +10,7 @@
   function log(msg) {
     events.push(msg);
     logNode.textContent = events.join("\n");
+    document.title = "xv6-media-codecs:" + msg.slice(0, 512);
     console.log("XV6-FIXTURE " + msg);
   }
 
@@ -42,6 +43,7 @@
   log("mediaCapabilities=" + typeof navigator.mediaCapabilities);
 
   var playable = false;
+  var summary = [];
   types.forEach(function (type) {
     var media = type.indexOf("audio/") === 0 ? audio : video;
     var canPlay = "";
@@ -59,6 +61,8 @@
     }
     if (canPlay === "probably" || canPlay === "maybe" || mse === "true")
       playable = true;
+    summary.push(type.replace(/; codecs=/, ":").replace(/[\" ]/g, "") +
+      ":c=" + (canPlay || "-") + ":m=" + mse);
     log("type=" + q(type) + " canPlayType=" + q(canPlay) + " mse=" + q(mse));
   });
 
@@ -88,7 +92,8 @@
 
   window.setTimeout(function () {
     document.body.dataset.result = playable ? "pass" : "fail";
-    log("RESULT " + (playable ? "pass" : "fail") + " playable=" + playable);
+    log("RESULT " + (playable ? "pass" : "fail") + " playable=" + playable +
+      " summary=" + summary.join("|"));
   }, 500);
 })();
 </script>

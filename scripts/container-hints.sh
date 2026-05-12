@@ -12,6 +12,7 @@ xv6 container commands:
   xv6-kernel-x86    compile the x86_64 kernel
   xv6-user-ports    compile user programs and all ports
   xv6-images        build fs.img, initrd.cpio.gz, and boot.img
+  xv6-hyperv-image  build a Hyper-V Gen2 bootable VHDX
   xv6-launch-nokvm  boot x86_64 in QEMU with USE_KVM=0
   xv6-check-gui-accel
                     check KVM, DRI, and udmabuf passthrough for GUI video

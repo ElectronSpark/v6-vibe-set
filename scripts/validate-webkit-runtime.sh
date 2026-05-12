@@ -250,6 +250,30 @@ check_no_private_gobject_runtime() {
 
 check_no_private_gobject_runtime
 
+if [[ -e "${sysroot}/lib/libgtk-3.so.0" &&
+      -e "${sysroot}/lib/libgdk-3.so.0" ]]; then
+    gtk_real="$(readlink -f "${sysroot}/lib/libgtk-3.so.0" 2>/dev/null || true)"
+    gdk_real="$(readlink -f "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null || true)"
+    gtk_base="$(basename "${gtk_real:-${sysroot}/lib/libgtk-3.so.0}")"
+    gdk_base="$(basename "${gdk_real:-${sysroot}/lib/libgdk-3.so.0}")"
+    gtk_rev="$(printf '%s\n' "${gtk_base}" |
+        sed -n 's/^libgtk-3\.so\.0\.\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')"
+    gdk_rev="$(printf '%s\n' "${gdk_base}" |
+        sed -n 's/^libgdk-3\.so\.0\.\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')"
+    if [[ -n "${gtk_rev}" && -n "${gdk_rev}" &&
+          "${gtk_rev}" != "${gdk_rev}" ]]; then
+        echo "webkit-runtime-check: libgtk-3.so.0 (${gtk_base}) and libgdk-3.so.0 (${gdk_base}) come from different GTK releases" >&2
+        exit 1
+    fi
+    if command -v readelf >/dev/null 2>&1; then
+        gdk_symbols="$(readelf -Ws "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null || true)"
+        if ! grep -q 'gdk_running_in_sandbox' <<<"${gdk_symbols}"; then
+            echo "webkit-runtime-check: staged libgdk-3.so.0 lacks GTK private ABI used by libgtk-3" >&2
+            exit 1
+        fi
+    fi
+fi
+
 if command -v nm >/dev/null 2>&1 &&
    [[ -e "${sysroot}/lib/libwebkit2gtk-4.1.so.0" &&
       -e "${sysroot}/lib/libgdk-3.so.0" ]]; then

@@ -18,6 +18,8 @@ this directory and out of git.
 - `build-linux-host-libs.sh` - stage host glibc runtime support libraries.
 - `build-linux-host-probes.sh` - build small host-glibc ABI probe programs.
 - `make-rootfs.sh` - generate the ext4 root filesystem image from the sysroot.
+- `make-hyperv-image.sh` - generate a Hyper-V Gen2 bootable VHDX from
+  `xv6.bin` and `fs.img`.
 - `make-initrd.sh` - legacy initrd builder retained for the CMake `initrd`
   target.
 - `make-image.sh` - legacy boot-image builder retained for the CMake `image`

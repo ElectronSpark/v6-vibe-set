@@ -4,7 +4,7 @@
 # (root=/dev/disk0).
 #
 # Usage:
-#   make-rootfs.sh <sysroot_dir> <out_img> [size_mb]
+#   make-rootfs.sh <sysroot_dir> <out_img> [size_mb|auto]
 #
 # The sysroot is expected to contain host-glibc Linux userland under bin/,
 # lib/, lib64/, libexec/, usr/, share/, and etc/.
@@ -26,6 +26,7 @@ if [[ ! -d "${SYSROOT}/bin" ]]; then
 fi
 
 command -v mkfs.ext4 >/dev/null || { echo "make-rootfs: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
+command -v e2fsck   >/dev/null || { echo "make-rootfs: e2fsck not found (install e2fsprogs)" >&2; exit 1; }
 command -v rsync    >/dev/null || { echo "make-rootfs: rsync not found"               >&2; exit 1; }
 
 STAGE="$(mktemp -d)"
@@ -122,6 +123,15 @@ fi
 mkdir -p "${STAGE}/root/.ssh" "${STAGE}/root/Desktop" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
 chmod 0700 "${STAGE}/root/.ssh"
 chmod 0755 "${STAGE}/var/empty"
+
+# Host-built GStreamer registry files store the absolute sysroot path used
+# during staging.  Preserve that path as a symlink inside the guest so the
+# prebuilt registry can be used read-only instead of rescanning plugins during
+# WebKit startup.
+if [[ -f "${STAGE}/share/gstreamer-1.0/registry.x86_64.bin" ]]; then
+    mkdir -p "${STAGE}/tmp/xv6-hyperv-build"
+    ln -sfn / "${STAGE}/tmp/xv6-hyperv-build/sysroot"
+fi
 
 cat > "${STAGE}/root/Desktop/terminal.desktop" <<'EOF'
 [Desktop Entry]
@@ -227,7 +237,7 @@ cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
 Type=Application
 Name=WebKit
 Exec=/libexec/webkit2gtk-4.1/MiniBrowser
-Arg=https://www.google.com/
+Arg=https://www.google.com/search?q=xv6&gbv=1
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
@@ -403,9 +413,27 @@ stage_mesa_runtime() {
 stage_host_glibc
 stage_mesa_runtime
 
+if [[ "${SIZE_MB}" == "auto" ]]; then
+    stage_kib="$(du -sk "${STAGE}" | awk '{print $1}')"
+    # ext4 -d needs room for metadata, directories, and future runtime writes.
+    # Use about 45% headroom plus 256 MiB, then round up to a 128 MiB boundary.
+    SIZE_MB=$(( (stage_kib * 145 / 100 + 262144 + 1023) / 1024 ))
+    if (( SIZE_MB < 1024 )); then
+        SIZE_MB=1024
+    fi
+    SIZE_MB=$(( ((SIZE_MB + 127) / 128) * 128 ))
+fi
+
+if ! [[ "${SIZE_MB}" =~ ^[0-9]+$ ]] || (( SIZE_MB <= 0 )); then
+    echo "make-rootfs: invalid image size '${SIZE_MB}' (expected MiB or auto)" >&2
+    exit 1
+fi
+
 rm -f "${OUT}"
 truncate -s "${SIZE_MB}M" "${OUT}"
-mkfs.ext4 -F -L xv6root -d "${STAGE}" "${OUT}" >/dev/null
+mkfs.ext4 -F -L xv6root \
+    -O '^has_journal,^metadata_csum,^64bit,^ext_attr,^resize_inode' \
+    -d "${STAGE}" "${OUT}" >/dev/null
 
 if command -v debugfs >/dev/null 2>&1; then
     debugfs -w "${OUT}" <<'EOF' >/dev/null 2>&1 || true
@@ -451,5 +479,7 @@ set_inode_field /etc/ssh/ssh_host_ecdsa_key.pub uid 0
 set_inode_field /etc/ssh/ssh_host_ecdsa_key.pub gid 0
 EOF
 fi
+
+e2fsck -fy "${OUT}" >/dev/null
 
 echo "make-rootfs: wrote ${OUT} (${SIZE_MB} MiB ext4, label=xv6root) from ${SYSROOT}"

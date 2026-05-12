@@ -12,7 +12,18 @@
 set(_initrd "${XV6_BUILD_ROOT}/initrd.cpio.gz")
 set(_image  "${XV6_BUILD_ROOT}/boot.img")
 set(_fsimg  "${XV6_BUILD_ROOT}/fs.img")
-set(_fsimg_size_mb "1536" CACHE STRING "Size of fs.img in MiB")
+set(_x86_linux_img "${XV6_KERNEL_ARTIFACTS}/build/kernel/xv6.bin")
+if(XV6_ARCH STREQUAL "x86_64")
+	set(_qemu_kernel "${_x86_linux_img}")
+else()
+	set(_qemu_kernel "${XV6_KERNEL_ARTIFACTS}/kernel.elf")
+endif()
+set(_hyperv_vhdx "${XV6_BUILD_ROOT}/xv6-hyperv.vhdx")
+set(_fsimg_size_mb "auto" CACHE STRING "Size of fs.img in MiB, or auto to size from the staged sysroot")
+set(_hyperv_img_size_mb "0" CACHE STRING
+	"Size of Hyper-V VHDX in MiB; 0 chooses a size from fs.img")
+set(_hyperv_cmdline "BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=0 video=1024x640"
+	CACHE STRING "Kernel command line embedded in the Hyper-V EFI loader")
 file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
 
@@ -55,13 +66,25 @@ add_custom_command(
 add_custom_target(initrd DEPENDS ${_initrd})
 add_custom_target(image DEPENDS ${_image} rootfs)
 
+add_custom_target(hyperv-image
+	COMMAND ${CMAKE_COMMAND} -E env
+	            HYPERV_CMDLINE=${_hyperv_cmdline}
+	            ${CMAKE_SOURCE_DIR}/scripts/make-hyperv-image.sh
+	            ${_x86_linux_img}
+	            ${_fsimg}
+	            ${_hyperv_vhdx}
+	            ${_hyperv_img_size_mb}
+	DEPENDS kernel rootfs
+	BYPRODUCTS ${_hyperv_vhdx}
+	COMMENT "Building Hyper-V Gen2 bootable VHDX ${_hyperv_vhdx}")
+
 # ---------------------------------------------------------------------
 # qemu boot — uses fs.img (the rootfs target).
 # ---------------------------------------------------------------------
 add_custom_target(qemu
 	COMMAND ${CMAKE_SOURCE_DIR}/scripts/run-qemu.sh
 	            ${XV6_ARCH}
-	            ${XV6_KERNEL_ARTIFACTS}/kernel.elf
+	            ${_qemu_kernel}
 	            ${_fsimg}
 	DEPENDS kernel rootfs
 	USES_TERMINAL
