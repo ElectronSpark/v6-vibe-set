@@ -90,6 +90,21 @@ The build-local sysroot is always `${build_dir}/sysroot`. Do not set
 that so generated runtimes and downloaded dependency caches do not spill into
 the source tree or another checkout.
 
+## Hyper-V
+
+The x86_64 kernel can also boot as a Generation 2 Hyper-V VM. Build the VHDX
+from the same kernel and rootfs artifacts:
+
+```sh
+cmake --build build-x86_64 --target hyperv-image -j2
+```
+
+This writes `build-x86_64/xv6-hyperv.vhdx`. Create a Generation 2 VM, disable
+Secure Boot, attach that VHDX as the boot disk, assign the desired CPU count,
+and start it. The Hyper-V path uses a small repo-built EFI loader that passes
+the firmware memory map, ramdisk, and GOP framebuffer to the kernel. The VHDX,
+ESP image, and loader objects are generated under the build directory only.
+
 See `scripts/README.md` for the maintained helper scripts and what generated
 artifacts should stay out of the repository.
 
@@ -111,6 +126,12 @@ Build the full OS in the container:
 
 ```sh
 docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-build
+```
+
+Build the Hyper-V VHDX in the container:
+
+```sh
+docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-hyperv-image
 ```
 
 Launch the OS from the container without KVM:

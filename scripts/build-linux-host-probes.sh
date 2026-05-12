@@ -7,6 +7,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 HOST_CC="${HOST_CC:-gcc}"
 SYSROOT="${1:-${REPO_ROOT}/build-x86_64/sysroot}"
 OUT_DIR="${SYSROOT}/bin"
+BUILD_BASE="$(mkdir -p "$(dirname "${SYSROOT}")" && cd "$(dirname "${SYSROOT}")" && pwd)"
 HOST_PROBE_CFLAGS="${HOST_PROBE_CFLAGS:--O2 -g}"
 HOST_PROBE_WARN_CFLAGS="${HOST_PROBE_WARN_CFLAGS:-}"
 HOST_USER_CFLAGS="${HOST_USER_CFLAGS:-${HOST_PROBE_CFLAGS}}"
@@ -17,7 +18,7 @@ STACK_GUARD_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_stack_guard_probe.c"
 NCURSES_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_ncurses_probe.c"
 READLINE_SRC="${REPO_ROOT}/tools/linux-abi-probes/host_readline_probe.c"
 HOST_SH_SRC="${REPO_ROOT}/user/programs/sh/sh.c"
-HOST_WAYLAND_REF="${HOST_WAYLAND_REF:-${REPO_ROOT}/build-x86_64/ports/wayland-host-glibc-test}"
+HOST_WAYLAND_REF="${HOST_WAYLAND_REF:-${BUILD_BASE}/ports/wayland-host-glibc-test}"
 mapfile -t HOST_USER_PROGRAMS < <(
     find "${REPO_ROOT}/user/programs" -mindepth 1 -maxdepth 1 -type d \
         -printf '%f\n' | sort

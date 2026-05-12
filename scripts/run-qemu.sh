@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-qemu.sh <arch> <kernel.elf> <fs.img>
+# run-qemu.sh <arch> <kernel-image> <fs.img>
 #
 # Boots the kernel + xv6fs disk image in qemu-system-<arch>.
 # Set DISPLAY_MODE=gtk|sdl|nographic (default gtk on x86_64, nographic on riscv64).
@@ -20,6 +20,8 @@
 #                           GPU launch cannot see host /dev/dri.
 #   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
 #                           requested but /dev/udmabuf is unavailable.
+#   QEMU_REQUIRE_KVM=auto   Require KVM for WebKit-accelerated GUI launches.
+#                           Set to 0 for deliberate slow-path debugging.
 #   QEMU_CPU=auto           Use host CPU features under KVM and qemu64 under TCG.
 #   QEMU_HOST_GL=auto       Host OpenGL provider. auto selects WSL D3D12 when
 #                           /dev/dxg and Mesa d3d12 are available. Set
@@ -35,18 +37,28 @@
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
 #                           pointer-grab scaling ambiguity.
-#   QEMU_INPUT=virtio       Add a virtio tablet for absolute host pointer input.
+#   QEMU_INPUT=auto         Input device path: auto, virtio, virtio-mouse,
+#                           vmmouse, ps2, or none. auto uses virtio-tablet for
+#                           GTK and vmmouse for SDL because QEMU's SDL frontend
+#                           can fail to deliver absolute tablet motion on WSLg
+#                           while relative devices can be host-edge clamped.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
 #                           Hide the host cursor and use the guest cursor.
+#   QEMU_SDL_GRAB_MOD=lctrl-lalt
+#                           SDL mouse/keyboard ungrab modifier.
+#   QEMU_SDL_SHOW_CURSOR=on
+#                           Keep the host cursor visible. WSLg's SDL/X11 grab
+#                           path can stop delivering focused pointer motion when
+#                           the cursor is hidden/captured.
 #   QEMU_DRY_RUN=1          Print the resolved qemu command and exit.
 #   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-        echo "usage: $0 <arch> <kernel.elf> <fs.img>" >&2
+        echo "usage: $0 <arch> <kernel-image> <fs.img>" >&2
         exit 1
 fi
 ARCH="$1"; KERNEL="$2"; FSIMG="$3"
@@ -57,13 +69,16 @@ QEMU_MEMORY="${QEMU_MEMORY:-4G}"
 QEMU_CPU="${QEMU_CPU:-auto}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0}"
 QEMU_VMMOUSE="${QEMU_VMMOUSE:-0}"
-QEMU_INPUT="${QEMU_INPUT:-virtio}"
+QEMU_INPUT="${QEMU_INPUT:-auto}"
 if [[ -z "${QEMU_MACHINE:-}" ]]; then
+        QEMU_MACHINE_AUTO=1
         if [[ "${QEMU_VMMOUSE}" == "1" ]]; then
                 QEMU_MACHINE="pc,vmport=on"
         else
                 QEMU_MACHINE="pc,vmport=off"
         fi
+else
+        QEMU_MACHINE_AUTO=0
 fi
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
@@ -78,10 +93,11 @@ QEMU_VIRTIO_GPU_BLOB="${QEMU_VIRTIO_GPU_BLOB:-auto}"
 QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-256M}"
 QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
 QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
+QEMU_REQUIRE_KVM="${QEMU_REQUIRE_KVM:-auto}"
 QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
 QEMU_WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY:-gtk}"
 QEMU_ALLOW_WSL_SDL_GL="${QEMU_ALLOW_WSL_SDL_GL:-0}"
-QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-wayland}"
+QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-x11}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -90,10 +106,35 @@ QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
 QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
 QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
 QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
+QEMU_SDL_GRAB_MOD="${QEMU_SDL_GRAB_MOD:-lctrl-lalt}"
+QEMU_SDL_SHOW_CURSOR="${QEMU_SDL_SHOW_CURSOR:-on}"
 
 if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
         QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
 fi
+
+qemu_append_has_enabled_flag() {
+        local key="$1"
+        [[ " ${QEMU_APPEND} " == *" ${key}=1 "* ]]
+}
+
+print_kvm_hint() {
+        echo "run-qemu: smooth WebKit video needs KVM; the current launch would fall back to slow TCG." >&2
+        echo "run-qemu: make /dev/kvm readable/writable by this user, then restart the shell/WSL session." >&2
+        echo "run-qemu: common fix: sudo usermod -aG kvm ${USER}; in WSL, also check /dev/kvm group/udev permissions." >&2
+        echo "run-qemu: set QEMU_REQUIRE_KVM=0 only for deliberate non-accelerated debugging." >&2
+}
+
+requires_kvm_for_this_launch() {
+        if [[ "${QEMU_REQUIRE_KVM}" == "1" ]]; then
+                return 0
+        fi
+        if [[ "${QEMU_REQUIRE_KVM}" != "auto" ]]; then
+                return 1
+        fi
+        [[ "${ARCH}" == "x86_64" && "${DISPLAY_MODE:-gtk}" != "nographic" ]] || return 1
+        qemu_append_has_enabled_flag webkit_accel
+}
 
 if [[ "${QEMU_GDB}" == "1" ]]; then
         QEMU_GDB_ARGS=(-gdb "tcp::${QEMU_GDB_PORT}")
@@ -126,17 +167,25 @@ KVM_ARGS=()
 if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
                 echo "run-qemu: /dev/kvm exists but is not accessible to ${USER}." >&2
-                echo "run-qemu: requesting sudo to chmod a+rw /dev/kvm ..." >&2
-                if sudo chmod a+rw /dev/kvm; then
-                        echo "run-qemu: /dev/kvm is now accessible." >&2
+                if [[ -t 0 ]]; then
+                        echo "run-qemu: requesting sudo to chmod a+rw /dev/kvm ..." >&2
+                        if sudo chmod a+rw /dev/kvm; then
+                                echo "run-qemu: /dev/kvm is now accessible." >&2
+                        else
+                                echo "run-qemu: sudo failed; falling back to TCG unless this launch requires KVM." >&2
+                        fi
                 else
-                        echo "run-qemu: sudo failed; falling back to TCG." >&2
+                        echo "run-qemu: noninteractive shell; not prompting for sudo." >&2
                 fi
         fi
         if [[ -r /dev/kvm && -w /dev/kvm ]]; then
                 KVM_ARGS=(-enable-kvm)
                 echo "run-qemu: using KVM acceleration" >&2
         fi
+fi
+if [[ ${#KVM_ARGS[@]} -eq 0 ]] && requires_kvm_for_this_launch; then
+        print_kvm_hint
+        exit 2
 fi
 if [[ "${QEMU_CPU}" == "auto" ]]; then
         if [[ "${ARCH}" == "x86_64" && ${#KVM_ARGS[@]} -gt 0 ]]; then
@@ -318,8 +367,7 @@ case "${ARCH}" in
                                 DISPLAY_MODE="gtk"
                         fi
                 fi
-                if [[ "${HOST_GL_MODE}" == "wsl-d3d12" &&
-                      "${DISPLAY_MODE}" == "sdl" ]]; then
+                if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]]; then
                         QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* &&
@@ -362,13 +410,16 @@ case "${ARCH}" in
                         DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
                                       -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "sdl" && "${QEMU_GPU}" == *"-gl"* ]]; then
-                        DISPLAY_ARGS=(-display "sdl,gl=on,show-cursor=${QEMU_GTK_SHOW_CURSOR}"
+                        DISPLAY_ARGS=(-display "sdl,gl=on,show-cursor=${QEMU_SDL_SHOW_CURSOR},grab-mod=${QEMU_SDL_GRAB_MOD}"
                                       -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         # Forward pointer motion as soon as the host cursor
                         # enters the GTK window.  Relying on click-to-grab can
                         # leave the guest cursor apparently frozen on Wayland.
                         DISPLAY_ARGS=(-display "gtk,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
+                                      -serial mon:stdio)
+                elif [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                        DISPLAY_ARGS=(-display "sdl,show-cursor=${QEMU_SDL_SHOW_CURSOR},grab-mod=${QEMU_SDL_GRAB_MOD}"
                                       -serial mon:stdio)
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
@@ -473,9 +524,33 @@ case "${ARCH}" in
                                 ;;
                 esac
                 INPUT_ARGS=()
+                if [[ "${QEMU_INPUT}" == "auto" ]]; then
+                        if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
+                                QEMU_INPUT="none"
+                        elif [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                                QEMU_INPUT="vmmouse"
+                                QEMU_VMMOUSE=1
+                                if [[ "${QEMU_MACHINE_AUTO}" == "1" ]]; then
+                                        QEMU_MACHINE="pc,vmport=on"
+                                fi
+                        else
+                                QEMU_INPUT="virtio"
+                        fi
+                fi
                 case "${QEMU_INPUT}" in
                         virtio)
                                 INPUT_ARGS=(-device virtio-tablet-pci)
+                                ;;
+                        virtio-mouse)
+                                INPUT_ARGS=(-device virtio-mouse-pci)
+                                ;;
+                        vmmouse)
+                                if [[ "${QEMU_MACHINE_AUTO}" == "1" ]]; then
+                                        QEMU_MACHINE="pc,vmport=on"
+                                elif [[ "${QEMU_MACHINE}" != *"vmport=on"* ]]; then
+                                        echo "run-qemu: QEMU_INPUT=vmmouse needs QEMU_MACHINE with vmport=on" >&2
+                                        exit 2
+                                fi
                                 ;;
                         ps2|none)
                                 ;;

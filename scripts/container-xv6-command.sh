@@ -23,6 +23,12 @@ cmake_args=(
     -DXV6_ARCH="${arch}"
     -DXV6_PARALLEL_JOBS="${jobs}"
 )
+if [[ -n "${XV6_WEBKIT_REF_SYSROOT:-}" ]]; then
+    cmake_args+=(
+        -DXV6_WEBKIT_REF_SYSROOT="${XV6_WEBKIT_REF_SYSROOT}"
+        -DXV6_WEBKIT_STRICT_STAGE=ON
+    )
+fi
 
 usage() {
     cat <<'USAGE'
@@ -33,6 +39,7 @@ Build the OS:
   xv6-kernel-x86      configure x86_64 and build only the kernel
   xv6-user-ports      build user programs and all ports
   xv6-images          build fs.img, initrd.cpio.gz, and boot.img
+  xv6-hyperv-image    build a Hyper-V Gen2 bootable xv6-hyperv.vhdx
 
 Launch the OS:
   xv6-launch-nokvm    build kernel/rootfs, then boot QEMU with USE_KVM=0
@@ -100,6 +107,9 @@ case "${command_name}" in
         ;;
     xv6-images)
         build_targets rootfs initrd image
+        ;;
+    xv6-hyperv-image)
+        build_targets hyperv-image
         ;;
     xv6-launch-nokvm|xv6-qemu-nokvm)
         configure

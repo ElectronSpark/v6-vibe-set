@@ -28,6 +28,7 @@ add_custom_target(help-targets
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel     build kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  kernel-sparse  run sparse lock/context checks for kernel"
 	COMMAND ${CMAKE_COMMAND} -E echo "  image      build bootable image / initrd"
+	COMMAND ${CMAKE_COMMAND} -E echo "  hyperv-image build Hyper-V Gen2 bootable VHDX"
 	COMMAND ${CMAKE_COMMAND} -E echo "  rootfs     build ext4 fs.img from sysroot (boot disk)"
 	COMMAND ${CMAKE_COMMAND} -E echo "  qemu       boot image in qemu (see scripts/run-qemu.sh)"
 	COMMAND ${CMAKE_COMMAND} -E echo "  world      everything above"

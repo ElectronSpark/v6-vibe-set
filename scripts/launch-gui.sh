@@ -18,6 +18,8 @@ fi
 
 kernel_candidates=(
     "${KERNEL:-}"
+    "${BUILD_DIR}/kernel/build/kernel/xv6.bin"
+    "${BUILD_DIR}/kernel/xv6.bin"
     "${BUILD_DIR}/kernel/kernel.elf"
     "${BUILD_DIR}/kernel/build/kernel/kernel"
     "${BUILD_DIR}/kernel/kernel/kernel"
@@ -37,9 +39,10 @@ if [[ -z "${KERNEL_PATH}" ]]; then
     exit 1
 fi
 
-if [[ -z "${KERNEL:-}" && "${KERNEL_PATH}" != "${BUILD_DIR}/kernel/kernel.elf" ]]; then
-    echo "launch-gui: warning: using plain kernel artifact without embedded backtrace symbols: ${KERNEL_PATH}" >&2
-    echo "launch-gui: build the umbrella kernel target to install: ${BUILD_DIR}/kernel/kernel.elf" >&2
+if [[ -z "${KERNEL:-}" && "${KERNEL_PATH}" != "${BUILD_DIR}/kernel/build/kernel/xv6.bin" &&
+      "${KERNEL_PATH}" != "${BUILD_DIR}/kernel/xv6.bin" ]]; then
+    echo "launch-gui: warning: using non-Linux-boot kernel artifact: ${KERNEL_PATH}" >&2
+    echo "launch-gui: build the umbrella kernel target to install: ${BUILD_DIR}/kernel/build/kernel/xv6.bin" >&2
 fi
 
 if [[ ! -f "${FSIMG}" ]]; then

@@ -12,6 +12,7 @@
   const lines = [];
   function log(line) {
     lines.push(line);
+    document.title = "xv6-video-direct:" + line.slice(0, 96);
     console.log("VIDEO-DIRECT " + line);
     out.textContent = lines.join("\n");
   }

@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6-media-init:boot</title>
+<pre id="out">boot</pre>
+<script>
+(function () {
+  var out = document.getElementById("out");
+  var steps = [];
+  function mark(step) {
+    steps.push(step);
+    document.title = "xv6-media-init:" + steps.join(",");
+    out.textContent = steps.join("\n");
+    console.log("XV6-MEDIA-INIT " + steps.join(","));
+  }
+  function safe(step, fn) {
+    mark("before-" + step);
+    try {
+      var value = fn();
+      mark("after-" + step + ":" + value);
+    } catch (e) {
+      mark("throw-" + step + ":" + e.name + ":" + e.message);
+    }
+  }
+  mark("script");
+  safe("create-video", function () { return typeof document.createElement("video"); });
+  safe("create-audio", function () { return typeof document.createElement("audio"); });
+  var video = document.createElement("video");
+  safe("canplay-mp4", function () { return video.canPlayType("video/mp4"); });
+  safe("canplay-avc", function () {
+    return video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"');
+  });
+  safe("mediasource-type", function () { return typeof window.MediaSource; });
+  safe("mse-mp4", function () {
+    if (!window.MediaSource || typeof MediaSource.isTypeSupported !== "function")
+      return "missing";
+    return String(MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"'));
+  });
+  safe("attach-src", function () {
+    video.muted = true;
+    video.playsInline = true;
+    video.src = "test-mse.mp4";
+    return video.readyState + "/" + video.networkState;
+  });
+  setTimeout(function () {
+    mark("timeout:" + video.readyState + "/" + video.networkState +
+         ":err=" + (video.error ? video.error.code : 0));
+  }, 500);
+})();
+</script>

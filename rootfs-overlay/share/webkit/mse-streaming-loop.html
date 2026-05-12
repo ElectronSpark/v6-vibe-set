@@ -22,6 +22,7 @@
     lines.push(line);
     if (lines.length > 160)
       lines.shift();
+    document.title = "xv6-mse-stream:" + line.slice(0, 96);
     console.log("MSE-STREAM " + line);
     out.textContent = lines.join("\n");
   }
