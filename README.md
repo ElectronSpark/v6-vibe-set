@@ -51,6 +51,15 @@ target builds
 `build-x86_64/fs.img`; `qemu` boots it with GTK display and user-mode
 networking.
 
+## Graphics API scope
+
+The desktop is Wayland/EGL-first. Native Wayland EGL clients are the supported
+OpenGL presentation path, and backend acceleration is gated by the render
+backend's `FB_GPU_BACKEND_F_OPENGL_SUBMIT` capability. GLX is intentionally not
+implemented: there is no X server in the normal session, and GLX clients should
+be treated as unsupported rather than silently routed through an xv6-private
+compatibility path.
+
 ## Build and launch
 
 These are the commands to use from a clean checkout. The root filesystem image

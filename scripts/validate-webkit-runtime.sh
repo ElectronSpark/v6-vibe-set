@@ -424,7 +424,7 @@ if [[ -n "${fsimg}" ]]; then
         "/lib/libcairo-gobject.so.2"
         "/lib/webkit2gtk-4.1/injected-bundle/libwebkit2gtkinjectedbundle.so"
         "/share/glib-2.0/schemas/gschemas.compiled"
-        "/root/Desktop/webkit.desktop"
+        "/root/desktop/webkit.desktop"
     )
 
     if command -v readelf >/dev/null 2>&1 &&
