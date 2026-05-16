@@ -7,9 +7,13 @@ cd "${ROOT}"
 
 BUILD_DIR="${BUILD_DIR:-build-x86_64}"
 LOG="${GPU_VALIDATE_LOG:-${ROOT}/${BUILD_DIR}/gpu-validate.log}"
-MODE="${GPU_VALIDATE_MODE:-nographic}"
+MODE="${GPU_VALIDATE_MODE:-gtk}"
 TIMEOUT="${GPU_VALIDATE_TIMEOUT:-180s}"
-APPEND_BASE="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 video=1280x800}"
+GPU_VALIDATE_XRES="${GPU_VALIDATE_XRES:-640}"
+GPU_VALIDATE_YRES="${GPU_VALIDATE_YRES:-480}"
+GPU_VALIDATE_TOKEN="${GPU_VALIDATE_TOKEN:-gpuv-$$}"
+APPEND_BASE="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 gpu_validate=1 video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}}"
+APPEND_BASE="${APPEND_BASE} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
 
 mkdir -p "$(dirname "${LOG}")"
 : > "${LOG}"
@@ -41,11 +45,18 @@ reject_log()
     fi
 }
 
+cleanup_validation_qemu()
+{
+    pkill -TERM -f "qemu-system-x86_64 .*gpu_validate_token=${GPU_VALIDATE_TOKEN}" 2>/dev/null || true
+}
+
 validate_launch_contract()
 {
     local dry
 
     dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-gpu-gl \
+        QEMU_VIRTIO_GPU_XRES="${GPU_VALIDATE_XRES}" \
+        QEMU_VIRTIO_GPU_YRES="${GPU_VALIDATE_YRES}" \
         QEMU_INPUT=virtio QEMU_NET=0 QEMU_APPEND="${APPEND_BASE}" \
         bash scripts/run-qemu.sh x86_64 \
         "${BUILD_DIR}/kernel/build/kernel/xv6.bin" "${BUILD_DIR}/fs.img")"
@@ -60,12 +71,14 @@ validate_launch_contract()
         fail "GTK menubar must stay hidden for deterministic geometry"
     grep -q -- 'show-tabs=off' <<<"${dry}" ||
         fail "GTK tabs must stay hidden for deterministic geometry"
-    grep -q -- 'virtio-gpu-gl-pci,xres=1280,yres=800' <<<"${dry}" ||
+    grep -q -- "virtio-gpu-gl-pci,xres=${GPU_VALIDATE_XRES},yres=${GPU_VALIDATE_YRES}" <<<"${dry}" ||
         fail "virtio-gpu-gl geometry contract missing"
     grep -q -- 'virtio-tablet-pci' <<<"${dry}" ||
         fail "virtio tablet input contract missing"
-    grep -q -- 'video=1280x800' <<<"${dry}" ||
+    grep -q -- "video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}" <<<"${dry}" ||
         fail "guest video mode contract missing"
+    grep -q -- 'gpu_validate=1' <<<"${dry}" ||
+        fail "guest GPU substrate validation cmdline missing"
 }
 
 run_substrate()
@@ -74,91 +87,58 @@ run_substrate()
         fail "expect is required for prompt-synchronized guest commands"
 
     echo "gpu-validate: running substrate checks (${MODE})" | tee -a "${LOG}"
+    trap cleanup_validation_qemu RETURN
 expect >>"${LOG}" 2>&1 <<EOF || fail "substrate VM run failed"
 set timeout 180
+match_max 200000
 proc wait_prompt {} {
     set saved_timeout \$::timeout
     set ::timeout 30
     expect {
-        -re {root:/# ?} { }
+        -re {[^\r\n]*# ?} { }
         timeout {
             send "\r"
-            expect -re {root:/# ?}
+            expect -re {[^\r\n]*# ?}
         }
     }
     set ::timeout \$saved_timeout
 }
 set env(DISPLAY_MODE) "${MODE}"
 set env(USE_KVM) "${USE_KVM:-1}"
-set env(QEMU_GPU) "${QEMU_GPU:-virtio-gpu}"
+set env(QEMU_GPU) "${QEMU_GPU:-virtio-gpu-gl}"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
+set env(QEMU_VIRTIO_GPU_XRES) "${GPU_VALIDATE_XRES}"
+set env(QEMU_VIRTIO_GPU_YRES) "${GPU_VALIDATE_YRES}"
+set env(QEMU_ALLOW_WSL_SDL_GL) "${QEMU_ALLOW_WSL_SDL_GL:-1}"
 set env(QEMU_APPEND) "${APPEND_BASE}"
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch-gui.sh
-expect "wlcomp: entering main loop"
-wait_prompt
-send "export XDG_RUNTIME_DIR=/tmp\r"
-wait_prompt
-send "export WAYLAND_DISPLAY=wayland-0\r"
-wait_prompt
-send "gbmtest\r"
-expect -re {gbmtest: passed linear BO create/map/export/import/destroy}
-wait_prompt
-send "dmabufsmoke\r"
-expect -re {dmabufsmoke: presented linux-dmabuf buffer}
-wait_prompt
-send "mesawlegl --frames=4 --loops=1 --resize-every=2\r"
-expect -re {mesawlegl\[[0-9]+\]: complete frames=4 status=0}
-wait_prompt
-send "mesawlegl --frames=6 --loops=1 --resize-every=3 &\r"
-wait_prompt
-send "mesaglsmoke --frames=6 --loops=1 --resize-every=3 &\r"
-wait_prompt
-send "mouseinject 65535 65535\r"
-expect -re {mouseinject: absolute x=65535 y=65535}
-wait_prompt
-set saw_mesawlegl 0
-set saw_mesaglsmoke 0
-while { !(\$saw_mesawlegl && \$saw_mesaglsmoke) } {
-    expect {
-        -re {mesawlegl\[[0-9]+\]: complete frames=6 status=0} {
-            set saw_mesawlegl 1
-        }
-        -re {mesaglsmoke\[[0-9]+\]: complete frames=6 status=0} {
-            set saw_mesaglsmoke 1
-        }
-        timeout {
-            exit 3
-        }
-    }
-}
-wait_prompt
-send "gpubuftest 3\r"
-expect -re {gpubuftest: completed 3 buffer cycles}
-wait_prompt
-send "gpubuftest --render-owner\r"
-expect -re {gpubuftest: render fd ownership verified}
-wait_prompt
-send "sleep 1\r"
-wait_prompt
-send "fbstat\r"
-wait_prompt
-send "shutdown\r"
-expect eof
-catch wait result
-exit [lindex \$result 3]
+expect -re {wlcomp: entering main loop}
+expect -re {__GPUV_READY__}
+expect -re {__GPUV_FBSTAT_DONE_0__}
+exit 0
 EOF
+    cleanup_validation_qemu
+    trap - RETURN
 
     require_log 'gbmtest: passed linear BO create/map/export/import/destroy' \
         "GBM BO import/export pass"
     require_log 'dmabufsmoke: presented linux-dmabuf buffer' \
         "linux-dmabuf presentation pass"
-    require_log 'mesawlegl\[[0-9]+\]: complete frames=4 status=0' \
+    require_log '__GPUV_MESAWLEGL4_DONE_0__' \
         "Mesa Wayland EGL resize/swap pass"
     require_log 'mesawlegl\[[0-9]+\]: complete frames=6 status=0' \
         "multi-client mesawlegl completion"
-    require_log 'mesaglsmoke\[[0-9]+\]: complete frames=6 status=0' \
+    require_log '__GPUV_MESAGL_DONE_0__' \
         "multi-client mesaglsmoke completion"
+    require_log 'virgltest: ctx=[0-9]+ res=[0-9]+ map=[0-9]+ fence=[0-9]+ signaled=[0-9]+' \
+        "virgl resource/submit/fence pass"
+    require_log 'virgltest: async-submit queued' \
+        "virgl async submit/fence pass"
+    require_log 'virgltest: invalid-submit rejected invalid ioctls' \
+        "virgl invalid ioctl rejection pass"
+    require_log 'virgltest: bad-submit isolated' \
+        "virgl forced failure isolation pass"
     require_log 'mouseinject: absolute x=65535 y=65535' \
         "input injection while GPU clients are active"
     require_log 'virtio_input: initialized' "virtio-tablet input device"
@@ -166,13 +146,27 @@ EOF
         "graphics buffer/fence cycles"
     require_log 'gpubuftest: render fd ownership verified' \
         "render fd ownership cleanup"
-    require_log '^bo_handles 0[[:space:]]*$' "clean BO handle accounting"
-    require_log '^bo_live_bytes 0[[:space:]]*$' "clean BO byte accounting"
+    require_log '^bo_handles 1[[:space:]]*$' \
+        "only the compositor persistent scanout BO remains live"
+    require_log '^virtio_resources 1[[:space:]]*$' \
+        "only the compositor persistent scanout resource remains live"
+    require_log 'wlcomp: using (direct scanout|fb GPU buffer)' \
+        "compositor GPU-backed/direct framebuffer mode"
+    require_log '^display_presents [1-9][0-9]*[[:space:]]*$' \
+        "display present completion accounting"
+    require_log '^display_completions [1-9][0-9]*[[:space:]]*$' \
+        "display completion accounting"
+    require_log '^display_last_complete [1-9][0-9]*[[:space:]]*$' \
+        "latest display completion sequence"
     require_log '^bo_fd_live 0[[:space:]]*$' "clean BO fd accounting"
     require_log '^fence_fd_live 0[[:space:]]*$' "clean fence fd accounting"
     require_log '^rejected_blits 0[[:space:]]*$' "no rejected blits"
     require_log '^virtio_failures 0[[:space:]]*$' "no virtio failures"
     require_log '^virtio_timeouts 0[[:space:]]*$' "no virtio timeouts"
+    require_log '^virtio_context_failed 0[[:space:]]*$' \
+        "no live failed virgl contexts after recovery"
+    require_log '^virtio_context_failures [1-9][0-9]*[[:space:]]*$' \
+        "forced virgl context failure was accounted"
 }
 
 run_visible_3d()
@@ -198,10 +192,10 @@ proc wait_prompt {} {
     set saved_timeout \$::timeout
     set ::timeout 30
     expect {
-        -re {root:/# ?} { }
+        -re {[^\r\n]*# ?} { }
         timeout {
             send "\r"
-            expect -re {root:/# ?}
+            expect -re {[^\r\n]*# ?}
         }
     }
     set ::timeout \$saved_timeout
@@ -214,7 +208,6 @@ set env(QEMU_NET) "${QEMU_NET:-0}"
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=1280x800"
 set env(QEMU_EXTRA) "-monitor unix:${sock},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch-gui.sh
-expect "wlcomp: entering main loop"
 wait_prompt
 after 8000
 send "export XDG_RUNTIME_DIR=/tmp\r"

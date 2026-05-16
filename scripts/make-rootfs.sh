@@ -120,7 +120,8 @@ elif [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
     ln -sf certs/ca-certificates.crt "${STAGE}/etc/ssl/cert.pem"
 fi
 
-mkdir -p "${STAGE}/root/.ssh" "${STAGE}/root/Desktop" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
+mkdir -p "${STAGE}/root/.ssh" "${STAGE}/root/desktop" "${STAGE}/home/guest" "${STAGE}/var/empty" "${STAGE}/var/run" "${STAGE}/etc/ssh"
+rm -rf "${STAGE}/root/Desktop"
 chmod 0700 "${STAGE}/root/.ssh"
 chmod 0755 "${STAGE}/var/empty"
 
@@ -133,7 +134,7 @@ if [[ -f "${STAGE}/share/gstreamer-1.0/registry.x86_64.bin" ]]; then
     ln -sfn / "${STAGE}/tmp/xv6-hyperv-build/sysroot"
 fi
 
-cat > "${STAGE}/root/Desktop/terminal.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/terminal.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Terminal
@@ -142,7 +143,7 @@ IconChar=>
 IconColor=0xFF3D6E9E
 EOF
 
-cat > "${STAGE}/root/Desktop/files.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/files.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Files
@@ -151,7 +152,7 @@ IconChar=F
 IconColor=0xFFA67C52
 EOF
 
-cat > "${STAGE}/root/Desktop/info.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/info.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Info
@@ -160,7 +161,7 @@ IconChar=i
 IconColor=0xFF3DA67C
 EOF
 
-cat > "${STAGE}/root/Desktop/calc.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/calc.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Calc
@@ -169,7 +170,7 @@ IconChar=C
 IconColor=0xFF7C3DA6
 EOF
 
-cat > "${STAGE}/root/Desktop/network.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/network.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Network
@@ -178,7 +179,7 @@ IconChar=N
 IconColor=0xFF3DA6A6
 EOF
 
-cat > "${STAGE}/root/Desktop/settings.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/settings.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Settings
@@ -187,7 +188,7 @@ IconChar=S
 IconColor=0xFF7B7B7B
 EOF
 
-cat > "${STAGE}/root/Desktop/monitor.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/monitor.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Monitor
@@ -196,17 +197,16 @@ IconChar=M
 IconColor=0xFFA63D7C
 EOF
 
-cat > "${STAGE}/root/Desktop/3ddemo.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=3D Demo
-Exec=/bin/mesaglsmoke
-Arg=--demo
+X-XV6-Builtin=3ddemo
 IconChar=3
 IconColor=0xFF6EA63D
 EOF
 
-cat > "${STAGE}/root/Desktop/editor.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/editor.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Editor
@@ -215,7 +215,7 @@ IconChar=V
 IconColor=0xFFA65C3D
 EOF
 
-cat > "${STAGE}/root/Desktop/browser.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/browser.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Browser
@@ -232,28 +232,26 @@ is_webkit_placeholder() {
 }
 
 if [[ -x "${STAGE}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
-cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=WebKit
 Exec=/libexec/webkit2gtk-4.1/MiniBrowser
-Arg=https://www.google.com/search?q=xv6&gbv=1
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
 elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]] &&
      ! is_webkit_placeholder "${STAGE}/bin/webkitgpusmoke"; then
-cat > "${STAGE}/root/Desktop/webkit.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=WebKit
 Exec=/bin/webkitgpusmoke
-Arg=file:///share/webkit/gpu-smoke.html
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
 else
-    rm -f "${STAGE}/root/Desktop/webkit.desktop"
+    rm -f "${STAGE}/root/desktop/webkit.desktop"
 fi
 
 if command -v ssh-keygen >/dev/null 2>&1; then
