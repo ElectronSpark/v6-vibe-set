@@ -48,6 +48,10 @@ These skills are deliberately provisional methodology playbooks. They are not gr
 - `xv6-debug-live-gdb`: live QEMU/GDB sampling method, stale VM checks, and recurring capture mistakes.
 - `xv6-debug-build-repro`: reproducibility methodology for fresh clones, Docker, copied toolchains, stamps, CMake/Ninja, and submodules.
 - `xv6-debug-gui-runtime`: GUI debugging method for producer/waiter/consumer/renderer splits and recurring compositor traps.
+  Companion files: `GPU_OPENGL_PLAN.md` for the current GPU milestone shape,
+  `WEBKIT_TODO.md`, `WEBKIT_GAP_MAP.md`, and `AGENT_TEAM.md` for long GPU/GUI
+  role coordination and current Hyper-V lessons learned. The source-audited
+  remaining GPU checklist lives at repo root in `GPU_REMAINING_GAPS.md`.
 
 ## Routing Hints
 
@@ -59,3 +63,8 @@ These skills are deliberately provisional methodology playbooks. They are not gr
 - Open/read/write/path bugs: use `xv6-kernel-vfs-core`, then the matching filesystem or device skill.
 - Page fault or mmap bugs: use `xv6-kernel-traps-syscalls`, `xv6-kernel-memory-management`, and `xv6-kernel-arch-platform`.
 - Lost terminal/job-control behavior: use `xv6-kernel-tty-console`, then process/signal skills.
+- Hyper-V GPU/OpenGL work: start with `xv6-os-debugging` for build/deploy/live
+  probe rules, then use `xv6-debug-gui-runtime/GPU_OPENGL_PLAN.md` and
+  `xv6-debug-gui-runtime/AGENT_TEAM.md` for the graphics gap map and role
+  split. Keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT` false until non-readback D3D12
+  presentation and the finite 480p >60 FPS demo are validated.
