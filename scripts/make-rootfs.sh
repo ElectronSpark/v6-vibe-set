@@ -147,7 +147,7 @@ cat > "${STAGE}/root/desktop/files.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Files
-X-XV6-Builtin=files
+Exec=/bin/filemgr /root
 IconChar=F
 IconColor=0xFFA67C52
 EOF
@@ -201,7 +201,7 @@ cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=3D Demo
-X-XV6-Builtin=3ddemo
+Exec=/bin/mesademo
 IconChar=3
 IconColor=0xFF6EA63D
 EOF

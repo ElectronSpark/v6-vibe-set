@@ -15,6 +15,8 @@ Current companion docs in this directory:
 - `WEBKIT_TODO.md`: active WebKit validation checklist.
 - `WEBKIT_GAP_MAP.md`: archived WebKitGTK override-retirement notes.
 - `GPU_OPENGL_PLAN.md`: active GPU/OpenGL plan and gap tracker.
+- `AGENT_TEAM.md`: role map for long GPU/GUI implementation sessions and the
+  current Hyper-V lessons learned.
 
 ## When to Use
 
@@ -117,6 +119,45 @@ Current companion docs in this directory:
 - If input is queued but not consumed, first ask whether readiness is level-correct and whether the compositor reaches its drain point.
 - If rendering continues but interaction fails, focus on input routing, focus state, pointer/keyboard protocol delivery, or client state rather than framebuffer.
 
+## Validated GPU Baselines
+
+These items were retired from `GPU_REMAINING_GAPS.md` after the May 17, 2026
+source audit. Re-check current source and validation logs before changing them,
+but do not treat them as open plan items by default.
+
+- Hyper-V DXG has a usable transport and D3DKMT readiness lane: `/dev/dxg`
+  exposes global/vGPU transports, adapter enumeration/open works, and
+  `fbstat`/`FB_GPU_BACKEND_QUERY` distinguish `DXG_TRANSPORT`, `D3DKMT`, and
+  `OPENGL_SUBMIT`.
+- Stable `dxgprobe` coverage includes adapter query, video memory query, device
+  creation, paging queue creation, allocation create/destroy, residency/evict,
+  GPUVA map/reserve/free, allocation priority/offer/reclaim/cache invalidate,
+  CPU monitored-fence signal, shared resource NT fd query/open, shared sync NT
+  fd open, owner isolation, leak-close cleanup, and unsupported ioctl handling.
+- Hyper-V DXG allocation handling now includes existing-sysmem page pinning,
+  PFN-list forwarding, cleanup-time unpinning, and late-failure unwind for host
+  allocations when post-host-create local copyout/tracking fails.
+- `/dev/dxg` per-open tracking is growable for devices, contexts, HW queues,
+  paging queues, sync objects, allocations, resources, and GPUVA reservations.
+  This is a baseline improvement, not the final WSL-style `dxgprocess` object
+  graph.
+- The general render substrate has `/dev/dri/renderD128`, libdrm/GBM discovery,
+  PRIME-style BO fd export/import, render-fd ownership cleanup, pollable fence
+  fd accounting, and no-leak validation through `gpubuftest`, `gbmtest`,
+  `drmprimeprobe`, and `drmgpuprobe`.
+- Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
+  linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
+  acquire-fence waits with stall recovery, GPU BO present/direct scanout for
+  framebuffer BOs, display completion accounting, and screenshot visual checks.
+- KVM/virtio-gpu/virgl is the current validated OpenGL-submit backend. It owns
+  `FB_GPU_BACKEND_F_OPENGL_SUBMIT` today; Hyper-V does not.
+- The desktop 3D demo now launches through `mesademo`/`mesawlegl --demo` with a
+  real 640x480 Wayland/EGL window, close/resize handling, and an RTC-based FPS
+  overlay drawn inside the GL surface.
+- WebKit acceleration is intentionally gated on `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
+  Hyper-V render-node or D3DKMT presence alone must keep WebKit on the stable
+  fallback path.
+
 ## Common Problems
 
 - **Generated-source drift**: `ports/wayland/src/wlcomp.c` says one thing while `build-x86_64/ports/wayland/wlcomp-build/wlcomp.c` runs another.
@@ -136,3 +177,8 @@ Current companion docs in this directory:
 - Do not fix GUI freezes by replacing `epoll_wait` with sleeps as a final answer; that can hide kernel readiness bugs.
 - Do not validate a source `wlcomp.c` change without checking the generated file and rebuilt image/rootfs state.
 - Do not debug browser, network, compositor, and input hypotheses all at once unless the capture proves they interact.
+- Do not call Hyper-V OpenGL complete while it still presents through the
+  D3D12-to-software/readback bridge or while the finite 480p demo remains below
+  60 FPS.
+- Do not compare a current NVIDIA Hyper-V failure against an old Intel WSL trace
+  without capturing a same-adapter control trace.

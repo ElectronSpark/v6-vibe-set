@@ -75,6 +75,46 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - If the taskbar lacks a NetSurf button, inspect xdg toplevel app-id/title handling before assuming the surface never mapped.
 - For Wayland EOF noise, clean client disconnects should be silent. Keep logs for socket errors, nonzero child exits, and signal kills.
 
+## Hyper-V GPU Bring-Up
+
+- Treat Hyper-V GPU work as a transport, UMD, compositor-present, and validation problem. Do not mark `FB_GPU_BACKEND_F_OPENGL_SUBMIT` true just because `/dev/dri/renderD128`, DXG transport, D3DKMT readiness, or a real HW queue exists.
+- Known honest capability split:
+  - Hyper-V may expose `FB_GPU_BACKEND_F_DXG_TRANSPORT` and `FB_GPU_BACKEND_F_D3DKMT`.
+  - Hyper-V must keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT` false until Mesa D3D12 creates real render contexts, submits real UMD command buffers, presents without the software readback lane, and the 480p 3D demo sustains more than 60 FPS after warmup.
+  - KVM/virgl is the current OpenGL-submit backend.
+- Before editing GPU code, check dirty state in all nested repos:
+  - `git -C /home/es/xv6-os status --short`
+  - `git -C /home/es/xv6-os/kernel status --short`
+  - `git -C /home/es/xv6-os/user status --short`
+  - `git -C /home/es/xv6-os/ports status --short`
+- Use `/tmp/xv6-hyperv-build` directly for Hyper-V builds. Do not rely on VS Code CMake Tools when it reports no configured targets.
+- Build focused Hyper-V test images with explicit command lines instead of reusing a stale VHDX. Keep the VM at 6 vCPUs when the current workflow asks for reduced cores:
+  - `cmake --build /tmp/xv6-hyperv-build --target kernel -j2`
+  - `cmake --build /tmp/xv6-hyperv-build --target rootfs -j2`
+  - `HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=0 video=1024x640 acpi_cpus=6 wlcomp_gpu_compose=1 wlcomp_gpu_direct_scanout=1' scripts/make-hyperv-image.sh /tmp/xv6-hyperv-build/kernel/build/kernel/xv6.bin /tmp/xv6-hyperv-build/fs.img /tmp/xv6-hyperv-build/xv6-hyperv-gpu-test.vhdx 0`
+- Serial helper:
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& 'C:\Temp\com-tcp-read.ps1' -Cmd '<guest command>' -ReadMs <ms>"`
+- Serial silence is not proof of inactivity. Long Mesa/DXG traces often buffer output until the command exits. Keep polling the running command; if it times out, check VM state with `Get-VM` and then run a fresh short serial command such as `cat /proc/cmdline`.
+- If a follow-up serial command only echoes the command text, do not infer that `/dev/dxg` or `fbstat` is empty. The guest shell may not be ready after a long trace; collect a fresh shell prompt or use a split command.
+- Do not reboot or redeploy over a running freeze or long-probe sample until evidence has been collected, unless the user explicitly asks for a reset.
+- Keep WSL comparisons adapter-matched. A WSL Intel trace is not a reliable reference for an xv6 NVIDIA Hyper-V run. Capture same-adapter traces when possible, for example:
+  - `env GALLIUM_DRIVER=d3d12 D3D12_DEBUG=verbose MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LD_PRELOAD=/tmp/xv6-wsl-probe/libwsl_dxg_ioctl_trace.so /tmp/tmp.PHsSKWCqgl/bin/mesaglfeature > /tmp/xv6-wsl-probe/mesaglfeature-nvidia-live.trace 2>&1`
+- Remember what the trace layers mean:
+  - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
+  - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
+  - If you transform a packet in the kernel, add or consult kernel-side diagnostics before claiming the host saw the transformed packet.
+- Current Hyper-V D3D12 state from May 17, 2026:
+  - Real Mesa/NVIDIA D3D12 reaches DXCore enumeration, `CREATECONTEXTVIRTUAL` with 3200-byte private data, `CREATEHWQUEUE` with 124-byte private data, many allocations/GPUVA maps/locks, and real `SUBMITCOMMANDTOHWQUEUE` calls that return success.
+  - The blocker is later than "submit does not work": `mesaglfeature` passes the first 32x32 FBO draw/readback, then the second 64x32 FBO draw path fails when `LX_DXMAKERESIDENT` receives a multi-allocation batch (`count=2`, `flags=0x1`) and the host returns `STATUS_INVALID_PARAMETER` / `-EINVAL`, causing `D3D12: Removing Device`.
+  - Sorting or otherwise rewriting residency lists is not a substitute for proof. Compare WSL and xv6 by same adapter, same private payloads, kernel-side packet contents, host status, fence values, and cleanup state.
+- The 3D demo can render through Mesa D3D12 but still presents through a software/readback Wayland lane and is below the 60 FPS target. FPS validation must use an in-surface RTC-based overlay plus finite post-warmup measurement, not only stderr or window-title updates.
+- The next durable Hyper-V GPU milestones are:
+  - WSL-style typed per-open DXG object graph and teardown ordering.
+  - Exact WDDM private payload and host return layout parity for real UMD sequences.
+  - D3D12 shared-resource/fence export/import between a Mesa client and compositor.
+  - A non-readback Wayland present path for Hyper-V.
+  - A finite GUI performance validator that fails below 60 FPS after warmup.
+
 ## WebKit and VM Faults
 
 - A healthy WebKit smoke boot reaches `wlcomp: client title: WebKitGTK MiniBrowser`, then usually a page title such as `Google`.

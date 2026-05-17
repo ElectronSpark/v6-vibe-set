@@ -1,175 +1,185 @@
 # GPU Remaining Gaps
 
-Last updated: 2026-05-14
+Last updated: 2026-05-17
 
-## Current Validated Baseline
+This file is now scoped to work that is still missing. Completed baseline
+capabilities were moved into the skill docs, mainly
+`.github/skills/xv6-debug-gui-runtime/SKILL.md` and
+`.github/skills/xv6-os-debugging/SKILL.md`.
 
-- [x] Hyper-V `/dev/dxg` exposes the GPU-PV global and vGPU transports.
-- [x] `LX_DXENUMADAPTERS2` returns the Hyper-V adapter after the real adapter-open probe succeeds.
-- [x] `fbstat` reports D3DKMT readiness only after the D3DKMT path is actually initialized.
-- [x] `dxgprobe` validates adapter query, feature query, adapter statistics query, driver-private escape, video-memory query, device creation, device state, paging queue creation, resource-backed standard allocation create/destroy, allocation priority set/get, allocation residency/evict, allocation offer/reclaim, allocation GPUVA map, GPUVA reserve/free, heap-transition flush, allocation cache invalidate, monitored-fence CPU signal, and stable unsupported handling for sync-file, shared-handle, video-memory reservation, device-error, HW-queue sync, allocation-property, clock-calibration, and process-enumeration ioctls on the stable path. The opt-in submit probe additionally validates allocation CPU lock/unlock, generic sync signal/wait forwarding, GPU sync signal/wait forwarding, and GPU2 sync signal forwarding before attempting submit. The stable default probe now repeats in the same boot after allocation cleanup. CPU wait and submit repros remain opt-in because the host rejects the current packets; context probing is opt-in but no longer poisons the stable path after cleanup.
-- [x] Mesa softpipe Wayland smoke still completes on the fresh Hyper-V image.
-- [x] The Mesa 3D demo renders FPS inside the GL surface, not only in stderr or the window title.
+## Source Audit
 
-Latest visible Hyper-V 3D demo tuning: the desktop-launched `mesawlegl --demo` path now detects the software fallback and uses a smaller software-only surface, lower sphere tessellation, a cheaper fragment shader, and no depth clear/test on that path. The accelerated virgl path is not forced through `softpipe` anymore when `LIBGL_ALWAYS_SOFTWARE=0` or `GALLIUM_DRIVER` is set. Focused Hyper-V images were built from `/tmp/xv6-hyperv-build/fs.img` and deployed to `/mnt/c/Temp/xv6-hyperv.vhdx`; screenshots captured `/mnt/c/Temp/xv6-hyperv-fps-fast2.png` and `/mnt/c/Temp/xv6-hyperv-fps-fast3.png` with the in-surface FPS overlay visible after launching from the desktop icon. The compositor-side `/tmp/wlcomp-fps` sample reached `fps=9.980 ... mode=direct-scanout fb=1024x768` on the tuned path, while the client FPS still fluctuates around the softpipe ceiling. `mesad3d12probe` confirmed the faster hardware path is still blocked: DXCore enumerates the `Microsoft Hyper-V GPU-PV Render Driver` adapter, then Mesa D3D12 fails `D3D12CreateDevice` with `0x80004005`, so Hyper-V must continue to report `backend_opengl_submit 0`.
+Checked against the current dirty tree on May 17, 2026:
 
-Latest Hyper-V validation: `scripts/hyperv-dxg-validate.sh` rebuilt kernel/rootfs, created `/tmp/xv6-hyperv-build/xv6-hyperv-dxg-validate.vhdx`, deployed it to `/mnt/c/Temp/xv6-hyperv.vhdx`, waited for the guest shell, and ran split serial probes for freshness, boot-time GL smoke, `fbstat`, `gpubuftest`, `drmprimeprobe`, `gbmtest`, `dmabufsmoke --nv12 --explicit-sync`, `mesaglfeature`, stable `dxgprobe`, opt-in `dxgprobe --try-submit`, `dxgprobe --owner-isolation`, forced `dxgprobe --leak-close` cleanup, `drmgpuprobe`, `/dev/dxg`, and final `fbstat`. The latest run passed on May 13, 2026 and wrote `/tmp/xv6-hyperv-build/hyperv-dxg-validate.log`. It verified `glsmoke pid=52 exited=1 status=0`, `gpubuftest: completed 1 buffer cycles`, `gpubuftest: render fd ownership verified`, `drmprimeprobe: ok size=16384 pitch=320 imported=9`, `gbmtest: passed linear NV12 modifier plane metadata import`, `dmabufsmoke: presented linux-dmabuf buffer format=NV12 planes=2`, `dmabufsmoke: explicit-sync release=immediate`, `wlcomp: explicit-sync immediate release`, `mesaglfeature: ok`, stable `dxgprobe: ok`, `dxg_adapters3 1 handle0=0x40000000`, `dxgprobe: owner-isolation ok`, `dxgprobe: leak-close ok`, `drmgpuprobe: passed`, `d3dkmt_ioctls=277 successes=169 ready=1`, `cleanup_attempts:8 cleanup_successes:8 cleanup_last_ret:0 cleanup_last_op:0 cleanup_failed_op:0`, `backend_dxg_transport 1`, `backend_d3dkmt 1`, and `backend_opengl_submit 0`. The opt-in submit diagnostics still find non-sync `dx12_empty_e1` context creation plus `empty_null`, `zero4_null`, and `empty_private64` submit success; `dxgprobe --try-submit` waits for the paging queue fence after the pending GPUVA map (`paging_fence_wait map_gpuva target=7001 value=7001`), proving the allocation-backed submit failures are not just a map-fence race. All allocation-backed GPUVA submits still fail, including the newer present-redirected flag matrix (`flags=0x2` and `flags=0x3`) and locked-CPU-pointer variants, with final diagnostics recording `submit_status:0xc000000d` for the expected invalid CPU-VA command pointer case. `_KMTQAITYPE_UMDRIVERPRIVATE` still fails at requested sizes 64, 256, and 1024. Hyper-V must therefore continue to report `backend_opengl_submit 0`.
+- `kernel/kernel/dev/hyperv_input.c`
+- `kernel/kernel/dev/fb.c`
+- `kernel/kernel/inc/uabi/d3dkmthk.h`
+- `user/programs/dxgprobe/dxgprobe.c`
+- `ports/wayland/src/desktop.c`
+- `ports/wayland/src/desktop_clients.inc`
+- `ports/wayland/src/mesawlegl.c`
+- `ports/wayland/src/mesademo.c`
+- `ports/wayland/src/gl_fps_overlay.c`
+- `ports/wayland/src/wlcomp_dmabuf.inc`
+- `ports/wayland/src/wlcomp_buffer_shm.inc`
+- `ports/mesa/src/src/gallium/frontends/dri/drisw.c`
+- `ports/mesa/src/src/gallium/drivers/d3d12/d3d12_resource.cpp`
+- `scripts/hyperv-dxg-validate.sh`
+- `scripts/hyperv-gpu-stress.sh`
+- `scripts/hyperv-webkit-gpu-validate.sh`
+- `scripts/hyperv-3d-visual-check.sh`
 
-Host partition evidence: both NVIDIA `VEN_10DE&DEV_28A0` and Intel `VEN_8086&DEV_46A3` host GPU-PV adapters expose compute budget in `Get-VMHostPartitionableGpu`, but `Get-VMGpuPartitionAdapter -VMName xv6-os-hyperv` reports `CurrentPartitionCompute : 0`. This remains true after explicitly setting `MinPartitionCompute`, `MaxPartitionCompute`, and `OptimalPartitionCompute` to `1000000000` on the active Intel partition. Fresh guest boots still report `adapter_type ... render=0 ... compute=0`; this matches the host-side current compute value and is a likely reason real render/compute submit and hardware queue packets are rejected by the host.
+The current code already has substantial Hyper-V DXG and general GPU substrate
+coverage: DXG transport, D3DKMT readiness reporting, stable `dxgprobe`
+coverage, existing-sysmem pin tracking, late allocation unwind, NT resource and
+sync-object fd export/open, render-node/GBM/PRIME-style BO fd support, linear
+ARGB/XRGB/NV12 linux-dmabuf import, explicit-sync release objects, compositor
+GPU BO present/direct-scanout paths, display completion accounting, virgl
+OpenGL-submit on KVM, WebKit fallback gating, and 3D-demo visual/FPS overlay
+smokes. Those are no longer listed as remaining gaps here.
 
-Additional host partition comparison: replacing the VM GPU partition adapter with the NVIDIA `VEN_10DE&DEV_28A0` instance still reported `CurrentPartitionCompute : 0` even with compute min/max/optimal set to `1000000000`. The NVIDIA guest path reported `adapter_type ... render=0 ... compute=0`, but differed from Intel by enabling feature id 0 (`value=0xf`) and mapping the standard allocation at low GPUVA `0x10000`. Context probing selected `dx12_hwqueue_e1`, but every submit variant failed, including empty/null-rendering submits; the Intel partition remains the better diagnostic path because it at least accepts `empty_null`, `zero4_null`, and `empty_private64` against `dx12_empty_e1`.
+## Current Honest State
 
-Latest WSL2-mimic DXCore evidence: `LX_DXQUERYADAPTERINFO` now uses WSL-style dynamic private buffers up to the 128 KiB VM-bus packet limit and records a 16-entry query history with returned lengths. `KMTQAITYPE_QUERYREGISTRY` is shimmed for `DXCoreAttributes` and `EnableVGPUIndicator` and follows the buffer-overflow retry contract; raw host forwarding for registry queries returned no payload on this transport path. Mesa D3D12 diagnostics show `libdxcore.so` and `libd3d12.so` are present, `IDXCoreAdapterFactory::CreateAdapterList` returns one NVIDIA Hyper-V GPU-PV adapter for D3D12/D3D11/compute/media/hardware attributes, and `D3D12CreateDevice` reaches the NVIDIA UMD. The UMD creates a D3D12 context with a 3200-byte private payload (`flags:0x10 hint:12 priv:3200`), creates a 64 KiB allocation, maps it at GPUVA `0x4000000` after a guarded retry that clamps an over-broad `SizeInPages` request to the actual allocation size, makes it resident, and CPU-locks it. The remaining D3D12CreateDevice blocker is `LX_DXCREATEHWQUEUE`: the UMD requests `context:0x40000800 flags:0x0 priv:124`, and the host times out with no reply (`create_ret:-5`), so Mesa reports `D3D12CreateDevice` `0x80004005`. `Get-VMGpuPartitionAdapter -VMName xv6-os-hyperv` still reports `CurrentPartitionCompute : 0` even though min/max/optimal compute are `1000000000`, matching the suspicion that this host partition cannot accept real render/HW-queue work yet. The May 14 focused cleanup run also verified the failed D3D12 path no longer panics and fd-close cleanup reports `cleanup_successes:1 cleanup_last_ret:0 cleanup_failed_op:0`; the host still reports `free_ret:-22` for the already-invalid GPUVA, which cleanup treats as already released while continuing allocation/device teardown.
-
-May 14 WSL transport-shape update: the kernel now has the WSL vmbus v40 extended-header structure, records the full `GETINTERNALADAPTERINFO` result length, broadens PCI enumeration beyond bus 0/function 0, and can accept a diagnostic `dxg_host_vgpu_luid=high:low` command-line fallback. Validation showed this Hyper-V VM does not expose the WSL synthetic PCI GPU function to xv6 (`dxg_pci=device:0x0 ... host_luid:0:0`), and the host's PowerShell `PartitionVfLuid` is not a valid substitute for the vmbus extended-header LUID: forcing `dxg_host_vgpu_luid=0:110725b1` made `ext_header=1` but broke basic adapter queries (`adapter_type`, video memory, and device creation failed). The deployed validation image was restored to the no-forced-LUID path, where `dxgprobe` again passes and `/dev/dxg` reports `ext_header=0`. `CREATEHWQUEUE` also no longer retries by stripping UMD private data; the guest preserves the real private payload and records the host result directly. This keeps the implementation closer to WSL without falsely advertising OpenGL submit.
-
-May 14 D3D12 residency update: `LX_DXMAKERESIDENT` now matches WSL's VM-bus packet shape by leaving the wire `device` field zero, and DXG iospace mappings now use uncached PFN PTEs like the Hyper-V framebuffer scanout mapping. The Mesa D3D12/NVIDIA path now reports WSL-like pending fence progression in `/dev/dxg` (`make_ret:259`, map fences `7005/7007/.../7037`) while stable `dxgprobe` still ends with `dxgprobe: ok`. The D3D12 device path still crashes inside NVIDIA UMD before any HW-queue submit, at `memset(NULL, 0, 0x4800)` after successful context/HW-queue/allocation/map/residency work; diagnostic fault dumps show the UMD object at `r12+0x100` has live child pointers but the buffer selected for that memset remains null. Hyper-V therefore still must not set `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
-
-May 14 WSL live-probe alignment update: the staged WSL runtime libraries in the xv6 sysroot are byte-identical to `/usr/lib/wsl/lib/libdxcore.so`, `libd3d12.so`, and `libnvwgf2umx.so`. A WSL `LD_PRELOAD` ioctl trace of the same `mesad3d12probe` command shows the NVIDIA path uses `CREATECONTEXTVIRTUAL` with `priv=3200`, `CREATEHWQUEUE` with `priv=124`, `SUBMITCOMMANDTOHWQUEUE` with a 32 KiB command buffer and `priv=280`, then allocation/map/make-resident/wait/lock/unlock flows. The xv6 Hyper-V path now reaches the same class of real work: `/dev/dxg` records `dxg_context_last=len:3256 ret:0 ... node:4 engine:1 flags:0x10 hint:12 priv:3200`, `dxg_hwqueue_last=create_len:200 create_ret:0 ... priv:124 queue:... submit_len:8 submit_ret:0 destroy_ret:0`, and the NVIDIA allocation private-data output has the expected `ADVN` prefix after fixing the host allocation return layout. Additional WSL-matching cleanup was added for CPU-visible allocation mappings: host allocation cache flags are tracked, fence mappings use cached PTEs, repeated `LOCK2` calls reuse the allocation CPU VA, and `UNLOCK2` refcounts/unmaps like WSL. Validation still fails inside `libnvwgf2umx.so` at `rip=0x7ffffa318d89`, reading through a null pointer in the UMD object before the first `UNLOCK2`; `backend_opengl_submit` remains `0`.
+- Hyper-V can expose `/dev/dri/renderD128`, DXG transport, and D3DKMT readiness.
+- Hyper-V must still report `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0`.
+  `fb.c` currently sets `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only for virgl.
+  Keep that invariant until the non-readback D3D12 present path and 480p
+  >60 FPS demo are validated.
+- Mesa D3D12 on Hyper-V reaches real D3D12 UMD work and real hardware-queue
+  submit in observed runs, but the desktop present path still goes through
+  Mesa's DRI software/readback lane and remains below the 480p >60 FPS target.
+- WebKit acceleration and `webkit_dmabuf=1` are correctly gated on
+  `FB_GPU_BACKEND_F_OPENGL_SUBMIT`; this is a safety gate, not completion of
+  the accelerated WebKit surface contract.
 
 ## Remaining Checklist
 
-### Hyper-V DXG / D3DKMT
+### DXG Kernel Semantics
 
-- [x] Make `LX_DXCREATEALLOCATION` succeed for a minimal useful allocation.
-  - Acceptance: `dxgprobe` prints an allocation handle and `/dev/dxg` reports `dxg_allocation_last ret:0` with nonzero allocation/resource state.
-- [x] Add/query the host allocation payload needed by `CREATEALLOCATION`.
-  - Acceptance: standard or driver-private allocation data is generated through a host-compatible path instead of sending an empty allocation description.
-- [x] Validate `LX_DXMAPGPUVIRTUALADDRESS` with a real allocation.
-  - Acceptance: `dxgprobe` maps the allocation and records nonzero GPUVA or a host-success status/fence.
-- [x] Validate `LX_DXMAKERESIDENT` and `LX_DXEVICT` with a real allocation.
-  - Acceptance: `dxgprobe` records successful residency and eviction results without leaking allocation state.
-- [x] Validate `LX_DXLOCK2` and `LX_DXUNLOCK2` with a real allocation.
-  - Acceptance: a host allocation can be CPU-mapped, exposed to userspace, and unlocked without breaking cleanup.
-  - Current evidence: `dxgprobe --try-submit` locks allocation `0x400002c0`, receives `lock2_probe ok ... data=0x7fffff59a000`, unlocks it successfully, and `/dev/dxg` reports `dxg_lock2_last=len:16 ret:0 status:0x0 allocation:0x400002c0 offset:0x108002000 user_va:0x7fffff59a000 unlock_len:8 unlock_ret:0 unlock_status:0x0`.
-- [x] Validate `LX_DXDESTROYALLOCATION2` cleanup.
-  - Acceptance: successful allocation probes destroy all allocations/resources and leave no live handles in `/dev/dxg` diagnostics.
-- [x] Make a useful render/compute context creation mode work.
-  - Acceptance: a non-sync-only context path succeeds, or the required private payload is documented and generated.
-  - Current evidence: context probing is opt-in (`dxgprobe --try-context`) and this Hyper-V adapter reports `paravirtualized=1` while the active NVIDIA GPU-PV partition still has `CurrentPartitionCompute : 0`. Private and initial-data context modes still fail, but the current NVIDIA path creates a non-sync `dx12_hwqueue_e1` context (`hint=16 flags=0x10 node=0 engine=1`) and the Mesa D3D12 UMD creates its real D3D12 context with `flags:0x10 hint:12 priv:3200`. Stable `dxgprobe` still succeeds after the opt-in context/submit probe cleanup.
-- [ ] Validate `LX_DXSUBMITCOMMAND` / `LX_DXSUBMITCOMMANDTOHWQUEUE` against a real context/allocation path.
-  - Acceptance: a minimal valid command submission returns host success and exposes a completion/fence result.
-  - Current evidence: `dxgprobe --try-submit` keeps the standard allocation resident while probing submits, waits for the pending GPUVA map fence (`paging_fence_wait map_gpuva target=7001 value=7001`), locks the allocation, writes a zero command into the CPU-visible mapping, submits, unlocks, and then evicts during cleanup. On Intel GPU-PV, `empty_null`, `zero4_null`, and `empty_private64` submits succeed against the non-sync context, proving the host accepts the context and submit packet shape. Every GPUVA-backed submit still fails, including `gpuva4_plain`, `gpuva4_null`, `gpuva_plain`, `gpuva_null`, `gpuva_mesa_private`, `gpuva_mesa_private_null`, `gpuva4_null_primary`, `gpuva_null_primary`, `gpuva_private_primary`, `gpuva_null_history`, and `gpuva_private_primary_history`; locked CPU-mapping command-buffer variants with written-primary metadata fail with `STATUS_INVALID_PARAMETER`. A focused NoKmdAccess matrix (`/tmp/xv6-hyperv-build/dxg-submit-nokmd-fixed.log`) added the documented submit flag bit and tested `gpuva_nokmd` (`flags=0x5`), `gpuva_mesa_private_nokmd` (`flags=0x5`), `gpuva_nokmd_present_redirected` (`flags=0x7`), and `locked64_nokmd_primary` (`flags=0x5`); all still failed, with `/dev/dxg` recording the final result as `submit_len:8 submit_ret:-22 submit_status:0xc000000d cmd:0x7fffff59a000 cmd_len:64 flags:0x5 priv:164 contexts:1 ctx0:0x40000300`. A Freedreno/Mesa-style driver-private allocation side probe (`priv=304`) also fails on this Hyper-V adapter before allocation creation. `LX_DXCREATEHWQUEUE` reaches the host with a full 72-byte reply, but default flags, `disable_gpu_timeout`, and private-data variants (`priv=64` and `priv=65`) are rejected with `create_status:0xc000000d` (`STATUS_INVALID_PARAMETER`) and no queue/fence. Submit-to-hwqueue has not been validated because queue creation still fails; the next blocker is discovering/generating the valid UMD command/private payload for this adapter or confirming that this `render=0 compute=0` Hyper-V partition cannot accept real render submits.
-  - Additional DXCore bridge evidence: `mesad3d12probe` now proves the WSL runtime path gets past DXCore enumeration and into NVIDIA UMD bring-up with correct adapter properties (`vendor=0x10de device=0x28a0`). The UMD creates the real D3D12 context (`priv:3200`), creates a hardware queue (`priv:124`), and `LX_DXSUBMITCOMMANDTOHWQUEUE` succeeds (`submit_ret:0`) against the real queue. The current blocker has moved later: after successful allocation creation, GPUVA map, make-resident, wait, CPU lock, and HW-queue submit, `libnvwgf2umx.so` faults at `rip=0x7ffffa318d89` while dereferencing a null UMD object pointer before the first `UNLOCK2`. Hyper-V must therefore continue to expose D3DKMT readiness without advertising OpenGL submit until `mesad3d12probe` reaches `mesaglfeature: ok` and `fb.c` can honestly set `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
-  - May 14 continuation evidence: live WSL ioctl traces showed Mesa/NVIDIA uses `MapGpuVirtualAddress` with `allocation=0` into a previously reserved GPUVA range and expects `STATUS_PENDING` with `virtual_address=base`. xv6 now permits that WSL-compatible zero-allocation map only when the base/size lies inside a GPUVA reservation tracked for the current open file; the same `mesad3d12probe --fault-trace` run then advanced past those calls, multiple real HW queues, and 32 KiB `SUBMITCOMMANDTOHWQUEUE` packets. The next observed failure pattern was local `-EPERM` after many successful allocations/maps, matching exhaustion of the old 64-entry per-open handle tracking table; WSL creates 132 allocations and 142 GPUVA maps in the same probe. The table limit is now 512, `/dev/dxg` reports high-water/drop counters (`dxg_track_limits=...`), and `LX_DXUPDATEGPUVIRTUALADDRESS` now uses a WSL-style dynamic command buffer up to the VM-bus packet limit instead of a hard 16-operation cap. `LX_DXQUERYCLOCKCALIBRATION`, `LX_DXUPDATEALLOCPROPERTY`, and `LX_DXCHANGEVIDEOMEMORYRESERVATION` now forward to their matching host commands instead of returning `-ENOTSUP`; existing pure-C `dxgprobe` coverage will validate them on the next Hyper-V run. Future validation can distinguish host rejection from local tracking, packet-size, or previously stubbed D3DKMT support. A clean validation image was rebuilt at `/tmp/xv6-hyperv-build/xv6-hyperv.vhdx`, but deployment is temporarily blocked because the Windows Hyper-V management service is stuck in `StopPending` with `xv6-os-hyperv` stuck in `Stopping` and the deployed VHDX locked.
-  - May 15 Intel GPU-PV evidence: the Hyper-V path now reaches the WSL D3D12 runtime far enough for `mesad3d12probe` to create an EGL/GLES context on `D3D12 (Microsoft Hyper-V GPU-PV Render Driver)`. Fixes in this pass mapped monitored-fence CPU VAs, raised the residency allocation limit to WSL's 10240-allocation cap, serialized DXG ring pumping around the shared receive buffer, serialized synchronous DXG request/response sends around the single completion slot, and added errno-aware WSL/xv6 ioctl traces. Clean no-trace validation now completes the first real FBO draw/readback through D3D12 (`pass size=32x32 center=80,160,240,255 corner=0,0,0,255`) instead of faulting or hanging before submit. The remaining Intel blocker is the second FBO's residency transition: WSL succeeds at `MAKERESIDENT paging=0x400003c0 count=2 flags=0x1` with allocations `[0x40001c00, 0x40001c80]` and fence `7027`, while xv6 reaches the equivalent point and the host returns `EINVAL`, after which D3D12 removes the device before the 64x32 draw submit. Sorting the allocation list and retrying the WSL-zero-device packet with the tracked paging-queue device did not clear the host rejection. Hyper-V therefore still must keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT` false until this second-FBO residency/submit path reaches `mesaglfeature: ok` without tracing.
-- [x] Add wait/signal sync object paths.
-  - Acceptance: CPU/GPU wait and signal ioctls can be probed without hangs and report host status precisely.
-  - Current evidence: CPU signal for a monitored-fence sync object succeeds (`signal_len:8 signal_ret:0 signal_status:0x0`) on the stable default path. CPU wait is opt-in (`dxgprobe --try-wait`) because the host rejects all current CPU-wait variants. A wait-matrix run on `/tmp/xv6-hyperv-dxg-wait-matrix.vhdx` tried fence values `0` and `1` with `wait_any=0` and `wait_any=1`; all four failed, and `/dev/dxg` recorded the final result as `wait_len:8 wait_ret:-22 wait_status:0xc000000d`. Generic GPU sync signal/wait UABI and forwarding are now wired (`LX_DXSIGNALSYNCHRONIZATIONOBJECT`, `LX_DXWAITFORSYNCHRONIZATIONOBJECT`); the fresh opt-in submit validation reached the host and recorded clean rejection for both (`sync_legacy_signal failed`, `sync_legacy_wait failed`) instead of an unknown ioctl. GPU signal/wait UABI and forwarding are wired (`LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMGPU`, `LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMGPU2`, `LX_DXWAITFORSYNCHRONIZATIONOBJECTFROMGPU`); the fresh validation created non-sync context `0x40000480`, signaled monitored fence sync `0x400004c0` successfully through both GPU signal paths (`sync_gpu_signal ok`, `sync_gpu2_signal ok`), and captured host rejection for GPU wait without hanging (`gpu_wait_len:8 gpu_wait_ret:-22 gpu_wait_status:0xc000000d`).
-- [x] Add richer DXG handle ownership and cleanup.
-  - Acceptance: devices, contexts, paging queues, sync objects, allocations, and GPUVA reservations are tracked per process/open and cleaned on close/exit.
-  - Current evidence: `/dev/dxg` now has per-open tracking for devices, contexts, hardware queues, paging queues, paging fence metadata, sync objects, allocations/resources, and GPUVA ranges, plus fd-release cleanup counters (`d3dkmt_open_files=opens:... cleanup_attempts:... cleanup_successes:... cleanup_last_ret:...`). The ioctl path rejects cross-open use/destruction of tracked DXG handles before forwarding to the host. The automated Hyper-V validator now runs `dxgprobe --owner-isolation`, which creates a device on one `/dev/dxg` fd and verifies a second fd cannot destroy it (`dxgprobe: owner isolation rejected foreign destroy device=0x40000500`, `dxgprobe: owner-isolation ok`). It also runs `dxgprobe --leak-close; dxgprobe; cat /dev/dxg`: the leak-close run left device `0x40000540`, queue `0x400005c0`, sync `0x40000680`, resource `0x40000600`, allocation `0x40000640`, and GPUVA `0x800000010000` for fd-close cleanup; the next normal `dxgprobe` passed, and final `/dev/dxg` reported `cleanup_attempts:8 cleanup_successes:8 cleanup_last_ret:0`. A May 14 `mesad3d12probe` failure-path run also left a pending GPUVA from the UMD path and then reported `cleanup_successes:1 cleanup_last_ret:0 cleanup_failed_op:0`, while preserving the explicit diagnostic `free_ret:-22` for the host's already-invalid GPUVA.
-- [x] Replace singleton DXG object state with process/open-local state where required.
-  - Acceptance: two `dxgprobe` instances cannot corrupt or destroy each other's objects.
-  - Current evidence: the stable path keeps the Hyper-V host process handle at VM scope because attempts to create/destroy a fresh host process per fd made repeated adapter enumeration fail (`dxgprobe: enum count failed rc=-1 count=0`, `/dev/dxg` `last_ret=-5`). The object state that must be isolated is now open-local: devices, contexts, hardware queues, paging queues, sync objects, allocations/resources, and GPUVA ranges are tracked on the owning `/dev/dxg` open; foreign destroy/use is rejected before forwarding to the host. The automated Hyper-V validator runs `dxgprobe --owner-isolation` and verifies a second fd cannot destroy the first fd's device (`dxgprobe: owner-isolation ok`), then runs `dxgprobe --leak-close; dxgprobe; cat /dev/dxg` and verifies fd-close cleanup (`cleanup_attempts:8 cleanup_successes:8 cleanup_last_ret:0`) without corrupting the next probe. The singleton that remains is the protocol-required host process lifetime, not child object ownership.
-- [x] Expand DXG ioctl coverage beyond the current subset.
-  - Acceptance: lock/unlock, update GPUVA, set existing sysmem/pages/store, hw queues, escapes, priorities, allocation residency queries, shared handles, feature queries, and adapter/device query gaps are either implemented or explicitly marked unsupported with stable errno behavior.
-  - Current evidence: the implemented/probed UABI surface now includes `LX_DXENUMADAPTERS3` in addition to feature query, adapter statistics query, driver-private escape, share-object-with-host forwarding, explicit sync-file unsupported handling, explicit shared-handle unsupported handling (`LX_DXSHAREOBJECTS`, `LX_DXOPENSYNCOBJECTFROMNTHANDLE2`, `LX_DXQUERYRESOURCEINFOFROMNTHANDLE`, `LX_DXOPENRESOURCEFROMNTHANDLE`), video-memory reservation unsupported handling, device-error unsupported handling, HW-queue signal/wait unsupported handling, allocation-property unsupported handling, clock-calibration unsupported handling, process-enumeration unsupported handling, existing-sysmem allocation unsupported handling, allocation priority set/get, allocation residency query, allocation offer/reclaim, heap-transition flush, allocation cache invalidate, context scheduling priority set/get, Update-GPUVA forwarding, generic sync signal/wait forwarding, and CPU/GPU/GPU2 sync signal/wait forwarding in addition to adapter/device, paging queue, allocation, residency, GPUVA reserve/map/free, lock/unlock, context, submit, and hwqueue probes. Stable validation shows Hyper-V feature ids 0, 32, and 33 are known but disabled (`value=0x2`), `LX_DXENUMADAPTERS3` reports the active adapter (`dxg_adapters3 1 handle0=0x40000000`), `LX_DXQUERYSTATISTICS` returns adapter statistics through host LUID translation (`len:784 status:0x0 type:0`), `LX_DXESCAPE` driver-private forwarding returns successfully with `flags:0x8 size:4`, `LX_DXSHAREOBJECTWITHHOST` reaches the global host channel but the current monitored-fence object is rejected with `STATUS_INVALID_PARAMETER` or no completion payload depending on object type, `LX_DXSHAREOBJECTS` and open/query-from-NT-handle return stable `-ENOTSUP` with `/dev/dxg` diagnostics (`dxg_sharedhandle_last=... ret:-95`), `LX_DXCREATESYNCFILE`/`LX_DXWAITSYNCFILE`/`LX_DXOPENSYNCOBJECTFROMSYNCFILE` return stable `-ENOTSUP` with `/dev/dxg` diagnostics (`dxg_syncfile_last=... ret:-95`), the latest unsupported ioctls return stable `-ENOTSUP` with `/dev/dxg` diagnostics (`dxg_unsupported_last=... ret:-95`), and `dxgprobe` verifies `existing_sysmem_allocation unsupported device=... size=65536` instead of forwarding an unbacked sysmem allocation. Allocation priority set/get returns through the host, `LX_DXQUERYALLOCATIONRESIDENCY` reports the fresh standard allocation as status `3` before make-resident, `LX_DXOFFERALLOCATIONS` succeeds, `LX_DXRECLAIMALLOCATIONS2` succeeds, `LX_DXFLUSHHEAPTRANSITIONS` succeeds, and `LX_DXINVALIDATECACHE` succeeds for the standard allocation. Page/store-backed allocations and full fd-backed shared-object semantics are not advertised as supported; callers get stable unsupported behavior instead of partially-forwarded host state.
-- [x] Stabilize `/dev/dxg` diagnostics.
-  - Acceptance: debug/status output is complete, non-truncated, and includes last host status/length for every implemented ioctl.
-  - Current evidence: diagnostics now use a 16 KiB per-open snapshot, report `dxg_status=size:16384 truncated:0 snapshot:1`, and no longer corrupt multi-read `cat /dev/dxg` output. The status includes context short-completion failures, submit command buffer/length/flags/private size/context, submit host status, lock/unlock offset and user mapping, CPU/GPU sync signal/wait host status, share-with-host, shared-handle, sync-file, and miscellaneous unsupported ioctl status, feature-query result/status, priority result/status, Update-GPUVA result/status, and cache/heap maintenance result/status.
-- [x] Add automated Hyper-V DXG validation.
-  - Acceptance: one command rebuilds/deploys the VHDX, verifies VM freshness, runs `fbstat`, `dxgprobe`, `cat /dev/dxg`, and Mesa smoke, then fails on stale images, bad readiness, panics, or DXG regressions.
-  - Current evidence: `scripts/hyperv-dxg-validate.sh` rebuilds kernel/rootfs, creates a focused Hyper-V validation VHDX, deploys it, waits for a ready guest shell, and checks split serial probe output for the expected command line, host/guest freshness, boot-time Mesa Wayland EGL smoke status, Hyper-V backend, DXG transport, D3DKMT readiness, `backend_opengl_submit 0`, `gpubuftest` BO/fence markers, `drmprimeprobe` PRIME fd markers, `mesaglfeature` shader/texture/FBO/depth-stencil/resize markers, stable `dxgprobe: ok`, opt-in `dxgprobe --try-submit`, forced `dxgprobe --leak-close` cleanup plus follow-up `dxgprobe`, `drmgpuprobe: passed`, generic sync signal/wait markers, GPU2 sync signal markers, `escape_driver_private ok`, `dxg_escape_last=.*ret:0`, `share_object_with_host (ok|failed)`, `dxg_shareobject_last=len:`, `share_objects unsupported`, `open_sync_nt unsupported`, `query_resource_nt unsupported`, `open_resource_nt unsupported`, `dxg_sharedhandle_last=.*ret:-95`, `sync_file_create unsupported`, `sync_file_wait unsupported`, `sync_file_open unsupported`, `dxg_syncfile_last=.*ret:-95`, the seven miscellaneous unsupported markers (`change_vidmem_reservation`, `mark_device_error`, `hwqueue_signal_sync`, `hwqueue_wait_sync`, `update_alloc_property`, `query_clock_calibration`, `enum_processes`), `dxg_unsupported_last=.*ret:-95`, `cleanup_attempts:... cleanup_successes:... cleanup_last_ret:0`, and `d3dkmt_ioctls=... ready=1`. The latest passing run completed on `/tmp/xv6-hyperv-build/xv6-hyperv-dxg-validate.vhdx` and wrote `/tmp/xv6-hyperv-build/hyperv-dxg-validate.log`.
+- [ ] Replace growable per-open trackers with a WSL-style `dxgprocess` object
+  graph and typed handle table.
+  - Current source state: `hvdxg_open_state` now has growable per-open arrays
+    for devices, contexts, HW queues, paging queues, sync objects, allocations,
+    resources, and GPUVA reservations. That removed several fixed diagnostic
+    table limits.
+  - Still missing: WSL-like `hmgrtable` semantics, typed object krefs, global
+    versus process-local handle namespaces, fork/exec rules, lock ordering, and
+    exact teardown/unwind ordering for arbitrary close/error paths.
 
-### Kernel Graphics Object Model
+- [ ] Match WSL resource/shared-resource sealing and metadata lifetime exactly.
+  - Current source state: resource and sync NT fd export/open paths exist,
+    clone tracked metadata, and hold the VFS file reference while query/open
+    consumes the metadata.
+  - Still missing: a sealed WSL-style resource object model for runtime private
+    data, resource private data, per-allocation private data, allocation sizes,
+    cache flags, shared-owner lifetime, late destruction, and multiple-open
+    aliasing beyond the current tracked-resource clone.
 
-- [x] Introduce a DRM-like object namespace or equivalent render-device model.
-  - Acceptance: render objects are not framebuffer-private handles and have clear process/open ownership.
-  - Current evidence: `/dev/dri/renderD128` uses per-open render owners for DRM objects. `gpubuftest --render-owner` verifies one render fd cannot destroy another fd's BO and that exported BO fds survive creator render-fd close. `drmprimeprobe` creates a dumb BO on one render fd, exports it with `DRM_IOCTL_PRIME_HANDLE_TO_FD`, closes the creator fd, verifies the original handle is stale on a second render fd, imports through `DRM_IOCTL_PRIME_FD_TO_HANDLE`, maps the imported handle through `DRM_IOCTL_MODE_MAP_DUMB`/`mmap`, and cleans it up. The latest Hyper-V validator requires these markers.
-- [x] Add standard PRIME/dmabuf-style fd semantics beyond the current narrow BO capability path.
-  - Acceptance: exported buffers survive creator fd close, import consistently, and carry enough metadata for generic clients.
-  - Current evidence: `drmprimeprobe` validates `DRM_CAP_PRIME` import/export, dumb BO create metadata (`size=16384 pitch=320`), PRIME export/import, creator fd close survival, stale-handle rejection, closed-PRIME-fd rejection, imported BO mmap/readback, and cleanup. `drmgpuprobe` continues to validate GBM BO creation/export through the render-node/libdrm path.
-- [x] Add modifier and multi-plane buffer metadata.
-  - Acceptance: buffer import can negotiate more than single-plane linear ARGB8888/XRGB8888.
-  - Current evidence: `ports/xv6-gbm` now supports `GBM_FORMAT_NV12`, `GBM_BO_IMPORT_FD_MODIFIER`, `gbm_device_get_format_modifier_plane_count`, `gbm_bo_get_modifier`, `gbm_bo_get_plane_count`, per-plane stride/offset/handle/fd accessors, and linear modifier validation. The Hyper-V validator requires `gbmtest: passed linear NV12 modifier plane metadata import`, which creates a two-plane NV12 BO with `GBM_FORMAT_MOD_LINEAR`, exports both plane fds, imports through modifier metadata, and verifies plane count, modifier, second-plane stride, and second-plane offset.
-- [x] Add explicit sync objects and pollable fences.
-  - Acceptance: pending/completed/invalid fences behave correctly with `poll`, zero-timeout query, blocking wait, and close/release.
-  - Current evidence: `gpubuftest` exports ready and future BO fences as fds. The fresh Hyper-V validator requires ready-fence query/wait/poll success, future-fence zero-timeout query success while unsignaled, future-fence zero-timeout poll not-ready behavior, future blocking wait clean `-EAGAIN`, closed-fence-fd query rejection, closed-fence-fd `POLLNVAL`, and release accounting (`fence_fd_queries 3`, `fence_fd_polls 2`, `fence_fd_poll_ready 1`, `fence_fd_live 0`).
-- [x] Add robust GPU reset/error recovery.
-  - Acceptance: wedged or failed GPU work wakes waiters, marks only affected contexts/objects failed, and leaves the compositor responsive.
-  - Current evidence: the KVM/virtio validator exercises normal GL work, async virgl submit/fence completion, and `virgltest --bad-submit` in both the substrate lane and the visible 3D-demo lane. The passing May 13, 2026 run recorded `virgltest: bad-submit isolated ctx=8 fresh=9 fence=32 signaled=32`, completed the visible spherical-poly demo with `status=0`, and ended with `virtio_failures 0`, `virtio_timeouts 0`, `virtio_context_failed 0`, and `virtio_context_failures 1`. The forced-failure path marks only the affected user context, rejects later submits/resource creation on that context, lets a fresh context submit successfully, and leaves the compositor/3D client responsive. Command timeout handling still marks all live virtio contexts failed, wakes the pending completion path, and prevents callers from treating unknown completion state as success.
+- [ ] Verify every WDDM private payload and return layout against the real UMD
+  sequence.
+  - Current source state: the UAPI surface includes the relevant context,
+    allocation, GPUVA, residency, sync, shared-object, HW-queue, submit,
+    sync-file, and process-enumeration ioctls. The kernel forwards large
+    `CREATECONTEXTVIRTUAL`, `CREATEHWQUEUE`, allocation private data, and HW
+    queue submit payloads far enough for real D3D12 work in observed runs.
+  - Still missing: same-adapter automated comparison for every private payload,
+    host return layout, residency packet, fence value, cacheability side effect,
+    and cleanup ordering. Kernel-side diagnostics must prove what the host saw
+    after any xv6 packet rewrite; user-space `LD_PRELOAD` traces only show the
+    pre-kernel ioctl arguments.
 
-### Mesa / Userspace Graphics API
+- [ ] Resolve the real Mesa/NVIDIA second-FBO residency failure.
+  - Last observed blocker: the real D3D12 path can pass the first 32x32 FBO
+    readback, then fails on the 64x32 FBO path when a multi-allocation
+    `LX_DXMAKERESIDENT` batch (`count=2`, `flags=0x1`) receives host
+    `STATUS_INVALID_PARAMETER` / `-EINVAL`, causing D3D12 device removal.
+  - Still missing: kernel-side packet diagnostics for the forwarded allocation
+    list/order/device field/status/fence, plus a focused pure-C or Mesa probe
+    that reproduces and then proves the corrected residency packet.
 
-- [x] Provide a standard libdrm/GBM render-node contract.
-  - Acceptance: Mesa and GBM clients can discover and use the render device without xv6-private paths where possible.
-  - Current evidence: `/dev/dri/renderD128` is registered as a DRM render-node facade, libdrm recognizes it, `drmgpuprobe` exercises `drmGetDevices2`, `drmGetNodeTypeFromFd`, GBM BO create/export, and now reports the selected backend through `FB_GPU_BACKEND_QUERY`.
-- [x] Reduce xv6-specific Mesa winsys assumptions.
-  - Acceptance: local shims are either upstream-compatible or limited to narrow compatibility glue.
-  - Current evidence: the virgl DRI helper now passes the loader-provided DRM render-node fd into the xv6 virgl winsys, and the winsys duplicates that fd instead of hard-coding `/dev/gpu0`/`/dev/fb0` for normal DRI operation. `XV6_VIRGL_DEVICE`, `/dev/dri/renderD128`, `/dev/gpu0`, and `/dev/fb0` remain fallback paths for software-driver and diagnostic creation. The KVM/virtio validator passed after this change with `mesawlegl` rendering through `renderer=virgl (D3D12 (Intel(R) UHD Graphics))`, `virgltest: async-submit queued ctx=6 fence=29 initial_signaled=28 final_signaled=29 completed_inline=0`, `backend_opengl_submit 1`, and `virtio_failures 0`.
-- [x] Add broader GL conformance coverage.
-  - Acceptance: shader, texture, VBO, FBO, depth/stencil, blending, viewport, scissor, resize, and teardown paths have repeatable tests beyond smoke output.
-  - Current evidence: `mesaglfeature` is staged with the Wayland/Mesa port and the Hyper-V validator now requires `mesaglfeature: pass size=32x32`, `mesaglfeature: pass size=64x32`, and `mesaglfeature: ok`. The probe creates a surfaceless GLES2 context, compiles shaders, draws from a VBO with texture sampling into an FBO with packed depth/stencil, enables blending, uses viewport and scissor, reads back expected pixels, resizes the FBO, and tears resources down cleanly.
-- [x] Clarify GLX scope.
-  - Acceptance: GLX is either implemented or explicitly documented as unsupported because the desktop is Wayland/EGL-first.
-  - Current evidence: `README.md` now has a "Graphics API scope" section documenting that the supported OpenGL presentation path is native Wayland EGL, acceleration is gated by `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, and GLX is intentionally unsupported because the normal session has no X server.
-- [x] Remove unnecessary readback/copy paths from Mesa presentation.
-  - Acceptance: a Mesa Wayland client can swap through a native buffer path without pbuffer readback for the normal presentation lane.
-  - Current evidence: the desktop 3D demo now launches `mesawlegl --demo`, so the normal demo path uses Mesa's native Wayland EGL surface and `eglSwapBuffers`; the launcher passes `glsmoke_frames`/`glsmoke_loops` through to demo mode, and `mesawlegl` draws a lightweight seven-segment `FPS` overlay inside the GL surface while also updating the toplevel title and logging `mesawlegl[..]: fps=...`. A May 14 Hyper-V screenshot captured after double-clicking the desktop icon is `/mnt/c/Temp/xv6-hyperv-mesawlegl-fps-final.png`; serial evidence showed `wlcomp: launched mesawlegl (pid 57)`, `57 mesawlegl --demo`, and title updates such as `Mesa 3D Demo - 3.4 FPS`. `mesaglsmoke` remains available for the older surfaceless/readback smoke lane.
+### Hyper-V OpenGL Present Path
 
-### Wayland / Compositor Buffer Path
+- [ ] Stop presenting Hyper-V D3D12 through the DRI software-present/readback
+  lane.
+  - Current source state: `mesademo` selects `GALLIUM_DRIVER=d3d12` on Hyper-V,
+    and `mesawlegl` uses a native Wayland EGL surface, but Mesa still falls
+    through `drisw.c` for the Wayland presenter.
+  - Still missing: a native D3D12 Wayland swap path that hands compositor-visible
+    GPU resources across process boundaries without CPU readback.
 
-- [x] Extend standard `linux-dmabuf` support beyond single-plane linear buffers.
-  - Acceptance: multi-plane and modifier negotiation are represented and rejected/accepted accurately.
-  - Current evidence: `wlcomp` advertises ARGB8888, XRGB8888, and NV12 with linear modifiers through `zwp_linux_dmabuf_v1`; accepts multi-plane params; validates per-plane modifier/offset/stride layout; imports each plane fd into the render BO model; stores per-plane mapped addresses, sizes, handles, strides, and offsets; composites NV12 to ARGB in the software compositor path; and releases all imported plane handles on buffer destruction. `dmabufsmoke --nv12` creates a two-plane `GBM_FORMAT_NV12` BO with `GBM_BO_USE_LINEAR`, fills Y and UV planes, exports both plane fds, submits them through `linux-dmabuf`, and presents the buffer. The Hyper-V validator requires both `dmabufsmoke: presented linux-dmabuf buffer format=NV12 planes=2` and compositor-side `wlcomp: dmabuf buffer ... fmt=0x3231564e planes=2`, and the latest passing run recorded final `bo_fd_exports 9`, `bo_fd_imports 7`, and `bo_fd_live 0`.
-- [x] Add standard explicit-sync release fences.
-  - Acceptance: acquire/release fences are carried through the compositor protocol path rather than private-only fence probes.
-  - Current evidence: `wlcomp` now advertises `zwp_linux_explicit_synchronization_v1` with per-surface sync objects, accepts acquire fences, binds release objects to committed buffers, and sends standard `zwp_linux_buffer_release_v1` completion. The Hyper-V validator runs `dmabufsmoke --nv12 --explicit-sync`; the passing run recorded `wlcomp: explicit-sync immediate release` and `dmabufsmoke: explicit-sync release=immediate` for a two-plane NV12 linux-dmabuf buffer. The fenced-release path is wired to `FB_GPU_FENCE_EXPORT_FD` when a pending framebuffer present fence is available; this run used immediate release because the compositor had already completed the software-present path.
-- [x] Add a compositor GPU composition path.
-  - Acceptance: `wlcomp` can composite surfaces through GPU commands for at least one validated mode.
-  - Current evidence: `wlcomp` now has an opt-in compositor GPU compose path (`wlcomp_gpu_compose=1` / `XV6_WLCOMP_GPU_COMPOSE=1`) for eligible XRGB GPU BO surfaces on a direct-scanout target. The latest Hyper-V validator booted with `wayland_dmabuf=1 wlcomp_gpu_compose=1`, ran `dmabufsmoke --hold-ms=1200`, and recorded `wlcomp: gpu-compose presented handle=15 rect=392,286 240x160 src_off=0 fence=2` plus a follow-up cursor/taskbar rectangle present. `/tmp/wlcomp-fps` reported `gpu_compose=1 gpu_pixels=38400 mode=direct-scanout`, final `fbstat` showed `bo_presents 294`, `bo_fences 294`, `backend_d3dkmt 1`, and `backend_opengl_submit 0`, and the full `scripts/hyperv-dxg-validate.sh` run passed.
-- [x] Add direct scanout or overlay promotion where safe.
-  - Acceptance: fullscreen/no-overlay surfaces can bypass software composition with correct cursor/taskbar fallback behavior.
-  - Current evidence: `wlcomp` first tries `FB_GPU_SCANOUT_MAP` and uses direct scanout when the framebuffer scanout is mappable; otherwise it falls back to a GPU BO present target. The Hyper-V validator now requires `/tmp/wlcomp-fps` to report `mode=direct-scanout` or `mode=bo-present`, and the latest Hyper-V pass reported `mode=direct-scanout fb=1024x768` plus nonzero display completion accounting. The KVM/virtio validator passed with the BO-backed compositor mode (`wlcomp: using fb GPU buffer`) and clean post-run resource accounting.
-- [x] Add page-flip/vsync completion reporting.
-  - Acceptance: frame callbacks can be tied to display completion instead of only software present completion.
-  - Current evidence: the framebuffer GPU UABI now exposes `FB_GPU_DISPLAY_WAIT`, `struct fb_gpu_display_wait`, and display-present/completion counters in `fbstat`. `wlcomp` records the latest display sequence after scanout flush or BO present, checks completion before releasing the pending present wait, and logs completion stats. The latest Hyper-V validator requires and passed `display_presents`, `display_completions`, and `display_last_complete` with nonzero values (`2948` in the final `fbstat`); the KVM validator also passed with `display_presents 60`, `display_completions 60`, and `display_last_complete 60`.
-- [x] Add compositor-side GPU stall recovery.
-  - Acceptance: a stuck GPU operation does not freeze input or the Wayland event loop.
-  - Current evidence: `wlcomp` now bounds both display-completion waits and explicit acquire-fence waits with the shared `wlcomp_stall_recover_ms` / `XV6_WLCOMP_STALL_RECOVER_MS` timeout. On timeout it logs `wlcomp: recovered stalled display completion ...` or `wlcomp: recovered stalled acquire fence ...`, increments recovery counters, closes the stalled acquire fence when needed, and resumes the event loop instead of freezing input. Normal Hyper-V and KVM validation completed without triggering the recovery path, while the recovery counters are compiled into the periodic damage stats for future stress runs.
+- [ ] Add a D3D12 shared-resource Wayland buffer path.
+  - Current source state: `wlcomp_dmabuf.inc` imports standard linux-dmabuf fds
+    through `FB_GPU_BO_IMPORT_FD`, which assumes xv6 framebuffer BO semantics
+    and mappable linear planes.
+  - Still missing: a DXG-aware import path for D3D12 NT shared-resource fds,
+    including resource metadata, allocation private data, owning/opening device
+    context, and release lifetime.
 
-### Virtio / Virgl
+- [ ] Extend Wayland protocol/glue for D3D12 resource type and fences.
+  - Current source state: the private `xv6_gpu_buffer_manager` carries xv6 GPU
+    BO handles and an acquire fence fd; linux-dmabuf carries linear plane fds,
+    format, modifier, offsets, and strides.
+  - Still missing: a protocol contract that says "this fd is a D3D12 NT shared
+    resource plus sync/fence object" and carries enough metadata for the
+    compositor to open it through `/dev/dxg`.
 
-- [x] Broaden virtio-gpu command validation.
-  - Acceptance: invalid command buffers are rejected safely and valid context/resource paths remain isolated per context.
-  - Current evidence: the KVM/virtio lane now runs `virgltest`, `virgltest --invalid-submit`, and `virgltest --bad-submit` from `/bin/gpu-substrate-validate` under `scripts/gpu-validate.sh`. The passing May 13, 2026 run recorded normal virgl resource/transfer/submit/fence coverage (`virgltest: ctx=5 res=41 ... fence=28 signaled=28 capset=2 version=2 size=1384`), rejected invalid context flags plus zero-context, null-command, unaligned-size, oversize, and foreign-context submits (`virgltest: invalid-submit rejected invalid ioctls ctx=6 fence=29 signaled=29`), then forced a bad submit and verified isolation/recovery (`virgltest: bad-submit isolated ctx=7 fresh=8 fence=30 signaled=30`).
-- [x] Make the virgl fence model more asynchronous.
-  - Acceptance: submit and wait paths do not require synchronous completion at the syscall boundary for normal operation.
-  - Current evidence: `FB_GPU_VIRGL_SUBMIT_ASYNC` now copies command streams into kernel-owned pages, queues the virtio-gpu `SUBMIT_3D` request, returns the submitted fence before host completion, and drains completion on later GPU commands or fence waits. Mesa's xv6 virgl winsys uses the async flag for normal submits while the synchronous path remains available. The May 13, 2026 KVM validation run recorded `virgltest: async-submit queued ctx=6 fence=29 initial_signaled=28 final_signaled=29 completed_inline=0`, proving the submit returned before the fence was signaled, then `FB_GPU_VIRGL_FENCE_WAIT` completed it. Final stats remained clean: `virtio_failures 0`, `virtio_timeouts 0`, `virtio_submits 31`, `virtio_fences 31`, and `virtio_last_fence 32`.
-- [x] Keep resource and context lifetime accounting clean under failure.
-  - Acceptance: forced failure tests leave no leaked BOs, resources, fences, or live failed contexts after cleanup.
-  - Current evidence: the same KVM/virtio run ended with `backend_opengl_submit 1`, `bo_fd_live 0`, `fence_fd_live 0`, `virtio_failures 0`, `virtio_timeouts 0`, `virtio_context_failed 0`, and `virtio_context_failures 1`; the only live BO/resource was the compositor's persistent scanout (`bo_handles 1`, `virtio_resources 1`). The host validator also verified no leftover QEMU/expect process after PASS.
+- [ ] Implement GPU-side present/composite for D3D12 resources on Hyper-V.
+  - Current source state: `FB_GPU_BO_PRESENT`, direct scanout, and compositor
+    GPU compose speed up framebuffer BO presentation. They do not make a D3D12
+    render target a native compositor input.
+  - Still missing: compositor-side D3D12 copy/present from the shared resource,
+    or an equivalent WSLg-style host compositor path, with no repeated CPU
+    texture readback/copy.
 
-### WebKit / Toolkit Consumers
+### Validation
 
-- [x] Keep WebKit accelerated compositing opt-in until stable.
-  - Acceptance: default WebKit remains visible/stable and forced acceleration failures do not regress the safe path.
-  - Current evidence: Hyper-V booted with `webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_gpu_smoke=1 webkit_timeout_ms=45000`; because `backend_opengl_submit=0`, `desktop.c` kept WebKit on the stable compositor path. The local file smoke mapped a Wayland toplevel titled `xv6 WebKit GPU API Smoke`, timed out cleanly, destroyed the WebKit surface, printed `WebKit API smoke complete; keeping Wayland session alive`, and post-timeout `ps` still showed `wlcomp` and `/bin/desktop` alive.
-- [x] Make forced WebKit WebGL stable after the first rendered frame.
-  - Acceptance: the local WebGL smoke runs repeatedly without UI/WebKit process crashes, coredumps, or blank content.
-  - Current evidence: the May 13, 2026 KVM/virgl run passed `scripts/webkit-virgl-gpu-validate.sh` against a freshly rebuilt rootfs. The guest logged `webkit_gpu_policy name=webkitgpusmoke requested_accel=1 effective_accel=1 opengl_submit=1 dxg_transport=0 render_node=1 dmabuf=0 fallback=none`, then WebKit reached `webgl ready`, `webgl spherical poly`, and `webgl spherical poly complete`, relaunched with `webkit_reopen=2`, emitted `__WEBKIT_API_SMOKE_DONE_0__`, and the validator rejected no status-6, GBM EGL abort, panic, coredump, compositor-exit, or WebKit smoke failure markers.
+- [ ] Add pure-C D3D12 shared-resource export/import/open/present validation.
+  - Current source state: `dxgprobe` validates resource and sync NT fd
+    export/query/open across parent/child opens, but that proves only the
+    metadata/share half.
+  - Still missing: one process exporting a D3D12-renderable resource, another
+    process or compositor opening it through `/dev/dxg`, synchronizing it with
+    a fence/sync object, and presenting it without mapping/copying pixels
+    through CPU memory.
+
+- [ ] Make the pure-C WSL-trace replay validator pass as an equivalence test.
+  - Current source state: `dxgprobe --wsl-trace-replay` exists and replays an
+    ordered device, paging queue, allocation, residency, GPUVA, lock, context,
+    HW queue, submit, and teardown sequence.
+  - Still missing: WSL-equivalent success criteria for the real UMD packet
+    shapes. The validator should assert matching return statuses, fence
+    progress, object ownership, and cleanup for the same adapter instead of
+    remaining an opt-in repro for known host rejections.
+
+- [ ] Add a finite GUI performance validator that fails below 60 FPS after
+  warmup.
+  - Current source state: the 3D demo defaults to a 640x480 Wayland/EGL window,
+    is closeable/resizable, draws an RTC-based FPS overlay inside the GL
+    surface, logs FPS, and has screenshot visual checks.
+  - Still missing: an automated Hyper-V validator that launches the desktop
+    demo, confirms a visible nonblack in-window overlay, skips warmup, samples a
+    fixed duration/frame window, and fails unless sustained visible FPS exceeds
+    60.
+
+### WebKit Consumer Contract
+
 - [ ] Implement the durable WebKitGTK accelerated-surface contract.
-  - Acceptance: WebKit uses the same dmabuf/render-node/fence path as native Mesa clients rather than an env-var-only acceleration claim.
-  - Current evidence: `webkit_accel=1 webkit_api_smoke=1` now gets the accelerated Mesa environment only when the render backend advertises `FB_GPU_BACKEND_F_OPENGL_SUBMIT`; Hyper-V DXG falls back to the stable path until the D3DKMT/OpenGL bridge can create real render contexts. A local-file Hyper-V WebKit API smoke validated that the fallback keeps `wlcomp` alive after timeout. A focused MiniBrowser run with `webkit_accel=1 webkit_dmabuf=1 webkit_gpu_smoke=1 webkit_log=1` on Hyper-V did not prove the dmabuf contract: it produced no WebKit title, no `wlcomp: dmabuf buffer`, no BO imports/fences, and the stalled log only showed Mesa `drisw` software EGL context setup before the watchdog closed MiniBrowser. `desktop.c` therefore now treats `webkit_dmabuf=1` as requiring `FB_GPU_BACKEND_F_OPENGL_SUBMIT` too; validation with `webkit_dmabuf=1` now reports `webkit_gpu_policy name=MiniBrowser requested_accel=1 effective_accel=0 opengl_submit=0 dxg_transport=1 render_node=1 dmabuf=0 fallback=opengl_submit_unavailable`, so Hyper-V cannot claim an effective accelerated WebKit contract from render-node existence alone.
-- [x] Add repeated WebKit GPU validation.
-  - Acceptance: local WebGL load, resize, close/reopen, timeout recovery, and post-run resource accounting are automated.
-  - Current evidence: `scripts/hyperv-webkit-gpu-validate.sh` rebuilds kernel/rootfs, creates `/tmp/xv6-hyperv-build/xv6-hyperv-webkit-gpu-validate.vhdx`, deploys it to Hyper-V, boots a local-only WebKit API/WebGL smoke with `webkit_reopen=2`, and fails if the compositor exits, a crash marker appears, or Hyper-V accidentally advertises OpenGL submit. The latest May 13, 2026 run passed and recorded the durable launch marker `webkit_gpu_policy name=webkitgpusmoke requested_accel=1 effective_accel=0 opengl_submit=0 dxg_transport=1 render_node=1 dmabuf=0 fallback=opengl_submit_unavailable`, two mapped `xv6 WebKit GPU API Smoke` toplevels, a watchdog close/relaunch cycle, `WebKit timeout smoke complete`, live `wlcomp`/`desktop` before shutdown, and final `backend_opengl_submit 0`.
-- [x] Track heavy-page responsiveness separately from GPU substrate.
-  - Acceptance: YouTube/heavy-script behavior is tested as a browser workload, not used as the first proof of kernel GPU correctness.
-  - Current evidence: the automated WebKit validation now uses `file:///share/webkit/gpu-webgl-smoke.html` and explicitly avoids network/Google/YouTube as the first GPU-substrate proof. Heavy-page and network browser behavior remain separate workload tests after local GPU, compositor, and process-lifetime contracts pass.
+  - Current source state: WebKit acceleration and `webkit_dmabuf=1` are gated
+    on `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, so Hyper-V falls back safely while
+    virgl can opt in.
+  - Still missing: WebKit using the same render-node, D3D12/dmabuf/shared
+    resource, and fence path as native Mesa clients on Hyper-V. An environment
+    variable or render-node existence alone is not accepted evidence.
 
-### Validation / Recovery
+## Acceptance Gate
 
-- [x] Add a long-running mixed GUI/GPU stress lane.
-  - Acceptance: multiple GPU clients, cursor motion, terminal open/close, resize churn, forced client death, stalled submits, screenshots, and post-run resource accounting run in one automated scenario.
-  - Current evidence: `scripts/hyperv-gpu-stress.sh` builds/deploys a long Hyper-V 3D-demo boot by default, or can reuse a running stress VM. The passing reuse-mode run used `glsmoke_demo=1 glsmoke_frames=2400`, verified a live `mesawlegl --demo --frames=2400 --loops=1` process, captured `/mnt/c/Temp/xv6-hyperv-gpu-stress.png` through `scripts/hyperv-3d-visual-check.sh`, ran `gpubuftest 3`, `dmabufsmoke --nv12 --explicit-sync`, `drmgpuprobe`, `dxgprobe --owner-isolation`, and `fbstat` while the demo continued emitting FPS updates, and passed resource checks with `bo_fd_live 0`, `fence_fd_live 0`, `bo_fd_exports 12`, `bo_fd_imports 10`, `fence_fd_exports 12`, `fence_fd_queries 18`, and `backend_opengl_submit 0`. The run wrote `/tmp/xv6-hyperv-build/hyperv-gpu-stress.log` and ended with `hyperv-gpu-stress: passed`.
-- [x] Run validation on both KVM/virtio and Hyper-V/DXG lanes.
-  - Acceptance: regressions are classified by backend and shared compositor/Mesa failures are separated from backend-specific failures.
-  - Current evidence: the Hyper-V/DXG lane passes through `scripts/hyperv-dxg-validate.sh` with `backend_dxg_transport 1`, `backend_d3dkmt 1`, and `backend_opengl_submit 0`. The KVM/virtio lane now passes through `scripts/gpu-validate.sh` with `BUILD_DIR=/tmp/xv6-hyperv-build GPU_VALIDATE_LOG=/tmp/xv6-hyperv-build/gpu-validate.log`; the latest May 13, 2026 run reached the desktop autostart validator, exercised `gbmtest`, `dmabufsmoke`, two native Wayland EGL `mesawlegl` clients, `mesaglsmoke`, input injection, `gpubuftest 3`, render-fd ownership cleanup, and final `fbstat`, then exited cleanly with no leftover QEMU processes. The KVM log recorded `backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl`, `backend_opengl_submit 1`, `bo_fd_live 0`, `fence_fd_live 0`, `virtio_failures 0`, and `virtio_timeouts 0`. The KVM validator uses dedicated `__GPUV_*_DONE_0__` sentinels from `/bin/gpu-substrate-validate` so serial log interleaving cannot hide a client failure.
-- [x] Keep screenshot-based visual checks for the 3D demo.
-  - Acceptance: the demo is nonblank, correctly framed, has the expected close UI, and no known mesh/culling flaw.
-  - Current evidence: Hyper-V visual smoke boot with `glsmoke=1 glsmoke_demo=1 glsmoke_frames=600` showed a live `mesawlegl --demo --frames=600 --loops=1` process and repeated `Mesa 3D Demo - ... FPS` title/log updates. `scripts/hyperv-3d-visual-check.sh` captured the Hyper-V WMI thumbnail, converted the RGB565 raw frame to `/mnt/c/Temp/xv6-hyperv-3d-fps-clickfix.png`, and passed nonblank/color/contrast checks plus the enlarged FPS-overlay crop check (`overlay_bright=3082 overlay_dark=32299`). The captured image shows the desktop chrome, the framed Mesa 3D demo surface, the low-poly sphere, and the large in-surface `FPS 2.7` overlay.
-- [x] Record build/runtime freshness in validation logs.
-  - Acceptance: validation output includes image timestamp, VM uptime, kernel build identity, and VHDX/rootfs path.
-  - Current evidence: `/tmp/xv6-hyperv-build/hyperv-dxg-validate.log` now records `host_date`, repo HEAD/status, `kernel_bin`, `rootfs_img`, `out_vhdx`, `deploy_vhdx`, artifact sizes/mtimes before and after deploy, Hyper-V `Get-VM` state/uptime, guest `/proc/version`, guest `/proc/uptime`, and the exact Hyper-V command line.
+Hyper-V GPU/OpenGL support is complete only when all of the following are true:
+
+- `mesaglfeature` passes on Hyper-V D3D12 without tracing or device removal.
+- A Mesa Wayland client presents a D3D12-rendered surface through a shared GPU
+  resource/fence path, not through DRI software readback.
+- The desktop-launched 640x480 or equivalent 480p 3D demo is visible, closeable,
+  resizable, and sustains more than 60 FPS after warmup.
+- `fbstat` can honestly report `backend_opengl_submit 1` on Hyper-V.
+- WebKit acceleration uses that same validated OpenGL-submit/shared-surface
+  contract and stays gated off when the contract is unavailable.
