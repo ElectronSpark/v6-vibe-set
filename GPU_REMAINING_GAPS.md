@@ -325,6 +325,16 @@ contracts should be traceably compatible.
   `nouveauabitest; drmiftest; fbstat` showed `nouveau_ioctl_entries 2`,
   `nouveau_fail_closed 2`, all native success counters still zero, and
   `backend_opengl_submit 0`.
+  Wave67 progress: native NVIDIA discovery now reports DRM driver name
+  `nouveau` and a PCI-style unique string only when a real NVIDIA PCI device
+  is present outside Hyper-V DXG; Hyper-V continues to report the xv6 facade
+  and fail closed. The xv6 libdrm path now permits `drmOpen("nouveau", NULL)`
+  to reach the local DRM node, and `nouveauabitest` exercises
+  `nouveau_device_open(NULL)` before falling back to direct render-node wrap.
+  Focused Hyper-V evidence after a fresh `/tmp/xv6-hyperv-build` image showed
+  `nouveauabitest: discovery open fail-closed ret=-19`, direct wrap
+  `driver=xv6_gpu ret=-19`, `drmiftest: ok`, `nouveau_ioctl_entries 2`,
+  `nouveau_fail_closed 2`, and `backend_opengl_submit 0`.
 
 ### Port Integration And Acceptance
 
