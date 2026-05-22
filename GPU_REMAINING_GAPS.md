@@ -1,6 +1,6 @@
 # GPU Remaining Gaps
 
-Last updated: 2026-05-21
+Last updated: 2026-05-22
 
 This file is now scoped to work that is still missing. Completed baseline
 capabilities were moved into the skill docs, mainly
@@ -194,12 +194,32 @@ contracts should be traceably compatible.
   transitions. Focused Hyper-V evidence from
   `/tmp/xv6-hyperv-build/xv6-drm-core.vhdx` keeps `fbstat` DRM node diagnostics
   intact, reports `backend_opengl_submit 0`, and passes `drmiftest: ok`.
-- [ ] Move `/dev/dri/card0` and `/dev/dri/renderD128` dispatch from the fb
+- [x] Move `/dev/dri/card0` and `/dev/dri/renderD128` dispatch from the fb
   facade into the DRM core while keeping `/dev/gpu0` and `/dev/fb0`
   compatibility as wrappers.
-- [ ] Implement Linux-compatible ioctl dispatch tables with common DRM core
+  Wave72 closure: `/dev/dri/card0` and `/dev/dri/renderD128` now install
+  DRM-only file operations at open time, so their ioctl path goes directly to
+  `gpu_drm_fops_ioctl()` and cannot consume the `/dev/gpu0` private
+  FB/GPU-compatibility switch. `/dev/gpu0` keeps the compatibility file ops and
+  still falls through to DRM commands for legacy callers. Focused Hyper-V
+  evidence from `/tmp/xv6-hyperv-build/xv6-drm-dispatch.vhdx` shows
+  `fbstat; drmiftest` passing with primary and render DRM nodes open,
+  render-node KMS/magic/master denial policy intact, unknown ioctl rejection
+  intact, and `backend_opengl_submit 0`.
+- [x] Implement Linux-compatible ioctl dispatch tables with common DRM core
   commands, permission checks, driver-private command ranges, copyin/copyout
   validation, and unknown-command diagnostics.
+  Wave72 closure: `drm_core.c` now owns a `drm_core_ioctl_desc` dispatch table
+  contract with per-command node masks for legacy, primary, and render nodes.
+  The framebuffer/GPU driver registers common DRM, KMS, dumb/GEM, PRIME,
+  syncobj, virtio-gpu private, and Nouveau private command descriptors, while
+  the DRM core performs table lookup, per-open ioctl accounting, node policy
+  checks, and unknown-command rejection before calling the driver handler.
+  Handler-level copyin/copyout validation remains at the command boundary, and
+  diagnostics distinguish unknown commands from core node-policy denials. The
+  same focused Hyper-V run validates common ioctls, render-vs-primary
+  permissions, page-flip/KMS scaffolding, dumb/GEM lifetime, syncobj behavior,
+  fail-closed Nouveau ABI probes, and unknown ioctl rejection.
 - [x] Add `/proc` or `/dev` diagnostics proving node type, driver name,
   feature flags, open-file counts, master/auth state, GEM object counts, TTM
   memory usage, KMS object counts, and driver-private ioctl counters.
