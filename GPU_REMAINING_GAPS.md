@@ -191,9 +191,19 @@ contracts should be traceably compatible.
 - [ ] Implement Linux-compatible ioctl dispatch tables with common DRM core
   commands, permission checks, driver-private command ranges, copyin/copyout
   validation, and unknown-command diagnostics.
-- [ ] Add `/proc` or `/dev` diagnostics proving node type, driver name,
+- [x] Add `/proc` or `/dev` diagnostics proving node type, driver name,
   feature flags, open-file counts, master/auth state, GEM object counts, TTM
   memory usage, KMS object counts, and driver-private ioctl counters.
+  Wave70 closure: `fbstat` now opens `/dev/dri/card0` and
+  `/dev/dri/renderD128` and prints node path/type, DRM driver name, unique
+  string, DRM caps, primary auth/master transition state, and render-node
+  magic/master rejection policy. The same `/dev/gpu0` stats output already
+  exposes open-file counts, GEM/BO counts, TTM memory usage, KMS framebuffer and
+  page-flip counters, syncobj counters, and Nouveau driver-private ioctl
+  counters. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-drm-diag.vhdx` shows the new `drm_node`,
+  `drm_caps`, `drm_node_state`, and `drm_node_policy` rows, plus
+  `backend_opengl_submit 0`, followed by `drmiftest: ok`.
 - [x] Add a pure-C `drmiftest` validator covering version, unique, caps,
   set-client-cap, get-client/stats, magic/auth, master/drop-master, primary
   and render-node permission differences, and unknown ioctl rejection.
