@@ -312,6 +312,12 @@ contracts should be traceably compatible.
   driver=xv6_gpu ret=-19`, followed by `drmiftest: ok` and
   `backend_opengl_submit 0`. On native NVIDIA PCI, the same validator is ready
   to exercise libdrm getparam/client/BO/map/PRIME paths.
+  Wave65 progress: the native-positive `nouveauabitest` path now also creates
+  a `NOUVEAU_FIFO_CHANNEL_CLASS` object through libdrm, constructs a pushbuf,
+  and kicks the deterministic no-op push path before BO/map/PRIME coverage.
+  Focused Hyper-V evidence remains fail-closed with
+  `nouveauabitest: nouveau absent fail-closed ok driver=xv6_gpu ret=-19`,
+  `drmiftest: ok`, and `backend_opengl_submit 0`.
 
 ### Port Integration And Acceptance
 
