@@ -241,17 +241,49 @@ contracts should be traceably compatible.
 
 ### GEM, PRIME, DMA-Buf, Fences, And Sync Objects
 
-- [ ] Promote the current BO/fd objects into a GEM object layer with per-file
+- [x] Promote the current BO/fd objects into a GEM object layer with per-file
   handle tables, global object references, mmap offsets, close-on-file-release
   cleanup, and no stale-handle access across render opens.
-- [ ] Keep existing FB/GBM ioctls backed by GEM rather than parallel BO logic.
-- [ ] Implement GEM dumb buffer create/map/destroy on top of GEM with stable
+  Wave73 closure: framebuffer BO handles are now backed by explicit
+  `fb_gpu_gem_object` instances with global object ids, object refcounts,
+  object-owned pages, object-owned fence state, and per-open BO handles that
+  point at the shared object. Close-on-file-release still destroys only the
+  calling file's handles, stale handles remain rejected across render opens,
+  and exported BO/PRIME fds keep the GEM object alive after the original render
+  file closes. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-gem-shared.vhdx` passes `drmprimeprobe`,
+  `gpubuftest 2`, `drmiftest`, and `fbstat`, including stale-handle rejection,
+  imported-handle mmap/readback, BO fd lifetime, fence fd poll/query behavior,
+  and `backend_opengl_submit 0`.
+- [x] Keep existing FB/GBM ioctls backed by GEM rather than parallel BO logic.
+  Wave73 closure: `FB_GPU_BO_CREATE`, `FB_GPU_BO_IMPORT`,
+  `FB_GPU_BO_EXPORT_FD`, `FB_GPU_BO_IMPORT_FD`, `FB_GPU_BO_INFO`, DRM dumb
+  buffers, and PRIME export/import now all operate on the GEM-backed BO handle
+  layer. Import-fd and PRIME fd-to-handle allocate a new per-file handle for
+  the existing GEM object rather than cloning page arrays into a parallel BO.
+- [x] Implement GEM dumb buffer create/map/destroy on top of GEM with stable
   mmap offsets and Linux-compatible size, pitch, bpp, and alignment semantics.
-- [ ] Implement PRIME export/import through shared GEM references with
+  Wave73 closure: `DRM_IOCTL_MODE_CREATE_DUMB` allocates a GEM object,
+  `DRM_IOCTL_MODE_MAP_DUMB` returns the stable handle-derived mmap offset, and
+  destroy drops the per-file handle while releasing the object only after all
+  fd/import references are gone. `drmiftest` and `drmprimeprobe` both validate
+  stable mmap offsets, stale handle rejection, and imported mapping readback.
+- [x] Implement PRIME export/import through shared GEM references with
   `drmPrimeHandleToFD`/`drmPrimeFDToHandle` semantics and fd lifetime tests.
+  Wave73 closure: PRIME handle-to-fd exports a reference to the GEM-backed BO
+  handle, and PRIME fd-to-handle creates a new handle to the same GEM object.
+  The focused Hyper-V run proves the exported fd survives closing the source
+  render node, a second render node cannot use the stale source handle, the
+  imported PRIME handle maps and reads/writes successfully, and a closed PRIME
+  fd is rejected.
 - [ ] Add dma-buf style metadata for format, modifier, plane count, offsets,
   strides, and implicit/explicit fence attachment; keep existing Wayland
   linux-dmabuf import wired to that metadata.
+  Wave73 partial: GEM objects now carry format, modifier, plane-count,
+  offset/stride, and implicit/explicit fence metadata, with AddFB2 and BO_INFO
+  updating/reading the object metadata. This row remains open until the
+  multi-plane Wayland linux-dmabuf import path is proven to consume that same
+  metadata contract end to end.
 - [x] Implement DRM syncobj and timeline syncobj UAPI enough for Mesa/Nouveau:
   create, destroy, handle-to-fd, fd-to-handle, wait, reset, signal, timeline
   wait/signal, and diagnostics.
