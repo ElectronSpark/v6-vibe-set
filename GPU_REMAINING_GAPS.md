@@ -252,7 +252,7 @@ contracts should be traceably compatible.
 - [ ] Replace hardcoded single-mode DRM KMS responses with KMS object models:
   mode_config, connectors, encoders, CRTCs, planes, framebuffers, properties,
   blobs, and leases/placeholders where Linux clients expect them.
-- [ ] Implement `GETRESOURCES`, `GETCONNECTOR`, `GETENCODER`, `GETCRTC`,
+- [x] Implement `GETRESOURCES`, `GETCONNECTOR`, `GETENCODER`, `GETCRTC`,
   `GETPLANERESOURCES`, `GETPLANE`, `GETPROPERTY`, `GETPROPBLOB`,
   `ADDFB2`, `RMFB`, `SETCRTC`, page-flip, and vblank/event delivery.
   Wave62 adds a primary plane object: `GETPLANERESOURCES` now returns one
@@ -263,15 +263,26 @@ contracts should be traceably compatible.
   `MODE_ID`, `GETPROPERTY` returns Linux-style object/blob property flags, and
   `GETPROPBLOB` returns the current mode blob. `drmiftest` validates property
   discovery, mode blob contents, and invalid property/blob rejection on focused
-  Hyper-V with `backend_opengl_submit 0`. Vblank/event delivery remains open.
+  Hyper-V with `backend_opengl_submit 0`.
+  Wave69 closure: `drmiftest` now directly validates `GETCRTC`, `GETENCODER`,
+  invalid CRTC/encoder rejection, `SETCRTC`, `WAIT_VBLANK`, page flip with a
+  readable `DRM_EVENT_FLIP_COMPLETE`, empty event-queue rejection, invalid
+  page flip rejection, empty atomic check/commit, invalid atomic rejection,
+  `RMFB`, and dumb-buffer teardown. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-kms-events2.vhdx` shows `drmiftest: ok`,
+  `kms_page_flips 1`, `kms_atomic_commits 2`, and
+  `backend_opengl_submit 0`.
 - [ ] Add atomic modesetting objects and ioctls enough for modern Mesa/Wayland
   clients: object property enumeration, atomic check, atomic commit, out-fence,
   nonblocking commit rejection or completion.
 - [ ] Wire KMS scanout to existing framebuffer/virtio/synthvid paths without
   claiming Hyper-V OpenGL submit until native present and FPS gates pass.
-- [ ] Add pure-C KMS validators for resource enumeration, dumb-buffer
+- [x] Add pure-C KMS validators for resource enumeration, dumb-buffer
   framebuffer creation, page flip event delivery, atomic check/commit, and
   invalid-object rejection.
+  Wave69 closure: `drmiftest` covers the listed KMS contracts in pure C on
+  focused Hyper-V, including positive and negative object IDs, event delivery,
+  and the Hyper-V OpenGL-submit gate.
 
 ### PCI Driver Model And Nouveau Port
 
