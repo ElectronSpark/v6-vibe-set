@@ -99,6 +99,19 @@ for name in "${HOST_USER_PROGRAMS[@]}"; do
                 echo "build-linux-host-probes: warning: skipping pngtest until host libpng is staged" >&2
             fi
             ;;
+        nouveauabitest)
+            if [[ -f "${SYSROOT}/include/libdrm/nouveau/nouveau.h" &&
+                  -f "${SYSROOT}/lib/libdrm_nouveau.so" ]]; then
+                build_host_user_program "${name}" \
+                    -I"${SYSROOT}/include" \
+                    -I"${SYSROOT}/include/libdrm" \
+                    -I"${SYSROOT}/include/libdrm/nouveau" \
+                    -L"${SYSROOT}/lib" -Wl,-rpath,/lib \
+                    -ldrm_nouveau -ldrm -pthread -ldl
+            else
+                echo "build-linux-host-probes: warning: skipping nouveauabitest until libdrm_nouveau is staged" >&2
+            fi
+            ;;
         *)
             build_host_user_program "${name}"
             ;;

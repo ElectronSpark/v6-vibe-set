@@ -305,6 +305,13 @@ contracts should be traceably compatible.
   sequence when Nouveau is present and validates the Hyper-V fail-closed path
   otherwise. PRIME sharing, map writes, unsupported-class coverage, and
   non-empty pushbuf/VM-bind validation remain open.
+  Wave64 progress: added `nouveauabitest`, a staged host-glibc guest validator
+  linked against `libdrm_nouveau`/`libdrm`. It opens `/dev/dri/renderD128` and
+  uses the real libdrm-nouveau `nouveau_device_wrap` path. Focused Hyper-V
+  evidence passes with `nouveauabitest: nouveau absent fail-closed ok
+  driver=xv6_gpu ret=-19`, followed by `drmiftest: ok` and
+  `backend_opengl_submit 0`. On native NVIDIA PCI, the same validator is ready
+  to exercise libdrm getparam/client/BO/map/PRIME paths.
 
 ### Port Integration And Acceptance
 
