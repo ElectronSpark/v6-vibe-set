@@ -280,6 +280,11 @@ contracts should be traceably compatible.
   `CHANNEL_FREE`, `GEM_NEW`, `GEM_INFO`, `GEM_CPU_PREP`, `GEM_CPU_FINI`,
   `GEM_PUSHBUF`, `VM_INIT`, `VM_BIND`, and `EXEC`, with unsupported paths
   fail-closed and counted.
+  Wave63 progress: the xv6 Nouveau skeleton now accepts the libdrm/native-NVIDIA
+  probe path through `VM_INIT`, no-op `VM_BIND`, `CHANNEL_ALLOC`, `GEM_NEW`,
+  `GEM_INFO`, `GEM_CPU_PREP`, `GEM_CPU_FINI`, no-op `GEM_PUSHBUF`, no-op
+  `EXEC`, `GEM_CLOSE`, and `CHANNEL_FREE`. Hyper-V DXG still returns
+  unsupported on Nouveau `GETPARAM`, so the path stays fail-closed there.
 - [ ] Implement Nouveau device discovery, chipset/class reporting, VRAM/GART
   sizing, BAR aperture mapping, PTIMER reads or emulation, and graph-unit
   reporting matched to Linux/libdrm expectations.
@@ -289,14 +294,28 @@ contracts should be traceably compatible.
 - [ ] Port Nouveau channel/fifo and pushbuffer submission enough to run a
   deterministic no-op or fence-only submit on supported hardware, then expand
   to Mesa Nouveau command streams.
+  Wave63 progress: deterministic zero-push/no-reloc `GEM_PUSHBUF`, zero-op
+  `VM_BIND`, and zero-push `EXEC` return success on the native-NVIDIA skeleton.
+  Non-empty pushbuffers, relocations, VM bind ops, waits/signals, and real FIFO
+  submission remain fail-closed.
 - [ ] Add Nouveau validators: libdrm-nouveau open/getparam, channel allocate,
   GEM new/info/map/CPU prep/fini, PRIME sharing, pushbuf validation, VM bind,
   and fail-closed unsupported-class behavior.
+  Wave63 progress: `drmiftest` now validates the native-NVIDIA no-op Nouveau
+  sequence when Nouveau is present and validates the Hyper-V fail-closed path
+  otherwise. PRIME sharing, map writes, unsupported-class coverage, and
+  non-empty pushbuf/VM-bind validation remain open.
 
 ### Port Integration And Acceptance
 
-- [ ] Build libdrm with Nouveau enabled against xv6 headers, without local
+- [x] Build libdrm with Nouveau enabled against xv6 headers, without local
   struct drift or private duplicated ioctl numbers.
+  Wave63 evidence: `/tmp/xv6-hyperv-build/ports` target `port-libdrm` built
+  with Meson `Nouveau: true` and staged `libdrm_nouveau.so`,
+  `libdrm_nouveau.a`, `libdrm_nouveau.pc`, and `nouveau/nouveau.h` into the
+  Hyper-V sysroot. Focused Hyper-V `drmiftest; fbstat` then passed with
+  `drmiftest: nouveau absent fail-closed ok` and
+  `backend_opengl_submit 0`.
 - [ ] Enable Mesa Nouveau winsys/driver build only after the kernel Nouveau
   probe and GEM/TTM/KMS validators pass.
 - [ ] Add CI/host scripts that build `/tmp/xv6-hyperv-build`, create focused
