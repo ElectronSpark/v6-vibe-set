@@ -182,9 +182,18 @@ contracts should be traceably compatible.
   so kernel code, libdrm, Mesa, and pure-C validators compile against one ABI.
   Initial shared `uabi/drm.h` is consumed by `fb.c`, `drmiftest`, and
   `drmprimeprobe`; validated on focused Hyper-V with OpenGL-submit still gated.
-- [ ] Add a DRM core device layer independent of framebuffer fallback:
+- [x] Add a DRM core device layer independent of framebuffer fallback:
   `drm_device`, `drm_driver`, `drm_file`, per-open magic/auth/master state,
   render-vs-primary node policy, and driver-private callbacks.
+  Wave71 closure: the shared per-device/per-file DRM state moved out of the
+  framebuffer facade into `kernel/dev/drm_core.c` and `inc/dev/drm_core.h`.
+  The new core owns `drm_core_device`, `drm_core_driver`, `drm_core_file`,
+  per-open magic allocation, auth/client-cap state, primary/render/legacy node
+  policy, and master/drop-master ownership. The framebuffer/GPU facade now
+  embeds a `drm_core_file` and calls the core for the common DRM state
+  transitions. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-drm-core.vhdx` keeps `fbstat` DRM node diagnostics
+  intact, reports `backend_opengl_submit 0`, and passes `drmiftest: ok`.
 - [ ] Move `/dev/dri/card0` and `/dev/dri/renderD128` dispatch from the fb
   facade into the DRM core while keeping `/dev/gpu0` and `/dev/fb0`
   compatibility as wrappers.
