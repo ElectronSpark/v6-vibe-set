@@ -318,6 +318,13 @@ contracts should be traceably compatible.
   Focused Hyper-V evidence remains fail-closed with
   `nouveauabitest: nouveau absent fail-closed ok driver=xv6_gpu ret=-19`,
   `drmiftest: ok`, and `backend_opengl_submit 0`.
+  Wave66 progress: `FB_GPU_GET_STATS`/`fbstat` now expose Nouveau private-ioctl
+  counters for entries, fail-closed absence, getparam, channel alloc/free,
+  GEM new/info/CPU prep/fini, VM init, no-op VM bind, no-op pushbuf, no-op
+  exec, and unsupported recognized paths. Focused Hyper-V evidence after
+  `nouveauabitest; drmiftest; fbstat` showed `nouveau_ioctl_entries 2`,
+  `nouveau_fail_closed 2`, all native success counters still zero, and
+  `backend_opengl_submit 0`.
 
 ### Port Integration And Acceptance
 
