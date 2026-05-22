@@ -154,3 +154,126 @@ claim that Hyper-V OpenGL submit is complete.
   reads, D3D12 device creation, then command queue creation.
 - Keep Hyper-V `backend_opengl_submit` false until the Mesa D3D12 path reaches
   real device/context/submit validation, not just `/dev/dxg` readiness.
+
+## Presentation Reality Check
+
+- Wave58 native-present blocker summary:
+  - WSL `dxgkrnl` is a working reference for resource/sync sharing, not for a
+    guest-only scanout bind. `dxgkio_share_objects` validates a process handle,
+    creates `dxgresource`/`dxgsyncobj` anon-inode fds, creates host NT shared
+    handles, and seals shared-resource metadata
+    (`/tmp/wsl2-kernel-dxg-ref/drivers/hv/dxgkrnl/ioctl.c:4780`,
+    `:4867`, `:4890`, `:4896`). Resource import is
+    `dxgkio_query_resource_info_nt` plus `open_resource`, which validates the
+    fd kind, checks private blob sizes, sends `OPENRESOURCE`, and copies runtime,
+    resource, and allocation private data back to userspace
+    (`ioctl.c:4945`, `:4968`, `:5094`, `:5168`, `:5212`, `:5222`).
+    Fence/sync import uses `dxgvmb_send_open_sync_object_nt`, sending the target
+    device, `shared_owner->host_shared_handle`, flags, and monitored-fence VA
+    result (`dxgvmbus.c:750`, `:766`, `:791`).
+  - The same WSL source does not provide a Linux ioctl that binds a D3D12/DXG
+    resource to guest-visible scanout. The ioctl table exposes share/open
+    resource, open sync, syncfile, and `SHAREOBJECTWITHHOST`, but no
+    present-source/display-bind entry (`ioctl.c:5564`). The VM bus enum names
+    `PRESENTHISTORYTOKEN`, `SETREDIRECTEDFLIPFENCEVALUE`, and `BLT`
+    (`dxgvmbus.h:97`), but this is not an implemented Linux UAPI contract for
+    runtime-resource scanout. QueryAdapterInfo adapter-type results are also
+    rewritten to clear display support (`dxgvmbus.c:3872`, `:3878`, `:3881`).
+  - Linux Hyper-V DRM/synthvid is a working display reference, but it is a
+    framebuffer VRAM protocol: the guest sends `SYNTHVID_VRAM_LOCATION` with a
+    guest physical VRAM address, CPU-copies shadow framebuffer damage into that
+    VRAM, then sends `SYNTHVID_DIRT`
+    (`/home/es/reps/linux/drivers/gpu/drm/hyperv/hyperv_drm_proto.c:248`,
+    `:277`, `:351`;
+    `/home/es/reps/linux/drivers/gpu/drm/hyperv/hyperv_drm_modeset.c:28`,
+    `:170`). Dirtying synthvid VRAM therefore proves host framebuffer update
+    plumbing, not that a D3D12 shared resource has been scanned out without
+    Mesa `drisw`/CPU readback.
+  - WSLg/display-helper architecture remains the conceptually right shape for
+    no-readback native present: a compositor/remoting participant must consume a
+    shared GPU object plus acquire/release synchronization and report display
+    completion. Local WSLg/FreeRDP/VAIL source was not available in this
+    workspace during the Wave58 pass, so xv6 should treat that lane as an
+    architecture target requiring a host/display helper or a later same-adapter
+    WSLg trace, not as a copyable `dxgkrnl` kernel path.
+
+- WSL Linux `dxgkrnl` does not expose a Linux `LX_DXPRESENT` ioctl in the
+  WSL 6.6 UAPI.
+  - URL: https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.6.y/include/uapi/misc/d3dkmthk.h
+  - Evidence: the exported ioctl set ends at `LX_DXENUMPROCESSES` and includes
+    create/open/share resource, sync object, submit-command, and HW queue
+    operations, but no `D3DKMTPresent`/`Present` ioctl.
+  - Cross-check: `drivers/hv/dxgkrnl/ioctl.c` maps those `LX_DX*` ioctls to
+    handlers and likewise has submit/share/open-resource paths, but no present
+    handler.
+
+- Windows has a native `D3DKMTPresent` KMT entry point, but WSL Linux does not
+  project that entry point through `/dev/dxg`.
+  - URL: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/d3dkmthk/nf-d3dkmthk-d3dkmtpresent
+  - Implication: a guest D3D12 allocation/share handle is not itself a display
+    present. It is only an object that another participant can open and use.
+
+- WSLg presentation is compositor/remoting architecture, not a kernel present
+  ioctl.
+  - URL: https://github.com/microsoft/wslg
+  - Evidence: WSLg runs Weston as the Wayland compositor, uses FreeRDP as the
+    RDP server, launches `mstsc.exe` on the host, and remotes app windows with
+    RAIL/VAIL. The WSLg README also documents the first-release limitation that
+    vGPU interop with Weston went through system memory: rendered data was
+    copied from VRAM to system memory before Weston presentation, then uploaded
+    again on the Windows side.
+  - Implication: avoiding CPU readback needs compositor/remoting work, not just
+    a new dxg ioctl name.
+
+- D3D12 shared handles are an interop primitive, not a present primitive.
+  - URL: https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createsharedhandle
+  - Evidence: `ID3D12Device::CreateSharedHandle` creates a handle to a heap,
+    resource, or fence; `OpenSharedHandle` lets another D3D12 device open it.
+  - Implication: for xv6, a D3D12 shared resource plus fence is a real buffer
+    import contract between a client and compositor, but only becomes a
+    no-readback present path after the compositor imports it into D3D12 and
+    forwards/composes it through a real host-visible presentation/remoting path.
+
+- Hyper-V synthvid is a guest-framebuffer dirty-rectangle protocol.
+  - URL: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/drivers/gpu/drm/hyperv/hyperv_drm_proto.c?h=v6.16.12
+  - URL: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/drivers/gpu/drm/hyperv/hyperv_drm_modeset.c?h=v6.16.12
+  - Evidence: the Linux DRM driver sends `SYNTHVID_VRAM_LOCATION` with a guest
+    physical VRAM address, copies damaged framebuffer rectangles into that VRAM,
+    then sends `SYNTHVID_DIRT`.
+  - xv6 mapping: `hyperv_video_dirty()` and `/dev/fb0` scanout flushing are
+    honest for CPU-visible framebuffer updates, but synthvid should not be
+    described as directly presenting a D3D12/DXG allocation.
+
+## Real xv6 Contract Shape
+
+A real minimal xv6 contract for no-readback Hyper-V presentation is:
+
+1. `/dev/dxg` remains the WSL-style D3DKMT transport: create/open/share D3D12
+   resources and monitored fences, with per-open ownership and teardown parity.
+2. Wayland clients may submit a D3D12 shared resource handle, adapter LUID,
+   dimensions/format/stride, and an acquire fence/value to the compositor.
+3. The compositor must import the resource through `/dev/dxg`, validate LUID and
+   dimensions, wait on the fence, and either:
+   - hand it to a real host/remoting presentation participant, or
+   - explicitly report `d3d12_native_present_unimplemented` and keep using the
+     CPU framebuffer/synthvid lane.
+4. Backend advertising stays conservative: `FB_GPU_BACKEND_F_D3DKMT` means the
+   D3DKMT transport works; `FB_GPU_BACKEND_F_OPENGL_SUBMIT` or any future
+   D3D12-present flag must require proven compositor import plus non-readback
+   presentation evidence.
+
+Validator corollaries:
+
+- Clear `/tmp/wlcomp-d3d12-present` before each native-present smoke, FPS
+  sample, or WebKit preflight. A pre-existing evidence file is not proof that
+  the current client produced a new D3D12-presented frame.
+- Treat window-title changes, Wayland callbacks, release fences, imported
+  resource metadata, and `/tmp/wlcomp-fps` samples as liveness/context only.
+  The FPS and WebKit gates must require native D3D12 present completions
+  correlated with display completions over a finite post-warmup window and no
+  CPU/readback fallback markers. Validator env overrides must not be able to
+  shrink the sample into a one-or-two-tick title/callback check.
+- WebKit may select the D3D12 GPU environment only after the same
+  shared-surface/OpenGL-submit contract used by native Mesa clients has fresh
+  evidence. Render-node existence, DXG transport, dmabuf request state, or a
+  stale validator log is not sufficient.
