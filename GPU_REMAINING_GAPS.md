@@ -311,19 +311,50 @@ contracts should be traceably compatible.
 
 ### TTM Memory Manager
 
-- [ ] Add a TTM-like memory manager with resource managers for system memory,
+- [x] Add a TTM-like memory manager with resource managers for system memory,
   GART/TT, VRAM, and stolen/scanout memory, even when a backend maps some
   domains onto the same physical allocator initially.
-- [ ] Add buffer-object placement policy, validation, eviction, pinning,
+  Wave73 closure: `fb.c` now keeps per-domain TTM resource-manager state for
+  system, TT/GART, VRAM, and stolen/scanout domains while continuing to back
+  the initial implementation with the existing xv6 page allocator. BO/GEM TTM
+  placement state is object-backed and exported through `FB_GPU_TTM_VALIDATE`
+  for focused validation. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-ttm.vhdx` runs `ttmtest; fbstat; drmiftest`;
+  `ttmtest` reports TT/VRAM manager state and `evictions=1`, `fbstat` keeps
+  `backend_opengl_submit 0`, and `drmiftest: ok` still passes.
+- [x] Add buffer-object placement policy, validation, eviction, pinning,
   reservation/ww-mutex equivalent rules, and LRU accounting.
-- [ ] Add TT page population/unpopulation with page pinning, scatter-gather
+  Wave73 closure: TTM validation rejects invalid placements, selects a domain
+  from Linux-shaped placement masks, maintains reservation sequence numbers
+  under the framebuffer/GEM lock, assigns monotonically increasing LRU
+  sequence numbers, supports pin/unpin, and evicts the oldest unpinned BO from
+  a requested domain. The pure-C `ttmtest` covers TT placement, pin/unpin,
+  VRAM migration, no-op same-domain validation, explicit TT eviction, and
+  invalid-placement rejection.
+- [x] Add TT page population/unpopulation with page pinning, scatter-gather
   metadata, DMA address placeholders, and cleanup-time leak diagnostics.
-- [ ] Add move paths for system-to-VRAM, VRAM-to-system, and no-op same-domain
+  Wave73 closure: TTM objects now expose `tt_populated`, scatter-gather entry
+  count, and a DMA-address placeholder derived from the first backing page.
+  The same focused run proves TT population metadata is nonzero during TT
+  validation and that process teardown returns test BOs to the ordinary
+  `fbstat` leak counters (`bo_fd_live 0`, `fence_fd_live 0`, stable TTM byte
+  counters after destroy).
+- [x] Add move paths for system-to-VRAM, VRAM-to-system, and no-op same-domain
   moves with explicit fail-closed diagnostics where hardware copy engines are
   not wired yet.
-- [ ] Add TTM validators for placement selection, domain migration,
+  Wave73 closure: placement validation now accounts system-to-TT,
+  TT-to-VRAM, VRAM-to-system eviction, and same-domain validation without
+  incrementing move count. The initial move path is metadata/accounting-only
+  because no hardware copy engine is wired for these synthetic domains; invalid
+  placements fail closed and increment `ttm_validate_failures`.
+- [x] Add TTM validators for placement selection, domain migration,
   pin/unpin, eviction ordering, reservation deadlock avoidance, and leak-free
   file/process teardown.
+  Wave73 closure: added `/bin/ttmtest`, a pure-C guest validator using
+  `FB_GPU_TTM_VALIDATE`. Focused Hyper-V evidence on the rebuilt image shows
+  `ttmtest: ok tt_bytes=0 vram_bytes=65536 evictions=1`,
+  `ttm_validate_failures 1` for the deliberate invalid placement, no BO/fence
+  fd leaks, `backend_opengl_submit 0`, and `drmiftest: ok`.
 
 ### KMS, Modesetting, Planes, And Atomic State
 
