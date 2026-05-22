@@ -276,14 +276,21 @@ contracts should be traceably compatible.
   render node, a second render node cannot use the stale source handle, the
   imported PRIME handle maps and reads/writes successfully, and a closed PRIME
   fd is rejected.
-- [ ] Add dma-buf style metadata for format, modifier, plane count, offsets,
+- [x] Add dma-buf style metadata for format, modifier, plane count, offsets,
   strides, and implicit/explicit fence attachment; keep existing Wayland
   linux-dmabuf import wired to that metadata.
-  Wave73 partial: GEM objects now carry format, modifier, plane-count,
-  offset/stride, and implicit/explicit fence metadata, with AddFB2 and BO_INFO
-  updating/reading the object metadata. This row remains open until the
-  multi-plane Wayland linux-dmabuf import path is proven to consume that same
-  metadata contract end to end.
+  Wave74 closure: GEM objects now carry format, modifier, plane-count,
+  offset/stride, and implicit/explicit fence metadata. `FB_GPU_BO_IMPORT_FD`
+  and `FB_GPU_BO_INFO` expose that metadata, and Wayland linux-dmabuf import
+  now passes the protocol metadata into the kernel import, then rejects the
+  buffer if the kernel-returned format, modifier, plane count, offsets, or
+  strides disagree. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-dmabuf-metadata.vhdx` with `wayland_dmabuf=1`
+  runs `dmabufsmoke --nv12; fbstat`: xv6-gbm reports `planes=2`,
+  `y_stride=240`, `uv_stride=240`, `uv_offset=38400`, the compositor logs both
+  linux-dmabuf plane imports and accepts `fmt=0x3231564e planes=2`, the client
+  reports `presented linux-dmabuf buffer format=NV12 planes=2`, and Hyper-V
+  remains `backend_opengl_submit 0`.
 - [x] Implement DRM syncobj and timeline syncobj UAPI enough for Mesa/Nouveau:
   create, destroy, handle-to-fd, fd-to-handle, wait, reset, signal, timeline
   wait/signal, and diagnostics.
