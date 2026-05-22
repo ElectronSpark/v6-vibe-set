@@ -15,7 +15,7 @@ WAIT_SEC=${WAIT_SEC:-25}
 REUSE_RUNNING_VM=${REUSE_RUNNING_VM:-0}
 KERNEL_BIN=${KERNEL_BIN:-${BUILD_DIR}/kernel/build/kernel/xv6.bin}
 ROOTFS_IMG=${ROOTFS_IMG:-${BUILD_DIR}/fs.img}
-HYPERV_CMDLINE=${HYPERV_CMDLINE:-BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=${FRAMES} wayland_dmabuf=1 video=1024x640}
+HYPERV_CMDLINE=${HYPERV_CMDLINE:-BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=${FRAMES} wayland_dmabuf=1 video=1024x640 acpi_cpus=6}
 
 fail() {
     echo "hyperv-gpu-stress: $*" >&2
@@ -35,6 +35,15 @@ require_log() {
     local description=$2
 
     grep -Eq "${pattern}" "${LOG}" || fail "missing ${description}; log=${LOG}"
+}
+
+reject_log() {
+    local pattern=$1
+    local description=$2
+
+    if grep -Eiq "${pattern}" "${LOG}"; then
+        fail "found ${description}; log=${LOG}"
+    fi
 }
 
 command -v powershell.exe >/dev/null || fail "missing powershell.exe"
@@ -73,6 +82,12 @@ require_log 'dmabufsmoke: explicit-sync release=(fenced|immediate)' \
 require_log 'drmgpuprobe: passed' "DRM/GBM probe"
 require_log 'dxgprobe: owner-isolation ok' "DXG owner isolation"
 require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
+reject_log 'backend_opengl_submit 1' \
+    "Hyper-V OpenGL-submit claim in stress without strict native-present/FPS gate"
+reject_log 'drisw|softpipe|llvmpipe|swrast|xv6-mesa: d3d12 native present unavailable; refusing DRI software/readback present|d3d12_(cpu_readback|cpu_mapping|cpu_copy|readback)=[1-9][0-9]*' \
+    "software/readback rendering path"
+reject_log 'hyperv-3d-fps-validate: ok|strict_anti_inflation=1|effective_presented_fps=' \
+    "FPS pass marker in stress lane; run hyperv-3d-fps-validate.sh for FPS credit"
 require_log 'bo_fd_live 0' "BO fd cleanup accounting"
 require_log 'fence_fd_live 0' "fence fd cleanup accounting"
 
