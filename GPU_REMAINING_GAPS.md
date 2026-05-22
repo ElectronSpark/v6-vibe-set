@@ -258,8 +258,12 @@ contracts should be traceably compatible.
   Wave62 adds a primary plane object: `GETPLANERESOURCES` now returns one
   plane, `GETPLANE` reports XRGB8888/ARGB8888 support and render nodes reject
   it. `drmiftest` validates this on focused Hyper-V with
-  `backend_opengl_submit 0`. Property/blob enumeration and vblank/event
-  delivery remain open.
+  `backend_opengl_submit 0`.
+  Wave68 progress: connector property enumeration now exposes `CRTC_ID` and
+  `MODE_ID`, `GETPROPERTY` returns Linux-style object/blob property flags, and
+  `GETPROPBLOB` returns the current mode blob. `drmiftest` validates property
+  discovery, mode blob contents, and invalid property/blob rejection on focused
+  Hyper-V with `backend_opengl_submit 0`. Vblank/event delivery remains open.
 - [ ] Add atomic modesetting objects and ioctls enough for modern Mesa/Wayland
   clients: object property enumeration, atomic check, atomic commit, out-fence,
   nonblocking commit rejection or completion.
@@ -351,9 +355,13 @@ contracts should be traceably compatible.
 - [ ] Add CI/host scripts that build `/tmp/xv6-hyperv-build`, create focused
   test images, and run the pure-C DRM/GEM/TTM/KMS/Nouveau validators before
   any browser or FPS claim.
-- [ ] Preserve the existing invariant that Hyper-V reports
+- [x] Preserve the existing invariant that Hyper-V reports
   `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` until the separate native-present,
   480p >60 FPS, and WebKit shared-surface gates are truly proven.
+  Wave68 evidence: focused Hyper-V `drmiftest; fbstat` after the KMS property
+  work still reports `backend_opengl_submit 0` and
+  `backend_opengl_submit_gate closed`; Hyper-V continues to advertise only
+  DXG transport/D3DKMT, not OpenGL submit.
 
 ## Dependency Split
 
