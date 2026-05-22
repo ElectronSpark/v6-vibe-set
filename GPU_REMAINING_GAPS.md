@@ -358,9 +358,19 @@ contracts should be traceably compatible.
 
 ### KMS, Modesetting, Planes, And Atomic State
 
-- [ ] Replace hardcoded single-mode DRM KMS responses with KMS object models:
+- [x] Replace hardcoded single-mode DRM KMS responses with KMS object models:
   mode_config, connectors, encoders, CRTCs, planes, framebuffers, properties,
   blobs, and leases/placeholders where Linux clients expect them.
+  Wave74 closure: KMS now has explicit Linux-shaped object/property
+  enumeration for CRTC, connector, encoder, primary plane, framebuffers, and
+  the current mode blob through `DRM_IOCTL_MODE_OBJ_GETPROPERTIES`.
+  `GETPROPERTY` now exposes range, object, blob, enum, immutable, and atomic
+  metadata for `ACTIVE`, `MODE_ID`, `CRTC_ID`, primary-plane `type`, `FB_ID`,
+  source/CRTC rectangles, and fence properties. Focused Hyper-V evidence from
+  `/tmp/xv6-hyperv-build/xv6-kms-scanout.vhdx` runs `drmiftest; fbstat`:
+  `drmiftest` discovers CRTC and plane object properties, rejects render-node
+  KMS access, and finishes `drmiftest: ok` while `fbstat` keeps
+  `backend_opengl_submit 0`.
 - [x] Implement `GETRESOURCES`, `GETCONNECTOR`, `GETENCODER`, `GETCRTC`,
   `GETPLANERESOURCES`, `GETPLANE`, `GETPROPERTY`, `GETPROPBLOB`,
   `ADDFB2`, `RMFB`, `SETCRTC`, page-flip, and vblank/event delivery.
@@ -381,11 +391,25 @@ contracts should be traceably compatible.
   `/tmp/xv6-hyperv-build/xv6-kms-events2.vhdx` shows `drmiftest: ok`,
   `kms_page_flips 1`, `kms_atomic_commits 2`, and
   `backend_opengl_submit 0`.
-- [ ] Add atomic modesetting objects and ioctls enough for modern Mesa/Wayland
+- [x] Add atomic modesetting objects and ioctls enough for modern Mesa/Wayland
   clients: object property enumeration, atomic check, atomic commit, out-fence,
   nonblocking commit rejection or completion.
-- [ ] Wire KMS scanout to existing framebuffer/virtio/synthvid paths without
+  Wave74 closure: `DRM_IOCTL_MODE_ATOMIC` now parses object/property arrays
+  for CRTC and primary-plane commits, validates object/property compatibility,
+  accepts synchronous test-only and blocking commits, writes `-1` to an
+  `OUT_FENCE_PTR` as an immediate-completion fence placeholder, rejects
+  unsupported acquire fences and nonblocking commits fail-closed, and updates
+  KMS state through the same object model. The focused run reports
+  `kms_atomic_commits 3`, `drmiftest: ok`, and no TTM validation failures.
+- [x] Wire KMS scanout to existing framebuffer/virtio/synthvid paths without
   claiming Hyper-V OpenGL submit until native present and FPS gates pass.
+  Wave74 closure: `SETCRTC`, page flip, and atomic plane `FB_ID` commits now
+  present the selected KMS framebuffer through the existing BO-to-framebuffer
+  blit/dirty path (`fb_blit_from_bo`), which in turn uses the virtio flush path
+  when virtio-backed and Hyper-V synthvid dirty notification otherwise. The
+  focused Hyper-V run shows KMS validation increasing `bo_presents` and
+  display completions while `backend_opengl_submit 0` and
+  `backend_opengl_submit_gate closed` remain intact.
 - [x] Add pure-C KMS validators for resource enumeration, dumb-buffer
   framebuffer creation, page flip event delivery, atomic check/commit, and
   invalid-object rejection.
