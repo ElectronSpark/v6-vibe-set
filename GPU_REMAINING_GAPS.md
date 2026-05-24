@@ -293,9 +293,14 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   credit until the same frame also proves native D3D12 display completion.
 - [x] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
   event queues covered by focused validators after any DRM refactor.
-- [ ] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
+- [x] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
   DXG-present state, WebKit harness tracing, and ioctl-name tracing so debug
   helpers do not become accidental capability gates.
+  Generic GPU/DRM ioctl tracing now uses `fb-gpu-trace` instead of
+  WebKit-specific labels. `fbstat` emits
+  `gpu_diagnostics_separation_matrix`, and the focused core runner requires
+  generic DRM/KMS/fb diagnostics to stay separate from DXG-present and WebKit
+  policy evidence while granting zero native-present/OpenGL-submit credit.
 
 ### 3. PCI Runtime And Nouveau
 

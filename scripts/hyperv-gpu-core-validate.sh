@@ -607,6 +607,8 @@ require_log 'gpubuftest: render fd ownership verified' "render-fd ownership vali
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
 require_log 'nouveau_mesa_smoke_gate_matrix .*synthetic_gpup_rejected=PASS .*mesa_nvif_enabled=0 .*status=PASS' \
     "Nouveau Mesa smoke gate"
+require_log 'gpu_diagnostics_separation_matrix .*generic_scanout=drm-kms-fb .*d3d12_present=dxg-present .*webkit_policy=separate .*ioctl_trace_label=fb-gpu-trace .*generic_scanout_native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "generic DRM/KMS diagnostics stay separate from D3D12/WebKit gates"
 require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
 require_log 'backend_opengl_submit_gate closed' "Hyper-V OpenGL-submit gate closed"
 require_nouveau_dda_or_gpup_fail_closed
@@ -616,6 +618,8 @@ reject_log 'backend_opengl_submit 1' \
     "Hyper-V OpenGL-submit claim before native-present/FPS/WebKit contract"
 reject_guest_log 'dxg_ntshared_(runtime_resource|runtime_process|wsl_model)=.*alloc_owner:0x0/0' \
     "zero allocation-owner diagnostics in NT-share runtime/provenance lines"
+reject_guest_log 'webkit-gpu:' \
+    "legacy WebKit-specific label on generic GPU/DRM ioctl trace"
 reject_guest_log 'panic|fatal page fault|coredump|(^|[^[:alpha:]])assert([^[:alpha:]]|$)|device removal|Removing Device' \
     "guest crash or D3D12 device-removal signature"
 
