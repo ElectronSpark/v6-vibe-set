@@ -333,8 +333,12 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   references. Dedicated counters and `nouveau_submit_failclosed_matrix` prove
   the no-op/fence-only paths are separate from non-empty command rejection and
   that no native-present/OpenGL-submit credit is granted.
-- [ ] Add a Mesa Nouveau smoke that reaches winsys/device-info on the intended
+- [x] Add a Mesa Nouveau smoke that reaches winsys/device-info on the intended
   hardware and cannot pass on synthetic GPU-P-only answers.
+  `nouveauabitest` is the Mesa/libdrm smoke gate. On DDA it must open the
+  Nouveau device and reach libdrm winsys/device-info, channel, BO, map, and
+  PRIME paths; on GPU-P-only images it can only pass as explicit no-DDA
+  fail-closed evidence with `synthetic_gpup_rejected=PASS`.
 
 ### 4. Native D3D12 Shared-Resource Present
 

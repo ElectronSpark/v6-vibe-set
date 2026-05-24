@@ -366,6 +366,10 @@ but do not treat them as open plan items by default.
   from non-empty command buffers; `nouveau_submit_failclosed_matrix` should show
   non-empty pushbuf/exec/vm-bind rejects and zero native-present/OpenGL-submit
   credit.
+- `nouveauabitest` is the Mesa/libdrm Nouveau smoke gate. DDA runs must reach
+  libdrm winsys/device-info plus channel/BO/map/PRIME paths; GPU-P-only runs
+  may pass only with `nouveau_mesa_smoke_gate_matrix` showing
+  `synthetic_gpup_rejected=PASS` and no Mesa NVIF enablement.
 - Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for

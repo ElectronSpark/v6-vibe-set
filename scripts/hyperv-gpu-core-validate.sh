@@ -605,6 +605,8 @@ require_log 'present_source_failclosed_matrix .*bind_contract_rc=-[0-9]+ .*hyper
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
 require_log 'gpubuftest: render fd ownership verified' "render-fd ownership validator"
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
+require_log 'nouveau_mesa_smoke_gate_matrix .*synthetic_gpup_rejected=PASS .*mesa_nvif_enabled=0 .*status=PASS' \
+    "Nouveau Mesa smoke gate"
 require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
 require_log 'backend_opengl_submit_gate closed' "Hyper-V OpenGL-submit gate closed"
 require_nouveau_dda_or_gpup_fail_closed
