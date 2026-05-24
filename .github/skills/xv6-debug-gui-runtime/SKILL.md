@@ -344,6 +344,18 @@ but do not treat them as open plan items by default.
   BAR-backed DDA NVIDIA PCI function is accepted. `fbstat` should emit
   `nouveau_gpup_failclosed_matrix` with no fake BAR/DMA/IRQ/getparam/native
   present/OpenGL-submit credit.
+- For DDA/Nouveau `GETPARAM`, keep provenance split: PCI vendor/device,
+  bus type, BAR/VRAM aperture, chipset, and VRAM base are DDA PCI facts;
+  `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, `VRAM_USED`, and
+  `HAS_VMA_TILEMODE` are local driver capabilities; unsupported engine/timer
+  facts fail closed until sourced. `nouveau_getparam_ddafacts_matrix` must
+  report zero synthetic hardware facts before this plan row is considered
+  closed.
+- Legacy Nouveau channel work is tracked separately from NVIF. The old
+  `CHANNEL_ALLOC`/`GROBJ_ALLOC`/`NOTIFIEROBJ_ALLOC`/`GPUOBJ_FREE` ioctls should
+  maintain per-open channel/object state, reject duplicates and unsupported
+  classes, and report `nouveau_channel_object_matrix`; Mesa's newer NVIF
+  object/subchannel path is still governed by the active NVIF plan row.
 - Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for

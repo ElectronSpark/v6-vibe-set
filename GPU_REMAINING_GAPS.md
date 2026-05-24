@@ -304,11 +304,21 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
   `fbstat` whenever no DDA/Nouveau PCI function is accepted.
-- [ ] Replace synthetic Nouveau `GETPARAM` answers with DDA-sourced
+- [x] Replace synthetic Nouveau `GETPARAM` answers with DDA-sourced
   chipset/class, BAR, VRAM/GART, engine, and firmware facts when DDA hardware
-  is present.
-- [ ] Implement Nouveau channel/FIFO/GROBJ/notifier allocation semantics rather
+  is present. Hardware-looking answers now come from the accepted DDA PCI
+  device/resource apertures or fail closed; local answers such as
+  `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, and `HAS_VMA_TILEMODE`
+  are tracked separately as driver capabilities, and validators reject any
+  remaining synthetic hardware facts.
+- [x] Implement Nouveau channel/FIFO/GROBJ/notifier allocation semantics rather
   than no-op channel handles.
+  Legacy channel allocation now creates per-open channel state, tracks
+  notifier and GROBJ objects, rejects duplicate/unsupported objects, frees
+  objects explicitly through `GPUOBJ_FREE`, and reclaims leaked objects on fd
+  close. `drmiftest` emits `nouveau_channel_object_matrix` for this contract;
+  the separate `DRM_NOUVEAU_NVIF` row below remains open for Mesa's newer
+  subchannel object path.
 - [ ] Implement `DRM_NOUVEAU_NVIF` far enough for the Mesa Nouveau winsys path,
   or add precise fail-closed validation for each unsupported NVIF class.
 - [ ] Implement non-empty Nouveau command submission on DDA hardware, or
