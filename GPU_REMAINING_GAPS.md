@@ -139,7 +139,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Validate stale handle rejection after delayed reuse for every object
     class: device, context, HW queue, paging queue, sync object, resource,
     allocation, and GPUVA reservation.
-- [ ] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
+- [x] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
   adapter/device list locking, multiple opens of the same adapter, and close
   behavior while child objects still exist.
 - [ ] Re-audit DXG object teardown order against WSL:
