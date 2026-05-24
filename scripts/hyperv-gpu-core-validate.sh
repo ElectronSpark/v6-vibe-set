@@ -504,6 +504,8 @@ require_log 'qai_admission_matrix .*direct_list_luid_match=1 .*backend_opengl_su
     "DXG QAI xv6-vs-WSL admission classification"
 require_log 'local_adapter_reuse ok .*delayed:[0-9]+->[1-9][0-9]* .*min_free=128' \
     "WSL-style local adapter min-free reuse delay"
+require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*sync_rejected=1 .*paging_queue_rejected=1 .*paging_queue_sync_rejected=1 .*allocation_rejected=1 .*gpuva_rejected=1 .*device_final_rejected=1 .*status=PASS' \
+    "WSL-style stale DXG object rejection matrix"
 require_log 'handle_lifetime ok .*reuse_delayed:[0-9]+ .*min_free:128' \
     "WSL-style object handle tombstone lifetime"
 require_log 'shared_resource_seal_provenance_matrix .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \

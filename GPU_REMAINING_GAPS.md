@@ -120,9 +120,15 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     no immediate same-handle reuse and `min_free=128`.
   - [x] Add destroyed-entry serial diagnostics for tracked DXG objects and
     expose object/local-adapter reuse delay counters through `/dev/dxg`.
+  - [x] Replace unordered linear normal-object lookup with index-addressed
+    handle-table lookup keyed by WSL handle index/unique/instance fields.
+  - [x] Add pure-C stale-handle matrix output for device, sync object, paging
+    queue, paging-queue sync object, allocation/resource destroy, and GPUVA
+    free attempts, and require matching denied-counter deltas.
   - [ ] Replace the remaining growable-array approximation with a true
-    free-list table for normal DXG objects, including unique bump on free,
-    typed lookup parity, and explicit `ignore_destroyed` callers matching WSL.
+    free-list table for normal DXG objects, including free-count/head/tail,
+    unique bump on free, chunk expansion, and explicit `ignore_destroyed`
+    callers matching WSL.
   - [ ] Validate stale handle rejection after delayed reuse for every object
     class: device, context, HW queue, paging queue, sync object, resource,
     allocation, and GPUVA reservation.
