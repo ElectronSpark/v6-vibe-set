@@ -235,10 +235,16 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   `wsl_trace_replay_signature` tied to the selected OPENADAPTER LUID and the
   current NVIDIA WSL trace reference; the focused core runner requires those
   rows before accepting the WSL replay segment.
-- [ ] Finish direct D3D12 fence sharing parity: decide whether the final native
+- [x] Finish direct D3D12 fence sharing parity: decide whether the final native
   path requires direct `ID3D12Device::OpenSharedHandle(fence)` success or only
   WSL-style DXG sync-file acquire, then validate the chosen behavior against
   same-adapter WSL traces.
+  The native Wayland/D3D12 contract now selects WSL-style DXG sync-file acquire
+  as the required fence handoff. `d3d12sharedsmoke` emits
+  `d3d12_fence_sharing_policy_matrix` and
+  `d3d12_fence_sharing_validation_matrix` with direct D3D12 fence fd import
+  unused, the same-adapter NVIDIA WSL trace recorded as the parity source, and
+  no native-present/OpenGL-submit credit.
 - [x] Preserve WSL-style shared resource semantics as regression coverage:
   one-time seal, stable runtime/resource/allocation metadata, repeated
   query/open, exporter-destroy survival, child open, wrong-kind rejection, and

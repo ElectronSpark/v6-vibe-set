@@ -736,6 +736,9 @@ require_prior_shared_surface_contract()
         "prior DXG/native-present contract evidence"
     require_d3d12_display_provenance_file_if_present "${FPS_CONTRACT_LOG}" \
         "prior FPS/OpenGL-submit contract evidence"
+    require_file_log "${DXG_CONTRACT_LOG}" \
+        'd3d12_fence_sharing_policy_matrix .*decision=dxg_syncfile_acquire .*direct_d3d12_open_required=0 .*dxg_syncfile_acquire_required=1 .*same_adapter_trace_required=1 .*native_present_claim=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "prior DXG/native-present D3D12 fence-sharing policy"
     if grep -Eq 'backend_opengl_submit 0' "${FPS_CONTRACT_LOG}" ||
        grep -Eq 'backend_opengl_submit 0' "${DXG_CONTRACT_LOG}"; then
         reject_file_log "${DXG_CONTRACT_LOG}" \
