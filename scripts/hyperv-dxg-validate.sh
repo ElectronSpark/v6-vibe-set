@@ -1528,6 +1528,10 @@ require_log 'sync_gpu2_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x
     "WSL enqueue_cpu_event GPU2 signal validator"
 require_log 'dxg_synccpuevent_signal=.*successes:[1-9][0-9]* .*ret:0 .*flags:0x2 objects:0 contexts:1 .*event:[1-9][0-9]*' \
     "DXG enqueue_cpu_event packet diagnostics"
+require_log 'dxg_async_message_matrix .*status=(PASS|DEFERRED)' \
+    "WSL async-message send-path validator"
+require_log 'dxg_async_send_last=enabled:[01] attempts:[0-9]+ successes:[0-9]+ fallback_sync:[0-9]+ cmd:[0-9]+ cmd_len:[0-9]+ wire_len:[0-9]+ async_bit:[01] route_global:[01] .*packet_type:[0-9]+ ret:0' \
+    "DXG async-message packet diagnostics"
 require_log 'sync_gpu2_signal (ok|failed)' \
     "DXG GPU2 sync signal probe marker"
 require_dxg_fd_cleanup_after_leak_close

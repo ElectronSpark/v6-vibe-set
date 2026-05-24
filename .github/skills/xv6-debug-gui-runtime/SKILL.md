@@ -220,6 +220,13 @@ but do not treat them as open plan items by default.
   send failure. Validators should require `sync_signal_cpu_event_matrix`,
   `sync_gpu2_cpu_event_matrix`, and `dxg_synccpuevent_signal`, not only the
   absence of `-ENOTSUP`.
+- For WSL `hdr.async_msg` parity, keep the command family exact:
+  `SUBMITCOMMAND`, `SIGNALSYNCOBJECT`, `WAITFORSYNCOBJECTFROMGPU`, and
+  `SUBMITCOMMANDTOHWQUEUE` can use `dxgvmb_send_async_msg()` when the host
+  advertises async messages; `WAITFORSYNCOBJECTFROMCPU` remains synchronous.
+  xv6 should expose both the send decision and the packet shape through
+  `dxg_async_message_matrix` and `dxg_async_send_last`, with sync fallback
+  reported explicitly when the host capability is absent.
 - For NT shared-object import coverage, validate both directions of fd kind
   separation: resource query/open must reject sync fds, and sync open must
   reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`
