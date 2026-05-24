@@ -1155,6 +1155,8 @@ require_dxg_fd_cleanup_after_leak_close() {
         "DXG leak-close validator invocation"
     require_log 'd3dkmt_open_files=opens:[1-9][0-9]* live:[0-9]+ cleanup_attempts:[1-9][0-9]* cleanup_successes:[1-9][0-9]* cleanup_last_ret:0 .*cleanup_had_tracked:1' \
         "DXG fd cleanup advanced after leak-close"
+    require_log 'd3dkmt_cleanup_wsl_order=.*sync:[0-9]+ .*allocation:[0-9]+ .*resource:[0-9]+ .*context:[0-9]+ .*hwqueue:[0-9]+ .*paging:[0-9]+ .*device:[0-9]+ .*process:[0-9]+ .*valid:1' \
+        "DXG fd cleanup preserved WSL-style teardown order"
     require_log 'dxg_host_cmd_counts=.*destroyprocess:0' \
         "DXG fd cleanup kept host destroyprocess suppressed"
     require_log 'dxg_closeadapter_order=.*destroyprocess:0' \

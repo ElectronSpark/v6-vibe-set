@@ -175,6 +175,13 @@ but do not treat them as open plan items by default.
   index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
   free-count/head/tail diagnostics, and minimum-free expansion. Do not regress
   this back to unordered linear scans or silent best-effort tracking drops.
+- For DXG teardown, keep the WSL order explicit. Device/process cleanup should
+  stop the device, drop sync objects locally, handle allocations/resources,
+  drop contexts and their HW queues, drop paging queues, then destroy the
+  device and finally the process. Explicit destroy ioctls that WSL makes stale
+  before host destroy should untrack local handles before sending the host
+  packet. `/dev/dxg` must expose `d3dkmt_cleanup_wsl_order` with `valid:1`
+  for the final-close validator.
 - For WSL-style NT shared-object fds from `LX_DXSHAREOBJECTS`, require one
   object per call, preserve resource-vs-sync fd kind, set close-on-exec on the
   returned fd, and prove copyout-failure cleanup separately from normal close.
