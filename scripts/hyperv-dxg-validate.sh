@@ -1520,6 +1520,14 @@ require_log 'sync_legacy_wait (ok|failed)' \
     "generic DXG sync wait probe marker"
 require_log 'sync_legacy_wait_multi_matrix rc=-22 expected=-22 status=PASS' \
     "WSL legacy GPU wait rejects multi-object packet shape"
+require_log 'sync_signal_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*status=PASS' \
+    "WSL enqueue_cpu_event signal-object validator"
+require_log 'sync_fromcpu_cpu_event_failclosed_matrix .*rc=-22 expected=-22 status=PASS' \
+    "DXG FROMCPU enqueue_cpu_event fail-closed validator"
+require_log 'sync_gpu2_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*status=PASS' \
+    "WSL enqueue_cpu_event GPU2 signal validator"
+require_log 'dxg_synccpuevent_signal=.*successes:[1-9][0-9]* .*ret:0 .*flags:0x2 objects:0 contexts:1 .*event:[1-9][0-9]*' \
+    "DXG enqueue_cpu_event packet diagnostics"
 require_log 'sync_gpu2_signal (ok|failed)' \
     "DXG GPU2 sync signal probe marker"
 require_dxg_fd_cleanup_after_leak_close

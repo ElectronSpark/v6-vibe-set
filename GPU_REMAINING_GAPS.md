@@ -163,8 +163,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     --create-publication-faults-validate` now faults the final user result
     page, proves same-process host destroy, and proves stale local destroy
     retries fail for the unpublished device/context/HW-queue/fence handles.
-  - [ ] Implement or explicitly validate WSL-equivalent CPU-event signal
-    packets for `enqueue_cpu_event`; fail-closed logging alone is not enough.
+  - [x] Implement and validate WSL-equivalent CPU-event signal packets for
+    `enqueue_cpu_event`; `SIGNALSYNCHRONIZATIONOBJECT` and
+    `SIGNALSYNCHRONIZATIONOBJECTFROMGPU2` now allocate eventfd-backed host
+    events, send the host event id as `cpu_event_handle`, clean up on send
+    failure, and expose `sync_signal_cpu_event_matrix`,
+    `sync_gpu2_cpu_event_matrix`, and `dxg_synccpuevent_signal` diagnostics.
   - [ ] Add async-message parity or a same-adapter trace-backed decision for
     signal/wait/HW-queue submit paths where WSL can set `hdr.async_msg`.
   - [x] Reject legacy GPU waits with `object_count > 1` so the
