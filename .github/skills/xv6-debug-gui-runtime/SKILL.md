@@ -340,6 +340,10 @@ but do not treat them as open plan items by default.
   PRIME-style BO fd export/import, render-fd ownership cleanup, pollable fence
   fd accounting, and no-leak validation through `gpubuftest`, `gbmtest`,
   `drmprimeprobe`, and `drmgpuprobe`.
+- On GPU-P-only Hyper-V images, Nouveau must remain fail-closed unless a real
+  BAR-backed DDA NVIDIA PCI function is accepted. `fbstat` should emit
+  `nouveau_gpup_failclosed_matrix` with no fake BAR/DMA/IRQ/getparam/native
+  present/OpenGL-submit credit.
 - Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for
