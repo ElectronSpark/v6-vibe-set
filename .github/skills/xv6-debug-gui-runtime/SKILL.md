@@ -207,6 +207,12 @@ but do not treat them as open plan items by default.
   yet match WSL CPU-event signal or async-message semantics, make it an
   explicit active plan item with validator evidence instead of burying it in
   generic unsupported logging.
+- For create-path publication faults, keep host cleanup before local handle
+  publication WSL-shaped. `dxgprobe --create-publication-faults-validate`
+  should fault the final result page for `CREATEDEVICE`,
+  `CREATECONTEXTVIRTUAL`, and `CREATEHWQUEUE`, then require the same owning
+  host process handle to destroy the host-created object and require stale
+  local destroy retries to fail for the unpublished handles.
 - For NT shared-object import coverage, validate both directions of fd kind
   separation: resource query/open must reject sync fds, and sync open must
   reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`
