@@ -200,6 +200,13 @@ but do not treat them as open plan items by default.
   `OPENADAPTERFROMLUID`, and `QUERYADAPTERINFO`) still bind in their own
   WSL-order paths, but inherited fds from a different TGID must fail before
   those paths can mint local aliases or query adapter data.
+- For WSL packet-shape parity, keep the source comparison tight. WSL leaves
+  `CREATEDEVICE.cdd_device` zeroed, sizes `MAKERESIDENT` as the base command
+  plus allocation handles with no extra local tail dword, and forwards VGPU
+  D3DKMT packets with the owning `dxgprocess` host handle. If a path cannot
+  yet match WSL CPU-event signal or async-message semantics, make it an
+  explicit active plan item with validator evidence instead of burying it in
+  generic unsupported logging.
 - For NT shared-object import coverage, validate both directions of fd kind
   separation: resource query/open must reject sync fds, and sync open must
   reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`

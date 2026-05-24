@@ -234,7 +234,7 @@ require_wddm_payload_residency() {
     fi
 
     echo "hyperv-dxg-validate: missing WDDM make-resident diagnostics" >&2
-    echo "hyperv-dxg-validate: expected single-allocation ok, sorted multi-allocation ok, or pre-device STATUS_PENDING count=1" >&2
+    echo "hyperv-dxg-validate: expected single-allocation ok, WSL-order multi-allocation ok, or pre-device STATUS_PENDING count=1" >&2
     echo "hyperv-dxg-validate: log: ${LOG}" >&2
     exit 1
 }
@@ -242,9 +242,9 @@ require_wddm_payload_residency() {
 require_makeresident_count2_packet_shape() {
     require_log 'residency_batch_matrix .*requested_count=2 requested_flags=0x1 .*actual_count=2 actual_flags=0x1 .*rc=(0|259) .*status=PASS' \
         "MakeResident count=2 flags=0x1 residency-batch matrix PASS"
-    require_log 'dxg_makeresident_shape=cmd:52 wsl_cmd:52 result:24 actual:24 owner_ok:2 tracked:2 order:1' \
+    require_log 'dxg_makeresident_shape=cmd:48 wsl_cmd:48 result:24 actual:24 owner_ok:2 tracked:2 order:1' \
         "MakeResident count=2 WSL-sized packet-shape diagnostics"
-    require_log 'dxg_residency_last=.*make_(ret|user_ret):(0|259) .*make_status:0x(0|103) .*flags:0x1 count:2 sorted:1' \
+    require_log 'dxg_residency_last=.*make_(ret|user_ret):(0|259) .*make_status:0x(0|103) .*flags:0x1 count:2 sorted:0' \
         "MakeResident count=2 host return/order diagnostics"
     echo "hyperv-dxg-validate: MakeResident count=2 packet-shape proof ok" |
         tee -a "${LOG}"
@@ -1509,6 +1509,8 @@ require_log 'sync_legacy_signal (ok|failed)' \
     "generic DXG sync signal probe marker"
 require_log 'sync_legacy_wait (ok|failed)' \
     "generic DXG sync wait probe marker"
+require_log 'sync_legacy_wait_multi_matrix rc=-22 expected=-22 status=PASS' \
+    "WSL legacy GPU wait rejects multi-object packet shape"
 require_log 'sync_gpu2_signal (ok|failed)' \
     "DXG GPU2 sync signal probe marker"
 require_dxg_fd_cleanup_after_leak_close
