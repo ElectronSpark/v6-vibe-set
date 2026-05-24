@@ -361,6 +361,11 @@ but do not treat them as open plan items by default.
   and method/register/map/notify operations, return an empty SCLASS list, reject
   NEW and unsupported operations explicitly, and report
   `nouveau_nvif_failclosed_matrix`.
+- Non-empty Nouveau submission remains fail-closed until a DDA command engine
+  exists. Keep zero-op/fence-only `PUSHBUF`, `EXEC`, and `VM_BIND` separate
+  from non-empty command buffers; `nouveau_submit_failclosed_matrix` should show
+  non-empty pushbuf/exec/vm-bind rejects and zero native-present/OpenGL-submit
+  credit.
 - Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for
