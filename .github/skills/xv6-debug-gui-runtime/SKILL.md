@@ -381,6 +381,12 @@ but do not treat them as open plan items by default.
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for
   framebuffer BOs, display completion accounting, and screenshot visual checks.
+- Generic framebuffer/DRM/KMS diagnostics must stay distinct from
+  D3D12/WebKit contract gates. Kernel ioctl trace output should use
+  `fb-gpu-trace`; `fbstat` should emit `gpu_diagnostics_separation_matrix`
+  with generic DRM/KMS/fb prefixes, DXG-present/WebKit policy as separate
+  namespaces, and zero native-present/OpenGL-submit credit from generic
+  scanout evidence alone.
 - KVM/virtio-gpu/virgl is the current validated OpenGL-submit backend. It owns
   `FB_GPU_BACKEND_F_OPENGL_SUBMIT` today; Hyper-V does not.
 - The desktop 3D demo now launches through `mesademo`/`mesawlegl --demo` with a
