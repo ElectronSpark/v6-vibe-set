@@ -319,8 +319,13 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   close. `drmiftest` emits `nouveau_channel_object_matrix` for this contract;
   the separate `DRM_NOUVEAU_NVIF` row below remains open for Mesa's newer
   subchannel object path.
-- [ ] Implement `DRM_NOUVEAU_NVIF` far enough for the Mesa Nouveau winsys path,
+- [x] Implement `DRM_NOUVEAU_NVIF` far enough for the Mesa Nouveau winsys path,
   or add precise fail-closed validation for each unsupported NVIF class.
+  xv6 now parses NVIF v0 headers for SCLASS, NEW, DEL, method/register/map,
+  and notification operations. It advertises no NVIF classes until a real
+  class hierarchy exists, rejects NEW for would-be engine classes, rejects
+  methods/register/map/notify operations explicitly, and validates this with
+  `nouveau_nvif_failclosed_matrix`.
 - [ ] Implement non-empty Nouveau command submission on DDA hardware, or
   return source-audited fail-closed tokens that Mesa/Nouveau validators check.
 - [ ] Add a Mesa Nouveau smoke that reaches winsys/device-info on the intended

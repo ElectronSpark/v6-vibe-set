@@ -356,6 +356,11 @@ but do not treat them as open plan items by default.
   maintain per-open channel/object state, reject duplicates and unsupported
   classes, and report `nouveau_channel_object_matrix`; Mesa's newer NVIF
   object/subchannel path is still governed by the active NVIF plan row.
+- NVIF support must not advertise made-up engine classes. Until the Nouveau
+  class hierarchy is real, `DRM_NOUVEAU_NVIF` should parse v0 SCLASS/NEW/DEL
+  and method/register/map/notify operations, return an empty SCLASS list, reject
+  NEW and unsupported operations explicitly, and report
+  `nouveau_nvif_failclosed_matrix`.
 - Wayland/compositor baseline includes standard `zwp_linux_dmabuf_v1` import for
   linear ARGB8888/XRGB8888/NV12, dmabuf feedback, explicit-sync release objects,
   acquire-fence waits with stall recovery, GPU BO present/direct scanout for
