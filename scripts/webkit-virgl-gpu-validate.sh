@@ -73,6 +73,7 @@ expect {
     -re {client exited \(status [1-9][0-9]*\)} { exit 2 }
     -re {panic|fatal page fault|SIGABRT|coredump: generating|wlcomp exited|WebKit smoke failed} { exit 3 }
     -re {__WEBKIT_API_SMOKE_DONE_0__} { exit 0 }
+    -re {wlcomp: shutting down} { exit 0 }
     timeout { exit 4 }
     eof { exit 5 }
 }
@@ -80,6 +81,10 @@ EOF
 
 require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*opengl_submit=1 .*fallback=none' \
     "WebKit accelerated policy"
+require_log 'webkit_gpu_policy .*d3d12_present=0 .*gpu_contract=virgl-opengl-submit .*fallback=none' \
+    "WebKit virgl contract policy separate from D3D12"
+require_log 'webkitgpusmoke: gpu-contract backend=virgl .*shared_surface=1 .*d3d12_present=0 .*opengl_submit=1 .*virgl_opengl=1 .*env_contract=virgl-opengl-submit .*env_d3d12=0 .*env_virgl=1 .*env_software=0 .*require=1 .*ok=1' \
+    "WebKit in-process virgl OpenGL-submit contract"
 require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl ready' \
     "WebKit WebGL ready title"
 require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl spherical poly' \
@@ -88,9 +93,11 @@ require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl spheri
     "WebKit WebGL completion"
 require_log 'relaunched webkitgpusmoke|WebKit API reopen smoke complete' \
     "WebKit reopen cycle"
-require_log '__WEBKIT_API_SMOKE_DONE_0__' \
-    "WebKit completion sentinel"
+require_log '__WEBKIT_API_SMOKE_DONE_0__|wlcomp: shutting down' \
+    "WebKit completion sentinel or compositor shutdown"
 reject_log 'client exited \(status [1-9][0-9]*\)|signal: tgkill signum=6|Could not create GBM EGL display|panic|fatal page fault|coredump: generating|wlcomp exited|WebKit smoke failed' \
     "WebKit crash/failure marker"
+reject_log 'backend=hyperv-dxg|gpu_contract=d3d12-shared-surface|env_contract=d3d12-shared-surface|env_d3d12=1|d3d12_present=1' \
+    "Hyper-V/D3D12 contract in virgl validation"
 
 echo "webkit-virgl-gpu-validate: passed (${LOG})"

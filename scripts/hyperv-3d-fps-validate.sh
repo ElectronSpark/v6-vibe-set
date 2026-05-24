@@ -4,6 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+BUILD_DIR=${BUILD_DIR:-/tmp/xv6-hyperv-build}
 VM_NAME=${VM_NAME:-xv6-os-hyperv}
 SERIAL_SCRIPT=${SERIAL_SCRIPT:-C:\\Temp\\com-tcp-read.ps1}
 WARMUP_SEC=${WARMUP_SEC:-8}
@@ -27,9 +28,12 @@ VISUAL_MIN_FPS=${VISUAL_MIN_FPS:-}
 LOW_VISUAL_CADENCE_FPS=${LOW_VISUAL_CADENCE_FPS:-20}
 MIN_ACTIVE_NATIVE_INTERVALS=${MIN_ACTIVE_NATIVE_INTERVALS:-}
 MIN_ACTIVE_DISPLAY_INTERVALS=${MIN_ACTIVE_DISPLAY_INTERVALS:-}
+FPS_ANTI_INFLATION_SELFTEST=${FPS_ANTI_INFLATION_SELFTEST:-0}
 VISUAL_WINDOW_SEC=$(((VISUAL_SAMPLES * VISUAL_SAMPLE_MS + 999) / 1000))
 DEMO_FRAMES=${DEMO_FRAMES:-$(((WARMUP_SEC + SAMPLE_SEC + VISUAL_WINDOW_SEC + 4) * DEMO_FRAME_RATE_BUDGET))}
 LOG=${LOG:-/tmp/xv6-hyperv-3d-fps-validate.log}
+CORE_CONTRACT_LOG=${GPU_CORE_VALIDATE_LOG:-${BUILD_DIR}/hyperv-gpu-core-validate.log}
+CORE_CONTRACT_MAX_AGE_SEC=${GPU_CORE_CONTRACT_MAX_AGE_SEC:-3600}
 VALIDATION_RUN_ID=${VALIDATION_RUN_ID:-fps-$(date +%s)-$$}
 VISUAL_DIR=
 
@@ -43,6 +47,120 @@ trap cleanup EXIT
 fail() {
     echo "hyperv-3d-fps-validate: $*" >&2
     exit 1
+}
+
+anti_inflation_selftest() {
+    : >"${LOG}"
+    echo "hyperv-3d-fps-validate: validation_run_id=${VALIDATION_RUN_ID}" |
+        tee -a "${LOG}"
+    python3 - "${LOG}" "${VALIDATION_RUN_ID}" "${VISUAL_MAX_REPORT_RATIO}" \
+        "${VISUAL_REPORT_FPS_MARGIN}" "${LOW_VISUAL_CADENCE_FPS}" <<'PY'
+import sys
+from pathlib import Path
+
+log_path = Path(sys.argv[1])
+run_id = sys.argv[2]
+ratio_limit = float(sys.argv[3])
+margin = float(sys.argv[4])
+low_visual_cadence_fps = float(sys.argv[5])
+
+def rejects_inflation(reported_fps, visual_progress_fps):
+    visual_ceiling = visual_progress_fps * ratio_limit
+    if (visual_progress_fps < low_visual_cadence_fps and
+            reported_fps - visual_progress_fps > margin):
+        return True
+    return (reported_fps > visual_ceiling and
+            reported_fps - visual_progress_fps > margin)
+
+def accepts_current_run_evidence(values):
+    return values and all(value == run_id for value in values)
+
+def accepts_content_progress(crcs, frame_counts):
+    return (len(crcs) >= 2 and len(set(crcs)) >= 2 and
+            len(frame_counts) >= 2 and frame_counts[-1] > frame_counts[0])
+
+negative_rejected = rejects_inflation(40.0, 5.0)
+positive_rejected = rejects_inflation(65.0, 62.0)
+stale_run_rejected = not accepts_current_run_evidence(
+    ["stale-preflight", run_id]
+)
+static_content_rejected = not accepts_content_progress(
+    [0x12345678, 0x12345678],
+    [17, 17],
+)
+frozen_window_rejected = (
+    rejects_inflation(40.0, 0.0) and
+    not accepts_content_progress([0x12345678, 0x12345678], [17, 17])
+)
+if not negative_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: 40 FPS with single-digit visible "
+        "progress was accepted"
+    )
+if positive_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: matching visible/native cadence "
+        "was rejected"
+    )
+if not stale_run_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: stale/mixed run-id evidence was "
+        "accepted"
+    )
+if not static_content_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: unchanged content CRC/frame evidence "
+        "was accepted"
+    )
+if not frozen_window_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: frozen window with displayed FPS was "
+        "accepted"
+    )
+line = (
+    "hyperv-3d-fps-validate: anti-inflation selftest ok "
+    f"validation_run_id={run_id} negative_rejected=1 "
+    "displayed_fps=40.000 visual_progress_fps=5.000 "
+    "stale_run_rejected=1 static_content_rejected=1 "
+    "frozen_window_negative=1 frozen_window_rejected=1 "
+    "post_warmup_sample_window=1 native_present_delta=0 "
+    "frame_callback_delta=0 buffer_release_delta=0 "
+    "thumbnail_progress_delta=0 outside_overlay_crc_changes=0 "
+    f"low_visual_cadence_fps={low_visual_cadence_fps:.3f} "
+    f"ratio_limit={ratio_limit:.3f} margin={margin:.3f} "
+    "positive_accepted=1 displayed_fps=65.000 visual_progress_fps=62.000"
+)
+print(line)
+with log_path.open("a", encoding="utf-8") as out:
+    out.write(line + "\n")
+PY
+}
+
+require_core_gpu_contract() {
+    local now
+    local mtime
+    local age
+
+    [[ -s "${CORE_CONTRACT_LOG}" ]] ||
+        fail "missing prior core GPU validator log: ${CORE_CONTRACT_LOG}; run scripts/hyperv-gpu-core-validate.sh first"
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "${CORE_CONTRACT_LOG}")"
+    age=$((now - mtime))
+    (( age <= CORE_CONTRACT_MAX_AGE_SEC )) ||
+        fail "stale prior core GPU validator log: ${CORE_CONTRACT_LOG} age=${age}s max=${CORE_CONTRACT_MAX_AGE_SEC}s"
+    grep -Eq 'hyperv-gpu-core-validate: passed validation_run_id=' "${CORE_CONTRACT_LOG}" ||
+        fail "prior core GPU validator log lacks pass marker: ${CORE_CONTRACT_LOG}"
+    grep -Eq 'ttmtest: ok' "${CORE_CONTRACT_LOG}" ||
+        fail "prior core GPU validator log lacks TTM pass marker"
+    grep -Eq 'drmiftest: ok' "${CORE_CONTRACT_LOG}" ||
+        fail "prior core GPU validator log lacks DRM/GEM/KMS pass marker"
+    grep -Eq 'nouveauabitest: .*ok' "${CORE_CONTRACT_LOG}" ||
+        fail "prior core GPU validator log lacks Nouveau ABI pass marker"
+    grep -Eq 'backend_opengl_submit 0' "${CORE_CONTRACT_LOG}" ||
+        fail "prior core GPU validator did not prove Hyper-V OpenGL-submit stayed gated"
+    if grep -Eiq 'backend_opengl_submit 1|panic|fatal page fault|coredump|assert|device removal|Removing Device' "${CORE_CONTRACT_LOG}"; then
+        fail "prior core GPU validator log contains an invalid acceleration/crash marker"
+    fi
 }
 
 require_int_at_least() {
@@ -75,8 +193,13 @@ capture_thumbnail_raw() {
         "\$vmName = '${VM_NAME}'; \$rawPath = '${raw_win}'; \$vm = Get-WmiObject -Namespace root\\virtualization\\v2 -Class Msvm_ComputerSystem -Filter \"ElementName='\$vmName'\"; if (-not \$vm) { throw \"VM not found: \$vmName\" }; \$svc = Get-WmiObject -Namespace root\\virtualization\\v2 -Class Msvm_VirtualSystemManagementService; \$img = \$svc.GetVirtualSystemThumbnailImage(\$vm, ${WIDTH}, ${HEIGHT}).ImageData; [System.IO.File]::WriteAllBytes(\$rawPath, \$img); \"raw bytes: \$([int]\$img.Length)\""
 }
 
-command -v powershell.exe >/dev/null || fail "missing powershell.exe"
 command -v python3 >/dev/null || fail "missing python3"
+if [[ "${FPS_ANTI_INFLATION_SELFTEST}" == "1" ]]; then
+    anti_inflation_selftest
+    exit 0
+fi
+
+command -v powershell.exe >/dev/null || fail "missing powershell.exe"
 require_int_at_least WARMUP_SEC "${WARMUP_SEC}" "${MIN_WARMUP_SEC}"
 require_int_at_least SAMPLE_SEC "${SAMPLE_SEC}" "${MIN_SAMPLE_SEC}"
 if [[ -z "${MIN_ACTIVE_NATIVE_INTERVALS}" ]]; then
@@ -104,6 +227,9 @@ fi
 : >"${LOG}"
 echo "hyperv-3d-fps-validate: validation_run_id=${VALIDATION_RUN_ID}" |
     tee -a "${LOG}"
+echo "hyperv-3d-fps-validate: requiring prior core GPU validators log=${CORE_CONTRACT_LOG}" |
+    tee -a "${LOG}"
+require_core_gpu_contract
 
 echo "hyperv-3d-fps-validate: checking native D3D12 present smoke" |
     tee -a "${LOG}"
@@ -219,7 +345,7 @@ d3d12_resources = []
 d3d12_buffer_generations = []
 d3d12_present_ids = []
 d3d12_present_completed = []
-d3d12_helper_commit_successes = []
+d3d12_gpup_dda_commit_successes = []
 d3d12_same_frame_callback_releases = []
 d3d12_same_frame_callbacks = []
 d3d12_same_frame_releases = []
@@ -242,7 +368,7 @@ visual_resources = []
 visual_buffer_generations = []
 visual_present_ids = []
 visual_present_completed = []
-visual_helper_commit_successes = []
+visual_gpup_dda_commit_successes = []
 visual_same_frame_callback_releases = []
 visual_same_frame_callbacks = []
 visual_same_frame_releases = []
@@ -267,15 +393,12 @@ release_counter_keys = (
     "d3d12_gpu_present_releases",
     "d3d12_release_count",
 )
-helper_commit_success_keys = (
+gpup_dda_commit_success_keys = (
     "d3d12_dxg_present_source_commit_successes",
     "d3d12_present_source_commit_successes",
     "d3d12_present_source_buffer_commit_successes",
     "dxg_present_commit_successes",
     "d3d12_final_handoff_host_display_commit_success",
-    "d3d12_helper_commit_accepted",
-    "d3d12_present_helper_commit_accepted",
-    "d3d12_host_display_helper_commit_accepted",
     "d3d12_present_source_commit_accepted",
     "d3d12_dxg_present_source_commit_accepted",
     "d3d12_host_display_commit_accepted",
@@ -329,6 +452,33 @@ def log_validation(message):
 def fail_validation(message):
     log_validation(message)
     raise SystemExit(message)
+
+def counter_delta(values):
+    if len(values) < 2:
+        return None
+    return values[-1] - values[0]
+
+def format_optional(value):
+    if value is None:
+        return "missing"
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return str(value)
+
+def frozen_window_negative(reason, **fields):
+    ordered = {
+        "validation_run_id": expected_run_id,
+        "frozen_window_detected": 1,
+        "post_warmup_sample_window": 1,
+        "displayed_fps_context_only": 1,
+        "acceptance_requires_native_present_and_content_progress": 1,
+        "reason": reason,
+    }
+    ordered.update(fields)
+    log_validation(
+        "frozen-window negative "
+        + " ".join(f"{key}={value}" for key, value in ordered.items())
+    )
 
 def reject_backend_opengl_submit_for_failed_present():
     failed_present = re.search(
@@ -420,9 +570,9 @@ def reject_dxg_present_accounting_state():
             )):
         fail_validation(
             "D3D12 present fail-closed classification="
-            "validated-missing-host-helper: present ioctl/copyin reached "
-            "validated kernel handling, but the required host-display helper "
-            "ABI is missing; fail-closed accounting is not native completion "
+            "validated-missing-gpup-or-dda-display-bind: present ioctl/copyin reached "
+            "validated kernel handling, but the required GPU-P/DDA display "
+            "bind is missing; fail-closed accounting is not native completion "
             "or FPS credit"
         )
 
@@ -513,6 +663,51 @@ def hex_or_int_value(line, keys):
         if match:
             return int(match.group(1), 0)
     return None
+
+def frame_index(path):
+    match = re.fullmatch(r"frame-([0-9]+)\.raw", path.name)
+    if not match:
+        raise SystemExit(f"unexpected thumbnail name: {path.name}")
+    return int(match.group(1))
+
+def load_thumbnail_progress():
+    raws = sorted(visual_dir.glob("frame-*.raw"), key=frame_index)
+    expected = width * height * 2
+    if len(raws) < 2:
+        raise SystemExit("not enough visible thumbnail samples")
+    frames = []
+    frame_times = []
+    outside_overlay_crcs = []
+    for raw_path in raws:
+        raw = raw_path.read_bytes()
+        if len(raw) < expected:
+            raise SystemExit(
+                f"thumbnail too small: {raw_path} {len(raw)} < {expected}"
+            )
+        frame = raw[:expected]
+        frames.append(frame)
+        frame_times.append(raw_path.stat().st_mtime)
+        crc = 0
+        for y in range(visual_ignore_top_pixels, height):
+            row = y * width * 2
+            crc = zlib.crc32(frame[row:row + width * 2], crc)
+        outside_overlay_crcs.append(crc & 0xffffffff)
+
+    transitions = []
+    for a, b in zip(frames, frames[1:]):
+        changed = 0
+        for y in range(height):
+            row = y * width * 2
+            for x in range(width):
+                # Ignore the title/FPS-overlay band; it can change while the
+                # 3D surface itself is frozen or skipped by the compositor.
+                if y < visual_ignore_top_pixels:
+                    continue
+                off = row + x * 2
+                if a[off:off + 2] != b[off:off + 2]:
+                    changed += 1
+        transitions.append(changed)
+    return frames, frame_times, outside_overlay_crcs, transitions
 
 def require_run_id_samples(name, values):
     if not values:
@@ -605,9 +800,9 @@ for line in log.splitlines():
         completed = re.search(r"\bcompleted=([0-9]+)", line)
         if completed:
             visual_present_completed.append(int(completed.group(1)))
-        helper_commit = counter_value(line, helper_commit_success_keys)
-        if helper_commit is not None:
-            visual_helper_commit_successes.append(helper_commit)
+        gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
+        if gpup_dda_commit is not None:
+            visual_gpup_dda_commit_successes.append(gpup_dda_commit)
         same_frame = counter_value(line, same_frame_callback_release_keys)
         if same_frame is not None:
             visual_same_frame_callback_releases.append(same_frame)
@@ -688,9 +883,9 @@ for line in log.splitlines():
         completed = re.search(r"\bcompleted=([0-9]+)", line)
         if completed:
             d3d12_present_completed.append(int(completed.group(1)))
-        helper_commit = counter_value(line, helper_commit_success_keys)
-        if helper_commit is not None:
-            d3d12_helper_commit_successes.append(helper_commit)
+        gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
+        if gpup_dda_commit is not None:
+            d3d12_gpup_dda_commit_successes.append(gpup_dda_commit)
         same_frame = counter_value(line, same_frame_callback_release_keys)
         if same_frame is not None:
             d3d12_same_frame_callback_releases.append(same_frame)
@@ -931,6 +1126,7 @@ demo_client_pids = [
 ]
 if "hyperv-3d-fps-validate: visual thumbnails inside finite sample window" not in log:
     raise SystemExit("visible thumbnail samples were not captured inside the finite FPS sample window")
+frames, frame_times, outside_overlay_crcs, transitions = load_thumbnail_progress()
 if ("d3d12sharedsmoke: present validation ok" not in log and
         import_only_evidence_lines()):
     fail_validation(
@@ -1027,6 +1223,23 @@ if len(d3d12_content_crcs) < 2:
         "missing D3D12 content CRC samples from compositor evidence"
     )
 if len(set(d3d12_content_crcs)) < 2:
+    frozen_window_negative(
+        "sample_content_crc_static",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        content_crc_changes=0,
+        changed=",".join(str(v) for v in transitions),
+        d3d12_content_crcs=",".join(hex(value) for value in d3d12_content_crcs),
+    )
     raise SystemExit(
         "D3D12 compositor content CRC did not change during FPS sample: "
         f"values={','.join(hex(value) for value in d3d12_content_crcs)}"
@@ -1041,11 +1254,53 @@ if len(d3d12_content_frames) < 2:
         "missing D3D12 content frame/change counter samples from compositor "
         "evidence"
     )
+if d3d12_content_frames[-1] == d3d12_content_frames[0]:
+    frozen_window_negative(
+        "sample_content_frame_not_advancing",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=0,
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        changed=",".join(str(v) for v in transitions),
+        content_frames=",".join(str(v) for v in d3d12_content_frames),
+    )
 d3d12_content_frame_deltas = require_advancing_counter(
     "d3d12 content frame/change counter",
     d3d12_content_frames,
 )
 sample_content_frame_delta = d3d12_content_frames[-1] - d3d12_content_frames[0]
+content_active_preview = sum(1 for value in d3d12_content_frame_deltas
+                             if value > 0)
+content_required_preview = min(
+    min_active_native_intervals,
+    len(d3d12_content_frame_deltas),
+)
+if content_required_preview > 0 and content_active_preview < content_required_preview:
+    frozen_window_negative(
+        "sample_content_frame_not_repeated",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=sample_content_frame_delta,
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        active_content_frame_intervals=content_active_preview,
+        required_content_frame_intervals=content_required_preview,
+        content_frame_deltas=",".join(str(v) for v in d3d12_content_frame_deltas),
+        changed=",".join(str(v) for v in transitions),
+    )
 active_content_frame_intervals = require_active_intervals(
     "D3D12 content frame/change counter",
     d3d12_content_frame_deltas,
@@ -1192,6 +1447,30 @@ native_fps = native_completed / elapsed
 warmup_native_completed = d3d12_present_counts[0]
 native_completion_deltas = interval_deltas("d3d12_gpu_present_completes",
                                            d3d12_present_counts)
+native_active_preview = sum(1 for value in native_completion_deltas if value > 0)
+native_required_preview = min(
+    min_active_native_intervals,
+    len(native_completion_deltas),
+)
+if native_required_preview > 0 and native_active_preview < native_required_preview:
+    frozen_window_negative(
+        "native_present_not_advancing",
+        sample_elapsed=f"{elapsed:.3f}",
+        native_present_delta=native_completed,
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        active_native_intervals=native_active_preview,
+        required_native_intervals=native_required_preview,
+        native_deltas=",".join(str(v) for v in native_completion_deltas),
+        changed=",".join(str(v) for v in transitions),
+    )
 active_native_intervals = require_active_intervals(
     "native D3D12 present completions",
     native_completion_deltas,
@@ -1229,12 +1508,12 @@ if d3d12_present_completed[-1] < d3d12_present_ids[-1]:
         f"present_id={d3d12_present_ids[-1]} "
         f"completed={d3d12_present_completed[-1]}"
     )
-if (len(d3d12_helper_commit_successes) < 2 or
-        any(value == 0 for value in d3d12_helper_commit_successes)):
+if (len(d3d12_gpup_dda_commit_successes) < 2 or
+        any(value == 0 for value in d3d12_gpup_dda_commit_successes)):
     raise SystemExit(
-        "missing helper present-source commit accepted samples from "
+        "missing GPU-P/DDA present-source commit accepted samples from "
         "/tmp/wlcomp-d3d12-present: "
-        f"values={','.join(str(value) for value in d3d12_helper_commit_successes)}"
+        f"values={','.join(str(value) for value in d3d12_gpup_dda_commit_successes)}"
     )
 d3d12_present_id_deltas = require_advancing_counter(
     "DXG present_id",
@@ -1244,16 +1523,16 @@ d3d12_present_completed_deltas = require_advancing_counter(
     "DXG completed counter",
     d3d12_present_completed,
 )
-d3d12_helper_commit_deltas = require_advancing_counter(
-    "helper present-source commit accepted",
-    d3d12_helper_commit_successes,
+d3d12_gpup_dda_commit_deltas = require_advancing_counter(
+    "GPU-P/DDA present-source commit accepted",
+    d3d12_gpup_dda_commit_successes,
 )
 sample_present_id_delta = d3d12_present_ids[-1] - d3d12_present_ids[0]
 sample_present_completed_delta = (
     d3d12_present_completed[-1] - d3d12_present_completed[0]
 )
-sample_helper_commit_delta = (
-    d3d12_helper_commit_successes[-1] - d3d12_helper_commit_successes[0]
+sample_gpup_dda_commit_delta = (
+    d3d12_gpup_dda_commit_successes[-1] - d3d12_gpup_dda_commit_successes[0]
 )
 if sample_present_id_delta < native_completed:
     raise SystemExit(
@@ -1273,13 +1552,13 @@ if sample_present_completed_delta < native_completed:
         f"completed_values={','.join(str(v) for v in d3d12_present_completed)} "
         f"native_values={','.join(str(v) for v in d3d12_present_counts)}"
     )
-if sample_helper_commit_delta < native_completed:
+if sample_gpup_dda_commit_delta < native_completed:
     raise SystemExit(
-        "helper present-source commit accepted counter did not advance with "
+        "GPU-P/DDA present-source commit accepted counter did not advance with "
         "native present completions during FPS sample: "
-        f"commit_delta={sample_helper_commit_delta} "
+        f"commit_delta={sample_gpup_dda_commit_delta} "
         f"native_completed={native_completed} "
-        f"commit_values={','.join(str(v) for v in d3d12_helper_commit_successes)} "
+        f"commit_values={','.join(str(v) for v in d3d12_gpup_dda_commit_successes)} "
         f"native_values={','.join(str(v) for v in d3d12_present_counts)}"
     )
 active_present_id_intervals = require_active_intervals(
@@ -1292,9 +1571,9 @@ active_present_completed_intervals = require_active_intervals(
     d3d12_present_completed_deltas,
     min_active_native_intervals,
 )
-active_helper_commit_intervals = require_active_intervals(
-    "helper present-source commit accepted",
-    d3d12_helper_commit_deltas,
+active_gpup_dda_commit_intervals = require_active_intervals(
+    "GPU-P/DDA present-source commit accepted",
+    d3d12_gpup_dda_commit_deltas,
     min_active_native_intervals,
 )
 if any(value == 0 for value in d3d12_same_frame_callback_releases):
@@ -1465,7 +1744,7 @@ if active_native_display_callback_release_intervals < required_correlated_interv
     )
 active_full_evidence_intervals = sum(
     1
-    for native, display, callback, release, generation, evidence_time, present_id, present_done, helper_commit in zip(
+    for native, display, callback, release, generation, evidence_time, present_id, present_done, gpup_dda_commit in zip(
         native_completion_deltas,
         display_completion_deltas,
         callback_deltas,
@@ -1474,11 +1753,11 @@ active_full_evidence_intervals = sum(
         d3d12_evidence_time_deltas,
         d3d12_present_id_deltas,
         d3d12_present_completed_deltas,
-        d3d12_helper_commit_deltas,
+        d3d12_gpup_dda_commit_deltas,
     )
     if (native > 0 and display > 0 and callback > 0 and release > 0 and
         generation > 0 and evidence_time > 0 and present_id > 0 and
-        present_done > 0 and helper_commit > 0)
+        present_done > 0 and gpup_dda_commit > 0)
 )
 required_full_evidence_intervals = min(
     min_active_native_intervals,
@@ -1490,11 +1769,11 @@ required_full_evidence_intervals = min(
     len(d3d12_evidence_time_deltas),
     len(d3d12_present_id_deltas),
     len(d3d12_present_completed_deltas),
-    len(d3d12_helper_commit_deltas),
+    len(d3d12_gpup_dda_commit_deltas),
 )
 if active_full_evidence_intervals < required_full_evidence_intervals:
     raise SystemExit(
-        "native/display/callback/release/run-evidence/DXG-present/helper-commit counters "
+        "native/display/callback/release/run-evidence/DXG-present/GPU-P/DDA-commit counters "
         "did not advance in the same sample intervals: "
         f"overlap={active_full_evidence_intervals} "
         f"required={required_full_evidence_intervals} "
@@ -1506,7 +1785,7 @@ if active_full_evidence_intervals < required_full_evidence_intervals:
         f"evidence_time_deltas={','.join(str(v) for v in d3d12_evidence_time_deltas)} "
         f"present_id_deltas={','.join(str(v) for v in d3d12_present_id_deltas)} "
         f"completed_deltas={','.join(str(v) for v in d3d12_present_completed_deltas)} "
-        f"helper_commit_deltas={','.join(str(v) for v in d3d12_helper_commit_deltas)}"
+        f"gpup_dda_commit_deltas={','.join(str(v) for v in d3d12_gpup_dda_commit_deltas)}"
     )
 if not backend_opengl_submit_samples:
     raise SystemExit(
@@ -1544,35 +1823,47 @@ if (re.search(
         r"path=d3d12-dxg-present-source-display-handoff",
         log,
     )):
+    if re.search(
+            r"host-display-helper/resource-scanout-bind|"
+            r"runtime-created-d3d12-resource-to-host-display-helper|"
+            r"custom_host_tool:[1-9][0-9]*|custom_host_tool=1",
+            log,
+    ):
+        fail_validation(
+            "D3D12 present evidence used a custom host display helper; only "
+            "represented GPU-P/DXG or DDA/Nouveau handoff is accepted"
+        )
     if not re.search(
             r"missing host ABI=dxg-resource-scanout-bind|"
-            r"missing host ABI=host-display-helper/resource-scanout-bind|"
+            r"missing host ABI=gpu-p-dxg-resource-scanout-bind|"
             r"ABI=dxg-resource-scanout-bind|"
-            r"ABI=host-display-helper/resource-scanout-bind|"
-            r"helper=host-display-helper/resource-scanout-bind|"
+            r"ABI=gpu-p-dxg-resource-scanout-bind|"
+            r"gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|"
+            r""
             r"d3d12_display_handoff_requires_kernel_host_protocol=1",
             log,
     ):
         fail_validation(
-            "D3D12 present fail-closed without named host-display helper "
+            "D3D12 present fail-closed without named GPU-P/DDA display-bind "
             "diagnostic"
         )
     if re.search(
-            r"helper=host-display-helper/resource-scanout-bind|"
-            r"missing host ABI=host-display-helper/resource-scanout-bind|"
-            r"ABI=host-display-helper/resource-scanout-bind",
+            r"gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|"
+            r""
+            r"missing host ABI=gpu-p-dxg-resource-scanout-bind|"
+            r"ABI=gpu-p-dxg-resource-scanout-bind",
             log,
     ) and not re.search(
             r"candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38",
             log,
     ):
         fail_validation(
-            "D3D12 present fail-closed host-display helper diagnostic "
+            "D3D12 present fail-closed GPU-P/DDA display-bind diagnostic "
             "lacked candidate_cmds presenthistory=34,redirected_flip_fence=35,blt=38"
         )
     fail_validation(
-        "fail-closed present: missing host-display "
-        "helper/resource-scanout-bind dependency; present_id/completed are "
+        "fail-closed present: missing GPU-P/DDA "
+        "resource-scanout-bind dependency; present_id/completed are "
         "not usable and callbacks/releases remain blocked, so "
         "FPS/WebKit/OpenGL-submit credit is refused"
     )
@@ -1669,7 +1960,8 @@ wave60_reject = re.search(
     r"\bd3d12_native_present_requirements_satisfied[ =]0\b|"
     r"\bnative_requirements=0\b|"
     r"\bd3d12_present_source_(?:commit_rejected_eopnotsupp|"
-    r"no_present_id_completed|helper_transport_absent|"
+    r"no_present_id_completed|gpu_p_or_dda_transport_absent|"
+    r"no_gpu_p_or_dda_display_bind|"
     r"same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1\b|"
     r"\bd3d12_present_source_buffer_query_skipped_commit_failed[ =]1\b|"
     r"\bd3d12_present_source_query_skipped_reason=commit-failed\b",
@@ -1697,14 +1989,13 @@ if re.search(r"\bd3d12_(final_handoff_|display_completion_required)", log):
         ),
         (
             r"\bd3d12_final_handoff_lane[ =]"
-            r"runtime-created-d3d12-resource-to-host-display-helper\b",
-            "D3D12 final handoff helper-contract lane",
+            r"runtime-created-d3d12-resource-through-gpu-p-or-dda\b",
+            "D3D12 final handoff GPU-P/DDA lane",
         ),
         (
             r"\bd3d12_final_handoff_selected[ =]"
-            r"(?:dxg-resource-scanout-bind|"
-            r"host-display-helper/resource-scanout-bind)\b",
-            "D3D12 final handoff selected helper contract",
+            r"(?:dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)\b",
+            "D3D12 final handoff selected GPU-P/DDA contract",
         ),
         (
             r"\bd3d12_final_handoff_source[ =]"
@@ -1756,47 +2047,23 @@ if "xv6-mesa: d3d12 native present unavailable; refusing DRI software/readback p
     raise SystemExit("D3D12 fell back to the refused DRI readback path")
 if re.search(r"\b(drisw|softpipe|llvmpipe|swrast)\b", log, re.IGNORECASE):
     raise SystemExit("Mesa used a software/DRI software path during FPS validation")
-def frame_index(path):
-    match = re.fullmatch(r"frame-([0-9]+)\.raw", path.name)
-    if not match:
-        raise SystemExit(f"unexpected thumbnail name: {path.name}")
-    return int(match.group(1))
-
-raws = sorted(visual_dir.glob("frame-*.raw"), key=frame_index)
-expected = width * height * 2
-if len(raws) < 2:
-    raise SystemExit("not enough visible thumbnail samples")
-frames = []
-frame_times = []
-outside_overlay_crcs = []
-for raw_path in raws:
-    raw = raw_path.read_bytes()
-    if len(raw) < expected:
-        raise SystemExit(f"thumbnail too small: {raw_path} {len(raw)} < {expected}")
-    frame = raw[:expected]
-    frames.append(frame)
-    frame_times.append(raw_path.stat().st_mtime)
-    crc = 0
-    for y in range(visual_ignore_top_pixels, height):
-        row = y * width * 2
-        crc = zlib.crc32(frame[row:row + width * 2], crc)
-    outside_overlay_crcs.append(crc & 0xffffffff)
-
-transitions = []
-for a, b in zip(frames, frames[1:]):
-    changed = 0
-    for y in range(height):
-        row = y * width * 2
-        for x in range(width):
-            # Ignore the title/FPS-overlay band; it can change while the 3D
-            # surface itself is frozen or skipped by the compositor.
-            if y < visual_ignore_top_pixels:
-                continue
-            off = row + x * 2
-            if a[off:off + 2] != b[off:off + 2]:
-                changed += 1
-    transitions.append(changed)
 if max(transitions) < min_changed_pixels:
+    frozen_window_negative(
+        "thumbnail_progress_below_threshold",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        changed=",".join(str(v) for v in transitions),
+        outside_overlay_crcs=",".join(hex(value) for value in outside_overlay_crcs),
+    )
     raise SystemExit(
         "visible thumbnail progression too small outside title/FPS overlay: "
         f"max_changed={max(transitions)} required={min_changed_pixels} "
@@ -1806,6 +2073,24 @@ required_active_transitions = min(2, len(transitions))
 active_transitions = sum(1 for changed in transitions
                          if changed >= min_changed_pixels)
 if active_transitions < required_active_transitions:
+    frozen_window_negative(
+        "thumbnail_progress_not_repeated",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        active_thumbnail_transitions=active_transitions,
+        required_thumbnail_transitions=required_active_transitions,
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        changed=",".join(str(v) for v in transitions),
+        outside_overlay_crcs=",".join(hex(value) for value in outside_overlay_crcs),
+    )
     raise SystemExit(
         "visible thumbnail progression was not repeated across the sample "
         f"window: active={active_transitions} "
@@ -1814,6 +2099,18 @@ if active_transitions < required_active_transitions:
         f"samples={','.join(str(v) for v in transitions)}"
     )
 if len(set(outside_overlay_crcs)) < 2:
+    frozen_window_negative(
+        "outside_overlay_crc_static",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=0,
+        changed=",".join(str(v) for v in transitions),
+        outside_overlay_crcs=",".join(hex(value) for value in outside_overlay_crcs),
+    )
     raise SystemExit(
         "outside-overlay thumbnail CRC did not change: "
         f"crcs={','.join(hex(value) for value in outside_overlay_crcs)}"
@@ -1824,6 +2121,20 @@ outside_overlay_crc_transitions = sum(
     if before != after
 )
 if outside_overlay_crc_transitions < required_active_transitions:
+    frozen_window_negative(
+        "outside_overlay_crc_not_repeated",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        active_thumbnail_transitions=active_transitions,
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        required_thumbnail_transitions=required_active_transitions,
+        changed=",".join(str(v) for v in transitions),
+        outside_overlay_crcs=",".join(hex(value) for value in outside_overlay_crcs),
+    )
     raise SystemExit(
         "outside-overlay thumbnail CRC did not change repeatedly across the "
         "visual window: "
@@ -1890,6 +2201,19 @@ if len(visual_content_crcs) < 2:
         "evidence"
     )
 if len(set(visual_content_crcs)) < 2:
+    frozen_window_negative(
+        "visual_content_crc_static",
+        sample_elapsed=f"{elapsed:.3f}",
+        native_present_delta=native_completed,
+        frame_callback_delta=format_optional(counter_delta(visual_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(visual_release_counts)),
+        content_frame_delta=format_optional(counter_delta(visual_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        content_crc_changes=0,
+        changed=",".join(str(v) for v in transitions),
+        visual_content_crcs=",".join(hex(value) for value in visual_content_crcs),
+    )
     raise SystemExit(
         "visual-window D3D12 compositor content CRC did not change: "
         f"values={','.join(hex(value) for value in visual_content_crcs)}"
@@ -1917,6 +2241,19 @@ if visual_native_elapsed <= 0.0:
         f"{visual_native_elapsed:.3f}"
     )
 if visual_native_completed <= 0:
+    frozen_window_negative(
+        "visual_native_present_not_advancing",
+        sample_elapsed=f"{elapsed:.3f}",
+        visual_native_present_elapsed=f"{visual_native_elapsed:.3f}",
+        native_present_delta=native_completed,
+        visual_window_native_present_delta=visual_native_completed,
+        frame_callback_delta=format_optional(counter_delta(visual_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(visual_release_counts)),
+        content_frame_delta=visual_content_frame_delta,
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        changed=",".join(str(v) for v in transitions),
+    )
     raise SystemExit(
         "native D3D12 present completions did not advance while visible "
         "thumbnail progression was sampled: "
@@ -1951,6 +2288,19 @@ if len(visual_callback_counts) < 2:
 interval_deltas("visual d3d12_frame_callbacks", visual_callback_counts)
 visual_callbacks = visual_callback_counts[-1] - visual_callback_counts[0]
 if visual_callbacks <= 0:
+    frozen_window_negative(
+        "visual_frame_callbacks_not_advancing",
+        sample_elapsed=f"{elapsed:.3f}",
+        visual_native_present_elapsed=f"{visual_native_elapsed:.3f}",
+        native_present_delta=native_completed,
+        visual_window_native_present_delta=visual_native_completed,
+        frame_callback_delta=visual_callbacks,
+        buffer_release_delta=format_optional(counter_delta(visual_release_counts)),
+        content_frame_delta=visual_content_frame_delta,
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        changed=",".join(str(v) for v in transitions),
+    )
     raise SystemExit(
         "D3D12 frame callbacks did not advance while visible thumbnail "
         "progression was sampled"
@@ -1968,6 +2318,19 @@ if len(visual_release_counts) < 2:
 interval_deltas("visual d3d12_buffer_releases", visual_release_counts)
 visual_releases = visual_release_counts[-1] - visual_release_counts[0]
 if visual_releases <= 0:
+    frozen_window_negative(
+        "visual_buffer_releases_not_advancing",
+        sample_elapsed=f"{elapsed:.3f}",
+        visual_native_present_elapsed=f"{visual_native_elapsed:.3f}",
+        native_present_delta=native_completed,
+        visual_window_native_present_delta=visual_native_completed,
+        frame_callback_delta=visual_callbacks,
+        buffer_release_delta=visual_releases,
+        content_frame_delta=visual_content_frame_delta,
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        changed=",".join(str(v) for v in transitions),
+    )
     raise SystemExit(
         "D3D12 buffer releases did not advance while visible thumbnail "
         "progression was sampled"
@@ -2012,11 +2375,11 @@ if visual_present_completed[-1] < visual_present_ids[-1]:
         f"present_id={visual_present_ids[-1]} "
         f"completed={visual_present_completed[-1]}"
     )
-if (len(visual_helper_commit_successes) < 2 or
-        any(value == 0 for value in visual_helper_commit_successes)):
+if (len(visual_gpup_dda_commit_successes) < 2 or
+        any(value == 0 for value in visual_gpup_dda_commit_successes)):
     raise SystemExit(
-        "missing visual-window helper present-source commit accepted samples: "
-        f"values={','.join(str(value) for value in visual_helper_commit_successes)}"
+        "missing visual-window GPU-P/DDA present-source commit accepted samples: "
+        f"values={','.join(str(value) for value in visual_gpup_dda_commit_successes)}"
     )
 visual_present_id_deltas = require_advancing_counter(
     "visual-window DXG present_id",
@@ -2026,16 +2389,16 @@ visual_present_completed_deltas = require_advancing_counter(
     "visual-window DXG completed counter",
     visual_present_completed,
 )
-visual_helper_commit_deltas = require_advancing_counter(
-    "visual-window helper present-source commit accepted",
-    visual_helper_commit_successes,
+visual_gpup_dda_commit_deltas = require_advancing_counter(
+    "visual-window GPU-P/DDA present-source commit accepted",
+    visual_gpup_dda_commit_successes,
 )
 visual_present_id_delta = visual_present_ids[-1] - visual_present_ids[0]
 visual_present_completed_delta = (
     visual_present_completed[-1] - visual_present_completed[0]
 )
-visual_helper_commit_delta = (
-    visual_helper_commit_successes[-1] - visual_helper_commit_successes[0]
+visual_gpup_dda_commit_delta = (
+    visual_gpup_dda_commit_successes[-1] - visual_gpup_dda_commit_successes[0]
 )
 if visual_present_id_delta < visual_native_completed:
     raise SystemExit(
@@ -2055,13 +2418,13 @@ if visual_present_completed_delta < visual_native_completed:
         f"completed_values={','.join(str(v) for v in visual_present_completed)} "
         f"native_values={','.join(str(v) for v in visual_native_counts)}"
     )
-if visual_helper_commit_delta < visual_native_completed:
+if visual_gpup_dda_commit_delta < visual_native_completed:
     raise SystemExit(
-        "visual-window helper present-source commit accepted counter did not "
+        "visual-window GPU-P/DDA present-source commit accepted counter did not "
         "advance with native present completions: "
-        f"commit_delta={visual_helper_commit_delta} "
+        f"commit_delta={visual_gpup_dda_commit_delta} "
         f"native_completed={visual_native_completed} "
-        f"commit_values={','.join(str(v) for v in visual_helper_commit_successes)} "
+        f"commit_values={','.join(str(v) for v in visual_gpup_dda_commit_successes)} "
         f"native_values={','.join(str(v) for v in visual_native_counts)}"
     )
 if any(value == 0 for value in visual_same_frame_callback_releases):
@@ -2095,7 +2458,7 @@ log_validation(
     f"native_present_delta={visual_native_completed} "
     f"present_id_delta={visual_present_id_delta} "
     f"completed_delta={visual_present_completed_delta} "
-    f"helper_commit_delta={visual_helper_commit_delta} "
+    f"gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"evidence_generation_delta={sum(visual_generation_deltas)} "
     f"evidence_time_delta_us={sum(visual_evidence_time_deltas)} "
     f"frame_callback_delta={visual_callbacks} "
@@ -2113,13 +2476,17 @@ log_validation(
     f"validation_run_id={expected_run_id} "
     "visual_samples_inside_sample_window=1 "
     "d3d12_display_handoff_implemented=1 "
+    "displayed_fps_context_only=1 "
+    "demo_fps_context_only=1 "
+    "acceptance_requires_native_present_and_content_progress=1 "
+    "acceptance_requires_effective_presented_fps_gt_min=1 "
     f"native_present_fps={native_fps:.3f} "
     f"app_visible_avg={avg:.3f} "
     f"app_visible_low={low:.3f} "
     f"display_completion_fps={completion_fps:.3f} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
-    f"sample_helper_commit_delta={sample_helper_commit_delta} "
+    f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"sample_evidence_generation_delta={sum(d3d12_generation_deltas)} "
     f"sample_evidence_time_delta_us={sum(d3d12_evidence_time_deltas)} "
     f"sample_content_crc_changes={sample_content_crc_changes} "
@@ -2130,7 +2497,7 @@ log_validation(
     f"active_release_intervals={active_release_intervals} "
     f"active_present_id_intervals={active_present_id_intervals} "
     f"active_completed_intervals={active_present_completed_intervals} "
-    f"active_helper_commit_intervals={active_helper_commit_intervals} "
+    f"active_gpup_dda_commit_intervals={active_gpup_dda_commit_intervals} "
     f"active_content_frame_intervals={active_content_frame_intervals} "
     f"active_native_display_intervals={active_native_display_intervals} "
     f"active_native_display_callback_release_intervals="
@@ -2191,26 +2558,26 @@ if active_transitions < len(transitions):
             f"ratio_limit={visual_max_stale_report_ratio:.3f} "
             f"samples={','.join(str(v) for v in transitions)}"
         )
-if native_fps < min_fps:
+if native_fps <= min_fps:
     raise SystemExit(
         f"native D3D12 present FPS below gate: fps={native_fps:.3f} "
         f"completed_native={native_completed} elapsed={elapsed:.3f}s "
         f"required>{min_fps:.3f}"
     )
-if completion_fps < min_fps:
+if completion_fps <= min_fps:
     raise SystemExit(
         f"display completion FPS below gate: fps={completion_fps:.3f} "
         f"completed_display={completed} elapsed={elapsed:.3f}s "
         f"required>{min_fps:.3f}"
     )
-if visual_native_fps < min_fps:
+if visual_native_fps <= min_fps:
     raise SystemExit(
         f"visual-window native-present FPS below gate: "
         f"fps={visual_native_fps:.3f} "
         f"completed_native={visual_native_completed} "
         f"elapsed={visual_native_elapsed:.3f}s required>{min_fps:.3f}"
     )
-if effective_presented_fps < min_fps:
+if effective_presented_fps <= min_fps:
     raise SystemExit(
         "effective real-presented FPS below gate: "
         f"effective_presented_fps={effective_presented_fps:.3f} "
@@ -2237,6 +2604,10 @@ log_validation(
     "strict anti-inflation contract "
     f"validation_run_id={expected_run_id} "
     "strict_anti_inflation=1 "
+    "displayed_fps_context_only=1 "
+    "demo_fps_context_only=1 "
+    "acceptance_requires_native_present_and_content_progress=1 "
+    "acceptance_requires_effective_presented_fps_gt_min=1 "
     "demo_client_pid_match=1 "
     "demo_resource_match=1 "
     "demo_buffer_generation_match=1 "
@@ -2263,10 +2634,10 @@ log_validation(
     f"display_completion_fps={completion_fps:.3f} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
-    f"sample_helper_commit_delta={sample_helper_commit_delta} "
+    f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"visual_present_id_delta={visual_present_id_delta} "
     f"visual_completed_delta={visual_present_completed_delta} "
-    f"visual_helper_commit_delta={visual_helper_commit_delta} "
+    f"visual_gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"visual_window_native_present_fps={visual_native_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
     f"app_visible_avg={avg:.3f}"
@@ -2278,12 +2649,13 @@ print(
     f"sample_native_present_count_delta={native_completed} "
     f"sample_elapsed={elapsed:.3f}s native_present_fps={native_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
+    "acceptance_requires_effective_presented_fps_gt_min=1 "
     "d3d12_display_handoff_implemented=1 "
     f"sample_evidence_generation_delta={sum(d3d12_generation_deltas)} "
     f"sample_evidence_time_delta_us={sum(d3d12_evidence_time_deltas)} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
-    f"sample_helper_commit_delta={sample_helper_commit_delta} "
+    f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"sample_content_crc_changes={sample_content_crc_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
     f"active_native_intervals={active_native_intervals} "
@@ -2292,7 +2664,7 @@ print(
     f"active_release_intervals={active_release_intervals} "
     f"active_present_id_intervals={active_present_id_intervals} "
     f"active_completed_intervals={active_present_completed_intervals} "
-    f"active_helper_commit_intervals={active_helper_commit_intervals} "
+    f"active_gpup_dda_commit_intervals={active_gpup_dda_commit_intervals} "
     f"active_content_frame_intervals={active_content_frame_intervals} "
     f"active_native_display_intervals={active_native_display_intervals} "
     f"active_native_display_callback_release_intervals="
@@ -2301,7 +2673,7 @@ print(
     f"visual_window_native_present_delta={visual_native_completed} "
     f"visual_window_present_id_delta={visual_present_id_delta} "
     f"visual_window_completed_delta={visual_present_completed_delta} "
-    f"visual_window_helper_commit_delta={visual_helper_commit_delta} "
+    f"visual_window_gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"visual_window_evidence_generation_delta={sum(visual_generation_deltas)} "
     f"visual_window_evidence_time_delta_us={sum(visual_evidence_time_deltas)} "
     f"visual_window_frame_callback_delta={visual_callbacks} "

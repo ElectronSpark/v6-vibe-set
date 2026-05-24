@@ -472,6 +472,26 @@ require_opensyncobject_source_matrix_if_present() {
         tee -a "${LOG}"
 }
 
+require_opensync_handle_source_matrix_if_present() {
+    if ! grep -Eq 'opensync_handle_source_matrix' "${LOG}"; then
+        return
+    fi
+
+    require_log 'opensync_handle_source_matrix .*status=PASS' \
+        "OpenSync handle-source matrix PASS"
+    require_log 'opensync_handle_source_matrix .*host_shared_rc=0 .*host_shared_sync=0x[1-9a-f][0-9a-f]*' \
+        "OpenSync handle-source host-shared success"
+    require_log 'opensync_handle_source_matrix .*host_nt_attempted=1 .*host_nt_rc=-?[0-9]+' \
+        "OpenSync handle-source host-NT variant attempted"
+    require_log 'opensync_handle_source_matrix .*source_varied=1 .*present_attempted=0 .*native_present_claim=0' \
+        "OpenSync handle-source matrix produced no present credit"
+    if grep -Eq 'opensync_handle_source_matrix .*status=FAIL' "${LOG}"; then
+        fail "OpenSync handle-source matrix reported FAIL"
+    fi
+    echo "hyperv-dxg-validate: OpenSync handle-source matrix proof ok; this closes only the handle-source variant, not D3D12 fence/native-present/FPS/WebKit" |
+        tee -a "${LOG}"
+}
+
 require_ntshared_close_behavior_matrix_if_present() {
     if ! grep -Eq 'ntshared_close_behavior_matrix' "${LOG}"; then
         return
@@ -520,13 +540,16 @@ fail_known_d3d12_shared_blocker() {
     fi
 }
 
-require_fail_closed_helper_diagnostic() {
-    if ! grep -Eq 'missing host ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|helper=host-display-helper/resource-scanout-bind|d3d12_display_handoff_requires_kernel_host_protocol=1' "${LOG}"; then
-        fail "D3D12 present fail-closed without named missing host-display helper diagnostic"
+require_fail_closed_gpup_dda_diagnostic() {
+    if grep -Eq 'host-display-helper/resource-scanout-bind|runtime-created-d3d12-resource-to-host-display-helper|custom_host_tool:[1-9][0-9]*|custom_host_tool=1' "${LOG}"; then
+        fail "D3D12 present evidence used a custom host display helper; only represented GPU-P/DXG or DDA/Nouveau handoff is accepted"
     fi
-    if grep -Eq 'helper=host-display-helper/resource-scanout-bind|missing host ABI=host-display-helper/resource-scanout-bind|ABI=host-display-helper/resource-scanout-bind' "${LOG}"; then
+    if ! grep -Eq 'missing host ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|d3d12_present_source_no_gpu_p_or_dda_display_bind=1|d3d12_display_handoff_requires_kernel_host_protocol=1' "${LOG}"; then
+        fail "D3D12 present fail-closed without named missing GPU-P/DDA display-bind diagnostic"
+    fi
+    if grep -Eq 'gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|missing host ABI=gpu-p-dxg-resource-scanout-bind|ABI=gpu-p-dxg-resource-scanout-bind' "${LOG}"; then
         require_log 'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38' \
-            "Wave49 host-display-helper candidate command diagnostics"
+            "Wave49 GPU-P/DXG candidate command diagnostics"
     fi
 }
 
@@ -550,10 +573,10 @@ require_d3d12_current_run_display_provenance_if_present() {
 
     require_log 'd3d12_display_completion_required[ =]1' \
         "D3D12 WSLg-display/native display-completion requirement"
-    require_log 'd3d12_final_handoff_lane[ =]runtime-created-d3d12-resource-to-host-display-helper' \
-        "D3D12 final handoff helper-contract lane"
-    require_log 'd3d12_final_handoff_selected[ =](dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)' \
-        "D3D12 final handoff selected helper contract"
+    require_log 'd3d12_final_handoff_lane[ =]runtime-created-d3d12-resource-through-gpu-p-or-dda' \
+        "D3D12 final handoff GPU-P/DDA lane"
+    require_log 'd3d12_final_handoff_selected[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)' \
+        "D3D12 final handoff selected GPU-P/DDA contract"
     require_log 'd3d12_final_handoff_source[ =]runtime-created-d3d12-resource' \
         "D3D12 final handoff runtime-created resource source"
     require_log 'd3d12_final_handoff_destination[ =]host-display-channel' \
@@ -573,18 +596,18 @@ require_d3d12_current_run_display_provenance_if_present() {
         require_log 'd3d12_final_handoff_completed[ =][1-9][0-9]*' \
             "D3D12 final handoff nonzero completed counter"
     else
-        echo "hyperv-dxg-validate: D3D12 final handoff helper-contract evidence consumed; this closes current-run provenance only, not native present/FPS/WebKit" |
+        echo "hyperv-dxg-validate: D3D12 final handoff GPU-P/DDA contract evidence consumed; this closes current-run provenance only, not native present/FPS/WebKit" |
             tee -a "${LOG}"
     fi
 }
 
 fail_wave41_fail_closed_present() {
     require_backend_opengl_submit_gated_for_failed_present
-    if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|callbacks_blocked=1|releases_blocked=1|present_id=0|completed=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|helper_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${LOG}" &&
+    if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|callbacks_blocked=1|releases_blocked=1|present_id=0|completed=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|gpu_p_or_dda_transport_absent|no_gpu_p_or_dda_display_bind|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${LOG}" &&
        ! grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff' "${LOG}"; then
-        require_fail_closed_helper_diagnostic
-        echo "hyperv-dxg-validate: fail-closed present: missing host-display helper/resource-scanout-bind dependency; native-present/FPS/WebKit remain gated" >&2
-        grep -E 'missing host ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|helper=host-display-helper/resource-scanout-bind|candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38|d3d12_display_handoff_requires_kernel_host_protocol=1|d3d12_present_errno=95|present_errno=95|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
+        require_fail_closed_gpup_dda_diagnostic
+        echo "hyperv-dxg-validate: fail-closed present: missing GPU-P/DDA resource-scanout-bind dependency; native-present/FPS/WebKit remain gated" >&2
+        grep -E 'missing host ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38|d3d12_display_handoff_requires_kernel_host_protocol=1|d3d12_present_errno=95|present_errno=95|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
             true
         echo "hyperv-dxg-validate: log: ${LOG}" >&2
         exit 1
@@ -607,7 +630,7 @@ reject_wave60_registration_only_present() {
     if grep -Eq 'd3d12_(dxg_present_source|present_source_buffer)_register_successes[ =][1-9][0-9]*' "${LOG}" &&
        grep -Eq 'd3d12_(dxg_present_source|present_source_buffer)_commit_successes[ =]0' "${LOG}"; then
         echo "hyperv-dxg-validate: D3D12 present-source registration succeeded but commit did not; registration-only proof is not native present" >&2
-        grep -E 'd3d12_(native_present_requirements_satisfied|dxg_present_source_(register|commit|present_id|completed)|present_source_(buffer_|)(registered|query|commit|no_present_id|helper_transport|same_frame|luid)|present_errno|present_missing)|backend_opengl_submit [01]' "${LOG}" >&2 ||
+        grep -E 'd3d12_(native_present_requirements_satisfied|dxg_present_source_(register|commit|present_id|completed)|present_source_(buffer_|)(registered|query|commit|no_present_id|gpu_p_or_dda_transport|same_frame|luid)|present_errno|present_missing)|backend_opengl_submit [01]' "${LOG}" >&2 ||
             true
         echo "hyperv-dxg-validate: log: ${LOG}" >&2
         exit 1
@@ -646,10 +669,10 @@ fail_dxg_present_accounting_state() {
        grep -Eq 'dxg_present_commit_copyin_failures 0' "${LOG}" &&
        grep -Eq 'dxg_present_commit_attempts [1-9][0-9]*' "${LOG}" &&
        grep -Eq 'dxg_present_host_handoff_missing [1-9][0-9]*|dxg_present_missing_host_abi [1-9][0-9]*|dxg_present_last_ret 95' "${LOG}"; then
-        echo "hyperv-dxg-validate: D3D12 present fail-closed classification=validated-missing-host-helper" >&2
-        grep -E 'dxg_present_(register|commit)_(ioctl_entries|copyin_failures|attempts|successes|rejects)|dxg_present_(host_handoff_missing|missing_host_abi|last_ret|requires_host_protocol|helper_contract_version|helper_required_metadata|helper_transport_present|helper_source_live|helper_requires_completion)|d3d12_(evidence_stage|present_path|present_missing|present_errno|dxg_present_source_commit_attempts|dxg_present_source_commit_successes|dxg_present_id|dxg_present_completed)|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
+        echo "hyperv-dxg-validate: D3D12 present fail-closed classification=validated-missing-gpup-or-dda-display-bind" >&2
+        grep -E 'dxg_present_(register|commit)_(ioctl_entries|copyin_failures|attempts|successes|rejects)|dxg_present_(host_handoff_missing|missing_host_abi|last_ret|requires_host_protocol|gpu_p_or_dda_contract_version|gpu_p_or_dda_required_metadata|gpu_p_or_dda_transport_present|gpu_p_or_dda_source_live|gpu_p_or_dda_requires_completion)|d3d12_(evidence_stage|present_path|present_missing|present_errno|dxg_present_source_commit_attempts|dxg_present_source_commit_successes|dxg_present_id|dxg_present_completed)|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
             true
-        echo "hyperv-dxg-validate: present ioctl/copyin reached validated kernel handling, but the required host-display helper ABI is missing; fail-closed accounting is not native completion" >&2
+        echo "hyperv-dxg-validate: present ioctl/copyin reached validated kernel handling, but the required GPU-P/DDA display bind is missing; fail-closed accounting is not native completion" >&2
         echo "hyperv-dxg-validate: log: ${LOG}" >&2
         exit 1
     fi
@@ -765,7 +788,7 @@ require_no_d3d12_cpu_or_partial_present_path() {
        grep -Eq 'd3d12_display_handoff_implemented=0' "${LOG}" ||
        grep -Eq '(callbacks_blocked|releases_blocked)=[1-9][0-9]*' "${LOG}" ||
        grep -Eq 'd3d12_present_errno=([1-9][0-9]*)' "${LOG}" ||
-       grep -Eq 'd3d12_native_present_requirements_satisfied[ =]0|native_requirements=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|helper_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1|d3d12_present_source_buffer_query_skipped_commit_failed[ =]1|d3d12_present_source_query_skipped_reason=commit-failed' "${LOG}"; then
+       grep -Eq 'd3d12_native_present_requirements_satisfied[ =]0|native_requirements=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|gpu_p_or_dda_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1|d3d12_present_source_buffer_query_skipped_commit_failed[ =]1|d3d12_present_source_query_skipped_reason=commit-failed' "${LOG}"; then
         fail "D3D12 present validation used an incomplete or CPU/readback path"
     fi
 }
@@ -799,16 +822,13 @@ require_wave60_native_present_keys() {
         "Wave60 frame callback same-present-id proof"
 }
 
-require_d3d12_helper_commit_accepted() {
-    require_any_counter_at_least 1 "D3D12 helper present-source commit accepted" \
+require_d3d12_gpup_dda_commit_accepted() {
+    require_any_counter_at_least 1 "D3D12 GPU-P/DDA present-source commit accepted" \
         d3d12_dxg_present_source_commit_successes \
         d3d12_present_source_commit_successes \
         d3d12_present_source_buffer_commit_successes \
         dxg_present_commit_successes \
         d3d12_final_handoff_host_display_commit_success \
-        d3d12_helper_commit_accepted \
-        d3d12_present_helper_commit_accepted \
-        d3d12_host_display_helper_commit_accepted \
         d3d12_present_source_commit_accepted \
         d3d12_dxg_present_source_commit_accepted \
         d3d12_host_display_commit_accepted
@@ -925,7 +945,7 @@ require_d3d12_present_display_correlation() {
     require_counter_at_least d3d12_display_handoff_implemented 1 \
         "D3D12 display-handoff implementation marker"
     require_wave60_native_present_keys
-    require_d3d12_helper_commit_accepted
+    require_d3d12_gpup_dda_commit_accepted
     require_d3d12_same_frame_callback_release
     require_counter_at_least display_completions 1 \
         "display completion counter"
@@ -1364,6 +1384,7 @@ run_guest 'dxgprobe --owner-isolation' 120000
 run_guest 'echo V:sl; dxgprobe --shared-lifetime-validate; cat /dev/dxg' 180000
 run_guest 'echo V:sp; dxgprobe --shared-private-validate; cat /dev/dxg' 180000
 run_guest 'echo V:in; dxgprobe --import-negative; cat /dev/dxg; echo D:in' 180000
+run_guest 'echo V:oh; dxgprobe --sync-handle-source-matrix; cat /dev/dxg; echo D:oh' 180000
 run_guest 'echo V:bl; d3d12sharedsmoke --bad-luid' 120000
 run_guest 'echo V:eo; d3d12sharedsmoke' 180000
 run_guest 'echo V:rp' 10000
@@ -1478,6 +1499,10 @@ require_log_line 'V:in' \
     "D3D12 import-negative validator invocation"
 require_log_line 'D:in' \
     "D3D12 import-negative validator completion marker"
+require_log_line 'V:oh' \
+    "OpenSync handle-source validator invocation"
+require_log_line 'D:oh' \
+    "OpenSync handle-source validator completion marker"
 require_log_line 'V:bl' \
     "D3D12 bad-LUID validator invocation"
 require_log_line 'V:eo' \
@@ -1506,6 +1531,7 @@ require_log 'shared_private ok' \
 require_shared_resource_seal_provenance_if_present
 require_import_negative_matrix
 require_opensyncobject_source_matrix_if_present
+require_opensync_handle_source_matrix_if_present
 require_ntshared_close_behavior_matrix_if_present
 require_log 'wddm_payload_validate (ok|predevice_pending) context_len=[1-9][0-9]* context_priv=[1-9][0-9]* .* hwqueue_priv=[1-9][0-9]* .* submit_priv=[1-9][0-9]*' \
     "real UMD WDDM private payload diagnostics"

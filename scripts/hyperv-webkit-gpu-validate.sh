@@ -13,10 +13,12 @@ LOG="${WEBKIT_GPU_VALIDATE_LOG:-${BUILD_DIR}/hyperv-webkit-gpu-validate.log}"
 VALIDATION_RUN_ID="${VALIDATION_RUN_ID:-webkit-$(date +%s)-$$}"
 DXG_CONTRACT_LOG="${WEBKIT_GPU_DXG_CONTRACT_LOG:-${WEBKIT_GPU_CONTRACT_LOG:-${BUILD_DIR}/hyperv-dxg-validate.log}}"
 FPS_CONTRACT_LOG="${WEBKIT_GPU_FPS_CONTRACT_LOG:-${WEBKIT_GPU_CONTRACT_LOG:-${BUILD_DIR}/hyperv-3d-fps-validate.log}}"
+CORE_CONTRACT_LOG="${GPU_CORE_VALIDATE_LOG:-${BUILD_DIR}/hyperv-gpu-core-validate.log}"
 READ_MS="${WEBKIT_GPU_VALIDATE_READ_MS:-150000}"
 TIMEOUT_MS="${WEBKIT_GPU_VALIDATE_TIMEOUT_MS:-30000}"
 REOPEN="${WEBKIT_GPU_VALIDATE_REOPEN:-2}"
 CONTRACT_MAX_AGE_SEC="${WEBKIT_GPU_CONTRACT_MAX_AGE_SEC:-3600}"
+MODE="${WEBKIT_GPU_VALIDATE_MODE:-full}"
 
 fail()
 {
@@ -105,18 +107,21 @@ reject_wave60_registration_only_present_file()
     fi
 }
 
-require_fail_closed_helper_diagnostic_file()
+require_fail_closed_gpup_dda_diagnostic_file()
 {
     local file="$1"
     local why="$2"
 
-    if ! grep -Eq 'missing host ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)|helper=host-display-helper/resource-scanout-bind|d3d12_display_handoff_requires_kernel_host_protocol=1' "${file}"; then
-        fail "${why} fail-closed D3D12 present lacked named host-display helper diagnostic"
+    if grep -Eq 'host-display-helper/resource-scanout-bind|runtime-created-d3d12-resource-to-host-display-helper|custom_host_tool:[1-9][0-9]*|custom_host_tool=1' "${file}"; then
+        fail "${why} used a custom host display helper; only represented GPU-P/DXG or DDA/Nouveau handoff is accepted"
     fi
-    if grep -Eq 'helper=host-display-helper/resource-scanout-bind|missing host ABI=host-display-helper/resource-scanout-bind|ABI=host-display-helper/resource-scanout-bind' "${file}"; then
+    if ! grep -Eq 'missing host ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|d3d12_present_source_no_gpu_p_or_dda_display_bind=1|d3d12_display_handoff_requires_kernel_host_protocol=1' "${file}"; then
+        fail "${why} fail-closed D3D12 present lacked named GPU-P/DDA display-bind diagnostic"
+    fi
+    if grep -Eq 'gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|missing host ABI=gpu-p-dxg-resource-scanout-bind|ABI=gpu-p-dxg-resource-scanout-bind' "${file}"; then
         require_file_log "${file}" \
             'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38' \
-            "${why} Wave49 host-display-helper candidate command diagnostics"
+            "${why} Wave49 GPU-P/DXG candidate command diagnostics"
     fi
 }
 
@@ -152,11 +157,11 @@ require_d3d12_display_provenance_file_if_present()
         'd3d12_display_completion_required[ =]1' \
         "${why} D3D12 WSLg-display/native display-completion requirement"
     require_file_log "${file}" \
-        'd3d12_final_handoff_lane[ =]runtime-created-d3d12-resource-to-host-display-helper' \
-        "${why} D3D12 final handoff helper-contract lane"
+        'd3d12_final_handoff_lane[ =]runtime-created-d3d12-resource-through-gpu-p-or-dda' \
+        "${why} D3D12 final handoff GPU-P/DDA lane"
     require_file_log "${file}" \
-        'd3d12_final_handoff_selected[ =](dxg-resource-scanout-bind|host-display-helper/resource-scanout-bind)' \
-        "${why} D3D12 final handoff selected helper contract"
+        'd3d12_final_handoff_selected[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)' \
+        "${why} D3D12 final handoff selected GPU-P/DDA contract"
     require_file_log "${file}" \
         'd3d12_final_handoff_source[ =]runtime-created-d3d12-resource' \
         "${why} D3D12 final handoff runtime-created resource source"
@@ -250,10 +255,10 @@ reject_import_only_evidence_file()
         fail "missing ${why} native-present completion contract: release=1, frame=1, gpu_present delta, display completion, nonce, and content hash/frame counters"
     fi
 
-    if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|helper_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${file}" &&
+    if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|gpu_p_or_dda_transport_absent|no_gpu_p_or_dda_display_bind|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${file}" &&
        ! grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff' "${file}"; then
-        require_fail_closed_helper_diagnostic_file "${file}" "${why}"
-        fail "${why} is fail-closed present: missing host-display helper/resource-scanout-bind dependency; WebKit remains gated until nonzero present_id, completed>=present_id, callbacks/releases, no readback, strict FPS, and backend_opengl_submit=1 exist"
+        require_fail_closed_gpup_dda_diagnostic_file "${file}" "${why}"
+        fail "${why} is fail-closed present: missing GPU-P/DDA resource-scanout-bind dependency; WebKit remains gated until nonzero present_id, completed>=present_id, callbacks/releases, no readback, strict FPS, and backend_opengl_submit=1 exist"
     fi
 
     if grep -Eq 'd3d12sharedsmoke: runtime CreateSharedHandle\(resource\) ok' "${file}" &&
@@ -313,10 +318,10 @@ reject_dxg_present_accounting_state_file()
        grep -Eq 'dxg_present_commit_copyin_failures 0' "${file}" &&
        grep -Eq 'dxg_present_commit_attempts [1-9][0-9]*' "${file}" &&
        grep -Eq 'dxg_present_host_handoff_missing [1-9][0-9]*|dxg_present_missing_host_abi [1-9][0-9]*|dxg_present_last_ret 95' "${file}"; then
-        echo "hyperv-webkit-gpu-validate: ${why} classification=validated-missing-host-helper" >&2
-        grep -E 'dxg_present_(register|commit)_(ioctl_entries|copyin_failures|attempts|successes|rejects)|dxg_present_(host_handoff_missing|missing_host_abi|last_ret|requires_host_protocol|helper_contract_version|helper_required_metadata|helper_transport_present|helper_source_live|helper_requires_completion)|d3d12_(evidence_stage|present_path|present_missing|present_errno|dxg_present_source_commit_attempts|dxg_present_source_commit_successes|dxg_present_id|dxg_present_completed)|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${file}" >&2 ||
+        echo "hyperv-webkit-gpu-validate: ${why} classification=validated-missing-gpup-or-dda-display-bind" >&2
+        grep -E 'dxg_present_(register|commit)_(ioctl_entries|copyin_failures|attempts|successes|rejects)|dxg_present_(host_handoff_missing|missing_host_abi|last_ret|requires_host_protocol|gpu_p_or_dda_contract_version|gpu_p_or_dda_required_metadata|gpu_p_or_dda_transport_present|gpu_p_or_dda_source_live|gpu_p_or_dda_requires_completion)|d3d12_(evidence_stage|present_path|present_missing|present_errno|dxg_present_source_commit_attempts|dxg_present_source_commit_successes|dxg_present_id|dxg_present_completed)|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${file}" >&2 ||
             true
-        fail "${why} reached validated kernel present handling, but the host-display helper ABI is missing; fail-closed accounting is not native completion or WebKit/FPS credit"
+        fail "${why} reached validated kernel present handling, but the GPU-P/DDA display bind is missing; fail-closed accounting is not native completion or WebKit/FPS credit"
     fi
 }
 
@@ -589,21 +594,18 @@ require_any_counter_ge()
     fi
 }
 
-require_d3d12_helper_commit_accepted_file()
+require_d3d12_gpup_dda_commit_accepted_file()
 {
     local file="$1"
     local why="$2"
 
     require_any_counter_ge "${file}" 1 \
-        "${why} D3D12 helper present-source commit accepted" \
+        "${why} D3D12 GPU-P/DDA present-source commit accepted" \
         d3d12_dxg_present_source_commit_successes \
         d3d12_present_source_commit_successes \
         d3d12_present_source_buffer_commit_successes \
         dxg_present_commit_successes \
         d3d12_final_handoff_host_display_commit_success \
-        d3d12_helper_commit_accepted \
-        d3d12_present_helper_commit_accepted \
-        d3d12_host_display_helper_commit_accepted \
         d3d12_present_source_commit_accepted \
         d3d12_dxg_present_source_commit_accepted \
         d3d12_host_display_commit_accepted
@@ -654,7 +656,7 @@ require_wave60_native_present_keys_file()
         'd3d12_frame_callback_same_present_id[ =]1' \
         "${why} Wave60 frame callback same-present-id proof"
     reject_file_log "${file}" \
-        'd3d12_native_present_requirements_satisfied[ =]0|native_requirements=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|helper_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1|d3d12_present_source_buffer_query_skipped_commit_failed[ =]1|d3d12_present_source_query_skipped_reason=commit-failed' \
+        'd3d12_native_present_requirements_satisfied[ =]0|native_requirements=0|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|gpu_p_or_dda_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1|d3d12_present_source_buffer_query_skipped_commit_failed[ =]1|d3d12_present_source_query_skipped_reason=commit-failed' \
         "${why} Wave60 fail-closed/pass-by-registration native-present evidence"
 }
 
@@ -717,6 +719,7 @@ require_latest_d3d12_luid_match()
 
 require_prior_shared_surface_contract()
 {
+    require_prior_core_gpu_contract
     require_fresh_file "${DXG_CONTRACT_LOG}" \
         "prior DXG/native-present contract evidence log"
     require_fresh_file "${FPS_CONTRACT_LOG}" \
@@ -771,7 +774,7 @@ require_prior_shared_surface_contract()
         "prior DXG D3D12 display-handoff implementation marker"
     require_wave60_native_present_keys_file "${DXG_CONTRACT_LOG}" \
         "prior DXG strict-present"
-    require_d3d12_helper_commit_accepted_file "${DXG_CONTRACT_LOG}" \
+    require_d3d12_gpup_dda_commit_accepted_file "${DXG_CONTRACT_LOG}" \
         "prior DXG strict-present"
     require_d3d12_same_frame_callback_release_file "${DXG_CONTRACT_LOG}" \
         "prior DXG strict-present"
@@ -809,7 +812,7 @@ require_prior_shared_surface_contract()
         "prior FPS strict-present existing-sysmem exclusion marker"
     require_wave60_native_present_keys_file "${FPS_CONTRACT_LOG}" \
         "prior FPS strict-present"
-    require_d3d12_helper_commit_accepted_file "${FPS_CONTRACT_LOG}" \
+    require_d3d12_gpup_dda_commit_accepted_file "${FPS_CONTRACT_LOG}" \
         "prior FPS strict-present"
     require_d3d12_same_frame_callback_release_file "${FPS_CONTRACT_LOG}" \
         "prior FPS strict-present"
@@ -844,11 +847,32 @@ require_prior_shared_surface_contract()
         "prior D3D12 DRI software/readback fallback"
 }
 
+require_prior_core_gpu_contract()
+{
+    require_fresh_file "${CORE_CONTRACT_LOG}" \
+        "prior core GPU validator evidence log"
+    require_file_log "${CORE_CONTRACT_LOG}" \
+        'hyperv-gpu-core-validate: passed validation_run_id=' \
+        "prior core GPU validator pass marker"
+    require_file_log "${CORE_CONTRACT_LOG}" 'ttmtest: ok' \
+        "prior TTM validator"
+    require_file_log "${CORE_CONTRACT_LOG}" 'drmiftest: ok' \
+        "prior DRM/GEM/KMS validator"
+    require_file_log "${CORE_CONTRACT_LOG}" 'nouveauabitest: .*ok' \
+        "prior Nouveau ABI validator"
+    require_file_log "${CORE_CONTRACT_LOG}" 'backend_opengl_submit 0' \
+        "prior Hyper-V OpenGL-submit gated state"
+    reject_file_log "${CORE_CONTRACT_LOG}" \
+        'backend_opengl_submit 1|panic|fatal page fault|coredump|assert|device removal|Removing Device' \
+        "prior invalid core GPU validator acceleration/crash marker"
+}
+
 webkit_shared_surface_contract_validated()
 {
-    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
-    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
-    grep -Eq 'd3d12sharedsmoke: present validation ok frame=1 release=1 gpu_present=[0-9]+->[1-9][0-9]*' "${LOG}" &&
+	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
+	    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
+	    grep -Eq 'webkitgpusmoke: gpu-contract .*d3d12_run_id=webkit-[0-9]+-[0-9]+ .*env_run_id=webkit-[0-9]+-[0-9]+ .*d3d12_run_id_match=1 .*ok=1' "${LOG}" &&
+	    grep -Eq 'd3d12sharedsmoke: present validation ok frame=1 release=1 gpu_present=[0-9]+->[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff .*present_id=[1-9][0-9]* completed=[1-9][0-9]* .*mtime_ms=[1-9][0-9]* min_mtime_ms=[1-9][0-9]* .*starts=[1-9][0-9]* copy=[1-9][0-9]* completes=[1-9][0-9]* .*resource=0x[1-9a-fA-F][0-9a-fA-F]* allocations=[1-9][0-9]* fence=0x[1-9a-fA-F][0-9a-fA-F]* target=1 release=[1-9][0-9]* .*source_luid=([0-9a-fA-F]{8}):([0-9a-fA-F]{8}) matched_luid=\1:\2 no_cpu_readback=1' "${LOG}" &&
     grep -Eq 'd3d12_gpu_present_complete[s]?=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_gpu_present_starts=[1-9][0-9]*' "${LOG}" &&
@@ -885,7 +909,7 @@ require_current_native_present_contract()
         "WebKit current-run D3D12 display-handoff implementation marker"
     require_wave60_native_present_keys_file "${LOG}" \
         "WebKit current-run"
-    require_d3d12_helper_commit_accepted_file "${LOG}" \
+    require_d3d12_gpup_dda_commit_accepted_file "${LOG}" \
         "WebKit current-run"
     require_d3d12_same_frame_callback_release_file "${LOG}" \
         "WebKit current-run"
@@ -986,7 +1010,148 @@ run_guest()
         tee -a "${LOG}"
 }
 
-echo "hyperv-webkit-gpu-validate: requiring prior shared-surface contract evidence dxg=${DXG_CONTRACT_LOG} fps=${FPS_CONTRACT_LOG}" |
+run_contract_negative_validate()
+{
+    echo "hyperv-webkit-gpu-validate: mode=contract-negative" | tee -a "${LOG}"
+    echo "hyperv-webkit-gpu-validate: building kernel/rootfs" | tee -a "${LOG}"
+    cmake --build "${BUILD_DIR}" --target kernel -j"${WEBKIT_GPU_VALIDATE_JOBS:-2}" |
+        tee -a "${LOG}"
+    cmake --build "${BUILD_DIR}" --target rootfs -j"${WEBKIT_GPU_VALIDATE_JOBS:-2}" |
+        tee -a "${LOG}"
+
+    echo "hyperv-webkit-gpu-validate: building ${OUT_VHDX}" | tee -a "${LOG}"
+    HYPERV_CMDLINE="BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=1 webkit_accel=1 webkit_contract_wait_ms=1000 webkit_api_smoke=0 webkit_webgl_smoke=0 webkit_logging=1 webkit_timeout_ms=15000 desktop_exit_after_smoke=1 video=1024x640 acpi_cpus=6" \
+        scripts/make-hyperv-image.sh \
+            "${BUILD_DIR}/kernel/build/kernel/xv6.bin" \
+            "${BUILD_DIR}/fs.img" \
+            "${OUT_VHDX}" 0 | tee -a "${LOG}"
+
+    echo "hyperv-webkit-gpu-validate: deploying to ${VM_NAME}" | tee -a "${LOG}"
+    run_ps "Stop-VM -Name '${VM_NAME}' -TurnOff -Force -ErrorAction SilentlyContinue"
+    cp -f "${OUT_VHDX}" "${DEPLOY_VHDX}"
+    run_ps "Start-VM -Name '${VM_NAME}'; Get-VM -Name '${VM_NAME}' | Select Name, State, Uptime | Format-List"
+
+    echo "hyperv-webkit-gpu-validate: running contract-negative C validator" |
+        tee -a "${LOG}"
+    sleep 20
+    run_guest "echo __WEBKIT_CONTRACT_NEG_BEGIN__; cat /proc/cmdline; cat /proc/uptime" \
+        "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+    run_guest "rm -f /tmp/wlcomp-d3d12-present; sleep 8; cat /tmp/webkit-gpu-policy" \
+        "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+    run_guest "webkitgpusmoke --expect-d3d12-gpu-contract-fail; echo webkit_contract_negative_status=\$?" \
+        "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+    run_guest "fbstat; ps; cat /proc/uptime; echo __WEBKIT_CONTRACT_NEG_END__" \
+        "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+
+    require_log '__WEBKIT_CONTRACT_NEG_BEGIN__' \
+        "WebKit contract-negative begin marker"
+    require_log '__WEBKIT_CONTRACT_NEG_END__' \
+        "WebKit contract-negative end marker"
+    require_log 'webkit=1 .*webkit_accel=1 .*webkit_contract_wait_ms=1000 .*webkit_api_smoke=0 .*webkit_webgl_smoke=0' \
+        "WebKit contract-negative command line"
+    require_log 'backend hyperv-dxg flags' "Hyper-V GPU backend"
+    require_log 'backend_opengl_submit 0' \
+        "Hyper-V OpenGL-submit remains gated"
+    require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=0 .*opengl_submit=0 .*shared_surface=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none .*fallback=opengl_submit_unavailable' \
+        "WebKit desktop policy stays gated without shared-surface contract"
+	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*shared_surface=0 .*d3d12_present=0 .*opengl_submit=0 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=0' \
+	        "WebKit C contract validator rejects unavailable D3D12 shared-surface contract"
+	    require_log 'webkitgpusmoke: gpu-contract .*env_run_id=d3d12-contract-negative .*d3d12_run_id_match=0 .*ok=0' \
+	        "WebKit C contract validator rejects missing/mismatched WebKit run id"
+    require_log 'webkitgpusmoke: d3d12-contract-only expected=fail rc=-1' \
+        "WebKit contract-negative expected failure"
+    require_log 'webkit_contract_negative_status=0' \
+        "WebKit contract-negative validator exit status"
+    reject_log 'backend_opengl_submit 1' \
+        "Hyper-V OpenGL-submit enabled before native-present/FPS/WebKit proof"
+    reject_log 'webkit_gpu_policy .*effective_accel=1' \
+        "WebKit acceleration enabled without validated shared-surface contract"
+    reject_log 'webkit_gpu_policy .*gpu_contract=d3d12-shared-surface' \
+        "WebKit D3D12 contract policy before prerequisites"
+    reject_log 'webkit_gpu_policy .*gpu_contract=virgl-opengl-submit' \
+        "WebKit virgl contract on Hyper-V negative image"
+    reject_log 'webkitgpusmoke: d3d12-contract-only expected=fail rc=0' \
+        "WebKit C validator accepting the unavailable D3D12 contract"
+    reject_log 'panic|fatal page fault|SIGABRT|coredump: generating' \
+        "crash marker"
+    reject_log 'wlcomp exited' "compositor exit"
+
+    echo "hyperv-webkit-gpu-validate: passed contract-negative (${LOG})" |
+        tee -a "${LOG}"
+}
+
+run_preflight_stale_negative_validate()
+{
+    local tmpdir
+    local output
+    local rc
+    local old_epoch
+
+    tmpdir="$(mktemp -d "${BUILD_DIR}/webkit-preflight-stale.XXXXXX")"
+    old_epoch="$(( $(date +%s) - CONTRACT_MAX_AGE_SEC - 30 ))"
+
+    printf '%s\n' \
+        'hyperv-gpu-core-validate: passed validation_run_id=stale-preflight' \
+        'ttmtest: ok' \
+        'drmiftest: ok' \
+        'nouveauabitest: ok' \
+        'backend_opengl_submit 0' \
+        >"${tmpdir}/core.log"
+    printf '%s\n' \
+        'hyperv-dxg-validate: validation_run_id=stale-preflight' \
+        'backend_opengl_submit 0' \
+        >"${tmpdir}/dxg.log"
+    printf '%s\n' \
+        'hyperv-3d-fps-validate: ok validation_run_id=stale-preflight render=640x480' \
+        'backend_opengl_submit 1' \
+        'effective_presented_fps=999' \
+        >"${tmpdir}/fps.log"
+    touch -d "@${old_epoch}" "${tmpdir}/fps.log"
+
+    set +e
+    output="$(
+        {
+            CORE_CONTRACT_LOG="${tmpdir}/core.log"
+            DXG_CONTRACT_LOG="${tmpdir}/dxg.log"
+            FPS_CONTRACT_LOG="${tmpdir}/fps.log"
+            require_prior_shared_surface_contract
+        } 2>&1
+    )"
+    rc=$?
+    set -e
+
+    printf '%s\n' "${output}" | tee -a "${LOG}"
+    if (( rc == 0 )); then
+        fail "stale FPS preflight evidence was accepted"
+    fi
+    if ! grep -Fq 'stale prior FPS/OpenGL-submit contract evidence log' <<<"${output}"; then
+        fail "stale FPS preflight negative did not fail for stale FPS evidence"
+    fi
+    if grep -Eq 'prior finite 480p FPS validation|prior Hyper-V OpenGL-submit gate' <<<"${output}"; then
+        fail "stale FPS preflight negative reached accelerated WebKit/FPS acceptance checks"
+    fi
+
+    echo "hyperv-webkit-gpu-validate: stale-fps-preflight-negative status=PASS stale_log=${tmpdir}/fps.log" |
+        tee -a "${LOG}"
+}
+
+case "${MODE}" in
+full)
+    ;;
+contract-negative)
+    run_contract_negative_validate
+    exit 0
+    ;;
+preflight-stale-negative)
+    run_preflight_stale_negative_validate
+    exit 0
+    ;;
+*)
+    fail "unsupported WEBKIT_GPU_VALIDATE_MODE=${MODE}"
+    ;;
+esac
+
+echo "hyperv-webkit-gpu-validate: requiring prior GPU evidence core=${CORE_CONTRACT_LOG} dxg=${DXG_CONTRACT_LOG} fps=${FPS_CONTRACT_LOG}" |
     tee -a "${LOG}"
 require_prior_shared_surface_contract
 echo "hyperv-webkit-gpu-validate: building kernel/rootfs" | tee -a "${LOG}"
@@ -1022,8 +1187,10 @@ if webkit_shared_surface_contract_validated; then
         "WebKit D3D12 shared-surface/OpenGL-submit acceleration gate"
     require_log 'webkit_gpu_policy .*gpu_contract=d3d12-shared-surface .*d3d12_native_present_required=1 .*d3d12_copy_export=0 .*d3d12_readback=0 .*fallback=none' \
         "WebKit D3D12 native-present/no-readback policy"
-    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' \
-        "WebKit in-process D3D12 GPU contract audit"
+	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' \
+	        "WebKit in-process D3D12 GPU contract audit"
+	    require_log 'webkitgpusmoke: gpu-contract .*d3d12_run_id=webkit-[0-9]+-[0-9]+ .*env_run_id=webkit-[0-9]+-[0-9]+ .*d3d12_run_id_match=1 .*ok=1' \
+	        "WebKit D3D12 evidence belongs to the current WebKit run"
     require_log 'd3d12_gpu_present_complete[s]?=[1-9][0-9]*' \
         "WebKit D3D12 native-present completion evidence"
     require_log 'd3d12_present_resource=0x[1-9a-fA-F][0-9a-fA-F]*' \
@@ -1100,10 +1267,10 @@ reject_log 'webkitgpusmoke: gpu-contract .*env_d3d12_native_present_disabled=1' 
     "WebKit D3D12 native present disabled"
 reject_log 'webkitgpusmoke: gpu-contract .*env_d3d12_copy_export=1' \
     "WebKit D3D12 copy-export fallback"
-if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|helper_transport_absent|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${LOG}" &&
+if grep -Eq 'd3d12_present_errno=95|present_errno=95|(^|[[:space:]])(commit_errno|commit_status|d3d12_.*commit_(errno|status))[ =]95($|[[:space:]])|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|d3d12_present_source_(commit_rejected_eopnotsupp|no_present_id_completed|gpu_p_or_dda_transport_absent|no_gpu_p_or_dda_display_bind|same_frame_callbacks_blocked|same_frame_releases_blocked)[ =]1' "${LOG}" &&
    ! grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff' "${LOG}"; then
-    require_fail_closed_helper_diagnostic_file "${LOG}" "WebKit current-run D3D12 present"
-    fail "fail-closed present: missing host-display helper/resource-scanout-bind dependency; WebKit remains gated off until nonzero present_id, completed>=present_id, callbacks/releases, no readback, strict FPS, and backend_opengl_submit=1 exist"
+    require_fail_closed_gpup_dda_diagnostic_file "${LOG}" "WebKit current-run D3D12 present"
+    fail "fail-closed present: missing GPU-P/DDA resource-scanout-bind dependency; WebKit remains gated off until nonzero present_id, completed>=present_id, callbacks/releases, no readback, strict FPS, and backend_opengl_submit=1 exist"
 fi
 if grep -Eq 'webkit_gpu_policy .*effective_accel=1' "${LOG}" &&
    grep -Eq 'd3d12sharedsmoke: (shareobjects failed|CreateSharedHandle\(resource\) failed|present validation failed|GPU present evidence (file missing or unreadable|missing/unchanged)|could not remove stale present evidence)|cat: cannot open /tmp/wlcomp-d3d12-present' "${LOG}"; then
