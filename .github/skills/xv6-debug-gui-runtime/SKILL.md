@@ -328,6 +328,11 @@ but do not treat them as open plan items by default.
     the OUT_FENCE gate.
 - For WSL `hmgrtable` parity, keep local adapter handles and normal DXG object
   handles distinct:
+  - `hvdxg_process_state` should keep WSL-shaped process object refs separate
+    from process memory refs; validators should look for
+    `dxg_process_mem_lifetime_matrix` and the kernel
+    `d3dkmt_process_lifetime=` status row before closing process-lifetime
+    parity items;
   - local adapter handles use the per-process local handle namespace and should
     prove index/unique encoding plus the WSL minimum-free reuse delay
     (`min_free=128`) with `dxgprobe --handle-lifetime-validate`;

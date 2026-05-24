@@ -113,7 +113,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     the same TGID namespace, matching WSL's TGID-keyed `dxgprocess` lookup.
   - [x] Add a common pre-dispatch TGID ownership gate for D3DKMT ioctls so
     stale or wrong-process file descriptors fail before packet forwarding.
-  - [ ] Split process object lifetime from process memory lifetime, or add
+  - [x] Split process object lifetime from process memory lifetime, or add
     validated equivalent references for shared fds and async cleanup paths.
 - [ ] Re-audit the xv6 DXG handle table against WSL `hmgrtable`: local adapter
   handles versus normal object handles, index/unique/instance fields, destroyed
