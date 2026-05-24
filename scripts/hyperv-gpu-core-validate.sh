@@ -437,6 +437,9 @@ serial_step "dxg-cpu-event-signal" \
 serial_step "dxg-syncfile" \
     "WSL-style DXG sync-file open/wait/unwind validator" 180000 \
     'echo __CORE_DXG_SYNCFILE_BEGIN__; dxgprobe --syncfile; cat /dev/dxg; echo __CORE_DXG_SYNCFILE_END__'
+serial_step "dxg-wsl-replay" \
+    "same-adapter WSL-shaped D3DKMT replay packet/signature validator" 180000 \
+    'echo __CORE_DXG_WSL_REPLAY_BEGIN__; dxgprobe --wsl-trace-replay; cat /dev/dxg; echo __CORE_DXG_WSL_REPLAY_END__'
 serial_step "dxg-present-source" \
     "fail-closed DXG present-source and bind-contract validator" 180000 \
     'echo __CORE_DXG_PRESENT_BEGIN__; dxgprobe --present-source-failclosed-validate; cat /dev/dxg; fbstat; echo __CORE_DXG_PRESENT_END__'
@@ -569,6 +572,18 @@ require_log 'dxg_syncfile_open_unwind_matrix .*open_fault_rc=-14 .*open_destroy=
     "WSL-style sync-file open copyout-failure cleanup validator"
 require_log 'dxg_syncfile_lifetime=.*open_faults:[1-9][0-9]* .*open_destroy:[1-9][0-9]*/[1-9][0-9]*/0 .*host_events:0/[1-9][0-9]*/[1-9][0-9]*' \
     "DXG sync-file lifetime and host-event diagnostics"
+require_log '^__CORE_DXG_WSL_REPLAY_BEGIN__$' \
+    "WSL replay begin marker"
+require_log '^__CORE_DXG_WSL_REPLAY_END__$' \
+    "WSL replay end marker"
+require_log 'wsl_trace_replay_packet_matrix stage=create_device .*status=PASS' \
+    "WSL replay CREATEDEVICE packet matrix"
+require_log 'wsl_trace_replay_packet_matrix stage=create_allocation .*status=PASS' \
+    "WSL replay CREATEALLOCATION packet matrix"
+require_log 'wsl_trace_replay_packet_matrix stage=submit_hwqueue .*expected_reject:1 .*status=PASS' \
+    "WSL replay synthetic HWQUEUE submit rejection matrix"
+require_log 'wsl_trace_replay_signature .*trace=/tmp/xv6-wsl-probe/mesaglfeature-nvidia-live.trace .*equivalence=synthetic_invalid_parameter .*same_adapter_source=selected_openadapter_luid .*status=PASS' \
+    "same-adapter WSL trace replay signature"
 require_log 'dxg_opensync_envelope=route:global cmd:40 wire:56 ext:1 eoff:16 result:24 actual:24 ret:0 status:0x0 .* fd_kind:1 fd_refs:[1-9][0-9]*' \
     "WSL-natural OPENSYNCOBJECT envelope"
 require_log 'dxg_opensync_shape=.* off_dev:24 off_global:28 off_flags:36' \
