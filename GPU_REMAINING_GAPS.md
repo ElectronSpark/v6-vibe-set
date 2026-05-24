@@ -136,7 +136,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     free-list table for normal DXG objects, including free-count/head/tail,
     unique bump on free, chunk expansion, and explicit `ignore_destroyed`
     callers matching WSL.
-  - [ ] Validate stale handle rejection after delayed reuse for every object
+  - [x] Validate stale handle rejection after delayed reuse for every object
     class: device, context, HW queue, paging queue, sync object, resource,
     allocation, and GPUVA reservation.
 - [ ] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
