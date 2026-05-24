@@ -178,6 +178,11 @@ but do not treat them as open plan items by default.
   separation: resource query/open must reject sync fds, and sync open must
   reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`
   contract before using any shared handle as native-present evidence.
+- For NT shared-object fd publication, prove the WSL-style copyout failure
+  path separately from ordinary close: a bad `shared_handle` pointer must
+  deallocate the just-installed fd, run last-fd close cleanup, drop the
+  NT shared-object ref to zero, and still allow a subsequent valid share of the
+  same resource or sync object.
 - WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
   `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
   `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.

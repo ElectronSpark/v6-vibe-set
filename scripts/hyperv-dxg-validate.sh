@@ -402,6 +402,14 @@ require_import_negative_matrix() {
         "D3D12 sync import-negative inherited parent-device rejection proof"
     require_log 'sync_import_negative_matrix .*present_attempted=0 .*native_present_claim=0' \
         "D3D12 sync import-negative produced no present credit"
+    require_log 'ntshare_copyout_cleanup_matrix kind=resource .*status=PASS' \
+        "D3D12 resource NT share copyout-failure cleanup PASS"
+    require_log 'ntshare_copyout_cleanup_matrix kind=resource .*fault_share_rc=-1 .*reclaimed=1 .*refs_after=0 .*valid_share_after_fault=1 .*returned_fd_valid=1' \
+        "D3D12 resource NT share copyout failure reclaimed fd/ref and recovered"
+    require_log 'ntshare_copyout_cleanup_matrix kind=sync .*status=PASS' \
+        "D3D12 sync NT share copyout-failure cleanup PASS"
+    require_log 'ntshare_copyout_cleanup_matrix kind=sync .*fault_share_rc=-1 .*reclaimed=1 .*refs_after=0 .*valid_share_after_fault=1 .*returned_fd_valid=1' \
+        "D3D12 sync NT share copyout failure reclaimed fd/ref and recovered"
     require_log 'dxg_tgid_pre_dispatch_matrix .*status=PASS' \
         "DXG inherited fd pre-dispatch TGID gate matrix PASS"
     require_log 'dxg_tgid_pre_dispatch_matrix .*inherited_enum_rc=-1 .*inherited_openadapter_rc=-1 .*inherited_query_rc=-1 .*inherited_create_rc=-1 .*inherited_opensync_rc=-1' \
@@ -414,6 +422,9 @@ require_import_negative_matrix() {
     fi
     if grep -Eq 'dxg_tgid_pre_dispatch_matrix .*status=FAIL' "${LOG}"; then
         fail "DXG pre-dispatch TGID matrix reported FAIL"
+    fi
+    if grep -Eq 'ntshare_copyout_cleanup_matrix .*status=FAIL' "${LOG}"; then
+        fail "NT share copyout cleanup matrix reported FAIL"
     fi
     require_opensync_child_split_matrices
     echo "hyperv-dxg-validate: D3D12 import-negative proof ok; this closes rejection/provenance only, not native present/FPS/WebKit" |

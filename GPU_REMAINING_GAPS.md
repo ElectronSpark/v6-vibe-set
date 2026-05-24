@@ -174,7 +174,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Keep `LX_DXSHAREOBJECTS` single-object only and publish custom NT
     shared-resource/sync fds with `FD_CLOEXEC`; the shared-resource C
     validator now fails unless the returned fd reports close-on-exec.
-  - [ ] Add explicit copyout-failure fault injection for `shared_handle` so
+  - [x] Add explicit copyout-failure fault injection for `shared_handle` so
     cleanup of the fd/file reference and NT shared-object ref is proven without
     relying on ordinary close paths.
   - [x] Add a wrong-kind matrix that exports resource and sync NT fds, then
