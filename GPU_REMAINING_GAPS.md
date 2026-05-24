@@ -164,6 +164,14 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
 - [ ] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
   `object_count == 1`, anon-inode kind, `O_CLOEXEC`, copyout-before-install,
   cleanup of unused fd/file references on failure, and wrong-kind rejection.
+  - [x] Keep `LX_DXSHAREOBJECTS` single-object only and publish custom NT
+    shared-resource/sync fds with `FD_CLOEXEC`; the shared-resource C
+    validator now fails unless the returned fd reports close-on-exec.
+  - [ ] Add explicit copyout-failure fault injection for `shared_handle` so
+    cleanup of the fd/file reference and NT shared-object ref is proven without
+    relying on ordinary close paths.
+  - [ ] Add a wrong-kind matrix that exports resource and sync NT fds, then
+    proves resource-open rejects sync fds and sync-open rejects resource fds.
 - [ ] Re-audit WSL `CREATESYNCFILE`, `OPENSYNCOBJECTFROMSYNCFILE`, and
   `WAITSYNCFILE`: monitored-fence `dma_fence` creation, host event
   registration, CPU wait submission, temporary local sync-object lifetime,

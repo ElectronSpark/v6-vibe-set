@@ -508,7 +508,7 @@ require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*sync_r
     "WSL-style stale DXG object rejection matrix"
 require_log 'handle_lifetime ok .*reuse_delayed:[0-9]+ .*min_free:128 .*free_count:[0-9]+ .*free_head:[0-9]+ .*free_tail:[0-9]+' \
     "WSL-style object handle tombstone lifetime"
-require_log 'shared_resource_seal_provenance_matrix .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \
+require_log 'shared_resource_seal_provenance_matrix .*fd_cloexec=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \
     "canonical shared-resource record seal/open/close validator"
 require_log 'shared_mutation_rejection_matrix .*append_rc=-[0-9]+ .*private_rc=-[0-9]+ .*size_flag_rc=-[0-9]+ .*owner_status=0 .*private_rewrite_rejects=[0-9]+->[1-9][0-9]* .*size_flag_rewrite_rejects=[0-9]+->[1-9][0-9]* .*owner_rewrite_rejects=[0-9]+->[1-9][0-9]* .*record_same=1 .*record_mutated=0 .*status=PASS' \
     "sealed shared-resource mutation rejection validator"
