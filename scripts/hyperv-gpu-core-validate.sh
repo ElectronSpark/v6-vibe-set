@@ -557,6 +557,10 @@ require_log 'sync_gpu2_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x
     "WSL-style SIGNALSYNCHRONIZATIONOBJECTFROMGPU2 enqueue_cpu_event validator"
 require_log 'dxg_synccpuevent_signal=.*successes:[1-9][0-9]* .*ret:0 .*flags:0x2 objects:0 contexts:1 .*event:[1-9][0-9]*' \
     "DXG CPU-event signal packet diagnostics"
+require_log 'dxg_async_message_matrix .*status=(PASS|DEFERRED)' \
+    "WSL async-message send-path validator"
+require_log 'dxg_async_send_last=enabled:[01] attempts:[0-9]+ successes:[0-9]+ fallback_sync:[0-9]+ cmd:[0-9]+ cmd_len:[0-9]+ wire_len:[0-9]+ async_bit:[01] route_global:[01] .*packet_type:[0-9]+ ret:0' \
+    "DXG async-message packet diagnostics"
 require_log 'sync_file_matrix .*create_rc=0 .*wait_rc=0 .*open_rc=0 .*open_sync=0x[1-9a-f][0-9a-f]* .*child_status=0 .*child_rc=0' \
     "WSL-style sync-file create/wait/open child validator"
 require_log 'dxg_syncfile_create_unwind_matrix .*create_fault_rc=-14 .*fd_visible=0 .*fd_reclaimed=[0-9]+->[1-9][0-9]* .*event_removed=[0-9]+->[1-9][0-9]* .*balanced=1 .*status=PASS' \

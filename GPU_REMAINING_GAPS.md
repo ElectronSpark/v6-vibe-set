@@ -169,8 +169,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     events, send the host event id as `cpu_event_handle`, clean up on send
     failure, and expose `sync_signal_cpu_event_matrix`,
     `sync_gpu2_cpu_event_matrix`, and `dxg_synccpuevent_signal` diagnostics.
-  - [ ] Add async-message parity or a same-adapter trace-backed decision for
-    signal/wait/HW-queue submit paths where WSL can set `hdr.async_msg`.
+  - [x] Add async-message parity or a same-adapter trace-backed decision for
+    signal/wait/HW-queue submit paths where WSL can set `hdr.async_msg`;
+    submit-command, signal-sync-object, GPU-wait, and HWQUEUE submit now use
+    WSL's async send path when the host advertises it, CPU wait remains
+    synchronous, and `dxg_async_message_matrix`/`dxg_async_send_last` prove
+    async or explicit sync fallback.
   - [x] Reject legacy GPU waits with `object_count > 1` so the
     wire packet obeys WSL's legacy single-object rule.
   - [ ] Extend packet diagnostics/validators to cover command length,
