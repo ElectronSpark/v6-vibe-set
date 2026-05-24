@@ -398,6 +398,10 @@ but do not treat them as open plan items by default.
 - WebKit acceleration is intentionally gated on `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
   Hyper-V render-node or D3DKMT presence alone must keep WebKit on the stable
   fallback path.
+  `wlcomp_launcher` must compare the generated WebKit run id with both
+  `d3d12_run_id` and `d3d12_present_identity_compositor_run_id` before it may
+  select the D3D12 WebKit environment; `webkit_gpu_contract_matrix` is the
+  launcher-side current-run gate row.
 
 ### DRM/KMS Validation Baselines
 

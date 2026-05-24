@@ -435,15 +435,25 @@ Goal: WebKit acceleration must consume the exact same contract as native Mesa
 clients; it cannot be enabled from render-node presence or dmabuf requests
 alone.
 
-- [ ] Keep Hyper-V WebKit acceleration gated off while any earlier active-plan
+- [x] Keep Hyper-V WebKit acceleration gated off while any earlier active-plan
   section remains open.
+  The WebKit launcher still requires `FB_GPU_BACKEND_F_OPENGL_SUBMIT` plus a
+  validated D3D12 shared-surface/native-present contract before selecting the
+  D3D12 environment. While earlier sections remain open, Hyper-V stays on the
+  stable software WebKit path and `hyperv-webkit-gpu-validate.sh` rejects
+  `effective_accel=1` or stale contract evidence.
 - [ ] Route WebKitGTK through the same Mesa D3D12 render-node path, Wayland
   D3D12 shared-resource protocol, monitored-fence/sync-file acquire path,
   adapter-LUID validation, native present path, and backend flag as native
   Mesa clients.
-- [ ] Add WebKit run-id and current-run evidence matching so stale
+- [x] Add WebKit run-id and current-run evidence matching so stale
   `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
   cannot satisfy the WebKit gate.
+  `wlcomp_launcher` now passes the generated WebKit run id into the D3D12
+  evidence admission check, requires both `d3d12_run_id` and
+  `d3d12_present_identity_compositor_run_id` to match before the D3D12 WebKit
+  environment can be selected, and emits `webkit_gpu_contract_matrix` for the
+  run-id/same-adapter/native-present decision.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.
