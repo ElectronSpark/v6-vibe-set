@@ -104,7 +104,7 @@ Goal: make the Hyper-V DXG path match WSL2 `dxgkrnl` where WSL is the right
 reference: process lifetime, typed handles, D3DKMT packet shape, shared
 resource/sync lifetime, and monitored-fence sync-file behavior.
 
-- [ ] Re-audit `hvdxg_process_state` against WSL `struct dxgprocess`:
+- [x] Re-audit `hvdxg_process_state` against WSL `struct dxgprocess`:
   host-process creation/destruction, refcount lifetime, process memory
   lifetime, `tgid`/namespace behavior, retained process reuse, and final
   `DESTROYPROCESS` ordering.
@@ -115,7 +115,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     stale or wrong-process file descriptors fail before packet forwarding.
   - [x] Split process object lifetime from process memory lifetime, or add
     validated equivalent references for shared fds and async cleanup paths.
-- [ ] Re-audit the xv6 DXG handle table against WSL `hmgrtable`: local adapter
+- [x] Re-audit the xv6 DXG handle table against WSL `hmgrtable`: local adapter
   handles versus normal object handles, index/unique/instance fields, destroyed
   tombstones, free-list reuse delay, typed lookup, stale-handle rejection, and
   `ignore_destroyed` callers.
@@ -168,7 +168,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [ ] Split shared-resource metadata into explicit WSL-like
     resource/allocation records so seal/query/open lifetimes are not stored
     only as flat blobs on `hvdxg_tracked_resource`.
-- [ ] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
+- [x] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
   `object_count == 1`, anon-inode kind, `O_CLOEXEC`, copyout-before-install,
   cleanup of unused fd/file references on failure, and wrong-kind rejection.
   - [x] Keep `LX_DXSHAREOBJECTS` single-object only and publish custom NT
