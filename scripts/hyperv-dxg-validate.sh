@@ -1587,6 +1587,8 @@ require_opensync_handle_source_matrix_if_present
 require_ntshared_close_behavior_matrix_if_present
 require_log 'wddm_payload_validate (ok|predevice_pending) context_len=[1-9][0-9]* context_priv=[1-9][0-9]* .* hwqueue_priv=[1-9][0-9]* .* submit_priv=[1-9][0-9]*' \
     "real UMD WDDM private payload diagnostics"
+require_log 'dxg_packet_shape_matrix .*createprocess=1 .*createdevice=1 .*createcontext=1 .*createhwqueue=1 .*createallocation=1 .*makeresident=1 .*openresource=1 .*sync_create=1 .*opensync=1 .*shareobject=1 .*waitgpu=1 .*unwind=1 .*status=PASS' \
+    "DXG packet-shape aggregate validator"
 require_wddm_payload_residency
 require_makeresident_count2_packet_shape
 require_wddm_layout_or_predevice_pending

@@ -227,6 +227,11 @@ but do not treat them as open plan items by default.
   xv6 should expose both the send decision and the packet shape through
   `dxg_async_message_matrix` and `dxg_async_send_last`, with sync fallback
   reported explicitly when the host capability is absent.
+- For broad packet-marshalling closure, prefer one aggregate pure-C matrix over
+  loose status rows. `dxg_packet_shape_matrix` should prove command/result
+  lengths, owner process handles, private blob order, first resource/sync/HWQ
+  handles, async or sync-fallback send policy, and create-publication unwind
+  counters before the packet-shape plan row is checked.
 - For NT shared-object import coverage, validate both directions of fd kind
   separation: resource query/open must reject sync fds, and sync open must
   reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`
