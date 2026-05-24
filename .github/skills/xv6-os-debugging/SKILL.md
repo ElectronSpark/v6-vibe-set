@@ -135,6 +135,12 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   source/resource generations, required metadata, selected bind lane, and
   display-completion source as the handoff contract; do not infer native
   present from loose D3DKMT handles or `/dev/dxg` readiness alone.
+- The selected native-present handoff lane is GPU-P/DDA
+  `dxg-resource-scanout-bind`, not WSLg display channel emulation and not a
+  synthvid GPA-dirty bridge. `fbstat` should report
+  `dxg_present_lane_selection_matrix` with WSLg disabled, synthvid limited to
+  GPA dirty VRAM, `custom_host_tool=0`, and zero native-present/OpenGL-submit
+  credit until the real host ABI and completion source exist.
 - The next durable Hyper-V GPU milestones are:
   - WSL-style typed per-open DXG object graph and teardown ordering.
   - Exact WDDM private payload and host return layout parity for real UMD sequences.

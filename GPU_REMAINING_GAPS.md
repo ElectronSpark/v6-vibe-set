@@ -356,9 +356,17 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
 Goal: turn the current fail-closed D3D12 shared-resource lane into a real
 non-readback display handoff.
 
-- [ ] Select one final display handoff lane and document why it matches a
+- [x] Select one final display handoff lane and document why it matches a
   working model: WSLg-like display channel, GPU-P/DDA resource-to-scanout
   binding, or trace-proven synthvid/VRAM bridge.
+  The selected lane is GPU-P/DDA `dxg-resource-scanout-bind`: a source-owned
+  D3D12 resource, allocation, adapter LUID, dimensions, format/modifier, and
+  sync-file/fence target must bind to a real display completion source. WSLg's
+  display channel is not exposed by xv6/WSL `dxgkrnl`, synthvid is GPA
+  dirty-rectangle VRAM rather than a D3D12 resource bind, DDA Nouveau is a
+  separate PCI path, and no custom host tool is allowed. `fbstat` now emits
+  `dxg_present_lane_selection_matrix` for this selection while keeping native
+  present and OpenGL-submit credit at zero.
 - [ ] Implement the selected `dxg-resource-scanout-bind` equivalent without
   custom host tooling.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
