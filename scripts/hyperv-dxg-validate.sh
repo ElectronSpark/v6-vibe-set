@@ -402,9 +402,18 @@ require_import_negative_matrix() {
         "D3D12 sync import-negative inherited parent-device rejection proof"
     require_log 'sync_import_negative_matrix .*present_attempted=0 .*native_present_claim=0' \
         "D3D12 sync import-negative produced no present credit"
+    require_log 'dxg_tgid_pre_dispatch_matrix .*status=PASS' \
+        "DXG inherited fd pre-dispatch TGID gate matrix PASS"
+    require_log 'dxg_tgid_pre_dispatch_matrix .*inherited_enum_rc=-1 .*inherited_openadapter_rc=-1 .*inherited_query_rc=-1 .*inherited_create_rc=-1 .*inherited_opensync_rc=-1' \
+        "DXG inherited fd rejected discovery, query, create, and opensync before dispatch"
+    require_log 'dxg_tgid_pre_dispatch_matrix .*kernel_namespace_diag_present=1' \
+        "DXG inherited fd pre-dispatch TGID kernel diagnostic"
 
     if grep -Eq '(resource|sync)_import_negative_matrix .*status=FAIL' "${LOG}"; then
         fail "D3D12 import-negative matrix reported FAIL; failing negative-import rows cannot close provenance or native-present checklist items"
+    fi
+    if grep -Eq 'dxg_tgid_pre_dispatch_matrix .*status=FAIL' "${LOG}"; then
+        fail "DXG pre-dispatch TGID matrix reported FAIL"
     fi
     require_opensync_child_split_matrices
     echo "hyperv-dxg-validate: D3D12 import-negative proof ok; this closes rejection/provenance only, not native present/FPS/WebKit" |

@@ -111,7 +111,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Remove cross-TGID retained host-process reuse from
     `hvdxg_process_get_current`; retained host processes can only be reused by
     the same TGID namespace, matching WSL's TGID-keyed `dxgprocess` lookup.
-  - [ ] Add a common pre-dispatch TGID ownership gate for D3DKMT ioctls so
+  - [x] Add a common pre-dispatch TGID ownership gate for D3DKMT ioctls so
     stale or wrong-process file descriptors fail before packet forwarding.
   - [ ] Split process object lifetime from process memory lifetime, or add
     validated equivalent references for shared fds and async cleanup paths.
@@ -177,7 +177,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [ ] Add explicit copyout-failure fault injection for `shared_handle` so
     cleanup of the fd/file reference and NT shared-object ref is proven without
     relying on ordinary close paths.
-  - [ ] Add a wrong-kind matrix that exports resource and sync NT fds, then
+  - [x] Add a wrong-kind matrix that exports resource and sync NT fds, then
     proves resource-open rejects sync fds and sync-open rejects resource fds.
 - [ ] Re-audit WSL `CREATESYNCFILE`, `OPENSYNCOBJECTFROMSYNCFILE`, and
   `WAITSYNCFILE`: monitored-fence `dma_fence` creation, host event

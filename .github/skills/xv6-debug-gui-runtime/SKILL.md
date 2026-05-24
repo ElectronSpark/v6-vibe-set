@@ -168,6 +168,16 @@ but do not treat them as open plan items by default.
 - For `dxgprocess` lifetime, keep reuse keyed by TGID like WSL. Do not reuse a
   retained host process handle across TGIDs; if a host workaround is ever
   necessary, expose it as non-parity diagnostics instead of sharing namespaces.
+- For D3DKMT ioctls, keep the TGID ownership gate in the common `/dev/dxg`
+  dispatch before per-open host-process binding, adapter alias creation, user
+  copyout, or packet forwarding. Discovery/bind ioctls (`ENUMADAPTERS*`,
+  `OPENADAPTERFROMLUID`, and `QUERYADAPTERINFO`) still bind in their own
+  WSL-order paths, but inherited fds from a different TGID must fail before
+  those paths can mint local aliases or query adapter data.
+- For NT shared-object import coverage, validate both directions of fd kind
+  separation: resource query/open must reject sync fds, and sync open must
+  reject resource fds. Keep this as a pure-C `dxgprobe --import-negative`
+  contract before using any shared handle as native-present evidence.
 - WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
   `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
   `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.
