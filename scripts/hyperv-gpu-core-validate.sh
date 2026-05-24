@@ -517,6 +517,8 @@ require_log 'present_bind_contract_skeleton_matrix .*source=0x[1-9a-fA-F][0-9a-f
     "fail-closed source-owned DXG bind-contract skeleton"
 require_log 'present_bind_contract_stale_source_matrix .*source=0x[1-9a-fA-F][0-9a-fA-F]* .*source_live=0 .*block_reason=0x[1-9a-fA-F][0-9a-fA-F]* .*completion_source=3 .*present_id=0 completed=0 .*native_present_claim=0 .*status=PASS' \
     "stale present-source bind-contract rejection"
+require_log 'present_bind_contract_foreign_source_matrix .*source=0x[1-9a-fA-F][0-9a-fA-F]* .*source_live=0 .*source_generation=0 .*block_reason=0x[1-9a-fA-F][0-9a-fA-F]* .*completion_source=3 .*present_id=0 completed=0 .*native_present_claim=0 .*status=PASS' \
+    "foreign present-source bind-contract rejection"
 require_log 'present_source_failclosed_matrix .*bind_contract_rc=-[0-9]+ .*hyperv_opengl_submit=0 .*failclosed=1 .*no_present_credit=1 .*owner_cleanup=1 .*native_present_claim=0 .*status=PASS' \
     "present-source fail-closed no-credit validator"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
