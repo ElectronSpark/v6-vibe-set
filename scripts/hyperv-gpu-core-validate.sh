@@ -514,6 +514,8 @@ require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc
     "WSL-style per-process adapter rejects raw host adapter and destroys child device on final close"
 require_log 'dxgprocess_adapter_parent_matrix .*child_status=0 .*status=PASS' \
     "WSL-style per-process adapter validator child exited cleanly"
+require_log 'd3dkmt_cleanup_wsl_order=.*sync:[0-9]+ .*allocation:[0-9]+ .*resource:[0-9]+ .*context:[0-9]+ .*hwqueue:[0-9]+ .*paging:[0-9]+ .*device:[0-9]+ .*process:[0-9]+ .*valid:1' \
+    "WSL-style final-close DXG teardown order diagnostics"
 require_log 'createallocation_unwind_matrix .*create_rc=-14 .*destroy_ctx=5 .*destroy_count=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
     "WSL-style CREATEALLOCATION copyout-failure cleanup validator"
 require_log 'openresource_unwind_matrix .*open_rc=-14 .*destroy_ctx=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \

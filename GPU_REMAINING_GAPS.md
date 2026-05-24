@@ -142,7 +142,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
 - [x] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
   adapter/device list locking, multiple opens of the same adapter, and close
   behavior while child objects still exist.
-- [ ] Re-audit DXG object teardown order against WSL:
+- [x] Re-audit DXG object teardown order against WSL:
   HW queues, contexts, paging queues, sync objects, allocations, resources,
   GPUVA reservations, devices, adapters, and process host handles.
 - [ ] Compare xv6 packet structs and marshalling against WSL `dxgvmbus.c` for
