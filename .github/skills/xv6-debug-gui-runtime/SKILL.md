@@ -297,6 +297,14 @@ but do not treat them as open plan items by default.
   - native KMS OUT_FENCE and display-correlated vblank/page-flip completion are
     separate gates; passing the vblank/page-flip source matrix does not close
     the OUT_FENCE gate.
+- For WSL `hmgrtable` parity, keep local adapter handles and normal DXG object
+  handles distinct:
+  - local adapter handles use the per-process local handle namespace and should
+    prove index/unique encoding plus the WSL minimum-free reuse delay
+    (`min_free=128`) with `dxgprobe --handle-lifetime-validate`;
+  - normal object handles still need full free-list parity before the broad
+    handle-table gate can close, even if tombstone diagnostics and stale
+    rejection counters look healthy.
 
 ## Common Problems
 

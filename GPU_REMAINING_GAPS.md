@@ -112,6 +112,20 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   handles versus normal object handles, index/unique/instance fields, destroyed
   tombstones, free-list reuse delay, typed lookup, stale-handle rejection, and
   `ignore_destroyed` callers.
+  - [x] Mirror WSL handle bit layout for diagnostics: index, unique, and
+    instance fields are decoded for tracked DXG objects, and local adapter
+    handles now carry a nonzero unique field.
+  - [x] Add WSL-style minimum-free reuse delay for per-process local adapter
+    handles, with pure-C `dxgprobe --handle-lifetime-validate` coverage proving
+    no immediate same-handle reuse and `min_free=128`.
+  - [x] Add destroyed-entry serial diagnostics for tracked DXG objects and
+    expose object/local-adapter reuse delay counters through `/dev/dxg`.
+  - [ ] Replace the remaining growable-array approximation with a true
+    free-list table for normal DXG objects, including unique bump on free,
+    typed lookup parity, and explicit `ignore_destroyed` callers matching WSL.
+  - [ ] Validate stale handle rejection after delayed reuse for every object
+    class: device, context, HW queue, paging queue, sync object, resource,
+    allocation, and GPUVA reservation.
 - [ ] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
   adapter/device list locking, multiple opens of the same adapter, and close
   behavior while child objects still exist.
