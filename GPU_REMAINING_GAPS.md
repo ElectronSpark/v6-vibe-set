@@ -145,7 +145,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
 - [x] Re-audit DXG object teardown order against WSL:
   HW queues, contexts, paging queues, sync objects, allocations, resources,
   GPUVA reservations, devices, adapters, and process host handles.
-- [ ] Compare xv6 packet structs and marshalling against WSL `dxgvmbus.c` for
+- [x] Compare xv6 packet structs and marshalling against WSL `dxgvmbus.c` for
   `CREATEPROCESS`, `OPENADAPTER`, `QUERYADAPTERINFO`, `CREATEDEVICE`,
   `CREATECONTEXTVIRTUAL`, `CREATEHWQUEUE`, `CREATEALLOCATION`,
   `DESTROYALLOCATION`, `MAKERESIDENT`, `OPENRESOURCE`, sync-object
@@ -177,9 +177,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     async or explicit sync fallback.
   - [x] Reject legacy GPU waits with `object_count > 1` so the
     wire packet obeys WSL's legacy single-object rule.
-  - [ ] Extend packet diagnostics/validators to cover command length,
+  - [x] Extend packet diagnostics/validators to cover command length,
     result length, owner process, private blob order, first handles, and
-    post-copyout unwind status for every path in this packet-marshalling row.
+    post-copyout unwind status for every path in this packet-marshalling row;
+    `dxgprobe --wddm-payload-validate` now emits
+    `dxg_packet_shape_matrix` over create/open/share/sync/wait/HWQUEUE/
+    destroy/unwind diagnostics, and the Hyper-V DXG validator requires it.
 - [x] Re-audit WSL `CREATEALLOCATION` and `OPENRESOURCE` failure unwind:
   runtime/resource/allocation private blob copyout, local handle publication,
   host resource destruction after late failure, standard-allocation substitution,
