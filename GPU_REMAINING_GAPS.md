@@ -228,20 +228,32 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Add pure-C sync-file validators covering create-copyout fd/event
     cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
     child-process open from the same sync-file fd.
-- [ ] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
+- [x] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
   adapter whenever the driver store, UMD payload sizes, or D3DKMT packet
-  shaping changes.
+  shaping changes. `dxgprobe --wsl-trace-replay` now emits
+  `wsl_trace_replay_packet_matrix` rows for the replayed packet sequence and a
+  `wsl_trace_replay_signature` tied to the selected OPENADAPTER LUID and the
+  current NVIDIA WSL trace reference; the focused core runner requires those
+  rows before accepting the WSL replay segment.
 - [ ] Finish direct D3D12 fence sharing parity: decide whether the final native
   path requires direct `ID3D12Device::OpenSharedHandle(fence)` success or only
   WSL-style DXG sync-file acquire, then validate the chosen behavior against
   same-adapter WSL traces.
-- [ ] Preserve WSL-style shared resource semantics as regression coverage:
+- [x] Preserve WSL-style shared resource semantics as regression coverage:
   one-time seal, stable runtime/resource/allocation metadata, repeated
   query/open, exporter-destroy survival, child open, wrong-kind rejection, and
-  NT fd close separate from explicit D3DKMT destroy.
-- [ ] Preserve WSL-style shared sync semantics as regression coverage:
+  NT fd close separate from explicit D3DKMT destroy. The core runner now
+  consumes `shared_resource_seal_provenance_matrix`,
+  `shared_mutation_rejection_matrix`, `shared_lifetime_record_matrix`,
+  `resource_import_negative_matrix`, `ntshare_object_kind_matrix`, and
+  `dxg_sharedfd_close` diagnostics.
+- [x] Preserve WSL-style shared sync semantics as regression coverage:
   NT fd export/open, stale-close rejection, process namespace separation,
   monitored-fence target values, sync-file import/export, and cleanup ordering.
+  The focused runner requires `opensync_layout_source_matrix`,
+  `sync_import_negative_matrix`, `sync_file_matrix`,
+  `dxg_syncfile_*_unwind_matrix`, `dxg_syncfile_lifetime`, and the
+  `dxg_opensync_*` packet diagnostics.
 
 ### 2. Linux DRM/GEM/TTM/KMS Interfaces
 
@@ -251,17 +263,29 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
 - [ ] Replace diagnostic-only `dma_fence` pieces with a real fence lifetime
   model across GEM, PRIME/dma-buf, KMS, syncobj, timelines, poll, callback
   removal, and final object release.
+  - [x] Make DRM syncobj timeline transfer copy pending source state instead
+    of requiring the source point to be signaled first. The pure-C DRM matrix
+    now requires `syncobj_pending_transfer_matrix` plus transfer wakeup
+    provenance, with no native-present or OpenGL-submit credit.
 - [ ] Replace the global-lock approximation with Linux-shaped `dma_resv` and
   ww-mutex rules throughout TTM validation, eviction, migration, PRIME export,
   KMS prepare/cleanup, and teardown.
 - [ ] Implement real KMS atomic `IN_FENCE_FD` and `OUT_FENCE_PTR` behavior with
   display-correlated completion, not immediate software completion.
-- [ ] Extend KMS scanout formats/modifiers beyond the current metadata-only
-  paths only when the primary plane can actually present them; unsupported
-  formats must continue to fail before side effects.
+  - [x] Keep the current atomic OUT_FENCE provenance honest: software scanout
+    completion increments `kms_atomic_out_fence_software_scanout_correlated`,
+    while `kms_atomic_out_fence_display_correlated` remains reserved for a
+    real native/display completion source.
+- [x] Keep the current KMS modifier path self-consistent while scanout remains
+  XRGB/ARGB-only: `DRM_CAP_ADDFB2_MODIFIERS` advertises the accepted linear
+  metadata contract, `ADDFB2`/`GETFB2` round-trip linear NV12 metadata, and
+  non-linear, mixed-plane, and unsupported present paths fail before side
+  effects or native/OpenGL-submit credit.
+- [ ] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
+  only when the primary plane can present them without the software fallback.
 - [ ] Keep vblank/page-flip display-correlation separate from native-present
   credit until the same frame also proves native D3D12 display completion.
-- [ ] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
+- [x] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
   event queues covered by focused validators after any DRM refactor.
 - [ ] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
   DXG-present state, WebKit harness tracing, and ioctl-name tracing so debug

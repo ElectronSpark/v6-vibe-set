@@ -207,6 +207,17 @@ but do not treat them as open plan items by default.
   yet match WSL CPU-event signal or async-message semantics, make it an
   explicit active plan item with validator evidence instead of burying it in
   generic unsupported logging.
+- For same-adapter WSL replay coverage, keep `dxgprobe --wsl-trace-replay`
+  tied to the selected OPENADAPTER LUID and the current NVIDIA trace reference.
+  The section is not covered unless `wsl_trace_replay_packet_matrix` rows prove
+  each replayed D3DKMT packet shape and `wsl_trace_replay_signature` reports
+  `status=PASS`.
+- For shared-resource/shared-sync regression coverage, treat the focused core
+  runner as the index: `shared_resource_seal_provenance_matrix`,
+  `shared_mutation_rejection_matrix`, `shared_lifetime_record_matrix`,
+  `resource_import_negative_matrix`, `opensync_layout_source_matrix`,
+  `sync_import_negative_matrix`, `sync_file_matrix`, and the sync-file unwind
+  rows must all stay green before editing native present or WebKit gates.
 - For create-path publication faults, keep host cleanup before local handle
   publication WSL-shaped. `dxgprobe --create-publication-faults-validate`
   should fault the final result page for `CREATEDEVICE`,
@@ -358,7 +369,9 @@ but do not treat them as open plan items by default.
   - advancing display, DXG-present, native-present, or OpenGL-submit credit.
 - The current Hyper-V KMS NV12 baseline is metadata-only: NV12
   `ADDFB2`/`GETFB2` round-trips, primary `GETPLANE` advertises only
-  XRGB8888/ARGB8888, and the NV12 scanout/present matrix is fail-closed.
+  XRGB8888/ARGB8888, `DRM_CAP_ADDFB2_MODIFIERS` advertises only the accepted
+  linear metadata contract, and the NV12 scanout/present matrix is
+  fail-closed.
 - KMS vblank/page-flip event-source provenance is its own layer:
   - display-correlated timing requires `kms_vblank_synthetic=0`,
     `kms_vblank_display_correlated=1`, and
@@ -366,7 +379,7 @@ but do not treat them as open plan items by default.
   - those events are still not native-present evidence unless the same run also
     proves real atomic OUT_FENCE/native display handoff completion;
   - Hyper-V must keep `backend_opengl_submit 0` while OUT_FENCE provenance is
-    `software_immediate`.
+    `software_scanout_commit`.
 - For DRM sync_file validation, distinguish the layers:
   - pending export/import readiness proves live source tracking;
   - callback lifecycle proves poll-arm, signal-fire, close-cancel, and
@@ -374,6 +387,9 @@ but do not treat them as open plan items by default.
   - syncobj wait callback lifecycle proves actual sleeping waits arm per-state
     callbacks, signal/transfer fires them, finite timeout cancels them, and
     `wait_callback_late_delta=0`;
+  - pending syncobj timeline transfer must copy the source dependency before
+    it is signaled, then wake destination waiters only after the source point
+    signals; the index row is `syncobj_pending_transfer_matrix`;
   - fd-visible cancellation should happen from `.last_fd_close`; delayed
     `.release` accounting is not enough evidence for close-before-signal
     behavior;
