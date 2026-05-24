@@ -154,6 +154,10 @@ but do not treat them as open plan items by default.
   code as the comparison anchors for `/dev/dxg` process lifetime, typed handle
   tables, shared-resource sealing, monitored-fence sync-file behavior, and
   D3DKMT packet layout.
+- For `CREATEALLOCATION` and `OPENRESOURCE` unwind paths, keep cleanup packets
+  on the same per-open `dxgprocess` host handle as the successful create/open
+  packet. A global process handle in `DESTROYALLOCATION` cleanup is a WSL
+  parity bug even if the helper usually succeeds on a single-process smoke.
 - WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
   `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
   `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.

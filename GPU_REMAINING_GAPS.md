@@ -147,6 +147,20 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   runtime/resource/allocation private blob copyout, local handle publication,
   host resource destruction after late failure, standard-allocation substitution,
   and result-private-data return layout.
+  - [x] Send `DESTROYALLOCATION` late-failure cleanup through the same
+    per-open DXG process handle used for the corresponding `CREATEALLOCATION`
+    or `OPENRESOURCE` packet, with existing destroy-allocation diagnostics
+    recording the process handle sent to the host.
+  - [x] Make create/open local tracking failures visible to callers instead of
+    best-effort drops: resource/allocation publication now returns errors,
+    unwinds partial local state, and destroys host-created resources on failure.
+  - [ ] Add a pure-C fault-injection validator that forces post-host
+    `CREATEALLOCATION` and `OPENRESOURCE` publication failures, then proves
+    same-process host cleanup, original errno preservation, no leaked local
+    handles, and balanced pinned sysmem pages.
+  - [ ] Split shared-resource metadata into explicit WSL-like
+    resource/allocation records so seal/query/open lifetimes are not stored
+    only as flat blobs on `hvdxg_tracked_resource`.
 - [ ] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
   `object_count == 1`, anon-inode kind, `O_CLOEXEC`, copyout-before-install,
   cleanup of unused fd/file references on failure, and wrong-kind rejection.
