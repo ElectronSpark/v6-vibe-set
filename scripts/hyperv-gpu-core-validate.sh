@@ -248,6 +248,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "DDA/Nouveau D3D12 import path is not fabricated"
     require_log 'dxg_present_dda_nouveau_scanout_bind_present 0' \
         "DDA/Nouveau scanout bind path is not fabricated"
+    require_log 'nouveau_gpup_failclosed_matrix .*accepts=0 .*backend_dda_nouveau=0 .*reject_reason=PASS .*no_fake_bar=PASS .*no_fake_dma=PASS .*no_fake_irq=PASS .*no_fake_getparam=PASS .*no_fake_present=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau fail-closed matrix"
 }
 
 log_metadata() {

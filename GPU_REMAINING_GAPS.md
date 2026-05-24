@@ -300,8 +300,10 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   ownership, MSI/MSI-X setup, legacy IRQ fallback policy, interrupt delivery,
   resource claim/release, runtime PM suspend/resume usage, and remove-path
   validation.
-- [ ] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
+- [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
+  The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
+  `fbstat` whenever no DDA/Nouveau PCI function is accepted.
 - [ ] Replace synthetic Nouveau `GETPARAM` answers with DDA-sourced
   chipset/class, BAR, VRAM/GART, engine, and firmware facts when DDA hardware
   is present.
