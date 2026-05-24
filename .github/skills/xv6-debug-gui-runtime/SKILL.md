@@ -158,6 +158,10 @@ but do not treat them as open plan items by default.
   on the same per-open `dxgprocess` host handle as the successful create/open
   packet. A global process handle in `DESTROYALLOCATION` cleanup is a WSL
   parity bug even if the helper usually succeeds on a single-process smoke.
+- For normal DXG object handles, keep the WSL `hmgrtable` shape visible:
+  index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
+  free-count/head/tail diagnostics, and minimum-free expansion. Do not regress
+  this back to unordered linear scans or silent best-effort tracking drops.
 - WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
   `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
   `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.

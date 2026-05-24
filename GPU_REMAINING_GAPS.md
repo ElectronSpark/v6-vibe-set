@@ -125,7 +125,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Add pure-C stale-handle matrix output for device, sync object, paging
     queue, paging-queue sync object, allocation/resource destroy, and GPUVA
     free attempts, and require matching denied-counter deltas.
-  - [ ] Replace the remaining growable-array approximation with a true
+  - [x] Replace the remaining growable-array approximation with a true
     free-list table for normal DXG objects, including free-count/head/tail,
     unique bump on free, chunk expansion, and explicit `ignore_destroyed`
     callers matching WSL.
