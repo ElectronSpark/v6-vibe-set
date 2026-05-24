@@ -179,10 +179,22 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     relying on ordinary close paths.
   - [x] Add a wrong-kind matrix that exports resource and sync NT fds, then
     proves resource-open rejects sync fds and sync-open rejects resource fds.
-- [ ] Re-audit WSL `CREATESYNCFILE`, `OPENSYNCOBJECTFROMSYNCFILE`, and
+- [x] Re-audit WSL `CREATESYNCFILE`, `OPENSYNCOBJECTFROMSYNCFILE`, and
   `WAITSYNCFILE`: monitored-fence `dma_fence` creation, host event
   registration, CPU wait submission, temporary local sync-object lifetime,
   GPU wait submission, and unwind on copyout or fd failure.
+  - [x] Keep the current xv6 custom sync-file fd honest as a WSL-style DXG
+    sync-file parity skeleton, while documenting that it is not yet Linux
+    `sync_file`/`dma_fence`.
+  - [x] Add source diagnostics for sync-file fd live/release counts,
+    host-event active/allocation/removal counts, create-copyout unwind, and
+    open-copyout unwind.
+  - [x] Destroy the host-opened sync object if
+    `OPENSYNCOBJECTFROMSYNCFILE` succeeds on the host but user copyout fails,
+    and prove that no local sync handle was published.
+  - [x] Add pure-C sync-file validators covering create-copyout fd/event
+    cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
+    child-process open from the same sync-file fd.
 - [ ] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
   adapter whenever the driver store, UMD payload sizes, or D3DKMT packet
   shaping changes.

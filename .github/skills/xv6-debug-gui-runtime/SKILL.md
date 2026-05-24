@@ -185,6 +185,12 @@ but do not treat them as open plan items by default.
 - For WSL-style NT shared-object fds from `LX_DXSHAREOBJECTS`, require one
   object per call, preserve resource-vs-sync fd kind, set close-on-exec on the
   returned fd, and prove copyout-failure cleanup separately from normal close.
+- For DXG sync-file parity, be precise: xv6 currently has a custom
+  `anon_inode:sync_file` fd that follows the WSL DXG lifecycle shape, not a
+  full Linux `sync_file`/`dma_fence`. Keep validators for create-copyout
+  fd/event cleanup, open-copyout host sync-object destruction, temporary
+  `WAITSYNCFILE` sync-object destruction, child-process open from the same fd,
+  and `dxg_syncfile_lifetime` host-event/live-count balance.
 - For `dxgprocess` lifetime, keep reuse keyed by TGID like WSL. Do not reuse a
   retained host process handle across TGIDs; if a host workaround is ever
   necessary, expose it as non-parity diagnostics instead of sharing namespaces.
