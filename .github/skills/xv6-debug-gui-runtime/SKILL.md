@@ -331,6 +331,10 @@ but do not treat them as open plan items by default.
   - local adapter handles use the per-process local handle namespace and should
     prove index/unique encoding plus the WSL minimum-free reuse delay
     (`min_free=128`) with `dxgprobe --handle-lifetime-validate`;
+  - stale-handle validation should explicitly name and reject every locally
+    tracked class in the matrix: device, context, HW queue, HW-queue progress
+    fence sync, sync object, paging queue, paging-queue sync, resource,
+    standalone allocation, and GPUVA reservation;
   - normal object handles still need full free-list parity before the broad
     handle-table gate can close, even if tombstone diagnostics and stale
     rejection counters look healthy.
