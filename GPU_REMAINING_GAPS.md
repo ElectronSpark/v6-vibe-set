@@ -326,8 +326,13 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   class hierarchy exists, rejects NEW for would-be engine classes, rejects
   methods/register/map/notify operations explicitly, and validates this with
   `nouveau_nvif_failclosed_matrix`.
-- [ ] Implement non-empty Nouveau command submission on DDA hardware, or
+- [x] Implement non-empty Nouveau command submission on DDA hardware, or
   return source-audited fail-closed tokens that Mesa/Nouveau validators check.
+  Until a real DDA command engine exists, non-empty GEM pushbuf, EXEC, and
+  VM_BIND paths reject after validating their user buffers and object
+  references. Dedicated counters and `nouveau_submit_failclosed_matrix` prove
+  the no-op/fence-only paths are separate from non-empty command rejection and
+  that no native-present/OpenGL-submit credit is granted.
 - [ ] Add a Mesa Nouveau smoke that reaches winsys/device-info on the intended
   hardware and cannot pass on synthetic GPU-P-only answers.
 
