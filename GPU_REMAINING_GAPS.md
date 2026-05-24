@@ -150,6 +150,25 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   `CREATECONTEXTVIRTUAL`, `CREATEHWQUEUE`, `CREATEALLOCATION`,
   `DESTROYALLOCATION`, `MAKERESIDENT`, `OPENRESOURCE`, sync-object
   create/open/signal/wait, sync-file create/open/wait, and HW-queue submit.
+  - [x] Align the obvious WSL packet-shape divergences found in the source
+    audit: keep `CREATEDEVICE.cdd_device` zeroed like WSL, remove the
+    non-WSL trailing dword from `MAKERESIDENT`, and require the validator to
+    prove the resulting count=2 packet length.
+  - [x] Send VGPU D3DKMT packets through the per-open/owner-bound host process
+    handle instead of the global process fallback wherever the ioctl has an
+    owner, matching WSL's `process->host_handle` forwarding model.
+  - [ ] Add host-destroy unwind and pure-C fault coverage for
+    `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`, and `CREATEHWQUEUE` failures after
+    host creation but before local/user publication.
+  - [ ] Implement or explicitly validate WSL-equivalent CPU-event signal
+    packets for `enqueue_cpu_event`; fail-closed logging alone is not enough.
+  - [ ] Add async-message parity or a same-adapter trace-backed decision for
+    signal/wait/HW-queue submit paths where WSL can set `hdr.async_msg`.
+  - [x] Reject legacy GPU waits with `object_count > 1` so the
+    wire packet obeys WSL's legacy single-object rule.
+  - [ ] Extend packet diagnostics/validators to cover command length,
+    result length, owner process, private blob order, first handles, and
+    post-copyout unwind status for every path in this packet-marshalling row.
 - [x] Re-audit WSL `CREATEALLOCATION` and `OPENRESOURCE` failure unwind:
   runtime/resource/allocation private blob copyout, local handle publication,
   host resource destruction after late failure, standard-allocation substitution,
