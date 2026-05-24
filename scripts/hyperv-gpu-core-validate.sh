@@ -510,6 +510,10 @@ require_log 'handle_lifetime_stale_matrix .*object_classes=device,context,hwqueu
     "WSL-style stale DXG object matrix names every tracked class"
 require_log 'dxg_process_mem_lifetime_matrix .*child_status=0 .*object_release_delta=[1-9][0-9]* .*mem_release_delta=[1-9][0-9]* .*mem_free_delta=[1-9][0-9]* .*status=PASS' \
     "WSL-style split DXG process object and memory lifetime"
+require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc=0 .*close_adapter_rc=0 .*child_destroy_after_final_close_rc=-1 .*status=PASS' \
+    "WSL-style per-process adapter rejects raw host adapter and destroys child device on final close"
+require_log 'dxgprocess_adapter_parent_matrix .*child_status=0 .*status=PASS' \
+    "WSL-style per-process adapter validator child exited cleanly"
 require_log 'handle_lifetime ok .*reuse_delayed:[0-9]+ .*min_free:128 .*free_count:[0-9]+ .*free_head:[0-9]+ .*free_tail:[0-9]+' \
     "WSL-style object handle tombstone lifetime"
 require_log 'shared_resource_seal_provenance_matrix .*fd_cloexec=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \

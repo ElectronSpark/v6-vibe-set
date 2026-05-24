@@ -340,6 +340,10 @@ but do not treat them as open plan items by default.
     tracked class in the matrix: device, context, HW queue, HW-queue progress
     fence sync, sync object, paging queue, paging-queue sync, resource,
     standalone allocation, and GPUVA reservation;
+  - `dxgprocess_adapter` parity means `CREATEDEVICE` must resolve a
+    process-local adapter handle, not the raw host adapter handle, and final
+    close of that per-process adapter should tear down still-live child
+    devices; require `dxgprocess_adapter_matrix` before checking that plan row;
   - normal object handles still need full free-list parity before the broad
     handle-table gate can close, even if tombstone diagnostics and stale
     rejection counters look healthy.
