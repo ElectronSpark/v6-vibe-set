@@ -514,9 +514,13 @@ require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc
     "WSL-style per-process adapter rejects raw host adapter and destroys child device on final close"
 require_log 'dxgprocess_adapter_parent_matrix .*child_status=0 .*status=PASS' \
     "WSL-style per-process adapter validator child exited cleanly"
+require_log 'createallocation_unwind_matrix .*create_rc=-14 .*destroy_ctx=5 .*destroy_count=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
+    "WSL-style CREATEALLOCATION copyout-failure cleanup validator"
+require_log 'openresource_unwind_matrix .*open_rc=-14 .*destroy_ctx=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
+    "WSL-style OPENRESOURCE copyout-failure cleanup validator"
 require_log 'handle_lifetime ok .*reuse_delayed:[0-9]+ .*min_free:128 .*free_count:[0-9]+ .*free_head:[0-9]+ .*free_tail:[0-9]+' \
     "WSL-style object handle tombstone lifetime"
-require_log 'shared_resource_seal_provenance_matrix .*fd_cloexec=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \
+require_log 'shared_resource_seal_provenance_matrix .*fd_cloexec=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*shared_model_coherent=1 .*status=PASS' \
     "canonical shared-resource record seal/open/close validator"
 require_log 'shared_mutation_rejection_matrix .*append_rc=-[0-9]+ .*private_rc=-[0-9]+ .*size_flag_rc=-[0-9]+ .*owner_status=0 .*private_rewrite_rejects=[0-9]+->[1-9][0-9]* .*size_flag_rewrite_rejects=[0-9]+->[1-9][0-9]* .*owner_rewrite_rejects=[0-9]+->[1-9][0-9]* .*record_same=1 .*record_mutated=0 .*status=PASS' \
     "sealed shared-resource mutation rejection validator"
