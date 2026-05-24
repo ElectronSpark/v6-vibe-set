@@ -108,6 +108,13 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   host-process creation/destruction, refcount lifetime, process memory
   lifetime, `tgid`/namespace behavior, retained process reuse, and final
   `DESTROYPROCESS` ordering.
+  - [x] Remove cross-TGID retained host-process reuse from
+    `hvdxg_process_get_current`; retained host processes can only be reused by
+    the same TGID namespace, matching WSL's TGID-keyed `dxgprocess` lookup.
+  - [ ] Add a common pre-dispatch TGID ownership gate for D3DKMT ioctls so
+    stale or wrong-process file descriptors fail before packet forwarding.
+  - [ ] Split process object lifetime from process memory lifetime, or add
+    validated equivalent references for shared fds and async cleanup paths.
 - [ ] Re-audit the xv6 DXG handle table against WSL `hmgrtable`: local adapter
   handles versus normal object handles, index/unique/instance fields, destroyed
   tombstones, free-list reuse delay, typed lookup, stale-handle rejection, and
