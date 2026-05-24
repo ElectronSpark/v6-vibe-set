@@ -162,6 +162,9 @@ but do not treat them as open plan items by default.
   index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
   free-count/head/tail diagnostics, and minimum-free expansion. Do not regress
   this back to unordered linear scans or silent best-effort tracking drops.
+- For WSL-style NT shared-object fds from `LX_DXSHAREOBJECTS`, require one
+  object per call, preserve resource-vs-sync fd kind, set close-on-exec on the
+  returned fd, and prove copyout-failure cleanup separately from normal close.
 - WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
   `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
   `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.
