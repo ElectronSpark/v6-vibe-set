@@ -157,9 +157,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Send VGPU D3DKMT packets through the per-open/owner-bound host process
     handle instead of the global process fallback wherever the ioctl has an
     owner, matching WSL's `process->host_handle` forwarding model.
-  - [ ] Add host-destroy unwind and pure-C fault coverage for
+  - [x] Add host-destroy unwind and pure-C fault coverage for
     `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`, and `CREATEHWQUEUE` failures after
-    host creation but before local/user publication.
+    host creation but before local/user publication. `dxgprobe
+    --create-publication-faults-validate` now faults the final user result
+    page, proves same-process host destroy, and proves stale local destroy
+    retries fail for the unpublished device/context/HW-queue/fence handles.
   - [ ] Implement or explicitly validate WSL-equivalent CPU-event signal
     packets for `enqueue_cpu_event`; fail-closed logging alone is not enough.
   - [ ] Add async-message parity or a same-adapter trace-backed decision for

@@ -213,7 +213,7 @@ require_no_malformed_validator_markers() {
 
     bad=$(normalized_log_lines |
         grep -E '^[VD]:' |
-        grep -Ev '^[VD]:(sl|sp|bl|eo|rp|pe|dx|lc|in)$' || true)
+        grep -Ev '^[VD]:(sl|sp|bl|eo|rp|pe|dx|lc|in|cp)$' || true)
     if [[ -n "${bad}" ]]; then
         echo "hyperv-dxg-validate: malformed or merged validator marker" >&2
         printf '%s\n' "${bad}" >&2
@@ -1410,6 +1410,7 @@ fi
 run_guest 'dxgprobe' "${READ_MS}"
 run_guest 'dxgprobe --try-submit; cat /dev/dxg' 180000
 run_guest 'dxgprobe --owner-isolation' 120000
+run_guest 'echo V:cp; dxgprobe --create-publication-faults-validate; cat /dev/dxg; echo D:cp' 180000
 run_guest 'echo V:sl; dxgprobe --shared-lifetime-validate; cat /dev/dxg' 180000
 run_guest 'echo V:sp; dxgprobe --shared-private-validate; cat /dev/dxg' 180000
 run_guest 'echo V:in; dxgprobe --import-negative; cat /dev/dxg; echo D:in' 180000
@@ -1505,6 +1506,14 @@ require_log 'dxgprobe: owner isolation rejected (foreign|exec-child) destroy' \
     "DXG open-local owner isolation rejection"
 require_log 'dxgprobe: owner-isolation ok' \
     "DXG open-local owner isolation success"
+require_log 'dxg_createdevice_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+    "DXG CREATEDEVICE post-host-create copyout unwind"
+require_log 'dxg_createcontext_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+    "DXG CREATECONTEXTVIRTUAL post-host-create copyout unwind"
+require_log 'dxg_createhwqueue_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+    "DXG CREATEHWQUEUE post-host-create copyout unwind"
+require_log 'dxg_create_publication_faults_matrix device=PASS context=PASS hwqueue=PASS status=PASS' \
+    "DXG create-publication aggregate validator"
 require_log 'sync_legacy_signal (ok|failed)' \
     "generic DXG sync signal probe marker"
 require_log 'sync_legacy_wait (ok|failed)' \

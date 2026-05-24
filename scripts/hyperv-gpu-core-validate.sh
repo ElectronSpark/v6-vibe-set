@@ -416,6 +416,9 @@ serial_step "dxg-qai-admission" \
 serial_step "dxg-handle-lifetime" \
     "WSL-shaped local adapter and object handle tombstone validator" 180000 \
     'echo __CORE_DXG_HANDLE_BEGIN__; dxgprobe --handle-lifetime-validate; cat /dev/dxg; echo __CORE_DXG_HANDLE_END__'
+serial_step "dxg-create-publication" \
+    "WSL-shaped create copyout unwind and no-local-publication validator" 180000 \
+    'echo __CORE_DXG_CREATEPUB_BEGIN__; dxgprobe --create-publication-faults-validate; cat /dev/dxg; echo __CORE_DXG_CREATEPUB_END__'
 serial_step "dxg-seal-provenance" \
     "shared-resource seal, metadata provenance, and no-present-credit validator" 180000 \
     'echo __CORE_DXG_SEAL_BEGIN__; dxgprobe --shared-seal-provenance-validate; cat /dev/dxg; echo __CORE_DXG_SEAL_END__'
@@ -519,6 +522,14 @@ require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc
     "WSL-style per-process adapter rejects raw host adapter and destroys child device on final close"
 require_log 'dxgprocess_adapter_parent_matrix .*child_status=0 .*status=PASS' \
     "WSL-style per-process adapter validator child exited cleanly"
+require_log 'dxg_createdevice_copyout_unwind_matrix .*rc=-14 .*destroy_retry_rc=-[0-9]+ .*unwind_ret=0 .*no_local_publication=1 .*status=PASS' \
+    "WSL-style CREATEDEVICE post-host-create copyout unwind"
+require_log 'dxg_createcontext_copyout_unwind_matrix .*rc=-14 .*destroy_retry_rc=-[0-9]+ .*unwind_ret=0 .*no_local_publication=1 .*status=PASS' \
+    "WSL-style CREATECONTEXTVIRTUAL post-host-create copyout unwind"
+require_log 'dxg_createhwqueue_copyout_unwind_matrix .*rc=-14 .*destroy_queue_retry_rc=-[0-9]+ .*destroy_fence_retry_rc=-[0-9]+ .*unwind_ret=0 .*no_local_publication=1 .*status=PASS' \
+    "WSL-style CREATEHWQUEUE post-host-create copyout unwind"
+require_log 'dxg_create_publication_faults_matrix device=PASS context=PASS hwqueue=PASS status=PASS' \
+    "aggregate create-publication fault validator"
 require_log 'd3dkmt_cleanup_wsl_order=.*sync:[0-9]+ .*allocation:[0-9]+ .*resource:[0-9]+ .*context:[0-9]+ .*hwqueue:[0-9]+ .*paging:[0-9]+ .*device:[0-9]+ .*process:[0-9]+ .*valid:1' \
     "WSL-style final-close DXG teardown order diagnostics"
 require_log 'createallocation_unwind_matrix .*create_rc=-14 .*destroy_ctx=5 .*destroy_count=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
