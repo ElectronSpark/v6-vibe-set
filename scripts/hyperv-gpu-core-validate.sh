@@ -413,6 +413,9 @@ serial_step "dxg-admission" \
 serial_step "dxg-qai-admission" \
     "direct and adapter-list QAI admission evidence with OpenGL-submit gate" 120000 \
     'echo __CORE_DXG_QAI_BEGIN__; dxgprobe --qai-admission-validate; cat /dev/dxg; fbstat; echo __CORE_DXG_QAI_END__'
+serial_step "dxg-handle-lifetime" \
+    "WSL-shaped local adapter and object handle tombstone validator" 180000 \
+    'echo __CORE_DXG_HANDLE_BEGIN__; dxgprobe --handle-lifetime-validate; cat /dev/dxg; echo __CORE_DXG_HANDLE_END__'
 serial_step "dxg-seal-provenance" \
     "shared-resource seal, metadata provenance, and no-present-credit validator" 180000 \
     'echo __CORE_DXG_SEAL_BEGIN__; dxgprobe --shared-seal-provenance-validate; cat /dev/dxg; echo __CORE_DXG_SEAL_END__'
@@ -453,6 +456,8 @@ require_log '^__CORE_DXG_ADMISSION_BEGIN__$' "DXG shared-resource admission begi
 require_log '^__CORE_DXG_ADMISSION_END__$' "DXG shared-resource admission end marker"
 require_log '^__CORE_DXG_QAI_BEGIN__$' "DXG QAI admission begin marker"
 require_log '^__CORE_DXG_QAI_END__$' "DXG QAI admission end marker"
+require_log '^__CORE_DXG_HANDLE_BEGIN__$' "DXG handle lifetime begin marker"
+require_log '^__CORE_DXG_HANDLE_END__$' "DXG handle lifetime end marker"
 require_log '^__CORE_DXG_SEAL_BEGIN__$' "DXG seal-provenance begin marker"
 require_log '^__CORE_DXG_SEAL_END__$' "DXG seal-provenance end marker"
 require_log '^__CORE_DXG_MUTATION_BEGIN__$' "DXG seal-mutation begin marker"
@@ -497,6 +502,10 @@ require_log 'qai_admission_row route=create-adapter-list-d3d12-graphics type=48 
     "DXG QAI adapter-list type48 row"
 require_log 'qai_admission_matrix .*direct_list_luid_match=1 .*backend_opengl_submit=0 .*wsl_trace=/tmp/xv6-wsl-probe/wave77-wsl-qai-admission-type0-9300.trace .*divergence_class=nonblocking-admission-proven-before-export .*status=PASS' \
     "DXG QAI xv6-vs-WSL admission classification"
+require_log 'local_adapter_reuse ok .*delayed:[0-9]+->[1-9][0-9]* .*min_free=128' \
+    "WSL-style local adapter min-free reuse delay"
+require_log 'handle_lifetime ok .*reuse_delayed:[0-9]+ .*min_free:128' \
+    "WSL-style object handle tombstone lifetime"
 require_log 'shared_resource_seal_provenance_matrix .*record_generation_coherent=1 .*canonical_record_coherent=1 .*status=PASS' \
     "canonical shared-resource record seal/open/close validator"
 require_log 'shared_mutation_rejection_matrix .*append_rc=-[0-9]+ .*private_rc=-[0-9]+ .*size_flag_rc=-[0-9]+ .*owner_status=0 .*private_rewrite_rejects=[0-9]+->[1-9][0-9]* .*size_flag_rewrite_rejects=[0-9]+->[1-9][0-9]* .*owner_rewrite_rejects=[0-9]+->[1-9][0-9]* .*record_same=1 .*record_mutated=0 .*status=PASS' \
