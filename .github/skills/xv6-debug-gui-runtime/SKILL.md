@@ -191,6 +191,13 @@ but do not treat them as open plan items by default.
   fd/event cleanup, open-copyout host sync-object destruction, temporary
   `WAITSYNCFILE` sync-object destruction, child-process open from the same fd,
   and `dxg_syncfile_lifetime` host-event/live-count balance.
+- For native Wayland/D3D12 fence acquire, the chosen contract is WSL-style DXG
+  sync-file acquire, not direct D3D12 fence fd import. `d3d12sharedsmoke`
+  should emit `d3d12_fence_sharing_policy_matrix` and
+  `d3d12_fence_sharing_validation_matrix` with
+  `decision=dxg_syncfile_acquire`, same-adapter WSL trace provenance, direct
+  D3D12 fence fd use disabled, and zero native-present/OpenGL-submit credit
+  until the real display handoff exists.
 - For `dxgprocess` lifetime, keep reuse keyed by TGID like WSL. Do not reuse a
   retained host process handle across TGIDs; if a host workaround is ever
   necessary, expose it as non-parity diagnostics instead of sharing namespaces.
