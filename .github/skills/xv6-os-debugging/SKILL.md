@@ -78,6 +78,19 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 ## Hyper-V GPU Bring-Up
 
 - Treat Hyper-V GPU work as a transport, UMD, compositor-present, and validation problem. Do not mark `FB_GPU_BACKEND_F_OPENGL_SUBMIT` true just because `/dev/dri/renderD128`, DXG transport, D3DKMT readiness, or a real HW queue exists.
+- The former large `kernel/dev/fb.c` and `kernel/dev/hyperv_input.c` files are
+  split under subsystem roots:
+  - `kernel/dev/fb/module.c` is the framebuffer/GPU root. Its fragments group
+    scanout, BO/GEM/TTM/dmabuf, DXG present-source glue, exported fd/fence
+    lifecycle, DRM/KMS, syncobj/PRIME/virtgpu, Nouveau, dispatch, init, and
+    panic-screen code.
+  - `kernel/dev/hyperv/module.c` is the Hyper-V root. Its fragments group
+    common protocol state, vPCI config, DXG diagnostics/status, DXG object and
+    shared-resource lifetime, D3DKMT ioctl forwarding, DXG device exports,
+    VMBus core, synthetic devices, and public init/stub code.
+  Keep new work in the narrow fragment that owns the behavior. Promote a
+  fragment to a separately compiled `.c` file only after its shared state and
+  static helper dependencies have explicit internal APIs.
 - Known honest capability split:
   - Hyper-V may expose `FB_GPU_BACKEND_F_DXG_TRANSPORT` and `FB_GPU_BACKEND_F_D3DKMT`.
   - Hyper-V must keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT` false until Mesa D3D12 creates real render contexts, submits real UMD command buffers, presents without the software readback lane, and the 480p 3D demo sustains more than 60 FPS after warmup.
@@ -99,6 +112,13 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - Do not reboot or redeploy over a running freeze or long-probe sample until evidence has been collected, unless the user explicitly asks for a reset.
 - Keep WSL comparisons adapter-matched. A WSL Intel trace is not a reliable reference for an xv6 NVIDIA Hyper-V run. Capture same-adapter traces when possible, for example:
   - `env GALLIUM_DRIVER=d3d12 D3D12_DEBUG=verbose MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LD_PRELOAD=/tmp/xv6-wsl-probe/libwsl_dxg_ioctl_trace.so /tmp/tmp.PHsSKWCqgl/bin/mesaglfeature > /tmp/xv6-wsl-probe/mesaglfeature-nvidia-live.trace 2>&1`
+- WSL2 `dxgkrnl` lives under `drivers/hv/dxgkrnl` in Microsoft's WSL2 Linux
+  kernel, with UAPI in `include/uapi/misc/d3dkmthk.h`. Use it as the DXG/D3DKMT
+  process, handle-table, shared-resource, sync-file, and VMBus packet
+  reference; do not treat it as the DRM/KMS/Nouveau display-stack reference.
+- Keep the reference tracks separate: WSL parity can close Hyper-V DXG object
+  and wire-layout gates, while Linux DRM/GEM/TTM/KMS/Nouveau sources govern
+  `/dev/dri`, PRIME/dma-buf, KMS atomic, PCI runtime, and Nouveau behavior.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
@@ -108,12 +128,69 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   - The blocker is later than "submit does not work": `mesaglfeature` passes the first 32x32 FBO draw/readback, then the second 64x32 FBO draw path fails when `LX_DXMAKERESIDENT` receives a multi-allocation batch (`count=2`, `flags=0x1`) and the host returns `STATUS_INVALID_PARAMETER` / `-EINVAL`, causing `D3D12: Removing Device`.
   - Sorting or otherwise rewriting residency lists is not a substitute for proof. Compare WSL and xv6 by same adapter, same private payloads, kernel-side packet contents, host status, fence values, and cleanup state.
 - The 3D demo can render through Mesa D3D12 but still presents through a software/readback Wayland lane and is below the 60 FPS target. FPS validation must use an in-surface RTC-based overlay plus finite post-warmup measurement, not only stderr or window-title updates.
+- The source-level Hyper-V native-present skeleton is
+  `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY`. It lives in
+  `kernel/dev/fb/fb_dxg_present.c` and must remain fail-closed until a real
+  GPU-P/DDA display lane exists. Treat its registered present source,
+  source/resource generations, required metadata, selected bind lane, and
+  display-completion source as the handoff contract; do not infer native
+  present from loose D3DKMT handles or `/dev/dxg` readiness alone.
 - The next durable Hyper-V GPU milestones are:
   - WSL-style typed per-open DXG object graph and teardown ordering.
   - Exact WDDM private payload and host return layout parity for real UMD sequences.
   - D3D12 shared-resource/fence export/import between a Mesa client and compositor.
   - A non-readback Wayland present path for Hyper-V.
   - A finite GUI performance validator that fails below 60 FPS after warmup.
+
+### Hyper-V GPU Validation Discipline
+
+- Keep validation hierarchical:
+  - build `/tmp/xv6-hyperv-build` first;
+  - run focused pure-C guest sections for the implemented slice;
+  - only then run heavier GUI/FPS/WebKit validation for a completed segment.
+- For KMS/DRM format work, separate framebuffer metadata from scanout capability:
+  - `ADDFB2`/`GETFB2` may accept metadata for formats that the primary scanout
+    plane cannot present yet;
+  - `GETPLANE` must advertise only formats that the primary plane can actually
+    scan out;
+  - `SETCRTC`, page flip, atomic commit, and atomic `TEST_ONLY` must reject an
+    unsupported framebuffer before queuing events, taking in-fence refs,
+    exporting or cleaning out-fences, mutating plane/current-FB state, or
+    advancing display/DXG/native/OpenGL-submit credit.
+- Treat zero-credit matrices as real contracts, not decorative logging:
+  validators should prove `native_present_credit=0`, `opengl_submit_credit=0`,
+  and no DXG-present/display deltas whenever a path is still software,
+  synthetic, or fail-closed.
+- For KMS vblank/page-flip work, keep event-source provenance separate from
+  native-present proof:
+  - pre-native KMS events may be display-completion-correlated only when
+    validators report `kms_vblank_synthetic=0`,
+    `kms_vblank_display_correlated=1`, and
+    `display_completion_correlated=PASS`;
+  - display-correlated KMS events still grant no native-present or
+    OpenGL-submit credit until atomic OUT_FENCE/native display handoff is real;
+  - software/immediate atomic OUT_FENCE provenance remains an open gate even
+    after vblank/page-flip event timing is display-correlated.
+- For sync_file/fence work, keep the hierarchy explicit:
+  - live pending sync_file export/import is one layer;
+  - callback lifecycle is a stricter layer and must prove poll arms, source
+    signal fires, close-before-signal cancels, late fires stay zero, and live
+    syncobj/fd state balances;
+  - syncobj waits are stricter again when they prove per-state wait callbacks:
+    a real sleeping wait arms a callback, signal/transfer fires it, finite
+    timeout or interruption cancels it, late-fire count stays zero, and
+    native/OpenGL-submit credit stays zero;
+  - on xv6 custom fds, visible close-before-signal cancellation belongs in the
+    `.last_fd_close` hook; `.release` can run later and should only be backup
+    cleanup;
+  - software fence-fd callbacks should prove the same add/fire/remove/late
+    lifecycle on `fb_gpu_fence` objects before claiming broader dma-fence
+    parity; the software fence fd uses VFS `early_release_on_close` so exact
+    object lifetime can be validated when no hidden/concurrent references
+    remain;
+  - do not mark the broad Linux `dma_fence` gate complete until callback
+    removal, timeline lifetime, poll wakeups, and reservation iteration are
+    validated across GEM, PRIME, KMS, and syncobj.
 
 ## WebKit and VM Faults
 

@@ -68,7 +68,7 @@ Current companion docs in this directory:
 - The private Wayland GPU-buffer protocol is version 2. Fence-aware clients may call `create_buffer_with_fence`; `wlcomp` polls the acquire fence fd before sampling, defers release/frame callbacks until the fence is ready, and keeps the surface damaged while waiting. This private path remains a bootstrap/fence-probe fallback; new generic clients should prefer standard `zwp_linux_dmabuf_v1`.
 - Compositor buffer release is now present-fence-aware. `wlcomp` queues `wl_buffer.release` for replaced and committed buffers, queries the framebuffer BO present fence with `FB_GPU_BO_FENCE`, and only sends releases/frame callbacks after acquire fences and the latest present fence are ready. If GUI clients appear to stall in SHM/memfd allocation again, verify both acquire-fence readiness and the release queue before assuming a toolkit bug.
 - Standard Wayland dmabuf validation uses `/bin/dmabufsmoke` after rebuilding `port-wayland`, `port-xv6-gbm`, and `rootfs`. Export `XDG_RUNTIME_DIR=/tmp` and `WAYLAND_DISPLAY=wayland-0`, then run `dmabufsmoke`; healthy output is `dmabufsmoke: presented linux-dmabuf buffer` plus `wlcomp: client app_id: dmabufsmoke`. Follow with `/bin/fbstat`; healthy output has the BO fd export/import counters incremented, `bo_handles 0`, `bo_live_bytes 0`, `bo_fd_live 0`, `fence_fd_live 0`, `rejected_blits 0`, and zero virtio failures/timeouts.
-- Host-side graphics substrate validation now lives in `scripts/gpu-validate.sh`. By default it first checks the `scripts/run-qemu.sh` dry-run launch contract for deterministic GTK geometry (`zoom-to-fit=off`, hidden menubar/tabs, 1280x800 guest mode, and `virtio-tablet-pci`), then uses KVM plus `QEMU_GPU=virtio-gpu`, waits for command success markers and the guest prompt with `expect`, runs `gbmtest`, `dmabufsmoke`, `mesawlegl --frames=4 --loops=1 --resize-every=2`, concurrent `mesawlegl` plus `mesaglsmoke` resize stress, injects a bottom-right absolute pointer event with `/bin/mouseinject`, then runs `gpubuftest 3` and `gpubuftest --render-owner`, captures post-quiesce `fbstat`, and rejects crash markers, rejected blits, leaked BO/fence fd objects, and virtio failures/timeouts. The post-quiesce step matters because custom BO/fence fd release accounting runs after VFS `close()` via RCU/workqueue cleanup; the fd is removed immediately, but `*_fd_live` reaches zero only after the deferred release hook runs. Use `GPU_VALIDATE_BUILD=1` to rebuild first, and `GPU_VALIDATE_VISIBLE_3D=1` for the optional GTK/virgl visible-demo lane; that path waits for `renderer=virgl buffer=xv6-gpu-bo spherical-poly-demo`, captures `build-x86_64/gpu-validate.ppm` through the QEMU monitor, runs `virgltest --bad-submit` to force one virgl context into the failed state, captures `fbstat`, and rejects the same crash/failure markers. A healthy visible run shows `virgltest: bad-submit isolated`, `virtio_context_failed 0`, one increment in `virtio_context_failures`, and zero virtio failures/timeouts. Normal `/bin/virgltest` also validates explicit virgl submit fence fds with `FB_GPU_VIRGL_FENCE_EXPORT_FD` and `FB_GPU_VIRGL_FENCE_QUERY_FD`.
+- Host-side graphics substrate validation now lives in `scripts/gpu-validate.sh`. By default it first checks the `scripts/run-qemu.sh` dry-run launch contract for deterministic GTK geometry (`zoom-to-fit=off`, hidden menubar/tabs, 1280x800 guest mode, and `virtio-tablet-pci`), then uses KVM plus `QEMU_GPU=virtio-gpu`, waits for command success markers and the guest prompt with `expect`, runs `gbmtest`, `dmabufsmoke`, `mesawlegl --frames=4 --loops=1 --resize-every=2`, concurrent `mesawlegl` plus `mesaglsmoke` resize stress, injects a bottom-right absolute pointer event with `/bin/mouseinject`, then runs `gpubuftest 3` and `gpubuftest --render-owner`, captures post-quiesce `fbstat`, and rejects crash markers, rejected blits, leaked BO/fence fd objects, and virtio failures/timeouts. The post-quiesce step matters because custom BO fd release accounting runs after VFS `close()` via RCU/workqueue cleanup; software fence fds use VFS `early_release_on_close` for exact object lifetime when no hidden/concurrent refs remain. Use `GPU_VALIDATE_BUILD=1` to rebuild first, and `GPU_VALIDATE_VISIBLE_3D=1` for the optional GTK/virgl visible-demo lane; that path waits for `renderer=virgl buffer=xv6-gpu-bo spherical-poly-demo`, captures `build-x86_64/gpu-validate.ppm` through the QEMU monitor, runs `virgltest --bad-submit` to force one virgl context into the failed state, captures `fbstat`, and rejects the same crash/failure markers. A healthy visible run shows `virgltest: bad-submit isolated`, `virtio_context_failed 0`, one increment in `virtio_context_failures`, and zero virtio failures/timeouts. Normal `/bin/virgltest` also validates explicit virgl submit fence fds with `FB_GPU_VIRGL_FENCE_EXPORT_FD` and `FB_GPU_VIRGL_FENCE_QUERY_FD`.
 - Virgl context fault validation uses the private xv6 submit flag `FB_GPU_VIRGL_SUBMIT_FORCE_FAIL`. This is a deterministic test hook for the kernel policy: it marks only the target context failed and returns `EIO`, without sending malformed command buffers to QEMU. After the forced failure, submits and context-bound resource creation against that context should fail, context destroy should still work, and a fresh context should submit a NOP successfully.
 - `wlcomp` has quiet-by-default damage instrumentation for blink/flicker work. Set `XV6_WLCOMP_STATS_MS=<ms>` in the compositor environment to log frame count, presented rects/pixels, full-screen frames, union collapses, acquire-fence blocked frames, full-damage causes, and present mode (`bo-present` or `user-blit`).
 - `wlcomp` should prefer an exportable `FB_GPU_BO_CREATE` compositor backbuffer and log `wlcomp: using fb GPU buffer ... handle=...`; if that ioctl fails it falls back to malloc plus `FB_GPU_BLIT`.
@@ -125,6 +125,103 @@ These items were retired from `GPU_REMAINING_GAPS.md` after the May 17, 2026
 source audit. Re-check current source and validation logs before changing them,
 but do not treat them as open plan items by default.
 
+### Source Layout
+
+- GPU/framebuffer implementation now enters through
+  `kernel/dev/fb/module.c`, with owned fragments under `kernel/dev/fb/`.
+  Route scanout/fbdev changes to `fb_scanout.c`, BO/GEM/TTM/dmabuf changes
+  to `fb_bo_ttm_dmabuf.c`, DRM/KMS changes to `fb_drm_core_kms.c` or
+  `fb_kms_atomic.c`, syncobj/PRIME/virtgpu changes to
+  `fb_syncobj_prime_virtgpu.c`, Hyper-V present bridge changes to
+  `fb_dxg_present.c`, and Nouveau compatibility changes to
+  `fb_nouveau.c`.
+- Hyper-V implementation now enters through `kernel/dev/hyperv/module.c`, with
+  owned fragments under `kernel/dev/hyperv/`. Route VMBus/SynIC work to
+  `hyperv_vmbus_core.c`, synthetic input/storage/network/video work to
+  `hyperv_synth_devices.c`, vPCI work to `hyperv_vpci_config.c`, DXG
+  object/shared-resource lifetime to `hyperv_dxg_objects_shared.c`, D3DKMT
+  ioctl shaping to `hyperv_dxg_ioctls.c`, and DXG status/readiness exports to
+  `hyperv_dxg_device.c` or `hyperv_dxg_status_device.c`.
+
+### WSL And Linux Reference Split
+
+- WSL2 `dxgkrnl` is the reference for Hyper-V DXG/D3DKMT object and wire
+  behavior. In the Microsoft WSL2 Linux kernel it lives under
+  `drivers/hv/dxgkrnl`, with UAPI in `include/uapi/misc/d3dkmthk.h`; do not
+  look under `drivers/gpu/dxgkrnl`.
+- Use WSL `dxgprocess`, `hmgrtable`, `dxgprocess_adapter`,
+  `dxgsharedresource`, `dxgsharedsyncobject`, `dxgsyncfile`, and `dxgvmbus`
+  code as the comparison anchors for `/dev/dxg` process lifetime, typed handle
+  tables, shared-resource sealing, monitored-fence sync-file behavior, and
+  D3DKMT packet layout.
+- WSL `dxgkrnl` is not the DRM/KMS/Nouveau reference. Use Linux DRM, GEM, TTM,
+  `dma_fence`, `dma_resv`, KMS atomic, PCI runtime, and Nouveau sources for
+  `/dev/dri`, PRIME/dma-buf, scanout, and Nouveau compatibility work.
+- Keep these tracks separate in plans and validators: WSL parity can close DXG
+  transport/object gates, but it cannot by itself prove native display handoff,
+  KMS scanout, Nouveau command submission, FPS, WebKit acceleration, or
+  `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
+
+#### GPU Module Index
+
+- `kernel/dev/fb/module.c`: unity root for the framebuffer/GPU module.
+- `kernel/dev/fb/fb_common.c`: common includes shared by x86 and stubs.
+- `kernel/dev/fb/fb_internal.c`: GPU constants, shared state, boot logo, and
+  internal prototypes.
+- `kernel/dev/fb/fb_scanout.c`: framebuffer scanout, blit, scanout map, flush,
+  and display-completion accounting.
+- `kernel/dev/fb/fb_bo_ttm_dmabuf.c`: BO/GEM objects, TTM placement,
+  reservations, and dma-buf metadata/lifetime.
+- `kernel/dev/fb/fb_dxg_present.c`: Hyper-V DXG present-source registration,
+  commit, query, fail-closed native-present diagnostics, and the
+  `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` skeleton that ties native handoff to
+  a registered source, source/resource generations, required metadata, selected
+  GPU-P/DDA lane, and display-completion source.
+- `kernel/dev/fb/fb_fd_sync.c`: exported BO/fence/sync fd file operations,
+  poll, close, and callback lifecycle.
+- `kernel/dev/fb/fb_device_ioctl.c`: `/dev/fb0` and `/dev/gpu0` ownership,
+  open/close, read/write, and `FB_GPU_*` ioctl dispatch.
+- `kernel/dev/fb/fb_drm_core_kms.c`: DRM core helpers, legacy ioctls, KMS
+  resources, properties, planes, CRTC, connector, and framebuffer metadata.
+- `kernel/dev/fb/fb_kms_atomic.c`: KMS framebuffer lifecycle, leases,
+  modeset, page-flip, vblank, and atomic commit/fence behavior.
+- `kernel/dev/fb/fb_syncobj_prime_virtgpu.c`: DRM syncobj/timeline,
+  sync-file bridge, dumb BO, PRIME, and virtgpu compatibility ioctls.
+- `kernel/dev/fb/fb_nouveau.c`: Nouveau PCI facade and Nouveau private DRM
+  ioctl compatibility.
+- `kernel/dev/fb/fb_drm_dispatch.c`: DRM ioctl switch, render-node file ops,
+  and DRM mmap.
+- `kernel/dev/fb/fb_init_panic.c`: GPU device registration, framebuffer init,
+  firmware framebuffer setup, and panic screen renderer.
+- `kernel/dev/fb/fb_non_x86.c`: non-x86 framebuffer/GPU stubs.
+
+#### Hyper-V Module Index
+
+- `kernel/dev/hyperv/module.c`: unity root for the Hyper-V module.
+- `kernel/dev/hyperv/hyperv_common.c`: common includes shared by x86 and
+  stubs.
+- `kernel/dev/hyperv/hyperv_defs_state.c`: Hyper-V/VMBus/DXG constants, wire
+  structs, and shared per-channel/device state.
+- `kernel/dev/hyperv/hyperv_vpci_config.c`: Hyper-V vPCI config-window backend
+  and bus-relations parsing.
+- `kernel/dev/hyperv/hyperv_dxg_state_diag.c`: DXG adapter admission, WSL
+  parity diagnostics, payload caches, and status text helpers.
+- `kernel/dev/hyperv/hyperv_dxg_status_device.c`: `/dev/dxg` status read path,
+  IO-space/MMIO helpers, and existing-sysmem mapping helpers.
+- `kernel/dev/hyperv/hyperv_dxg_objects_shared.c`: DXG process/object/handle,
+  allocation/resource/sync tracking, NT shared resource/sync fds, and teardown.
+- `kernel/dev/hyperv/hyperv_dxg_ioctls.c`: D3DKMT ioctl validation,
+  ownership checks, packet shaping, forwarding, and completion handling.
+- `kernel/dev/hyperv/hyperv_dxg_device.c`: DXG cdev/file operations and public
+  transport/D3DKMT readiness exports.
+- `kernel/dev/hyperv/hyperv_vmbus_core.c`: Hyper-V CPUID/MSR, SynIC, VMBus
+  ring buffers, packets, events, completions, and DXG send/wait helpers.
+- `kernel/dev/hyperv/hyperv_synth_devices.c`: synthetic HID/keyboard,
+  StorVSC, NetVSC, SynthVid, and vPCI channel helpers.
+- `kernel/dev/hyperv/hyperv_init_public.c`: Hyper-V channel opening, public
+  init entry points, video status/dirty APIs, and startup sequencing.
+- `kernel/dev/hyperv/hyperv_non_x86.c`: non-x86 Hyper-V stubs.
+
 - Hyper-V DXG has a usable transport and D3DKMT readiness lane: `/dev/dxg`
   exposes global/vGPU transports, adapter enumeration/open works, and
   `fbstat`/`FB_GPU_BACKEND_QUERY` distinguish `DXG_TRANSPORT`, `D3DKMT`, and
@@ -157,6 +254,49 @@ but do not treat them as open plan items by default.
 - WebKit acceleration is intentionally gated on `FB_GPU_BACKEND_F_OPENGL_SUBMIT`.
   Hyper-V render-node or D3DKMT presence alone must keep WebKit on the stable
   fallback path.
+
+### DRM/KMS Validation Baselines
+
+- Treat KMS format support as a two-level contract:
+  - framebuffer metadata support means `ADDFB2`/`GETFB2` can store and
+    round-trip format, modifier, plane handle, pitch, and offset fields;
+  - scanout support means the format is advertised by `GETPLANE` and all
+    modeset/present paths can use it without software-only side effects.
+- Until native scanout exists for a format, validators should prove unsupported
+  `SETCRTC`, page flip, atomic commit, and atomic `TEST_ONLY` reject before:
+  - queuing DRM events;
+  - taking or waiting in-fence refs;
+  - creating, exporting, cleaning, or placeholder-writing out-fences;
+  - mutating current KMS framebuffer state;
+  - advancing display, DXG-present, native-present, or OpenGL-submit credit.
+- The current Hyper-V KMS NV12 baseline is metadata-only: NV12
+  `ADDFB2`/`GETFB2` round-trips, primary `GETPLANE` advertises only
+  XRGB8888/ARGB8888, and the NV12 scanout/present matrix is fail-closed.
+- KMS vblank/page-flip event-source provenance is its own layer:
+  - display-correlated timing requires `kms_vblank_synthetic=0`,
+    `kms_vblank_display_correlated=1`, and
+    `display_completion_correlated=PASS`;
+  - those events are still not native-present evidence unless the same run also
+    proves real atomic OUT_FENCE/native display handoff completion;
+  - Hyper-V must keep `backend_opengl_submit 0` while OUT_FENCE provenance is
+    `software_immediate`.
+- For DRM sync_file validation, distinguish the layers:
+  - pending export/import readiness proves live source tracking;
+  - callback lifecycle proves poll-arm, signal-fire, close-cancel, and
+    no-late-fire accounting;
+  - syncobj wait callback lifecycle proves actual sleeping waits arm per-state
+    callbacks, signal/transfer fires them, finite timeout cancels them, and
+    `wait_callback_late_delta=0`;
+  - fd-visible cancellation should happen from `.last_fd_close`; delayed
+    `.release` accounting is not enough evidence for close-before-signal
+    behavior;
+  - exported software fence fds need their own add/fire/remove/late callback
+    matrix before broad dma-fence language is justified; exact software
+    fence-object lifetime uses `early_release_on_close` when the fd has no
+    hidden or concurrent refs;
+  - native KMS OUT_FENCE and display-correlated vblank/page-flip completion are
+    separate gates; passing the vblank/page-flip source matrix does not close
+    the OUT_FENCE gate.
 
 ## Common Problems
 
