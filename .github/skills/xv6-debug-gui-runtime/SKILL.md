@@ -158,6 +158,19 @@ but do not treat them as open plan items by default.
   on the same per-open `dxgprocess` host handle as the successful create/open
   packet. A global process handle in `DESTROYALLOCATION` cleanup is a WSL
   parity bug even if the helper usually succeeds on a single-process smoke.
+- For `CREATEALLOCATION` and `OPENRESOURCE` late user-publication failures,
+  keep a pure-C copyout-fault matrix in `dxgprobe`: force `-EFAULT` after the
+  host succeeds, prove same-process `DESTROYALLOCATION`, prove no local handle
+  was published by retrying destroy on the returned host handles, and prove
+  existing-sysmem active page pins return to the pre-fault count.
+  `OPENRESOURCE` should fault `open_alloc_info` before the final args copyout
+  so cleanup uses the host-returned resource handle, not the still-zero user
+  `req.resource` mirror.
+- For WSL-like shared resources, treat the explicit resource metadata record
+  and per-allocation records as the canonical seal/query/open lifetime model.
+  The older flat fields can remain as compatibility mirrors only while
+  validators require `shared_model_coherent=1` and `dxg_sharedresource_model`
+  reports valid records that match the mirror.
 - For normal DXG object handles, keep the WSL `hmgrtable` shape visible:
   index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
   free-count/head/tail diagnostics, and minimum-free expansion. Do not regress

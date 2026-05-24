@@ -150,7 +150,7 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   `CREATECONTEXTVIRTUAL`, `CREATEHWQUEUE`, `CREATEALLOCATION`,
   `DESTROYALLOCATION`, `MAKERESIDENT`, `OPENRESOURCE`, sync-object
   create/open/signal/wait, sync-file create/open/wait, and HW-queue submit.
-- [ ] Re-audit WSL `CREATEALLOCATION` and `OPENRESOURCE` failure unwind:
+- [x] Re-audit WSL `CREATEALLOCATION` and `OPENRESOURCE` failure unwind:
   runtime/resource/allocation private blob copyout, local handle publication,
   host resource destruction after late failure, standard-allocation substitution,
   and result-private-data return layout.
@@ -161,11 +161,11 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Make create/open local tracking failures visible to callers instead of
     best-effort drops: resource/allocation publication now returns errors,
     unwinds partial local state, and destroys host-created resources on failure.
-  - [ ] Add a pure-C fault-injection validator that forces post-host
+  - [x] Add a pure-C fault-injection validator that forces post-host
     `CREATEALLOCATION` and `OPENRESOURCE` publication failures, then proves
     same-process host cleanup, original errno preservation, no leaked local
     handles, and balanced pinned sysmem pages.
-  - [ ] Split shared-resource metadata into explicit WSL-like
+  - [x] Split shared-resource metadata into explicit WSL-like
     resource/allocation records so seal/query/open lifetimes are not stored
     only as flat blobs on `hvdxg_tracked_resource`.
 - [x] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
