@@ -282,6 +282,9 @@ but do not treat them as open plan items by default.
   `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` skeleton that ties native handoff to
   a registered source, source/resource generations, required metadata, selected
   GPU-P/DDA lane, and display-completion source.
+  The selected lane is GPU-P/DDA `dxg-resource-scanout-bind`, with WSLg display
+  channel unavailable, synthvid limited to GPA-dirty VRAM, no custom host tool,
+  and `dxg_present_lane_selection_matrix` as the fbstat evidence row.
 - `kernel/dev/fb/fb_fd_sync.c`: exported BO/fence/sync fd file operations,
   poll, close, and callback lifecycle.
 - `kernel/dev/fb/fb_device_ioctl.c`: `/dev/fb0` and `/dev/gpu0` ownership,
