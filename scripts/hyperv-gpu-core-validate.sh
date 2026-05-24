@@ -428,6 +428,9 @@ serial_step "dxg-lifetime" \
 serial_step "dxg-sync-nt" \
     "WSL-natural shared sync-object export/open/fence validator" 180000 \
     'echo __CORE_DXG_SYNCNT_BEGIN__; dxgprobe --sync-only; cat /dev/dxg; echo __CORE_DXG_SYNCNT_END__'
+serial_step "dxg-syncfile" \
+    "WSL-style DXG sync-file open/wait/unwind validator" 180000 \
+    'echo __CORE_DXG_SYNCFILE_BEGIN__; dxgprobe --syncfile; cat /dev/dxg; echo __CORE_DXG_SYNCFILE_END__'
 serial_step "dxg-present-source" \
     "fail-closed DXG present-source and bind-contract validator" 180000 \
     'echo __CORE_DXG_PRESENT_BEGIN__; dxgprobe --present-source-failclosed-validate; cat /dev/dxg; fbstat; echo __CORE_DXG_PRESENT_END__'
@@ -466,6 +469,8 @@ require_log '^__CORE_DXG_LIFETIME_BEGIN__$' "DXG lifetime begin marker"
 require_log '^__CORE_DXG_LIFETIME_END__$' "DXG lifetime end marker"
 require_log '^__CORE_DXG_SYNCNT_BEGIN__$' "DXG sync NT-sharing begin marker"
 require_log '^__CORE_DXG_SYNCNT_END__$' "DXG sync NT-sharing end marker"
+require_log '^__CORE_DXG_SYNCFILE_BEGIN__$' "DXG sync-file begin marker"
+require_log '^__CORE_DXG_SYNCFILE_END__$' "DXG sync-file end marker"
 require_log '^__CORE_DXG_PRESENT_BEGIN__$' "DXG present-source begin marker"
 require_log '^__CORE_DXG_PRESENT_END__$' "DXG present-source end marker"
 require_log '^__CORE_GPUBUF_BEGIN__$' "BO/fence begin marker"
@@ -530,6 +535,14 @@ require_log 'shared_lifetime_record_matrix .*livefd=[0-9]+->[0-9]+->0 .*same_rec
     "canonical shared-resource record repeated/child/destroy/close validator"
 require_log 'opensync_layout_source_matrix .*nt_handle_source=shareobjects_fd .*same_open_rc=0 .*same_open_ok=1 .*same_fence_cpu=0x[1-9a-f][0-9a-f]* .*same_fence_gpu=0x[1-9a-f][0-9a-f]* .*child_process_attempted=1 .*child_status=0 .*status=PASS' \
     "WSL-natural shared sync-object export/open validator"
+require_log 'sync_file_matrix .*create_rc=0 .*wait_rc=0 .*open_rc=0 .*open_sync=0x[1-9a-f][0-9a-f]* .*child_status=0 .*child_rc=0' \
+    "WSL-style sync-file create/wait/open child validator"
+require_log 'dxg_syncfile_create_unwind_matrix .*create_fault_rc=-14 .*fd_visible=0 .*fd_reclaimed=[0-9]+->[1-9][0-9]* .*event_removed=[0-9]+->[1-9][0-9]* .*balanced=1 .*status=PASS' \
+    "WSL-style sync-file create copyout-failure cleanup validator"
+require_log 'dxg_syncfile_open_unwind_matrix .*open_fault_rc=-14 .*open_destroy=[0-9]+/[0-9]+->[1-9][0-9]*/[1-9][0-9]* .*destroy_ret=0 .*source_fd_valid=1 .*no_local_leak=1 .*status=PASS' \
+    "WSL-style sync-file open copyout-failure cleanup validator"
+require_log 'dxg_syncfile_lifetime=.*open_faults:[1-9][0-9]* .*open_destroy:[1-9][0-9]*/[1-9][0-9]*/0 .*host_events:0/[1-9][0-9]*/[1-9][0-9]*' \
+    "DXG sync-file lifetime and host-event diagnostics"
 require_log 'dxg_opensync_envelope=route:global cmd:40 wire:56 ext:1 eoff:16 result:24 actual:24 ret:0 status:0x0 .* fd_kind:1 fd_refs:[1-9][0-9]*' \
     "WSL-natural OPENSYNCOBJECT envelope"
 require_log 'dxg_opensync_shape=.* off_dev:24 off_global:28 off_flags:36' \
