@@ -431,6 +431,9 @@ serial_step "dxg-lifetime" \
 serial_step "dxg-sync-nt" \
     "WSL-natural shared sync-object export/open/fence validator" 180000 \
     'echo __CORE_DXG_SYNCNT_BEGIN__; dxgprobe --sync-only; cat /dev/dxg; echo __CORE_DXG_SYNCNT_END__'
+serial_step "dxg-cpu-event-signal" \
+    "WSL-shaped enqueue_cpu_event signal packet validator" 180000 \
+    'echo __CORE_DXG_CPUEVENT_BEGIN__; dxgprobe --try-submit; cat /dev/dxg; echo __CORE_DXG_CPUEVENT_END__'
 serial_step "dxg-syncfile" \
     "WSL-style DXG sync-file open/wait/unwind validator" 180000 \
     'echo __CORE_DXG_SYNCFILE_BEGIN__; dxgprobe --syncfile; cat /dev/dxg; echo __CORE_DXG_SYNCFILE_END__'
@@ -546,6 +549,14 @@ require_log 'shared_lifetime_record_matrix .*livefd=[0-9]+->[0-9]+->0 .*same_rec
     "canonical shared-resource record repeated/child/destroy/close validator"
 require_log 'opensync_layout_source_matrix .*nt_handle_source=shareobjects_fd .*same_open_rc=0 .*same_open_ok=1 .*same_fence_cpu=0x[1-9a-f][0-9a-f]* .*same_fence_gpu=0x[1-9a-f][0-9a-f]* .*child_process_attempted=1 .*child_status=0 .*status=PASS' \
     "WSL-natural shared sync-object export/open validator"
+require_log 'sync_signal_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*host_events=[0-9]+/[0-9]+/[0-9]+->[0-9]+/[1-9][0-9]*/[0-9]+ .*status=PASS' \
+    "WSL-style SIGNALSYNCHRONIZATIONOBJECT enqueue_cpu_event validator"
+require_log 'sync_fromcpu_cpu_event_failclosed_matrix .*rc=-22 expected=-22 status=PASS' \
+    "DXG FROMCPU enqueue_cpu_event fail-closed validator"
+require_log 'sync_gpu2_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*host_events=[0-9]+/[0-9]+/[0-9]+->[0-9]+/[1-9][0-9]*/[0-9]+ .*status=PASS' \
+    "WSL-style SIGNALSYNCHRONIZATIONOBJECTFROMGPU2 enqueue_cpu_event validator"
+require_log 'dxg_synccpuevent_signal=.*successes:[1-9][0-9]* .*ret:0 .*flags:0x2 objects:0 contexts:1 .*event:[1-9][0-9]*' \
+    "DXG CPU-event signal packet diagnostics"
 require_log 'sync_file_matrix .*create_rc=0 .*wait_rc=0 .*open_rc=0 .*open_sync=0x[1-9a-f][0-9a-f]* .*child_status=0 .*child_rc=0' \
     "WSL-style sync-file create/wait/open child validator"
 require_log 'dxg_syncfile_create_unwind_matrix .*create_fault_rc=-14 .*fd_visible=0 .*fd_reclaimed=[0-9]+->[1-9][0-9]* .*event_removed=[0-9]+->[1-9][0-9]* .*balanced=1 .*status=PASS' \
