@@ -250,6 +250,12 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "DDA/Nouveau scanout bind path is not fabricated"
     require_log 'nouveau_gpup_failclosed_matrix .*accepts=0 .*backend_dda_nouveau=0 .*reject_reason=PASS .*no_fake_bar=PASS .*no_fake_dma=PASS .*no_fake_irq=PASS .*no_fake_getparam=PASS .*no_fake_remove=PASS .*no_fake_present=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau fail-closed matrix"
+    require_log 'native_display_readiness_failclosed_matrix .*hyperv_gpup=PASS .*native_display_ready=0 .*dda_native_display_present=0 .*display_target_kind=0 .*dxg_scanout_bind_successes=0 .*present_id=0 completed=0 .*reject_reasons=0x7f .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only native display readiness stays fail-closed"
+    require_log 'nouveau_display_failclosed_matrix .*accepts=0 .*create_attempts=0 .*create_successes=0 .*heads=0 .*connectors=0 .*vblank_supported=0 .*vblank_irqs=0 .*flip_completions=0 .*dda_native_display_present=0 .*native_display_ready=0 .*reject_reasons=0x7f .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau display object skeleton stays fail-closed"
+    require_log 'kms_present_discriminator_failclosed_matrix .*last_lane=0 .*kms_present_dumb=0 .*kms_present_synthvid=0 .*kms_present_nouveau_hw=0 .*reject_reasons=0x7f .*selected=none .*native_display_ready=0 .*dda_native_display_present=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only KMS native-present discriminator stays fail-closed"
     require_log 'nouveau_pci_runtime_contract_matrix .*accepts=0 .*gpup_only=PASS .*dma_mask=NOT_CONFIGURED .*coherent_dma_mask=NOT_CONFIGURED .*dma_map=GPU_P_FAIL_CLOSED .*bar_claim=NOT_ATTEMPTED .*irq_handler=ABSENT .*irq_delivery=ABSENT .*runtime_pm_usage=DEFERRED .*remove_path=DEFERRED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau PCI runtime contract matrix"
     require_log 'nouveau_pci_runtime_interface_matrix .*accepts=0 .*resource_tree=GPU_P_FAIL_CLOSED .*dma_mapping_api=GPU_P_FAIL_CLOSED .*msi_msix_programming=NOT_ATTEMPTED .*legacy_irq_fallback=NOT_CLAIMED .*irq_delivery=ABSENT .*runtime_pm=DEFERRED .*remove_path=DEFERRED .*hot_remove=DEFERRED .*native_engine=ABSENT .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \

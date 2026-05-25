@@ -530,6 +530,18 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   Nouveau device and reach libdrm winsys/device-info, channel, BO, map, and
   PRIME paths; on GPU-P-only images it can only pass as explicit no-DDA
   fail-closed evidence with `synthetic_gpup_rejected=PASS`.
+- [x] Add a kernel-owned native-display readiness and KMS present-discriminator
+  skeleton before any DDA/Nouveau native-present claims.
+  The stats ABI now has explicit Nouveau display readiness fields for DDA
+  native display presence, display-create attempts/successes, heads,
+  connectors, vblank support/IRQs, hardware page-flip completions, and reject
+  reasons. KMS native-present lanes are separately named as none, dumb,
+  synthvid, or Nouveau hardware, with zero-credit reject reasons required on
+  GPU-P-only Hyper-V. `fbstat`, `gpucorevalidate`, and the focused runner now
+  require `native_display_readiness_failclosed_matrix`,
+  `nouveau_display_failclosed_matrix`, and
+  `kms_present_discriminator_failclosed_matrix`; validation passed on
+  2026-05-25 with `validation_run_id=core-1779720971-1215307`.
 
 ### 4. Native D3D12 Shared-Resource Present
 

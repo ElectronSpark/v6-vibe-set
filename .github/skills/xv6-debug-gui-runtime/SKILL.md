@@ -555,6 +555,14 @@ but do not treat them as open plan items by default.
     proves real atomic OUT_FENCE/native display handoff completion;
   - Hyper-V must keep `backend_opengl_submit 0` while OUT_FENCE provenance is
     `software_scanout_commit`.
+- Native-display readiness is kernel-owned state, not a user-space inference
+  from generic KMS success. On GPU-P-only Hyper-V the required rows are
+  `native_display_readiness_failclosed_matrix`,
+  `nouveau_display_failclosed_matrix`, and
+  `kms_present_discriminator_failclosed_matrix`, each with zero
+  native-present/OpenGL-submit credit and `reject_reasons=0x7f` until a real
+  DDA/Nouveau display object, heads/connectors, vblank source, and hardware
+  flip completion exist.
 - For DRM sync_file validation, distinguish the layers:
   - pending export/import readiness proves live source tracking;
   - callback lifecycle proves poll-arm, signal-fire, close-cancel, and
