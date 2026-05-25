@@ -145,6 +145,11 @@ but do not treat them as open plan items by default.
   IDs are not Linux ioctls, and the stats row must report no sender,
   resource-bind, or display-completion contract before any native-present
   credit can be considered.
+- Keep the fail-closed proof scalarized: WSL ioctl namespace checked,
+  display-bind ioctl absent, standard allocations classified as private driver
+  data rather than scanout binding, synthvid limited to GPA dirty rectangles,
+  and DDA/Nouveau PCI display split from D3D12 resource import, scanout bind,
+  and hardware flip completion.
 - When planning the remaining native-present work, keep the chunks ordered:
   host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split
@@ -587,8 +592,10 @@ but do not treat them as open plan items by default.
 - Legacy Nouveau channel work is tracked separately from NVIF. The old
   `CHANNEL_ALLOC`/`GROBJ_ALLOC`/`NOTIFIEROBJ_ALLOC`/`GPUOBJ_FREE` ioctls should
   maintain per-open channel/object state, reject duplicates and unsupported
-  classes, and report `nouveau_channel_object_matrix`; Mesa's newer NVIF
-  object/subchannel path is still governed by the active NVIF plan row.
+  classes, and report `nouveau_channel_object_matrix`. Publish channel/VM state
+  only after successful ioctl copyout, so `-EFAULT` cannot leave active state
+  behind. Mesa's newer NVIF object/subchannel path is still governed by the
+  active NVIF plan row.
 - NVIF support must not advertise made-up engine classes. Until the Nouveau
   class hierarchy is real, `DRM_NOUVEAU_NVIF` should parse v0 SCLASS/NEW/DEL
   and method/register/map/notify operations, return an empty SCLASS list, reject

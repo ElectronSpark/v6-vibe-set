@@ -113,14 +113,26 @@ run_policy_negative_preflight()
 
     echo "hyperv-webkit-gpu-validate: webkit_evidence_rejection_matrix title_only=PASS chrome_only=PASS cursor_only=PASS callback_only=PASS release_only=PASS render_node_only=PASS dmabuf_only=PASS env_only=PASS software_fallback=PASS status=PASS" |
         tee -a "${LOG}"
-    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_content_crc_progress=1 required_frame_hash_progress=1 required_same_client_resource_generation_identity=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT content_crc_progress=0 frame_hash_progress=0 same_client_resource_generation_identity=0 prior_fps_native_present_contract=0 backend_opengl_submit=0 native_present_completion=0 gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=0 content_crc_progress=0 frame_hash_progress=0 current_webkit_run_id=0 same_client_resource_generation_identity=0 callback_release_ordering=0 prior_fps_native_present_contract=0 backend_opengl_submit=0 native_present_completion=0 gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
 }
 
 require_webkit_animated_content_native_present_gate()
 {
-    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*content_crc_progress=PASS .*frame_hash_progress=PASS .*same_client_resource_generation_identity=PASS .*prior_fps_native_present_contract=PASS .*backend_opengl_submit=1 .*native_present_completion=PASS .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
+    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*compositor_owned_visible_content=PASS .*content_crc_progress=PASS .*frame_hash_progress=PASS .*current_webkit_run_id=PASS .*same_client_resource_generation_identity=PASS .*callback_release_ordering=PASS .*prior_fps_native_present_contract=PASS .*backend_opengl_submit=1 .*native_present_completion=PASS .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
         "WebKit animated-content/native-present acceleration gate"
+}
+
+emit_webkit_animated_content_native_present_gate_open()
+{
+    local native_credit
+
+    native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
+    if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
+        native_credit=1
+    fi
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
+        tee -a "${LOG}"
 }
 
 require_backend_opengl_submit_gated_for_failed_present_file()
@@ -636,6 +648,111 @@ require_any_counter_ge()
     fi
 }
 
+require_compositor_owned_visible_content_file()
+{
+    local file="$1"
+    local why="$2"
+    local present_id
+    local completed
+    local content_present_id
+    local content_completed
+    local display_bind_generation
+    local content_generation
+
+    require_file_log "${file}" \
+        'd3d12_visible_content_crc[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "${why} compositor-owned visible content CRC"
+    require_file_log "${file}" \
+        'd3d12_visible_content_frame[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "${why} compositor-owned visible content frame counter"
+    require_file_log "${file}" \
+        'd3d12_visible_frame_hash[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "${why} compositor-owned visible content frame hash"
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_content_progress_source_owned[ =]1($|[[:space:]])' \
+        "${why} compositor-owned content source"
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_content_progress_state[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' \
+        "${why} D3D12 content progress state"
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_visible_content_progress[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' \
+        "${why} D3D12 visible content progress"
+    require_counter_ge "${file}" d3d12_content_progress_native_present_complete 1 \
+        "${why} content progress native present completion"
+    require_counter_ge "${file}" d3d12_content_progress_visible_credit 1 \
+        "${why} visible content credit"
+    require_counter_ge "${file}" d3d12_content_progress_native_present_credit 1 \
+        "${why} native content credit"
+
+    present_id="$(last_any_log_counter "${file}" d3d12_dxg_present_id present_id)"
+    completed="$(last_any_log_counter "${file}" d3d12_dxg_present_completed completed)"
+    content_present_id="$(last_log_counter "${file}" d3d12_content_progress_present_id)"
+    content_completed="$(last_log_counter "${file}" d3d12_content_progress_completed)"
+    display_bind_generation="$(last_log_counter "${file}" display_bind_resource_generation)"
+    content_generation="$(last_log_counter "${file}" d3d12_content_progress_display_bind_resource_generation)"
+    if [[ -z "${present_id}" || -z "${completed}" ||
+          -z "${content_present_id}" || -z "${content_completed}" ]]; then
+        fail "missing ${why} content/native-present id correlation"
+    fi
+    if (( content_present_id != present_id )); then
+        fail "${why} content present id does not match native present id: content=${content_present_id} present=${present_id}"
+    fi
+    if (( content_completed < content_present_id )); then
+        fail "${why} content completed counter does not cover content present id: completed=${content_completed} present=${content_present_id}"
+    fi
+    if (( completed < present_id )); then
+        fail "${why} native completed counter does not cover present id: completed=${completed} present=${present_id}"
+    fi
+    if [[ -n "${display_bind_generation}" && -n "${content_generation}" &&
+          "${content_generation}" -ne "${display_bind_generation}" ]]; then
+        fail "${why} content resource generation does not match display-bind generation: content=${content_generation} display_bind=${display_bind_generation}"
+    fi
+}
+
+require_same_client_resource_generation_identity_file()
+{
+    local file="$1"
+    local why="$2"
+    local client_pid
+    local identity_client_pid
+    local client_buffer_id
+    local identity_client_buffer_id
+    local manager_resource_id
+    local identity_manager_resource_id
+    local buffer_generation
+    local identity_buffer_generation
+
+    client_pid="$(last_log_counter "${file}" d3d12_client_pid)"
+    identity_client_pid="$(last_log_counter "${file}" d3d12_present_identity_client_pid)"
+    client_buffer_id="$(last_log_counter "${file}" d3d12_client_buffer_id)"
+    identity_client_buffer_id="$(last_log_counter "${file}" d3d12_present_identity_client_buffer_id)"
+    manager_resource_id="$(last_log_counter "${file}" d3d12_manager_resource_id)"
+    identity_manager_resource_id="$(last_log_counter "${file}" d3d12_present_identity_manager_resource_id)"
+    buffer_generation="$(last_log_counter "${file}" d3d12_buffer_generation)"
+    identity_buffer_generation="$(last_log_counter "${file}" d3d12_present_identity_buffer_generation)"
+    if [[ -z "${client_pid}" || -z "${identity_client_pid}" ||
+          -z "${client_buffer_id}" || -z "${identity_client_buffer_id}" ||
+          -z "${manager_resource_id}" || -z "${identity_manager_resource_id}" ||
+          -z "${buffer_generation}" || -z "${identity_buffer_generation}" ]]; then
+        fail "missing ${why} same-client/resource/generation identity fields"
+    fi
+    if (( client_pid < 1 || client_pid != identity_client_pid )); then
+        fail "${why} client pid identity mismatch: client=${client_pid} identity=${identity_client_pid}"
+    fi
+    if (( client_buffer_id < 1 || client_buffer_id != identity_client_buffer_id )); then
+        fail "${why} client buffer id identity mismatch: client=${client_buffer_id} identity=${identity_client_buffer_id}"
+    fi
+    if (( manager_resource_id < 1 || manager_resource_id != identity_manager_resource_id )); then
+        fail "${why} manager resource id identity mismatch: resource=${manager_resource_id} identity=${identity_manager_resource_id}"
+    fi
+    if (( buffer_generation < 1 || buffer_generation != identity_buffer_generation )); then
+        fail "${why} buffer generation identity mismatch: generation=${buffer_generation} identity=${identity_buffer_generation}"
+    fi
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_present_identity_current_run_valid[ =]1($|[[:space:]])' \
+        "${why} current-run identity proof"
+}
+
 require_d3d12_gpup_dda_commit_accepted_file()
 {
     local file="$1"
@@ -689,6 +806,7 @@ require_holistic_d3d12_display_bind_evidence_file()
         "${why} D3D12 visible content credit"
     require_counter_ge "${file}" d3d12_native_present_completion_id 1 \
         "${why} D3D12 native present completion id"
+    require_compositor_owned_visible_content_file "${file}" "${why}"
 
     display_bind_present_id="$(last_log_counter "${file}" display_bind_present_id)"
     display_bind_completed_id="$(last_log_counter "${file}" display_bind_completed_id)"
@@ -981,7 +1099,7 @@ require_prior_core_gpu_contract()
 webkit_shared_surface_contract_validated()
 {
 	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
-	    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
+		    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_identity_ok=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
 	    grep -Eq 'webkitgpusmoke: gpu-contract .*d3d12_run_id=webkit-[0-9]+-[0-9]+ .*env_run_id=webkit-[0-9]+-[0-9]+ .*d3d12_run_id_match=1 .*ok=1' "${LOG}" &&
 	    grep -Eq 'd3d12sharedsmoke: present validation ok frame=1 release=1 gpu_present=[0-9]+->[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff .*present_id=[1-9][0-9]* completed=[1-9][0-9]* .*mtime_ms=[1-9][0-9]* min_mtime_ms=[1-9][0-9]* .*starts=[1-9][0-9]* copy=[1-9][0-9]* completes=[1-9][0-9]* .*resource=0x[1-9a-fA-F][0-9a-fA-F]* allocations=[1-9][0-9]* fence=0x[1-9a-fA-F][0-9a-fA-F]* target=1 release=[1-9][0-9]* .*source_luid=([0-9a-fA-F]{8}):([0-9a-fA-F]{8}) matched_luid=\1:\2 no_cpu_readback=1' "${LOG}" &&
@@ -997,14 +1115,16 @@ webkit_shared_surface_contract_validated()
     grep -Eq '(^|[[:space:]])completion_source[ =](3|display|native-display|native-display-completion)($|[[:space:]])' "${LOG}" &&
     grep -Eq 'd3d12_evidence_generation=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_present_evidence_time_us=[1-9][0-9]*' "${LOG}" &&
-    grep -Eq 'd3d12_(present_content_crc|present_region_crc|client_content_crc|visible_content_crc|present_crc)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
-    grep -Eq 'd3d12_(present_content_frame|present_content_frames|present_content_change|present_content_changes|visible_content_frame|visible_content_frames)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
-    grep -Eq 'd3d12_(present_frame_hash|visible_frame_hash|content_frame_hash)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
+    grep -Eq 'd3d12_visible_content_crc=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
+    grep -Eq 'd3d12_visible_content_frame=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
+    grep -Eq 'd3d12_visible_frame_hash=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
     grep -Eq '(^|[[:space:]])d3d12_content_progress_state[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])d3d12_visible_content_progress[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])d3d12_content_(native_complete|native_present_complete|progress_native_present_complete)[ =]1($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])d3d12_content_visible_credit[ =]1($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])d3d12_content_native_credit[ =]1($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_content_progress_source_owned[ =]1($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_present_identity_current_run_valid[ =]1($|[[:space:]])' "${LOG}" &&
     grep -Eq "^(validation_run_id|xv6_validation_run_id|d3d12_validation_run_id|fps_validation_run_id|d3d12_run_id)=${VALIDATION_RUN_ID}($|[[:space:]])" "${LOG}" &&
     grep -Eq 'd3d12_present_release_fence=[1-9][0-9]*' "${LOG}"
 }
@@ -1054,23 +1174,19 @@ require_current_native_present_contract()
         "WebKit current-run D3D12 evidence timestamp"
     require_counter_ge "${LOG}" d3d12_present_resource 1 \
         "WebKit current-run D3D12 present resource identity"
+    require_same_client_resource_generation_identity_file "${LOG}" \
+        "WebKit current-run D3D12 evidence"
     require_counter_ge "${LOG}" d3d12_runtime_created_d3d12_resource_required 1 \
         "WebKit current-run runtime-created D3D12 resource strict-present marker"
     require_log '(^|[[:space:]])(d3d12_)?existing_sysmem_is_d3d12_com_resource[ =]0' \
         "WebKit current-run strict-present existing-sysmem exclusion marker"
     require_d3d12_display_provenance_file_if_present "${LOG}" \
         "WebKit current-run evidence"
-    require_any_counter_ge "${LOG}" 1 \
-        "WebKit current-run D3D12 content CRC counter" \
-        d3d12_present_content_crc d3d12_present_region_crc \
-        d3d12_client_content_crc d3d12_visible_content_crc \
-        d3d12_present_crc
-    require_any_counter_ge "${LOG}" 1 \
-        "WebKit current-run D3D12 content frame/change counter" \
-        d3d12_present_content_frame d3d12_present_content_frames \
-        d3d12_present_content_change d3d12_present_content_changes \
-        d3d12_visible_content_frame d3d12_visible_content_frames
+    require_compositor_owned_visible_content_file "${LOG}" \
+        "WebKit current-run D3D12 evidence"
     require_current_validation_run_id "WebKit current-run D3D12 evidence"
+    require_log 'webkitgpusmoke: gpu-contract .*d3d12_identity_ok=1 .*d3d12_run_id_match=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*ok=1' \
+        "WebKit in-process compositor-owned native-present content gate"
     completes="$(last_log_counter "${LOG}" d3d12_gpu_present_completes)"
     if [[ -z "${completes}" ]]; then
         completes="$(last_log_counter "${LOG}" d3d12_gpu_present_complete)"
@@ -1145,7 +1261,7 @@ run_webkit_animated_fixture_liveness()
         "${READ_MS}"
     require_log "webkitgpusmoke: complete uri=${fixture_uri} .*title_complete=1" \
         "WebKit animated fixture liveness"
-    echo "hyperv-webkit-gpu-validate: webkit_animated_content_fixture_liveness_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} source_contained_fixture=1 animated_title_frame=PASS title_only_liveness=1 content_crc_progress=MISSING frame_hash_progress=MISSING native_present_completion=MISSING gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_fixture_liveness_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} source_contained_fixture=1 animated_title_frame=PASS title_only_liveness=1 compositor_owned_visible_content=MISSING content_crc_progress=MISSING frame_hash_progress=MISSING current_webkit_run_id=MISSING same_client_resource_generation_identity=MISSING callback_release_ordering=MISSING native_present_completion=MISSING gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -1191,7 +1307,7 @@ run_contract_negative_validate()
     require_log 'backend hyperv-dxg flags' "Hyper-V GPU backend"
     require_log 'backend_opengl_submit 0' \
         "Hyper-V OpenGL-submit remains gated"
-    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*required_content_crc_progress=1 .*required_frame_hash_progress=1 .*required_same_client_resource_generation_identity=1 .*required_prior_fps_native_present_contract=1 .*required_backend_opengl_submit=1 .*required_native_present_completion=1 .*title_only=REJECT .*chrome_only=REJECT .*cursor_only=REJECT .*env_only=REJECT .*render_node_only=REJECT .*dmabuf_only=REJECT .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS" \
+    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*required_compositor_owned_visible_content=1 .*required_content_crc_progress=1 .*required_frame_hash_progress=1 .*required_current_webkit_run_id=1 .*required_same_client_resource_generation_identity=1 .*required_callback_release_ordering=1 .*required_prior_fps_native_present_contract=1 .*required_backend_opengl_submit=1 .*required_native_present_completion=1 .*title_only=REJECT .*chrome_only=REJECT .*cursor_only=REJECT .*env_only=REJECT .*render_node_only=REJECT .*dmabuf_only=REJECT .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS" \
         "WebKit animated-content/native-present gate closed on Hyper-V"
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=0 .*opengl_submit=0 .*shared_surface=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none .*fallback=opengl_submit_unavailable' \
         "WebKit desktop policy stays gated without shared-surface contract"
@@ -1335,6 +1451,7 @@ require_log 'webkit=1 .*webkit_accel=1 .*webkit_contract_wait_ms=120000 .*webkit
 require_log 'backend hyperv-dxg flags' "Hyper-V GPU backend"
 if webkit_shared_surface_contract_validated; then
     require_current_native_present_contract
+    emit_webkit_animated_content_native_present_gate_open
     require_webkit_animated_content_native_present_gate
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' \
         "WebKit D3D12 shared-surface/OpenGL-submit acceleration gate"
