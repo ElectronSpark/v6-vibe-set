@@ -177,6 +177,10 @@ but do not treat them as open plan items by default.
   The visible diagnostics are `provider_submits`, `lock_dropped_submits`,
   `revalidate_attempts`, `revalidate_successes`, and
   `revalidate_failures`.
+- The Hyper-V display-bind provider may be the concrete owner even before the
+  host ABI exists. Keep `hyperv_dxg_display_bind_submit_failclosed()` explicit
+  about pinned dxg/resource metadata, no host ABI, no sender, and no display
+  completion; this is a future sender slot, not native-present proof.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 - Treat the animated WebKit fixture as a liveness probe until the compositor
@@ -186,6 +190,11 @@ but do not treat them as open plan items by default.
   and visible/native content credits before `webkit_gpu_contract_matrix ok=1`;
   the Hyper-V validator may run the fixture, but must keep the WebKit
   acceleration gate closed when that native/content evidence is absent.
+- D3D12 content-progress evidence should come from compositor-owned
+  `wlcomp_buffer` sample fields. Reset them on each D3D12 shared-resource
+  commit, tie them to display-bind present/completed/resource generation, and
+  leave `source_owned=0` plus zero visible/native credit until a real
+  non-readback native-present content sampler fills CRC/frame/hash values.
 
 ### Source Layout
 
