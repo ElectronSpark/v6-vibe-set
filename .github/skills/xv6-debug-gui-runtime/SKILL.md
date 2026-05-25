@@ -152,6 +152,14 @@ but do not treat them as open plan items by default.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
+- Treat `display_bind_*` evidence as the canonical bridge between the kernel
+  present-source contract, `wlcomp`, FPS, and WebKit. The required keys are
+  `display_bind_backend`, `display_bind_transport`,
+  `display_bind_present_id`, `display_bind_completed_id`,
+  `display_bind_resource_generation`, and
+  `display_bind_completion_source`/`completion_source`. Fail-closed Hyper-V
+  evidence may name the selected backend/transport, but present/completed ids
+  must stay zero and no consumer may grant native-present credit from that.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 
@@ -470,6 +478,11 @@ but do not treat them as open plan items by default.
   They must show absent display bind/transport, zero present/completion ids,
   blocked or deferred callback/release ordering, required per-client
   generation matching, and zero native-present/OpenGL-submit credit.
+- `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
+  It should mirror kernel `dxg_display_bind_*` stats and keep the current
+  GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,
+  completion source required, present/completed ids zero, custom host tooling
+  zero, and zero native-present/OpenGL-submit credit.
 - `hyperv_opengl_submit_gate_matrix` is the backend flag invariant. On Hyper-V
   it must remain `backend_gate=closed` with `backend_opengl_submit=0` until
   native present, finite FPS, and the WebKit shared-surface contract are all
