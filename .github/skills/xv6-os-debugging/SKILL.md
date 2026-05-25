@@ -193,6 +193,11 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   `mesawlegl_fps_present_credit_matrix`; on the fail-closed Hyper-V path these
   rows must report effective presented FPS as zero and ignore the displayed
   overlay FPS.
+- Keep `/tmp/wlcomp-d3d12-present` authoritative for FPS/WebKit consumers:
+  it should include `d3d12_wayland_present_fps_provenance_matrix` and scalar
+  `d3d12_fps_provenance_*` keys, while
+  `FB_GPU_DXG_PRESENT_SOURCE_COMMIT` only copies `present_id/completed` back
+  on a real success path.
 - The selected native-present handoff lane is GPU-P/DDA
   `dxg-resource-scanout-bind`, not WSLg display channel emulation and not a
   synthvid GPA-dirty bridge. `fbstat` should report

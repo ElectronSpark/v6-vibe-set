@@ -567,6 +567,14 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779679708-3257998`.
+- [x] Add the commit-result copyout skeleton required by any future nonzero
+  `present_id/completed` path. `FB_GPU_DXG_PRESENT_SOURCE_COMMIT` now copies
+  the commit struct back to userspace only on success; the current fail-closed
+  path still returns an errno and preserves zero present/completion credit.
+  `dxgprobe`, `gpucorevalidate`, and the focused runner require
+  `d3d12_present_commit_result_copyout_contract_matrix` so the missing real
+  host bind cannot be hidden behind an ioctl ABI that would discard success
+  results.
 - [x] Replace present-source resource-fd provenance with a typed WSL-style
   DXG shared-resource admission snapshot: the FB present source must prove the
   fd is `anon_inode:dxgresource`, the shared-resource metadata is sealed, the
@@ -747,6 +755,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `mesawlegl_fps_present_credit_matrix` with
   `effective_presented_fps=0.000`, `visible_fps_ignored=1`, and
   `native_present_credit=0` on the current fail-closed Hyper-V path.
+- [x] Promote the Wayland present/FPS provenance row into the file-backed
+  D3D12 evidence contract, not just stderr. `/tmp/wlcomp-d3d12-present` now
+  records `d3d12_wayland_present_fps_provenance_matrix` plus scalar
+  `d3d12_fps_provenance_*` keys, so FPS and WebKit validators can reject
+  visible app-loop FPS unless the same resource/generation has a native
+  display completion.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
