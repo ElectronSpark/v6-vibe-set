@@ -272,6 +272,10 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     child-process open from the same sync-file fd.
 - [ ] Replace the by-value shared-resource fd clone with a WSL-style parent
   shared-resource object:
+  - [x] Add parent-resource scaffold diagnostics while preserving existing
+    clone semantics: resource fds now carry parent id, fd refs, parent refs,
+    opened-child counters, creator/opened child snapshots, and
+    `dxg_sharedresource_parent` status output.
   - [ ] Add a refcounted parent resource object with fd refs, host NT refs,
     sealed generation, private-data ownership, allocation metadata, and an
     opened-resource list.
@@ -279,13 +283,19 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     parent instead of deep-cloning fd-private resource state.
   - [ ] Move seal/query/open metadata reads to the parent and keep per-open
     children responsible only for process-local handles and cleanup.
-  - [ ] Update display-bind snapshots to pin the parent and validate the
-    matching opened child/resource generation before accepting the fd.
+  - [x] Thread parent id/ref/opened-child evidence through display-bind pin
+    snapshots, fail-closed provider validation, `FB_GPU_GET_STATS`, and the
+    pure-C display-bind diagnostics.
+  - [ ] Update display-bind snapshots to pin the real parent object and
+    validate the matching opened child/resource generation before accepting
+    native-present credit.
 - [ ] Finish WSL sealed-allocation metadata parity:
-  - [ ] Add sealed allocation `num_pages` and `cached` metadata to shared
+  - [x] Add sealed allocation `num_pages` and `cached` metadata to shared
     allocation records.
-  - [ ] Populate the metadata from create/open allocation state and preserve it
-    across seal/query/open/exporter-destroy lifetimes.
+  - [x] Populate the metadata from create/open allocation state and expose it
+    in shared-resource model diagnostics.
+  - [ ] Preserve sealed allocation metadata across query/open/exporter-destroy
+    lifetimes on the real WSL-style parent object.
   - [ ] Add pure-C validators for duplicate fd/open-child close ordering,
     sealed `num_pages`/`cached` stability, and parent/child ref balance.
 - [x] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
