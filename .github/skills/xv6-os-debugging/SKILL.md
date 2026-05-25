@@ -124,6 +124,20 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   the host, commit the local dxgprocess object graph before copying handles to
   userspace; tracking or late-copyout failure must untrack local state and
   destroy the host-opened object through the owner-bound process handle.
+- Apply the same WSL publication rule to host-created handles: device,
+  context, allocation/resource, sync object, paging queue, and HW queue create
+  paths must commit local object-table state before handle copyout. On late
+  failure, untrack local state and destroy the host-created object through the
+  owner-bound process handle where a D3DKMT destroy command exists.
+- Treat monitored-fence mappings like WSL `dxgsyncobject_stop()` lifetime:
+  track map size and owning VM, map kernel aliases as PFNMAP, and unmap both
+  user and kernel fence aliases when the sync object is untracked or create/open
+  publication unwinds. Do not leave a stale fence VA/KVA as evidence.
+- The remaining WSL shared-resource model gap is parent ownership, not another
+  flat metadata blob. Shared-resource fds should converge on a refcounted
+  parent with fd refs, host NT refs, sealed private-data/allocation metadata,
+  and opened-resource children; per-open children should not deep-clone the
+  parent as the authoritative lifetime object.
 - Keep the reference tracks separate: WSL parity can close Hyper-V DXG object
   and wire-layout gates, while Linux DRM/GEM/TTM/KMS/Nouveau sources govern
   `/dev/dri`, PRIME/dma-buf, KMS atomic, PCI runtime, and Nouveau behavior.
