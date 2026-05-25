@@ -611,6 +611,17 @@ non-readback display handoff.
   CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
   `validation_run_id=core-1779708956-589366`.
+- [x] Add a canonical display-bind backend boundary that every later consumer
+  must use instead of inferring native present from loose DXG readiness.
+  The kernel stats ABI now mirrors the selected bind backend, transport,
+  operation, metadata/lifetime requirements, block reason, display-completion
+  source, source/resource generations, and present/completed ids as
+  `dxg_display_bind_*`. `fbstat`, `gpucorevalidate`, and the focused runner
+  require `d3d12_display_bind_backend_boundary_matrix`, while `wlcomp`, the
+  FPS validator, and the WebKit gate consume the same `display_bind_*` keys
+  from `/tmp/wlcomp-d3d12-present` and log matrices. The current Hyper-V path
+  remains fail-closed with zero ids, zero native-present credit, zero
+  OpenGL-submit credit, and no custom host tooling.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`

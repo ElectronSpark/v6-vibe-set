@@ -439,6 +439,12 @@ d3d12_present_ids = []
 d3d12_present_completed = []
 d3d12_native_completion_ids = []
 d3d12_resource_generations = []
+d3d12_display_bind_backends = []
+d3d12_display_bind_transports = []
+d3d12_display_bind_present_ids = []
+d3d12_display_bind_completed_ids = []
+d3d12_display_bind_resource_generations = []
+d3d12_display_bind_completion_sources = []
 d3d12_gpup_dda_commit_successes = []
 d3d12_same_frame_callback_releases = []
 d3d12_same_frame_callbacks = []
@@ -477,6 +483,12 @@ visual_present_ids = []
 visual_present_completed = []
 visual_native_completion_ids = []
 visual_resource_generations = []
+visual_display_bind_backends = []
+visual_display_bind_transports = []
+visual_display_bind_present_ids = []
+visual_display_bind_completed_ids = []
+visual_display_bind_resource_generations = []
+visual_display_bind_completion_sources = []
 visual_gpup_dda_commit_successes = []
 visual_same_frame_callback_releases = []
 visual_same_frame_callbacks = []
@@ -674,6 +686,74 @@ def same_run_resource_generation_completion_progress(run_ids, resources,
             return True
         seen[key] = max(seen.get(key, 0), completion_id)
     return False
+
+def display_bind_completion_source_ok(value):
+    return value.lower() in {
+        "3",
+        "display",
+        "native-display",
+        "native-display-completion",
+    }
+
+def require_display_bind_evidence(name, backends, transports, present_ids,
+                                  completed_ids, resource_generations,
+                                  completion_sources):
+    allowed_backends = {
+        "hyperv-dxg",
+        "gpu-p",
+        "gpu-p-dda",
+        "dda",
+        "nouveau",
+    }
+    allowed_transports = {
+        "dxg-resource-scanout-bind",
+        "gpu-p-dxg-resource-scanout-bind",
+    }
+    if not backends:
+        raise SystemExit(f"missing {name} display_bind_backend evidence")
+    bad_backends = [value for value in backends
+                    if value.lower() not in allowed_backends]
+    if bad_backends:
+        raise SystemExit(
+            f"{name} display_bind_backend was not native GPU display bind: "
+            f"values={','.join(backends)}"
+        )
+    if not transports:
+        raise SystemExit(f"missing {name} display_bind_transport evidence")
+    bad_transports = [value for value in transports
+                      if value.lower() not in allowed_transports]
+    if bad_transports:
+        raise SystemExit(
+            f"{name} display_bind_transport was not GPU-P/DXG scanout bind: "
+            f"values={','.join(transports)}"
+        )
+    if len(present_ids) < 2 or any(value == 0 for value in present_ids):
+        raise SystemExit(
+            f"missing nonzero {name} display_bind_present_id samples: "
+            f"values={','.join(str(value) for value in present_ids)}"
+        )
+    if len(completed_ids) < 2 or any(value == 0 for value in completed_ids):
+        raise SystemExit(
+            f"missing nonzero {name} display_bind_completed_id samples: "
+            f"values={','.join(str(value) for value in completed_ids)}"
+        )
+    if completed_ids[-1] < present_ids[-1]:
+        raise SystemExit(
+            f"{name} display_bind_completed_id did not cover "
+            f"display_bind_present_id: present_id={present_ids[-1]} "
+            f"completed_id={completed_ids[-1]}"
+        )
+    if not resource_generations or any(value == 0 for value in resource_generations):
+        raise SystemExit(
+            f"missing nonzero {name} display_bind_resource_generation "
+            f"evidence: values={','.join(str(value) for value in resource_generations)}"
+        )
+    if not any(display_bind_completion_source_ok(value)
+               for value in completion_sources):
+        raise SystemExit(
+            f"missing {name} native display completion_source evidence: "
+            f"values={','.join(completion_sources) if completion_sources else 'missing'}"
+        )
 
 def log_fps_gate_skeleton(stage, outside_overlay_values):
     native_delta = counter_delta(d3d12_present_counts)
@@ -1155,6 +1235,29 @@ for line in log.splitlines():
         resource_generation = counter_value(line, resource_generation_keys)
         if resource_generation is not None:
             visual_resource_generations.append(resource_generation)
+        display_bind_backend = token_value(line, ("display_bind_backend",))
+        if display_bind_backend is not None:
+            visual_display_bind_backends.append(display_bind_backend)
+        display_bind_transport = token_value(line, ("display_bind_transport",))
+        if display_bind_transport is not None:
+            visual_display_bind_transports.append(display_bind_transport)
+        display_bind_present_id = counter_value(line, ("display_bind_present_id",))
+        if display_bind_present_id is not None:
+            visual_display_bind_present_ids.append(display_bind_present_id)
+        display_bind_completed_id = counter_value(line, ("display_bind_completed_id",))
+        if display_bind_completed_id is not None:
+            visual_display_bind_completed_ids.append(display_bind_completed_id)
+        display_bind_resource_generation = counter_value(
+            line,
+            ("display_bind_resource_generation",),
+        )
+        if display_bind_resource_generation is not None:
+            visual_display_bind_resource_generations.append(
+                display_bind_resource_generation
+            )
+        completion_source = token_value(line, ("completion_source",))
+        if completion_source is not None:
+            visual_display_bind_completion_sources.append(completion_source)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             visual_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -1268,6 +1371,29 @@ for line in log.splitlines():
         resource_generation = counter_value(line, resource_generation_keys)
         if resource_generation is not None:
             d3d12_resource_generations.append(resource_generation)
+        display_bind_backend = token_value(line, ("display_bind_backend",))
+        if display_bind_backend is not None:
+            d3d12_display_bind_backends.append(display_bind_backend)
+        display_bind_transport = token_value(line, ("display_bind_transport",))
+        if display_bind_transport is not None:
+            d3d12_display_bind_transports.append(display_bind_transport)
+        display_bind_present_id = counter_value(line, ("display_bind_present_id",))
+        if display_bind_present_id is not None:
+            d3d12_display_bind_present_ids.append(display_bind_present_id)
+        display_bind_completed_id = counter_value(line, ("display_bind_completed_id",))
+        if display_bind_completed_id is not None:
+            d3d12_display_bind_completed_ids.append(display_bind_completed_id)
+        display_bind_resource_generation = counter_value(
+            line,
+            ("display_bind_resource_generation",),
+        )
+        if display_bind_resource_generation is not None:
+            d3d12_display_bind_resource_generations.append(
+                display_bind_resource_generation
+            )
+        completion_source = token_value(line, ("completion_source",))
+        if completion_source is not None:
+            d3d12_display_bind_completion_sources.append(completion_source)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             d3d12_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -1969,6 +2095,15 @@ if d3d12_present_completed[-1] < d3d12_present_ids[-1]:
         f"present_id={d3d12_present_ids[-1]} "
         f"completed={d3d12_present_completed[-1]}"
     )
+require_display_bind_evidence(
+    "sample-window D3D12",
+    d3d12_display_bind_backends,
+    d3d12_display_bind_transports,
+    d3d12_display_bind_present_ids,
+    d3d12_display_bind_completed_ids,
+    d3d12_display_bind_resource_generations,
+    d3d12_display_bind_completion_sources,
+)
 if (len(d3d12_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in d3d12_gpup_dda_commit_successes)):
     raise SystemExit(
@@ -1984,6 +2119,14 @@ d3d12_present_completed_deltas = require_advancing_counter(
     "DXG completed counter",
     d3d12_present_completed,
 )
+d3d12_display_bind_present_id_deltas = require_advancing_counter(
+    "display_bind_present_id",
+    d3d12_display_bind_present_ids,
+)
+d3d12_display_bind_completed_id_deltas = require_advancing_counter(
+    "display_bind_completed_id",
+    d3d12_display_bind_completed_ids,
+)
 d3d12_gpup_dda_commit_deltas = require_advancing_counter(
     "GPU-P/DDA present-source commit accepted",
     d3d12_gpup_dda_commit_successes,
@@ -1991,6 +2134,13 @@ d3d12_gpup_dda_commit_deltas = require_advancing_counter(
 sample_present_id_delta = d3d12_present_ids[-1] - d3d12_present_ids[0]
 sample_present_completed_delta = (
     d3d12_present_completed[-1] - d3d12_present_completed[0]
+)
+sample_display_bind_present_id_delta = (
+    d3d12_display_bind_present_ids[-1] - d3d12_display_bind_present_ids[0]
+)
+sample_display_bind_completed_id_delta = (
+    d3d12_display_bind_completed_ids[-1] -
+    d3d12_display_bind_completed_ids[0]
 )
 sample_gpup_dda_commit_delta = (
     d3d12_gpup_dda_commit_successes[-1] - d3d12_gpup_dda_commit_successes[0]
@@ -2013,6 +2163,24 @@ if sample_present_completed_delta < native_completed:
         f"completed_values={','.join(str(v) for v in d3d12_present_completed)} "
         f"native_values={','.join(str(v) for v in d3d12_present_counts)}"
     )
+if sample_display_bind_present_id_delta < native_completed:
+    raise SystemExit(
+        "display_bind_present_id did not advance with native present "
+        "completions during FPS sample: "
+        f"display_bind_present_id_delta={sample_display_bind_present_id_delta} "
+        f"native_completed={native_completed} "
+        f"display_bind_present_ids={','.join(str(v) for v in d3d12_display_bind_present_ids)} "
+        f"native_values={','.join(str(v) for v in d3d12_present_counts)}"
+    )
+if sample_display_bind_completed_id_delta < native_completed:
+    raise SystemExit(
+        "display_bind_completed_id did not advance with native present "
+        "completions during FPS sample: "
+        f"display_bind_completed_id_delta={sample_display_bind_completed_id_delta} "
+        f"native_completed={native_completed} "
+        f"display_bind_completed_ids={','.join(str(v) for v in d3d12_display_bind_completed_ids)} "
+        f"native_values={','.join(str(v) for v in d3d12_present_counts)}"
+    )
 if sample_gpup_dda_commit_delta < native_completed:
     raise SystemExit(
         "GPU-P/DDA present-source commit accepted counter did not advance with "
@@ -2030,6 +2198,16 @@ active_present_id_intervals = require_active_intervals(
 active_present_completed_intervals = require_active_intervals(
     "DXG completed counter",
     d3d12_present_completed_deltas,
+    min_active_native_intervals,
+)
+active_display_bind_present_id_intervals = require_active_intervals(
+    "display_bind_present_id",
+    d3d12_display_bind_present_id_deltas,
+    min_active_native_intervals,
+)
+active_display_bind_completed_id_intervals = require_active_intervals(
+    "display_bind_completed_id",
+    d3d12_display_bind_completed_id_deltas,
     min_active_native_intervals,
 )
 active_gpup_dda_commit_intervals = require_active_intervals(
@@ -2240,7 +2418,7 @@ if active_native_display_callback_release_intervals < required_correlated_interv
     )
 active_full_evidence_intervals = sum(
     1
-    for native, display, callback, release, generation, evidence_time, present_id, present_done, gpup_dda_commit in zip(
+    for native, display, callback, release, generation, evidence_time, present_id, present_done, bind_present_id, bind_completed_id, gpup_dda_commit in zip(
         native_completion_deltas,
         display_completion_deltas,
         callback_deltas,
@@ -2249,11 +2427,14 @@ active_full_evidence_intervals = sum(
         d3d12_evidence_time_deltas,
         d3d12_present_id_deltas,
         d3d12_present_completed_deltas,
+        d3d12_display_bind_present_id_deltas,
+        d3d12_display_bind_completed_id_deltas,
         d3d12_gpup_dda_commit_deltas,
     )
     if (native > 0 and display > 0 and callback > 0 and release > 0 and
         generation > 0 and evidence_time > 0 and present_id > 0 and
-        present_done > 0 and gpup_dda_commit > 0)
+        present_done > 0 and bind_present_id > 0 and
+        bind_completed_id > 0 and gpup_dda_commit > 0)
 )
 required_full_evidence_intervals = min(
     min_active_native_intervals,
@@ -2265,11 +2446,13 @@ required_full_evidence_intervals = min(
     len(d3d12_evidence_time_deltas),
     len(d3d12_present_id_deltas),
     len(d3d12_present_completed_deltas),
+    len(d3d12_display_bind_present_id_deltas),
+    len(d3d12_display_bind_completed_id_deltas),
     len(d3d12_gpup_dda_commit_deltas),
 )
 if active_full_evidence_intervals < required_full_evidence_intervals:
     raise SystemExit(
-        "native/display/callback/release/run-evidence/DXG-present/GPU-P/DDA-commit counters "
+        "native/display/callback/release/run-evidence/DXG-present/display-bind/GPU-P/DDA-commit counters "
         "did not advance in the same sample intervals: "
         f"overlap={active_full_evidence_intervals} "
         f"required={required_full_evidence_intervals} "
@@ -2281,6 +2464,8 @@ if active_full_evidence_intervals < required_full_evidence_intervals:
         f"evidence_time_deltas={','.join(str(v) for v in d3d12_evidence_time_deltas)} "
         f"present_id_deltas={','.join(str(v) for v in d3d12_present_id_deltas)} "
         f"completed_deltas={','.join(str(v) for v in d3d12_present_completed_deltas)} "
+        f"display_bind_present_id_deltas={','.join(str(v) for v in d3d12_display_bind_present_id_deltas)} "
+        f"display_bind_completed_id_deltas={','.join(str(v) for v in d3d12_display_bind_completed_id_deltas)} "
         f"gpup_dda_commit_deltas={','.join(str(v) for v in d3d12_gpup_dda_commit_deltas)}"
     )
 if not backend_opengl_submit_samples:
@@ -2906,6 +3091,15 @@ if visual_present_completed[-1] < visual_present_ids[-1]:
         f"present_id={visual_present_ids[-1]} "
         f"completed={visual_present_completed[-1]}"
     )
+require_display_bind_evidence(
+    "visual-window D3D12",
+    visual_display_bind_backends,
+    visual_display_bind_transports,
+    visual_display_bind_present_ids,
+    visual_display_bind_completed_ids,
+    visual_display_bind_resource_generations,
+    visual_display_bind_completion_sources,
+)
 if (len(visual_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in visual_gpup_dda_commit_successes)):
     raise SystemExit(
@@ -2920,6 +3114,14 @@ visual_present_completed_deltas = require_advancing_counter(
     "visual-window DXG completed counter",
     visual_present_completed,
 )
+visual_display_bind_present_id_deltas = require_advancing_counter(
+    "visual-window display_bind_present_id",
+    visual_display_bind_present_ids,
+)
+visual_display_bind_completed_id_deltas = require_advancing_counter(
+    "visual-window display_bind_completed_id",
+    visual_display_bind_completed_ids,
+)
 visual_gpup_dda_commit_deltas = require_advancing_counter(
     "visual-window GPU-P/DDA present-source commit accepted",
     visual_gpup_dda_commit_successes,
@@ -2927,6 +3129,13 @@ visual_gpup_dda_commit_deltas = require_advancing_counter(
 visual_present_id_delta = visual_present_ids[-1] - visual_present_ids[0]
 visual_present_completed_delta = (
     visual_present_completed[-1] - visual_present_completed[0]
+)
+visual_display_bind_present_id_delta = (
+    visual_display_bind_present_ids[-1] - visual_display_bind_present_ids[0]
+)
+visual_display_bind_completed_id_delta = (
+    visual_display_bind_completed_ids[-1] -
+    visual_display_bind_completed_ids[0]
 )
 visual_gpup_dda_commit_delta = (
     visual_gpup_dda_commit_successes[-1] - visual_gpup_dda_commit_successes[0]
@@ -2947,6 +3156,24 @@ if visual_present_completed_delta < visual_native_completed:
         f"completed_delta={visual_present_completed_delta} "
         f"native_completed={visual_native_completed} "
         f"completed_values={','.join(str(v) for v in visual_present_completed)} "
+        f"native_values={','.join(str(v) for v in visual_native_counts)}"
+    )
+if visual_display_bind_present_id_delta < visual_native_completed:
+    raise SystemExit(
+        "visual-window display_bind_present_id did not advance with native "
+        "present completions: "
+        f"display_bind_present_id_delta={visual_display_bind_present_id_delta} "
+        f"native_completed={visual_native_completed} "
+        f"display_bind_present_ids={','.join(str(v) for v in visual_display_bind_present_ids)} "
+        f"native_values={','.join(str(v) for v in visual_native_counts)}"
+    )
+if visual_display_bind_completed_id_delta < visual_native_completed:
+    raise SystemExit(
+        "visual-window display_bind_completed_id did not advance with native "
+        "present completions: "
+        f"display_bind_completed_id_delta={visual_display_bind_completed_id_delta} "
+        f"native_completed={visual_native_completed} "
+        f"display_bind_completed_ids={','.join(str(v) for v in visual_display_bind_completed_ids)} "
         f"native_values={','.join(str(v) for v in visual_native_counts)}"
     )
 if visual_gpup_dda_commit_delta < visual_native_completed:
@@ -2989,6 +3216,8 @@ log_validation(
     f"native_present_delta={visual_native_completed} "
     f"present_id_delta={visual_present_id_delta} "
     f"completed_delta={visual_present_completed_delta} "
+    f"display_bind_present_id_delta={visual_display_bind_present_id_delta} "
+    f"display_bind_completed_id_delta={visual_display_bind_completed_id_delta} "
     f"gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"evidence_generation_delta={sum(visual_generation_deltas)} "
     f"evidence_time_delta_us={sum(visual_evidence_time_deltas)} "
@@ -3017,6 +3246,8 @@ log_validation(
     f"display_completion_fps={completion_fps:.3f} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
+    f"sample_display_bind_present_id_delta={sample_display_bind_present_id_delta} "
+    f"sample_display_bind_completed_id_delta={sample_display_bind_completed_id_delta} "
     f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"sample_evidence_generation_delta={sum(d3d12_generation_deltas)} "
     f"sample_evidence_time_delta_us={sum(d3d12_evidence_time_deltas)} "
@@ -3028,6 +3259,8 @@ log_validation(
     f"active_release_intervals={active_release_intervals} "
     f"active_present_id_intervals={active_present_id_intervals} "
     f"active_completed_intervals={active_present_completed_intervals} "
+    f"active_display_bind_present_id_intervals={active_display_bind_present_id_intervals} "
+    f"active_display_bind_completed_id_intervals={active_display_bind_completed_id_intervals} "
     f"active_gpup_dda_commit_intervals={active_gpup_dda_commit_intervals} "
     f"active_content_frame_intervals={active_content_frame_intervals} "
     f"active_native_display_intervals={active_native_display_intervals} "
@@ -3170,9 +3403,13 @@ log_validation(
     f"display_completion_fps={completion_fps:.3f} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
+    f"sample_display_bind_present_id_delta={sample_display_bind_present_id_delta} "
+    f"sample_display_bind_completed_id_delta={sample_display_bind_completed_id_delta} "
     f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"visual_present_id_delta={visual_present_id_delta} "
     f"visual_completed_delta={visual_present_completed_delta} "
+    f"visual_display_bind_present_id_delta={visual_display_bind_present_id_delta} "
+    f"visual_display_bind_completed_id_delta={visual_display_bind_completed_id_delta} "
     f"visual_gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"visual_window_native_present_fps={visual_native_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
@@ -3191,6 +3428,8 @@ print(
     f"sample_evidence_time_delta_us={sum(d3d12_evidence_time_deltas)} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
+    f"sample_display_bind_present_id_delta={sample_display_bind_present_id_delta} "
+    f"sample_display_bind_completed_id_delta={sample_display_bind_completed_id_delta} "
     f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"sample_content_crc_changes={sample_content_crc_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
@@ -3200,6 +3439,8 @@ print(
     f"active_release_intervals={active_release_intervals} "
     f"active_present_id_intervals={active_present_id_intervals} "
     f"active_completed_intervals={active_present_completed_intervals} "
+    f"active_display_bind_present_id_intervals={active_display_bind_present_id_intervals} "
+    f"active_display_bind_completed_id_intervals={active_display_bind_completed_id_intervals} "
     f"active_gpup_dda_commit_intervals={active_gpup_dda_commit_intervals} "
     f"active_content_frame_intervals={active_content_frame_intervals} "
     f"active_native_display_intervals={active_native_display_intervals} "
@@ -3209,6 +3450,8 @@ print(
     f"visual_window_native_present_delta={visual_native_completed} "
     f"visual_window_present_id_delta={visual_present_id_delta} "
     f"visual_window_completed_delta={visual_present_completed_delta} "
+    f"visual_window_display_bind_present_id_delta={visual_display_bind_present_id_delta} "
+    f"visual_window_display_bind_completed_id_delta={visual_display_bind_completed_id_delta} "
     f"visual_window_gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"visual_window_evidence_generation_delta={sum(visual_generation_deltas)} "
     f"visual_window_evidence_time_delta_us={sum(visual_evidence_time_deltas)} "

@@ -653,6 +653,58 @@ require_d3d12_gpup_dda_commit_accepted_file()
         d3d12_host_display_commit_accepted
 }
 
+require_holistic_d3d12_display_bind_evidence_file()
+{
+    local file="$1"
+    local why="$2"
+    local display_bind_present_id
+    local display_bind_completed_id
+    local present_id
+    local completed
+
+    require_file_log "${file}" \
+        '(^|[[:space:]])display_bind_backend[ =](hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau)($|[[:space:]])' \
+        "${why} D3D12 display_bind_backend"
+    require_file_log "${file}" \
+        '(^|[[:space:]])display_bind_transport[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' \
+        "${why} D3D12 display_bind_transport"
+    require_counter_ge "${file}" display_bind_present_id 1 \
+        "${why} D3D12 display_bind_present_id"
+    require_counter_ge "${file}" display_bind_completed_id 1 \
+        "${why} D3D12 display_bind_completed_id"
+    require_counter_ge "${file}" display_bind_resource_generation 1 \
+        "${why} D3D12 display_bind_resource_generation"
+    require_file_log "${file}" \
+        '(^|[[:space:]])completion_source[ =](3|display|native-display|native-display-completion)($|[[:space:]])' \
+        "${why} D3D12 native display completion_source"
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_content_progress_state[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' \
+        "${why} D3D12 content progress state"
+    require_file_log "${file}" \
+        '(^|[[:space:]])d3d12_visible_content_progress[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' \
+        "${why} D3D12 visible content progress"
+    require_counter_ge "${file}" d3d12_content_progress_native_present_complete 1 \
+        "${why} D3D12 content progress native present completion"
+    require_counter_ge "${file}" d3d12_content_progress_visible_credit 1 \
+        "${why} D3D12 visible content credit"
+    require_counter_ge "${file}" d3d12_native_present_completion_id 1 \
+        "${why} D3D12 native present completion id"
+
+    display_bind_present_id="$(last_log_counter "${file}" display_bind_present_id)"
+    display_bind_completed_id="$(last_log_counter "${file}" display_bind_completed_id)"
+    present_id="$(last_any_log_counter "${file}" d3d12_dxg_present_id present_id)"
+    completed="$(last_any_log_counter "${file}" d3d12_dxg_present_completed completed)"
+    if (( display_bind_completed_id < display_bind_present_id )); then
+        fail "${why} display_bind_completed_id does not cover display_bind_present_id: present_id=${display_bind_present_id} completed_id=${display_bind_completed_id}"
+    fi
+    if [[ -n "${present_id}" && "${display_bind_present_id}" -ne "${present_id}" ]]; then
+        fail "${why} display_bind_present_id does not match D3D12 present_id: display_bind_present_id=${display_bind_present_id} present_id=${present_id}"
+    fi
+    if [[ -n "${completed}" && "${display_bind_completed_id}" -ne "${completed}" ]]; then
+        fail "${why} display_bind_completed_id does not match D3D12 completed counter: display_bind_completed_id=${display_bind_completed_id} completed=${completed}"
+    fi
+}
+
 require_wave60_native_present_keys_file()
 {
     local file="$1"
@@ -819,6 +871,8 @@ require_prior_shared_surface_contract()
         "prior DXG D3D12 display-handoff implementation marker"
     require_wave60_native_present_keys_file "${DXG_CONTRACT_LOG}" \
         "prior DXG strict-present"
+    require_holistic_d3d12_display_bind_evidence_file "${DXG_CONTRACT_LOG}" \
+        "prior DXG strict-present"
     require_d3d12_gpup_dda_commit_accepted_file "${DXG_CONTRACT_LOG}" \
         "prior DXG strict-present"
     require_d3d12_same_frame_callback_release_file "${DXG_CONTRACT_LOG}" \
@@ -856,6 +910,8 @@ require_prior_shared_surface_contract()
         '(^|[[:space:]])(d3d12_)?existing_sysmem_is_d3d12_com_resource[ =]0' \
         "prior FPS strict-present existing-sysmem exclusion marker"
     require_wave60_native_present_keys_file "${FPS_CONTRACT_LOG}" \
+        "prior FPS strict-present"
+    require_holistic_d3d12_display_bind_evidence_file "${FPS_CONTRACT_LOG}" \
         "prior FPS strict-present"
     require_d3d12_gpup_dda_commit_accepted_file "${FPS_CONTRACT_LOG}" \
         "prior FPS strict-present"
@@ -923,6 +979,12 @@ webkit_shared_surface_contract_validated()
     grep -Eq 'd3d12_gpu_present_starts=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_gpu_copy_completes=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_display_handoff_implemented[ =]1' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_backend[ =](hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau)($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_transport[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_present_id[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_completed_id[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_resource_generation[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])completion_source[ =](3|display|native-display|native-display-completion)($|[[:space:]])' "${LOG}" &&
     grep -Eq 'd3d12_evidence_generation=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_present_evidence_time_us=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_(present_content_crc|present_region_crc|client_content_crc|visible_content_crc|present_crc)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
@@ -953,6 +1015,8 @@ require_current_native_present_contract()
     require_counter_ge "${LOG}" d3d12_display_handoff_implemented 1 \
         "WebKit current-run D3D12 display-handoff implementation marker"
     require_wave60_native_present_keys_file "${LOG}" \
+        "WebKit current-run"
+    require_holistic_d3d12_display_bind_evidence_file "${LOG}" \
         "WebKit current-run"
     require_d3d12_gpup_dda_commit_accepted_file "${LOG}" \
         "WebKit current-run"
