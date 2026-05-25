@@ -285,6 +285,10 @@ but do not treat them as open plan items by default.
   The selected lane is GPU-P/DDA `dxg-resource-scanout-bind`, with WSLg display
   channel unavailable, synthvid limited to GPA-dirty VRAM, no custom host tool,
   and `dxg_present_lane_selection_matrix` as the fbstat evidence row.
+  `present_source_software_path_rejection_matrix` is the pure-C zero-credit
+  proof that framebuffer blit, CPU map/readback, DRI software present,
+  copy-export fallback, and callback-only/release-only paths cannot satisfy
+  this native-present contract while the real display-bind lane is missing.
 - `kernel/dev/fb/fb_fd_sync.c`: exported BO/fence/sync fd file operations,
   poll, close, and callback lifecycle.
 - `kernel/dev/fb/fb_device_ioctl.c`: `/dev/fb0` and `/dev/gpu0` ownership,
