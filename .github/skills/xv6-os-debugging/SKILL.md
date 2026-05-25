@@ -129,6 +129,10 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   runtime-PM/remove diagnostics, and zero native-present/OpenGL-submit credit
   until a real native engine and display handoff exist. GPU-P-only Hyper-V
   must keep BAR/DMA/IRQ/map counters zero and report `GPU_P_FAIL_CLOSED`.
+  Validate IRQ work with `nouveau_pci_irq_provenance_matrix`; on GPU-P-only
+  boots, either a real DDA/Nouveau reject counter or `nouveau_pci_probes 0`
+  is an honest fail-closed reason, but MSI/MSI-X, legacy IRQ, handler, cause,
+  ack, and spurious counters must remain zero.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.

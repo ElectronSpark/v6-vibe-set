@@ -226,8 +226,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "no DDA/Nouveau PCI function accepted on the GPU-P Hyper-V image"
     require_log 'backend_dda_nouveau 0' \
         "backend does not advertise DDA/Nouveau on GPU-P-only image"
-    require_log 'nouveau_pci_probe_reject_(dxg_present|no_bars) [1-9][0-9]*' \
-        "Nouveau DDA probe rejected because no BAR-backed DDA device is assigned"
+    require_log '(nouveau_pci_probe_reject_(dxg_present|no_bars) [1-9][0-9]*|nouveau_pci_probes 0)' \
+        "Nouveau DDA probe rejected or no DDA/Nouveau PCI candidate existed"
     require_log 'dxg_present_dxg_state_names .*paravirtualized.*no_display.*no_sources' \
         "GPU-P adapter is render/paravirtualized but has no display sources"
     require_log 'dxg_present_dxg_adapter_type_wsl 0x[1-9a-f][0-9a-f]*' \
@@ -254,6 +254,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "GPU-P-only Nouveau PCI runtime contract matrix"
     require_log 'nouveau_pci_runtime_interface_matrix .*accepts=0 .*resource_tree=GPU_P_FAIL_CLOSED .*dma_mapping_api=GPU_P_FAIL_CLOSED .*msi_msix_programming=NOT_ATTEMPTED .*legacy_irq_fallback=NOT_CLAIMED .*irq_delivery=ABSENT .*runtime_pm=DEFERRED .*remove_path=DEFERRED .*hot_remove=DEFERRED .*native_engine=ABSENT .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau PCI runtime interface matrix"
+    require_log 'nouveau_pci_irq_provenance_matrix .*accepts=0 .*msi_attempts=0 .*msi_unsupported=0 .*msix_attempts=0 .*msix_unsupported=0 .*legacy_requests=0 .*legacy_grants=0 .*handler_invocations=0 .*cause_reads=0 .*cause_valid=0 .*cause_acks=0 .*spurious=0 .*device_cause=GPU_P_FAIL_CLOSED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau IRQ provenance matrix"
 }
 
 log_metadata() {
