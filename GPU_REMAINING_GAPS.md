@@ -408,6 +408,21 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
   passed on 2026-05-25 with
   `validation_run_id=core-1779702023-161062`.
+- [x] Add Linux-shaped MSI/MSI-X fail-closed and IRQ provenance diagnostics
+  for DDA/Nouveau without granting GPU-P fake interrupt state.
+  The PCI core now tracks IRQ-vector allocation attempts/failures,
+  MSI/MSI-X requests that remain unsupported, and legacy IRQ request/grant
+  counts. Nouveau publishes those fields plus handler invocation, device-cause,
+  ack, and spurious counters through `nouveau_pci_dma_resource_matrix`,
+  `nouveau_pci_runtime_contract_matrix`,
+  `nouveau_pci_runtime_interface_matrix`, and the focused
+  `nouveau_pci_irq_provenance_matrix`. GPU-P-only Hyper-V passes only when
+  there is a real DDA/Nouveau reject reason or no DDA/Nouveau PCI candidate at
+  all, with zero fabricated IRQ/native-present/OpenGL-submit credit. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
+  passed on 2026-05-25 with
+  `validation_run_id=core-1779703653-280807`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
