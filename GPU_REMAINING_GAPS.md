@@ -422,6 +422,18 @@ non-readback display handoff.
   present and OpenGL-submit credit at zero.
 - [ ] Implement the selected `dxg-resource-scanout-bind` equivalent without
   custom host tooling.
+- [x] Make the selected bind lane's missing host ABI explicit and validator
+  owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
+  `gpucorevalidate` now emit and require
+  `dxg_resource_scanout_bind_host_abi_matrix`, proving the selected lane is
+  GPU-P/DXG scanout-bind, no custom host tool is used, WSL dxgkrnl exposes no
+  display-bind ioctl, synthvid remains GPA-dirty-only, D3DKMT handles and the
+  same-adapter shared resource are only admission evidence, and no display
+  target, present id, native-present credit, or OpenGL-submit credit is granted.
+  Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779675508-3085051`.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.

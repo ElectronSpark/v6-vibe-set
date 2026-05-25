@@ -604,6 +604,8 @@ require_log 'present_bind_contract_foreign_source_matrix .*source=0x[1-9a-fA-F][
     "foreign present-source bind-contract rejection"
 require_log 'present_source_failclosed_matrix .*bind_contract_rc=-[0-9]+ .*hyperv_opengl_submit=0 .*failclosed=1 .*no_present_credit=1 .*owner_cleanup=1 .*native_present_claim=0 .*status=PASS' \
     "present-source fail-closed no-credit validator"
+require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_scanout_bind .*custom_host_tool=0 .*wsl_dxg_display_bind_ioctl=0 .*synthvid_vram_bridge=gpa_dirty_only .*dxg_resource_fd=PASS .*d3dkmt_handles=PASS .*same_adapter_luid=PASS .*missing_host_abi=1 .*transport_present=0 .*display_target_kind=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DXG resource scanout-bind host ABI absence matrix"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
 require_log 'gpubuftest: render fd ownership verified' "render-fd ownership validator"
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
