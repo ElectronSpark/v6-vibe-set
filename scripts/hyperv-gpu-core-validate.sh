@@ -248,7 +248,7 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "DDA/Nouveau D3D12 import path is not fabricated"
     require_log 'dxg_present_dda_nouveau_scanout_bind_present 0' \
         "DDA/Nouveau scanout bind path is not fabricated"
-    require_log 'nouveau_gpup_failclosed_matrix .*accepts=0 .*backend_dda_nouveau=0 .*reject_reason=PASS .*no_fake_bar=PASS .*no_fake_dma=PASS .*no_fake_irq=PASS .*no_fake_getparam=PASS .*no_fake_present=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    require_log 'nouveau_gpup_failclosed_matrix .*accepts=0 .*backend_dda_nouveau=0 .*reject_reason=PASS .*no_fake_bar=PASS .*no_fake_dma=PASS .*no_fake_irq=PASS .*no_fake_getparam=PASS .*no_fake_remove=PASS .*no_fake_present=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau fail-closed matrix"
     require_log 'nouveau_pci_runtime_contract_matrix .*accepts=0 .*gpup_only=PASS .*dma_mask=NOT_CONFIGURED .*coherent_dma_mask=NOT_CONFIGURED .*dma_map=GPU_P_FAIL_CLOSED .*bar_claim=NOT_ATTEMPTED .*irq_handler=ABSENT .*irq_delivery=ABSENT .*runtime_pm_usage=DEFERRED .*remove_path=DEFERRED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau PCI runtime contract matrix"
@@ -256,6 +256,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "GPU-P-only Nouveau PCI runtime interface matrix"
     require_log 'nouveau_pci_irq_provenance_matrix .*accepts=0 .*msi_attempts=0 .*msi_unsupported=0 .*msix_attempts=0 .*msix_unsupported=0 .*legacy_requests=0 .*legacy_grants=0 .*handler_invocations=0 .*cause_reads=0 .*cause_valid=0 .*cause_acks=0 .*spurious=0 .*device_cause=GPU_P_FAIL_CLOSED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau IRQ provenance matrix"
+    require_log 'nouveau_pci_remove_pm_matrix .*accepts=0 .*remove_calls=0 .*runtime_resume_attempts=0 .*runtime_resume_successes=0 .*runtime_barriers=0 .*runtime_resume_before_remove=NOT_APPLICABLE .*remove_while_suspended=0 .*hot_remove_events=0 .*removed=0 .*bar_iounmaps=0 .*irq_unregisters=0 .*irq_vectors_freed=0 .*bus_master_clears=0 .*device_disables=0 .*drvdata_cleared=0 .*teardown=GPU_P_FAIL_CLOSED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau remove/PM provenance matrix"
 }
 
 log_metadata() {

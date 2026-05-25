@@ -133,6 +133,12 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   boots, either a real DDA/Nouveau reject counter or `nouveau_pci_probes 0`
   is an honest fail-closed reason, but MSI/MSI-X, legacy IRQ, handler, cause,
   ack, and spurious counters must remain zero.
+  Validate runtime-PM/remove work with `nouveau_pci_remove_pm_matrix`. Mirror
+  Linux PCI's resume/barrier-before-remove shape: GPU-P-only boots must report
+  `runtime_resume_before_remove=NOT_APPLICABLE` and zero remove/teardown
+  counters, while accepted DDA hardware remains diagnostic until a real
+  remove or hot-remove path proves BAR unmap, IRQ unregister, vector free,
+  bus-master clear, device disable, and drvdata clear ordering.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
