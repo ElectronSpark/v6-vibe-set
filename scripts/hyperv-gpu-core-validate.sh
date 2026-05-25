@@ -252,6 +252,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "GPU-P-only Nouveau fail-closed matrix"
     require_log 'nouveau_pci_runtime_contract_matrix .*accepts=0 .*gpup_only=PASS .*dma_mask=NOT_CONFIGURED .*coherent_dma_mask=NOT_CONFIGURED .*bar_claim=NOT_ATTEMPTED .*irq_handler=ABSENT .*irq_delivery=ABSENT .*runtime_pm_usage=DEFERRED .*remove_path=DEFERRED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau PCI runtime contract matrix"
+    require_log 'nouveau_pci_runtime_interface_matrix .*accepts=0 .*resource_tree=GPU_P_FAIL_CLOSED .*dma_mapping_api=GPU_P_FAIL_CLOSED .*msi_msix_programming=NOT_ATTEMPTED .*legacy_irq_fallback=NOT_CLAIMED .*irq_delivery=ABSENT .*runtime_pm=DEFERRED .*remove_path=DEFERRED .*hot_remove=DEFERRED .*native_engine=ABSENT .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau PCI runtime interface matrix"
 }
 
 log_metadata() {
@@ -608,6 +610,8 @@ require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_
     "DXG resource scanout-bind host ABI absence matrix"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
+require_log 'd3d12_native_completion_zero_credit_matrix .*display_bind=ABSENT .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "native D3D12 completion remains zero-credit before display bind"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
 require_log 'gpubuftest: render fd ownership verified' "render-fd ownership validator"
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
@@ -625,6 +629,8 @@ require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
 require_log 'backend_opengl_submit_gate closed' "Hyper-V OpenGL-submit gate closed"
 require_log 'hyperv_opengl_submit_gate_matrix .*backend_opengl_submit=0 .*requires_native_present=1 .*requires_finite_fps=1 .*requires_webkit_shared_surface=1 .*native_present_credit=0 .*display_target_kind=0 .*present_id=0 completed=0 .*backend_gate=closed .*status=PASS' \
     "Hyper-V OpenGL-submit gate matrix"
+require_log 'd3d12_display_bind_absent_matrix .*selected=gpup_dxg_scanout_bind .*display_bind=ABSENT .*transport_present=0 .*helper_requires_completion=1 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "D3D12 display bind absent matrix"
 require_nouveau_dda_or_gpup_fail_closed
 require_log 'bo_fd_live 0' "BO fd cleanup"
 require_log 'fence_fd_live 0' "fence fd cleanup"

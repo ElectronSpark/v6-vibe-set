@@ -364,6 +364,19 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
   CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`,
   `validation_run_id=core-1779674606-3042655`.
+- [x] Split the PCI/Nouveau runtime TODO into a fail-closed interface matrix
+  that mirrors the Linux driver layers without fabricating GPU-P hardware.
+  `fbstat`, `gpucorevalidate`, and the focused runner now require
+  `nouveau_pci_runtime_interface_matrix` with resource-tree ownership,
+  DMA-mapping API, MSI/MSI-X programming, legacy IRQ fallback, IRQ delivery,
+  runtime PM, remove/hot-remove, native engine, native-present credit, and
+  OpenGL-submit credit fields. On GPU-P-only Hyper-V this must pass as
+  `GPU_P_FAIL_CLOSED`/deferred/absent; a real DDA/Nouveau function remains
+  diagnostic until hardware proves those interfaces. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779679708-3257998`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
@@ -443,6 +456,17 @@ non-readback display handoff.
   present and still grant zero native-present/OpenGL-submit credit. This keeps
   WSL private-driver-data parity separate from the still-missing
   `dxg-resource-scanout-bind` host ABI.
+- [x] Add a zero-credit native-completion matrix before any real display-bind
+  implementation. `dxgprobe`, `fbstat`, `gpucorevalidate`, and the focused
+  runner now require `d3d12_native_completion_zero_credit_matrix` and
+  `d3d12_display_bind_absent_matrix`: display bind is absent, transport is
+  absent, present ids and completion counters are zero, callback/release
+  ordering is blocked/deferred, per-client generation matching is required,
+  and no native-present/OpenGL-submit credit is granted. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779679708-3257998`.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.
