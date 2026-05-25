@@ -186,6 +186,13 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   counters are allowed to show attempts, rejects, weak-evidence rejects, and
   source/resource generations only; successes, present IDs, completed IDs,
   native-present credit, and OpenGL-submit credit must stay zero.
+- The selected scanout-bind provider boundary is Hyper-V-owned even while it
+  is fail-closed: `fb_dxg_present.c` delegates to
+  `hyperv_dxg_display_bind_submit_failclosed()`, which revalidates the pinned
+  `/dev/dxg` + `anon_inode:dxgresource` metadata and reports explicit
+  no-host-ABI/no-sender/no-completion diagnostics. Do not replace those zero
+  ids with native-present credit until a real GPU-P/DDA sender and display
+  completion source are documented and validated.
 - Keep WSL present-history command IDs separate from native-present proof.
   `PRESENTHISTORYTOKEN`, redirected flip fence, and BLT enum values are known
   candidate command IDs, but without source-backed sender, packet, return, and
@@ -204,6 +211,10 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   `d3d12_fps_provenance_*` keys, while
   `FB_GPU_DXG_PRESENT_SOURCE_COMMIT` only copies `present_id/completed` back
   on a real success path.
+- Compositor-owned content progress lives on the D3D12 `wlcomp_buffer`
+  lifetime. The evidence writer should consume those per-buffer
+  CRC/frame/hash fields only; title text, app-side counters, and source logs
+  are liveness or client evidence, not visible/native content credit.
 - The selected native-present handoff lane is GPU-P/DDA
   `dxg-resource-scanout-bind`, not WSLg display channel emulation and not a
   synthvid GPA-dirty bridge. `fbstat` should report

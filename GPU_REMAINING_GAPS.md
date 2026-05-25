@@ -586,6 +586,14 @@ non-readback display handoff.
   the WSL VMBus enum namespace, the absence of a Linux display-bind ioctl,
   sender/resource-bind/completion contracts, and explicit zero-credit reject
   reasons before any validator can consume the row.
+  - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
+    while keeping it fail-closed. `fb_dxg_present.c` now delegates the
+    source/resource-generation snapshot to
+    `hyperv_dxg_display_bind_submit_failclosed()`, which revalidates the
+    WSL-style pinned `/dev/dxg` + `anon_inode:dxgresource` metadata and
+    returns explicit `no_host_abi`, `no_sender`, and `no_completion`
+    diagnostics with zero present/completed ids and zero native-present or
+    OpenGL-submit credit.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
@@ -964,6 +972,13 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `d3d12_present_frame_hash`, and `d3d12_visible_frame_hash` are present in
     the compositor evidence and remain zero until a real native-present
     content source exists.
+  - [x] Add compositor-owned content sample bookkeeping to the D3D12 buffer
+    lifetime. `wlcomp` now resets per-buffer content CRC/frame/hash sample
+    fields on each D3D12 shared-resource commit, records the display-bind
+    present/completed/resource generation on native completion, and has the
+    evidence writer consume only those compositor-owned fields. The sampler
+    still reports `source_owned=0` and grants no visible/native content credit
+    until a non-readback native-present content sampler exists.
   - [x] Keep the FPS demo source-side content telemetry separate from native
     proof. `mesawlegl` now writes `client_content_hash`,
     `client_content_frame`, `content_region=client-content-no-title-fps`, and
