@@ -139,6 +139,11 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   counters, while accepted DDA hardware remains diagnostic until a real
   remove or hot-remove path proves BAR unmap, IRQ unregister, vector free,
   bus-master clear, device disable, and drvdata clear ordering.
+  Accepted-DDA runtime suspend must save PCI command state and disable
+  memory/I/O/bus-master decode; resume must restore that command state before
+  the driver resume callback. Nouveau IRQ delivery can only be claimed after a
+  real BAR0 interrupt cause is read and acked, currently via `NV_PMC_INTR_0`
+  gated by `NV_PMC_INTR_EN_0`.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
