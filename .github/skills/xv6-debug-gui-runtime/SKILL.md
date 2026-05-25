@@ -297,6 +297,12 @@ but do not treat them as open plan items by default.
   resources, properties, planes, CRTC, connector, and framebuffer metadata.
 - `kernel/dev/fb/fb_kms_atomic.c`: KMS framebuffer lifecycle, leases,
   modeset, page-flip, vblank, and atomic commit/fence behavior.
+  Atomic `OUT_FENCE_PTR` validation should use
+  `atomic_out_fence_provenance_matrix out_fence_source=display_completion`
+  with `out_fence_display_correlated=1`,
+  `out_fence_software_scanout_correlated=0`, and zero native/OpenGL-submit
+  credit. `IN_FENCE_FD` validation must still prove stale, duplicate, future,
+  and nonblocking rejection plus balanced fd refs.
 - `kernel/dev/fb/fb_syncobj_prime_virtgpu.c`: DRM syncobj/timeline,
   sync-file bridge, dumb BO, PRIME, and virtgpu compatibility ioctls.
 - `kernel/dev/fb/fb_nouveau.c`: Nouveau PCI facade and Nouveau private DRM
