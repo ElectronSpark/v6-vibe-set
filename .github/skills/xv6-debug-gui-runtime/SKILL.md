@@ -674,10 +674,24 @@ but do not treat them as open plan items by default.
   `d3d12_content_progress_requires_native_present=1`,
   `d3d12_visible_content_requires_native_present_completion=1`,
   `d3d12_visible_content_credit_before_native_present=0`, and zero
-  native-present/OpenGL-submit credit.
+  native-present/OpenGL-submit credit. The evidence file should also include
+  explicit zero-valued content sample fields
+  (`d3d12_present_content_crc`, `d3d12_visible_content_crc`,
+  `d3d12_present_content_frame`, `d3d12_visible_content_frame`,
+  `d3d12_present_frame_hash`, `d3d12_visible_frame_hash`) until real
+  compositor-owned native-present content correlation exists. `mesawlegl`
+  source-side `client_content_hash`/`client_content_frame` and
+  `content_region=client-content-no-title-fps` are useful context, not native
+  present proof by themselves.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.
+- WebKit's animated native-present fixture currently proves liveness only.
+  Treat `/share/webkit/webkit-animated-content-native-present.html` title/frame
+  progress as insufficient until `/tmp/wlcomp-d3d12-present` supplies matching
+  nonzero content CRC/frame/hash, same run/client/resource generation, native
+  display completion, and canonical final display-bind names
+  (`gpup_dxg_scanout_bind` and `gpu-p-dxg-resource-scanout-bind`).
 - WebKit acceleration validation starts with the
   `webkit_evidence_rejection_matrix` policy preflight. Chrome/title/cursor-only,
   callback-only, release-only, render-node-only, dmabuf-only, env-only, and
