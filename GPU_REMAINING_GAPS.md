@@ -489,9 +489,29 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
   `validation_run_id=core-1779683691-3428894`.
-- [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
+- [x] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.
+  The runtime path now exports a real D3D12 shared resource, creates a DXG
+  sync-file acquire fd with `LX_DXCREATESYNCFILE`, validates direct
+  `LX_DXOPENSYNCOBJECTFROMSYNCFILE`, and sends that fd through the Wayland
+  resource-buffer protocol. `wlcomp` opens the resource and acquire fence on
+  the same adapter, registers the compositor-opened resource/allocation as a
+  DXG present source, then fails closed only at the selected but still-missing
+  GPU-P/DDA `dxg-resource-scanout-bind` host ABI. The kernel admission check
+  now validates per-open resource handles through the compositor `/dev/dxg`
+  owner table plus the shared fd's canonical global share, instead of requiring
+  the fd's creator-side handles to equal `OPENRESOURCEFROMNTHANDLE` results.
+  Evidence: `XV6_WLCOMP_D3D12_RUN_ID=opened d3d12sharedsmoke --runtime
+  --allow-failclosed-present` passed on the focused 6-vCPU Hyper-V image on
+  2026-05-25, including
+  `d3d12_fence_sharing_validation_matrix`,
+  `d3d12_wayland_dxg_syncfile_acquire_matrix`,
+  `d3d12_wayland_resource_buffer_admission_matrix`,
+  `d3d12_wayland_present_failclosed_identity_matrix`,
+  `d3d12_failclosed_lifecycle_matrix`, and
+  `d3d12_wayland_resource_buffer_runtime_matrix`, all with
+  `native_present_claim=0` and `opengl_submit_credit=0`.
 - [x] Add compositor-side admission and fail-closed identity matrices for that
   path without granting native-present credit. `wlcomp` now emits
   `d3d12_wayland_resource_buffer_admission_matrix` after same-LUID

@@ -198,6 +198,20 @@ but do not treat them as open plan items by default.
   `decision=dxg_syncfile_acquire`, same-adapter WSL trace provenance, direct
   D3D12 fence fd use disabled, and zero native-present/OpenGL-submit credit
   until the real display handoff exists.
+- For runtime D3D12 Wayland resource-buffer admission, distinguish the shared
+  fd's canonical creator-side resource handles from the compositor's per-open
+  `OPENRESOURCEFROMNTHANDLE` handles. FB present-source registration should
+  validate the compositor `/dev/dxg` owner table entry against the shared fd's
+  global share and sealed metadata generation; it should not require the fd's
+  stored creator handles to equal the compositor-opened resource/allocation.
+  The focused runtime C gate is
+  `d3d12sharedsmoke --runtime --allow-failclosed-present`: it must prove real
+  `LX_DXCREATESYNCFILE` export, `LX_DXOPENSYNCOBJECTFROMSYNCFILE` import,
+  same-LUID compositor resource/fence open,
+  `d3d12_wayland_resource_buffer_admission_matrix`,
+  per-open present-source register success, expected fail-closed
+  `EOPNOTSUPP` at the missing `dxg-resource-scanout-bind` host ABI, drained
+  callbacks/releases, and zero native-present/OpenGL-submit credit.
 - For `dxgprocess` lifetime, keep reuse keyed by TGID like WSL. Do not reuse a
   retained host process handle across TGIDs; if a host workaround is ever
   necessary, expose it as non-parity diagnostics instead of sharing namespaces.
