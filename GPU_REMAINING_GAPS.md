@@ -213,6 +213,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Make create/open local tracking failures visible to callers instead of
     best-effort drops: resource/allocation publication now returns errors,
     unwinds partial local state, and destroys host-created resources on failure.
+  - [x] Move `LX_DXOPENRESOURCEFROMNTHANDLE` local resource/allocation graph
+    publication before any user handle copyout, matching WSL's
+    assign-before-expose ordering. If local tracking or a late copyout fails,
+    xv6 now unwinds the tracked resource/allocation state and destroys the
+    host-opened resource through the same owner-bound process handle before any
+    stale handle can be considered published.
   - [x] Add a pure-C fault-injection validator that forces post-host
     `CREATEALLOCATION` and `OPENRESOURCE` publication failures, then proves
     same-process host cleanup, original errno preservation, no leaked local
@@ -244,6 +250,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Destroy the host-opened sync object if
     `OPENSYNCOBJECTFROMSYNCFILE` succeeds on the host but user copyout fails,
     and prove that no local sync handle was published.
+  - [x] Make sync-object tracking failures first-class and apply WSL-style
+    track-before-copyout ordering to sync open paths. `hvdxg_track_sync()` now
+    returns errors, `OPENSYNCOBJECTFROMNTHANDLE2` and
+    `OPENSYNCOBJECTFROMSYNCFILE` track the opened sync object before copying
+    the handle back to userspace, and failures unwind both the local handle
+    table entry and host-opened sync object.
   - [x] Add pure-C sync-file validators covering create-copyout fd/event
     cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
     child-process open from the same sync-file fd.
