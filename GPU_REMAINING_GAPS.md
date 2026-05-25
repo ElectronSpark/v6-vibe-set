@@ -653,8 +653,15 @@ non-readback display handoff.
   submitted resource and generation.
 - [ ] Send frame callbacks and buffer releases only after native completion for
   that same frame.
-- [ ] Add per-client, per-resource, per-generation native-present counters so
+- [x] Add per-client, per-resource, per-generation native-present counters so
   one client's progress cannot satisfy another client's validator.
+  `wlcomp` records `d3d12_client_native_present_*`,
+  `d3d12_resource_native_present_*`, and
+  `d3d12_resource_generation_native_present_*` counters in
+  `/tmp/wlcomp-d3d12-present`; `d3d12sharedsmoke` validates that attempts,
+  completions, rejects, and resource generations match the current client and
+  buffer generation before any native-present credit is accepted. The current
+  Hyper-V path remains zero-credit because native display completion is absent.
 - [x] Add the source-level skeleton for the narrow DXG/Hyper-V to KMS/scanout
   interface: `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` now reports a registered
   present-source-owned resource, source/resource generations, required metadata,
