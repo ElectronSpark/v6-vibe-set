@@ -162,7 +162,7 @@ require_fail_closed_gpup_dda_diagnostic_file()
     fi
     if grep -Eq 'gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|missing host ABI=gpu-p-dxg-resource-scanout-bind|ABI=gpu-p-dxg-resource-scanout-bind' "${file}"; then
         require_file_log "${file}" \
-            'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38' \
+            'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38,propagate_presenthistory=1' \
             "${why} Wave49 GPU-P/DXG candidate command diagnostics"
     fi
 }
@@ -892,14 +892,17 @@ require_prior_shared_surface_contract()
         '(^|[[:space:]])(d3d12_)?existing_sysmem_is_d3d12_com_resource[ =]0' \
         "prior strict-present existing-sysmem exclusion marker"
     require_file_log "${DXG_CONTRACT_LOG}" \
-        'd3d12_(present_content_crc|present_region_crc|client_content_crc|visible_content_crc|present_crc)[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
-        "prior DXG D3D12 content CRC"
+        'd3d12_visible_content_crc[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "prior DXG compositor-owned visible content CRC"
     require_file_log "${DXG_CONTRACT_LOG}" \
-        'd3d12_(present_content_frame|present_content_frames|present_content_change|present_content_changes|visible_content_frame|visible_content_frames)[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
-        "prior DXG D3D12 content frame/change counter"
+        'd3d12_visible_content_frame[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "prior DXG compositor-owned visible content frame counter"
     require_file_log "${DXG_CONTRACT_LOG}" \
-        'd3d12_(present_frame_hash|visible_frame_hash|content_frame_hash|visible_content_frame_hash)[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
-        "prior DXG D3D12 content frame hash"
+        'd3d12_visible_frame_hash[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
+        "prior DXG compositor-owned visible content frame hash"
+    require_file_log "${DXG_CONTRACT_LOG}" \
+        'd3d12_content_progress_source_owned[ =]1' \
+        "prior DXG compositor-owned content source"
     require_file_log "${FPS_CONTRACT_LOG}" \
         'hyperv-3d-fps-validate: ok validation_run_id=[A-Za-z0-9_.:-]+ .*window=640x480 .*render=640x480 .*render_div=1 ' \
         "prior finite 480p FPS validation"
@@ -926,6 +929,10 @@ require_prior_shared_surface_contract()
         "prior display-completion FPS"
     require_file_fps_gt "${FPS_CONTRACT_LOG}" effective_presented_fps 60 \
         "prior effective real-presented FPS"
+    require_file_fps_gt "${FPS_CONTRACT_LOG}" sample_content_frame_fps 60 \
+        "prior sample-window compositor content FPS"
+    require_file_fps_gt "${FPS_CONTRACT_LOG}" visual_window_content_frame_fps 60 \
+        "prior visual-window compositor content FPS"
     require_file_log "${FPS_CONTRACT_LOG}" \
         'hyperv-3d-fps-validate: visual cadence validation_run_id=[A-Za-z0-9_.:-]+ .*visual_samples_inside_sample_window=1 .*d3d12_display_handoff_implemented=1 .*native_present_delta=[1-9][0-9]* .*present_id_delta=[1-9][0-9]* .*completed_delta=[1-9][0-9]* .*evidence_generation_delta=[1-9][0-9]* .*frame_callback_delta=[1-9][0-9]* .*buffer_release_delta=[1-9][0-9]* .*content_crc_changes=[1-9][0-9]* .*content_frame_hash_changes=[1-9][0-9]* .*content_frame_delta=[1-9][0-9]* .*outside_overlay_crc_changes=[1-9][0-9]* .*visual_progress_fps=[0-9]+([.][0-9]+)? .*changed=[0-9,]*[1-9][0-9]*' \
         "prior visible-scene progression tied to native-present callback/release/content counters"

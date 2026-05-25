@@ -575,7 +575,7 @@ require_fail_closed_gpup_dda_diagnostic() {
         fail "D3D12 present fail-closed without named missing GPU-P/DDA display-bind diagnostic"
     fi
     if grep -Eq 'gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|missing host ABI=gpu-p-dxg-resource-scanout-bind|ABI=gpu-p-dxg-resource-scanout-bind' "${LOG}"; then
-        require_log 'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38' \
+        require_log 'candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38,propagate_presenthistory=1' \
             "Wave49 GPU-P/DXG candidate command diagnostics"
     fi
 }
@@ -634,7 +634,7 @@ fail_wave41_fail_closed_present() {
        ! grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff' "${LOG}"; then
         require_fail_closed_gpup_dda_diagnostic
         echo "hyperv-dxg-validate: fail-closed present: missing GPU-P/DDA resource-scanout-bind dependency; native-present/FPS/WebKit remain gated" >&2
-        grep -E 'missing host ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38|d3d12_display_handoff_requires_kernel_host_protocol=1|d3d12_present_errno=95|present_errno=95|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
+        grep -E 'missing host ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|ABI=(dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)|gpu_p_or_dda_bind=gpu-p-dxg-resource-scanout-bind|candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38,propagate_presenthistory=1|d3d12_display_handoff_requires_kernel_host_protocol=1|d3d12_present_errno=95|present_errno=95|present_id=0|completed=0|callbacks_blocked=1|releases_blocked=1|backend_opengl_submit 0' "${LOG}" >&2 ||
             true
         echo "hyperv-dxg-validate: log: ${LOG}" >&2
         exit 1
