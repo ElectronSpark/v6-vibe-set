@@ -256,9 +256,38 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
     `OPENSYNCOBJECTFROMSYNCFILE` track the opened sync object before copying
     the handle back to userspace, and failures unwind both the local handle
     table entry and host-opened sync object.
+  - [x] Extend WSL assign-before-expose ordering to the host-create paths:
+    `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`, `CREATEALLOCATION`,
+    `CREATESYNCOBJECT`, `CREATEPAGINGQUEUE`, and `CREATEHWQUEUE` now commit
+    local dxgprocess/object-table state before copying newly created handles
+    to userspace, and late failures untrack local state plus destroy the
+    host-created object where a host destroy command exists.
+  - [x] Add WSL-like monitored-fence stop semantics for tracked sync objects:
+    tracked sync rows now record fence map size and owning VM, kernel fence
+    aliases are PFNMAP mappings, `hvdxg_untrack_sync()` unmaps both user and
+    kernel fence aliases, and `dxg_fence_map` exposes unmap attempt/success/
+    failure diagnostics.
   - [x] Add pure-C sync-file validators covering create-copyout fd/event
     cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
     child-process open from the same sync-file fd.
+- [ ] Replace the by-value shared-resource fd clone with a WSL-style parent
+  shared-resource object:
+  - [ ] Add a refcounted parent resource object with fd refs, host NT refs,
+    sealed generation, private-data ownership, allocation metadata, and an
+    opened-resource list.
+  - [ ] Link creator and opener `hvdxg_tracked_resource` children to that
+    parent instead of deep-cloning fd-private resource state.
+  - [ ] Move seal/query/open metadata reads to the parent and keep per-open
+    children responsible only for process-local handles and cleanup.
+  - [ ] Update display-bind snapshots to pin the parent and validate the
+    matching opened child/resource generation before accepting the fd.
+- [ ] Finish WSL sealed-allocation metadata parity:
+  - [ ] Add sealed allocation `num_pages` and `cached` metadata to shared
+    allocation records.
+  - [ ] Populate the metadata from create/open allocation state and preserve it
+    across seal/query/open/exporter-destroy lifetimes.
+  - [ ] Add pure-C validators for duplicate fd/open-child close ordering,
+    sealed `num_pages`/`cached` stability, and parent/child ref balance.
 - [x] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
   adapter whenever the driver store, UMD payload sizes, or D3DKMT packet
   shaping changes. `dxgprobe --wsl-trace-replay` now emits
