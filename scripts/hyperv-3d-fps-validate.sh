@@ -86,6 +86,20 @@ def accepts_content_progress(crcs, frame_counts):
     return (len(crcs) >= 2 and len(set(crcs)) >= 2 and
             len(frame_counts) >= 2 and frame_counts[-1] > frame_counts[0])
 
+def accepts_display_bind_contract(fields):
+    return (
+        fields.get("display_bind_backend") == "gpup_dxg_scanout_bind" and
+        fields.get("display_bind_transport") ==
+            "gpu-p-dxg-resource-scanout-bind" and
+        fields.get("display_bind_present_id", 0) > 0 and
+        fields.get("display_bind_completed_id", 0) >=
+            fields.get("display_bind_present_id", 0) and
+        fields.get("display_bind_resource_generation", 0) > 0 and
+        fields.get("display_bind_completion_source") == "display" and
+        fields.get("content_credit", 0) == 1 and
+        fields.get("callback_release_same_frame", 0) == 1
+    )
+
 negative_rejected = rejects_inflation(40.0, 5.0)
 positive_rejected = rejects_inflation(65.0, 62.0)
 stale_run_rejected = not accepts_current_run_evidence(
@@ -99,6 +113,16 @@ frozen_window_rejected = (
     rejects_inflation(40.0, 0.0) and
     not accepts_content_progress([0x12345678, 0x12345678], [17, 17])
 )
+forged_high_fps_rejected = not accepts_display_bind_contract({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "missing",
+    "content_credit": 0,
+    "callback_release_same_frame": 0,
+})
 if not negative_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: 40 FPS with single-digit visible "
@@ -124,12 +148,18 @@ if not frozen_window_rejected:
         "anti-inflation selftest failed: frozen window with displayed FPS was "
         "accepted"
     )
+if not forged_high_fps_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: forged high-FPS display-bind "
+        "evidence without content/callback/release correlation was accepted"
+    )
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
     f"validation_run_id={run_id} mode={mode} negative_rejected=1 "
     "displayed_fps=40.000 visual_progress_fps=5.000 "
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
+    "forged_high_fps_negative=1 forged_high_fps_rejected=1 "
     "post_warmup_sample_window=1 native_present_delta=0 "
     "frame_callback_delta=0 buffer_release_delta=0 "
     "thumbnail_progress_delta=0 outside_overlay_crc_changes=0 "
@@ -156,6 +186,18 @@ credit_line = (
     "opengl_submit_credit=0 status=PASS"
 )
 print(credit_line)
+forged_line = (
+    "hyperv-3d-fps-validate: fps_forged_display_bind_negative_matrix "
+    f"validation_run_id={run_id} effective_presented_fps=999.000 "
+    "display_bind_backend=gpup_dxg_scanout_bind "
+    "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    "display_bind_present_id=9 display_bind_completed_id=9 "
+    "display_bind_resource_generation=4 "
+    "display_bind_completion_source=missing "
+    "content_visible_credit=0 callback_release_same_frame=0 "
+    "rejected=1 status=PASS"
+)
+print(forged_line)
 content_line = (
     "hyperv-3d-fps-validate: fps_visible_progress_negative_matrix "
     f"validation_run_id={run_id} outside_overlay_crc_changes=0 "

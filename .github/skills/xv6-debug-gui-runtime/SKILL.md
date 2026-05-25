@@ -152,6 +152,11 @@ but do not treat them as open plan items by default.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
+  Keep this file self-contained: it must include canonical `display_bind_*`
+  fields, and fail-closed rows should use
+  `display_bind_completion_source=missing` with zero ids. Demo-side
+  `effective_presented_fps` should be derived from native completion deltas,
+  not visible/app-loop FPS.
 - Treat `display_bind_*` evidence as the canonical bridge between the kernel
   present-source contract, `wlcomp`, FPS, and WebKit. The required keys are
   `display_bind_backend`, `display_bind_transport`,

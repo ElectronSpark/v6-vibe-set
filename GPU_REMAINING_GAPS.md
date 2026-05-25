@@ -904,6 +904,16 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `d3d12_fps_provenance_*` keys, so FPS and WebKit validators can reject
   visible app-loop FPS unless the same resource/generation has a native
   display completion.
+- [x] Make D3D12 display-bind evidence self-contained for FPS/WebKit
+  consumers. `/tmp/wlcomp-d3d12-present`, the compositor stderr matrices, and
+  `mesawlegl_fps_present_credit_matrix` now carry canonical
+  `display_bind_backend=gpup_dxg_scanout_bind`,
+  `display_bind_transport=gpu-p-dxg-resource-scanout-bind`,
+  present/completed ids, resource generation, and completion source.
+  Fail-closed rows report `display_bind_completion_source=missing` with zero
+  ids. `mesawlegl` computes `effective_presented_fps` from native completion
+  deltas instead of app-loop FPS, and the FPS/WebKit preflights require
+  display-bind, content-progress, and callback/release correlation.
 - [x] Add a fail-closed content-progress provenance skeleton to the same
   D3D12 evidence contract. `/tmp/wlcomp-d3d12-present` now records
   `d3d12_wayland_content_progress_matrix` plus
