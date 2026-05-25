@@ -611,8 +611,22 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   exists: nonzero present ids, completion counters, close-before-signal
   cancellation, frame callback/release ordering, and cleanup balance after
   native completion.
-- [ ] Keep WSL-trace replay equivalence current for the real UMD sequence and
+- [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
+  The same-adapter NVIDIA WSL replay now uses the full-private trace
+  `/tmp/xv6-wsl-probe/mesaglfeature-nvidia-fullpriv-20260525-034404.trace`:
+  3200-byte DX12 context private data, 594-byte queue-allocation private data,
+  WSL map-before-resident order, `LX_DXMAKERESIDENT flags=0x1`, 124-byte HW
+  queue private data with the live allocation handle at offset `0x24`, and
+  1880-byte HW queue submit private data. The kernel records host-saw packet
+  diagnostics for the transformed/forwarded packets, and the cleanup path now
+  accepts WSL-style local-adapter aliases against the tracked host-adapter
+  GPUVA range before sending `FREEGPUVIRTUALADDRESS`. Evidence:
+  focused 6-vCPU Hyper-V run on 2026-05-25 printed
+  `wsl_trace_replay_host_saw_matrix ... make_flags:0x1 ... submit_cmd_len:4096
+  submit_priv:1880 ... status=PASS` and
+  `wsl_trace_replay_signature ... equivalence=wsl_private_hwqueue_submit_success
+  ... packets:10/10 ... status=PASS`.
 - [x] Build and validate completed sections with `/tmp/xv6-hyperv-build` and
   focused 6-vCPU Hyper-V images before marking section items done.
   Evidence: the focused Hyper-V core validator rebuilt kernel/rootfs, deployed

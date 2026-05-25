@@ -112,6 +112,8 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - Do not reboot or redeploy over a running freeze or long-probe sample until evidence has been collected, unless the user explicitly asks for a reset.
 - Keep WSL comparisons adapter-matched. A WSL Intel trace is not a reliable reference for an xv6 NVIDIA Hyper-V run. Capture same-adapter traces when possible, for example:
   - `env GALLIUM_DRIVER=d3d12 D3D12_DEBUG=verbose MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA LD_PRELOAD=/tmp/xv6-wsl-probe/libwsl_dxg_ioctl_trace.so /tmp/tmp.PHsSKWCqgl/bin/mesaglfeature > /tmp/xv6-wsl-probe/mesaglfeature-nvidia-live.trace 2>&1`
+  - Use `XV6_DXG_TRACE_HEAD_BYTES=4096` with the trace shim when private-driver
+    payload parity matters; the default head dump is intentionally short.
 - WSL2 `dxgkrnl` lives under `drivers/hv/dxgkrnl` in Microsoft's WSL2 Linux
   kernel, with UAPI in `include/uapi/misc/d3dkmthk.h`. Use it as the DXG/D3DKMT
   process, handle-table, shared-resource, sync-file, and VMBus packet
@@ -123,6 +125,20 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
   - If you transform a packet in the kernel, add or consult kernel-side diagnostics before claiming the host saw the transformed packet.
+- Same-adapter NVIDIA WSL replay facts from the full-private trace
+  `/tmp/xv6-wsl-probe/mesaglfeature-nvidia-fullpriv-20260525-034404.trace`:
+  create the DX12 context before the queue allocation (`node=0`,
+  `engine=1`, `client_hint=12`, `hw_queue_supported=1`, private size 3200);
+  create the first queue allocation without a resource or standard allocation,
+  with 594 bytes of private data, allocation flags `0x4`, and priority
+  `0x78100000`; map GPUVA before make-resident using min `0x4000000`, max
+  `0x10000000000`, 16 pages, and write protection; make resident with
+  `cant_trim_further=1`; lock; then create the HW queue with the 124-byte
+  ADVN/XDVN private blob and the actual allocation handle at offset `0x24`.
+  `dxgprobe --wsl-trace-replay` should prove `SUBMITCOMMANDTOHWQUEUE` success
+  with 4096 command bytes, 1880 submit private bytes, host-saw packet
+  diagnostics, clean GPUVA cleanup, and
+  `equivalence=wsl_private_hwqueue_submit_success`.
 - Current Hyper-V D3D12 state from May 17, 2026:
   - Real Mesa/NVIDIA D3D12 reaches DXCore enumeration, `CREATECONTEXTVIRTUAL` with 3200-byte private data, `CREATEHWQUEUE` with 124-byte private data, many allocations/GPUVA maps/locks, and real `SUBMITCOMMANDTOHWQUEUE` calls that return success.
   - The blocker is later than "submit does not work": `mesaglfeature` passes the first 32x32 FBO draw/readback, then the second 64x32 FBO draw path fails when `LX_DXMAKERESIDENT` receives a multi-allocation batch (`count=2`, `flags=0x1`) and the host returns `STATUS_INVALID_PARAMETER` / `-EINVAL`, causing `D3D12: Removing Device`.

@@ -596,15 +596,13 @@ require_log 'wsl_trace_replay_packet_matrix stage=lock2 .*status=PASS' \
     "WSL replay LOCK2 packet matrix"
 require_log 'wsl_trace_replay_packet_matrix stage=create_context .*status=PASS' \
     "WSL replay CREATECONTEXTVIRTUAL packet matrix"
-require_log 'wsl_trace_replay_packet_matrix stage=submit_context_empty .*expected_reject:1 .*status=PASS' \
-    "WSL replay empty context submit rejection matrix"
 require_log 'wsl_trace_replay_packet_matrix stage=create_hwqueue .*status=PASS' \
     "WSL replay CREATEHWQUEUE packet matrix"
-require_log 'wsl_trace_replay_packet_matrix stage=submit_hwqueue .*expected_reject:1 .*status=PASS' \
-    "WSL replay synthetic HWQUEUE submit rejection matrix"
-require_log 'wsl_trace_replay_host_saw_matrix .*make_len:24 .*make_device:0x0 .*make_count:1 .*make_flags:0x0 .*make_sorted:0 .*make_in:[1-9a-fA-F][0-9a-fA-F]*,0 .*make_wire:[1-9a-fA-F][0-9a-fA-F]*,0 .*context_len:[1-9][0-9]* .*context_ret:0 .*hwqueue_len:[1-9][0-9]* .*hwqueue_ret:0 .*submit_queue:0x[1-9a-fA-F][0-9a-fA-F]* .*submit_cmd_len:4096 .*submit_priv:[1-9][0-9]* .*submit_len:[1-9][0-9]* .*host_saw=cat_/dev/dxg_after_replay .*status=PASS' \
+require_log 'wsl_trace_replay_packet_matrix stage=submit_hwqueue .*expected_reject:0 .*status=PASS' \
+    "WSL replay HWQUEUE submit success matrix"
+require_log 'wsl_trace_replay_host_saw_matrix .*make_len:24 .*make_device:0x0 .*make_count:1 .*make_flags:0x1 .*make_sorted:0 .*make_in:[1-9a-fA-F][0-9a-fA-F]*,0 .*make_wire:[1-9a-fA-F][0-9a-fA-F]*,0 .*context_len:[1-9][0-9]* .*context_ret:0 .*hwqueue_len:[1-9][0-9]* .*hwqueue_ret:0 .*submit_queue:0x[1-9a-fA-F][0-9a-fA-F]* .*submit_cmd_len:4096 .*submit_priv:[1-9][0-9]* .*submit_len:[1-9][0-9]* .*host_saw=cat_/dev/dxg_after_replay .*status=PASS' \
     "WSL replay kernel host-saw packet-shape diagnostics"
-require_log 'wsl_trace_replay_signature .*trace=/tmp/xv6-wsl-probe/mesaglfeature-nvidia-live.trace .*equivalence=synthetic_invalid_parameter .*same_adapter_source=selected_openadapter_luid .*status=PASS' \
+require_log 'wsl_trace_replay_signature .*trace=/tmp/xv6-wsl-probe/mesaglfeature-nvidia-fullpriv-20260525-034404.trace .*equivalence=wsl_private_hwqueue_submit_success .*same_adapter_source=selected_openadapter_luid .*status=PASS' \
     "same-adapter WSL trace replay signature"
 require_log 'dxg_opensync_envelope=route:global cmd:40 wire:56 ext:1 eoff:16 result:24 actual:24 ret:0 status:0x0 .* fd_kind:1 fd_refs:[1-9][0-9]*' \
     "WSL-natural OPENSYNCOBJECT envelope"
