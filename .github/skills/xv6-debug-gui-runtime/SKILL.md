@@ -249,6 +249,12 @@ but do not treat them as open plan items by default.
   `hvdxg_tracked_resource` state. The semantic phase must introduce a real
   `dxgsharedresource`-style parent whose metadata and children outlive fd
   closes according to refs.
+- The semantic parent phase is considered covered only when
+  `shared_resource_parent_lifetime_matrix` and
+  `shared_resource_sealed_alloc_metadata_matrix` are emitted by `dxgprobe` and
+  PASS. Those rows prove fd refs, child refs, parent id stability, close-fd
+  survival, and sealed allocation pages/cached/flags stability across
+  share/query/open/close.
 - For normal DXG object handles, keep the WSL `hmgrtable` shape visible:
   index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
   free-count/head/tail diagnostics, and minimum-free expansion. Do not regress
