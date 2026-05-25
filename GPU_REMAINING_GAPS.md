@@ -377,6 +377,22 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779679708-3257998`.
+- [x] Enforce PCI claim-before-iomap resource ownership and real DDA legacy
+  IRQ handler arm/disarm for Nouveau without fabricating GPU-P hardware.
+  The PCI core now records claim, release, iomap, owner-mismatch,
+  unclaimed-iomap, and unclaimed-release counters; Nouveau DDA probe claims
+  BARs before mapping, fails closed if the legacy IRQ vector/handler cannot be
+  armed, unregisters the handler on remove/unwind, and only increments
+  delivery-claimed when the handler actually fires. `fbstat` and
+  `gpucorevalidate` expose those counters through
+  `nouveau_pci_dma_resource_matrix` and
+  `nouveau_pci_runtime_interface_matrix`; GPU-P-only Hyper-V remains
+  fail-closed with zero fake resource, IRQ, native-present, or OpenGL-submit
+  credit. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
+  passed on 2026-05-25 with
+  `validation_run_id=core-1779689395-3730908`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from

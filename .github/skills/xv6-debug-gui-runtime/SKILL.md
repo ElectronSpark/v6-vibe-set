@@ -407,6 +407,11 @@ but do not treat them as open plan items by default.
   native-present/OpenGL-submit credit. A DDA/Nouveau device can only move this
   row forward after real BAR, DMA, IRQ, runtime-PM, engine, and present
   evidence exists.
+- For Nouveau/PCI work on GPU-P-only Hyper-V, keep `accepts=0` and expose no
+  fake BAR, DMA, IRQ, or native engine state. A real DDA path must claim BARs
+  before `pci_iomap()`, report owner/unclaimed resource counters, arm a real
+  IRQ handler before accepting the device, and count IRQ delivery only from
+  handler execution.
 - `dxg_resource_scanout_bind_host_abi_matrix` is the source-audited native
   present blocker row. It must say the selected lane is
   `gpup_dxg_scanout_bind`, no custom host tool is used, WSL dxgkrnl has no
