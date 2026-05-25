@@ -386,6 +386,13 @@ but do not treat them as open plan items by default.
   runtime PM/remove-path deferred, and zero native-present/OpenGL-submit credit.
   On accepted DDA hardware it is still diagnostic until real MSI/legacy IRQ
   delivery, runtime PM, remove, and engine/native-present behavior are proven.
+- `nouveau_pci_runtime_interface_matrix` keeps the same split at interface
+  granularity. On GPU-P-only Hyper-V it should report resource tree and DMA
+  mapping as `GPU_P_FAIL_CLOSED`, MSI/MSI-X not attempted, IRQ absent,
+  runtime PM/remove/hot-remove deferred, native engine absent, and zero
+  native-present/OpenGL-submit credit. A DDA/Nouveau device can only move this
+  row forward after real BAR, DMA, IRQ, runtime-PM, engine, and present
+  evidence exists.
 - `dxg_resource_scanout_bind_host_abi_matrix` is the source-audited native
   present blocker row. It must say the selected lane is
   `gpup_dxg_scanout_bind`, no custom host tool is used, WSL dxgkrnl has no
@@ -397,6 +404,11 @@ but do not treat them as open plan items by default.
   shadow, staging, and GDI surface union arms are present. This is not a
   native display handoff and must keep `display_bind_ioctl=0` plus zero
   native-present/OpenGL-submit credit.
+- `d3d12_native_completion_zero_credit_matrix` and
+  `d3d12_display_bind_absent_matrix` are the pre-native completion guards.
+  They must show absent display bind/transport, zero present/completion ids,
+  blocked or deferred callback/release ordering, required per-client
+  generation matching, and zero native-present/OpenGL-submit credit.
 - `hyperv_opengl_submit_gate_matrix` is the backend flag invariant. On Hyper-V
   it must remain `backend_gate=closed` with `backend_opengl_submit=0` until
   native present, finite FPS, and the WebKit shared-surface contract are all
