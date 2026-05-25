@@ -380,6 +380,12 @@ but do not treat them as open plan items by default.
   BAR-backed DDA NVIDIA PCI function is accepted. `fbstat` should emit
   `nouveau_gpup_failclosed_matrix` with no fake BAR/DMA/IRQ/getparam/native
   present/OpenGL-submit credit.
+- `nouveau_pci_runtime_contract_matrix` is the Linux-shaped PCI runtime
+  diagnostic row. On GPU-P-only images it should pass with DMA/coherent masks
+  not configured, BAR claims not attempted, no IRQ handler or delivery,
+  runtime PM/remove-path deferred, and zero native-present/OpenGL-submit credit.
+  On accepted DDA hardware it is still diagnostic until real MSI/legacy IRQ
+  delivery, runtime PM, remove, and engine/native-present behavior are proven.
 - For DDA/Nouveau `GETPARAM`, keep provenance split: PCI vendor/device,
   bus type, BAR/VRAM aperture, chipset, and VRAM base are DDA PCI facts;
   `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, `VRAM_USED`, and
