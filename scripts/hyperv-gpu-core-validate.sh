@@ -648,6 +648,8 @@ require_log 'd3d12_present_syncfile_preopen_matrix .*sync_file=[1-9][0-9]* .*ope
     "WSL-style sync-file acquire pre-open before native present"
 require_log 'd3d12_native_completion_zero_credit_matrix .*display_bind=ABSENT .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "native D3D12 completion remains zero-credit before display bind"
+require_log 'd3d12_native_completion_future_contract_matrix .*display_bind_gate=closed .*requires_present_id=1 .*requires_completed_ge_present=1 .*requires_same_resource_generation=1 .*requires_callback_release_after_completion=1 .*requires_close_before_signal_cancel=1 .*requires_cleanup_balance=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+    "native D3D12 completion future contract remains armed but fail-closed"
 require_log 'd3d12_present_commit_result_copyout_contract_matrix .*copyout_on_success=IMPLEMENTED .*failure_returns_errno=PASS .*failure_preserves_present_id=0 .*failure_preserves_completed=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "D3D12 present commit result copyout contract"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"

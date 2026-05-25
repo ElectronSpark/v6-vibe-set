@@ -125,6 +125,22 @@ These items were retired from `GPU_REMAINING_GAPS.md` after the May 17, 2026
 source audit. Re-check current source and validation logs before changing them,
 but do not treat them as open plan items by default.
 
+### Native Present Dependency Tree
+
+- Treat Hyper-V D3D12 acceleration as a dependency chain, not as independent
+  green checks: shared-resource import, sync-file acquire, compositor GPU copy,
+  DXG present-source commit, display completion, visible-content/FPS credit,
+  backend OpenGL-submit, then WebKit acceleration.
+- `dxg-resource-scanout-bind` or an equivalent GPU-P/DDA display-bind transport
+  is the root missing piece. Until it returns a nonzero present id and display
+  completion for the same resource generation, callbacks/releases may be
+  drained only as fail-closed lifecycle cleanup, not as native-present credit.
+- WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
+  current-run evidence source and reject title/chrome/cursor-only progress,
+  stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
+- `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
+  present dependency chain and the finite 480p FPS gate both pass.
+
 ### Source Layout
 
 - GPU/framebuffer implementation now enters through

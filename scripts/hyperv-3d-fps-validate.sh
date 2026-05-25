@@ -163,6 +163,17 @@ content_line = (
     "status=PASS"
 )
 print(content_line)
+interaction_line = (
+    "hyperv-3d-fps-validate: fps_demo_interaction_gate_matrix "
+    f"validation_run_id={run_id} mode={mode} visible_demo=REQUIRED "
+    "closeable_demo=REQUIRED resizable_demo=REQUIRED "
+    "native_present_completion=REQUIRED content_progress=REQUIRED "
+    "title_only_fps_rejected=PASS inflated_visible_fps_rejected=PASS "
+    "stale_or_frozen_content_rejected=PASS no_native_present_rejected=PASS "
+    "requires_native_present_completion=1 requires_content_progress=1 "
+    "native_present_credit=0 opengl_submit_credit=0 gate=closed status=PASS"
+)
+print(interaction_line)
 native_gate_line = (
     "hyperv-3d-fps-validate: fps_native_present_gate_skeleton_matrix "
     f"validation_run_id={run_id} mode={mode} "
@@ -178,7 +189,9 @@ visible_preflight_line = (
     f"validation_run_id={run_id} mode={mode} "
     "title_only_rejected=PASS overlay_only_rejected=PASS "
     "static_crc_rejected=PASS stale_run_rejected=PASS "
-    "frozen_window_rejected=PASS outside_overlay_crc_changes=0 "
+    "frozen_window_rejected=PASS inflated_visible_fps_rejected=PASS "
+    "no_native_present_rejected=PASS content_progress_contract=MISSING "
+    "outside_overlay_crc_changes=0 "
     "content_frame_delta=0 native_present_delta=0 "
     "requires_native_present_completion=1 "
     "requires_content_progress=1 gate=closed status=PASS"
@@ -187,7 +200,9 @@ print(visible_preflight_line)
 with log_path.open("a", encoding="utf-8") as out:
     out.write(line + "\n")
     out.write(overlay_line + "\n")
+    out.write(credit_line + "\n")
     out.write(content_line + "\n")
+    out.write(interaction_line + "\n")
     out.write(native_gate_line + "\n")
     out.write(visible_preflight_line + "\n")
 PY
@@ -414,11 +429,24 @@ d3d12_same_frame_callbacks = []
 d3d12_same_frame_releases = []
 d3d12_content_crcs = []
 d3d12_content_frames = []
+d3d12_content_progress_states = []
+d3d12_visible_content_progress_states = []
+d3d12_content_requires_native = []
+d3d12_content_native_complete = []
+d3d12_content_visible_credit = []
 d3d12_run_ids = []
 d3d12_native_paths = []
 d3d12_reject_evidence = []
 backend_modes = []
 backend_opengl_submit_samples = []
+demo_visible_evidence = []
+demo_closeable_evidence = []
+demo_resizable_evidence = []
+demo_interaction_native_complete = []
+demo_interaction_content_progress = []
+demo_interaction_present_ids = []
+demo_interaction_completed = []
+demo_interaction_run_ids = []
 visual_uptimes = []
 visual_native_counts = []
 visual_copy_counts = []
@@ -437,6 +465,11 @@ visual_same_frame_callbacks = []
 visual_same_frame_releases = []
 visual_content_crcs = []
 visual_content_frames = []
+visual_content_progress_states = []
+visual_visible_content_progress_states = []
+visual_content_requires_native = []
+visual_content_native_complete = []
+visual_content_visible_credit = []
 visual_run_ids = []
 visual_native_paths = []
 visual_reject_evidence = []
@@ -505,6 +538,34 @@ content_frame_keys = (
     "d3d12_visible_content_frame",
     "d3d12_visible_content_frames",
 )
+demo_visible_keys = (
+    "d3d12_demo_visible",
+    "demo_visible",
+    "visible_demo",
+    "window_visible",
+)
+demo_closeable_keys = (
+    "d3d12_demo_closeable",
+    "demo_closeable",
+    "closeable_demo",
+    "window_closeable",
+)
+demo_resizable_keys = (
+    "d3d12_demo_resizable",
+    "demo_resizable",
+    "resizable_demo",
+    "window_resizable",
+)
+demo_interaction_native_keys = (
+    "d3d12_demo_interaction_native_present_complete",
+    "demo_interaction_native_present_complete",
+    "demo_native_present_interaction_complete",
+)
+demo_interaction_content_keys = (
+    "d3d12_demo_interaction_content_progress",
+    "demo_interaction_content_progress",
+    "demo_visible_content_progress_complete",
+)
 
 def log_validation(message):
     line = f"hyperv-3d-fps-validate: {message}"
@@ -551,8 +612,21 @@ def positive_delta(values):
     value = counter_delta(values)
     return value is not None and value > 0
 
+def all_ones(values):
+    return bool(values) and all(value == 1 for value in values)
+
 def pass_missing(condition):
     return "PASS" if condition else "MISSING"
+
+def native_content_progress_complete(states, visible_states, requires,
+                                     native_complete, visible_credit):
+    return (
+        "NATIVE_PRESENT_COMPLETE" in states and
+        "NATIVE_PRESENT_COMPLETE" in visible_states and
+        all_ones(requires) and
+        all_ones(native_complete) and
+        all_ones(visible_credit)
+    )
 
 def log_fps_gate_skeleton(stage, outside_overlay_values):
     native_delta = counter_delta(d3d12_present_counts)
@@ -570,12 +644,37 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         positive_delta(d3d12_present_completed) and
         display_handoff > 0
     )
+    content_contract_ok = native_content_progress_complete(
+        d3d12_content_progress_states,
+        d3d12_visible_content_progress_states,
+        d3d12_content_requires_native,
+        d3d12_content_native_complete,
+        d3d12_content_visible_credit,
+    )
     content_progress_ok = (
         content_crc_changes > 0 and
         content_frame_delta is not None and content_frame_delta > 0 and
-        outside_overlay_changes > 0
+        outside_overlay_changes > 0 and
+        content_contract_ok
     )
-    gate_open = native_completion_ok and content_progress_ok
+    demo_interaction_ok = (
+        all_ones(demo_visible_evidence) and
+        all_ones(demo_closeable_evidence) and
+        all_ones(demo_resizable_evidence) and
+        all_ones(demo_interaction_native_complete) and
+        all_ones(demo_interaction_content_progress) and
+        demo_interaction_run_ids and
+        all(value == expected_run_id for value in demo_interaction_run_ids) and
+        demo_interaction_present_ids and
+        demo_interaction_completed and
+        demo_interaction_present_ids[-1] != 0 and
+        demo_interaction_completed[-1] >= demo_interaction_present_ids[-1]
+    )
+    gate_open = (
+        native_completion_ok and
+        content_progress_ok and
+        demo_interaction_ok
+    )
     log_validation(
         "fps_native_present_gate_skeleton_matrix "
         f"validation_run_id={expected_run_id} stage={stage} "
@@ -591,12 +690,37 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         f"gate={'open' if gate_open else 'closed'} status=PASS"
     )
     log_validation(
+        "fps_demo_interaction_gate_matrix "
+        f"validation_run_id={expected_run_id} stage={stage} "
+        f"visible_demo={pass_missing(all_ones(demo_visible_evidence))} "
+        f"closeable_demo={pass_missing(all_ones(demo_closeable_evidence))} "
+        f"resizable_demo={pass_missing(all_ones(demo_resizable_evidence))} "
+        f"interaction_run_id={pass_missing(bool(demo_interaction_run_ids) and all(value == expected_run_id for value in demo_interaction_run_ids))} "
+        f"native_present_completion={pass_missing(native_completion_ok)} "
+        f"content_progress={pass_missing(content_progress_ok)} "
+        f"interaction_native_present={pass_missing(all_ones(demo_interaction_native_complete))} "
+        f"interaction_content_progress={pass_missing(all_ones(demo_interaction_content_progress))} "
+        f"content_progress_contract={pass_missing(content_contract_ok)} "
+        f"interaction_present_id={demo_interaction_present_ids[-1] if demo_interaction_present_ids else 0} "
+        f"interaction_completed={demo_interaction_completed[-1] if demo_interaction_completed else 0} "
+        "requires_visible_demo=1 requires_closeable_demo=1 "
+        "requires_resizable_demo=1 "
+        "requires_native_present_completion=1 requires_content_progress=1 "
+        "visible_content_credit_before_native_present=0 "
+        f"native_present_credit={1 if gate_open else 0} "
+        f"opengl_submit_credit={backend_opengl_submit if gate_open else 0} "
+        f"gate={'open' if gate_open else 'closed'} status=PASS"
+    )
+    log_validation(
         "fps_visible_content_preflight_matrix "
         f"validation_run_id={expected_run_id} stage={stage} "
         "title_only_rejected=PASS overlay_only_rejected=PASS "
         "static_crc_rejected=PASS "
         "stale_run_rejected=PASS "
+        "inflated_visible_fps_rejected=PASS "
+        "no_native_present_rejected=PASS "
         f"content_crc_progress={pass_missing(content_crc_changes > 0)} "
+        f"content_progress_contract={pass_missing(content_contract_ok)} "
         f"outside_overlay_crc_changes={outside_overlay_changes} "
         f"content_crc_changes={content_crc_changes} "
         f"content_frame_delta={format_optional(content_frame_delta)} "
@@ -895,6 +1019,32 @@ for line in log.splitlines():
     if line.startswith("hyperv-3d-fps-validate: visual counter end"):
         visual_counter = "end"
         continue
+    demo_visible = counter_value(line, demo_visible_keys)
+    if demo_visible is not None:
+        demo_visible_evidence.append(demo_visible)
+    demo_closeable = counter_value(line, demo_closeable_keys)
+    if demo_closeable is not None:
+        demo_closeable_evidence.append(demo_closeable)
+    demo_resizable = counter_value(line, demo_resizable_keys)
+    if demo_resizable is not None:
+        demo_resizable_evidence.append(demo_resizable)
+    demo_interaction_native = counter_value(line, demo_interaction_native_keys)
+    if demo_interaction_native is not None:
+        demo_interaction_native_complete.append(demo_interaction_native)
+    demo_interaction_content = counter_value(line, demo_interaction_content_keys)
+    if demo_interaction_content is not None:
+        demo_interaction_content_progress.append(demo_interaction_content)
+    if (demo_visible is not None or demo_closeable is not None or
+            demo_resizable is not None):
+        present_id = counter_value(line, ("present_id", "d3d12_dxg_present_id"))
+        if present_id is not None:
+            demo_interaction_present_ids.append(present_id)
+        completed = counter_value(line, ("completed", "d3d12_dxg_present_completed"))
+        if completed is not None:
+            demo_interaction_completed.append(completed)
+        run_id = token_value(line, run_id_keys)
+        if run_id is not None:
+            demo_interaction_run_ids.append(run_id)
     if visual_counter is not None:
         uptime = re.match(r"^([0-9]+(?:\.[0-9]+)?)[ \t]+[0-9]+(?:\.[0-9]+)?[ \t]*$", line)
         if uptime:
@@ -944,6 +1094,30 @@ for line in log.splitlines():
         content_frame = hex_or_int_value(line, content_frame_keys)
         if content_frame is not None:
             visual_content_frames.append(content_frame)
+        content_state = token_value(line, ("d3d12_content_progress_state",))
+        if content_state is not None:
+            visual_content_progress_states.append(content_state)
+        visible_content_state = token_value(line, ("d3d12_visible_content_progress",))
+        if visible_content_state is not None:
+            visual_visible_content_progress_states.append(visible_content_state)
+        requires_native = counter_value(
+            line,
+            ("d3d12_content_progress_requires_native_present",),
+        )
+        if requires_native is not None:
+            visual_content_requires_native.append(requires_native)
+        native_complete = counter_value(
+            line,
+            ("d3d12_content_progress_native_present_complete",),
+        )
+        if native_complete is not None:
+            visual_content_native_complete.append(native_complete)
+        visible_credit = counter_value(
+            line,
+            ("d3d12_content_progress_visible_credit",),
+        )
+        if visible_credit is not None:
+            visual_content_visible_credit.append(visible_credit)
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             visual_run_ids.append(run_id)
@@ -1027,6 +1201,30 @@ for line in log.splitlines():
         content_frame = hex_or_int_value(line, content_frame_keys)
         if content_frame is not None:
             d3d12_content_frames.append(content_frame)
+        content_state = token_value(line, ("d3d12_content_progress_state",))
+        if content_state is not None:
+            d3d12_content_progress_states.append(content_state)
+        visible_content_state = token_value(line, ("d3d12_visible_content_progress",))
+        if visible_content_state is not None:
+            d3d12_visible_content_progress_states.append(visible_content_state)
+        requires_native = counter_value(
+            line,
+            ("d3d12_content_progress_requires_native_present",),
+        )
+        if requires_native is not None:
+            d3d12_content_requires_native.append(requires_native)
+        native_complete = counter_value(
+            line,
+            ("d3d12_content_progress_native_present_complete",),
+        )
+        if native_complete is not None:
+            d3d12_content_native_complete.append(native_complete)
+        visible_credit = counter_value(
+            line,
+            ("d3d12_content_progress_visible_credit",),
+        )
+        if visible_credit is not None:
+            d3d12_content_visible_credit.append(visible_credit)
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             d3d12_run_ids.append(run_id)
@@ -1488,6 +1686,37 @@ if not demo_evidence_valid or any(value != 1 for value in demo_evidence_valid):
         "demo FPS probe did not use validated native-present evidence: "
         f"values={','.join(str(value) for value in demo_evidence_valid)}"
     )
+demo_interaction_ready = (
+    all_ones(demo_visible_evidence) and
+    all_ones(demo_closeable_evidence) and
+    all_ones(demo_resizable_evidence) and
+    all_ones(demo_interaction_native_complete) and
+    all_ones(demo_interaction_content_progress) and
+    demo_interaction_present_ids and
+    demo_interaction_completed and
+    demo_interaction_run_ids and
+    all(value == expected_run_id for value in demo_interaction_run_ids) and
+    demo_interaction_present_ids[-1] != 0 and
+    demo_interaction_completed[-1] >= demo_interaction_present_ids[-1]
+)
+if not demo_interaction_ready:
+    fail_validation(
+        "fps_demo_interaction_gate_matrix "
+        f"validation_run_id={expected_run_id} stage=final "
+        f"visible_demo={pass_missing(all_ones(demo_visible_evidence))} "
+        f"closeable_demo={pass_missing(all_ones(demo_closeable_evidence))} "
+        f"resizable_demo={pass_missing(all_ones(demo_resizable_evidence))} "
+        f"interaction_run_id={pass_missing(bool(demo_interaction_run_ids) and all(value == expected_run_id for value in demo_interaction_run_ids))} "
+        f"interaction_native_present={pass_missing(all_ones(demo_interaction_native_complete))} "
+        f"interaction_content_progress={pass_missing(all_ones(demo_interaction_content_progress))} "
+        f"interaction_present_id={demo_interaction_present_ids[-1] if demo_interaction_present_ids else 0} "
+        f"interaction_completed={demo_interaction_completed[-1] if demo_interaction_completed else 0} "
+        "requires_visible_demo=1 requires_closeable_demo=1 "
+        "requires_resizable_demo=1 "
+        "requires_native_present_completion=1 requires_content_progress=1 "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE"
+    )
 if (len(demo_evidence_generations) != len(accepted_demo_records) or
         any(value <= 0 for value in demo_evidence_generations) or
         len(demo_evidence_times) != len(accepted_demo_records) or
@@ -1750,6 +1979,22 @@ if native_completed <= 0:
     raise SystemExit(
         "D3D12 native present completion count did not advance during FPS "
         f"sample: {d3d12_present_counts[0]}->{d3d12_present_counts[-1]}"
+    )
+if not native_content_progress_complete(
+        d3d12_content_progress_states,
+        d3d12_visible_content_progress_states,
+        d3d12_content_requires_native,
+        d3d12_content_native_complete,
+        d3d12_content_visible_credit):
+    fail_validation(
+        "fps_visible_native_content_gate_matrix "
+        f"validation_run_id={expected_run_id} stage=sample "
+        "native_present_completion=PASS "
+        "content_progress_contract=MISSING "
+        "requires_native_present_completion=1 requires_content_progress=1 "
+        "visible_content_credit_before_native_present=0 "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE"
     )
 if sample_content_frame_delta < native_completed:
     raise SystemExit(
@@ -2406,6 +2651,22 @@ if visual_native_completed <= 0:
         "thumbnail progression was sampled: "
         f"{visual_native_counts[0]}->{visual_native_counts[-1]}"
     )
+if not native_content_progress_complete(
+        visual_content_progress_states,
+        visual_visible_content_progress_states,
+        visual_content_requires_native,
+        visual_content_native_complete,
+        visual_content_visible_credit):
+    fail_validation(
+        "fps_visible_native_content_gate_matrix "
+        f"validation_run_id={expected_run_id} stage=visual-window "
+        "native_present_completion=PASS "
+        "content_progress_contract=MISSING "
+        "requires_native_present_completion=1 requires_content_progress=1 "
+        "visible_content_credit_before_native_present=0 "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE"
+    )
 if visual_content_frame_delta < visual_native_completed:
     raise SystemExit(
         "visual-window content frame counter lagged native present "
@@ -2758,6 +3019,11 @@ log_validation(
     "demo_client_pid_match=1 "
     "demo_resource_match=1 "
     "demo_buffer_generation_match=1 "
+    "demo_visible=1 "
+    "demo_closeable=1 "
+    "demo_resizable=1 "
+    "demo_interaction_native_present=1 "
+    "demo_interaction_content_progress=1 "
     f"sample_window_only={1 if not accepted_post_window_records else 0} "
     "sample_window_or_timestamped=1 "
     f"accepted_demo_samples={len(accepted_demo_records)} "
@@ -2831,6 +3097,9 @@ print(
     f"display_completion_delta={completed} "
     f"display_completion_fps={completion_fps:.3f} "
     f"visible_avg={avg:.3f} visible_low={low:.3f} "
+    "demo_visible=1 demo_closeable=1 demo_resizable=1 "
+    "demo_interaction_native_present=1 "
+    "demo_interaction_content_progress=1 "
     f"visual_progress_fps={visual_progress_fps:.3f} "
     f"outside_overlay_crc_changes={outside_overlay_crc_transitions} "
     f"backend_mode={backend_mode} backend_opengl_submit=1 "
