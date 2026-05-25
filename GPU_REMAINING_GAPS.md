@@ -690,6 +690,24 @@ non-readback display handoff.
     CORE_C_SECTIONS='preflight present-source final'
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
     `validation_run_id=core-1779750432-2876003`.
+  - [x] Expose the source/resource-generation-preserving query and
+    future-success validator shape for the fail-closed provider boundary.
+    `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` and the provider result now
+    report matching source/resource generations, provider status/block reason,
+    completion source, dirty sequence/rect counts, host-ABI/sender/completion
+    presence, negative provider diagnostics, and pin revalidation. `fbstat`,
+    `dxgprobe`, and `gpucorevalidate` require
+    `d3d12_display_bind_success_shape_matrix` and
+    `d3d12_display_bind_query_fields_matrix`, accepting today's fail-closed
+    zero-credit state while defining the complete future-success shape. A
+    fresh WSL2 source comparison against local 6.6.87 and public 6.18
+    confirmed WSL has D3DKMT shared-resource, present-history, and sync-file
+    primitives but no Linux UAPI display-bind ioctl or exposed display
+    completion handler, so the root host ABI item remains open. Evidence:
+    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+    CORE_C_SECTIONS='preflight present-source final'
+    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+    `validation_run_id=core-1779751975-2934585`.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require

@@ -191,6 +191,17 @@ but do not treat them as open plan items by default.
   `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
   diagnostics. Do not replace those with credit until a documented GPU-P/DDA
   sender and display completion source exists.
+- WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
+  present-history, and sync-file primitives, but no Linux UAPI display-bind
+  ioctl and no exposed Linux display-completion handler for binding a D3D12
+  resource to scanout. Keep
+  `d3d12_display_bind_success_shape_matrix` and
+  `d3d12_display_bind_query_fields_matrix` as the current query/success-shape
+  guards: they must preserve source/resource generation, provider status/block
+  reason, completion source, dirty metadata, host-ABI/sender/completion
+  presence, no-host/no-sender/no-completion diagnostics, pin revalidation, and
+  zero native-present/OpenGL-submit credit until a documented GPU-P/DDA sender
+  replaces the fail-closed provider.
 - A future provider-success result must pass the full source-local accept
   shape before `fb_dxg_present.c` may copy out native ids: provider status
   success, real transport, scanout-bind operation, host ABI present, sender
