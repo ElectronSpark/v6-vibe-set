@@ -450,6 +450,21 @@ but do not treat them as open plan items by default.
   - native KMS OUT_FENCE and display-correlated vblank/page-flip completion are
     separate gates; passing the vblank/page-flip source matrix does not close
     the OUT_FENCE gate.
+  - `kms_vblank_native_present_separation_matrix` is the focused source-level
+    guard: vblank/page-flip/display counters may advance while native D3D12
+    present and OpenGL-submit credit remain zero.
+- The finite 480p FPS validator runs the anti-inflation preflight by default
+  before heavy Hyper-V sampling. The required negative is the observed around-40
+  displayed/demo FPS with single-digit visible cadence, stale run id, static
+  content, or frozen-window evidence.
+- Passing FPS evidence must include the exact geometry contract:
+  `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
+  reject prior FPS artifacts that lack that full-resolution token.
+- WebKit acceleration validation starts with the
+  `webkit_evidence_rejection_matrix` policy preflight. Chrome/title/cursor-only,
+  callback-only, release-only, render-node-only, dmabuf-only, env-only, and
+  software-fallback evidence must all fail before any enabled WebKit artifact is
+  considered.
 - For WSL `hmgrtable` parity, keep local adapter handles and normal DXG object
   handles distinct:
   - `hvdxg_process_state` should keep WSL-shaped process object refs separate
