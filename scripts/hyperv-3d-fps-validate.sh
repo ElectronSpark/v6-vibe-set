@@ -493,6 +493,7 @@ d3d12_same_frame_callbacks = []
 d3d12_same_frame_releases = []
 d3d12_content_crcs = []
 d3d12_content_frames = []
+d3d12_content_frame_hashes = []
 d3d12_content_progress_states = []
 d3d12_visible_content_progress_states = []
 d3d12_content_requires_native = []
@@ -537,6 +538,7 @@ visual_same_frame_callbacks = []
 visual_same_frame_releases = []
 visual_content_crcs = []
 visual_content_frames = []
+visual_content_frame_hashes = []
 visual_content_progress_states = []
 visual_visible_content_progress_states = []
 visual_content_requires_native = []
@@ -609,6 +611,12 @@ content_frame_keys = (
     "d3d12_present_content_changes",
     "d3d12_visible_content_frame",
     "d3d12_visible_content_frames",
+)
+content_frame_hash_keys = (
+    "d3d12_present_frame_hash",
+    "d3d12_visible_frame_hash",
+    "d3d12_content_frame_hash",
+    "d3d12_visible_content_frame_hash",
 )
 native_completion_id_keys = (
     "d3d12_native_present_completion_id",
@@ -798,6 +806,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
     completed_delta = counter_delta(d3d12_present_completed)
     content_frame_delta = counter_delta(d3d12_content_frames)
     content_crc_changes = transition_count(d3d12_content_crcs)
+    content_frame_hash_changes = transition_count(d3d12_content_frame_hashes)
     outside_overlay_changes = transition_count(outside_overlay_values)
     display_handoff = max(d3d12_display_handoffs) if d3d12_display_handoffs else 0
     backend_opengl_submit = (backend_opengl_submit_samples[-1]
@@ -825,6 +834,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
     )
     content_progress_ok = (
         content_crc_changes > 0 and
+        content_frame_hash_changes > 0 and
         content_frame_delta is not None and content_frame_delta > 0 and
         outside_overlay_changes > 0 and
         content_contract_ok and
@@ -895,10 +905,12 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         "inflated_visible_fps_rejected=PASS "
         "no_native_present_rejected=PASS "
         f"content_crc_progress={pass_missing(content_crc_changes > 0)} "
+        f"content_frame_hash_progress={pass_missing(content_frame_hash_changes > 0)} "
         f"content_progress_contract={pass_missing(content_contract_ok)} "
         f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
         f"outside_overlay_crc_changes={outside_overlay_changes} "
         f"content_crc_changes={content_crc_changes} "
+        f"content_frame_hash_changes={content_frame_hash_changes} "
         f"content_frame_delta={format_optional(content_frame_delta)} "
         f"native_present_delta={format_optional(native_delta)} "
         "requires_native_present_completion=1 "
@@ -911,6 +923,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         "stale_run_rejected=PASS frozen_content_rejected=PASS "
         "title_only_fps_rejected=PASS "
         f"content_crc_changes={content_crc_changes} "
+        f"content_frame_hash_changes={content_frame_hash_changes} "
         f"content_frame_delta={format_optional(content_frame_delta)} "
         f"native_completion_ids={len(d3d12_native_completion_ids)} "
         f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
@@ -1313,6 +1326,9 @@ for line in log.splitlines():
         content_frame = hex_or_int_value(line, content_frame_keys)
         if content_frame is not None:
             visual_content_frames.append(content_frame)
+        content_frame_hash = hex_or_int_value(line, content_frame_hash_keys)
+        if content_frame_hash is not None:
+            visual_content_frame_hashes.append(content_frame_hash)
         content_state = token_value(line, ("d3d12_content_progress_state",))
         if content_state is not None:
             visual_content_progress_states.append(content_state)
@@ -1449,6 +1465,9 @@ for line in log.splitlines():
         content_frame = hex_or_int_value(line, content_frame_keys)
         if content_frame is not None:
             d3d12_content_frames.append(content_frame)
+        content_frame_hash = hex_or_int_value(line, content_frame_hash_keys)
+        if content_frame_hash is not None:
+            d3d12_content_frame_hashes.append(content_frame_hash)
         content_state = token_value(line, ("d3d12_content_progress_state",))
         if content_state is not None:
             d3d12_content_progress_states.append(content_state)
@@ -1840,6 +1859,42 @@ if len(set(d3d12_content_crcs)) < 2:
 sample_content_crc_changes = sum(
     1
     for before, after in zip(d3d12_content_crcs, d3d12_content_crcs[1:])
+    if before != after
+)
+if len(d3d12_content_frame_hashes) < 2:
+    raise SystemExit(
+        "missing D3D12 content frame-hash samples from compositor evidence"
+    )
+if len(set(d3d12_content_frame_hashes)) < 2:
+    frozen_window_negative(
+        "sample_content_frame_hash_static",
+        sample_elapsed=format_optional(counter_delta(uptimes)),
+        native_present_delta=format_optional(counter_delta(d3d12_present_counts)),
+        frame_callback_delta=format_optional(counter_delta(d3d12_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(d3d12_release_counts)),
+        content_frame_delta=format_optional(counter_delta(d3d12_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=sum(
+            1
+            for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+            if before != after
+        ),
+        content_crc_changes=sample_content_crc_changes,
+        content_frame_hash_changes=0,
+        changed=",".join(str(v) for v in transitions),
+        d3d12_content_frame_hashes=",".join(
+            hex(value) for value in d3d12_content_frame_hashes
+        ),
+    )
+    raise SystemExit(
+        "D3D12 compositor content frame hash did not change during FPS "
+        "sample: values="
+        f"{','.join(hex(value) for value in d3d12_content_frame_hashes)}"
+    )
+sample_content_frame_hash_changes = sum(
+    1
+    for before, after in zip(d3d12_content_frame_hashes,
+                             d3d12_content_frame_hashes[1:])
     if before != after
 )
 if len(d3d12_content_frames) < 2:
@@ -2307,6 +2362,7 @@ if not same_run_resource_generation_completion_progress(
         "stale_run_rejected=PASS frozen_content_rejected=PASS "
         "title_only_fps_rejected=PASS "
         f"content_crc_changes={sample_content_crc_changes} "
+        f"content_frame_hash_changes={sample_content_frame_hash_changes} "
         f"content_frame_delta={sample_content_frame_delta} "
         f"native_completion_ids={len(d3d12_native_completion_ids)} "
         "same_run_resource_generation_completion=MISSING "
@@ -2941,6 +2997,38 @@ visual_content_crc_changes = sum(
     for before, after in zip(visual_content_crcs, visual_content_crcs[1:])
     if before != after
 )
+if len(visual_content_frame_hashes) < 2:
+    raise SystemExit(
+        "missing visual-window D3D12 content frame-hash samples from "
+        "compositor evidence"
+    )
+if len(set(visual_content_frame_hashes)) < 2:
+    frozen_window_negative(
+        "visual_content_frame_hash_static",
+        sample_elapsed=f"{elapsed:.3f}",
+        native_present_delta=native_completed,
+        frame_callback_delta=format_optional(counter_delta(visual_callback_counts)),
+        buffer_release_delta=format_optional(counter_delta(visual_release_counts)),
+        content_frame_delta=format_optional(counter_delta(visual_content_frames)),
+        thumbnail_progress_delta=max(transitions),
+        outside_overlay_crc_changes=outside_overlay_crc_transitions,
+        content_crc_changes=visual_content_crc_changes,
+        content_frame_hash_changes=0,
+        changed=",".join(str(v) for v in transitions),
+        visual_content_frame_hashes=",".join(
+            hex(value) for value in visual_content_frame_hashes
+        ),
+    )
+    raise SystemExit(
+        "visual-window D3D12 compositor content frame hash did not change: "
+        f"values={','.join(hex(value) for value in visual_content_frame_hashes)}"
+    )
+visual_content_frame_hash_changes = sum(
+    1
+    for before, after in zip(visual_content_frame_hashes,
+                             visual_content_frame_hashes[1:])
+    if before != after
+)
 if len(visual_content_frames) < 2:
     raise SystemExit(
         "missing visual-window D3D12 content frame/change counter samples "
@@ -3004,6 +3092,7 @@ if not same_run_resource_generation_completion_progress(
         "stale_run_rejected=PASS frozen_content_rejected=PASS "
         "title_only_fps_rejected=PASS "
         f"content_crc_changes={visual_content_crc_changes} "
+        f"content_frame_hash_changes={visual_content_frame_hash_changes} "
         f"content_frame_delta={visual_content_frame_delta} "
         f"native_completion_ids={len(visual_native_completion_ids)} "
         "same_run_resource_generation_completion=MISSING "
@@ -3261,6 +3350,7 @@ log_validation(
     f"frame_callback_delta={visual_callbacks} "
     f"buffer_release_delta={visual_releases} "
     f"content_crc_changes={visual_content_crc_changes} "
+    f"content_frame_hash_changes={visual_content_frame_hash_changes} "
     f"content_frame_delta={visual_content_frame_delta} "
     f"outside_overlay_crc_changes={outside_overlay_crc_transitions} "
     f"native_present_fps={visual_native_fps:.3f} "
@@ -3289,6 +3379,7 @@ log_validation(
     f"sample_evidence_generation_delta={sum(d3d12_generation_deltas)} "
     f"sample_evidence_time_delta_us={sum(d3d12_evidence_time_deltas)} "
     f"sample_content_crc_changes={sample_content_crc_changes} "
+    f"sample_content_frame_hash_changes={sample_content_frame_hash_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
     f"active_native_intervals={active_native_intervals} "
     f"active_display_intervals={active_display_intervals} "
@@ -3469,6 +3560,7 @@ print(
     f"sample_display_bind_completed_id_delta={sample_display_bind_completed_id_delta} "
     f"sample_gpup_dda_commit_delta={sample_gpup_dda_commit_delta} "
     f"sample_content_crc_changes={sample_content_crc_changes} "
+    f"sample_content_frame_hash_changes={sample_content_frame_hash_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
     f"active_native_intervals={active_native_intervals} "
     f"active_display_intervals={active_display_intervals} "
@@ -3495,6 +3587,7 @@ print(
     f"visual_window_frame_callback_delta={visual_callbacks} "
     f"visual_window_buffer_release_delta={visual_releases} "
     f"visual_window_content_crc_changes={visual_content_crc_changes} "
+    f"visual_window_content_frame_hash_changes={visual_content_frame_hash_changes} "
     f"visual_window_content_frame_delta={visual_content_frame_delta} "
     f"visual_window_native_present_fps={visual_native_fps:.3f} "
     f"display_completion_delta={completed} "

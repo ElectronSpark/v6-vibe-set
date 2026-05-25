@@ -195,6 +195,17 @@ but do not treat them as open plan items by default.
   commit, tie them to display-bind present/completed/resource generation, and
   leave `source_owned=0` plus zero visible/native credit until a real
   non-readback native-present content sampler fills CRC/frame/hash values.
+  The finite FPS and WebKit gates require both content CRC/frame counters and
+  compositor-owned frame-hash progress; title/FPS overlay movement, fixture
+  title liveness, or CRC-only samples are not enough.
+- KMS/DRM remains a generic software-present compatibility path until a real
+  DDA/Nouveau display engine exists. `gpu_kms_present_fb()` must try the
+  native-present discriminator first and record reject reasons, then fall back
+  to `fb_blit_from_bo_format()` without granting `kms_present_nouveau_hw`,
+  native-present credit, or OpenGL-submit credit. Accepted DDA/Nouveau PCI
+  probes may publish BAR/DMA/IRQ diagnostics and a fail-closed display-create
+  attempt, but not heads/connectors/vblank/flip-completion success until those
+  are backed by real hardware programming.
 
 ### Source Layout
 
@@ -242,6 +253,12 @@ but do not treat them as open plan items by default.
   The older flat fields can remain as compatibility mirrors only while
   validators require `shared_model_coherent=1` and `dxg_sharedresource_model`
   reports valid records that match the mirror.
+- Preserve WSL-style shared-resource NT/global-share metadata through the
+  parent object and each opened child. A display-bind pin may not succeed from
+  a by-value clone or a child with stripped sharing state; use
+  `dxg_display_bind_pin_diag` to compare typed fd kind, opened child, parent
+  id, global share, sealed generation, and pinned refs before trusting the
+  future sleepable provider.
 - Current shared-resource parent work has a scaffold phase and a semantic
   phase. The scaffold may expose `dxg_sharedresource_parent`, parent id/ref/
   opened-child counters, and sealed allocation `num_pages`/`cached` metadata,
