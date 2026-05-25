@@ -662,6 +662,12 @@ non-readback display handoff.
   private driver data rather than scanout binding, synthvid is only a GPA dirty
   rectangle display path, and DDA/Nouveau PCI display presence is separate from
   D3D12 resource import, scanout bind, and hardware flip completion.
+  The Hyper-V-owned provider boundary is now a generic
+  `hyperv_dxg_display_bind_submit()` slot backed by the current fail-closed
+  implementation. Kernel stats and pure-C validators require the provider's
+  returned `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
+  scalars, so a future implementation must replace the sender/completion
+  contract deliberately instead of deriving credit from DXG readiness.
   - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
     while keeping it fail-closed. `fb_dxg_present.c` now delegates the
     source/resource-generation snapshot to
@@ -946,6 +952,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   id, same resource generation, callback/release after completion,
   close-before-signal cancellation, and cleanup balance. It grants zero native
   present or OpenGL-submit credit until the display-bind gate opens.
+  `gpucorevalidate` also emits `d3d12_native_completion_not_kms_matrix`, which
+  proves generic `FB_GPU_DISPLAY_WAIT`, KMS vblank, KMS OUT_FENCE, page-flip,
+  and software-blit progress remain zero-credit unless the future D3D12
+  display-bind completion path supplies nonzero source/resource-correlated
+  present/completed ids.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace
@@ -980,6 +991,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `fps_visible_native_content_gate_matrix`, so visible/closeable/resizable demo
   evidence and content-progress-native-present correlation are required before
   the finite FPS gate can open.
+  `mesawlegl` and the FPS validator now require exact native/content identity:
+  content progress state must be `NATIVE_PRESENT_COMPLETE`, visible content
+  progress must be `NATIVE_PRESENT_COMPLETE`, content progress must be
+  compositor-owned, content present/completed ids must match the canonical DXG
+  and display-bind ids, display-bind completion sources must all be native
+  display sources, and buffer/resource generations must match.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
@@ -1141,6 +1158,10 @@ alone.
   client/resource/generation identity, prior native-present FPS contract,
   backend OpenGL-submit, and native present completion. Current Hyper-V keeps
   this gate closed with zero WebKit acceleration credit.
+  The validator also deletes stale D3D12/WebKit policy artifacts before the
+  liveness-only fixture and requires any generated policy to remain
+  `effective_accel=0`, `validated_shared_surface=0`, `d3d12_present=0`, and
+  `gpu_contract=none` while native present is absent.
   - [x] Stage a deterministic animated-content fixture at
     `/share/webkit/webkit-animated-content-native-present.html`; the smoke
     probe recognizes its advancing frame title as fixture liveness only.

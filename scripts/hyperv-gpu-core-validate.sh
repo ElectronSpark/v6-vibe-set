@@ -668,6 +668,8 @@ require_log 'dxg_scanout_bind_weak_evidence_matrix .*d3dkmt_handles_only=[1-9][0
     "weak D3DKMT/resource/sync evidence is rejected without native-present credit"
 require_log 'dxg_syncfile_not_kms_completion_matrix .*scanout_successes=0 .*completion_successes=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "DXG sync-file evidence remains admission-only, not KMS completion"
+require_log 'd3d12_native_completion_not_kms_matrix .*display_wait_is_native=0 .*kms_generic_display_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "generic KMS/display-wait progress is not native D3D12 completion"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
 require_log 'd3d12_present_resource_fd_typed_admission_matrix .*typed_resource_fd=PASS .*sealed_before_admit=PASS .*shared_records_valid=PASS .*allocation_match=PASS .*generation_from_shared=PASS .*invalid_fd_rejected=PASS .*stale_source_cleanup=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
@@ -676,7 +678,7 @@ require_log 'd3d12_present_syncfile_preopen_matrix .*sync_file=[1-9][0-9]* .*ope
     "WSL-style sync-file acquire pre-open before native present"
 require_log 'd3d12_native_completion_zero_credit_matrix .*display_bind=ABSENT .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "native D3D12 completion remains zero-credit before display bind"
-require_log 'd3d12_display_bind_backend_boundary_matrix .*backend=gpup_dxg_scanout_bind .*contract_version=1 .*transport=0 .*transport_present=0 .*operation=1 .*completion_source=3 .*present_id=0 completed=0 .*custom_host_tool=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+require_log 'd3d12_display_bind_backend_boundary_matrix .*backend=gpup_dxg_scanout_bind .*contract_version=1 .*transport=0 .*transport_present=0 .*operation=1 .*completion_source=3 .*present_id=0 completed=0 .*provider_pin_revalidated=1 .*provider_no_host_abi=1 .*provider_no_sender=1 .*provider_no_completion=1 .*custom_host_tool=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "D3D12 display-bind backend boundary is explicit and fail-closed"
 require_log 'd3d12_native_completion_future_contract_matrix .*display_bind_gate=closed .*requires_present_id=1 .*requires_completed_ge_present=1 .*requires_same_resource_generation=1 .*requires_callback_release_after_completion=1 .*requires_close_before_signal_cancel=1 .*requires_cleanup_balance=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
     "native D3D12 completion future contract remains armed but fail-closed"

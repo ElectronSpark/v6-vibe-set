@@ -791,11 +791,40 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
             f"missing nonzero {name} display_bind_resource_generation "
             f"evidence: values={','.join(str(value) for value in resource_generations)}"
         )
-    if not any(display_bind_completion_source_ok(value)
-               for value in completion_sources):
+    bad_sources = [
+        value for value in completion_sources
+        if not display_bind_completion_source_ok(value)
+    ]
+    if not completion_sources or bad_sources:
         raise SystemExit(
             f"missing {name} native display completion_source evidence: "
             f"values={','.join(completion_sources) if completion_sources else 'missing'}"
+        )
+
+def require_display_bind_identity(name, present_ids, completed_ids,
+                                  buffer_generations,
+                                  display_bind_present_ids,
+                                  display_bind_completed_ids,
+                                  display_bind_resource_generations):
+    if not (present_ids and completed_ids and buffer_generations and
+            display_bind_present_ids and display_bind_completed_ids and
+            display_bind_resource_generations):
+        raise SystemExit(f"missing {name} display-bind identity samples")
+    if present_ids[-1] != display_bind_present_ids[-1]:
+        raise SystemExit(
+            f"{name} present_id/display_bind_present_id mismatch: "
+            f"present={present_ids[-1]} display_bind={display_bind_present_ids[-1]}"
+        )
+    if completed_ids[-1] != display_bind_completed_ids[-1]:
+        raise SystemExit(
+            f"{name} completed/display_bind_completed_id mismatch: "
+            f"completed={completed_ids[-1]} display_bind={display_bind_completed_ids[-1]}"
+        )
+    if buffer_generations[-1] != display_bind_resource_generations[-1]:
+        raise SystemExit(
+            f"{name} buffer_generation/display_bind_resource_generation mismatch: "
+            f"buffer={buffer_generations[-1]} "
+            f"display_bind={display_bind_resource_generations[-1]}"
         )
 
 def log_fps_gate_skeleton(stage, outside_overlay_values):
@@ -1331,7 +1360,10 @@ for line in log.splitlines():
             visual_display_bind_resource_generations.append(
                 display_bind_resource_generation
             )
-        completion_source = token_value(line, ("completion_source",))
+        completion_source = token_value(
+            line,
+            ("display_bind_completion_source", "completion_source"),
+        )
         if completion_source is not None:
             visual_display_bind_completion_sources.append(completion_source)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
@@ -1476,7 +1508,10 @@ for line in log.splitlines():
             d3d12_display_bind_resource_generations.append(
                 display_bind_resource_generation
             )
-        completion_source = token_value(line, ("completion_source",))
+        completion_source = token_value(
+            line,
+            ("display_bind_completion_source", "completion_source"),
+        )
         if completion_source is not None:
             d3d12_display_bind_completion_sources.append(completion_source)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
@@ -2285,6 +2320,15 @@ require_display_bind_evidence(
     d3d12_display_bind_completed_ids,
     d3d12_display_bind_resource_generations,
     d3d12_display_bind_completion_sources,
+)
+require_display_bind_identity(
+    "sample-window D3D12",
+    d3d12_present_ids,
+    d3d12_present_completed,
+    d3d12_buffer_generations,
+    d3d12_display_bind_present_ids,
+    d3d12_display_bind_completed_ids,
+    d3d12_display_bind_resource_generations,
 )
 if (len(d3d12_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in d3d12_gpup_dda_commit_successes)):
@@ -3317,6 +3361,15 @@ require_display_bind_evidence(
     visual_display_bind_completed_ids,
     visual_display_bind_resource_generations,
     visual_display_bind_completion_sources,
+)
+require_display_bind_identity(
+    "visual-window D3D12",
+    visual_present_ids,
+    visual_present_completed,
+    visual_buffer_generations,
+    visual_display_bind_present_ids,
+    visual_display_bind_completed_ids,
+    visual_display_bind_resource_generations,
 )
 if (len(visual_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in visual_gpup_dda_commit_successes)):
