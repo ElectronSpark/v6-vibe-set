@@ -160,6 +160,11 @@ but do not treat them as open plan items by default.
   `display_bind_completion_source`/`completion_source`. Fail-closed Hyper-V
   evidence may name the selected backend/transport, but present/completed ids
   must stay zero and no consumer may grant native-present credit from that.
+- Kernel native-present work should go through the source-local display-bind
+  request/result provider boundary in `fb_dxg_present.c`. The provider may
+  remain fail-closed, but it must preserve source/resource generation,
+  completion source, status, block reason, and zero present/completed ids until
+  a documented DDA/GPU-P sender replaces the stub.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 

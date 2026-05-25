@@ -663,10 +663,10 @@ require_holistic_d3d12_display_bind_evidence_file()
     local completed
 
     require_file_log "${file}" \
-        '(^|[[:space:]])display_bind_backend[ =](hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau)($|[[:space:]])' \
+        '(^|[[:space:]])display_bind_backend[ =](gpup_dxg_scanout_bind|hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau|dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' \
         "${why} D3D12 display_bind_backend"
     require_file_log "${file}" \
-        '(^|[[:space:]])display_bind_transport[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' \
+        '(^|[[:space:]])display_bind_transport[ =](gpu-p-dxg-resource-scanout-bind|dxg-resource-scanout-bind)($|[[:space:]])' \
         "${why} D3D12 display_bind_transport"
     require_counter_ge "${file}" display_bind_present_id 1 \
         "${why} D3D12 display_bind_present_id"
@@ -979,8 +979,8 @@ webkit_shared_surface_contract_validated()
     grep -Eq 'd3d12_gpu_present_starts=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_gpu_copy_completes=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_display_handoff_implemented[ =]1' "${LOG}" &&
-    grep -Eq '(^|[[:space:]])display_bind_backend[ =](hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau)($|[[:space:]])' "${LOG}" &&
-    grep -Eq '(^|[[:space:]])display_bind_transport[ =](dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_backend[ =](gpup_dxg_scanout_bind|hyperv-dxg|gpu-p|gpu-p-dda|dda|nouveau|dxg-resource-scanout-bind|gpu-p-dxg-resource-scanout-bind)($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])display_bind_transport[ =](gpu-p-dxg-resource-scanout-bind|dxg-resource-scanout-bind)($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])display_bind_present_id[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])display_bind_completed_id[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])display_bind_resource_generation[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
