@@ -420,9 +420,16 @@ non-readback display handoff.
 - [ ] Replace the fail-closed bind-contract skeleton with the selected real
   display-bindable resource plus completion source, instead of letting FB code
   infer native-present capability from raw `/dev/dxg` status fields.
-- [ ] Prove framebuffer blit, CPU map/readback, DRI software present,
+- [x] Prove framebuffer blit, CPU map/readback, DRI software present,
   copy-export fallback, and callback-only/release-only paths are rejected by
-  the same validator.
+  the same validator. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
+  CORE_C_MODE=whole-section CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779669683-2798390`, including
+  `present_source_software_path_rejection_matrix` with framebuffer blit,
+  CPU map/readback, DRI software present, copy-export fallback,
+  callback-only, and release-only all rejected, while keeping
+  `native_present_claim=0` and `opengl_submit_credit=0`.
 - [ ] Keep `backend_opengl_submit 0` until this section and the FPS section
   both pass.
 
