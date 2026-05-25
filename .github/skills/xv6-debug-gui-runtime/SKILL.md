@@ -581,6 +581,16 @@ but do not treat them as open plan items by default.
   provenance rows. It should carry both the matrix row and
   `d3d12_fps_provenance_*` scalar keys so FPS/WebKit validators do not depend
   on stderr timing.
+- Treat visible-content progress as zero-credit until native D3D12 display
+  completion is proven for the same resource/generation. The compositor should
+  emit `d3d12_wayland_content_progress_matrix` and
+  `d3d12_content_progress_*` scalar keys in `/tmp/wlcomp-d3d12-present`; on
+  fail-closed Hyper-V these must report `d3d12_content_progress_state=DEFERRED`,
+  `d3d12_visible_content_progress=DEFERRED`,
+  `d3d12_content_progress_requires_native_present=1`,
+  `d3d12_visible_content_requires_native_present_completion=1`,
+  `d3d12_visible_content_credit_before_native_present=0`, and zero
+  native-present/OpenGL-submit credit.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.
