@@ -314,7 +314,17 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   XRGB/ARGB-only: `DRM_CAP_ADDFB2_MODIFIERS` advertises the accepted linear
   metadata contract, `ADDFB2`/`GETFB2` round-trip linear NV12 metadata, and
   non-linear, mixed-plane, and unsupported present paths fail before side
-  effects or native/OpenGL-submit credit.
+  effects or native/OpenGL-submit credit. The primary plane now also exposes a
+  Linux-style immutable `IN_FORMATS` blob for the actual scanout subset only:
+  XRGB8888/ARGB8888 with `DRM_FORMAT_MOD_LINEAR`, while NV12 and non-linear
+  modifiers remain excluded from scanout credit. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight drm final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779671849-2925678`, including
+  `kms_in_formats_blob_matrix ... xrgb8888_linear=1 argb8888_linear=1
+  nv12_scanout=0 nonlinear_modifiers=0 native_present_credit=0
+  opengl_submit_credit=0 status=PASS`.
 - [ ] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
   only when the primary plane can present them without the software fallback.
 - [x] Keep vblank/page-flip display-correlation separate from native-present

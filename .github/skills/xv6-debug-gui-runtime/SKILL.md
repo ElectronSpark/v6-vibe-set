@@ -432,6 +432,11 @@ but do not treat them as open plan items by default.
   XRGB8888/ARGB8888, `DRM_CAP_ADDFB2_MODIFIERS` advertises only the accepted
   linear metadata contract, and the NV12 scanout/present matrix is
   fail-closed.
+- Primary-plane `IN_FORMATS` must match actual scanout, not framebuffer
+  metadata breadth. The current valid blob is immutable and advertises only
+  XRGB8888/ARGB8888 with `DRM_FORMAT_MOD_LINEAR`; validators require
+  `kms_in_formats_blob_matrix ... nv12_scanout=0 nonlinear_modifiers=0
+  native_present_credit=0 opengl_submit_credit=0 status=PASS`.
 - KMS vblank/page-flip event-source provenance is its own layer:
   - display-correlated timing requires `kms_vblank_synthetic=0`,
     `kms_vblank_display_correlated=1`, and
