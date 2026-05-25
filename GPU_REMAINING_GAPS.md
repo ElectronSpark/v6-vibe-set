@@ -896,6 +896,19 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   can consume the FPS artifact.
 - [ ] Confirm the demo is visible, closeable, and resizable during the passing
   run.
+  - [x] Add compositor-owned lifecycle evidence separate from app-loop FPS:
+    `wlcomp` now appends `wayland_demo_visible_close_resize_matrix` rows to
+    `/tmp/mesawlegl-fps` with current validation run id, client pid, mapped
+    state, closeable path, resize request/configure/ack or buffer-size-change
+    state, final window geometry, and zero native/OpenGL-submit credit.
+  - [x] Make the finite FPS launch exercise resize instead of relying on a
+    disabled-resize workaround: `hyperv-3d-fps-validate.sh` starts
+    `mesademo` with `--resize-every=${DEMO_RESIZE_EVERY:-120}`, and
+    `mesademo` forwards that option to `mesawlegl`.
+  - [x] Tighten `mesawlegl_demo_interaction_matrix` so source-side
+    `resizable_demo` requires an actual resize count, and its native/content
+    interaction fields come from the same strict D3D12 evidence reader used by
+    FPS samples.
 - [ ] Require visible content progress outside title/FPS overlay areas and
   correlate content hashes or thumbnail deltas with native present completions.
 - [x] Preserve a negative artifact where inflated displayed/demo FPS, including
@@ -956,6 +969,10 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `client_content_frame`, `content_region=client-content-no-title-fps`, and
     `mesawlegl_demo_interaction_matrix`, while still requiring compositor
     native-present content fields before granting effective presented FPS.
+  - [x] Remove the loose compositor stderr-only content-credit claim: the
+    display-completion log now carries explicit zero CRC/frame/hash content
+    fields and reports `PASS_FAILCLOSED` until real compositor-owned content
+    samples exist.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

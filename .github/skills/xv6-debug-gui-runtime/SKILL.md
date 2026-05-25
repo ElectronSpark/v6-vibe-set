@@ -686,6 +686,18 @@ but do not treat them as open plan items by default.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.
+- The 480p demo lifecycle gate has two evidence producers. `mesawlegl` owns
+  source/app telemetry and must only set `resizable_demo=1` after an actual
+  resize count. `wlcomp` owns compositor lifecycle telemetry and appends
+  `wayland_demo_visible_close_resize_matrix` to `/tmp/mesawlegl-fps` with
+  validation run id, client pid, mapped/closeable/resize state, geometry, and
+  zero native/OpenGL-submit credit. Do not let these lifecycle rows carry fake
+  present ids, completed ids, or content-progress credit.
+- Final FPS display-bind acceptance is canonical only:
+  `display_bind_backend=gpup_dxg_scanout_bind` and
+  `display_bind_transport=gpu-p-dxg-resource-scanout-bind`. Legacy aliases
+  such as `hyperv-dxg`, `gpu-p`, `dda`, `nouveau`, or
+  `dxg-resource-scanout-bind` are diagnostic text only, not final pass tokens.
 - WebKit's animated native-present fixture currently proves liveness only.
   Treat `/share/webkit/webkit-animated-content-native-present.html` title/frame
   progress as insufficient until `/tmp/wlcomp-d3d12-present` supplies matching
