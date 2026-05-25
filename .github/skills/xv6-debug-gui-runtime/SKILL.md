@@ -298,6 +298,13 @@ but do not treat them as open plan items by default.
   metadata, stale/foreign source rejection, software-path rejection, cleanup
   balance, and zero native-present/OpenGL-submit credit; they do not prove
   native display completion.
+  `d3d12_wayland_resource_buffer_admission_matrix` is compositor-side
+  intermediate evidence that the Wayland D3D12 buffer path accepted a
+  same-LUID resource/fence import. `d3d12_wayland_present_failclosed_identity_matrix`
+  records the same client/resource/generation when GPU-copy proof exists but
+  native display completion remains absent. Both rows are diagnostic and must
+  be rejected by strict DXG/FPS/WebKit gates until nonzero present/completion,
+  callbacks, releases, content progress, and backend OpenGL-submit all pass.
 - `kernel/dev/fb/fb_fd_sync.c`: exported BO/fence/sync fd file operations,
   poll, close, and callback lifecycle.
 - `kernel/dev/fb/fb_device_ioctl.c`: `/dev/fb0` and `/dev/gpu0` ownership,
