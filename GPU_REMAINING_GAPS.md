@@ -289,12 +289,27 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   on 2026-05-24 with `validation_run_id=core-1779668794-2747803`, including
   `ttm_dma_resv_ww_mutex_matrix ... max_acquired=2
   validate_failures_delta=0 native_accel_credit_delta=0 status=PASS`.
-- [ ] Implement real KMS atomic `IN_FENCE_FD` and `OUT_FENCE_PTR` behavior with
+- [x] Implement real KMS atomic `IN_FENCE_FD` and `OUT_FENCE_PTR` behavior with
   display-correlated completion, not immediate software completion.
-  - [x] Keep the current atomic OUT_FENCE provenance honest: software scanout
-    completion increments `kms_atomic_out_fence_software_scanout_correlated`,
-    while `kms_atomic_out_fence_display_correlated` remains reserved for a
-    real native/display completion source.
+  Atomic commits now validate and balance `IN_FENCE_FD` refs, reject stale,
+  duplicate, future, and nonblocking fence paths, export an `OUT_FENCE_PTR`
+  fd, and signal it from the recorded display-completion sequence rather than
+  the old software-scanout provenance counter. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=whole-section
+  CORE_C_SECTIONS='preflight drm final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779670401-2842329`, including
+  `atomic_fence_matrix atomic_fence_kernel=real`,
+  `atomic_out_fence_provenance_matrix out_fence_source=display_completion
+  ... out_fence_display_correlated=1
+  out_fence_software_scanout_correlated=0`, and zero
+  native-present/OpenGL-submit credit.
+  - [x] Keep the atomic OUT_FENCE provenance honest: the successful commit
+    now increments `kms_atomic_out_fence_display_correlated` only after the
+    framebuffer present path records display completion, while the
+    `kms_atomic_out_fence_software_scanout_correlated` fallback counter stays
+    zero in the validator and still grants no native-present/OpenGL-submit
+    credit.
 - [x] Keep the current KMS modifier path self-consistent while scanout remains
   XRGB/ARGB-only: `DRM_CAP_ADDFB2_MODIFIERS` advertises the accepted linear
   metadata contract, `ADDFB2`/`GETFB2` round-trip linear NV12 metadata, and
