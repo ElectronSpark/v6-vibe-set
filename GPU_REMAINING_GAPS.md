@@ -478,6 +478,17 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
   `validation_run_id=core-1779681659-3341588`.
+- [x] Add a WSL-style sync-file acquire pre-open guard for the present-source
+  path: export a monitored fence to a sync-file fd, reopen it to a D3DKMT sync
+  object before present admission, reject wrong fd kinds, preserve fence value
+  metadata, and keep native-present/OpenGL-submit credit at zero until a real
+  display-bind transport exists.
+  Evidence: `d3d12_present_syncfile_preopen_matrix` and final zero-credit
+  checks passed in
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
+  `validation_run_id=core-1779683691-3428894`.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.

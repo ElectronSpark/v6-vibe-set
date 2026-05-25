@@ -411,6 +411,11 @@ but do not treat them as open plan items by default.
   bind-contract resource generation comes from the sealed resource generation,
   stale source cleanup works, and native-present/OpenGL-submit credit stays
   zero.
+- `d3d12_present_syncfile_preopen_matrix` is the acquire-fence bridge guard
+  before native present. It should prove a monitored fence can be exported as
+  a WSL-style sync-file fd, reopened into a D3DKMT sync object, used for
+  present-source wait metadata, and rejected for wrong fd kinds, while still
+  granting zero native-present/OpenGL-submit credit.
 - `d3d12_native_completion_zero_credit_matrix` and
   `d3d12_display_bind_absent_matrix` are the pre-native completion guards.
   They must show absent display bind/transport, zero present/completion ids,
