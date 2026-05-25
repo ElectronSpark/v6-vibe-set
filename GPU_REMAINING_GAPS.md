@@ -434,6 +434,15 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779675508-3085051`.
+- [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
+  before adding any native display-bind behavior. The Hyper-V DXG VMBus
+  standard-allocation command now carries the same shared-primary, shadow,
+  staging, and GDI surface union shape used by WSL2 `dxgkrnl`; `dxgprobe`,
+  `gpucorevalidate`, and the focused core runner require
+  `wsl_standard_alloc_surface_abi_matrix` to prove the surface layouts are
+  present and still grant zero native-present/OpenGL-submit credit. This keeps
+  WSL private-driver-data parity separate from the still-missing
+  `dxg-resource-scanout-bind` host ABI.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.

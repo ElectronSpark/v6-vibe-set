@@ -606,6 +606,8 @@ require_log 'present_source_failclosed_matrix .*bind_contract_rc=-[0-9]+ .*hyper
     "present-source fail-closed no-credit validator"
 require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_scanout_bind .*custom_host_tool=0 .*wsl_dxg_display_bind_ioctl=0 .*synthvid_vram_bridge=gpa_dirty_only .*dxg_resource_fd=PASS .*d3dkmt_handles=PASS .*same_adapter_luid=PASS .*missing_host_abi=1 .*transport_present=0 .*display_target_kind=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "DXG resource scanout-bind host ABI absence matrix"
+require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "WSL-equivalent standard allocation surface ABI without native-present credit"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
 require_log 'gpubuftest: render fd ownership verified' "render-fd ownership validator"
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
