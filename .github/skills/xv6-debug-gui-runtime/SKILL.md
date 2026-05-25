@@ -577,6 +577,10 @@ but do not treat them as open plan items by default.
   Hyper-V these must show `effective_presented_fps=0.000`,
   `visible_fps_ignored=1`, and zero native-present/OpenGL-submit credit even
   if the overlay prints a higher number.
+- Treat `/tmp/wlcomp-d3d12-present` as the durable handoff file for those
+  provenance rows. It should carry both the matrix row and
+  `d3d12_fps_provenance_*` scalar keys so FPS/WebKit validators do not depend
+  on stderr timing.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.
