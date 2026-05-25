@@ -266,9 +266,14 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
 Goal: keep the Linux-facing GPU driver surface honest enough for Mesa, libdrm,
 Wayland, and Nouveau without claiming native Hyper-V present prematurely.
 
-- [ ] Replace diagnostic-only `dma_fence` pieces with a real fence lifetime
+- [x] Replace diagnostic-only `dma_fence` pieces with a real fence lifetime
   model across GEM, PRIME/dma-buf, KMS, syncobj, timelines, poll, callback
   removal, and final object release.
+  The kernel uses the refcounted `fb_gpu_fence` backing object for fence fd
+  export/query/wait, syncobj sync-file import/export, KMS OUT_FENCE, poll
+  callback fire/remove/late accounting, and final release. `gpucorevalidate`
+  now emits `drm_dma_fence_lifetime_contract_matrix`, and the Hyper-V core
+  runner requires it while granting no native-present/OpenGL-submit credit.
   - [x] Make DRM syncobj timeline transfer copy pending source state instead
     of requiring the source point to be signaled first. The pure-C DRM matrix
     now requires `syncobj_pending_transfer_matrix` plus transfer wakeup
