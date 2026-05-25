@@ -507,6 +507,12 @@ require_log 'acpi_cpus=6' "6 vCPU command line"
 require_log 'ttmtest: ok' "TTM validator"
 require_log 'drmiftest: ok' "DRM/GEM/KMS validator"
 require_log 'drmiftest: kms fb ok' "KMS framebuffer/atomic validator"
+require_log 'kms_primary_scanout_format_mod_matrix .*scanout_format_count=4 .*xrgb8888_linear=1 .*argb8888_linear=1 .*xbgr8888_linear=1 .*abgr8888_linear=1 .*nv12_scanout=0 .*modifier_check=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "KMS primary scanout format/modifier matrix"
+require_log 'kms_primary_scanout_actual_format_matrix .*xrgb8888_present=PASS .*xbgr8888_present=PASS .*xbgr8888_rb_swap=CPU_CONVERT .*rejected_blits_delta=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "KMS primary actual scanout format matrix"
+require_log 'kms_present_completion_failclosed_matrix .*unsupported_format=NV12 .*obj_setproperty_nv12_rejected=PASS .*obj_setproperty_state_unchanged=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "KMS NV12 fail-closed direct property matrix"
 require_log 'drmprimeprobe: ok' "DRM PRIME validator"
 require_log 'shared_admission_negative_matrix .*wrong_kind_fd_unchanged=1 .*foreign_process_device_status=0 .*stale_fd_unchanged=1 .*owner_allocation_present=1 .*failed_admission_no_fd_publish=1 .*failed_partial_record_absent=1 .*failed_partial_record_reusable=0 .*status=PASS' \
     "shared-resource local admission negative validator"

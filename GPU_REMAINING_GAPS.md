@@ -325,8 +325,17 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   `kms_in_formats_blob_matrix ... xrgb8888_linear=1 argb8888_linear=1
   nv12_scanout=0 nonlinear_modifiers=0 native_present_credit=0
   opengl_submit_credit=0 status=PASS`.
-- [ ] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
+- [x] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
   only when the primary plane can present them without the software fallback.
+  The primary plane now advertises XRGB8888, ARGB8888, XBGR8888, and ABGR8888
+  linear through the shared GETPLANE/IN_FORMATS table. XBGR/ABGR scanout uses
+  an explicit CPU R/B conversion in the framebuffer blit path, while NV12
+  remains metadata-only and fail-closed for primary scanout/direct FB_ID
+  property changes. Evidence: full focused Hyper-V core validation passed on
+  2026-05-24 with `validation_run_id=core-1779706363-461479`, including
+  `kms_primary_scanout_format_mod_matrix`,
+  `kms_primary_scanout_actual_format_matrix`, and
+  `kms_present_completion_failclosed_matrix`.
 - [x] Keep vblank/page-flip display-correlation separate from native-present
   credit until the same frame also proves native D3D12 display completion.
   `fbstat` now emits `kms_vblank_native_present_separation_matrix`, the

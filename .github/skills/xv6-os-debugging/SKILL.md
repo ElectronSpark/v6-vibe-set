@@ -193,10 +193,18 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
     plane cannot present yet;
   - `GETPLANE` must advertise only formats that the primary plane can actually
     scan out;
+  - do not add a format to `GETPLANE`/`IN_FORMATS` unless the present path
+    handles it end-to-end; current accepted primary scanout formats are linear
+    XRGB8888/ARGB8888 plus linear XBGR8888/ABGR8888 through explicit R/B
+    conversion, while NV12 remains metadata-only and fail-closed for primary
+    scanout;
   - `SETCRTC`, page flip, atomic commit, and atomic `TEST_ONLY` must reject an
     unsupported framebuffer before queuing events, taking in-fence refs,
     exporting or cleaning out-fences, mutating plane/current-FB state, or
     advancing display/DXG/native/OpenGL-submit credit.
+  - focused validators should include `kms_primary_scanout_format_mod_matrix`,
+    `kms_primary_scanout_actual_format_matrix`, and the NV12 fail-closed direct
+    property row in `kms_present_completion_failclosed_matrix`.
 - Treat zero-credit matrices as real contracts, not decorative logging:
   validators should prove `native_present_credit=0`, `opengl_submit_credit=0`,
   and no DXG-present/display deltas whenever a path is still software,
