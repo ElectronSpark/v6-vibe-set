@@ -619,9 +619,24 @@ non-readback display handoff.
   `dxg_display_bind_*`. `fbstat`, `gpucorevalidate`, and the focused runner
   require `d3d12_display_bind_backend_boundary_matrix`, while `wlcomp`, the
   FPS validator, and the WebKit gate consume the same `display_bind_*` keys
-  from `/tmp/wlcomp-d3d12-present` and log matrices. The current Hyper-V path
-  remains fail-closed with zero ids, zero native-present credit, zero
+  from `/tmp/wlcomp-d3d12-present` and log matrices. Consumer/user-facing
+  evidence normalizes the Hyper-V GPU-P bind lane to
+  `display_bind_backend=gpup_dxg_scanout_bind`,
+  keeps `display_bind_transport=gpu-p-dxg-resource-scanout-bind`, and keeps
+  `display_bind_completion_source=display`, while still accepting older log
+  spellings where validators need historical compatibility. The current Hyper-V
+  path remains fail-closed with zero ids, zero native-present credit, zero
   OpenGL-submit credit, and no custom host tooling.
+- [x] Add a source-local display-bind provider boundary and ledger before
+  wiring any host sender.
+  `fb_dxg_present.c` now builds an internal display-bind request/result for
+  the selected GPU-P/DDA lane and records the result on the owning present
+  source with source/resource generations, present/completed ids, completion
+  source, status, and block reason. The provider currently returns the same
+  `EOPNOTSUPP` no-transport/no-completion result because there is still no
+  documented non-custom GPU-P/DDA display-bind packet. This keeps later work
+  focused on replacing the provider backend instead of inferring credit from
+  D3DKMT handles, sync-files, or synthvid dirty rectangles.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`

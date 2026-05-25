@@ -699,15 +699,18 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
                                   completed_ids, resource_generations,
                                   completion_sources):
     allowed_backends = {
+        "gpup_dxg_scanout_bind",
         "hyperv-dxg",
         "gpu-p",
         "gpu-p-dda",
         "dda",
         "nouveau",
-    }
-    allowed_transports = {
         "dxg-resource-scanout-bind",
         "gpu-p-dxg-resource-scanout-bind",
+    }
+    allowed_transports = {
+        "gpu-p-dxg-resource-scanout-bind",
+        "dxg-resource-scanout-bind",
     }
     if not backends:
         raise SystemExit(f"missing {name} display_bind_backend evidence")
@@ -715,7 +718,8 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
                     if value.lower() not in allowed_backends]
     if bad_backends:
         raise SystemExit(
-            f"{name} display_bind_backend was not native GPU display bind: "
+            f"{name} display_bind_backend was not gpup_dxg_scanout_bind "
+            f"or a legacy native GPU display-bind name: "
             f"values={','.join(backends)}"
         )
     if not transports:
