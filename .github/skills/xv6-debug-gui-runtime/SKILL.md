@@ -242,6 +242,13 @@ but do not treat them as open plan items by default.
   The older flat fields can remain as compatibility mirrors only while
   validators require `shared_model_coherent=1` and `dxg_sharedresource_model`
   reports valid records that match the mirror.
+- Current shared-resource parent work has a scaffold phase and a semantic
+  phase. The scaffold may expose `dxg_sharedresource_parent`, parent id/ref/
+  opened-child counters, and sealed allocation `num_pages`/`cached` metadata,
+  but it does not close WSL parity while resource fds still deep-clone
+  `hvdxg_tracked_resource` state. The semantic phase must introduce a real
+  `dxgsharedresource`-style parent whose metadata and children outlive fd
+  closes according to refs.
 - For normal DXG object handles, keep the WSL `hmgrtable` shape visible:
   index-addressed lookup, destroyed-entry stale rejection, unique bump on free,
   free-count/head/tail diagnostics, and minimum-free expansion. Do not regress
@@ -508,8 +515,9 @@ but do not treat them as open plan items by default.
 - `d3d12_display_bind_pin_lifetime_matrix` is the WSL-style lifetime guard
   for the future sleepable display-bind provider. It should prove verified
   sources pin both the `/dev/dxg` owner fd and typed resource fd, carry nonzero
-  resource/process generations and process refs, balance unpins after source
-  cleanup, and keep native-present/OpenGL-submit credit at zero.
+  resource/process generations, process refs, parent id/ref/opened-child
+  counters, balance unpins after source cleanup, and keep native-present/
+  OpenGL-submit credit at zero.
 - `d3d12_present_syncfile_preopen_matrix` is the acquire-fence bridge guard
   before native present. It should prove a monitored fence can be exported as
   a WSL-style sync-file fd, reopened into a D3DKMT sync object, used for
