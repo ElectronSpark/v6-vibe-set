@@ -563,6 +563,13 @@ but do not treat them as open plan items by default.
   native-present/OpenGL-submit credit and `reject_reasons=0x7f` until a real
   DDA/Nouveau display object, heads/connectors, vblank source, and hardware
   flip completion exist.
+- Linux-shaped KMS/Nouveau/TTM diagnostics are allowed to pass only as
+  fail-closed mismatch rows until the matching native layer exists. Keep rows
+  such as `nouveau_display_kms_registration_matrix`,
+  `nouveau_kms_vblank_irq_source_matrix`,
+  `kms_scanout_cpu_convert_separation_matrix`,
+  `ttm_real_move_backend_matrix`, `nouveau_gem_mmap_backing_matrix`, and
+  `nouveau_gpuvm_mapping_failclosed_matrix` zero-credit on GPU-P-only Hyper-V.
 - For DRM sync_file validation, distinguish the layers:
   - pending export/import readiness proves live source tracking;
   - callback lifecycle proves poll-arm, signal-fire, close-cancel, and

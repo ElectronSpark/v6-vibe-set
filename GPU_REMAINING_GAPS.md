@@ -371,6 +371,16 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   `gpu_diagnostics_separation_matrix`, and the focused core runner requires
   generic DRM/KMS/fb diagnostics to stay separate from DXG-present and WebKit
   policy evidence while granting zero native-present/OpenGL-submit credit.
+- [x] Add Linux-shaped fail-closed mismatch rows for KMS/Nouveau/TTM/GEM/GPUVM
+  interfaces that are not native DDA hardware yet.
+  `fbstat`, `gpucorevalidate`, and the focused runner now require diagnostic
+  rows for Nouveau KMS registration, Nouveau vblank IRQ source, primary-plane
+  modifier policy, CPU-converted scanout separation, GEM framebuffer plane refs,
+  atomic plane-state and prepare/cleanup lifecycle, page-flip feature gates,
+  TTM real-move backend, Nouveau GEM mmap backing, Nouveau GPUVM mapping, and
+  DXG sync-file admission versus KMS completion. These rows are explicitly
+  zero-credit and fail closed until real DDA/Nouveau display, TTM, and engine
+  evidence exists.
 
 ### 3. PCI Runtime And Nouveau
 
