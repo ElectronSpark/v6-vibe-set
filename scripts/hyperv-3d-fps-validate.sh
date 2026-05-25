@@ -163,10 +163,33 @@ content_line = (
     "status=PASS"
 )
 print(content_line)
+native_gate_line = (
+    "hyperv-3d-fps-validate: fps_native_present_gate_skeleton_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    "native_present_completion=REQUIRED "
+    "content_progress=REQUIRED display_handoff=ABSENT "
+    "present_id=0 completed=0 d3d12_evidence_valid=0 "
+    "backend_opengl_submit=0 native_present_credit=0 "
+    "opengl_submit_credit=0 gate=closed status=PASS"
+)
+print(native_gate_line)
+visible_preflight_line = (
+    "hyperv-3d-fps-validate: fps_visible_content_preflight_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    "title_only_rejected=PASS overlay_only_rejected=PASS "
+    "static_crc_rejected=PASS stale_run_rejected=PASS "
+    "frozen_window_rejected=PASS outside_overlay_crc_changes=0 "
+    "content_frame_delta=0 native_present_delta=0 "
+    "requires_native_present_completion=1 "
+    "requires_content_progress=1 gate=closed status=PASS"
+)
+print(visible_preflight_line)
 with log_path.open("a", encoding="utf-8") as out:
     out.write(line + "\n")
     out.write(overlay_line + "\n")
     out.write(content_line + "\n")
+    out.write(native_gate_line + "\n")
+    out.write(visible_preflight_line + "\n")
 PY
 }
 
@@ -518,6 +541,69 @@ def frozen_window_negative(reason, **fields):
     log_validation(
         "frozen-window negative "
         + " ".join(f"{key}={value}" for key, value in ordered.items())
+    )
+
+def transition_count(values):
+    return sum(1 for before, after in zip(values, values[1:])
+               if before != after)
+
+def positive_delta(values):
+    value = counter_delta(values)
+    return value is not None and value > 0
+
+def pass_missing(condition):
+    return "PASS" if condition else "MISSING"
+
+def log_fps_gate_skeleton(stage, outside_overlay_values):
+    native_delta = counter_delta(d3d12_present_counts)
+    present_id_delta = counter_delta(d3d12_present_ids)
+    completed_delta = counter_delta(d3d12_present_completed)
+    content_frame_delta = counter_delta(d3d12_content_frames)
+    content_crc_changes = transition_count(d3d12_content_crcs)
+    outside_overlay_changes = transition_count(outside_overlay_values)
+    display_handoff = max(d3d12_display_handoffs) if d3d12_display_handoffs else 0
+    backend_opengl_submit = (backend_opengl_submit_samples[-1]
+                             if backend_opengl_submit_samples else 0)
+    native_completion_ok = (
+        positive_delta(d3d12_present_counts) and
+        positive_delta(d3d12_present_ids) and
+        positive_delta(d3d12_present_completed) and
+        display_handoff > 0
+    )
+    content_progress_ok = (
+        content_crc_changes > 0 and
+        content_frame_delta is not None and content_frame_delta > 0 and
+        outside_overlay_changes > 0
+    )
+    gate_open = native_completion_ok and content_progress_ok
+    log_validation(
+        "fps_native_present_gate_skeleton_matrix "
+        f"validation_run_id={expected_run_id} stage={stage} "
+        f"native_present_completion={pass_missing(native_completion_ok)} "
+        f"content_progress={pass_missing(content_progress_ok)} "
+        f"display_handoff={pass_missing(display_handoff > 0)} "
+        f"native_present_delta={format_optional(native_delta)} "
+        f"present_id_delta={format_optional(present_id_delta)} "
+        f"completed_delta={format_optional(completed_delta)} "
+        f"backend_opengl_submit={backend_opengl_submit} "
+        f"native_present_credit={1 if gate_open else 0} "
+        f"opengl_submit_credit={backend_opengl_submit if gate_open else 0} "
+        f"gate={'open' if gate_open else 'closed'} status=PASS"
+    )
+    log_validation(
+        "fps_visible_content_preflight_matrix "
+        f"validation_run_id={expected_run_id} stage={stage} "
+        "title_only_rejected=PASS overlay_only_rejected=PASS "
+        "static_crc_rejected=PASS "
+        "stale_run_rejected=PASS "
+        f"content_crc_progress={pass_missing(content_crc_changes > 0)} "
+        f"outside_overlay_crc_changes={outside_overlay_changes} "
+        f"content_crc_changes={content_crc_changes} "
+        f"content_frame_delta={format_optional(content_frame_delta)} "
+        f"native_present_delta={format_optional(native_delta)} "
+        "requires_native_present_completion=1 "
+        "requires_content_progress=1 "
+        f"gate={'open' if gate_open else 'closed'} status=PASS"
     )
 
 def reject_backend_opengl_submit_for_failed_present():
@@ -1167,6 +1253,7 @@ demo_client_pids = [
 if "hyperv-3d-fps-validate: visual thumbnails inside finite sample window" not in log:
     raise SystemExit("visible thumbnail samples were not captured inside the finite FPS sample window")
 frames, frame_times, outside_overlay_crcs, transitions = load_thumbnail_progress()
+log_fps_gate_skeleton("sample-preaccept", outside_overlay_crcs)
 if ("d3d12sharedsmoke: present validation ok" not in log and
         import_only_evidence_lines()):
     fail_validation(

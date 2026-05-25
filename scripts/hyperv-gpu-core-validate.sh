@@ -398,6 +398,8 @@ if [[ "${USE_C_VALIDATOR}" == "1" ]]; then
         "guest C aggregate validator failure"
     reject_guest_log 'panic|fatal page fault|coredump|(^|[^[:alpha:]])assert([^[:alpha:]]|$)|device removal|Removing Device' \
         "guest crash or D3D12 device-removal signature"
+    require_log 'gpu_core_c_validator opengl_submit_backend_separation_matrix .*backend=2 .*dxg_transport=1 .*d3dkmt=1 .*virgl_opengl=0 .*backend_opengl_submit=0 .*allowed_submit_backend=virgl .*hyperv_dxg_transport_is_submit=0 .*hyperv_d3dkmt_is_submit=0 .*kvm_virgl_submit_allowed=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "pure-C backend/OpenGL-submit separation matrix"
 
     log_metadata passed
     echo "hyperv-gpu-core-validate: passed validation_run_id=${VALIDATION_RUN_ID} (${LOG})" |
@@ -665,6 +667,8 @@ require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
 require_log 'backend_opengl_submit_gate closed' "Hyper-V OpenGL-submit gate closed"
 require_log 'hyperv_opengl_submit_gate_matrix .*backend_opengl_submit=0 .*requires_native_present=1 .*requires_finite_fps=1 .*requires_webkit_shared_surface=1 .*native_present_credit=0 .*display_target_kind=0 .*present_id=0 completed=0 .*backend_gate=closed .*status=PASS' \
     "Hyper-V OpenGL-submit gate matrix"
+require_log 'opengl_submit_backend_separation_matrix .*backend=hyperv-dxg .*dxg_transport=1 .*d3dkmt=1 .*virgl_opengl=0 .*backend_opengl_submit=0 .*allowed_submit_backend=virgl .*hyperv_dxg_transport_is_submit=0 .*hyperv_d3dkmt_is_submit=0 .*kvm_virgl_submit_allowed=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "backend/OpenGL-submit separation matrix"
 require_log 'd3d12_display_bind_absent_matrix .*selected=gpup_dxg_scanout_bind .*display_bind=ABSENT .*transport_present=0 .*helper_requires_completion=1 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "D3D12 display bind absent matrix"
 require_nouveau_dda_or_gpup_fail_closed

@@ -358,10 +358,17 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
 Goal: support Nouveau through Linux-shaped PCI/runtime/DRM interfaces, while
 being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
 
-- [ ] Extend PCI runtime support beyond probe scaffolding: DMA mask/coherency
+- [x] Extend PCI runtime support beyond probe scaffolding: DMA mask/coherency
   ownership, MSI/MSI-X setup, legacy IRQ fallback policy, interrupt delivery,
   resource claim/release, runtime PM suspend/resume usage, and remove-path
   validation.
+  The PCI core now has Linux-shaped wrappers for DMA masks, BAR mmap,
+  MSI/MSI-X, IRQ request/free, and runtime PM; Nouveau uses that surface while
+  GPU-P-only Hyper-V remains fail-closed with no fake BAR/DMA/IRQ/native-present
+  or OpenGL-submit credit. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
+  CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+  `validation_run_id=core-1779714735-891533`.
 - [x] Add explicit GPU-P-only PCI/Nouveau runtime contract diagnostics.
   `fbstat` and `gpucorevalidate` now emit
   `nouveau_pci_runtime_contract_matrix`, which records DMA/coherent masks,
@@ -456,6 +463,15 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
   passed on 2026-05-25 with
   `validation_run_id=core-1779707157-496144`.
+- [x] Add the Linux-shaped PCI wrapper surface Nouveau expects before deeper
+  driver porting: `dma_set_mask_and_coherent()`, `pci_enable_msi()`,
+  `pci_enable_msix_range()`, `pci_request_irq()`, `pci_free_irq()`,
+  `pci_mmap_bar()`, `pm_runtime_resume_and_get()`, `pm_runtime_put()`,
+  no-resume/no-idle refs, and `pm_runtime_barrier()`. Nouveau now uses the
+  wrapper surface for DMA mask setup, MSI/MSI-X fail-closed probes, and IRQ
+  registration while GPU-P-only Hyper-V still reports no fabricated BAR/DMA/IRQ
+  or native-present/OpenGL-submit credit. This is an interface skeleton, not a
+  claim that DDA hardware validation or native present is complete.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
@@ -681,6 +697,10 @@ non-readback display handoff.
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779676616-3128276`, including
   `hyperv_opengl_submit_gate_matrix ... backend_gate=closed status=PASS`.
+  Source now also emits `opengl_submit_backend_separation_matrix` so the next
+  focused rerun can prove Hyper-V has DXG transport and D3DKMT while
+  `backend_opengl_submit=0`; KVM/virgl remains the only allowed OpenGL-submit
+  backend.
 
 ### 5. Validation And Performance
 
@@ -728,6 +748,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   WebKit artifacts remain separate unchecked gates.
 - [ ] Make the finite 480p desktop 3D validator pass only on native D3D12
   presented frames after warmup.
+  Skeleton/preflight evidence is now explicit: `hyperv-3d-fps-validate.sh`
+  emits `fps_native_present_gate_skeleton_matrix` and
+  `fps_visible_content_preflight_matrix` before heavy FPS acceptance, with the
+  gate closed until native D3D12 present completions and visible content
+  progress are both present.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
@@ -761,6 +786,18 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `d3d12_fps_provenance_*` keys, so FPS and WebKit validators can reject
   visible app-loop FPS unless the same resource/generation has a native
   display completion.
+- [x] Add a fail-closed content-progress provenance skeleton to the same
+  D3D12 evidence contract. `/tmp/wlcomp-d3d12-present` now records
+  `d3d12_wayland_content_progress_matrix` plus
+  `d3d12_content_progress_*` scalar keys; on the current Hyper-V path it
+  reports `d3d12_content_progress_state=DEFERRED`,
+  `d3d12_visible_content_progress=DEFERRED`,
+  `d3d12_content_progress_requires_native_present=1`,
+  `d3d12_visible_content_requires_native_present_completion=1`,
+  `d3d12_visible_content_credit_before_native_present=0`, and zero
+  native-present/OpenGL-submit credit. This does not close the later
+  content-hash/thumbnail-progress requirement; it makes visible-content
+  credit explicitly impossible before native display completion.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

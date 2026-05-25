@@ -144,6 +144,12 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   the driver resume callback. Nouveau IRQ delivery can only be claimed after a
   real BAR0 interrupt cause is read and acked, currently via `NV_PMC_INTR_0`
   gated by `NV_PMC_INTR_EN_0`.
+  Keep Linux-shaped PCI wrapper names available for future Nouveau port code:
+  `dma_set_mask_and_coherent`, `pci_enable_msi`,
+  `pci_enable_msix_range`, `pci_request_irq`, `pci_free_irq`,
+  `pci_mmap_bar`, `pm_runtime_resume_and_get`, `pm_runtime_put`, and
+  `pm_runtime_barrier`. These wrappers must remain diagnostic/fail-closed on
+  GPU-P-only boots; they are not native-present or OpenGL-submit evidence.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.
