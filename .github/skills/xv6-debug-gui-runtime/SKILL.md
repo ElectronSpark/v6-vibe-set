@@ -198,6 +198,15 @@ but do not treat them as open plan items by default.
   The finite FPS and WebKit gates require both content CRC/frame counters and
   compositor-owned frame-hash progress; title/FPS overlay movement, fixture
   title liveness, or CRC-only samples are not enough.
+  Effective FPS must also be clamped by compositor-owned content cadence:
+  sample-window and visual-window content-frame FPS are part of the minimum
+  alongside native/display completion FPS, so app-loop or displayed FPS cannot
+  pass when visible content advances at one-digit cadence.
+  Final credit must use visible compositor-owned fields only:
+  `d3d12_visible_content_crc`, `d3d12_visible_content_frame`,
+  `d3d12_visible_frame_hash`, and
+  `d3d12_content_progress_source_owned=1`. Client/app hashes are diagnostic
+  context and must not open FPS/WebKit gates.
 - KMS/DRM remains a generic software-present compatibility path until a real
   DDA/Nouveau display engine exists. `gpu_kms_present_fb()` must try the
   native-present discriminator first and record reject reasons, then fall back
@@ -206,6 +215,14 @@ but do not treat them as open plan items by default.
   probes may publish BAR/DMA/IRQ diagnostics and a fail-closed display-create
   attempt, but not heads/connectors/vblank/flip-completion success until those
   are backed by real hardware programming.
+  Generic display completion must not be printed as D3D12 native-present
+  credit; use `generic_display_last_complete` for ordinary scanout progress
+  and keep `d3d12_native_present_credit=0`. KMS page-flip/vblank diagnostics
+  should distinguish software display completion from future native hardware,
+  with native hardware fields zero on the current path.
+  Keep GBM scanout support in lockstep with KMS primary-plane support: NV12 is
+  metadata/import-render only until the primary plane can scan it out without
+  software fallback.
 
 ### Source Layout
 

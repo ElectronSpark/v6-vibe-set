@@ -412,12 +412,19 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   `kms_primary_scanout_format_mod_matrix`,
   `kms_primary_scanout_actual_format_matrix`, and
   `kms_present_completion_failclosed_matrix`.
+  - [x] Keep GBM scanout support aligned with the KMS primary-plane contract:
+    `xv6-gbm` now rejects `GBM_BO_USE_SCANOUT` for `GBM_FORMAT_NV12`, while
+    leaving NV12 available for metadata/import-render paths.
 - [x] Keep vblank/page-flip display-correlation separate from native-present
   credit until the same frame also proves native D3D12 display completion.
   `fbstat` now emits `kms_vblank_native_present_separation_matrix`, the
   pure-C core validator requires it, and the Hyper-V core runner checks that
   vblank samples/page flips can be display-correlated while still granting
   zero native-present/OpenGL-submit credit.
+  - [x] Add explicit page-flip/vblank provenance counters so software display
+    completion is not mistaken for native hardware: validators now require
+    `page_flip_events_native_hw=0` and `vblank_source_native_hw=0` while the
+    current KMS path remains software/fail-closed.
 - [x] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
   event queues covered by focused validators after any DRM refactor.
 - [x] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
@@ -428,6 +435,10 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   `gpu_diagnostics_separation_matrix`, and the focused core runner requires
   generic DRM/KMS/fb diagnostics to stay separate from DXG-present and WebKit
   policy evidence while granting zero native-present/OpenGL-submit credit.
+  - [x] Stop reporting generic `display_last_complete` as
+    `d3d12_native_present_credit`. The matrix now prints
+    `generic_display_last_complete` separately and keeps
+    `d3d12_native_present_credit=0`.
 - [x] Add Linux-shaped fail-closed mismatch rows for KMS/Nouveau/TTM/GEM/GPUVM
   interfaces that are not native DDA hardware yet.
   `fbstat`, `gpucorevalidate`, and the focused runner now require diagnostic
@@ -720,6 +731,11 @@ non-readback display handoff.
   handle readiness, same-adapter resources, sync-file acquire, and synthvid
   GPA-dirty evidence are rejected as weak evidence, and native-present/
   OpenGL-submit credit stays zero.
+  - [x] Keep validators synchronized with that four-command diagnostic set:
+    core, DXG, FPS, and WebKit validators now require `presenthistory=34`,
+    `redirected_flip_fence=35`, `blt=38`, and
+    `propagate_presenthistory=1`/`cmds_known=4` while still requiring zero
+    sender/resource-bind/display-completion contracts.
 - [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
   before adding any native display-bind behavior. The Hyper-V DXG VMBus
   standard-allocation command now carries the same shared-primary, shadow,
@@ -976,8 +992,13 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `resizable_demo` requires an actual resize count, and its native/content
     interaction fields come from the same strict D3D12 evidence reader used by
     FPS samples.
-- [ ] Require visible content progress outside title/FPS overlay areas and
+- [x] Require visible content progress outside title/FPS overlay areas and
   correlate content hashes or thumbnail deltas with native present completions.
+  The finite FPS gate now requires outside-overlay thumbnail CRC/progression,
+  compositor-owned content CRC, frame, and frame-hash progress, matching
+  run/resource/generation/completion ids, and content-frame FPS above 60 in
+  both the sample and visual windows before a passing FPS artifact can be
+  consumed by WebKit or OpenGL-submit.
 - [x] Preserve a negative artifact where inflated displayed/demo FPS, including
   the observed around-40 FPS case, fails without native completion and visible
   content progress.
@@ -1054,6 +1075,19 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `d3d12_visible_frame_hash` advance with the same native-present evidence,
     and `wlcomp_launcher` refuses WebKit acceleration unless the same
     frame-hash evidence is present.
+  - [x] Clamp finite-FPS acceptance to compositor-owned content cadence, not
+    only native/display completion counters. `effective_presented_fps` now
+    takes the minimum of native present FPS, display completion FPS,
+    visual-window native FPS, sample-window content-frame FPS, and
+    visual-window content-frame FPS; WebKit's prior-FPS gate requires those
+    content-frame FPS values to exceed 60 as well. This specifically rejects
+    the "looks one digit but reports around 40" class of inflated artifacts.
+  - [x] Split compositor-owned visible content from client/app diagnostics in
+    the final gates. FPS, `wlcomp_launcher`, and `webkitgpusmoke` now require
+    `d3d12_visible_content_crc`, `d3d12_visible_content_frame`,
+    `d3d12_visible_frame_hash`, and
+    `d3d12_content_progress_source_owned=1`; client-side hashes remain
+    diagnostic context and cannot open FPS/WebKit credit.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

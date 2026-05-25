@@ -499,6 +499,7 @@ d3d12_visible_content_progress_states = []
 d3d12_content_requires_native = []
 d3d12_content_native_complete = []
 d3d12_content_visible_credit = []
+d3d12_content_source_owned = []
 d3d12_run_ids = []
 d3d12_native_paths = []
 d3d12_reject_evidence = []
@@ -544,6 +545,7 @@ visual_visible_content_progress_states = []
 visual_content_requires_native = []
 visual_content_native_complete = []
 visual_content_visible_credit = []
+visual_content_source_owned = []
 visual_run_ids = []
 visual_native_paths = []
 visual_reject_evidence = []
@@ -597,25 +599,13 @@ run_id_keys = (
     "fps_validation_run_id",
     "d3d12_run_id",
 )
-content_crc_keys = (
-    "d3d12_present_content_crc",
-    "d3d12_present_region_crc",
-    "d3d12_client_content_crc",
-    "d3d12_visible_content_crc",
-    "d3d12_present_crc",
-)
+content_crc_keys = ("d3d12_visible_content_crc",)
 content_frame_keys = (
-    "d3d12_present_content_frame",
-    "d3d12_present_content_frames",
-    "d3d12_present_content_change",
-    "d3d12_present_content_changes",
     "d3d12_visible_content_frame",
     "d3d12_visible_content_frames",
 )
 content_frame_hash_keys = (
-    "d3d12_present_frame_hash",
     "d3d12_visible_frame_hash",
-    "d3d12_content_frame_hash",
     "d3d12_visible_content_frame_hash",
 )
 native_completion_id_keys = (
@@ -709,13 +699,15 @@ def pass_missing(condition):
     return "PASS" if condition else "MISSING"
 
 def native_content_progress_complete(states, visible_states, requires,
-                                     native_complete, visible_credit):
+                                     native_complete, visible_credit,
+                                     source_owned):
     return (
         "NATIVE_PRESENT_COMPLETE" in states and
         "NATIVE_PRESENT_COMPLETE" in visible_states and
         all_ones(requires) and
         all_ones(native_complete) and
-        all_ones(visible_credit)
+        all_ones(visible_credit) and
+        all_ones(source_owned)
     )
 
 def same_run_resource_generation_completion_progress(run_ids, resources,
@@ -823,6 +815,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         d3d12_content_requires_native,
         d3d12_content_native_complete,
         d3d12_content_visible_credit,
+        d3d12_content_source_owned,
     )
     same_generation_completion_ok = (
         same_run_resource_generation_completion_progress(
@@ -1353,6 +1346,12 @@ for line in log.splitlines():
         )
         if visible_credit is not None:
             visual_content_visible_credit.append(visible_credit)
+        source_owned = counter_value(
+            line,
+            ("d3d12_content_progress_source_owned",),
+        )
+        if source_owned is not None:
+            visual_content_source_owned.append(source_owned)
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             visual_run_ids.append(run_id)
@@ -1492,6 +1491,12 @@ for line in log.splitlines():
         )
         if visible_credit is not None:
             d3d12_content_visible_credit.append(visible_credit)
+        source_owned = counter_value(
+            line,
+            ("d3d12_content_progress_source_owned",),
+        )
+        if source_owned is not None:
+            d3d12_content_source_owned.append(source_owned)
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             d3d12_run_ids.append(run_id)
@@ -2123,6 +2128,7 @@ if len(d3d12_present_counts) < 2:
     )
 native_completed = d3d12_present_counts[-1] - d3d12_present_counts[0]
 native_fps = native_completed / elapsed
+sample_content_frame_fps = sample_content_frame_delta / elapsed
 warmup_native_completed = d3d12_present_counts[0]
 native_completion_deltas = interval_deltas("d3d12_gpu_present_completes",
                                            d3d12_present_counts)
@@ -2340,7 +2346,8 @@ if not native_content_progress_complete(
         d3d12_visible_content_progress_states,
         d3d12_content_requires_native,
         d3d12_content_native_complete,
-        d3d12_content_visible_credit):
+        d3d12_content_visible_credit,
+        d3d12_content_source_owned):
     fail_validation(
         "fps_visible_native_content_gate_matrix "
         f"validation_run_id={expected_run_id} stage=sample "
@@ -2628,12 +2635,12 @@ if (re.search(
             r"ABI=gpu-p-dxg-resource-scanout-bind",
             log,
     ) and not re.search(
-            r"candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38",
+            r"candidate_cmds[:=]presenthistory=34,redirected_flip_fence=35,blt=38,propagate_presenthistory=1",
             log,
     ):
         fail_validation(
             "D3D12 present fail-closed GPU-P/DDA display-bind diagnostic "
-            "lacked candidate_cmds presenthistory=34,redirected_flip_fence=35,blt=38"
+            "lacked candidate_cmds presenthistory=34,redirected_flip_fence=35,blt=38,propagate_presenthistory=1"
         )
     fail_validation(
         "fail-closed present: missing GPU-P/DDA "
@@ -3070,7 +3077,8 @@ if not native_content_progress_complete(
         visual_visible_content_progress_states,
         visual_content_requires_native,
         visual_content_native_complete,
-        visual_content_visible_credit):
+        visual_content_visible_credit,
+        visual_content_source_owned):
     fail_validation(
         "fps_visible_native_content_gate_matrix "
         f"validation_run_id={expected_run_id} stage=visual-window "
@@ -3329,7 +3337,14 @@ if any(value == 0 for value in visual_same_frame_releases):
         f"values={','.join(str(value) for value in visual_same_frame_releases)}"
     )
 visual_native_fps = visual_native_completed / visual_native_elapsed
-effective_presented_fps = min(native_fps, completion_fps, visual_native_fps)
+visual_content_frame_fps = visual_content_frame_delta / visual_native_elapsed
+effective_presented_fps = min(
+    native_fps,
+    completion_fps,
+    visual_native_fps,
+    sample_content_frame_fps,
+    visual_content_frame_fps,
+)
 log_validation(
     "visual cadence "
     f"validation_run_id={expected_run_id} "
@@ -3352,6 +3367,7 @@ log_validation(
     f"content_crc_changes={visual_content_crc_changes} "
     f"content_frame_hash_changes={visual_content_frame_hash_changes} "
     f"content_frame_delta={visual_content_frame_delta} "
+    f"content_frame_fps={visual_content_frame_fps:.3f} "
     f"outside_overlay_crc_changes={outside_overlay_crc_transitions} "
     f"native_present_fps={visual_native_fps:.3f} "
     f"visual_progress_fps={visual_progress_fps:.3f} "
@@ -3381,6 +3397,7 @@ log_validation(
     f"sample_content_crc_changes={sample_content_crc_changes} "
     f"sample_content_frame_hash_changes={sample_content_frame_hash_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
+    f"sample_content_frame_fps={sample_content_frame_fps:.3f} "
     f"active_native_intervals={active_native_intervals} "
     f"active_display_intervals={active_display_intervals} "
     f"active_callback_intervals={active_callback_intervals} "
@@ -3469,6 +3486,20 @@ if visual_native_fps <= min_fps:
         f"completed_native={visual_native_completed} "
         f"elapsed={visual_native_elapsed:.3f}s required>{min_fps:.3f}"
     )
+if sample_content_frame_fps <= min_fps:
+    raise SystemExit(
+        "sample-window compositor content FPS below gate: "
+        f"fps={sample_content_frame_fps:.3f} "
+        f"content_frame_delta={sample_content_frame_delta} "
+        f"elapsed={elapsed:.3f}s required>{min_fps:.3f}"
+    )
+if visual_content_frame_fps <= min_fps:
+    raise SystemExit(
+        "visual-window compositor content FPS below gate: "
+        f"fps={visual_content_frame_fps:.3f} "
+        f"content_frame_delta={visual_content_frame_delta} "
+        f"elapsed={visual_native_elapsed:.3f}s required>{min_fps:.3f}"
+    )
 if effective_presented_fps <= min_fps:
     raise SystemExit(
         "effective real-presented FPS below gate: "
@@ -3476,6 +3507,8 @@ if effective_presented_fps <= min_fps:
         f"native_present_fps={native_fps:.3f} "
         f"display_completion_fps={completion_fps:.3f} "
         f"visual_window_native_present_fps={visual_native_fps:.3f} "
+        f"sample_content_frame_fps={sample_content_frame_fps:.3f} "
+        f"visual_window_content_frame_fps={visual_content_frame_fps:.3f} "
         f"required>{min_fps:.3f}"
     )
 if avg > native_fps * 1.15 and avg - native_fps > 3.0:
@@ -3529,6 +3562,7 @@ log_validation(
     f"visual_report_margin={visual_report_fps_margin:.3f} "
     f"native_present_fps={native_fps:.3f} "
     f"display_completion_fps={completion_fps:.3f} "
+    f"sample_content_frame_fps={sample_content_frame_fps:.3f} "
     f"sample_present_id_delta={sample_present_id_delta} "
     f"sample_completed_delta={sample_present_completed_delta} "
     f"sample_display_bind_present_id_delta={sample_display_bind_present_id_delta} "
@@ -3540,6 +3574,7 @@ log_validation(
     f"visual_display_bind_completed_id_delta={visual_display_bind_completed_id_delta} "
     f"visual_gpup_dda_commit_delta={visual_gpup_dda_commit_delta} "
     f"visual_window_native_present_fps={visual_native_fps:.3f} "
+    f"visual_window_content_frame_fps={visual_content_frame_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
     f"app_visible_avg={avg:.3f}"
 )
@@ -3562,6 +3597,7 @@ print(
     f"sample_content_crc_changes={sample_content_crc_changes} "
     f"sample_content_frame_hash_changes={sample_content_frame_hash_changes} "
     f"sample_content_frame_delta={sample_content_frame_delta} "
+    f"sample_content_frame_fps={sample_content_frame_fps:.3f} "
     f"active_native_intervals={active_native_intervals} "
     f"active_display_intervals={active_display_intervals} "
     f"active_callback_intervals={active_callback_intervals} "
@@ -3589,6 +3625,7 @@ print(
     f"visual_window_content_crc_changes={visual_content_crc_changes} "
     f"visual_window_content_frame_hash_changes={visual_content_frame_hash_changes} "
     f"visual_window_content_frame_delta={visual_content_frame_delta} "
+    f"visual_window_content_frame_fps={visual_content_frame_fps:.3f} "
     f"visual_window_native_present_fps={visual_native_fps:.3f} "
     f"display_completion_delta={completed} "
     f"display_completion_fps={completion_fps:.3f} "
