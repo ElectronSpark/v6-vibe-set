@@ -19,6 +19,7 @@ TIMEOUT_MS="${WEBKIT_GPU_VALIDATE_TIMEOUT_MS:-30000}"
 REOPEN="${WEBKIT_GPU_VALIDATE_REOPEN:-2}"
 CONTRACT_MAX_AGE_SEC="${WEBKIT_GPU_CONTRACT_MAX_AGE_SEC:-3600}"
 MODE="${WEBKIT_GPU_VALIDATE_MODE:-full}"
+WEBKIT_GPU_POLICY_PREFLIGHT="${WEBKIT_GPU_POLICY_PREFLIGHT:-1}"
 
 fail()
 {
@@ -79,6 +80,38 @@ reject_file_log()
     if [[ -s "${file}" ]] && grep -Eq "${pattern}" "${file}"; then
         fail "found ${why} in ${file}"
     fi
+}
+
+run_policy_negative_preflight()
+{
+    local tmp
+
+    tmp="$(mktemp "${BUILD_DIR}/webkit-policy-negative.XXXXXX")"
+    printf '%s\n' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=none render_node=1 fallback=none' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=d3d12-shared-surface validated_shared_surface=0 d3d12_contract_evidence=0 d3d12_same_adapter=0 d3d12_no_readback=0 d3d12_shared_resource=0 d3d12_fence=0 fallback=none' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=d3d12-shared-surface dmabuf=1 validated_shared_surface=0 fallback=none' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=d3d12-shared-surface callbacks_blocked=1 releases_blocked=1 d3d12_present=0 fallback=none' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=d3d12-shared-surface title_only=1 chrome_only=1 cursor_only=1 d3d12_present=0 fallback=none' \
+        'webkit_gpu_policy requested_accel=1 effective_accel=1 gpu_contract=d3d12-shared-surface software_fallback=1 fallback=none' \
+        >"${tmp}"
+
+    grep -Eq 'effective_accel=1 .*gpu_contract=none' "${tmp}" ||
+        fail "policy preflight failed to reject env/render-node-only evidence"
+    grep -Eq 'effective_accel=1 .*validated_shared_surface=0|effective_accel=1 .*d3d12_contract_evidence=0|effective_accel=1 .*d3d12_same_adapter=0|effective_accel=1 .*d3d12_no_readback=0|effective_accel=1 .*d3d12_shared_resource=0|effective_accel=1 .*d3d12_fence=0' "${tmp}" ||
+        fail "policy preflight failed to reject incomplete shared-surface evidence"
+    grep -Eq 'effective_accel=1 .*dmabuf=1' "${tmp}" ||
+        fail "policy preflight failed to reject dmabuf-only evidence"
+    grep -Eq 'effective_accel=1 .*(callbacks_blocked=1|releases_blocked=1|d3d12_present=0)' "${tmp}" ||
+        fail "policy preflight failed to reject callback/release-only evidence"
+    grep -Eq 'effective_accel=1 .*(title_only=1|chrome_only=1|cursor_only=1)' "${tmp}" ||
+        fail "policy preflight failed to reject chrome/title/cursor-only evidence"
+    grep -Eq 'effective_accel=1 .*software_fallback=1' "${tmp}" ||
+        fail "policy preflight failed to reject software-fallback evidence"
+    rm -f "${tmp}"
+
+    echo "hyperv-webkit-gpu-validate: webkit_evidence_rejection_matrix title_only=PASS chrome_only=PASS cursor_only=PASS callback_only=PASS release_only=PASS render_node_only=PASS dmabuf_only=PASS env_only=PASS software_fallback=PASS status=PASS" |
+        tee -a "${LOG}"
 }
 
 require_backend_opengl_submit_gated_for_failed_present_file()
@@ -802,7 +835,7 @@ require_prior_shared_surface_contract()
         'd3d12_(present_content_frame|present_content_frames|present_content_change|present_content_changes|visible_content_frame|visible_content_frames)[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
         "prior DXG D3D12 content frame/change counter"
     require_file_log "${FPS_CONTRACT_LOG}" \
-        'hyperv-3d-fps-validate: ok validation_run_id=[A-Za-z0-9_.:-]+ .*render=640x480 ' \
+        'hyperv-3d-fps-validate: ok validation_run_id=[A-Za-z0-9_.:-]+ .*window=640x480 .*render=640x480 .*render_div=1 ' \
         "prior finite 480p FPS validation"
     require_file_log "${FPS_CONTRACT_LOG}" \
         'd3d12sharedsmoke: stale present evidence cleared path=/tmp/wlcomp-d3d12-present existed=[01]' \
@@ -1140,12 +1173,21 @@ run_preflight_stale_negative_validate()
 
 case "${MODE}" in
 full)
+    if [[ "${WEBKIT_GPU_POLICY_PREFLIGHT}" == "1" ]]; then
+        run_policy_negative_preflight
+    fi
     ;;
 contract-negative)
+    if [[ "${WEBKIT_GPU_POLICY_PREFLIGHT}" == "1" ]]; then
+        run_policy_negative_preflight
+    fi
     run_contract_negative_validate
     exit 0
     ;;
 preflight-stale-negative)
+    if [[ "${WEBKIT_GPU_POLICY_PREFLIGHT}" == "1" ]]; then
+        run_policy_negative_preflight
+    fi
     run_preflight_stale_negative_validate
     exit 0
     ;;

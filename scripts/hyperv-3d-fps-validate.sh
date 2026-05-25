@@ -29,6 +29,7 @@ LOW_VISUAL_CADENCE_FPS=${LOW_VISUAL_CADENCE_FPS:-20}
 MIN_ACTIVE_NATIVE_INTERVALS=${MIN_ACTIVE_NATIVE_INTERVALS:-}
 MIN_ACTIVE_DISPLAY_INTERVALS=${MIN_ACTIVE_DISPLAY_INTERVALS:-}
 FPS_ANTI_INFLATION_SELFTEST=${FPS_ANTI_INFLATION_SELFTEST:-0}
+FPS_ANTI_INFLATION_PREFLIGHT=${FPS_ANTI_INFLATION_PREFLIGHT:-1}
 VISUAL_WINDOW_SEC=$(((VISUAL_SAMPLES * VISUAL_SAMPLE_MS + 999) / 1000))
 DEMO_FRAMES=${DEMO_FRAMES:-$(((WARMUP_SEC + SAMPLE_SEC + VISUAL_WINDOW_SEC + 4) * DEMO_FRAME_RATE_BUDGET))}
 LOG=${LOG:-/tmp/xv6-hyperv-3d-fps-validate.log}
@@ -50,11 +51,16 @@ fail() {
 }
 
 anti_inflation_selftest() {
-    : >"${LOG}"
-    echo "hyperv-3d-fps-validate: validation_run_id=${VALIDATION_RUN_ID}" |
-        tee -a "${LOG}"
+    local mode=${1:-standalone}
+
+    if [[ "${mode}" == "standalone" ]]; then
+        : >"${LOG}"
+        echo "hyperv-3d-fps-validate: validation_run_id=${VALIDATION_RUN_ID}" |
+            tee -a "${LOG}"
+    fi
     python3 - "${LOG}" "${VALIDATION_RUN_ID}" "${VISUAL_MAX_REPORT_RATIO}" \
-        "${VISUAL_REPORT_FPS_MARGIN}" "${LOW_VISUAL_CADENCE_FPS}" <<'PY'
+        "${VISUAL_REPORT_FPS_MARGIN}" "${LOW_VISUAL_CADENCE_FPS}" \
+        "${mode}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -63,6 +69,7 @@ run_id = sys.argv[2]
 ratio_limit = float(sys.argv[3])
 margin = float(sys.argv[4])
 low_visual_cadence_fps = float(sys.argv[5])
+mode = sys.argv[6]
 
 def rejects_inflation(reported_fps, visual_progress_fps):
     visual_ceiling = visual_progress_fps * ratio_limit
@@ -119,7 +126,7 @@ if not frozen_window_rejected:
     )
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
-    f"validation_run_id={run_id} negative_rejected=1 "
+    f"validation_run_id={run_id} mode={mode} negative_rejected=1 "
     "displayed_fps=40.000 visual_progress_fps=5.000 "
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
@@ -195,7 +202,7 @@ capture_thumbnail_raw() {
 
 command -v python3 >/dev/null || fail "missing python3"
 if [[ "${FPS_ANTI_INFLATION_SELFTEST}" == "1" ]]; then
-    anti_inflation_selftest
+    anti_inflation_selftest standalone
     exit 0
 fi
 
@@ -227,6 +234,12 @@ fi
 : >"${LOG}"
 echo "hyperv-3d-fps-validate: validation_run_id=${VALIDATION_RUN_ID}" |
     tee -a "${LOG}"
+if [[ "${FPS_ANTI_INFLATION_PREFLIGHT}" == "1" ]]; then
+    anti_inflation_selftest preflight
+else
+    echo "hyperv-3d-fps-validate: anti-inflation preflight skipped FPS_ANTI_INFLATION_PREFLIGHT=0" |
+        tee -a "${LOG}"
+fi
 echo "hyperv-3d-fps-validate: requiring prior core GPU validators log=${CORE_CONTRACT_LOG}" |
     tee -a "${LOG}"
 require_core_gpu_contract
@@ -2687,7 +2700,7 @@ print(
     f"visual_progress_fps={visual_progress_fps:.3f} "
     f"outside_overlay_crc_changes={outside_overlay_crc_transitions} "
     f"backend_mode={backend_mode} backend_opengl_submit=1 "
-    f"window={ww}x{wh} render={rw}x{rh} "
+    f"window={ww}x{wh} render={rw}x{rh} render_div={rdiv} "
     f"changed={','.join(str(v) for v in transitions)} "
     f"samples={','.join(f'{v:.3f}' for v in values)}"
 )

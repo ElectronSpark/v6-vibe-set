@@ -289,8 +289,12 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
   effects or native/OpenGL-submit credit.
 - [ ] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
   only when the primary plane can present them without the software fallback.
-- [ ] Keep vblank/page-flip display-correlation separate from native-present
+- [x] Keep vblank/page-flip display-correlation separate from native-present
   credit until the same frame also proves native D3D12 display completion.
+  `fbstat` now emits `kms_vblank_native_present_separation_matrix`, the
+  pure-C core validator requires it, and the Hyper-V core runner checks that
+  vblank samples/page flips can be display-correlated while still granting
+  zero native-present/OpenGL-submit credit.
 - [x] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
   event queues covered by focused validators after any DRM refactor.
 - [x] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
@@ -416,14 +420,22 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   focused 6-vCPU Hyper-V images before marking section items done.
 - [ ] Make the finite 480p desktop 3D validator pass only on native D3D12
   presented frames after warmup.
-- [ ] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
+- [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
+  The finite FPS validator already rejects non-480p or divided renders; its
+  final pass token now records `window=640x480 render=640x480 render_div=1`,
+  and WebKit's prior-FPS contract requires that exact token before acceleration
+  can consume the FPS artifact.
 - [ ] Confirm the demo is visible, closeable, and resizable during the passing
   run.
 - [ ] Require visible content progress outside title/FPS overlay areas and
   correlate content hashes or thumbnail deltas with native present completions.
-- [ ] Preserve a negative artifact where inflated displayed/demo FPS, including
+- [x] Preserve a negative artifact where inflated displayed/demo FPS, including
   the observed around-40 FPS case, fails without native completion and visible
   content progress.
+  `hyperv-3d-fps-validate.sh` now runs the 40-FPS anti-inflation negative
+  preflight by default before heavy VM sampling, covering stale run ids, static
+  content CRC/frame evidence, frozen-window evidence, and positive matching
+  visible/native cadence.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
@@ -457,9 +469,12 @@ alone.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.
-- [ ] Reject WebKit acceleration evidence based only on chrome/cursor/title
+- [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
   updates, callbacks, releases, render-node presence, dmabuf request,
   environment variables, or software fallback.
+  `hyperv-webkit-gpu-validate.sh` now runs a default policy-negative preflight
+  that emits `webkit_evidence_rejection_matrix` and proves those evidence
+  classes are rejected before any WebKit acceleration artifact is accepted.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
 
