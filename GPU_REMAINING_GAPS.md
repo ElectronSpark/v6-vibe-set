@@ -1025,6 +1025,17 @@ alone.
     launcher before any D3D12 WebKit environment is selected:
     `display_bind_backend=gpup_dxg_scanout_bind` and
     `display_bind_transport=gpu-p-dxg-resource-scanout-bind`.
+  - [x] Run the animated fixture in the Hyper-V WebKit validator as
+    liveness-only evidence while native present is still fail-closed.
+    `hyperv-webkit-gpu-validate.sh` emits
+    `webkit_animated_content_fixture_liveness_matrix` with title-frame
+    progress accepted only as fixture liveness, missing CRC/hash/native
+    completion called out explicitly, and zero native-present, OpenGL-submit,
+    or WebKit acceleration credit.
+  - [x] Tighten the pure-C WebKit smoke contract so content progress requires
+    nonzero content CRC, frame counter, frame hash,
+    `NATIVE_PRESENT_COMPLETE` content states, and explicit visible/native
+    content credits before `webkit_gpu_contract_matrix ok=1`.
   - [ ] Replace the fixture-liveness-only check with compositor-owned content
     CRC/frame/hash correlation for the same WebKit run id, client pid,
     resource generation, and native display completion.
