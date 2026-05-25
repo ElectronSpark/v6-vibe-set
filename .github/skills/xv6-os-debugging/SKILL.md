@@ -118,6 +118,12 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   kernel, with UAPI in `include/uapi/misc/d3dkmthk.h`. Use it as the DXG/D3DKMT
   process, handle-table, shared-resource, sync-file, and VMBus packet
   reference; do not treat it as the DRM/KMS/Nouveau display-stack reference.
+- Match WSL's assign-before-expose ordering for host-opened resources and sync
+  objects. After `OPENRESOURCEFROMNTHANDLE`,
+  `OPENSYNCOBJECTFROMNTHANDLE2`, or `OPENSYNCOBJECTFROMSYNCFILE` succeeds on
+  the host, commit the local dxgprocess object graph before copying handles to
+  userspace; tracking or late-copyout failure must untrack local state and
+  destroy the host-opened object through the owner-bound process handle.
 - Keep the reference tracks separate: WSL parity can close Hyper-V DXG object
   and wire-layout gates, while Linux DRM/GEM/TTM/KMS/Nouveau sources govern
   `/dev/dri`, PRIME/dma-buf, KMS atomic, PCI runtime, and Nouveau behavior.
