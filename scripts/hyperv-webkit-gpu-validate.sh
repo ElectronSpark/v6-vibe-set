@@ -132,6 +132,10 @@ emit_webkit_animated_content_native_present_gate_open()
     local display_bind_completed_id
     local content_generation
     local display_bind_generation
+    local final_handoff_present_id
+    local final_handoff_completed
+    local final_handoff_generation
+    local final_handoff_success
 
     native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
@@ -143,15 +147,27 @@ emit_webkit_animated_content_native_present_gate_open()
     display_bind_completed_id="$(last_log_counter "${LOG}" display_bind_completed_id)"
     content_generation="$(last_log_counter "${LOG}" d3d12_content_progress_display_bind_resource_generation)"
     display_bind_generation="$(last_log_counter "${LOG}" display_bind_resource_generation)"
+    final_handoff_success="$(last_log_counter "${LOG}" d3d12_final_handoff_success)"
+    final_handoff_present_id="$(last_log_counter "${LOG}" d3d12_final_handoff_present_id)"
+    final_handoff_completed="$(last_log_counter "${LOG}" d3d12_final_handoff_completed)"
+    final_handoff_generation="$(last_log_counter "${LOG}" d3d12_final_handoff_resource_generation)"
     if [[ -z "${content_present_id}" || -z "${content_completed}" ||
           -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
           -z "${content_generation}" || -z "${display_bind_generation}" ||
+          -z "${final_handoff_success}" ||
+          -z "${final_handoff_present_id}" ||
+          -z "${final_handoff_completed}" ||
+          -z "${final_handoff_generation}" ||
           "${content_present_id}" -ne "${display_bind_present_id}" ||
           "${content_completed}" -ne "${display_bind_completed_id}" ||
-          "${content_generation}" -ne "${display_bind_generation}" ]]; then
+          "${content_generation}" -ne "${display_bind_generation}" ||
+          "${final_handoff_success}" -ne 1 ||
+          "${final_handoff_present_id}" -ne "${display_bind_present_id}" ||
+          "${final_handoff_completed}" -ne "${display_bind_completed_id}" ||
+          "${final_handoff_generation}" -ne "${display_bind_generation}" ]]; then
         fail "cannot open WebKit animated content gate without exact content/display-bind identity"
     fi
-    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS content_present_id=${content_present_id} content_completed=${content_completed} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} content_resource_generation=${content_generation} display_bind_resource_generation=${display_bind_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS content_present_id=${content_present_id} content_completed=${content_completed} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} final_handoff_present_id=${final_handoff_present_id} final_handoff_completed=${final_handoff_completed} content_resource_generation=${content_generation} display_bind_resource_generation=${display_bind_generation} final_handoff_resource_generation=${final_handoff_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -634,6 +650,33 @@ last_any_log_counter()
     done
 }
 
+last_log_token()
+{
+    local file="$1"
+    local key="$2"
+
+    sed -nE \
+        "s/.*(^|[[:space:]])${key}([ =])([^[:space:]]+).*/\\3/p" \
+        "${file}" | tail -n 1
+}
+
+require_last_token_eq()
+{
+    local file="$1"
+    local key="$2"
+    local expected="$3"
+    local why="$4"
+    local value
+
+    value="$(last_log_token "${file}" "${key}")"
+    if [[ -z "${value}" ]]; then
+        fail "missing ${why}: ${key} in ${file}"
+    fi
+    if [[ "${value}" != "${expected}" ]]; then
+        fail "${why} mismatch: ${key}=${value} expected=${expected}"
+    fi
+}
+
 require_counter_ge()
 {
     local file="$1"
@@ -678,6 +721,14 @@ require_compositor_owned_visible_content_file()
     local content_completed
     local display_bind_generation
     local content_generation
+    local display_bind_present_id
+    local display_bind_completed_id
+    local content_display_bind_present_id
+    local content_display_bind_completed_id
+    local final_handoff_present_id
+    local final_handoff_completed
+    local final_handoff_generation
+    local final_handoff_success
 
     require_file_log "${file}" \
         'd3d12_visible_content_crc[ =](0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' \
@@ -703,29 +754,63 @@ require_compositor_owned_visible_content_file()
         "${why} visible content credit"
     require_counter_ge "${file}" d3d12_content_progress_native_present_credit 1 \
         "${why} native content credit"
+    require_counter_ge "${file}" d3d12_content_progress_current_run_valid 1 \
+        "${why} content current-run identity"
+    require_counter_ge "${file}" d3d12_content_progress_identity_complete 1 \
+        "${why} exact content/display-bind identity"
 
     present_id="$(last_any_log_counter "${file}" d3d12_dxg_present_id present_id)"
     completed="$(last_any_log_counter "${file}" d3d12_dxg_present_completed completed)"
     content_present_id="$(last_log_counter "${file}" d3d12_content_progress_present_id)"
     content_completed="$(last_log_counter "${file}" d3d12_content_progress_completed)"
+    display_bind_present_id="$(last_log_counter "${file}" display_bind_present_id)"
+    display_bind_completed_id="$(last_log_counter "${file}" display_bind_completed_id)"
+    content_display_bind_present_id="$(last_log_counter "${file}" d3d12_content_progress_display_bind_present_id)"
+    content_display_bind_completed_id="$(last_log_counter "${file}" d3d12_content_progress_display_bind_completed_id)"
     display_bind_generation="$(last_log_counter "${file}" display_bind_resource_generation)"
     content_generation="$(last_log_counter "${file}" d3d12_content_progress_display_bind_resource_generation)"
+    final_handoff_success="$(last_log_counter "${file}" d3d12_final_handoff_success)"
+    final_handoff_present_id="$(last_log_counter "${file}" d3d12_final_handoff_present_id)"
+    final_handoff_completed="$(last_log_counter "${file}" d3d12_final_handoff_completed)"
+    final_handoff_generation="$(last_log_counter "${file}" d3d12_final_handoff_resource_generation)"
     if [[ -z "${present_id}" || -z "${completed}" ||
-          -z "${content_present_id}" || -z "${content_completed}" ]]; then
+          -z "${content_present_id}" || -z "${content_completed}" ||
+          -z "${display_bind_present_id}" ||
+          -z "${display_bind_completed_id}" ||
+          -z "${content_display_bind_present_id}" ||
+          -z "${content_display_bind_completed_id}" ||
+          -z "${display_bind_generation}" || -z "${content_generation}" ||
+          -z "${final_handoff_success}" ||
+          -z "${final_handoff_present_id}" ||
+          -z "${final_handoff_completed}" ||
+          -z "${final_handoff_generation}" ]]; then
         fail "missing ${why} content/native-present id correlation"
     fi
     if (( content_present_id != present_id )); then
         fail "${why} content present id does not match native present id: content=${content_present_id} present=${present_id}"
     fi
-    if (( content_completed < content_present_id )); then
-        fail "${why} content completed counter does not cover content present id: completed=${content_completed} present=${content_present_id}"
+    if (( content_completed != completed )); then
+        fail "${why} content completed counter does not exactly match native completed counter: content=${content_completed} completed=${completed}"
     fi
     if (( completed < present_id )); then
         fail "${why} native completed counter does not cover present id: completed=${completed} present=${present_id}"
     fi
-    if [[ -n "${display_bind_generation}" && -n "${content_generation}" &&
-          "${content_generation}" -ne "${display_bind_generation}" ]]; then
+    if (( display_bind_present_id != present_id ||
+          content_display_bind_present_id != display_bind_present_id )); then
+        fail "${why} display-bind/content present id mismatch: present=${present_id} display_bind=${display_bind_present_id} content_display_bind=${content_display_bind_present_id}"
+    fi
+    if (( display_bind_completed_id != completed ||
+          content_display_bind_completed_id != display_bind_completed_id )); then
+        fail "${why} display-bind/content completed id mismatch: completed=${completed} display_bind=${display_bind_completed_id} content_display_bind=${content_display_bind_completed_id}"
+    fi
+    if (( content_generation != display_bind_generation )); then
         fail "${why} content resource generation does not match display-bind generation: content=${content_generation} display_bind=${display_bind_generation}"
+    fi
+    if (( final_handoff_success != 1 ||
+          final_handoff_present_id != present_id ||
+          final_handoff_completed != completed ||
+          final_handoff_generation != display_bind_generation )); then
+        fail "${why} final handoff ids do not exactly match DXG/display-bind/content identity: success=${final_handoff_success} final_present=${final_handoff_present_id} present=${present_id} final_completed=${final_handoff_completed} completed=${completed} final_generation=${final_handoff_generation} display_bind_generation=${display_bind_generation}"
     fi
 }
 
@@ -826,6 +911,14 @@ require_holistic_d3d12_display_bind_evidence_file()
         "${why} D3D12 visible content credit"
     require_counter_ge "${file}" d3d12_native_present_completion_id 1 \
         "${why} D3D12 native present completion id"
+    require_counter_ge "${file}" d3d12_final_handoff_success 1 \
+        "${why} D3D12 final handoff success"
+    require_counter_ge "${file}" d3d12_final_handoff_present_id 1 \
+        "${why} D3D12 final handoff present id"
+    require_counter_ge "${file}" d3d12_final_handoff_completed 1 \
+        "${why} D3D12 final handoff completed counter"
+    require_counter_ge "${file}" d3d12_final_handoff_resource_generation 1 \
+        "${why} D3D12 final handoff resource generation"
     require_compositor_owned_visible_content_file "${file}" "${why}"
 
     display_bind_present_id="$(last_log_counter "${file}" display_bind_present_id)"
@@ -930,8 +1023,16 @@ require_current_validation_run_id()
 {
     local why="$1"
 
-    require_log "^(validation_run_id|xv6_validation_run_id|d3d12_validation_run_id|fps_validation_run_id|d3d12_run_id)=${VALIDATION_RUN_ID}($|[[:space:]])" \
+    require_last_token_eq "${LOG}" validation_run_id "${VALIDATION_RUN_ID}" \
         "${why} validation run id"
+    require_last_token_eq "${LOG}" d3d12_run_id "${VALIDATION_RUN_ID}" \
+        "${why} D3D12 run id"
+    require_last_token_eq "${LOG}" d3d12_present_identity_compositor_run_id \
+        "${VALIDATION_RUN_ID}" "${why} compositor run id"
+    require_last_token_eq "${LOG}" d3d12_content_progress_run_id \
+        "${VALIDATION_RUN_ID}" "${why} content progress run id"
+    require_last_token_eq "${LOG}" d3d12_content_progress_compositor_run_id \
+        "${VALIDATION_RUN_ID}" "${why} content progress compositor run id"
 }
 
 require_latest_d3d12_luid_match()
