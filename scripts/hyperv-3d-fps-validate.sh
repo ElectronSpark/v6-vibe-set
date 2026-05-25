@@ -372,7 +372,7 @@ serial_read "rm -f /tmp/wlcomp-d3d12-present; XV6_GPU_VALIDATE_RUN_ID=${VALIDATI
 
 echo "hyperv-3d-fps-validate: starting finite 480p demo frames=${DEMO_FRAMES}" |
     tee -a "${LOG}"
-serial_read "rm -f /tmp/mesawlegl-fps /tmp/wlcomp-d3d12-present /tmp/hyperv-3d-fps-demo.log /tmp/hyperv-3d-fps-demo.pid; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} mesademo --frames=${DEMO_FRAMES} --size=${DEMO_SIZE} --render-div=1 --present-interval=1 --pace-us=0 >/tmp/hyperv-3d-fps-demo.log 2>&1 & echo \$! >/tmp/hyperv-3d-fps-demo.pid" 30000 |
+serial_read "rm -f /tmp/mesawlegl-fps /tmp/wlcomp-d3d12-present /tmp/hyperv-3d-fps-demo.log /tmp/hyperv-3d-fps-demo.pid; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} mesademo --frames=${DEMO_FRAMES} --size=${DEMO_SIZE} --render-div=1 --resize-every=${DEMO_RESIZE_EVERY:-120} --present-interval=1 --pace-us=0 >/tmp/hyperv-3d-fps-demo.log 2>&1 & echo \$! >/tmp/hyperv-3d-fps-demo.pid" 30000 |
     tee -a "${LOG}"
 
 echo "hyperv-3d-fps-validate: warming up ${WARMUP_SEC}s" | tee -a "${LOG}"
@@ -742,17 +742,9 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
                                   completion_sources):
     allowed_backends = {
         "gpup_dxg_scanout_bind",
-        "hyperv-dxg",
-        "gpu-p",
-        "gpu-p-dda",
-        "dda",
-        "nouveau",
-        "dxg-resource-scanout-bind",
-        "gpu-p-dxg-resource-scanout-bind",
     }
     allowed_transports = {
         "gpu-p-dxg-resource-scanout-bind",
-        "dxg-resource-scanout-bind",
     }
     if not backends:
         raise SystemExit(f"missing {name} display_bind_backend evidence")
@@ -761,7 +753,6 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
     if bad_backends:
         raise SystemExit(
             f"{name} display_bind_backend was not gpup_dxg_scanout_bind "
-            f"or a legacy native GPU display-bind name: "
             f"values={','.join(backends)}"
         )
     if not transports:
