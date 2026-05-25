@@ -289,6 +289,12 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Update display-bind snapshots to pin the real parent object and
     validate the matching opened child/resource generation before accepting
     native-present credit.
+  - [x] Preserve the WSL shared-resource NT/global-share metadata on the
+    parent resource and every opened child. The display-bind pin path now
+    rejects with explicit `dxg_display_bind_pin_diag` fields if the typed fd,
+    opened child, parent id, global share, or sealed generation diverge, so a
+    future sleepable display-bind provider cannot silently pin a by-value clone
+    or a child stripped of its parent sharing state.
 - [x] Finish WSL sealed-allocation metadata parity:
   - [x] Add sealed allocation `num_pages` and `cached` metadata to shared
     allocation records.
@@ -769,7 +775,9 @@ non-readback display handoff.
   `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
-  `validation_run_id=core-1779731829-1780191`.
+  `validation_run_id=core-1779731829-1780191`, then re-validated after
+  parent/global-share propagation and detailed pin diagnostics with
+  `validation_run_id=core-1779742515-2470561`.
 - [x] Add a WSL-style sync-file acquire pre-open guard for the present-source
   path: export a monitored fence to a sync-file fd, reopen it to a D3DKMT sync
   object before present admission, reject wrong fd kinds, preserve fence value
@@ -1039,6 +1047,13 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     display-completion log now carries explicit zero CRC/frame/hash content
     fields and reports `PASS_FAILCLOSED` until real compositor-owned content
     samples exist.
+  - [x] Tighten the finite FPS/WebKit handoff gates so content progress
+    requires compositor-owned frame-hash progress as well as CRC/frame
+    counters. `hyperv-3d-fps-validate.sh` now rejects both sample-window and
+    visual-window evidence unless `d3d12_present_frame_hash`/
+    `d3d12_visible_frame_hash` advance with the same native-present evidence,
+    and `wlcomp_launcher` refuses WebKit acceleration unless the same
+    frame-hash evidence is present.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
