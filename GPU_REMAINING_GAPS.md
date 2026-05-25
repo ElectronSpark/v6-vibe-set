@@ -423,6 +423,20 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
   passed on 2026-05-25 with
   `validation_run_id=core-1779703653-280807`.
+- [x] Add Linux-shaped PCI runtime-PM/remove provenance diagnostics for
+  DDA/Nouveau without granting GPU-P fake hot-remove or teardown state.
+  The PCI core now records resume-before-remove attempts, PM barriers,
+  hot-remove events, and removed state; Nouveau publishes teardown-phase
+  counters for BAR unmaps, IRQ unregister, vector free, bus-master clear,
+  device disable, and drvdata clear through
+  `nouveau_pci_remove_pm_matrix`. Placeholder IRQ handler entries no longer
+  claim delivery until a real device cause and ack path exists. GPU-P-only
+  Hyper-V passes only with zero fabricated remove/PM/IRQ/native-present/
+  OpenGL-submit state. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
+  passed on 2026-05-25 with
+  `validation_run_id=core-1779704735-342800`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
