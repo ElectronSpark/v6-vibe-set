@@ -270,33 +270,33 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   - [x] Add pure-C sync-file validators covering create-copyout fd/event
     cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
     child-process open from the same sync-file fd.
-- [ ] Replace the by-value shared-resource fd clone with a WSL-style parent
+- [x] Replace the by-value shared-resource fd clone with a WSL-style parent
   shared-resource object:
   - [x] Add parent-resource scaffold diagnostics while preserving existing
     clone semantics: resource fds now carry parent id, fd refs, parent refs,
     opened-child counters, creator/opened child snapshots, and
     `dxg_sharedresource_parent` status output.
-  - [ ] Add a refcounted parent resource object with fd refs, host NT refs,
+  - [x] Add a refcounted parent resource object with fd refs, host NT refs,
     sealed generation, private-data ownership, allocation metadata, and an
     opened-resource list.
-  - [ ] Link creator and opener `hvdxg_tracked_resource` children to that
+  - [x] Link creator and opener `hvdxg_tracked_resource` children to that
     parent instead of deep-cloning fd-private resource state.
-  - [ ] Move seal/query/open metadata reads to the parent and keep per-open
+  - [x] Move seal/query/open metadata reads to the parent and keep per-open
     children responsible only for process-local handles and cleanup.
   - [x] Thread parent id/ref/opened-child evidence through display-bind pin
     snapshots, fail-closed provider validation, `FB_GPU_GET_STATS`, and the
     pure-C display-bind diagnostics.
-  - [ ] Update display-bind snapshots to pin the real parent object and
+  - [x] Update display-bind snapshots to pin the real parent object and
     validate the matching opened child/resource generation before accepting
     native-present credit.
-- [ ] Finish WSL sealed-allocation metadata parity:
+- [x] Finish WSL sealed-allocation metadata parity:
   - [x] Add sealed allocation `num_pages` and `cached` metadata to shared
     allocation records.
   - [x] Populate the metadata from create/open allocation state and expose it
     in shared-resource model diagnostics.
-  - [ ] Preserve sealed allocation metadata across query/open/exporter-destroy
+  - [x] Preserve sealed allocation metadata across query/open/exporter-destroy
     lifetimes on the real WSL-style parent object.
-  - [ ] Add pure-C validators for duplicate fd/open-child close ordering,
+  - [x] Add pure-C validators for duplicate fd/open-child close ordering,
     sealed `num_pages`/`cached` stability, and parent/child ref balance.
 - [x] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
   adapter whenever the driver store, UMD payload sizes, or D3DKMT packet
