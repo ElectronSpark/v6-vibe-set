@@ -165,6 +165,12 @@ but do not treat them as open plan items by default.
   remain fail-closed, but it must preserve source/resource generation,
   completion source, status, block reason, and zero present/completed ids until
   a documented DDA/GPU-P sender replaces the stub.
+- The display-bind provider boundary must be sleepable-safe: snapshot under
+  `fb_state.lock`, submit outside that lock, then revalidate the present source
+  and resource generation before accepting or recording any provider result.
+  The visible diagnostics are `provider_submits`, `lock_dropped_submits`,
+  `revalidate_attempts`, `revalidate_successes`, and
+  `revalidate_failures`.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 
