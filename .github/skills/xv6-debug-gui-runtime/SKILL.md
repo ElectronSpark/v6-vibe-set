@@ -492,6 +492,14 @@ but do not treat them as open plan items by default.
   before heavy Hyper-V sampling. The required negative is the observed around-40
   displayed/demo FPS with single-digit visible cadence, stale run id, static
   content, or frozen-window evidence.
+- `mesawlegl` owns `/tmp/mesawlegl-fps` app telemetry. Treat its visible/app
+  FPS as context-only unless each sample has matching validation run id,
+  `process_id == d3d12_client_pid`, nonzero DXG present/completed counters,
+  `d3d12_native_present_requirements_satisfied=1`, no readback, and current
+  compositor evidence generation/time/resource/buffer-generation metadata.
+  `mesawlegl_fps_context_only_matrix` and
+  `fps_overlay_inflation_rejection_matrix` are rejection evidence, not pass
+  evidence for the 60 FPS gate.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.

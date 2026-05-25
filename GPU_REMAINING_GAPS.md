@@ -505,7 +505,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `hyperv-3d-fps-validate.sh` now runs the 40-FPS anti-inflation negative
   preflight by default before heavy VM sampling, covering stale run ids, static
   content CRC/frame evidence, frozen-window evidence, and positive matching
-  visible/native cadence.
+  visible/native cadence. `mesawlegl` now writes `/tmp/mesawlegl-fps` with
+  `mesawlegl_fps_context_only_matrix` while app-draw FPS lacks matching
+  D3D12 run id, client pid, nonzero present/completion counters, and native
+  requirements; the validator emits `fps_overlay_inflation_rejection_matrix`
+  and rejects those context-only samples before any FPS pass.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

@@ -138,8 +138,25 @@ line = (
     "positive_accepted=1 displayed_fps=65.000 visual_progress_fps=62.000"
 )
 print(line)
+overlay_line = (
+    "hyperv-3d-fps-validate: fps_overlay_inflation_rejection_matrix "
+    f"validation_run_id={run_id} displayed_fps=40.000 "
+    "visual_progress_fps=5.000 source=app-draw-loop-context-only "
+    "displayed_fps_context_only=1 native_present_delta=0 "
+    "d3d12_evidence_valid=0 rejected=1 status=PASS"
+)
+print(overlay_line)
+content_line = (
+    "hyperv-3d-fps-validate: fps_visible_progress_negative_matrix "
+    f"validation_run_id={run_id} outside_overlay_crc_changes=0 "
+    "content_frame_delta=0 native_present_delta=0 rejected=1 "
+    "status=PASS"
+)
+print(content_line)
 with log_path.open("a", encoding="utf-8") as out:
     out.write(line + "\n")
+    out.write(overlay_line + "\n")
+    out.write(content_line + "\n")
 PY
 }
 
@@ -1149,6 +1166,26 @@ if ("d3d12sharedsmoke: present validation ok" not in log and
     )
 if not samples:
     raise SystemExit("no /tmp/mesawlegl-fps visible_fps callback samples found")
+context_only_records = [
+    record for record in accepted_demo_records
+    if record["source"] == "app-draw-loop-context-only" or
+       record["evidence_valid"] == 0
+]
+if context_only_records:
+    last = context_only_records[-1]
+    log_validation(
+        "fps_overlay_inflation_rejection_matrix "
+        f"validation_run_id={expected_run_id} "
+        f"displayed_fps={last['visible_fps']:.3f} "
+        "source=app-draw-loop-context-only displayed_fps_context_only=1 "
+        "d3d12_evidence_valid=0 native_present_delta=0 rejected=1 "
+        "status=PASS"
+    )
+    raise SystemExit(
+        "demo FPS probe is app-draw-loop/context-only; native D3D12 "
+        "present completion evidence is required before FPS can pass: "
+        + last["line"]
+    )
 require_run_id_samples("/tmp/mesawlegl-fps", demo_run_ids)
 if not demo_process_ids or any(value <= 0 for value in demo_process_ids):
     raise SystemExit("missing /tmp/mesawlegl-fps process_id samples")
