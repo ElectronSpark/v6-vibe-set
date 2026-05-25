@@ -944,6 +944,18 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   native-present/OpenGL-submit credit. This does not close the later
   content-hash/thumbnail-progress requirement; it makes visible-content
   credit explicitly impossible before native display completion.
+  - [x] Emit explicit zero-credit content sample fields so consumers cannot
+    confuse missing data with passing data:
+    `d3d12_present_content_crc`, `d3d12_visible_content_crc`,
+    `d3d12_present_content_frame`, `d3d12_visible_content_frame`,
+    `d3d12_present_frame_hash`, and `d3d12_visible_frame_hash` are present in
+    the compositor evidence and remain zero until a real native-present
+    content source exists.
+  - [x] Keep the FPS demo source-side content telemetry separate from native
+    proof. `mesawlegl` now writes `client_content_hash`,
+    `client_content_frame`, `content_region=client-content-no-title-fps`, and
+    `mesawlegl_demo_interaction_matrix`, while still requiring compositor
+    native-present content fields before granting effective presented FPS.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
@@ -989,6 +1001,16 @@ alone.
   client/resource/generation identity, prior native-present FPS contract,
   backend OpenGL-submit, and native present completion. Current Hyper-V keeps
   this gate closed with zero WebKit acceleration credit.
+  - [x] Stage a deterministic animated-content fixture at
+    `/share/webkit/webkit-animated-content-native-present.html`; the smoke
+    probe recognizes its advancing frame title as fixture liveness only.
+  - [x] Require canonical final display-bind names in the WebKit validator and
+    launcher before any D3D12 WebKit environment is selected:
+    `display_bind_backend=gpup_dxg_scanout_bind` and
+    `display_bind_transport=gpu-p-dxg-resource-scanout-bind`.
+  - [ ] Replace the fixture-liveness-only check with compositor-owned content
+    CRC/frame/hash correlation for the same WebKit run id, client pid,
+    resource generation, and native display completion.
 - [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
   updates, callbacks, releases, render-node presence, dmabuf request,
   environment variables, or software fallback.
