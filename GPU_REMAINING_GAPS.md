@@ -467,6 +467,17 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779679708-3257998`.
+- [x] Replace present-source resource-fd provenance with a typed WSL-style
+  DXG shared-resource admission snapshot: the FB present source must prove the
+  fd is `anon_inode:dxgresource`, the shared-resource metadata is sealed, the
+  allocation/resource handles match the D3DKMT register payload, the sealed
+  generation feeds the bind-contract resource generation, stale fds/sources are
+  rejected, and no native-present/OpenGL-submit credit is granted until the
+  real display-bind transport exists. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+  `validation_run_id=core-1779681659-3341588`.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.
