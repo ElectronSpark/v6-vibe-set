@@ -621,6 +621,8 @@ require_log 'dxg_present_lane_selection_matrix .*selected=gpup_dxg_scanout_bind 
     "selected native-present display handoff lane"
 require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"
 require_log 'backend_opengl_submit_gate closed' "Hyper-V OpenGL-submit gate closed"
+require_log 'hyperv_opengl_submit_gate_matrix .*backend_opengl_submit=0 .*requires_native_present=1 .*requires_finite_fps=1 .*requires_webkit_shared_surface=1 .*native_present_credit=0 .*display_target_kind=0 .*present_id=0 completed=0 .*backend_gate=closed .*status=PASS' \
+    "Hyper-V OpenGL-submit gate matrix"
 require_nouveau_dda_or_gpup_fail_closed
 require_log 'bo_fd_live 0' "BO fd cleanup"
 require_log 'fence_fd_live 0' "fence fd cleanup"

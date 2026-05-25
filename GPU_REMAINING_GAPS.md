@@ -488,8 +488,16 @@ non-readback display handoff.
   CPU map/readback, DRI software present, copy-export fallback,
   callback-only, and release-only all rejected, while keeping
   `native_present_claim=0` and `opengl_submit_credit=0`.
-- [ ] Keep `backend_opengl_submit 0` until this section and the FPS section
-  both pass.
+- [x] Keep `backend_opengl_submit 0` until this section and the FPS section
+  both pass. Hyper-V still reports `backend_opengl_submit 0` and
+  `backend_opengl_submit_gate closed`; the focused core validator rejects any
+  premature `backend_opengl_submit 1` claim while native present/FPS/WebKit
+  gates remain open. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779676616-3128276`, including
+  `hyperv_opengl_submit_gate_matrix ... backend_gate=closed status=PASS`.
 
 ### 5. Validation And Performance
 
