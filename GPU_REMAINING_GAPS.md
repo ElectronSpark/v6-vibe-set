@@ -278,9 +278,17 @@ Wayland, and Nouveau without claiming native Hyper-V present prematurely.
     of requiring the source point to be signaled first. The pure-C DRM matrix
     now requires `syncobj_pending_transfer_matrix` plus transfer wakeup
     provenance, with no native-present or OpenGL-submit credit.
-- [ ] Replace the global-lock approximation with Linux-shaped `dma_resv` and
+- [x] Replace the global-lock approximation with Linux-shaped `dma_resv` and
   ww-mutex rules throughout TTM validation, eviction, migration, PRIME export,
   KMS prepare/cleanup, and teardown.
+  The TTM reservation path now has a `ww_acquire_ctx`-shaped validation lane
+  for ordered two-object reservation, reversed-order retry/backoff, balanced
+  release, and multi-object accounting while retaining the existing shared and
+  exclusive fence propagation used by PRIME/dma-buf, KMS pin/unpin, syncobj,
+  sync-file, eviction, and teardown. The focused Hyper-V core validator passed
+  on 2026-05-24 with `validation_run_id=core-1779668794-2747803`, including
+  `ttm_dma_resv_ww_mutex_matrix ... max_acquired=2
+  validate_failures_delta=0 native_accel_credit_delta=0 status=PASS`.
 - [ ] Implement real KMS atomic `IN_FENCE_FD` and `OUT_FENCE_PTR` behavior with
   display-correlated completion, not immediate software completion.
   - [x] Keep the current atomic OUT_FENCE provenance honest: software scanout

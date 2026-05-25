@@ -452,6 +452,12 @@ but do not treat them as open plan items by default.
     `fb_gpu_fence` backing object to GEM/PRIME/dma-buf, KMS OUT_FENCE,
     syncobj/sync-file, poll callback removal, and final release without
     native-present/OpenGL-submit credit;
+  - the broad dma-resv row is closed only when `ttmtest` and
+    `gpucorevalidate` require `ttm_dma_resv_ww_mutex_matrix`: a
+    `ww_acquire_ctx`-shaped reservation context, ordered multi-object acquire,
+    reversed-order retry/backoff, balanced releases, and zero
+    native-accel/OpenGL-submit credit across the existing TTM, PRIME/dma-buf,
+    KMS, syncobj, sync-file, eviction, and teardown attach points;
   - native KMS OUT_FENCE and display-correlated vblank/page-flip completion are
     separate gates; passing the vblank/page-flip source matrix does not close
     the OUT_FENCE gate.
