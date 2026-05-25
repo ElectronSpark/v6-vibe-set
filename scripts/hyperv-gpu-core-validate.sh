@@ -634,6 +634,10 @@ require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_
     "DXG resource scanout-bind host ABI absence matrix"
 require_log 'dxg_scanout_bind_skeleton_matrix .*attempts=[1-9][0-9]* .*rejects=[1-9][0-9]* .*successes=0 .*weak_evidence_rejects=[1-9][0-9]* .*present_id=0 completed=0 .*source_generation=[1-9][0-9]* .*resource_generation=[1-9][0-9]* .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "DXG scanout-bind skeleton rejects weak evidence without native-present credit"
+require_log 'dxg_scanout_bind_candidate_command_matrix .*presenthistory_cmd=34 .*redirected_flip_fence_cmd=35 .*blt_cmd=38 .*cmds_known=3 .*sender_contracts=0 .*completion_contracts=0 .*custom_host_tool=0 .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "WSL present-history candidate command IDs remain known but unusable without a scanout-bind contract"
+require_log 'dxg_scanout_bind_weak_evidence_matrix .*d3dkmt_handles_only=[1-9][0-9]* .*same_adapter_resource_only=[1-9][0-9]* .*syncfile_only=[1-9][0-9]* .*weak_evidence_rejects=[1-9][0-9]* .*successes=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "weak D3DKMT/resource/sync evidence is rejected without native-present credit"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
 require_log 'd3d12_present_resource_fd_typed_admission_matrix .*typed_resource_fd=PASS .*sealed_before_admit=PASS .*shared_records_valid=PASS .*allocation_match=PASS .*generation_from_shared=PASS .*invalid_fd_rejected=PASS .*stale_source_cleanup=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \

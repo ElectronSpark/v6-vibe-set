@@ -180,6 +180,19 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   counters are allowed to show attempts, rejects, weak-evidence rejects, and
   source/resource generations only; successes, present IDs, completed IDs,
   native-present credit, and OpenGL-submit credit must stay zero.
+- Keep WSL present-history command IDs separate from native-present proof.
+  `PRESENTHISTORYTOKEN`, redirected flip fence, and BLT enum values are known
+  candidate command IDs, but without source-backed sender, packet, return, and
+  completion contracts they remain rejected diagnostics only. Validators should
+  keep `dxg_scanout_bind_candidate_command_matrix` and
+  `dxg_scanout_bind_weak_evidence_matrix` green with zero native-present and
+  OpenGL-submit credit.
+- Treat visible FPS as app-loop evidence unless it is tied to native D3D12
+  completion for the same run/resource/generation. `wlcomp` should emit
+  `d3d12_wayland_present_fps_provenance_matrix`, and `mesawlegl` should emit
+  `mesawlegl_fps_present_credit_matrix`; on the fail-closed Hyper-V path these
+  rows must report effective presented FPS as zero and ignore the displayed
+  overlay FPS.
 - The selected native-present handoff lane is GPU-P/DDA
   `dxg-resource-scanout-bind`, not WSLg display channel emulation and not a
   synthvid GPA-dirty bridge. `fbstat` should report

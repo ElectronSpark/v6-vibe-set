@@ -539,6 +539,14 @@ non-readback display handoff.
   CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
   `validation_run_id=core-1779708956-589366`.
+- [x] Keep WSL present-history style command IDs as explicit rejected
+  candidates until a source-backed sender and completion contract exists.
+  The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
+  and `dxg_scanout_bind_weak_evidence_matrix`: WSL enum IDs 34/35/38 are
+  known, but sender/completion contracts remain zero, D3DKMT handle readiness,
+  same-adapter resources, sync-file acquire, and synthvid GPA-dirty evidence
+  are rejected as weak evidence, and native-present/OpenGL-submit credit stays
+  zero.
 - [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
   before adding any native display-bind behavior. The Hyper-V DXG VMBus
   standard-allocation command now carries the same shared-primary, shadow,
@@ -732,6 +740,13 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   D3D12 run id, client pid, nonzero present/completion counters, and native
   requirements; the validator emits `fps_overlay_inflation_rejection_matrix`
   and rejects those context-only samples before any FPS pass.
+- [x] Add a present/FPS provenance skeleton so visible demo FPS is explicitly
+  zero-credit unless it is backed by current-run native D3D12 display
+  completions. `wlcomp` now emits
+  `d3d12_wayland_present_fps_provenance_matrix`, and `mesawlegl` emits
+  `mesawlegl_fps_present_credit_matrix` with
+  `effective_presented_fps=0.000`, `visible_fps_ignored=1`, and
+  `native_present_credit=0` on the current fail-closed Hyper-V path.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

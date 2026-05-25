@@ -571,6 +571,12 @@ but do not treat them as open plan items by default.
   `mesawlegl_fps_context_only_matrix` and
   `fps_overlay_inflation_rejection_matrix` are rejection evidence, not pass
   evidence for the 60 FPS gate.
+- Use the present/FPS provenance rows to keep the GUI gate honest:
+  `wlcomp` emits `d3d12_wayland_present_fps_provenance_matrix`, and
+  `mesawlegl` emits `mesawlegl_fps_present_credit_matrix`. On fail-closed
+  Hyper-V these must show `effective_presented_fps=0.000`,
+  `visible_fps_ignored=1`, and zero native-present/OpenGL-submit credit even
+  if the overlay prints a higher number.
 - Passing FPS evidence must include the exact geometry contract:
   `window=640x480 render=640x480 render_div=1`. WebKit's GPU validator should
   reject prior FPS artifacts that lack that full-resolution token.
