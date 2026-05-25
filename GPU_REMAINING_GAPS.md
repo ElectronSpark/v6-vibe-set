@@ -694,6 +694,23 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
   `validation_run_id=core-1779681659-3341588`.
+- [x] Pin WSL-style display-bind source lifetime at registration time.
+  `fb_dxg_present.c` now pins the owning `/dev/dxg` fd and typed
+  `anon_inode:dxgresource` fd for every verified source before a future
+  sleepable display-bind provider can drop framebuffer locks. The pin snapshot
+  records resource generation, process generation, process refs, sealed
+  shared-resource metadata, and balanced unpin cleanup on source unregister or
+  owner close. The intentionally unverified `resource_fd=-1` negative lane
+  still registers and fails closed at commit with
+  `RESOURCE_FD_UNVERIFIED`, so validator evidence continues to prove the
+  correct rejection point. Evidence: `d3d12_display_bind_pin_lifetime_matrix`
+  passed with `pin_attempts=2`, `pin_successes=2`, `pin_failures=0`,
+  `unpins=2`, pinned dxg/resource fd evidence, nonzero process/resource
+  generations, and zero native-present/OpenGL-submit credit in
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
+  `validation_run_id=core-1779731829-1780191`.
 - [x] Add a WSL-style sync-file acquire pre-open guard for the present-source
   path: export a monitored fence to a sync-file fd, reopen it to a D3DKMT sync
   object before present admission, reject wrong fd kinds, preserve fence value

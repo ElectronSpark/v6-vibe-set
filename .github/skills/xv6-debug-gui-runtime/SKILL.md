@@ -351,6 +351,10 @@ but do not treat them as open plan items by default.
   `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` skeleton that ties native handoff to
   a registered source, source/resource generations, required metadata, selected
   GPU-P/DDA lane, and display-completion source.
+  Verified sources pin their owning `/dev/dxg` fd plus typed
+  `anon_inode:dxgresource` fd at registration time, then unpin on source
+  unregister/owner close so future sleepable display-bind submissions cannot
+  race fd close/reuse or process/resource lifetime.
   The selected lane is GPU-P/DDA `dxg-resource-scanout-bind`, with WSLg display
   channel unavailable, synthvid limited to GPA-dirty VRAM, no custom host tool,
   and `dxg_present_lane_selection_matrix` as the fbstat evidence row.
@@ -485,6 +489,11 @@ but do not treat them as open plan items by default.
   bind-contract resource generation comes from the sealed resource generation,
   stale source cleanup works, and native-present/OpenGL-submit credit stays
   zero.
+- `d3d12_display_bind_pin_lifetime_matrix` is the WSL-style lifetime guard
+  for the future sleepable display-bind provider. It should prove verified
+  sources pin both the `/dev/dxg` owner fd and typed resource fd, carry nonzero
+  resource/process generations and process refs, balance unpins after source
+  cleanup, and keep native-present/OpenGL-submit credit at zero.
 - `d3d12_present_syncfile_preopen_matrix` is the acquire-fence bridge guard
   before native present. It should prove a monitored fence can be exported as
   a WSL-style sync-file fd, reopened into a D3DKMT sync object, used for
