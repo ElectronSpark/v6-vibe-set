@@ -632,6 +632,8 @@ require_log 'present_source_failclosed_matrix .*bind_contract_rc=-[0-9]+ .*hyper
     "present-source fail-closed no-credit validator"
 require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_scanout_bind .*custom_host_tool=0 .*wsl_dxg_display_bind_ioctl=0 .*synthvid_vram_bridge=gpa_dirty_only .*dxg_resource_fd=PASS .*d3dkmt_handles=PASS .*same_adapter_luid=PASS .*missing_host_abi=1 .*transport_present=0 .*display_target_kind=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "DXG resource scanout-bind host ABI absence matrix"
+require_log 'dxg_scanout_bind_skeleton_matrix .*attempts=[1-9][0-9]* .*rejects=[1-9][0-9]* .*successes=0 .*weak_evidence_rejects=[1-9][0-9]* .*present_id=0 completed=0 .*source_generation=[1-9][0-9]* .*resource_generation=[1-9][0-9]* .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DXG scanout-bind skeleton rejects weak evidence without native-present credit"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
 require_log 'd3d12_present_resource_fd_typed_admission_matrix .*typed_resource_fd=PASS .*sealed_before_admit=PASS .*shared_records_valid=PASS .*allocation_match=PASS .*generation_from_shared=PASS .*invalid_fd_rejected=PASS .*stale_source_cleanup=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \

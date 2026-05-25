@@ -526,6 +526,19 @@ non-readback display handoff.
   CORE_C_SECTIONS='preflight present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
   `validation_run_id=core-1779675508-3085051`.
+- [x] Add a first-class scanout-bind skeleton beneath the selected lane rather
+  than treating the missing transport as only a bind-contract query result.
+  The kernel now records `dxg_scanout_bind_*` attempts, rejects,
+  weak-evidence rejects, completion polls, last source/resource generation,
+  present id, completion id, dirty sequence, and dirty-rect count. `fbstat`,
+  `dxgprobe`, `gpucorevalidate`, and the focused runner require
+  `dxg_scanout_bind_skeleton_matrix` so D3DKMT handle readiness, shared-resource
+  metadata, query calls, or callback-only evidence cannot accidentally earn
+  native-present or OpenGL-submit credit before a real GPU-P/DDA display-bind
+  transport exists. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
+  CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+  `validation_run_id=core-1779708956-589366`.
 - [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
   before adding any native display-bind behavior. The Hyper-V DXG VMBus
   standard-allocation command now carries the same shared-primary, shadow,
