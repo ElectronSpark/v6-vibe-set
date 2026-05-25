@@ -140,6 +140,10 @@ but do not treat them as open plan items by default.
   dirty rectangles, Linux Hyper-V DRM shadow blits, and a separate DDA/Nouveau
   PCI display path are all zero-credit until one of them proves a real D3D12
   resource-to-display completion path.
+- Keep the WSL present-history distinction kernel-owned: VMBus command enum
+  IDs are not Linux ioctls, and the stats row must report no sender,
+  resource-bind, or display-completion contract before any native-present
+  credit can be considered.
 - When planning the remaining native-present work, keep the chunks ordered:
   host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split
