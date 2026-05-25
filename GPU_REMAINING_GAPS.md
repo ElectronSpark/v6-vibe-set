@@ -637,6 +637,15 @@ non-readback display handoff.
   documented non-custom GPU-P/DDA display-bind packet. This keeps later work
   focused on replacing the provider backend instead of inferring credit from
   D3DKMT handles, sync-files, or synthvid dirty rectangles.
+- [x] Split the display-bind provider call away from the framebuffer lock and
+  revalidate the source/resource generation before recording a result.
+  The selected bind provider now receives a source snapshot, runs outside
+  `fb_state.lock`, then reacquires the lock and accepts the result only if the
+  present source handle, source generation, and resource generation still match.
+  `fbstat`, `dxgprobe`, and `gpucorevalidate` expose
+  `provider_submits`, `lock_dropped_submits`, `revalidate_attempts`,
+  `revalidate_successes`, and `revalidate_failures`, keeping the future
+  sleepable GPU-P/DDA sender WSL-style without granting native-present credit.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
