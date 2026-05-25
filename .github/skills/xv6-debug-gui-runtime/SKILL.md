@@ -289,6 +289,15 @@ but do not treat them as open plan items by default.
   proof that framebuffer blit, CPU map/readback, DRI software present,
   copy-export fallback, and callback-only/release-only paths cannot satisfy
   this native-present contract while the real display-bind lane is missing.
+  `d3d12_shared_resource_fd_lifetime_matrix`,
+  `d3d12_present_source_admission_matrix`,
+  `d3d12_acquire_fence_lifetime_matrix`, and
+  `d3d12_present_bind_contract_failclosed_matrix` are the current pure-C
+  fail-closed D3D12 resource/fence/present-source validators. They prove fd
+  lifetime, same-adapter admission, D3DKMT metadata, monitored-fence acquire
+  metadata, stale/foreign source rejection, software-path rejection, cleanup
+  balance, and zero native-present/OpenGL-submit credit; they do not prove
+  native display completion.
 - `kernel/dev/fb/fb_fd_sync.c`: exported BO/fence/sync fd file operations,
   poll, close, and callback lifecycle.
 - `kernel/dev/fb/fb_device_ioctl.c`: `/dev/fb0` and `/dev/gpu0` ownership,

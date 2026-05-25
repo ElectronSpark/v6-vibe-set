@@ -462,9 +462,23 @@ non-readback display handoff.
 
 Goal: accept only current-run, source-correlated, finite validation evidence.
 
-- [ ] Add or finish pure-C D3D12 shared-resource validators for export, query,
-  open, sync/fence export, acquire, present-source admission, native
-  completion, close-before-signal, stale fd rejection, and cleanup balance.
+- [x] Add source-contained pure-C D3D12 shared-resource validators for the
+  current fail-closed present-source contract. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779672997-2972287`, including
+  `d3d12_shared_resource_fd_lifetime_matrix`,
+  `d3d12_present_source_admission_matrix`,
+  `d3d12_acquire_fence_lifetime_matrix`, and
+  `d3d12_present_bind_contract_failclosed_matrix`. These prove live fd
+  registration, invalid/unverified/stale fd rejection, same-adapter admission,
+  D3DKMT handle metadata, monitored-fence acquire metadata, owner cleanup, and
+  zero native-present/OpenGL-submit credit.
+- [ ] Add native D3D12 completion validators once the real display-bind lane
+  exists: nonzero present ids, completion counters, close-before-signal
+  cancellation, frame callback/release ordering, and cleanup balance after
+  native completion.
 - [ ] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
 - [x] Build and validate completed sections with `/tmp/xv6-hyperv-build` and
