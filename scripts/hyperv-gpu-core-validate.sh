@@ -264,6 +264,22 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "GPU-P-only Nouveau IRQ provenance matrix"
     require_log 'nouveau_pci_remove_pm_matrix .*accepts=0 .*remove_calls=0 .*runtime_resume_attempts=0 .*runtime_resume_successes=0 .*runtime_barriers=0 .*runtime_resume_before_remove=NOT_APPLICABLE .*remove_while_suspended=0 .*hot_remove_events=0 .*removed=0 .*bar_iounmaps=0 .*irq_unregisters=0 .*irq_vectors_freed=0 .*bus_master_clears=0 .*device_disables=0 .*drvdata_cleared=0 .*teardown=GPU_P_FAIL_CLOSED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau remove/PM provenance matrix"
+    require_log 'nouveau_display_kms_registration_matrix .*accepts=0 .*kms_registered=0 .*native_display_ready=0 .*dda_native_display_present=0 .*registration_source=GPU_P_FAIL_CLOSED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau KMS registration remains absent"
+    require_log 'nouveau_kms_vblank_irq_source_matrix .*nouveau_vblank_supported=0 .*nouveau_vblank_irqs=0 .*nouveau_irq_claimed=0 .*flip_completions=0 .*irq_source=not_nouveau .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau vblank IRQ source remains absent"
+    require_log 'nouveau_primary_plane_modifier_failclosed_matrix .*nonlinear_modifiers=0 .*nouveau_hw_scanout=0 .*native_display_ready=0 .*modifier_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau primary-plane modifiers stay fail-closed"
+    require_log 'kms_scanout_cpu_convert_separation_matrix .*kms_present_nouveau_hw=0 .*cpu_convert_native_present=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "CPU-converted/generic scanout stays separate from native present"
+    require_log 'kms_gem_fb_plane_ref_matrix .*plane_ref_fields=bounded .*existing_kernel_fields=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "KMS GEM framebuffer plane refs remain diagnostic"
+    require_log 'kms_atomic_plane_state_matrix .*plane_state_native_present=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "KMS atomic plane state remains zero native-present credit"
+    require_log 'kms_atomic_prepare_cleanup_fb_matrix .*fb_prepare_cleanup_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "KMS atomic prepare/cleanup framebuffer lifecycle remains zero-credit"
+    require_log 'kms_page_flip_feature_gate_matrix .*target_gate=closed .*async_gate=closed .*page_flip_native_present_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "KMS page-flip feature gates stay closed without native display"
 }
 
 log_metadata() {
@@ -521,6 +537,8 @@ require_log 'kms_primary_scanout_actual_format_matrix .*xrgb8888_present=PASS .*
     "KMS primary actual scanout format matrix"
 require_log 'kms_present_completion_failclosed_matrix .*unsupported_format=NV12 .*obj_setproperty_nv12_rejected=PASS .*obj_setproperty_state_unchanged=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "KMS NV12 fail-closed direct property matrix"
+require_log 'ttm_real_move_backend_matrix .*real_move_backend=cpu_copy .*hw_backend=fail_closed .*native_accel_credit.*=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "TTM real move backend remains CPU-copy/fail-closed without native acceleration"
 require_log 'drmprimeprobe: ok' "DRM PRIME validator"
 require_log 'shared_admission_negative_matrix .*wrong_kind_fd_unchanged=1 .*foreign_process_device_status=0 .*stale_fd_unchanged=1 .*owner_allocation_present=1 .*failed_admission_no_fd_publish=1 .*failed_partial_record_absent=1 .*failed_partial_record_reusable=0 .*status=PASS' \
     "shared-resource local admission negative validator"
@@ -648,6 +666,8 @@ require_log 'dxg_native_present_lane_rejection_matrix .*wsl_presenthistory_enum_
     "native-present lane rejection matrix keeps WSL enum, synthvid shadow blit, and DDA/Nouveau separation honest"
 require_log 'dxg_scanout_bind_weak_evidence_matrix .*d3dkmt_handles_only=[1-9][0-9]* .*same_adapter_resource_only=[1-9][0-9]* .*syncfile_only=[1-9][0-9]* .*weak_evidence_rejects=[1-9][0-9]* .*successes=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "weak D3DKMT/resource/sync evidence is rejected without native-present credit"
+require_log 'dxg_syncfile_not_kms_completion_matrix .*scanout_successes=0 .*completion_successes=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DXG sync-file evidence remains admission-only, not KMS completion"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
 require_log 'd3d12_present_resource_fd_typed_admission_matrix .*typed_resource_fd=PASS .*sealed_before_admit=PASS .*shared_records_valid=PASS .*allocation_match=PASS .*generation_from_shared=PASS .*invalid_fd_rejected=PASS .*stale_source_cleanup=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
@@ -665,6 +685,10 @@ require_log 'gpubuftest: render fd ownership verified' "render-fd ownership vali
 require_log 'nouveauabitest: .*ok' "Nouveau ABI validator"
 require_log 'nouveau_mesa_smoke_gate_matrix .*synthetic_gpup_rejected=PASS .*mesa_nvif_enabled=0 .*status=PASS' \
     "Nouveau Mesa smoke gate"
+require_log 'nouveau_gem_mmap_backing_matrix .*mmap_backing=absent .*mmap_successes=0 .*backing_source=none .*linux_mmap_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "Nouveau GEM mmap backing remains fail-closed without DDA/TTM backing"
+require_log 'nouveau_gpuvm_mapping_failclosed_matrix .*mapping_successes=0 .*mapping_backend=fail_closed .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "Nouveau GPUVM mapping remains fail-closed without native engine"
 require_log 'gpu_diagnostics_separation_matrix .*generic_scanout=drm-kms-fb .*d3d12_present=dxg-present .*webkit_policy=separate .*ioctl_trace_label=fb-gpu-trace .*generic_scanout_native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "generic DRM/KMS diagnostics stay separate from D3D12/WebKit gates"
 require_log 'kms_vblank_native_present_separation_matrix .*display_completion_is_native_present=0 .*page_flip_native_present_credit=0 .*vblank_native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
