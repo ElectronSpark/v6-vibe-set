@@ -46,6 +46,7 @@ static volatile uint64_t last_map_fence;
 static volatile uint64_t last_make_fence;
 static int trace_submit_only;
 static int trace_compact;
+static uint32_t trace_head_limit;
 
 static uintptr_t trace_fault_pc(void *ctx)
 {
@@ -158,7 +159,8 @@ static uint32_t trace_bits32(const void *ptr)
 static void trace_dump_head(const char *name, uint64 ptr, uint32 size)
 {
     const unsigned char *p = (const unsigned char *)(uintptr_t)ptr;
-    uint32 n = size < 64 ? size : 64;
+    uint32 limit = trace_head_limit != 0 ? trace_head_limit : 64;
+    uint32 n = size < limit ? size : limit;
 
     if (ptr == 0 || size == 0 || in_trace || trace_compact)
         return;
@@ -578,9 +580,17 @@ __attribute__((constructor))
 static void trace_loaded(void)
 {
     struct sigaction sa;
+    const char *head_limit_env;
 
     trace_submit_only = getenv("XV6_DXG_TRACE_SUBMIT_ONLY") != NULL;
     trace_compact = getenv("XV6_DXG_TRACE_COMPACT") != NULL;
+    head_limit_env = getenv("XV6_DXG_TRACE_HEAD_BYTES");
+    if (head_limit_env != NULL && head_limit_env[0] != '\0') {
+        unsigned long value = strtoul(head_limit_env, NULL, 0);
+
+        if (value > 0 && value <= 65536)
+            trace_head_limit = (uint32_t)value;
+    }
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = trace_signal_handler;
     sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
