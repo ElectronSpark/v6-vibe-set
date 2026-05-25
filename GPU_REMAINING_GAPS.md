@@ -397,12 +397,18 @@ non-readback display handoff.
   while remaining fail-closed. Build evidence:
   `cmake --build /tmp/xv6-hyperv-build --target kernel user -j2` passed on
   2026-05-24.
-- [ ] Validate the bind-contract skeleton in the guest pure-C path:
+- [x] Validate the bind-contract skeleton in the guest pure-C path:
   `dxgprobe --present-source-failclosed` must prove the contract is tied to the
   registered source, returns no present id/completion, reports display
   completion as required, rejects stale or foreign source handles, and grants no
   native-present/OpenGL-submit credit. The focused runner now includes this as
   the `dxg-present-source` step in `scripts/hyperv-gpu-core-validate.sh`.
+  Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=whole-section
+  CORE_C_SECTIONS='preflight drm dxg-share dxg-sync present-source buffers
+  final' scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
+  `validation_run_id=core-1779667968-2704585`, including
+  `present_bind_contract_skeleton_matrix`, stale/foreign source rejection,
+  wait-sync metadata rejection, and zero native-present/OpenGL-submit credit.
 - [ ] Replace the fail-closed bind-contract skeleton with the selected real
   display-bindable resource plus completion source, instead of letting FB code
   infer native-present capability from raw `/dev/dxg` status fields.
@@ -421,8 +427,13 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   completion, close-before-signal, stale fd rejection, and cleanup balance.
 - [ ] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
-- [ ] Build and validate completed sections with `/tmp/xv6-hyperv-build` and
+- [x] Build and validate completed sections with `/tmp/xv6-hyperv-build` and
   focused 6-vCPU Hyper-V images before marking section items done.
+  Evidence: the focused Hyper-V core validator rebuilt kernel/rootfs, deployed
+  a 6-vCPU image, and passed `preflight`, `drm`, `dxg-share`, `dxg-sync`,
+  `present-source`, `buffers`, and `final` pure-C sections on 2026-05-24
+  (`validation_run_id=core-1779667968-2704585`). Native-present, FPS, and
+  WebKit artifacts remain separate unchecked gates.
 - [ ] Make the finite 480p desktop 3D validator pass only on native D3D12
   presented frames after warmup.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
