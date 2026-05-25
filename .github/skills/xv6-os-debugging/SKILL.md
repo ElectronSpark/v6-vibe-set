@@ -174,6 +174,12 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   source/resource generations, required metadata, selected bind lane, and
   display-completion source as the handoff contract; do not infer native
   present from loose D3DKMT handles or `/dev/dxg` readiness alone.
+- Keep native-present admission split into explicit stages: source admission,
+  GPU-side composite/copy, scanout-bind attempt, and display completion. Until
+  a real GPU-P/DDA host display-bind transport exists, `dxg_scanout_bind_*`
+  counters are allowed to show attempts, rejects, weak-evidence rejects, and
+  source/resource generations only; successes, present IDs, completed IDs,
+  native-present credit, and OpenGL-submit credit must stay zero.
 - The selected native-present handoff lane is GPU-P/DDA
   `dxg-resource-scanout-bind`, not WSLg display channel emulation and not a
   synthvid GPA-dirty bridge. `fbstat` should report
