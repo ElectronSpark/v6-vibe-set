@@ -174,6 +174,19 @@ interaction_line = (
     "native_present_credit=0 opengl_submit_credit=0 gate=closed status=PASS"
 )
 print(interaction_line)
+generation_line = (
+    "hyperv-3d-fps-validate: fps_stale_frozen_content_generation_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    "stale_run_rejected=PASS frozen_content_rejected=PASS "
+    "title_only_fps_rejected=PASS content_crc_changes=0 "
+    "content_frame_delta=0 native_completion_ids=0 "
+    "same_run_resource_generation_completion=MISSING "
+    "requires_native_present_completion_id_advance=1 "
+    "requires_same_run=1 requires_same_resource_generation=1 "
+    "native_present_credit=0 opengl_submit_credit=0 "
+    "gate=closed status=PASS"
+)
+print(generation_line)
 native_gate_line = (
     "hyperv-3d-fps-validate: fps_native_present_gate_skeleton_matrix "
     f"validation_run_id={run_id} mode={mode} "
@@ -203,6 +216,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(credit_line + "\n")
     out.write(content_line + "\n")
     out.write(interaction_line + "\n")
+    out.write(generation_line + "\n")
     out.write(native_gate_line + "\n")
     out.write(visible_preflight_line + "\n")
 PY
@@ -423,6 +437,8 @@ d3d12_resources = []
 d3d12_buffer_generations = []
 d3d12_present_ids = []
 d3d12_present_completed = []
+d3d12_native_completion_ids = []
+d3d12_resource_generations = []
 d3d12_gpup_dda_commit_successes = []
 d3d12_same_frame_callback_releases = []
 d3d12_same_frame_callbacks = []
@@ -459,6 +475,8 @@ visual_resources = []
 visual_buffer_generations = []
 visual_present_ids = []
 visual_present_completed = []
+visual_native_completion_ids = []
+visual_resource_generations = []
 visual_gpup_dda_commit_successes = []
 visual_same_frame_callback_releases = []
 visual_same_frame_callbacks = []
@@ -537,6 +555,16 @@ content_frame_keys = (
     "d3d12_present_content_changes",
     "d3d12_visible_content_frame",
     "d3d12_visible_content_frames",
+)
+native_completion_id_keys = (
+    "d3d12_native_present_completion_id",
+    "d3d12_context_native_present_completion_id",
+    "native_present_completion_id",
+)
+resource_generation_keys = (
+    "d3d12_resource_generation_counter",
+    "d3d12_buffer_generation",
+    "buffer_generation",
 )
 demo_visible_keys = (
     "d3d12_demo_visible",
@@ -628,6 +656,25 @@ def native_content_progress_complete(states, visible_states, requires,
         all_ones(visible_credit)
     )
 
+def same_run_resource_generation_completion_progress(run_ids, resources,
+                                                     generations,
+                                                     completion_ids):
+    if not run_ids or any(value != expected_run_id for value in run_ids):
+        return False
+    count = min(len(resources), len(generations), len(completion_ids))
+    if count < 2:
+        return False
+    seen = {}
+    for resource, generation, completion_id in zip(
+            resources[-count:], generations[-count:], completion_ids[-count:]):
+        if resource == 0 or generation == 0 or completion_id == 0:
+            continue
+        key = (resource, generation)
+        if key in seen and completion_id > seen[key]:
+            return True
+        seen[key] = max(seen.get(key, 0), completion_id)
+    return False
+
 def log_fps_gate_skeleton(stage, outside_overlay_values):
     native_delta = counter_delta(d3d12_present_counts)
     present_id_delta = counter_delta(d3d12_present_ids)
@@ -651,11 +698,20 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         d3d12_content_native_complete,
         d3d12_content_visible_credit,
     )
+    same_generation_completion_ok = (
+        same_run_resource_generation_completion_progress(
+            d3d12_run_ids,
+            d3d12_resources,
+            d3d12_resource_generations,
+            d3d12_native_completion_ids,
+        )
+    )
     content_progress_ok = (
         content_crc_changes > 0 and
         content_frame_delta is not None and content_frame_delta > 0 and
         outside_overlay_changes > 0 and
-        content_contract_ok
+        content_contract_ok and
+        same_generation_completion_ok
     )
     demo_interaction_ok = (
         all_ones(demo_visible_evidence) and
@@ -684,6 +740,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         f"native_present_delta={format_optional(native_delta)} "
         f"present_id_delta={format_optional(present_id_delta)} "
         f"completed_delta={format_optional(completed_delta)} "
+        f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
         f"backend_opengl_submit={backend_opengl_submit} "
         f"native_present_credit={1 if gate_open else 0} "
         f"opengl_submit_credit={backend_opengl_submit if gate_open else 0} "
@@ -701,6 +758,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         f"interaction_native_present={pass_missing(all_ones(demo_interaction_native_complete))} "
         f"interaction_content_progress={pass_missing(all_ones(demo_interaction_content_progress))} "
         f"content_progress_contract={pass_missing(content_contract_ok)} "
+        f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
         f"interaction_present_id={demo_interaction_present_ids[-1] if demo_interaction_present_ids else 0} "
         f"interaction_completed={demo_interaction_completed[-1] if demo_interaction_completed else 0} "
         "requires_visible_demo=1 requires_closeable_demo=1 "
@@ -721,12 +779,27 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         "no_native_present_rejected=PASS "
         f"content_crc_progress={pass_missing(content_crc_changes > 0)} "
         f"content_progress_contract={pass_missing(content_contract_ok)} "
+        f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
         f"outside_overlay_crc_changes={outside_overlay_changes} "
         f"content_crc_changes={content_crc_changes} "
         f"content_frame_delta={format_optional(content_frame_delta)} "
         f"native_present_delta={format_optional(native_delta)} "
         "requires_native_present_completion=1 "
         "requires_content_progress=1 "
+        f"gate={'open' if gate_open else 'closed'} status=PASS"
+    )
+    log_validation(
+        "fps_stale_frozen_content_generation_matrix "
+        f"validation_run_id={expected_run_id} stage={stage} "
+        "stale_run_rejected=PASS frozen_content_rejected=PASS "
+        "title_only_fps_rejected=PASS "
+        f"content_crc_changes={content_crc_changes} "
+        f"content_frame_delta={format_optional(content_frame_delta)} "
+        f"native_completion_ids={len(d3d12_native_completion_ids)} "
+        f"same_run_resource_generation_completion={pass_missing(same_generation_completion_ok)} "
+        "requires_native_present_completion_id_advance=1 "
+        "requires_same_run=1 requires_same_resource_generation=1 "
+        "native_present_credit=0 opengl_submit_credit=0 "
         f"gate={'open' if gate_open else 'closed'} status=PASS"
     )
 
@@ -1076,6 +1149,12 @@ for line in log.splitlines():
         completed = re.search(r"\bcompleted=([0-9]+)", line)
         if completed:
             visual_present_completed.append(int(completed.group(1)))
+        native_completion_id = counter_value(line, native_completion_id_keys)
+        if native_completion_id is not None:
+            visual_native_completion_ids.append(native_completion_id)
+        resource_generation = counter_value(line, resource_generation_keys)
+        if resource_generation is not None:
+            visual_resource_generations.append(resource_generation)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             visual_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -1183,6 +1262,12 @@ for line in log.splitlines():
         completed = re.search(r"\bcompleted=([0-9]+)", line)
         if completed:
             d3d12_present_completed.append(int(completed.group(1)))
+        native_completion_id = counter_value(line, native_completion_id_keys)
+        if native_completion_id is not None:
+            d3d12_native_completion_ids.append(native_completion_id)
+        resource_generation = counter_value(line, resource_generation_keys)
+        if resource_generation is not None:
+            d3d12_resource_generations.append(resource_generation)
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             d3d12_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -1996,6 +2081,25 @@ if not native_content_progress_complete(
         "native_present_credit=0 opengl_submit_credit=0 "
         "gate=closed status=FAIL_MISSING_EVIDENCE"
     )
+if not same_run_resource_generation_completion_progress(
+        d3d12_run_ids,
+        d3d12_resources,
+        d3d12_resource_generations,
+        d3d12_native_completion_ids):
+    fail_validation(
+        "fps_stale_frozen_content_generation_matrix "
+        f"validation_run_id={expected_run_id} stage=sample "
+        "stale_run_rejected=PASS frozen_content_rejected=PASS "
+        "title_only_fps_rejected=PASS "
+        f"content_crc_changes={sample_content_crc_changes} "
+        f"content_frame_delta={sample_content_frame_delta} "
+        f"native_completion_ids={len(d3d12_native_completion_ids)} "
+        "same_run_resource_generation_completion=MISSING "
+        "requires_native_present_completion_id_advance=1 "
+        "requires_same_run=1 requires_same_resource_generation=1 "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE"
+    )
 if sample_content_frame_delta < native_completed:
     raise SystemExit(
         "D3D12 visible/content frame counter lagged native present "
@@ -2664,6 +2768,25 @@ if not native_content_progress_complete(
         "content_progress_contract=MISSING "
         "requires_native_present_completion=1 requires_content_progress=1 "
         "visible_content_credit_before_native_present=0 "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE"
+    )
+if not same_run_resource_generation_completion_progress(
+        visual_run_ids,
+        visual_resources,
+        visual_resource_generations,
+        visual_native_completion_ids):
+    fail_validation(
+        "fps_stale_frozen_content_generation_matrix "
+        f"validation_run_id={expected_run_id} stage=visual-window "
+        "stale_run_rejected=PASS frozen_content_rejected=PASS "
+        "title_only_fps_rejected=PASS "
+        f"content_crc_changes={visual_content_crc_changes} "
+        f"content_frame_delta={visual_content_frame_delta} "
+        f"native_completion_ids={len(visual_native_completion_ids)} "
+        "same_run_resource_generation_completion=MISSING "
+        "requires_native_present_completion_id_advance=1 "
+        "requires_same_run=1 requires_same_resource_generation=1 "
         "native_present_credit=0 opengl_submit_credit=0 "
         "gate=closed status=FAIL_MISSING_EVIDENCE"
     )
