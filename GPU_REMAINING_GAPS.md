@@ -555,6 +555,11 @@ non-readback display handoff.
   completion. The current implementation must remain fail-closed until a
   documented GPU-P/DXG display-bind packet exists or the separate DDA/Nouveau
   native display path can provide equivalent non-readback completion.
+  `dxg_native_present_lane_rejection_matrix` now names each rejected lane
+  separately so future work cannot treat WSL present-history enum knowledge,
+  synthvid/GPA dirty rectangles, Linux Hyper-V DRM shadow blits, or a separate
+  DDA/Nouveau PCI path as D3D12 native-present credit without a real sender and
+  completion contract.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
@@ -671,13 +676,26 @@ non-readback display handoff.
   present. Build evidence:
   `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
   passed on 2026-05-24.
-- [ ] Implement GPU-side composite/copy/present from imported D3D12 resources
-  to the chosen display destination without CPU map/readback or DRI software
-  present.
-- [ ] Produce nonzero present ids and native completion counters for the same
-  submitted resource and generation.
-- [ ] Send frame callbacks and buffer releases only after native completion for
-  that same frame.
+- [ ] Replace the fail-closed bind-contract skeleton with a real selected
+  display-bind source. This is the unchecked root dependency for this section:
+  do not treat it as closed until a source-owned D3D12 resource/allocation,
+  adapter LUID, dimensions/format/modifier, and sync-file/fence target are
+  consumed by a GPU-P/DDA display-bind lane that returns display-correlated
+  completion.
+  Recommended disjoint chunks:
+  1. Host ABI discovery/proof: identify or add the narrow packet/protocol
+     boundary and keep the existing fail-closed matrix green while it is absent.
+  2. Kernel bind path: wire the source/admission record into a real
+     scanout-bind attempt, preserving source/resource generation, dirty metadata,
+     and zero-credit rejection counters on every failure path.
+  3. Compositor handoff: replace the current GPU-copy-only proof with a
+     display-bind submission path that still avoids CPU map/readback and DRI
+     software present.
+  4. Completion/lifetime: return nonzero present ids and completed ids for the
+     same submitted resource generation, then release buffers and send frame
+     callbacks only after that native completion.
+  5. Validators/credit: add the native completion validators and only then let
+     FPS, backend OpenGL-submit, and WebKit gates consume the evidence.
 - [x] Add per-client, per-resource, per-generation native-present counters so
   one client's progress cannot satisfy another client's validator.
   `wlcomp` records `d3d12_client_native_present_*`,
@@ -706,9 +724,6 @@ non-readback display handoff.
   `validation_run_id=core-1779667968-2704585`, including
   `present_bind_contract_skeleton_matrix`, stale/foreign source rejection,
   wait-sync metadata rejection, and zero native-present/OpenGL-submit credit.
-- [ ] Replace the fail-closed bind-contract skeleton with the selected real
-  display-bindable resource plus completion source, instead of letting FB code
-  infer native-present capability from raw `/dev/dxg` status fields.
 - [x] Prove framebuffer blit, CPU map/readback, DRI software present,
   copy-export fallback, and callback-only/release-only paths are rejected by
   the same validator. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build

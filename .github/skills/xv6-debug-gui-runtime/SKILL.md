@@ -135,6 +135,16 @@ but do not treat them as open plan items by default.
   is the root missing piece. Until it returns a nonzero present id and display
   completion for the same resource generation, callbacks/releases may be
   drained only as fail-closed lifecycle cleanup, not as native-present credit.
+- Keep the rejected native-present lanes explicit in validator output. WSL
+  present-history command IDs without sender/completion contracts, synthvid GPA
+  dirty rectangles, Linux Hyper-V DRM shadow blits, and a separate DDA/Nouveau
+  PCI display path are all zero-credit until one of them proves a real D3D12
+  resource-to-display completion path.
+- When planning the remaining native-present work, keep the chunks ordered:
+  host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
+  native completion/lifetime, then FPS/backend/WebKit credit. Do not split
+  those into independent pass claims; each later chunk depends on nonzero
+  display-correlated completion from the earlier source/resource generation.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
