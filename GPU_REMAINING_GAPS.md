@@ -649,11 +649,12 @@ non-readback display handoff.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
-  and `dxg_scanout_bind_weak_evidence_matrix`: WSL enum IDs 34/35/38 are
-  known, but sender/completion contracts remain zero, D3DKMT handle readiness,
-  same-adapter resources, sync-file acquire, and synthvid GPA-dirty evidence
-  are rejected as weak evidence, and native-present/OpenGL-submit credit stays
-  zero.
+  and `dxg_scanout_bind_weak_evidence_matrix`: WSL guest-to-host enum IDs
+  34/35/38 plus the host-to-VM `PROPAGATEPRESENTHISTORYTOKEN` completion
+  enum ID 1 are known, but sender/completion contracts remain zero. D3DKMT
+  handle readiness, same-adapter resources, sync-file acquire, and synthvid
+  GPA-dirty evidence are rejected as weak evidence, and native-present/
+  OpenGL-submit credit stays zero.
 - [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
   before adding any native display-bind behavior. The Hyper-V DXG VMBus
   standard-allocation command now carries the same shared-primary, shadow,

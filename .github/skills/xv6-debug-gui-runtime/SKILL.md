@@ -136,10 +136,11 @@ but do not treat them as open plan items by default.
   completion for the same resource generation, callbacks/releases may be
   drained only as fail-closed lifecycle cleanup, not as native-present credit.
 - Keep the rejected native-present lanes explicit in validator output. WSL
-  present-history command IDs without sender/completion contracts, synthvid GPA
-  dirty rectangles, Linux Hyper-V DRM shadow blits, and a separate DDA/Nouveau
-  PCI display path are all zero-credit until one of them proves a real D3D12
-  resource-to-display completion path.
+  present-history guest-to-host command IDs and the host-to-VM
+  `PROPAGATEPRESENTHISTORYTOKEN` completion enum are only candidates without
+  sender/completion contracts. Synthvid GPA dirty rectangles, Linux Hyper-V DRM
+  shadow blits, and a separate DDA/Nouveau PCI display path are also zero-credit
+  until one of them proves a real D3D12 resource-to-display completion path.
 - Keep the WSL present-history distinction kernel-owned: VMBus command enum
   IDs are not Linux ioctls, and the stats row must report no sender,
   resource-bind, or display-completion contract before any native-present
