@@ -353,6 +353,17 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   ownership, MSI/MSI-X setup, legacy IRQ fallback policy, interrupt delivery,
   resource claim/release, runtime PM suspend/resume usage, and remove-path
   validation.
+- [x] Add explicit GPU-P-only PCI/Nouveau runtime contract diagnostics.
+  `fbstat` and `gpucorevalidate` now emit
+  `nouveau_pci_runtime_contract_matrix`, which records DMA/coherent masks,
+  BAR claims, MSI/MSI-X setup, legacy IRQ fallback, IRQ handler/delivery,
+  runtime PM, remove-path state, and zero native-present/OpenGL-submit credit.
+  On GPU-P-only Hyper-V this row must pass with no fabricated BAR/DMA/IRQ
+  state; accepted DDA hardware remains diagnostic until real IRQ/runtime-PM and
+  native engine evidence exist. Validated on 2026-05-24 with
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`,
+  `validation_run_id=core-1779674606-3042655`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from

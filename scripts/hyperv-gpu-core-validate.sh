@@ -250,6 +250,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "DDA/Nouveau scanout bind path is not fabricated"
     require_log 'nouveau_gpup_failclosed_matrix .*accepts=0 .*backend_dda_nouveau=0 .*reject_reason=PASS .*no_fake_bar=PASS .*no_fake_dma=PASS .*no_fake_irq=PASS .*no_fake_getparam=PASS .*no_fake_present=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau fail-closed matrix"
+    require_log 'nouveau_pci_runtime_contract_matrix .*accepts=0 .*gpup_only=PASS .*dma_mask=NOT_CONFIGURED .*coherent_dma_mask=NOT_CONFIGURED .*bar_claim=NOT_ATTEMPTED .*irq_handler=ABSENT .*irq_delivery=ABSENT .*runtime_pm_usage=DEFERRED .*remove_path=DEFERRED .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+        "GPU-P-only Nouveau PCI runtime contract matrix"
 }
 
 log_metadata() {
