@@ -676,6 +676,20 @@ non-readback display handoff.
     returns explicit `no_host_abi`, `no_sender`, and `no_completion`
     diagnostics with zero present/completed ids and zero native-present or
     OpenGL-submit credit.
+  - [x] Add the future-success accept shape without enabling today's
+    fail-closed path. `fb_dxg_present.c` now accepts a provider result only
+    when the provider returns success, a real transport, scanout-bind
+    operation, host ABI present, sender present, display completion present,
+    revalidated pins, no negative provider diagnostics, matching
+    source/resource generations, a nonzero present id, completed >= present
+    id, and display completion source. The current
+    `hyperv_dxg_display_bind_submit()` implementation still returns zero ids
+    plus `no_host_abi`, `no_sender`, and `no_completion`, so Hyper-V receives
+    no native-present or OpenGL-submit credit. Evidence:
+    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+    CORE_C_SECTIONS='preflight present-source final'
+    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+    `validation_run_id=core-1779750432-2876003`.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
@@ -957,6 +971,15 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   and software-blit progress remain zero-credit unless the future D3D12
   display-bind completion path supplies nonzero source/resource-correlated
   present/completed ids.
+  The current pure-C validators additionally emit and require
+  `d3d12_display_bind_id_shape_matrix`,
+  `d3d12_provider_credit_gate_matrix`, and
+  `wsl_standard_alloc_not_display_bind_matrix`. These fail if display-bind ids
+  are forged/stale, if native/OpenGL credit appears while provider
+  `no_host_abi/no_sender/no_completion` diagnostics remain set, or if WSL
+  standard-allocation private metadata is treated as a scanout bind. Evidence:
+  focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
+  `validation_run_id=core-1779750432-2876003`.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace
@@ -996,7 +1019,14 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   progress must be `NATIVE_PRESENT_COMPLETE`, content progress must be
   compositor-owned, content present/completed ids must match the canonical DXG
   and display-bind ids, display-bind completion sources must all be native
-  display sources, and buffer/resource generations must match.
+  display sources, final handoff ids must match, and buffer/resource
+  generations must match. `wlcomp` now exports final-handoff resource
+  generation and content-progress current-run/identity fields, and
+  `hyperv-3d-fps-validate.sh` requires exact sample-window and visual-window
+  identity before accepting finite FPS. Lightweight anti-inflation selftest
+  evidence:
+  `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-identity
+  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
@@ -1192,6 +1222,11 @@ alone.
     present/completion/resource-generation evidence before opening the
     animated-content acceleration gate; title-only fixture liveness remains
     zero-credit.
+  - [x] Require final-handoff identity before any WebKit animated-content gate
+    can open. The WebKit validator now checks the exact current run id,
+    content/display-bind/final-handoff present ids, completed ids, and
+    resource generation before emitting an enabled gate; fail-closed Hyper-V
+    remains zero-credit.
 - [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
   updates, callbacks, releases, render-node presence, dmabuf request,
   environment variables, or software fallback.

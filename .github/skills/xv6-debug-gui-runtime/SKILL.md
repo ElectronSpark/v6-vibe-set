@@ -191,6 +191,18 @@ but do not treat them as open plan items by default.
   `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
   diagnostics. Do not replace those with credit until a documented GPU-P/DDA
   sender and display completion source exists.
+- A future provider-success result must pass the full source-local accept
+  shape before `fb_dxg_present.c` may copy out native ids: provider status
+  success, real transport, scanout-bind operation, host ABI present, sender
+  present, display completion present, revalidated pins, no negative provider
+  diagnostics, zero block reason, matching source/resource generations,
+  nonzero present id, completed >= present id, and display completion source.
+  The current fail-closed provider deliberately returns zero ids plus
+  no-host/no-sender/no-completion, so validators should keep
+  `d3d12_display_bind_id_shape_matrix`,
+  `d3d12_provider_credit_gate_matrix`, and
+  `wsl_standard_alloc_not_display_bind_matrix` green with zero native-present
+  and OpenGL-submit credit.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 - Treat the animated WebKit fixture as a liveness probe until the compositor
@@ -219,8 +231,11 @@ but do not treat them as open plan items by default.
   context and must not open FPS/WebKit gates.
 - FPS/WebKit consumers must also require exact identity between content
   progress, DXG present ids, display-bind ids, completion ids, and resource
-  generation. Generic KMS/vblank/OUT_FENCE/display-wait progress is not native
-  D3D12 completion and should be reported by an explicit zero-credit
+  generation. They must also require current-run content-progress identity
+  fields and final-handoff present/completed/resource-generation equality
+  before accepting FPS or WebKit acceleration evidence. Generic
+  KMS/vblank/OUT_FENCE/display-wait progress is not native D3D12 completion
+  and should be reported by an explicit zero-credit
   `d3d12_native_completion_not_kms_matrix`.
 - KMS/DRM remains a generic software-present compatibility path until a real
   DDA/Nouveau display engine exists. `gpu_kms_present_fb()` must try the
@@ -752,6 +767,8 @@ but do not treat them as open plan items by default.
   `d3d12_content_progress_*` scalar keys in `/tmp/wlcomp-d3d12-present`; on
   fail-closed Hyper-V these must report `d3d12_content_progress_state=DEFERRED`,
   `d3d12_visible_content_progress=DEFERRED`,
+  `d3d12_content_progress_current_run_valid=0`,
+  `d3d12_content_progress_identity_complete=0`,
   `d3d12_content_progress_requires_native_present=1`,
   `d3d12_visible_content_requires_native_present_completion=1`,
   `d3d12_visible_content_credit_before_native_present=0`, and zero

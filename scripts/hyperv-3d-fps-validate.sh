@@ -96,6 +96,21 @@ def accepts_display_bind_contract(fields):
             fields.get("display_bind_present_id", 0) and
         fields.get("display_bind_resource_generation", 0) > 0 and
         fields.get("display_bind_completion_source") == "display" and
+        fields.get("content_progress_current_run_valid", 0) == 1 and
+        fields.get("content_progress_identity_complete", 0) == 1 and
+        fields.get("content_progress_present_id", 0) ==
+            fields.get("display_bind_present_id", 0) and
+        fields.get("content_progress_completed", 0) ==
+            fields.get("display_bind_completed_id", 0) and
+        fields.get("content_progress_resource_generation", 0) ==
+            fields.get("display_bind_resource_generation", 0) and
+        fields.get("final_handoff_success", 0) == 1 and
+        fields.get("final_handoff_present_id", 0) ==
+            fields.get("display_bind_present_id", 0) and
+        fields.get("final_handoff_completed", 0) ==
+            fields.get("display_bind_completed_id", 0) and
+        fields.get("final_handoff_resource_generation", 0) ==
+            fields.get("display_bind_resource_generation", 0) and
         fields.get("content_credit", 0) == 1 and
         fields.get("callback_release_same_frame", 0) == 1
     )
@@ -506,7 +521,18 @@ d3d12_content_requires_native = []
 d3d12_content_native_complete = []
 d3d12_content_visible_credit = []
 d3d12_content_source_owned = []
+d3d12_content_current_run_valid = []
+d3d12_content_identity_complete = []
+d3d12_content_present_ids = []
+d3d12_content_completed_ids = []
+d3d12_content_display_bind_present_ids = []
+d3d12_content_display_bind_completed_ids = []
+d3d12_content_display_bind_resource_generations = []
 d3d12_run_ids = []
+d3d12_final_handoff_successes = []
+d3d12_final_handoff_present_ids = []
+d3d12_final_handoff_completed_ids = []
+d3d12_final_handoff_resource_generations = []
 d3d12_native_paths = []
 d3d12_reject_evidence = []
 backend_modes = []
@@ -552,7 +578,18 @@ visual_content_requires_native = []
 visual_content_native_complete = []
 visual_content_visible_credit = []
 visual_content_source_owned = []
+visual_content_current_run_valid = []
+visual_content_identity_complete = []
+visual_content_present_ids = []
+visual_content_completed_ids = []
+visual_content_display_bind_present_ids = []
+visual_content_display_bind_completed_ids = []
+visual_content_display_bind_resource_generations = []
 visual_run_ids = []
+visual_final_handoff_successes = []
+visual_final_handoff_present_ids = []
+visual_final_handoff_completed_ids = []
+visual_final_handoff_resource_generations = []
 visual_native_paths = []
 visual_reject_evidence = []
 in_sampling = False
@@ -604,6 +641,7 @@ run_id_keys = (
     "d3d12_validation_run_id",
     "fps_validation_run_id",
     "d3d12_run_id",
+    "d3d12_present_identity_compositor_run_id",
 )
 content_crc_keys = ("d3d12_visible_content_crc",)
 content_frame_keys = (
@@ -826,6 +864,113 @@ def require_display_bind_identity(name, present_ids, completed_ids,
             f"buffer={buffer_generations[-1]} "
             f"display_bind={display_bind_resource_generations[-1]}"
         )
+
+def require_native_content_identity(
+        name, present_ids, completed_ids, buffer_generations,
+        display_bind_present_ids, display_bind_completed_ids,
+        display_bind_resource_generations, content_present_ids,
+        content_completed_ids, content_display_bind_present_ids,
+        content_display_bind_completed_ids,
+        content_display_bind_resource_generations, content_current_run_valid,
+        content_identity_complete, final_handoff_successes,
+        final_handoff_present_ids, final_handoff_completed_ids,
+        final_handoff_resource_generations):
+    required = {
+        "present_id": present_ids,
+        "completed": completed_ids,
+        "buffer_generation": buffer_generations,
+        "display_bind_present_id": display_bind_present_ids,
+        "display_bind_completed_id": display_bind_completed_ids,
+        "display_bind_resource_generation": display_bind_resource_generations,
+        "content_present_id": content_present_ids,
+        "content_completed": content_completed_ids,
+        "content_display_bind_present_id": content_display_bind_present_ids,
+        "content_display_bind_completed_id": content_display_bind_completed_ids,
+        "content_display_bind_resource_generation":
+            content_display_bind_resource_generations,
+        "content_current_run_valid": content_current_run_valid,
+        "content_identity_complete": content_identity_complete,
+        "final_handoff_success": final_handoff_successes,
+        "final_handoff_present_id": final_handoff_present_ids,
+        "final_handoff_completed": final_handoff_completed_ids,
+        "final_handoff_resource_generation":
+            final_handoff_resource_generations,
+    }
+    missing = [key for key, values in required.items() if not values]
+    if missing:
+        raise SystemExit(
+            f"missing {name} native-content identity fields: "
+            f"{','.join(missing)}"
+        )
+    count = min(len(values) for values in required.values())
+    if count < 2:
+        raise SystemExit(
+            f"not enough {name} native-content identity samples: count={count}"
+        )
+    for index, values in enumerate(zip(
+            present_ids[-count:], completed_ids[-count:],
+            buffer_generations[-count:], display_bind_present_ids[-count:],
+            display_bind_completed_ids[-count:],
+            display_bind_resource_generations[-count:],
+            content_present_ids[-count:], content_completed_ids[-count:],
+            content_display_bind_present_ids[-count:],
+            content_display_bind_completed_ids[-count:],
+            content_display_bind_resource_generations[-count:],
+            content_current_run_valid[-count:],
+            content_identity_complete[-count:],
+            final_handoff_successes[-count:],
+            final_handoff_present_ids[-count:],
+            final_handoff_completed_ids[-count:],
+            final_handoff_resource_generations[-count:])):
+        (present_id, completed, generation,
+         display_present, display_completed, display_generation,
+         content_present, content_completed, content_display_present,
+         content_display_completed, content_generation, current_run_valid,
+         identity_complete, final_success, final_present,
+         final_completed, final_generation) = values
+        if current_run_valid != 1 or identity_complete != 1:
+            raise SystemExit(
+                f"{name} content identity did not prove current-run exactness "
+                f"at sample {index}: current_run_valid={current_run_valid} "
+                f"identity_complete={identity_complete}"
+            )
+        if final_success != 1:
+            raise SystemExit(
+                f"{name} final handoff was not successful at sample {index}: "
+                f"final_handoff_success={final_success}"
+            )
+        if not all(value > 0 for value in values[:11] + values[14:]):
+            raise SystemExit(
+                f"{name} native-content identity contained zero at "
+                f"sample {index}: values={values}"
+            )
+        if not (present_id == display_present == content_present ==
+                content_display_present == final_present):
+            raise SystemExit(
+                f"{name} present-id identity mismatch at sample {index}: "
+                f"dxg={present_id} display_bind={display_present} "
+                f"content={content_present} "
+                f"content_display_bind={content_display_present} "
+                f"final_handoff={final_present}"
+            )
+        if not (completed == display_completed == content_completed ==
+                content_display_completed == final_completed):
+            raise SystemExit(
+                f"{name} completed-id identity mismatch at sample {index}: "
+                f"dxg={completed} display_bind={display_completed} "
+                f"content={content_completed} "
+                f"content_display_bind={content_display_completed} "
+                f"final_handoff={final_completed}"
+            )
+        if not (generation == display_generation == content_generation ==
+                final_generation):
+            raise SystemExit(
+                f"{name} resource-generation identity mismatch at sample "
+                f"{index}: buffer={generation} "
+                f"display_bind={display_generation} "
+                f"content={content_generation} "
+                f"final_handoff={final_generation}"
+            )
 
 def log_fps_gate_skeleton(stage, outside_overlay_values):
     native_delta = counter_delta(d3d12_present_counts)
@@ -1417,9 +1562,81 @@ for line in log.splitlines():
         )
         if source_owned is not None:
             visual_content_source_owned.append(source_owned)
+        current_run_valid = counter_value(
+            line,
+            ("d3d12_content_progress_current_run_valid",
+             "content_progress_current_run_valid"),
+        )
+        if current_run_valid is not None:
+            visual_content_current_run_valid.append(current_run_valid)
+        identity_complete = counter_value(
+            line,
+            ("d3d12_content_progress_identity_complete",
+             "content_progress_identity_complete"),
+        )
+        if identity_complete is not None:
+            visual_content_identity_complete.append(identity_complete)
+        content_present_id = counter_value(
+            line,
+            ("d3d12_content_progress_present_id",
+             "content_progress_present_id"),
+        )
+        if content_present_id is not None:
+            visual_content_present_ids.append(content_present_id)
+        content_completed = counter_value(
+            line,
+            ("d3d12_content_progress_completed",
+             "content_progress_completed"),
+        )
+        if content_completed is not None:
+            visual_content_completed_ids.append(content_completed)
+        content_display_present = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_present_id",
+             "content_progress_display_bind_present_id"),
+        )
+        if content_display_present is not None:
+            visual_content_display_bind_present_ids.append(content_display_present)
+        content_display_completed = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_completed_id",
+             "content_progress_display_bind_completed_id"),
+        )
+        if content_display_completed is not None:
+            visual_content_display_bind_completed_ids.append(
+                content_display_completed
+            )
+        content_display_generation = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_resource_generation",
+             "content_progress_display_bind_resource_generation"),
+        )
+        if content_display_generation is not None:
+            visual_content_display_bind_resource_generations.append(
+                content_display_generation
+            )
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             visual_run_ids.append(run_id)
+        final_success = counter_value(line, ("d3d12_final_handoff_success",
+                                             "final_handoff_success"))
+        if final_success is not None:
+            visual_final_handoff_successes.append(final_success)
+        final_present = counter_value(line, ("d3d12_final_handoff_present_id",
+                                            "final_handoff_present_id"))
+        if final_present is not None:
+            visual_final_handoff_present_ids.append(final_present)
+        final_completed = counter_value(line, ("d3d12_final_handoff_completed",
+                                              "final_handoff_completed"))
+        if final_completed is not None:
+            visual_final_handoff_completed_ids.append(final_completed)
+        final_generation = counter_value(
+            line,
+            ("d3d12_final_handoff_resource_generation",
+             "final_handoff_resource_generation"),
+        )
+        if final_generation is not None:
+            visual_final_handoff_resource_generations.append(final_generation)
         callback_count = counter_value(line, callback_counter_keys)
         if callback_count is not None:
             visual_callback_counts.append(callback_count)
@@ -1565,9 +1782,81 @@ for line in log.splitlines():
         )
         if source_owned is not None:
             d3d12_content_source_owned.append(source_owned)
+        current_run_valid = counter_value(
+            line,
+            ("d3d12_content_progress_current_run_valid",
+             "content_progress_current_run_valid"),
+        )
+        if current_run_valid is not None:
+            d3d12_content_current_run_valid.append(current_run_valid)
+        identity_complete = counter_value(
+            line,
+            ("d3d12_content_progress_identity_complete",
+             "content_progress_identity_complete"),
+        )
+        if identity_complete is not None:
+            d3d12_content_identity_complete.append(identity_complete)
+        content_present_id = counter_value(
+            line,
+            ("d3d12_content_progress_present_id",
+             "content_progress_present_id"),
+        )
+        if content_present_id is not None:
+            d3d12_content_present_ids.append(content_present_id)
+        content_completed = counter_value(
+            line,
+            ("d3d12_content_progress_completed",
+             "content_progress_completed"),
+        )
+        if content_completed is not None:
+            d3d12_content_completed_ids.append(content_completed)
+        content_display_present = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_present_id",
+             "content_progress_display_bind_present_id"),
+        )
+        if content_display_present is not None:
+            d3d12_content_display_bind_present_ids.append(content_display_present)
+        content_display_completed = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_completed_id",
+             "content_progress_display_bind_completed_id"),
+        )
+        if content_display_completed is not None:
+            d3d12_content_display_bind_completed_ids.append(
+                content_display_completed
+            )
+        content_display_generation = counter_value(
+            line,
+            ("d3d12_content_progress_display_bind_resource_generation",
+             "content_progress_display_bind_resource_generation"),
+        )
+        if content_display_generation is not None:
+            d3d12_content_display_bind_resource_generations.append(
+                content_display_generation
+            )
         run_id = token_value(line, run_id_keys)
         if run_id is not None:
             d3d12_run_ids.append(run_id)
+        final_success = counter_value(line, ("d3d12_final_handoff_success",
+                                             "final_handoff_success"))
+        if final_success is not None:
+            d3d12_final_handoff_successes.append(final_success)
+        final_present = counter_value(line, ("d3d12_final_handoff_present_id",
+                                            "final_handoff_present_id"))
+        if final_present is not None:
+            d3d12_final_handoff_present_ids.append(final_present)
+        final_completed = counter_value(line, ("d3d12_final_handoff_completed",
+                                              "final_handoff_completed"))
+        if final_completed is not None:
+            d3d12_final_handoff_completed_ids.append(final_completed)
+        final_generation = counter_value(
+            line,
+            ("d3d12_final_handoff_resource_generation",
+             "final_handoff_resource_generation"),
+        )
+        if final_generation is not None:
+            d3d12_final_handoff_resource_generations.append(final_generation)
         callback_count = counter_value(line, callback_counter_keys)
         if callback_count is not None:
             d3d12_callback_counts.append(callback_count)
@@ -2329,6 +2618,26 @@ require_display_bind_identity(
     d3d12_display_bind_present_ids,
     d3d12_display_bind_completed_ids,
     d3d12_display_bind_resource_generations,
+)
+require_native_content_identity(
+    "sample-window D3D12",
+    d3d12_present_ids,
+    d3d12_present_completed,
+    d3d12_buffer_generations,
+    d3d12_display_bind_present_ids,
+    d3d12_display_bind_completed_ids,
+    d3d12_display_bind_resource_generations,
+    d3d12_content_present_ids,
+    d3d12_content_completed_ids,
+    d3d12_content_display_bind_present_ids,
+    d3d12_content_display_bind_completed_ids,
+    d3d12_content_display_bind_resource_generations,
+    d3d12_content_current_run_valid,
+    d3d12_content_identity_complete,
+    d3d12_final_handoff_successes,
+    d3d12_final_handoff_present_ids,
+    d3d12_final_handoff_completed_ids,
+    d3d12_final_handoff_resource_generations,
 )
 if (len(d3d12_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in d3d12_gpup_dda_commit_successes)):
@@ -3370,6 +3679,26 @@ require_display_bind_identity(
     visual_display_bind_present_ids,
     visual_display_bind_completed_ids,
     visual_display_bind_resource_generations,
+)
+require_native_content_identity(
+    "visual-window D3D12",
+    visual_present_ids,
+    visual_present_completed,
+    visual_buffer_generations,
+    visual_display_bind_present_ids,
+    visual_display_bind_completed_ids,
+    visual_display_bind_resource_generations,
+    visual_content_present_ids,
+    visual_content_completed_ids,
+    visual_content_display_bind_present_ids,
+    visual_content_display_bind_completed_ids,
+    visual_content_display_bind_resource_generations,
+    visual_content_current_run_valid,
+    visual_content_identity_complete,
+    visual_final_handoff_successes,
+    visual_final_handoff_present_ids,
+    visual_final_handoff_completed_ids,
+    visual_final_handoff_resource_generations,
 )
 if (len(visual_gpup_dda_commit_successes) < 2 or
         any(value == 0 for value in visual_gpup_dda_commit_successes)):
