@@ -989,6 +989,12 @@ webkit_shared_surface_contract_validated()
     grep -Eq 'd3d12_present_evidence_time_us=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_(present_content_crc|present_region_crc|client_content_crc|visible_content_crc|present_crc)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
     grep -Eq 'd3d12_(present_content_frame|present_content_frames|present_content_change|present_content_changes|visible_content_frame|visible_content_frames)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
+    grep -Eq 'd3d12_(present_frame_hash|visible_frame_hash|content_frame_hash)=(0x[1-9a-fA-F][0-9a-fA-F]*|[1-9][0-9]*)' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_content_progress_state[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_visible_content_progress[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_content_(native_complete|native_present_complete|progress_native_present_complete)[ =]1($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_content_visible_credit[ =]1($|[[:space:]])' "${LOG}" &&
+    grep -Eq '(^|[[:space:]])d3d12_content_native_credit[ =]1($|[[:space:]])' "${LOG}" &&
     grep -Eq "^(validation_run_id|xv6_validation_run_id|d3d12_validation_run_id|fps_validation_run_id|d3d12_run_id)=${VALIDATION_RUN_ID}($|[[:space:]])" "${LOG}" &&
     grep -Eq 'd3d12_present_release_fence=[1-9][0-9]*' "${LOG}"
 }
@@ -1116,6 +1122,20 @@ run_guest()
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
         "& 'C:\Temp\com-tcp-read.ps1' -Cmd '${cmd}' -ReadMs ${read_ms}" |
+        tee -a "${LOG}"
+}
+
+run_webkit_animated_fixture_liveness()
+{
+    local fixture_uri="file:///share/webkit/${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE}"
+
+    echo "hyperv-webkit-gpu-validate: running animated WebKit fixture ${fixture_uri}" |
+        tee -a "${LOG}"
+    run_guest "rm -f /tmp/webkit-title /tmp/webkit-animated-fixture.log; webkitgpusmoke ${fixture_uri} ${TIMEOUT_MS} >/tmp/webkit-animated-fixture.log 2>&1; echo webkit_animated_fixture_status=\$?; cat /tmp/webkit-animated-fixture.log; cat /tmp/webkit-title" \
+        "${READ_MS}"
+    require_log "webkitgpusmoke: complete uri=${fixture_uri} .*title_complete=1" \
+        "WebKit animated fixture liveness"
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_fixture_liveness_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} source_contained_fixture=1 animated_title_frame=PASS title_only_liveness=1 content_crc_progress=MISSING frame_hash_progress=MISSING native_present_completion=MISSING gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -1297,6 +1317,8 @@ echo "hyperv-webkit-gpu-validate: running local repeated WebKit smoke" |
 sleep 20
 run_guest "cat /proc/cmdline; cat /proc/uptime; rm -f /tmp/wlcomp-d3d12-present; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} d3d12sharedsmoke --runtime --require-present; cat /proc/uptime; sleep 90; cat /tmp/webkit-title; cat /tmp/webkit-gpu-policy; cat /tmp/webkit_log.txt; cat /tmp/wlcomp-d3d12-present; ps; fbstat; cat /proc/uptime" \
     "${READ_MS}"
+
+run_webkit_animated_fixture_liveness
 
 require_log 'webkit=1 .*webkit_accel=1 .*webkit_contract_wait_ms=120000 .*webkit_api_smoke=1 .*webkit_webgl_smoke=1 .*webkit_logging=1' \
     "WebKit local GPU/API smoke command line"

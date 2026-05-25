@@ -179,6 +179,13 @@ but do not treat them as open plan items by default.
   `revalidate_failures`.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
+- Treat the animated WebKit fixture as a liveness probe until the compositor
+  supplies content-owned CRC/frame/hash evidence tied to the same
+  native-present completion. `webkitgpusmoke` should require nonzero content
+  CRC, frame counter, frame hash, `NATIVE_PRESENT_COMPLETE` content states,
+  and visible/native content credits before `webkit_gpu_contract_matrix ok=1`;
+  the Hyper-V validator may run the fixture, but must keep the WebKit
+  acceleration gate closed when that native/content evidence is absent.
 
 ### Source Layout
 
