@@ -121,6 +121,14 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - Keep the reference tracks separate: WSL parity can close Hyper-V DXG object
   and wire-layout gates, while Linux DRM/GEM/TTM/KMS/Nouveau sources govern
   `/dev/dri`, PRIME/dma-buf, KMS atomic, PCI runtime, and Nouveau behavior.
+- For PCI/Nouveau work, mirror Linux's layering without pretending GPU-P is
+  DDA hardware. Accepted Nouveau requires a real BAR-backed NVIDIA display
+  PCI function, PCI resource claim-before-iomap, bus mastering, requested and
+  effective DMA mask diagnostics, streaming DMA map/unmap validation,
+  explicit MSI/MSI-X fail-closed or programming state, legacy IRQ provenance,
+  runtime-PM/remove diagnostics, and zero native-present/OpenGL-submit credit
+  until a real native engine and display handoff exist. GPU-P-only Hyper-V
+  must keep BAR/DMA/IRQ/map counters zero and report `GPU_P_FAIL_CLOSED`.
 - Remember what the trace layers mean:
   - `LD_PRELOAD` ioctl traces show the UMD's user-space ioctl arguments before the xv6 kernel rewrites or validates them.
   - `/dev/dxg` shows the kernel's recorded host-return state after forwarding.

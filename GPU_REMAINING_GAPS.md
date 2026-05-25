@@ -393,6 +393,21 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
   passed on 2026-05-25 with
   `validation_run_id=core-1779689395-3730908`.
+- [x] Add Linux-shaped PCI DMA mask and streaming map diagnostics for
+  DDA/Nouveau without granting GPU-P fake DMA state.
+  The PCI core now tracks requested/effective streaming and coherent DMA mask
+  bits, 64-to-32 fallback counters, and direct `pci_dma_map_single()` /
+  `pci_dma_unmap_single()` calls. Nouveau probes those APIs only after a real
+  BAR-backed DDA function is enabled and bus mastering is set; GPU-P-only
+  Hyper-V remains `GPU_P_FAIL_CLOSED` with zero DMA mask/map attempts.
+  `fbstat` and `gpucorevalidate` expose the fields through
+  `nouveau_pci_dma_resource_matrix`,
+  `nouveau_pci_runtime_contract_matrix`, and
+  `nouveau_pci_runtime_interface_matrix`. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
+  passed on 2026-05-25 with
+  `validation_run_id=core-1779702023-161062`.
 - [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
   BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
   The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
