@@ -414,6 +414,16 @@ non-readback display handoff.
 - [ ] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
   runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
   compositor import/open, and present admission.
+- [x] Add compositor-side admission and fail-closed identity matrices for that
+  path without granting native-present credit. `wlcomp` now emits
+  `d3d12_wayland_resource_buffer_admission_matrix` after same-LUID
+  resource/fence import and protocol acceptance, and
+  `d3d12_wayland_present_failclosed_identity_matrix` when the imported buffer
+  reaches GPU-copy proof but still lacks native display completion. The DXG and
+  WebKit validators classify those rows as intermediate evidence, not as native
+  present. Build evidence:
+  `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
+  passed on 2026-05-24.
 - [ ] Implement GPU-side composite/copy/present from imported D3D12 resources
   to the chosen display destination without CPU map/readback or DRI software
   present.
