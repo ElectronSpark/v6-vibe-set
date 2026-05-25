@@ -186,6 +186,11 @@ but do not treat them as open plan items by default.
   host ABI exists. Keep `hyperv_dxg_display_bind_submit_failclosed()` explicit
   about pinned dxg/resource metadata, no host ABI, no sender, and no display
   completion; this is a future sender slot, not native-present proof.
+- The public provider boundary is `hyperv_dxg_display_bind_submit()`. Today it
+  must route to the fail-closed implementation and expose provider-returned
+  `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
+  diagnostics. Do not replace those with credit until a documented GPU-P/DDA
+  sender and display completion source exists.
 - `FB_GPU_BACKEND_F_OPENGL_SUBMIT` remains false on Hyper-V until the native
   present dependency chain and the finite 480p FPS gate both pass.
 - Treat the animated WebKit fixture as a liveness probe until the compositor
@@ -212,6 +217,11 @@ but do not treat them as open plan items by default.
   `d3d12_visible_frame_hash`, and
   `d3d12_content_progress_source_owned=1`. Client/app hashes are diagnostic
   context and must not open FPS/WebKit gates.
+- FPS/WebKit consumers must also require exact identity between content
+  progress, DXG present ids, display-bind ids, completion ids, and resource
+  generation. Generic KMS/vblank/OUT_FENCE/display-wait progress is not native
+  D3D12 completion and should be reported by an explicit zero-credit
+  `d3d12_native_completion_not_kms_matrix`.
 - KMS/DRM remains a generic software-present compatibility path until a real
   DDA/Nouveau display engine exists. `gpu_kms_present_fb()` must try the
   native-present discriminator first and record reject reasons, then fall back

@@ -126,12 +126,32 @@ require_webkit_animated_content_native_present_gate()
 emit_webkit_animated_content_native_present_gate_open()
 {
     local native_credit
+    local content_present_id
+    local content_completed
+    local display_bind_present_id
+    local display_bind_completed_id
+    local content_generation
+    local display_bind_generation
 
     native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
         native_credit=1
     fi
-    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
+    content_present_id="$(last_log_counter "${LOG}" d3d12_content_progress_present_id)"
+    content_completed="$(last_log_counter "${LOG}" d3d12_content_progress_completed)"
+    display_bind_present_id="$(last_log_counter "${LOG}" display_bind_present_id)"
+    display_bind_completed_id="$(last_log_counter "${LOG}" display_bind_completed_id)"
+    content_generation="$(last_log_counter "${LOG}" d3d12_content_progress_display_bind_resource_generation)"
+    display_bind_generation="$(last_log_counter "${LOG}" display_bind_resource_generation)"
+    if [[ -z "${content_present_id}" || -z "${content_completed}" ||
+          -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
+          -z "${content_generation}" || -z "${display_bind_generation}" ||
+          "${content_present_id}" -ne "${display_bind_present_id}" ||
+          "${content_completed}" -ne "${display_bind_completed_id}" ||
+          "${content_generation}" -ne "${display_bind_generation}" ]]; then
+        fail "cannot open WebKit animated content gate without exact content/display-bind identity"
+    fi
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS content_present_id=${content_present_id} content_completed=${content_completed} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} content_resource_generation=${content_generation} display_bind_resource_generation=${display_bind_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -1100,7 +1120,7 @@ webkit_shared_surface_contract_validated()
 {
 	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
 		    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_identity_ok=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
-	    grep -Eq 'webkitgpusmoke: gpu-contract .*d3d12_run_id=webkit-[0-9]+-[0-9]+ .*env_run_id=webkit-[0-9]+-[0-9]+ .*d3d12_run_id_match=1 .*ok=1' "${LOG}" &&
+	    grep -Eq "webkitgpusmoke: gpu-contract .*d3d12_run_id=${VALIDATION_RUN_ID} .*d3d12_compositor_run_id=${VALIDATION_RUN_ID} .*env_run_id=${VALIDATION_RUN_ID} .*d3d12_run_id_match=1 .*ok=1" "${LOG}" &&
 	    grep -Eq 'd3d12sharedsmoke: present validation ok frame=1 release=1 gpu_present=[0-9]+->[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff .*present_id=[1-9][0-9]* completed=[1-9][0-9]* .*mtime_ms=[1-9][0-9]* min_mtime_ms=[1-9][0-9]* .*starts=[1-9][0-9]* copy=[1-9][0-9]* completes=[1-9][0-9]* .*resource=0x[1-9a-fA-F][0-9a-fA-F]* allocations=[1-9][0-9]* fence=0x[1-9a-fA-F][0-9a-fA-F]* target=1 release=[1-9][0-9]* .*source_luid=([0-9a-fA-F]{8}):([0-9a-fA-F]{8}) matched_luid=\1:\2 no_cpu_readback=1' "${LOG}" &&
     grep -Eq 'd3d12_gpu_present_complete[s]?=[1-9][0-9]*' "${LOG}" &&
@@ -1257,10 +1277,17 @@ run_webkit_animated_fixture_liveness()
 
     echo "hyperv-webkit-gpu-validate: running animated WebKit fixture ${fixture_uri}" |
         tee -a "${LOG}"
-    run_guest "rm -f /tmp/webkit-title /tmp/webkit-animated-fixture.log; webkitgpusmoke ${fixture_uri} ${TIMEOUT_MS} >/tmp/webkit-animated-fixture.log 2>&1; echo webkit_animated_fixture_status=\$?; cat /tmp/webkit-animated-fixture.log; cat /tmp/webkit-title" \
+    run_guest "rm -f /tmp/wlcomp-d3d12-present /tmp/webkit-gpu-policy /tmp/webkit-title /tmp/webkit-animated-fixture.log; webkitgpusmoke ${fixture_uri} ${TIMEOUT_MS} >/tmp/webkit-animated-fixture.log 2>&1; echo webkit_animated_fixture_status=\$?; cat /tmp/webkit-animated-fixture.log; cat /tmp/webkit-title; if test -f /tmp/webkit-gpu-policy; then cat /tmp/webkit-gpu-policy; else echo webkit_gpu_policy_absent=1; fi" \
         "${READ_MS}"
     require_log "webkitgpusmoke: complete uri=${fixture_uri} .*title_complete=1" \
         "WebKit animated fixture liveness"
+    if grep -q 'webkit_gpu_policy ' "${LOG}"; then
+        require_log 'webkit_gpu_policy .*effective_accel=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none' \
+            "WebKit animated fixture liveness cannot inherit stale GPU policy"
+    else
+        require_log 'webkit_gpu_policy_absent=1' \
+            "WebKit animated fixture liveness has no stale GPU policy"
+    fi
     echo "hyperv-webkit-gpu-validate: webkit_animated_content_fixture_liveness_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} source_contained_fixture=1 animated_title_frame=PASS title_only_liveness=1 compositor_owned_visible_content=MISSING content_crc_progress=MISSING frame_hash_progress=MISSING current_webkit_run_id=MISSING same_client_resource_generation_identity=MISSING callback_release_ordering=MISSING native_present_completion=MISSING gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
 }
@@ -1459,7 +1486,7 @@ if webkit_shared_surface_contract_validated; then
         "WebKit D3D12 native-present/no-readback policy"
 	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' \
 	        "WebKit in-process D3D12 GPU contract audit"
-	    require_log 'webkitgpusmoke: gpu-contract .*d3d12_run_id=webkit-[0-9]+-[0-9]+ .*env_run_id=webkit-[0-9]+-[0-9]+ .*d3d12_run_id_match=1 .*ok=1' \
+	    require_log "webkitgpusmoke: gpu-contract .*d3d12_run_id=${VALIDATION_RUN_ID} .*d3d12_compositor_run_id=${VALIDATION_RUN_ID} .*env_run_id=${VALIDATION_RUN_ID} .*d3d12_run_id_match=1 .*ok=1" \
 	        "WebKit D3D12 evidence belongs to the current WebKit run"
     require_log 'd3d12_gpu_present_complete[s]?=[1-9][0-9]*' \
         "WebKit D3D12 native-present completion evidence"
