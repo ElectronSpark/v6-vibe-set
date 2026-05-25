@@ -559,7 +559,11 @@ non-readback display handoff.
   separately so future work cannot treat WSL present-history enum knowledge,
   synthvid/GPA dirty rectangles, Linux Hyper-V DRM shadow blits, or a separate
   DDA/Nouveau PCI path as D3D12 native-present credit without a real sender and
-  completion contract.
+  completion contract. The candidate IDs and rejection reasons are now
+  kernel-owned stats as well as user-space validator text: the kernel records
+  the WSL VMBus enum namespace, the absence of a Linux display-bind ioctl,
+  sender/resource-bind/completion contracts, and explicit zero-credit reject
+  reasons before any validator can consume the row.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
