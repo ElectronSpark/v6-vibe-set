@@ -392,6 +392,10 @@ but do not treat them as open plan items by default.
   display-bind ioctl, synthvid is GPA-dirty-only, and D3DKMT shared-resource
   admission still grants zero display target, present id, native-present credit,
   or OpenGL-submit credit.
+- `hyperv_opengl_submit_gate_matrix` is the backend flag invariant. On Hyper-V
+  it must remain `backend_gate=closed` with `backend_opengl_submit=0` until
+  native present, finite FPS, and the WebKit shared-surface contract are all
+  proven from current-run evidence.
 - For DDA/Nouveau `GETPARAM`, keep provenance split: PCI vendor/device,
   bus type, BAR/VRAM aperture, chipset, and VRAM base are DDA PCI facts;
   `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, `VRAM_USED`, and
