@@ -146,6 +146,16 @@ overlay_line = (
     "d3d12_evidence_valid=0 rejected=1 status=PASS"
 )
 print(overlay_line)
+credit_line = (
+    "hyperv-3d-fps-validate: mesawlegl_fps_present_credit_matrix "
+    f"validation_run_id={run_id} visible_fps=40.000 "
+    "effective_presented_fps=0.000 strict_anti_inflation=1 "
+    "d3d12_evidence_valid=0 native_present_delta=0 present_id=0 "
+    "completed=0 displayed_fps_context_only=1 visible_fps_ignored=1 "
+    "fps_credit_source=none native_present_credit=0 "
+    "opengl_submit_credit=0 status=PASS"
+)
+print(credit_line)
 content_line = (
     "hyperv-3d-fps-validate: fps_visible_progress_negative_matrix "
     f"validation_run_id={run_id} outside_overlay_crc_changes=0 "
