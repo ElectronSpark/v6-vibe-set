@@ -386,6 +386,12 @@ but do not treat them as open plan items by default.
   runtime PM/remove-path deferred, and zero native-present/OpenGL-submit credit.
   On accepted DDA hardware it is still diagnostic until real MSI/legacy IRQ
   delivery, runtime PM, remove, and engine/native-present behavior are proven.
+- `dxg_resource_scanout_bind_host_abi_matrix` is the source-audited native
+  present blocker row. It must say the selected lane is
+  `gpup_dxg_scanout_bind`, no custom host tool is used, WSL dxgkrnl has no
+  display-bind ioctl, synthvid is GPA-dirty-only, and D3DKMT shared-resource
+  admission still grants zero display target, present id, native-present credit,
+  or OpenGL-submit credit.
 - For DDA/Nouveau `GETPARAM`, keep provenance split: PCI vendor/device,
   bus type, BAR/VRAM aperture, chipset, and VRAM base are DDA PCI facts;
   `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, `VRAM_USED`, and
