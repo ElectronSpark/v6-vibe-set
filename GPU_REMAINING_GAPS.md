@@ -1,6 +1,6 @@
 # GPU Remaining Gaps
 
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 This file tracks only the work that is still missing or needs fresh parity
 proof. Completed wave logs and historical evidence should live in the runtime
@@ -97,6 +97,25 @@ scanout or Nouveau correctness.
   roll-ups. This redesign keeps one active hierarchy below.
 
 ## Active Plan
+
+### Current Dependency Graph
+
+The remaining unchecked work is intentionally ordered around one root
+dependency:
+
+1. `dxg-resource-scanout-bind` or an equivalent GPU-P/DDA display-bind
+   transport must produce a nonzero present id and display-completion counter
+   for the same D3D12 resource generation.
+2. The compositor may then unblock callbacks/releases and grant visible content
+   and FPS credit only for that completed resource generation.
+3. Hyper-V may advertise `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only after the native
+   present path and finite 480p FPS validator pass.
+4. WebKit acceleration may turn on only after it consumes that exact same
+   shared-resource, sync-file, native-present, FPS, and backend-flag contract.
+
+Until item 1 exists, later validators should be strict, source-correlated, and
+fail-closed; they should not be reworded into "done" by accepting import-only,
+callback-only, title-only, or readback evidence.
 
 ### 1. WSL2 DXG Parity
 
@@ -530,6 +549,12 @@ non-readback display handoff.
   present and OpenGL-submit credit at zero.
 - [ ] Implement the selected `dxg-resource-scanout-bind` equivalent without
   custom host tooling.
+  Fresh source audit on 2026-05-25 found no existing WSL `dxgkrnl`, Linux
+  Hyper-V DRM/synthvid, or current DDA/Nouveau host ABI that can honestly bind
+  a D3D12 resource/allocation/fence to host scanout and return display
+  completion. The current implementation must remain fail-closed until a
+  documented GPU-P/DXG display-bind packet exists or the separate DDA/Nouveau
+  native display path can provide equivalent non-readback completion.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
@@ -730,6 +755,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   exists: nonzero present ids, completion counters, close-before-signal
   cancellation, frame callback/release ordering, and cleanup balance after
   native completion.
+  A pure-C fail-closed row,
+  `d3d12_native_completion_future_contract_matrix`, now names these required
+  checks before the real lane exists: nonzero present id, completed >= present
+  id, same resource generation, callback/release after completion,
+  close-before-signal cancellation, and cleanup balance. It grants zero native
+  present or OpenGL-submit credit until the display-bind gate opens.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace
@@ -759,7 +790,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   emits `fps_native_present_gate_skeleton_matrix` and
   `fps_visible_content_preflight_matrix` before heavy FPS acceptance, with the
   gate closed until native D3D12 present completions and visible content
-  progress are both present.
+  progress are both present. It also emits
+  `fps_demo_interaction_gate_matrix` and
+  `fps_visible_native_content_gate_matrix`, so visible/closeable/resizable demo
+  evidence and content-progress-native-present correlation are required before
+  the finite FPS gate can open.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
@@ -827,6 +862,12 @@ alone.
   D3D12 shared-resource protocol, monitored-fence/sync-file acquire path,
   adapter-LUID validation, native present path, and backend flag as native
   Mesa clients.
+  The WebKit launcher now reads the same `/tmp/wlcomp-d3d12-present` evidence
+  keys as native Mesa clients and emits `webkit_gpu_contract_matrix` even on
+  the current fail-closed Hyper-V path. It still refuses acceleration unless
+  OpenGL-submit, same-run identity, same adapter, no readback,
+  shared-resource/fence evidence, native present completion, callback/release
+  ordering, and native-present-complete content progress all pass together.
 - [x] Add WebKit run-id and current-run evidence matching so stale
   `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
   cannot satisfy the WebKit gate.
@@ -838,6 +879,12 @@ alone.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.
+  `hyperv-webkit-gpu-validate.sh` now adds
+  `webkit_animated_content_native_present_gate_matrix`, which requires the
+  animated fixture, content CRC progress, frame-hash progress, same
+  client/resource/generation identity, prior native-present FPS contract,
+  backend OpenGL-submit, and native present completion. Current Hyper-V keeps
+  this gate closed with zero WebKit acceleration credit.
 - [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
   updates, callbacks, releases, render-node presence, dmabuf request,
   environment variables, or software fallback.

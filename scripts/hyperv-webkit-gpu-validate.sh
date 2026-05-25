@@ -20,6 +20,7 @@ REOPEN="${WEBKIT_GPU_VALIDATE_REOPEN:-2}"
 CONTRACT_MAX_AGE_SEC="${WEBKIT_GPU_CONTRACT_MAX_AGE_SEC:-3600}"
 MODE="${WEBKIT_GPU_VALIDATE_MODE:-full}"
 WEBKIT_GPU_POLICY_PREFLIGHT="${WEBKIT_GPU_POLICY_PREFLIGHT:-1}"
+WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE="${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE:-webkit-animated-content-native-present.html}"
 
 fail()
 {
@@ -112,6 +113,14 @@ run_policy_negative_preflight()
 
     echo "hyperv-webkit-gpu-validate: webkit_evidence_rejection_matrix title_only=PASS chrome_only=PASS cursor_only=PASS callback_only=PASS release_only=PASS render_node_only=PASS dmabuf_only=PASS env_only=PASS software_fallback=PASS status=PASS" |
         tee -a "${LOG}"
+    echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_content_crc_progress=1 required_frame_hash_progress=1 required_same_client_resource_generation_identity=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT content_crc_progress=0 frame_hash_progress=0 same_client_resource_generation_identity=0 prior_fps_native_present_contract=0 backend_opengl_submit=0 native_present_completion=0 gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
+        tee -a "${LOG}"
+}
+
+require_webkit_animated_content_native_present_gate()
+{
+    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*content_crc_progress=PASS .*frame_hash_progress=PASS .*same_client_resource_generation_identity=PASS .*prior_fps_native_present_contract=PASS .*backend_opengl_submit=1 .*native_present_completion=PASS .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
+        "WebKit animated-content/native-present acceleration gate"
 }
 
 require_backend_opengl_submit_gated_for_failed_present_file()
@@ -1088,6 +1097,8 @@ run_contract_negative_validate()
     require_log 'backend hyperv-dxg flags' "Hyper-V GPU backend"
     require_log 'backend_opengl_submit 0' \
         "Hyper-V OpenGL-submit remains gated"
+    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*required_content_crc_progress=1 .*required_frame_hash_progress=1 .*required_same_client_resource_generation_identity=1 .*required_prior_fps_native_present_contract=1 .*required_backend_opengl_submit=1 .*required_native_present_completion=1 .*title_only=REJECT .*chrome_only=REJECT .*cursor_only=REJECT .*env_only=REJECT .*render_node_only=REJECT .*dmabuf_only=REJECT .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS" \
+        "WebKit animated-content/native-present gate closed on Hyper-V"
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=0 .*opengl_submit=0 .*shared_surface=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none .*fallback=opengl_submit_unavailable' \
         "WebKit desktop policy stays gated without shared-surface contract"
 	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*shared_surface=0 .*d3d12_present=0 .*opengl_submit=0 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=0' \
@@ -1228,6 +1239,7 @@ require_log 'webkit=1 .*webkit_accel=1 .*webkit_contract_wait_ms=120000 .*webkit
 require_log 'backend hyperv-dxg flags' "Hyper-V GPU backend"
 if webkit_shared_surface_contract_validated; then
     require_current_native_present_contract
+    require_webkit_animated_content_native_present_gate
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' \
         "WebKit D3D12 shared-surface/OpenGL-submit acceleration gate"
     require_log 'webkit_gpu_policy .*gpu_contract=d3d12-shared-surface .*d3d12_native_present_required=1 .*d3d12_copy_export=0 .*d3d12_readback=0 .*fallback=none' \
@@ -1255,6 +1267,8 @@ if webkit_shared_surface_contract_validated; then
     require_latest_d3d12_luid_match
 else
     require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit fallback gate"
+    require_log "webkit_animated_content_native_present_gate_matrix .*fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS" \
+        "WebKit animated-content/native-present gate remains closed"
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=0 .*opengl_submit=0 .*fallback=opengl_submit_unavailable' \
         "WebKit acceleration fallback gate"
     require_log 'webkit_gpu_policy .*shared_surface=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none .*fallback=opengl_submit_unavailable' \
