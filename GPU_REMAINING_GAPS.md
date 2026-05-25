@@ -585,7 +585,10 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   Legacy channel allocation now creates per-open channel state, tracks
   notifier and GROBJ objects, rejects duplicate/unsupported objects, frees
   objects explicitly through `GPUOBJ_FREE`, and reclaims leaked objects on fd
-  close. `drmiftest` emits `nouveau_channel_object_matrix` for this contract;
+  close. Channel allocation and VM init now publish owner state only after
+  successful ioctl copyout, so an `-EFAULT` user ABI failure cannot leave an
+  active channel or VM marker behind. `drmiftest` emits
+  `nouveau_channel_object_matrix` for this contract;
   the separate `DRM_NOUVEAU_NVIF` row below remains open for Mesa's newer
   subchannel object path.
 - [x] Implement `DRM_NOUVEAU_NVIF` far enough for the Mesa Nouveau winsys path,
@@ -654,6 +657,11 @@ non-readback display handoff.
   the WSL VMBus enum namespace, the absence of a Linux display-bind ioctl,
   sender/resource-bind/completion contracts, and explicit zero-credit reject
   reasons before any validator can consume the row.
+  The fail-closed proof now also records that the WSL ioctl namespace was
+  audited, no display-bind ioctl is present, standard-allocation payloads are
+  private driver data rather than scanout binding, synthvid is only a GPA dirty
+  rectangle display path, and DDA/Nouveau PCI display presence is separate from
+  D3D12 resource import, scanout bind, and hardware flip completion.
   - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
     while keeping it fail-closed. `fb_dxg_present.c` now delegates the
     source/resource-generation snapshot to
@@ -1151,9 +1159,18 @@ alone.
     nonzero content CRC, frame counter, frame hash,
     `NATIVE_PRESENT_COMPLETE` content states, and explicit visible/native
     content credits before `webkit_gpu_contract_matrix ok=1`.
-  - [ ] Replace the fixture-liveness-only check with compositor-owned content
+  - [x] Replace the fixture-liveness-only check with compositor-owned content
     CRC/frame/hash correlation for the same WebKit run id, client pid,
     resource generation, and native display completion.
+    `webkitgpusmoke` now parses and prints compositor run id, client pid,
+    client-buffer id, manager resource id, buffer generation, content
+    present/completed ids, and content resource generation before allowing
+    `ok=1`. `hyperv-webkit-gpu-validate.sh` requires compositor-owned visible
+    CRC/frame/hash fields, `d3d12_content_progress_source_owned=1`, current
+    WebKit run-id identity, callback/release ordering, and matching native
+    present/completion/resource-generation evidence before opening the
+    animated-content acceleration gate; title-only fixture liveness remains
+    zero-credit.
 - [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
   updates, callbacks, releases, render-node presence, dmabuf request,
   environment variables, or software fallback.

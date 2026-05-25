@@ -182,6 +182,12 @@ credit_line = (
     "effective_presented_fps=0.000 strict_anti_inflation=1 "
     "d3d12_evidence_valid=0 native_present_delta=0 present_id=0 "
     "completed=0 displayed_fps_context_only=1 visible_fps_ignored=1 "
+    "native_present_complete=0 same_run_resource_generation=0 "
+    "same_resource_generation=0 compositor_owned_visible_content_crc=0 "
+    "compositor_owned_visible_content_frame=0 "
+    "compositor_owned_visible_frame_hash=0 client_content_progress=0 "
+    "finite_demo_visible=0 finite_demo_closeable=0 "
+    "finite_demo_resizable=0 strict_finite_fps_evidence=0 "
     "fps_credit_source=none native_present_credit=0 "
     "opengl_submit_credit=0 status=PASS"
 )
@@ -1201,6 +1207,33 @@ def require_advancing_counter(name, values):
         )
     return deltas
 
+strict_fps_sample_requirements = (
+    ("evidence_valid", "d3d12_evidence_valid"),
+    ("native_present_credit", "native_present_credit"),
+    ("native_present_complete", "native_present_complete"),
+    ("same_run_resource_generation", "same_run_resource_generation"),
+    ("same_resource_generation", "same_resource_generation"),
+    ("compositor_owned_visible_content_crc",
+     "compositor_owned_visible_content_crc"),
+    ("compositor_owned_visible_content_frame",
+     "compositor_owned_visible_content_frame"),
+    ("compositor_owned_visible_frame_hash",
+     "compositor_owned_visible_frame_hash"),
+    ("client_content_progress", "client_content_progress"),
+    ("callback_release_same_frame", "callback_release_same_frame"),
+    ("finite_demo_visible", "finite_demo_visible"),
+    ("finite_demo_closeable", "finite_demo_closeable"),
+    ("finite_demo_resizable", "finite_demo_resizable"),
+    ("strict_finite_fps_evidence", "strict_finite_fps_evidence"),
+)
+
+def missing_strict_fps_sample_requirements(record):
+    missing = []
+    for key, label in strict_fps_sample_requirements:
+        if record.get(key) != 1:
+            missing.append(label)
+    return missing
+
 for line in log.splitlines():
     if line.startswith("hyperv-3d-fps-validate: sampling "):
         in_sampling = True
@@ -1528,7 +1561,7 @@ for line in log.splitlines():
             backend_opengl_submit_samples.append(int(opengl_submit.group(1)))
     fps = re.search(r"\bvisible_fps=([0-9]+(?:\.[0-9]+)?)", line)
     seq = re.search(r"\bcallback_seq=([0-9]+)", line)
-    if fps and seq:
+    if fps and seq and line.startswith("mesawlegl_fps_sample "):
         record = {
             "line": line,
             "in_sampling": in_sampling,
@@ -1551,6 +1584,19 @@ for line in log.splitlines():
             "resource": None,
             "buffer_generation": None,
             "client_pid": None,
+            "native_present_credit": None,
+            "native_present_complete": None,
+            "same_run_resource_generation": None,
+            "same_resource_generation": None,
+            "compositor_owned_visible_content_crc": None,
+            "compositor_owned_visible_content_frame": None,
+            "compositor_owned_visible_frame_hash": None,
+            "client_content_progress": None,
+            "callback_release_same_frame": None,
+            "finite_demo_visible": None,
+            "finite_demo_closeable": None,
+            "finite_demo_resizable": None,
+            "strict_finite_fps_evidence": None,
         }
         render = re.search(r"\brender=([0-9]+)x([0-9]+)", line)
         render_div = re.search(r"\brender_div=([0-9]+)", line)
@@ -1603,33 +1649,45 @@ for line in log.splitlines():
         demo_client_pid = re.search(r"\bd3d12_client_pid=([0-9]+)", line)
         if demo_client_pid:
             record["client_pid"] = int(demo_client_pid.group(1))
+        for key in (
+                "native_present_credit",
+                "native_present_complete",
+                "same_run_resource_generation",
+                "same_resource_generation",
+                "compositor_owned_visible_content_crc",
+                "compositor_owned_visible_content_frame",
+                "compositor_owned_visible_frame_hash",
+                "client_content_progress",
+                "callback_release_same_frame",
+                "finite_demo_visible",
+                "finite_demo_closeable",
+                "finite_demo_resizable",
+                "strict_finite_fps_evidence"):
+            value = counter_value(line, (key,))
+            if value is not None:
+                record[key] = value
         demo_records.append(record)
 
-in_window_demo_times = [
-    record["sample_time"]
-    for record in demo_records
-    if record["in_sampling"] and record["sample_time"] is not None
-]
-demo_time_min = min(in_window_demo_times) if in_window_demo_times else None
-demo_time_max = max(in_window_demo_times) if in_window_demo_times else None
-in_window_demo_keys = {
-    (record["seq"], record["sample_time"])
-    for record in demo_records
-    if record["in_sampling"]
-}
+sample_uptime_min = min(uptimes) if uptimes else None
+sample_uptime_max = max(uptimes) if uptimes else None
 accepted_demo_records = []
+accepted_demo_keys = set()
 for record in demo_records:
     timestamped_in_window = (
-        demo_time_min is not None and
+        sample_uptime_min is not None and
+        sample_uptime_max is not None and
         record["sample_time"] is not None and
-        demo_time_min <= record["sample_time"] <= demo_time_max
+        sample_uptime_min <= record["sample_time"] <= sample_uptime_max
     )
-    duplicate_in_window_sample = (
-        (record["seq"], record["sample_time"]) in in_window_demo_keys
+    legacy_in_window = (
+        record["in_sampling"] and
+        record["sample_time"] is None and
+        sample_uptime_min is None
     )
-    if (record["in_sampling"] or
-            (timestamped_in_window and not duplicate_in_window_sample)):
+    record_key = (record["seq"], record["sample_time"])
+    if (timestamped_in_window or legacy_in_window) and record_key not in accepted_demo_keys:
         accepted_demo_records.append(record)
+        accepted_demo_keys.add(record_key)
 accepted_record_ids = {id(record) for record in accepted_demo_records}
 ignored_post_window_records = [
     record
@@ -1752,6 +1810,32 @@ if context_only_records:
         "demo FPS probe is app-draw-loop/context-only; native D3D12 "
         "present completion evidence is required before FPS can pass: "
         + last["line"]
+    )
+missing_strict_records = [
+    (record, missing_strict_fps_sample_requirements(record))
+    for record in accepted_demo_records
+]
+missing_strict_records = [
+    (record, missing)
+    for record, missing in missing_strict_records
+    if missing
+]
+if missing_strict_records:
+    record, missing = missing_strict_records[-1]
+    fail_validation(
+        "fps_finite_credit_gate_matrix "
+        f"validation_run_id={expected_run_id} stage=sample "
+        "requires_native_present_completion=1 "
+        "requires_compositor_owned_visible_content_crc=1 "
+        "requires_compositor_owned_visible_content_frame=1 "
+        "requires_compositor_owned_visible_frame_hash=1 "
+        "requires_same_resource_generation=1 "
+        "requires_demo_visible=1 requires_demo_closeable=1 "
+        "requires_demo_resizable=1 "
+        f"missing={','.join(missing)} "
+        "native_present_credit=0 opengl_submit_credit=0 "
+        "gate=closed status=FAIL_MISSING_EVIDENCE "
+        f"line={record['line']}"
     )
 require_run_id_samples("/tmp/mesawlegl-fps", demo_run_ids)
 if not demo_process_ids or any(value <= 0 for value in demo_process_ids):
