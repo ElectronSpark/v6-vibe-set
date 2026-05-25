@@ -611,6 +611,8 @@ require_log 'gpu_diagnostics_separation_matrix .*generic_scanout=drm-kms-fb .*d3
     "generic DRM/KMS diagnostics stay separate from D3D12/WebKit gates"
 require_log 'kms_vblank_native_present_separation_matrix .*display_completion_is_native_present=0 .*page_flip_native_present_credit=0 .*vblank_native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "KMS vblank/page-flip display correlation stays separate from native-present credit"
+require_log 'drm_dma_fence_lifetime_contract_matrix .*single_backing_object=fb_gpu_fence .*gem_prime_dmabuf=PASS .*kms_out_fence=PASS .*syncobj_sync_file=PASS .*poll_callback_removal=PASS .*final_release=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DRM dma_fence lifetime contract across GEM/PRIME/dma-buf/KMS/syncobj/poll/release"
 require_log 'dxg_present_lane_selection_matrix .*selected=gpup_dxg_scanout_bind .*working_model=dxg_resource_scanout_bind .*wslg_display_channel=0 .*synthvid_vram_bridge=gpa_dirty_only .*gpup_or_dda_required=1 .*custom_host_tool=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "selected native-present display handoff lane"
 require_log 'backend_opengl_submit 0' "Hyper-V OpenGL-submit remains gated"

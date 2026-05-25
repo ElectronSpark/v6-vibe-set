@@ -447,6 +447,11 @@ but do not treat them as open plan items by default.
     matrix before broad dma-fence language is justified; exact software
     fence-object lifetime uses `early_release_on_close` when the fd has no
     hidden or concurrent refs;
+  - the broad dma-fence row is closed only by
+    `drm_dma_fence_lifetime_contract_matrix`, which ties the single
+    `fb_gpu_fence` backing object to GEM/PRIME/dma-buf, KMS OUT_FENCE,
+    syncobj/sync-file, poll callback removal, and final release without
+    native-present/OpenGL-submit credit;
   - native KMS OUT_FENCE and display-correlated vblank/page-flip completion are
     separate gates; passing the vblank/page-flip source matrix does not close
     the OUT_FENCE gate.
