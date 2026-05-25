@@ -404,6 +404,13 @@ but do not treat them as open plan items by default.
   shadow, staging, and GDI surface union arms are present. This is not a
   native display handoff and must keep `display_bind_ioctl=0` plus zero
   native-present/OpenGL-submit credit.
+- `d3d12_present_resource_fd_typed_admission_matrix` is the FB-to-DXG
+  admission guard before native present. It should prove the resource fd is a
+  typed WSL-style `anon_inode:dxgresource`, sealed shared-resource records are
+  visible, the fd metadata matches the D3DKMT handles/allocation count, the
+  bind-contract resource generation comes from the sealed resource generation,
+  stale source cleanup works, and native-present/OpenGL-submit credit stays
+  zero.
 - `d3d12_native_completion_zero_credit_matrix` and
   `d3d12_display_bind_absent_matrix` are the pre-native completion guards.
   They must show absent display bind/transport, zero present/completion ids,

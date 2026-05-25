@@ -610,6 +610,8 @@ require_log 'dxg_resource_scanout_bind_host_abi_matrix .*selected_lane=gpup_dxg_
     "DXG resource scanout-bind host ABI absence matrix"
 require_log 'wsl_standard_alloc_surface_abi_matrix .*shared_primary_size=24 .*shadow_size=16 .*staging_size=12 .*gdi_size=24 .*command_union=sharedprimary,shadow,staging,gdi .*standard_alloc_role=private_driver_data .*display_bind_ioctl=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "WSL-equivalent standard allocation surface ABI without native-present credit"
+require_log 'd3d12_present_resource_fd_typed_admission_matrix .*typed_resource_fd=PASS .*sealed_before_admit=PASS .*shared_records_valid=PASS .*allocation_match=PASS .*generation_from_shared=PASS .*invalid_fd_rejected=PASS .*stale_source_cleanup=PASS .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "typed DXG resource fd admission before native present"
 require_log 'd3d12_native_completion_zero_credit_matrix .*display_bind=ABSENT .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "native D3D12 completion remains zero-credit before display bind"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
