@@ -321,7 +321,9 @@ but do not treat them as open plan items by default.
   existing-sysmem active page pins return to the pre-fault count.
   `OPENRESOURCE` should fault `open_alloc_info` before the final args copyout
   so cleanup uses the host-returned resource handle, not the still-zero user
-  `req.resource` mirror.
+  `req.resource` mirror. Also require parent rollback fields:
+  `parent_same=1`, `parent_refs_balanced=1`, `parent_child_unlinked=1`, and
+  `sealed_generation_coherent=1`.
 - For WSL-like shared resources, treat the explicit resource metadata record
   and per-allocation records as the canonical seal/query/open lifetime model.
   The older flat fields can remain as compatibility mirrors only while
@@ -366,6 +368,12 @@ but do not treat them as open plan items by default.
   fd/event cleanup, open-copyout host sync-object destruction, temporary
   `WAITSYNCFILE` sync-object destruction, child-process open from the same fd,
   and `dxg_syncfile_lifetime` host-event/live-count balance.
+- The top-level Hyper-V DXG validator must consume WSL lifetime rows, not just
+  leave them as optional probe output: `dxg_process_mem_lifetime_matrix`,
+  `dxgprocess_adapter_matrix`, `handle_lifetime_stale_matrix`,
+  `shared_resource_parent_lifetime_matrix`,
+  `shared_resource_sealed_alloc_metadata_matrix`, `sync_file_matrix`, and both
+  `dxg_syncfile_*_unwind_matrix` rows.
 - For native Wayland/D3D12 fence acquire, the chosen contract is WSL-style DXG
   sync-file acquire, not direct D3D12 fence fd import. `d3d12sharedsmoke`
   should emit `d3d12_fence_sharing_policy_matrix` and

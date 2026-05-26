@@ -336,6 +336,20 @@ resource/sync lifetime, and monitored-fence sync-file behavior.
   `sync_import_negative_matrix`, `sync_file_matrix`,
   `dxg_syncfile_*_unwind_matrix`, `dxg_syncfile_lifetime`, and the
   `dxg_opensync_*` packet diagnostics.
+- [x] Promote WSL lifetime parity rows into the top-level Hyper-V DXG
+  validator after the display-bind metadata boundary. `hyperv-dxg-validate.sh`
+  now runs and requires process/object handle lifetime rows, shared-resource
+  parent lifetime and sealed-allocation metadata rows, sync-file create/open
+  unwind rows, and `OPENRESOURCE` parent rollback fields
+  (`parent_same`, `parent_refs_balanced`, `parent_child_unlinked`, and
+  `sealed_generation_coherent`) while keeping all native-present/OpenGL-submit
+  credit gated.
+  Evidence: focused Hyper-V C validators on the 6-vCPU image passed
+  `shared_resource_parent_lifetime_matrix` with `fd_refs=1/1/0`,
+  `shared_resource_seal_provenance_matrix ... no_present_credit=1 status=PASS`,
+  `dxg_syncfile_create_unwind_matrix ... status=PASS`,
+  `dxg_syncfile_open_unwind_matrix ... status=PASS`, and the process/handle
+  lifetime rows required by the runner.
 
 ### 2. Linux DRM/GEM/TTM/KMS Interfaces
 
