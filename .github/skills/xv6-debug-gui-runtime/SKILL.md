@@ -356,6 +356,12 @@ but do not treat them as open plan items by default.
   zero until a documented sender exists. Pair this with
   `d3d12_display_bind_stale_source_zero_credit_matrix`; stale/after-release
   rejects may advance, but any late present/completed ids must remain zero.
+- Keep WSL-style packet lifetime visible even while no sender exists:
+  `d3d12_display_bind_provider_packet_lifetime_matrix` must report no listed
+  packet, request id, transport pending id, completion demux, host-saw packet,
+  transport source, or packet completion/removal credit. A future sender must
+  replace those zeroes with real request-list publication and cancel/remove
+  evidence before completion can carry native-present credit.
 - Keep the stale async completion contract separate from stale-source cleanup.
   `d3d12_display_bind_stale_async_completion_contract_matrix` must report
   `real_sender=0`, no completion demux, no transport pending id, no host-saw

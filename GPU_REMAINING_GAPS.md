@@ -956,6 +956,16 @@ non-readback display handoff.
     present/completed ids, zero native-present credit, and zero OpenGL-submit
     credit. This checked row is a gate for the future provider, not evidence
     that the unchecked real-sender item is complete.
+  - [x] Add the WSL-shaped provider packet lifetime skeleton before a real
+    sender is wired. `d3d12_display_bind_provider_packet_lifetime_matrix`
+    names the future `dxgvmbus`-style request-list slot separately from the
+    provider publication row: request id, transport pending id, command id,
+    transaction id, channel, completion demux, packet completion, wait cancel,
+    packet removal on cancel, host-saw packet, and transport source. Today it
+    must report `packet_listed=0`, `request_id=0`, no transport pending id, no
+    demux, no host-saw display-bind packet, no transport source, zero
+    present/completed ids, and zero native-present/OpenGL/WebKit credit with
+    `PASS_FAILCLOSED`.
   - [x] Add the provider no-send preflight ledger before the real sender is
     wired. `hyperv_dxg_display_bind_submit_failclosed()` now records that the
     selected provider reached a complete, pin-revalidated ready-to-send
