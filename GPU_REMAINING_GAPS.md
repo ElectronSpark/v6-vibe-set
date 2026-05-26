@@ -170,7 +170,7 @@ these chunks in order:
      KVM/virgl recheck, WebKit route, WebKit content, and final WebKit artifact
      in one current-run dependency row so later sections cannot open from
      isolated partial evidence.
-  - `dxgprobe` and `gpucorevalidate` now emit
+  - `fbstat` and `gpucorevalidate` now emit
      `gpu_remaining_plan_dependency_skeleton_matrix`, requiring the WSL
      display-bind ioctl and in-band present-history completion handler to be
      absent, GPU-P sender/completion contracts to be zero, DDA/Nouveau import,
@@ -178,6 +178,13 @@ these chunks in order:
      present/OpenGL/WebKit credit to remain zero while the root display-bind
      gate is closed. The focused core runner requires this row before any
      later native-present/FPS/WebKit evidence can be trusted.
+     The row now names the still-closed sub-gates directly:
+     `real_display_bind_sender=0`, `real_display_bind_completion=0`,
+     `native_completion_validator_gate=closed`, `finite_480p_gate=closed`,
+     `backend_opengl_submit_gate=closed`, and
+     `webkit_enabled_artifact_gate=closed`, with
+     `DDA/Nouveau-separate-display-not-D3D12-bind` kept as a separate display
+     path rather than D3D12 scanout-bind evidence.
    - The skeleton is backed by source-audited negative-proof rows:
      `wsl_dxg_uapi_namespace_negative_matrix`,
      `wsl_dxg_adapter_display_caps_negative_matrix`, and
