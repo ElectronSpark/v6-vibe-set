@@ -148,6 +148,9 @@ but do not treat them as open plan items by default.
   `PROPAGATEPRESENTHISTORYTOKEN` count, length, command id, and payload-head
   bytes; keep `dxg_host_to_vm_presenthistory_completion_matrix` zero-credit
   until a real sender and matching host-to-VM completion payload are proven.
+  `dxg_presenthistory_telemetry_not_completion_matrix` should stay green with
+  `linux_inband_handler=absent`; present-history telemetry is not a
+  display-bind completion contract.
 - Keep the fail-closed proof scalarized: WSL ioctl namespace checked,
   display-bind ioctl absent, standard allocations classified as private driver
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,

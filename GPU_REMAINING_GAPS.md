@@ -785,7 +785,11 @@ non-readback display handoff.
     validators require
     `dxg_host_to_vm_presenthistory_completion_matrix` with zero present-history
     packets, zero completion contracts, zero native-present credit, and zero
-    OpenGL-submit credit on the current fail-closed path.
+    OpenGL-submit credit on the current fail-closed path. The validators also
+    emit `dxg_presenthistory_telemetry_not_completion_matrix`, matching WSL's
+    enum-only present-history source audit by naming the Linux in-band display
+    completion handler as absent instead of treating packet telemetry as a
+    display-bind completion contract.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
