@@ -1571,14 +1571,23 @@ alone.
     through the stricter provider-complete predicate instead of treating raw
     `present_id/completed` or syncfile/generic completion progress as native
     display-bind proof.
-- [x] Add WebKit run-id and current-run evidence matching so stale
-  `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
-  cannot satisfy the WebKit gate.
-  `wlcomp_launcher` now passes the generated WebKit run id into the D3D12
-  evidence admission check, requires both `d3d12_run_id` and
-  `d3d12_present_identity_compositor_run_id` to match before the D3D12 WebKit
-  environment can be selected, and emits `webkit_gpu_contract_matrix` for the
-  run-id/same-adapter/native-present decision.
+  - [x] Add WebKit run-id and current-run evidence matching so stale
+    `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
+    cannot satisfy the WebKit gate.
+    `wlcomp_launcher` now passes the generated WebKit run id into the D3D12
+    evidence admission check, requires both `d3d12_run_id` and
+    `d3d12_present_identity_compositor_run_id` to match before the D3D12 WebKit
+    environment can be selected, and emits `webkit_gpu_contract_matrix` for the
+    run-id/same-adapter/native-present decision.
+  - [x] Apply the same token-bounded current-run and content-progress gate to
+    the desktop autostart WebKit path.
+    `desktop` now parses D3D12 evidence as bounded `key=value` tokens, compares
+    the generated WebKit run id with both the compositor run id and the D3D12
+    run id, and keeps D3D12/WebKit acceleration closed unless compositor-owned
+    content CRC/frame/hash progress matches the provider-owned display-bind
+    present/completed ids and resource generation. The policy artifact exposes
+    `d3d12_run_id_match` and `d3d12_content_progress` so stale, prefixed, or
+    chrome/title-only evidence remains zero-credit.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.

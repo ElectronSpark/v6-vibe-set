@@ -1005,6 +1005,15 @@ but do not treat them as open plan items by default.
   nonzero content CRC/frame/hash, same run/client/resource generation, native
   display completion, and canonical final display-bind names
   (`gpup_dxg_scanout_bind` and `gpu-p-dxg-resource-scanout-bind`).
+- Keep both WebKit launch paths on the same strict D3D12 evidence contract.
+  `wlcomp_launcher` and `desktop` should parse `/tmp/wlcomp-d3d12-present` as
+  whitespace/line-bounded `key=value` tokens, require the generated WebKit run
+  id to match both `d3d12_run_id` and
+  `d3d12_present_identity_compositor_run_id`, and reject acceleration unless
+  compositor-owned content CRC/frame/hash progress matches the provider-owned
+  display-bind present/completed ids and resource generation. Policy artifacts
+  should expose `d3d12_run_id_match` and `d3d12_content_progress` so shell
+  validators can fail stale, prefixed, or chrome/title-only evidence.
 - WebKit acceleration validation starts with the
   `webkit_evidence_rejection_matrix` policy preflight. Chrome/title/cursor-only,
   callback-only, release-only, render-node-only, dmabuf-only, env-only, and
