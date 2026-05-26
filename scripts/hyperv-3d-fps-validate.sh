@@ -186,6 +186,9 @@ frozen_window_rejected = (
 forged_high_fps_rejected = not accepts_display_bind_contract({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "none",
+    "host_saw_display_bind_packet": 0,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 9,
     "display_bind_completed_id": 9,
     "display_bind_resource_generation": 4,
@@ -193,9 +196,34 @@ forged_high_fps_rejected = not accepts_display_bind_contract({
     "content_credit": 0,
     "callback_release_same_frame": 0,
 })
+presenthistory_authority_rejected = not accepts_display_bind_contract({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "wsl_presenthistory",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 1,
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "display",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 9,
+    "content_progress_completed": 9,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 9,
+    "final_handoff_completed": 9,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+})
 case_alias_completion_source_rejected = rejects_display_bind_aliases({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 9,
     "display_bind_completed_id": 9,
     "display_bind_resource_generation": 4,
@@ -215,6 +243,9 @@ case_alias_completion_source_rejected = rejects_display_bind_aliases({
 numeric_alias_completion_source_rejected = rejects_display_bind_aliases({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 9,
     "display_bind_completed_id": 9,
     "display_bind_resource_generation": 4,
@@ -234,6 +265,9 @@ numeric_alias_completion_source_rejected = rejects_display_bind_aliases({
 mixed_display_bind_tuple_rejected = not accepts_display_bind_contract({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 12,
     "display_bind_completed_id": 11,
     "display_bind_resource_generation": 4,
@@ -253,6 +287,9 @@ mixed_display_bind_tuple_rejected = not accepts_display_bind_contract({
 backend_zero_rejected = not accepts_downstream_consumer_gate({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 9,
     "display_bind_completed_id": 9,
     "display_bind_resource_generation": 4,
@@ -277,6 +314,9 @@ backend_zero_rejected = not accepts_downstream_consumer_gate({
 zero_native_ids_rejected = not accepts_downstream_consumer_gate({
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 0,
     "display_bind_completed_id": 0,
     "display_bind_resource_generation": 4,
@@ -329,6 +369,9 @@ valid_demo_interaction = {
     "demo_interaction_completed": 9,
     "display_bind_backend": "gpup_dxg_scanout_bind",
     "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_transport_source": "non_wsl_linux_dxgkrnl_extension",
+    "host_saw_display_bind_packet": 1,
+    "wsl_presenthistory_completion_credit": 0,
     "display_bind_present_id": 9,
     "display_bind_completed_id": 9,
     "display_bind_resource_generation": 4,
@@ -413,6 +456,11 @@ if not forged_high_fps_rejected:
         "anti-inflation selftest failed: forged high-FPS display-bind "
         "evidence without content/callback/release correlation was accepted"
     )
+if not presenthistory_authority_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: WSL presenthistory authority was "
+        "accepted as display-bind completion"
+    )
 if not case_alias_completion_source_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: DISPLAY completion-source alias "
@@ -490,6 +538,7 @@ line = (
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
     "forged_high_fps_negative=1 forged_high_fps_rejected=1 "
+    "presenthistory_authority_rejected=1 "
     "case_alias_completion_source_rejected=1 "
     "numeric_alias_completion_source_rejected=1 "
     "mixed_display_bind_tuple_rejected=1 "
@@ -1328,6 +1377,7 @@ def require_sealed_wlcomp_d3d12_evidence(name, seals, unsealed_blocks):
 
 DISPLAY_BIND_BACKEND = "gpup_dxg_scanout_bind"
 DISPLAY_BIND_TRANSPORT = "gpu-p-dxg-resource-scanout-bind"
+DISPLAY_BIND_TRANSPORT_SOURCE = "non_wsl_linux_dxgkrnl_extension"
 DISPLAY_BIND_COMPLETION_SOURCE = "display"
 
 def display_bind_backend_ok(value):
@@ -1335,6 +1385,9 @@ def display_bind_backend_ok(value):
 
 def display_bind_transport_ok(value):
     return value == DISPLAY_BIND_TRANSPORT
+
+def display_bind_transport_source_ok(value):
+    return value == DISPLAY_BIND_TRANSPORT_SOURCE
 
 def display_bind_completion_source_ok(value):
     return value == DISPLAY_BIND_COMPLETION_SOURCE
@@ -1345,6 +1398,9 @@ def display_bind_records_complete(records, incomplete_records):
     return all(
         display_bind_backend_ok(record["backend"]) and
         display_bind_transport_ok(record["transport"]) and
+        display_bind_transport_source_ok(record["transport_source"]) and
+        record["host_saw_packet"] == 1 and
+        record["wsl_presenthistory_credit"] == 0 and
         display_bind_completion_source_ok(record["completion_source"]) and
         record["present_id"] > 0 and
         record["completed_id"] >= record["present_id"] and
@@ -1377,6 +1433,22 @@ def require_display_bind_records(name, records, incomplete_records):
                 f"{name} display_bind_transport must be exactly "
                 f"{DISPLAY_BIND_TRANSPORT}: sample={index} "
                 f"value={record['transport']}"
+            )
+        if not display_bind_transport_source_ok(record["transport_source"]):
+            raise SystemExit(
+                f"{name} display_bind_transport_source must be exactly "
+                f"{DISPLAY_BIND_TRANSPORT_SOURCE}: sample={index} "
+                f"value={record['transport_source']}"
+            )
+        if record["host_saw_packet"] != 1:
+            raise SystemExit(
+                f"{name} host_saw_display_bind_packet must be 1: "
+                f"sample={index} value={record['host_saw_packet']}"
+            )
+        if record["wsl_presenthistory_credit"] != 0:
+            raise SystemExit(
+                f"{name} wsl_presenthistory_completion_credit must be 0: "
+                f"sample={index} value={record['wsl_presenthistory_credit']}"
             )
         if not display_bind_completion_source_ok(
                 record["completion_source"]):
@@ -2119,6 +2191,10 @@ def display_bind_record_from_line(line):
     return {
         "backend": fields["display_bind_backend"],
         "transport": fields["display_bind_transport"],
+        "transport_source": fields["display_bind_transport_source"],
+        "host_saw_packet": fields["host_saw_display_bind_packet"],
+        "wsl_presenthistory_credit":
+            fields["wsl_presenthistory_completion_credit"],
         "present_id": fields["display_bind_present_id"],
         "completed_id": fields["display_bind_completed_id"],
         "resource_generation": fields["display_bind_resource_generation"],
