@@ -95,6 +95,11 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
   - Hyper-V may expose `FB_GPU_BACKEND_F_DXG_TRANSPORT` and `FB_GPU_BACKEND_F_D3DKMT`.
   - Hyper-V must keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT` false until Mesa D3D12 creates real render contexts, submits real UMD command buffers, presents without the software readback lane, and the 480p 3D demo sustains more than 60 FPS after warmup.
   - KVM/virgl is the current OpenGL-submit backend.
+  - `scripts/gpu-validate.sh` is the positive KVM/virgl control validator:
+    require `backend virgl`, `backend_opengl_submit 1`,
+    `backend_opengl_submit_gate open`, `backend_virgl_opengl 1`, and
+    `opengl_submit_backend_separation_matrix ... opengl_submit_credit=1`.
+    This proves the control backend only; it does not grant Hyper-V credit.
 - Before editing GPU code, check dirty state in all nested repos:
   - `git -C /home/es/xv6-os status --short`
   - `git -C /home/es/xv6-os/kernel status --short`

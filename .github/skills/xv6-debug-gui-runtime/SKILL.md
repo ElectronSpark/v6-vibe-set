@@ -823,6 +823,10 @@ but do not treat them as open plan items by default.
   scanout evidence alone.
 - KVM/virtio-gpu/virgl is the current validated OpenGL-submit backend. It owns
   `FB_GPU_BACKEND_F_OPENGL_SUBMIT` today; Hyper-V does not.
+  `scripts/gpu-validate.sh` should prove that with `backend virgl`,
+  `backend_opengl_submit 1`, `backend_opengl_submit_gate open`,
+  `backend_virgl_opengl 1`, and
+  `opengl_submit_backend_separation_matrix ... opengl_submit_credit=1`.
 - The desktop 3D demo now launches through `mesademo`/`mesawlegl --demo` with a
   real 640x480 Wayland/EGL window, close/resize handling, and an RTC-based FPS
   overlay drawn inside the GL surface.

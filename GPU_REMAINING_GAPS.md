@@ -1514,6 +1514,16 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
   backend still reports the existing OpenGL-submit contract.
+  - [x] Add a positive KVM/virgl control assertion to the existing substrate
+    validator. `scripts/gpu-validate.sh` now requires the KVM run to report
+    `backend virgl`, `backend_opengl_submit 1`,
+    `backend_opengl_submit_gate open`, `backend_virgl_opengl 1`, and an
+    `opengl_submit_backend_separation_matrix` with `backend=virgl`,
+    `dxg_transport=0`, `d3dkmt=0`, `virgl_opengl=1`,
+    `allowed_submit_backend=virgl`, and `opengl_submit_credit=1`. This is
+    control-backend evidence only and grants no Hyper-V credit. The parent
+    re-check item remains open until the Hyper-V backend flag actually changes
+    after native-present/FPS/WebKit gates pass.
 
 ### 6. WebKit Consumer Contract
 

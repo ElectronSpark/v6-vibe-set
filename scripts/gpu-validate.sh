@@ -139,6 +139,16 @@ EOF
         "virgl invalid ioctl rejection pass"
     require_log 'virgltest: bad-submit isolated' \
         "virgl forced failure isolation pass"
+    require_log '^backend virgl flags 0x[0-9a-fA-F]+ renderer ' \
+        "KVM/virgl backend selected"
+    require_log '^backend_opengl_submit 1[[:space:]]*$' \
+        "KVM/virgl advertises OpenGL-submit"
+    require_log '^backend_opengl_submit_gate open[[:space:]]*$' \
+        "KVM/virgl OpenGL-submit gate is open"
+    require_log '^backend_virgl_opengl 1[[:space:]]*$' \
+        "KVM/virgl renderer flag"
+    require_log 'opengl_submit_backend_separation_matrix .*backend=virgl .*dxg_transport=0 .*d3dkmt=0 .*virgl_opengl=1 .*backend_opengl_submit=1 .*allowed_submit_backend=virgl .*hyperv_dxg_transport_is_submit=0 .*hyperv_d3dkmt_is_submit=0 .*kvm_virgl_submit_allowed=1 .*native_present_credit=0 .*opengl_submit_credit=1 .*status=PASS' \
+        "KVM/virgl positive OpenGL-submit control matrix"
     require_log 'mouseinject: absolute x=65535 y=65535' \
         "input injection while GPU clients are active"
     require_log 'virtio_input: initialized' "virtio-tablet input device"
