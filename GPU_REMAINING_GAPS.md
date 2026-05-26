@@ -219,6 +219,13 @@ these chunks in order:
      non-readback display proof until Nouveau display creation, non-virtual
      connectors, hardware vblank IRQs, and hardware page-flip completions all
      correlate through the KMS `NOUVEAU_HW` lane.
+  - `fb_dxg_present_display_bind_result_accepts()` now requires
+    `FB_GPU_DXG_DISPLAY_BIND_SOURCE_NON_WSL_DXGKRNL_EXTENSION` before a
+    provider result can become D3D12 native-present credit, so a future
+    DDA/Nouveau native-display source cannot be accidentally counted as the
+    D3D12 resource scanout-bind lane. The DDA/Nouveau proof rows now split
+    `dda_native_display_credit` from `d3d12_native_present_credit=0` while
+    preserving legacy `native_present_credit=0` for existing validators.
 
 ### 1. WSL2 DXG Parity
 
@@ -1691,6 +1698,24 @@ alone.
     `bash -n scripts/hyperv-webkit-gpu-validate.sh`,
     `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
     and staged `webkitgpusmoke --negative-selftests` passed.
+  - [x] Carry display-bind source authority through the final WebKit enabled
+    artifact gate. `hyperv-webkit-gpu-validate.sh` now refuses to emit or
+    accept an open `webkit_enabled_artifact_contract_matrix` unless the same
+    current-run provider-owned record also carries
+    `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+    `host_saw_display_bind_packet=1`, and
+    `wsl_presenthistory_completion_credit=0`. `webkitgpusmoke`'s parser
+    negative selftest names `source_authority_rejected=PASS`, so WSL
+    present-history telemetry or host-copy aliases cannot become WebKit
+    acceleration proof.
+  - [x] Require the same source-authority tuple in WebKit launch and policy
+    consumers, not only in post-hoc validators. `desktop` and
+    `wlcomp_launcher` now parse
+    `display_bind_transport_source`, `host_saw_display_bind_packet`, and
+    `wsl_presenthistory_completion_credit` from
+    `/tmp/wlcomp-d3d12-present`, require the future-positive tuple before
+    selecting the D3D12 WebKit path, and echo those fields in
+    `webkit_gpu_policy` and `wlcomp: webkit_gpu_contract_matrix`.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.

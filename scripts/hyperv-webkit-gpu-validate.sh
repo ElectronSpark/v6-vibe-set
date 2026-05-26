@@ -286,7 +286,7 @@ emit_webkit_animated_content_native_present_gate_open()
 
 require_webkit_enabled_artifact_contract_matrix()
 {
-    require_log "webkit_enabled_artifact_contract_matrix .*required_current_run_display_bind_completion=1 .*required_finite_480p_fps_artifact=1 .*required_backend_opengl_submit=1 .*required_shared_resource_fence_identity=1 .*required_compositor_owned_content_crc_frame_hash_identity=1 .*current_run_display_bind_completion=PASS .*finite_480p_fps_artifact=PASS .*backend_opengl_submit=1 .*shared_resource_fence_identity=PASS .*compositor_owned_content_crc_frame_hash_identity=PASS .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
+    require_log "webkit_enabled_artifact_contract_matrix .*required_current_run_display_bind_completion=1 .*required_finite_480p_fps_artifact=1 .*required_backend_opengl_submit=1 .*required_shared_resource_fence_identity=1 .*required_compositor_owned_content_crc_frame_hash_identity=1 .*current_run_display_bind_completion=PASS .*finite_480p_fps_artifact=PASS .*backend_opengl_submit=1 .*shared_resource_fence_identity=PASS .*compositor_owned_content_crc_frame_hash_identity=PASS .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
         "WebKit enabled artifact contract matrix"
 }
 
@@ -295,6 +295,9 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     local display_bind_present_id
     local display_bind_completed_id
     local display_bind_generation
+    local display_bind_transport_source
+    local host_saw_display_bind_packet
+    local wsl_presenthistory_completion_credit
     local native_credit
     local resource
     local allocations
@@ -334,6 +337,9 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     display_bind_present_id="$(last_log_counter "${LOG}" display_bind_present_id)"
     display_bind_completed_id="$(last_log_counter "${LOG}" display_bind_completed_id)"
     display_bind_generation="$(last_log_counter "${LOG}" display_bind_resource_generation)"
+    display_bind_transport_source="$(last_log_token "${LOG}" display_bind_transport_source)"
+    host_saw_display_bind_packet="$(last_log_counter "${LOG}" host_saw_display_bind_packet)"
+    wsl_presenthistory_completion_credit="$(last_log_counter "${LOG}" wsl_presenthistory_completion_credit)"
     native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
     resource="$(last_any_log_counter "${LOG}" d3d12_present_resource resource)"
     allocations="$(last_any_log_counter "${LOG}" d3d12_present_allocation_count allocations)"
@@ -352,6 +358,9 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     fi
     if [[ -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
           -z "${display_bind_generation}" || -z "${native_credit}" ||
+          -z "${display_bind_transport_source}" ||
+          -z "${host_saw_display_bind_packet}" ||
+          -z "${wsl_presenthistory_completion_credit}" ||
           -z "${resource}" || -z "${allocations}" ||
           -z "${fence}" || -z "${fence_target}" || -z "${release_fence}" ||
           -z "${content_crc}" || -z "${content_frame}" ||
@@ -370,8 +379,13 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     if (( native_credit != display_bind_completed_id )); then
         fail "WebKit enabled artifact native completion id does not match display-bind completion"
     fi
+    if [[ "${display_bind_transport_source}" != "non_wsl_linux_dxgkrnl_extension" ||
+          "${host_saw_display_bind_packet}" -ne 1 ||
+          "${wsl_presenthistory_completion_credit}" -ne 0 ]]; then
+        fail "WebKit enabled artifact display-bind source authority mismatch: source=${display_bind_transport_source} host_saw=${host_saw_display_bind_packet} wsl_credit=${wsl_presenthistory_completion_credit}"
+    fi
 
-    echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=PASS finite_480p_fps_artifact=PASS backend_opengl_submit=1 shared_resource_fence_identity=PASS compositor_owned_content_crc_frame_hash_identity=PASS display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} shared_resource=${resource} allocations=${allocations} fence=${fence} fence_target=${fence_target} release_fence=${release_fence} content_crc=${content_crc} content_frame=${content_frame} content_frame_hash=${content_frame_hash} content_present_id=${content_present_id} content_completed=${content_completed} content_resource_generation=${content_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=PASS finite_480p_fps_artifact=PASS backend_opengl_submit=1 shared_resource_fence_identity=PASS compositor_owned_content_crc_frame_hash_identity=PASS display_bind_transport_source=${display_bind_transport_source} host_saw_display_bind_packet=${host_saw_display_bind_packet} wsl_presenthistory_completion_credit=${wsl_presenthistory_completion_credit} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} shared_resource=${resource} allocations=${allocations} fence=${fence} fence_target=${fence_target} release_fence=${release_fence} content_crc=${content_crc} content_frame=${content_frame} content_frame_hash=${content_frame_hash} content_present_id=${content_present_id} content_completed=${content_completed} content_resource_generation=${content_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -1721,7 +1735,7 @@ require_prior_core_gpu_contract()
 
 webkit_shared_surface_contract_validated()
 {
-	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
+	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
         grep -Eq 'webkit_gpu_policy .*d3d12_evidence_seal=1 .*gpu_contract=d3d12-shared-surface' "${LOG}" &&
 		    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_evidence_seal=1 .*d3d12_identity_ok=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
 	    grep -Eq "webkitgpusmoke: gpu-contract .*d3d12_run_id=${VALIDATION_RUN_ID} .*d3d12_compositor_run_id=${VALIDATION_RUN_ID} .*env_run_id=${VALIDATION_RUN_ID} .*d3d12_run_id_match=1 .*ok=1" "${LOG}" &&
@@ -1907,7 +1921,7 @@ run_webkit_negative_selftests()
         tee -a "${LOG}"
     run_guest "webkitgpusmoke --negative-selftests; echo webkit_negative_selftests_status=\$?" \
         "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
-    require_log 'webkitgpusmoke: webkit_contract_parser_negative_matrix .*prefix_key_rejected=PASS .*suffix_key_rejected=PASS .*malformed_numeric_rejected=PASS .*backend_alias_rejected=PASS .*completion_source_alias_rejected=PASS .*unsealed_display_bind_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+    require_log 'webkitgpusmoke: webkit_contract_parser_negative_matrix .*prefix_key_rejected=PASS .*suffix_key_rejected=PASS .*malformed_numeric_rejected=PASS .*backend_alias_rejected=PASS .*completion_source_alias_rejected=PASS .*source_authority_rejected=PASS .*unsealed_display_bind_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit pure-C parser negative matrix"
     require_log 'webkitgpusmoke: webkit_lineage_equality_negative_matrix .*stale_d3d12_run_rejected=PASS .*stale_fps_run_rejected=PASS .*mixed_content_run_rejected=PASS .*backend_zero_with_ids_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit pure-C lineage equality negative matrix"
@@ -2119,7 +2133,7 @@ if webkit_shared_surface_contract_validated; then
     require_webkit_animated_content_native_present_gate
     emit_webkit_enabled_artifact_contract_matrix_open
     require_webkit_enabled_artifact_contract_matrix
-    require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' \
+    require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*gpu_contract=d3d12-shared-surface .*fallback=none' \
         "WebKit D3D12 shared-surface/OpenGL-submit acceleration gate"
     require_log 'webkit_gpu_policy .*gpu_contract=d3d12-shared-surface .*d3d12_native_present_required=1 .*d3d12_copy_export=0 .*d3d12_readback=0 .*fallback=none' \
         "WebKit D3D12 native-present/no-readback policy"
