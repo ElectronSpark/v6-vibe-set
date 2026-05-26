@@ -759,6 +759,16 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   `hyperv-gpu-core-validate.sh` now require
   `nouveau_linux_display_readiness_matrix ... status=PASS_FAILCLOSED` before
   any DDA/Nouveau display or OpenGL-submit credit can be claimed.
+  The kernel KMS native-present gate now uses the same full Linux-shaped
+  acceptance tuple instead of a loose subset: display engine object,
+  `mode_config`, CRTC/encoder/primary plane, outp/connector/head masks,
+  NVIF head construction, non-virtual connector, HPD/DP IRQ events, per-head
+  vblank event/IRQ source, atomic commit tail, hardware page-flip completion,
+  linear scanout policy, and no unvalidated nonlinear modifiers. Validators
+  require `nouveau_kms_acceptance_shape_matrix` and
+  `nouveau_dda_display_positive_shape_matrix` so future DDA/Nouveau display
+  credit stays separate from D3D12 native-present, OpenGL-submit, and WebKit
+  credit.
 
 ### 4. Native D3D12 Shared-Resource Present
 
@@ -825,14 +835,16 @@ non-readback display handoff.
   provider fail-closed, and zero native-present/OpenGL/WebKit credit.
   `d3d12_display_bind_host_abi_discovery_matrix` is the bounded source-audited
   gate under that catalog: no custom host tool, no WSL display-bind ioctl,
-  WSLg/FreeRDP absent, RDP frame transport copy/dirty-frame only, GPU-P sender
-  contract zero, completion demux contract zero, DDA/Nouveau import/scanout/
-  hardware flip absent, provider fail-closed, and transport/present/completed
-  ids plus native-present/OpenGL/WebKit credit all zero.
+  WSLg/FreeRDP absent, RDP frame transport copy/dirty-frame only, no hv_sock
+  display-bind service, GPU-P sender contract zero, completion demux contract
+  zero, DDA/Nouveau import/scanout/hardware flip absent, provider fail-closed,
+  and transport/present/completed ids plus native-present/OpenGL/WebKit credit
+  all zero.
   `d3d12_negative_abi_manifest_matrix` now records the exact WSL/Linux source
   audit as a single machine-validated manifest: WSL `d3dkmthk.h` has no
   display-bind ioctl, `dxgvmbus.c` has no resource scanout-bind sender or
-  present-history completion demux, present-history/redirected-flip/BLT/
+  present-history completion demux, hv_sock is generic AF_VSOCK plumbing with
+  no display-bind service contract, present-history/redirected-flip/BLT/
   HWQUEUE ids are not a display-bind contract, synthvid is GPA dirty-rect only,
   DDA/Nouveau is a separate PCI display path, and native-present/OpenGL credit
   remains zero.
