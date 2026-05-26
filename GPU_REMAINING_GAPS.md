@@ -103,9 +103,11 @@ scanout or Nouveau correctness.
 The remaining unchecked work is intentionally ordered around one root
 dependency:
 
-1. `dxg-resource-scanout-bind` or an equivalent GPU-P/DDA display-bind
-   transport must produce a nonzero present id and display-completion counter
-   for the same D3D12 resource generation.
+1. `dxg-resource-scanout-bind` or an equivalent GPU-P/DXG/WSLg-style
+   resource-to-display transport must produce a nonzero present id and
+   display-completion counter for the same D3D12 resource generation.
+   DDA/Nouveau is tracked as a separate native-display path, not as evidence
+   that the D3D12 resource scanout-bind root exists.
 2. The compositor may then unblock callbacks/releases and grant visible content
    and FPS credit only for that completed resource generation.
 3. Hyper-V may advertise `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only after the native
@@ -124,8 +126,11 @@ detailed source/evidence history, but new implementation should move through
 these chunks in order:
 
 1. **Host Display-Bind Source**
-   - Find or prove absent a non-custom GPU-P/DXG, WSLg-like, or DDA bridge
+   - Find or prove absent a non-custom GPU-P/DXG or WSLg-like bridge
      that can bind a guest D3D12 resource/allocation/fence to host scanout.
+     Keep DDA/Nouveau on its own native-display readiness track unless a
+     future source documents an explicit bridge from the D3D12 resource
+     generation into that display engine.
    - If a source exists, document its sender packet, return layout,
      completion payload, resource-generation identity, and same-adapter
      requirements against WSL/Linux source or same-adapter traces.
@@ -867,13 +872,17 @@ non-readback display handoff.
     CORE_C_SECTIONS='present-source' VALIDATION_RUN_ID=provider-pending-failclosed-3
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
-    evidence. A DDA-backed Nouveau PCI display path can only count as a native
-    display lane after it also proves a D3D12 shared-resource import,
-    scanout-bind, and hardware flip completion contract. `fb_nouveau.c` now
-    includes `NO_NOUVEAU_DISPLAY` in the fail-closed reject mask, and
-    `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused runner require
+    evidence. A DDA-backed Nouveau PCI display path is its own native-display
+    lane; it is not a D3D12 resource scanout-bind path and cannot close the
+    `dxg-resource-scanout-bind` root item. `fb_nouveau.c` now includes
+    `NO_NOUVEAU_DISPLAY` in the fail-closed reject mask, and `fbstat`,
+    `dxgprobe`, `gpucorevalidate`, and the focused runner require
     `d3d12_dda_nouveau_separate_display_not_bind_matrix` so DDA PCI display
     presence cannot be confused with a D3D12 resource-to-scanout bind.
+    The DDA/Nouveau native-display lane remains zero-credit until one current
+    lineage correlates Linux-shaped display create, nonvirtual
+    heads/connectors, hardware vblank IRQ, KMS `NOUVEAU_HW` page flip, and
+    hardware flip completion.
   - [x] Make host-to-VM present-history completion observable before any
     future native-present credit. The Hyper-V DXG receive path now recognizes
     `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
@@ -1238,7 +1247,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `native_present_completion_source_namespace_matrix` keeps D3D12 display-bind
   completion ids, Nouveau KMS vblank/page-flip sequences, and IRQ-cause counters
   in separate namespaces so a later DDA/Nouveau display path cannot be mistaken
-  for D3D12 resource scanout-bind completion.
+  for D3D12 resource scanout-bind completion. A DDA/Nouveau native-display
+  skeleton may collect display-create, nonvirtual head/connector, hardware
+  vblank IRQ, KMS `NOUVEAU_HW` page-flip, and hardware completion diagnostics,
+  but those fields must remain zero-credit unless they all correlate through
+  Linux-shaped Nouveau/KMS hardware state in the same validation lineage.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace

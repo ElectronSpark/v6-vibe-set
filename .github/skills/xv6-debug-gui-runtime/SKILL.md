@@ -668,7 +668,10 @@ but do not treat them as open plan items by default.
 - On GPU-P-only Hyper-V images, Nouveau must remain fail-closed unless a real
   BAR-backed DDA NVIDIA PCI function is accepted. `fbstat` should emit
   `nouveau_gpup_failclosed_matrix` with no fake BAR/DMA/IRQ/getparam/native
-  present/OpenGL-submit credit.
+  present/OpenGL-submit credit. Accepted DDA PCI facts are still only
+  diagnostics for native display until Linux-shaped display create, nonvirtual
+  heads/connectors, hardware vblank IRQ, KMS `NOUVEAU_HW` page flip, and
+  hardware flip completion all correlate in the same validation lineage.
 - `nouveau_pci_runtime_contract_matrix` is the Linux-shaped PCI runtime
   diagnostic row. On GPU-P-only images it should pass with DMA/coherent masks
   not configured, BAR claims not attempted, no IRQ handler or delivery,
@@ -733,8 +736,9 @@ but do not treat them as open plan items by default.
   and keep native-present/OpenGL/WebKit credit at zero.
 - `d3d12_dda_nouveau_separate_display_not_bind_matrix` is the DDA split guard.
   A separate DDA/Nouveau PCI display path is zero-credit for D3D12 native
-  present until it also proves a D3D12 shared-resource import, scanout-bind,
-  and hardware flip completion contract for the same resource generation.
+  present because it is not the D3D12 resource scanout-bind path. Keep it in a
+  native-display namespace unless a future source documents an explicit bridge
+  from a D3D12 resource generation into the Nouveau display engine.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,
