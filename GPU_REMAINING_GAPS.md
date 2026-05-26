@@ -1569,6 +1569,23 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     scripts/hyperv-3d-fps-validate.sh` passed and
     `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
     rebuilt the updated Wayland clients on 2026-05-26.
+  - [x] Require compositor-owned display-bind source authority before any
+    downstream consumer accepts native-present, FPS, or WebKit credit.
+    `/tmp/wlcomp-d3d12-present` now carries
+    `display_bind_transport_source`, `host_saw_display_bind_packet`, and
+    `wsl_presenthistory_completion_credit` in both fail-closed and
+    future-success writes. `d3d12sharedsmoke`, the FPS validator, the DXG
+    validator, and WebKit validators reject native-present/WebKit/FPS credit
+    unless the tuple is future-positive, line-scoped to the same
+    display-bind present/completed ids and resource generation, and explicitly
+    zero-credit for WSL present-history telemetry. Evidence:
+    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
+    `d3d12sharedsmoke --present-evidence-selftest`,
+    `webkitgpusmoke --contract-parser-negative`,
+    `webkitgpusmoke --negative-selftests`, and
+    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
+    VALIDATION_RUN_ID=webkit-source-boundary
+    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

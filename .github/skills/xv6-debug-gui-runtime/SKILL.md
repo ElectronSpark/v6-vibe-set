@@ -1023,9 +1023,15 @@ but do not treat them as open plan items by default.
 - Final FPS display-bind acceptance is canonical only:
   `display_bind_backend=gpup_dxg_scanout_bind` and
   `display_bind_transport=gpu-p-dxg-resource-scanout-bind`, with exact
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+  `host_saw_display_bind_packet=1`,
+  `wsl_presenthistory_completion_credit=0`, and
   `display_bind_completion_source=display` on the same evidence record as the
-  nonzero present id, completed id, and resource generation. Legacy aliases
-  such as `hyperv-dxg`, `gpu-p`, `dda`, `nouveau`,
+  nonzero present id, completed id, and resource generation. Fail-closed
+  `/tmp/wlcomp-d3d12-present` rows should instead report
+  `display_bind_transport_source=none`, `host_saw_display_bind_packet=0`,
+  and `wsl_presenthistory_completion_credit=0`, and remain zero-credit.
+  Legacy aliases such as `hyperv-dxg`, `gpu-p`, `dda`, `nouveau`,
   `dxg-resource-scanout-bind`, `host-display-channel`,
   `FB_GPU_DXG_PRESENT_COMPLETION_DISPLAY`, numeric enum values, and
   case-changed `DISPLAY` are diagnostic text only, not final pass tokens.
@@ -1075,11 +1081,15 @@ but do not treat them as open plan items by default.
   final tokens.
 - WebKit shell consumers must also be line-scoped. Before emitting any open
   WebKit gate, require one provider-owned display-bind record carrying exact
-  backend, transport, `display_bind_completion_source=display`,
-  `completion_source=display`, nonzero present/completed/resource generation,
-  `backend_opengl_submit=1`, and a matching native completion id. Do not fill
-  missing native completion ids from display-bind ids, and do not count
-  final-handoff-only host-display aliases as GPU-P/DDA commit acceptance.
+  backend, transport,
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+  `host_saw_display_bind_packet=1`,
+  `wsl_presenthistory_completion_credit=0`,
+  `display_bind_completion_source=display`, `completion_source=display`,
+  nonzero present/completed/resource generation, `backend_opengl_submit=1`,
+  and a matching native completion id. Do not fill missing native completion
+  ids from display-bind ids, and do not count final-handoff-only host-display
+  aliases or WSL present-history telemetry as GPU-P/DDA commit acceptance.
 - Pure-C validator consumers should use the same discipline. `gpucorevalidate`
   output checks should match whitespace/line-bounded tokens while still
   allowing deliberate `field=` prefix probes, and `dxgprobe` should parse

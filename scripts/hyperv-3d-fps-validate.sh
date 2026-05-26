@@ -92,6 +92,10 @@ def accepts_display_bind_contract(fields):
         fields.get("display_bind_backend") == "gpup_dxg_scanout_bind" and
         fields.get("display_bind_transport") ==
             "gpu-p-dxg-resource-scanout-bind" and
+        fields.get("display_bind_transport_source") ==
+            "non_wsl_linux_dxgkrnl_extension" and
+        fields.get("host_saw_display_bind_packet", 0) == 1 and
+        fields.get("wsl_presenthistory_completion_credit", 0) == 0 and
         fields.get("display_bind_present_id", 0) > 0 and
         fields.get("display_bind_completed_id", 0) >=
             fields.get("display_bind_present_id", 0) and
@@ -527,6 +531,9 @@ forged_line = (
     f"validation_run_id={run_id} effective_presented_fps=999.000 "
     "display_bind_backend=gpup_dxg_scanout_bind "
     "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    "display_bind_transport_source=none "
+    "host_saw_display_bind_packet=0 "
+    "wsl_presenthistory_completion_credit=0 "
     "display_bind_present_id=9 display_bind_completed_id=9 "
     "display_bind_resource_generation=4 "
     "display_bind_completion_source=missing "
@@ -539,6 +546,9 @@ source_isolation_line = (
     "fps_artifact_source_isolation_negative_matrix "
     f"validation_run_id={run_id} canonical_source=/tmp/wlcomp-d3d12-present "
     "forged_source=mesawlegl_fps "
+    "forged_display_bind_transport_source=non_wsl_linux_dxgkrnl_extension "
+    "forged_host_saw_display_bind_packet=1 "
+    "forged_wsl_presenthistory_completion_credit=0 "
     "forged_display_bind_present_id=9 forged_display_bind_completed_id=9 "
     "forged_d3d12_dxg_present_id=9 forged_d3d12_dxg_completed=9 "
     "quarantined_from_native_present_parser=1 rejected=1 "
@@ -552,6 +562,9 @@ downstream_line = (
     "backend_opengl_submit=0 backend_zero_rejected=1 "
     "display_bind_backend=gpup_dxg_scanout_bind "
     "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    "display_bind_transport_source=none "
+    "host_saw_display_bind_packet=0 "
+    "wsl_presenthistory_completion_credit=0 "
     "display_bind_present_id=0 display_bind_completed_id=0 "
     "display_bind_resource_generation=0 native_present_id=0 "
     "native_completed=0 native_present_ids_zero_rejected=1 "
@@ -568,6 +581,9 @@ dependency_line = (
     "accepted_completion_source=display_bind_provider "
     "display_bind_backend=missing "
     "display_bind_transport=missing "
+    "display_bind_transport_source=none "
+    "host_saw_display_bind_packet=0 "
+    "wsl_presenthistory_completion_credit=0 "
     "display_bind_present_id=0 display_bind_completed_id=0 "
     "display_bind_resource_generation=0 "
     "display_bind_completion_source=missing "
@@ -2047,6 +2063,18 @@ def display_bind_record_from_line(line):
     fields = {
         "display_bind_backend": token_value(line, ("display_bind_backend",)),
         "display_bind_transport": token_value(line, ("display_bind_transport",)),
+        "display_bind_transport_source": token_value(
+            line,
+            ("display_bind_transport_source",),
+        ),
+        "host_saw_display_bind_packet": counter_value(
+            line,
+            ("host_saw_display_bind_packet",),
+        ),
+        "wsl_presenthistory_completion_credit": counter_value(
+            line,
+            ("wsl_presenthistory_completion_credit",),
+        ),
         "display_bind_present_id": counter_value(
             line,
             ("display_bind_present_id",),
@@ -4212,6 +4240,15 @@ if (re.search(r"d3d12sharedsmoke: runtime CreateSharedHandle\(resource\) ok", lo
 if not re.search(
     r"d3d12sharedsmoke: native present evidence ok "
     r"path=d3d12-dxg-present-source-display-handoff "
+    r".*display_bind_backend=gpup_dxg_scanout_bind "
+    r".*display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    r".*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension "
+    r".*host_saw_display_bind_packet=1 "
+    r".*wsl_presenthistory_completion_credit=0 "
+    r".*display_bind_present_id=[1-9][0-9]* "
+    r".*display_bind_completed_id=[1-9][0-9]* "
+    r".*display_bind_resource_generation=[1-9][0-9]* "
+    r".*display_bind_completion_source=display "
     r".*present_id=[1-9][0-9]* completed=[1-9][0-9]* "
     r".*mtime_ms=[1-9][0-9]* min_mtime_ms=[1-9][0-9]* "
     r".*starts=[1-9][0-9]* copy=[1-9][0-9]* completes=[1-9][0-9]* "
