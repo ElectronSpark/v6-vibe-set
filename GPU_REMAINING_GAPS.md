@@ -205,6 +205,13 @@ these chunks in order:
      GPA-dirty evidence, and DDA/Nouveau display separation cannot become
      native-present credit without a real host ABI, sender, and
      display-completion contract.
+     The bounded host-ABI source audit is
+     `d3d12_display_bind_host_abi_discovery_matrix`: it must keep custom host
+     tooling absent, the WSL display-bind ioctl absent, WSLg/FreeRDP/RDP paths
+     absent or copy/dirty-frame only, GPU-P sender and completion-demux
+     contracts at zero, DDA/Nouveau D3D12 import/scanout/hardware flip absent,
+     the provider fail-closed, transport/present/completed ids zero, and
+     native-present/OpenGL/WebKit credit at zero.
      These follow the WSL `dxgkrnl` UAPI/display-cap clearing and Linux
      Nouveau DRM/KMS shape: WSL enum, adapter, standard-allocation,
      submit/present, trace replay, and present-history telemetry fields are
@@ -790,6 +797,12 @@ non-readback display handoff.
   absent, no custom host tool, no GPU-P/DXG sender/completion contract, no
   synthvid D3D12 bind, no DDA D3D12 import/scanout/hardware-flip completion,
   provider fail-closed, and zero native-present/OpenGL/WebKit credit.
+  `d3d12_display_bind_host_abi_discovery_matrix` is the bounded source-audited
+  gate under that catalog: no custom host tool, no WSL display-bind ioctl,
+  WSLg/FreeRDP absent, RDP frame transport copy/dirty-frame only, GPU-P sender
+  contract zero, completion demux contract zero, DDA/Nouveau import/scanout/
+  hardware flip absent, provider fail-closed, and transport/present/completed
+  ids plus native-present/OpenGL/WebKit credit all zero.
   The Hyper-V-owned provider boundary is now a generic
   `hyperv_dxg_display_bind_submit()` slot backed by the current fail-closed
   implementation. Kernel stats and pure-C validators require the provider's
@@ -901,6 +914,26 @@ non-readback display handoff.
     `public_present_api_not_guest_bind_matrix` with WSLg/FreeRDP local source
     absent, RDP classified as copy/dirty-frame transport, and native-present,
     OpenGL-submit, and WebKit acceleration credit at zero.
+  - [x] Add the bounded host-ABI discovery contract row without checking off
+    the root sender. `d3d12_display_bind_host_abi_discovery_matrix` is required
+    by `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused Hyper-V runner
+    as a source-audited fail-closed gate: no custom host tool, no WSL
+    display-bind ioctl, WSLg/FreeRDP absent, RDP copy/dirty-frame only, GPU-P
+    sender and completion-demux contracts zero, DDA/Nouveau import/scanout/
+    hardware flip absent, provider fail-closed, zero present/completed ids, and
+    zero native-present/OpenGL/WebKit credit.
+  - [x] Move no-host-ABI pending resolution/ref-release accounting into the
+    Hyper-V provider result without opening a sender. The fail-closed provider
+    now reports `resolved_or_cancelled=1`, `refs_released=1`,
+    `no_host_abi_cancelled=1`, and `no_host_abi_refs_released=1` after a
+    sampled provider submit, while keeping publish-before-send, transport
+    pending id, command id, transaction id, channel, completion demux, present
+    id, completed id, native-present credit, OpenGL-submit credit, and WebKit
+    credit at zero. Evidence:
+    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+    CORE_C_SECTIONS='preflight present-source final'
+    VALIDATION_RUN_ID=host-abi-discovery-provider-release
+    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
   - [x] Make host-to-VM present-history completion observable before any
     future native-present credit. The Hyper-V DXG receive path now recognizes
     `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
