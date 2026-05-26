@@ -146,7 +146,7 @@ require_webkit_display_bind_dependency_skeleton_closed()
 
 require_webkit_display_bind_dependency_skeleton_open()
 {
-    require_log 'webkit_display_bind_dependency_skeleton_matrix .*evidence_path=/tmp/wlcomp-d3d12-present .*required_current_run_display_bind_completion=1 .*required_validated_shared_surface_native_d3d12_contract=1 .*required_content_progress_native_present_complete=1 .*required_backend_opengl_submit=1 .*title_only=REJECT .*chrome_only=REJECT .*cursor_only=REJECT .*render_node_only=REJECT .*dmabuf_only=REJECT .*app_loop_only=REJECT .*stale_log_rejected=PASS .*display_bind_backend=gpup_dxg_scanout_bind .*display_bind_transport=gpu-p-dxg-resource-scanout-bind .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*display_bind_present_id=[1-9][0-9]* .*display_bind_completed_id=[1-9][0-9]* .*display_bind_resource_generation=[1-9][0-9]* .*display_bind_completion_source=display .*completion_source=display .*current_run_display_bind_completion=PASS .*validated_shared_surface_native_d3d12_contract=PASS .*content_progress_native_present_complete=PASS .*backend_opengl_submit=1 .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_content_credit=1 .*webkit_accel_credit=1 .*status=PASS' \
+    require_log 'webkit_display_bind_dependency_skeleton_matrix .*evidence_provider=wlcomp .*evidence_path=/tmp/wlcomp-d3d12-present .*evidence_generation=[1-9][0-9]* .*evidence_run_id=[A-Za-z0-9_.:-]+ .*required_current_run_display_bind_completion=1 .*required_validated_shared_surface_native_d3d12_contract=1 .*required_content_progress_native_present_complete=1 .*required_backend_opengl_submit=1 .*title_only=REJECT .*chrome_only=REJECT .*cursor_only=REJECT .*render_node_only=REJECT .*dmabuf_only=REJECT .*app_loop_only=REJECT .*stale_log_rejected=PASS .*display_bind_backend=gpup_dxg_scanout_bind .*display_bind_transport=gpu-p-dxg-resource-scanout-bind .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*display_bind_present_id=[1-9][0-9]* .*display_bind_completed_id=[1-9][0-9]* .*display_bind_resource_generation=[1-9][0-9]* .*display_bind_completion_source=display .*completion_source=display .*current_run_display_bind_completion=PASS .*validated_shared_surface_native_d3d12_contract=PASS .*content_progress_native_present_complete=PASS .*backend_opengl_submit=1 .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_content_credit=1 .*webkit_accel_credit=1 .*status=PASS' \
         "WebKit display-bind dependency skeleton open"
 }
 
@@ -158,6 +158,8 @@ require_webkit_animated_content_native_present_gate()
 
 emit_webkit_animated_content_native_present_gate_open()
 {
+    local evidence_generation
+    local evidence_run_id
     local native_credit
     local content_present_id
     local content_completed
@@ -189,12 +191,20 @@ emit_webkit_animated_content_native_present_gate_open()
     local fps_display_bind_completion_source
     local fps_completion_source
 
-    native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
+    require_sealed_d3d12_evidence_file "${LOG}" \
+        "WebKit animated content current-run provider tuple"
+    content_line="$(provider_owned_display_bind_line_file "${LOG}" \
+        "WebKit animated content content-progress tuple" \
+        'd3d12_wayland_content_progress_matrix .*status=PASS' 0 1)"
+    fps_line="$(provider_owned_display_bind_line_file "${LOG}" \
+        "WebKit animated content FPS provenance tuple" \
+        'd3d12_wayland_present_fps_provenance_matrix .*status=PASS' 0 0)"
+    evidence_generation="$(line_log_counter "${content_line}" evidence_generation)"
+    evidence_run_id="$(line_log_token "${content_line}" evidence_run_id)"
+    native_credit="$(line_log_counter "${content_line}" d3d12_native_present_completion_id)"
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
         fail "cannot open WebKit animated content gate without provider native completion id"
     fi
-    content_line="$(last_log_line "${LOG}" 'd3d12_wayland_content_progress_matrix .*status=PASS')"
-    fps_line="$(last_log_line "${LOG}" 'd3d12_wayland_present_fps_provenance_matrix .*status=PASS')"
     content_present_id="$(line_log_counter "${content_line}" present_id)"
     content_completed="$(line_log_counter "${content_line}" completed)"
     display_bind_present_id="$(line_log_counter "${content_line}" display_bind_present_id)"
@@ -218,11 +228,16 @@ emit_webkit_animated_content_native_present_gate_open()
     fps_wsl_presenthistory_completion_credit="$(line_log_counter "${fps_line}" wsl_presenthistory_completion_credit)"
     fps_display_bind_completion_source="$(line_log_token "${fps_line}" display_bind_completion_source)"
     fps_completion_source="$(line_log_token "${fps_line}" completion_source)"
-    final_handoff_success="$(last_log_counter "${LOG}" d3d12_final_handoff_success)"
-    final_handoff_present_id="$(last_log_counter "${LOG}" d3d12_final_handoff_present_id)"
-    final_handoff_completed="$(last_log_counter "${LOG}" d3d12_final_handoff_completed)"
-    final_handoff_generation="$(last_log_counter "${LOG}" d3d12_final_handoff_resource_generation)"
+    require_provider_owned_final_handoff_file "${LOG}" \
+        "WebKit animated content final handoff" \
+        "${display_bind_present_id}" "${display_bind_completed_id}" \
+        "${display_bind_generation}"
+    final_handoff_success=1
+    final_handoff_present_id="${display_bind_present_id}"
+    final_handoff_completed="${display_bind_completed_id}"
+    final_handoff_generation="${display_bind_generation}"
     if [[ -z "${content_line}" || -z "${fps_line}" ||
+          -z "${evidence_generation}" || -z "${evidence_run_id}" ||
           -z "${content_present_id}" || -z "${content_completed}" ||
           -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
           -z "${content_generation}" || -z "${display_bind_generation}" ||
@@ -259,6 +274,9 @@ emit_webkit_animated_content_native_present_gate_open()
           "${final_handoff_generation}" -ne "${display_bind_generation}" ]]; then
         fail "cannot open WebKit animated content gate without line-scoped content/display-bind/final-handoff identity"
     fi
+    if [[ "${evidence_run_id}" != "${VALIDATION_RUN_ID}" ]]; then
+        fail "cannot open WebKit animated content gate with stale provider tuple run id: evidence=${evidence_run_id} expected=${VALIDATION_RUN_ID}"
+    fi
     if [[ "${native_credit}" -ne "${display_bind_completed_id}" ]]; then
         fail "cannot open WebKit animated content gate with mixed native completion/display-bind ids: native=${native_credit} display_bind_completed=${display_bind_completed_id}"
     fi
@@ -278,7 +296,7 @@ emit_webkit_animated_content_native_present_gate_open()
           "${fps_completion_source}" != "display" ]]; then
         fail "cannot open WebKit animated content gate without exact gpup display-bind backend/transport/display completion source"
     fi
-    echo "hyperv-webkit-gpu-validate: webkit_display_bind_dependency_skeleton_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} evidence_path=/tmp/wlcomp-d3d12-present required_current_run_display_bind_completion=1 required_validated_shared_surface_native_d3d12_contract=1 required_content_progress_native_present_complete=1 required_backend_opengl_submit=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT render_node_only=REJECT dmabuf_only=REJECT app_loop_only=REJECT stale_log_rejected=PASS display_bind_backend=${display_bind_backend} display_bind_transport=${display_bind_transport} display_bind_transport_source=${display_bind_transport_source} host_saw_display_bind_packet=${host_saw_display_bind_packet} wsl_presenthistory_completion_credit=${wsl_presenthistory_completion_credit} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} display_bind_completion_source=${display_bind_completion_source} completion_source=${completion_source} content_present_id=${content_present_id} content_completed=${content_completed} final_handoff_present_id=${final_handoff_present_id} final_handoff_completed=${final_handoff_completed} current_run_display_bind_completion=PASS validated_shared_surface_native_d3d12_contract=PASS content_progress_native_present_complete=PASS backend_opengl_submit=1 gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_content_credit=1 webkit_accel_credit=1 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_display_bind_dependency_skeleton_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} evidence_provider=wlcomp evidence_path=/tmp/wlcomp-d3d12-present evidence_generation=${evidence_generation} evidence_run_id=${evidence_run_id} required_current_run_display_bind_completion=1 required_validated_shared_surface_native_d3d12_contract=1 required_content_progress_native_present_complete=1 required_backend_opengl_submit=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT render_node_only=REJECT dmabuf_only=REJECT app_loop_only=REJECT stale_log_rejected=PASS display_bind_backend=${display_bind_backend} display_bind_transport=${display_bind_transport} display_bind_transport_source=${display_bind_transport_source} host_saw_display_bind_packet=${host_saw_display_bind_packet} wsl_presenthistory_completion_credit=${wsl_presenthistory_completion_credit} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} display_bind_completion_source=${display_bind_completion_source} completion_source=${completion_source} content_present_id=${content_present_id} content_completed=${content_completed} final_handoff_present_id=${final_handoff_present_id} final_handoff_completed=${final_handoff_completed} current_run_display_bind_completion=PASS validated_shared_surface_native_d3d12_contract=PASS content_progress_native_present_complete=PASS backend_opengl_submit=1 gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_content_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
     echo "hyperv-webkit-gpu-validate: webkit_animated_content_native_present_gate_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} fixture=${WEBKIT_GPU_ANIMATED_CONTENT_FIXTURE} required_compositor_owned_visible_content=1 required_content_crc_progress=1 required_frame_hash_progress=1 required_current_webkit_run_id=1 required_same_client_resource_generation_identity=1 required_callback_release_ordering=1 required_prior_fps_native_present_contract=1 required_backend_opengl_submit=1 required_native_present_completion=1 title_only=REJECT chrome_only=REJECT cursor_only=REJECT env_only=REJECT render_node_only=REJECT dmabuf_only=REJECT compositor_owned_visible_content=PASS content_crc_progress=PASS frame_hash_progress=PASS current_webkit_run_id=PASS same_client_resource_generation_identity=PASS callback_release_ordering=PASS prior_fps_native_present_contract=PASS backend_opengl_submit=1 native_present_completion=PASS content_present_id=${content_present_id} content_completed=${content_completed} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} final_handoff_present_id=${final_handoff_present_id} final_handoff_completed=${final_handoff_completed} content_resource_generation=${content_generation} display_bind_resource_generation=${display_bind_generation} final_handoff_resource_generation=${final_handoff_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
@@ -286,12 +304,15 @@ emit_webkit_animated_content_native_present_gate_open()
 
 require_webkit_enabled_artifact_contract_matrix()
 {
-    require_log "webkit_enabled_artifact_contract_matrix .*required_current_run_display_bind_completion=1 .*required_finite_480p_fps_artifact=1 .*required_backend_opengl_submit=1 .*required_shared_resource_fence_identity=1 .*required_compositor_owned_content_crc_frame_hash_identity=1 .*current_run_display_bind_completion=PASS .*finite_480p_fps_artifact=PASS .*backend_opengl_submit=1 .*shared_resource_fence_identity=PASS .*compositor_owned_content_crc_frame_hash_identity=PASS .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
+    require_log "webkit_enabled_artifact_contract_matrix .*evidence_provider=wlcomp .*evidence_path=/tmp/wlcomp-d3d12-present .*evidence_generation=[1-9][0-9]* .*evidence_run_id=[A-Za-z0-9_.:-]+ .*required_current_run_display_bind_completion=1 .*required_finite_480p_fps_artifact=1 .*required_backend_opengl_submit=1 .*required_shared_resource_fence_identity=1 .*required_compositor_owned_content_crc_frame_hash_identity=1 .*current_run_display_bind_completion=PASS .*finite_480p_fps_artifact=PASS .*backend_opengl_submit=1 .*shared_resource_fence_identity=PASS .*compositor_owned_content_crc_frame_hash_identity=PASS .*display_bind_transport_source=non_wsl_linux_dxgkrnl_extension .*host_saw_display_bind_packet=1 .*wsl_presenthistory_completion_credit=0 .*gate=open .*native_present_credit=[1-9][0-9]* .*opengl_submit_credit=1 .*webkit_accel_credit=1 .*status=PASS" \
         "WebKit enabled artifact contract matrix"
 }
 
 emit_webkit_enabled_artifact_contract_matrix_open()
 {
+    local content_line
+    local evidence_generation
+    local evidence_run_id
     local display_bind_present_id
     local display_bind_completed_id
     local display_bind_generation
@@ -334,30 +355,36 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     require_file_log "${FPS_CONTRACT_LOG}" 'backend_opengl_submit 1' \
         "WebKit enabled artifact FPS backend OpenGL-submit flag"
 
-    display_bind_present_id="$(last_log_counter "${LOG}" display_bind_present_id)"
-    display_bind_completed_id="$(last_log_counter "${LOG}" display_bind_completed_id)"
-    display_bind_generation="$(last_log_counter "${LOG}" display_bind_resource_generation)"
-    display_bind_transport_source="$(last_log_token "${LOG}" display_bind_transport_source)"
-    host_saw_display_bind_packet="$(last_log_counter "${LOG}" host_saw_display_bind_packet)"
-    wsl_presenthistory_completion_credit="$(last_log_counter "${LOG}" wsl_presenthistory_completion_credit)"
-    native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
+    content_line="$(provider_owned_display_bind_line_file "${LOG}" \
+        "WebKit enabled artifact content-progress tuple" \
+        'd3d12_wayland_content_progress_matrix .*status=PASS' 0 1)"
+    evidence_generation="$(line_log_counter "${content_line}" evidence_generation)"
+    evidence_run_id="$(line_log_token "${content_line}" evidence_run_id)"
+    display_bind_present_id="$(line_log_counter "${content_line}" display_bind_present_id)"
+    display_bind_completed_id="$(line_log_counter "${content_line}" display_bind_completed_id)"
+    display_bind_generation="$(line_log_counter "${content_line}" display_bind_resource_generation)"
+    display_bind_transport_source="$(line_log_token "${content_line}" display_bind_transport_source)"
+    host_saw_display_bind_packet="$(line_log_counter "${content_line}" host_saw_display_bind_packet)"
+    wsl_presenthistory_completion_credit="$(line_log_counter "${content_line}" wsl_presenthistory_completion_credit)"
+    native_credit="$(line_log_counter "${content_line}" d3d12_native_present_completion_id)"
     resource="$(last_any_log_counter "${LOG}" d3d12_present_resource resource)"
     allocations="$(last_any_log_counter "${LOG}" d3d12_present_allocation_count allocations)"
     fence="$(last_any_log_counter "${LOG}" d3d12_present_fence fence)"
     fence_target="$(last_any_log_counter "${LOG}" d3d12_present_fence_target target)"
     release_fence="$(last_any_log_counter "${LOG}" d3d12_present_release_fence release)"
-    content_crc="$(last_log_counter "${LOG}" d3d12_visible_content_crc)"
-    content_frame="$(last_log_counter "${LOG}" d3d12_visible_content_frame)"
-    content_frame_hash="$(last_log_counter "${LOG}" d3d12_visible_frame_hash)"
-    content_present_id="$(last_log_counter "${LOG}" d3d12_content_progress_present_id)"
-    content_completed="$(last_log_counter "${LOG}" d3d12_content_progress_completed)"
-    content_generation="$(last_log_counter "${LOG}" d3d12_content_progress_display_bind_resource_generation)"
+    content_crc="$(line_log_counter "${content_line}" d3d12_visible_content_crc)"
+    content_frame="$(line_log_counter "${content_line}" d3d12_visible_content_frame)"
+    content_frame_hash="$(line_log_counter "${content_line}" d3d12_visible_frame_hash)"
+    content_present_id="$(line_log_counter "${content_line}" present_id)"
+    content_completed="$(line_log_counter "${content_line}" completed)"
+    content_generation="$(line_log_counter "${content_line}" display_bind_resource_generation)"
 
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
         fail "missing WebKit enabled artifact provider native completion id"
     fi
     if [[ -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
           -z "${display_bind_generation}" || -z "${native_credit}" ||
+          -z "${evidence_generation}" || -z "${evidence_run_id}" ||
           -z "${display_bind_transport_source}" ||
           -z "${host_saw_display_bind_packet}" ||
           -z "${wsl_presenthistory_completion_credit}" ||
@@ -367,6 +394,9 @@ emit_webkit_enabled_artifact_contract_matrix_open()
           -z "${content_frame_hash}" || -z "${content_present_id}" ||
           -z "${content_completed}" || -z "${content_generation}" ]]; then
         fail "missing WebKit enabled artifact identity fields"
+    fi
+    if [[ "${evidence_run_id}" != "${VALIDATION_RUN_ID}" ]]; then
+        fail "WebKit enabled artifact evidence run id mismatch: evidence=${evidence_run_id} expected=${VALIDATION_RUN_ID}"
     fi
     if (( display_bind_completed_id < display_bind_present_id )); then
         fail "WebKit enabled artifact display-bind completion does not cover present id"
@@ -384,8 +414,12 @@ emit_webkit_enabled_artifact_contract_matrix_open()
           "${wsl_presenthistory_completion_credit}" -ne 0 ]]; then
         fail "WebKit enabled artifact display-bind source authority mismatch: source=${display_bind_transport_source} host_saw=${host_saw_display_bind_packet} wsl_credit=${wsl_presenthistory_completion_credit}"
     fi
+    require_provider_owned_final_handoff_file "${LOG}" \
+        "WebKit enabled artifact final handoff" \
+        "${display_bind_present_id}" "${display_bind_completed_id}" \
+        "${display_bind_generation}"
 
-    echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=PASS finite_480p_fps_artifact=PASS backend_opengl_submit=1 shared_resource_fence_identity=PASS compositor_owned_content_crc_frame_hash_identity=PASS display_bind_transport_source=${display_bind_transport_source} host_saw_display_bind_packet=${host_saw_display_bind_packet} wsl_presenthistory_completion_credit=${wsl_presenthistory_completion_credit} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} shared_resource=${resource} allocations=${allocations} fence=${fence} fence_target=${fence_target} release_fence=${release_fence} content_crc=${content_crc} content_frame=${content_frame} content_frame_hash=${content_frame_hash} content_present_id=${content_present_id} content_completed=${content_completed} content_resource_generation=${content_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
+    echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} evidence_provider=wlcomp evidence_path=/tmp/wlcomp-d3d12-present evidence_generation=${evidence_generation} evidence_run_id=${evidence_run_id} required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=PASS finite_480p_fps_artifact=PASS backend_opengl_submit=1 shared_resource_fence_identity=PASS compositor_owned_content_crc_frame_hash_identity=PASS display_bind_transport_source=${display_bind_transport_source} host_saw_display_bind_packet=${host_saw_display_bind_packet} wsl_presenthistory_completion_credit=${wsl_presenthistory_completion_credit} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} shared_resource=${resource} allocations=${allocations} fence=${fence} fence_target=${fence_target} release_fence=${release_fence} content_crc=${content_crc} content_frame=${content_frame} content_frame_hash=${content_frame_hash} content_present_id=${content_present_id} content_completed=${content_completed} content_resource_generation=${content_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
         tee -a "${LOG}"
 }
 
@@ -922,6 +956,212 @@ line_log_token()
         tail -n 1
 }
 
+provider_owned_display_bind_line_file()
+{
+    local file="$1"
+    local why="$2"
+    local line_pattern="${3:-}"
+    local require_commit="${4:-0}"
+    local require_content="${5:-0}"
+
+    if [[ ! -s "${file}" ]]; then
+        fail "missing prior contract evidence log ${file}"
+    fi
+
+    awk -v require_commit="${require_commit}" \
+        -v require_content="${require_content}" \
+        -v expected_run_id="${VALIDATION_RUN_ID}" \
+        -v line_pattern="${line_pattern}" '
+    function token(key,    i, n, parts) {
+        for (i = 1; i <= NF; i++) {
+            n = split($i, parts, "=")
+            if (n == 2 && parts[1] == key)
+                return parts[2]
+            if ($i == key && i < NF)
+                return $(i + 1)
+        }
+        return ""
+    }
+    function nonzero_decimal(value) {
+        return value ~ /^[1-9][0-9]*$/
+    }
+    function commit_accepted(    value) {
+        value = token("d3d12_dxg_present_source_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_buffer_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("dxg_present_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_commit_accepted")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_dxg_present_source_commit_accepted")
+        if (nonzero_decimal(value)) return 1
+        return 0
+    }
+    function content_lineage_ok(    state, visible_state, content_run,
+        compositor_run, current_run, source_owned, identity_complete,
+        content_present, content_completed, content_generation, visible_crc,
+        visible_frame, visible_hash) {
+        state = token("d3d12_content_progress_state")
+        visible_state = token("d3d12_visible_content_progress")
+        content_run = token("d3d12_content_progress_run_id")
+        compositor_run = token("d3d12_content_progress_compositor_run_id")
+        current_run = token("d3d12_content_progress_current_run_valid")
+        source_owned = token("d3d12_content_progress_source_owned")
+        identity_complete = token("d3d12_content_progress_identity_complete")
+        content_present = token("present_id")
+        content_completed = token("completed")
+        content_generation = token("display_bind_resource_generation")
+        visible_crc = token("d3d12_visible_content_crc")
+        visible_frame = token("d3d12_visible_content_frame")
+        visible_hash = token("d3d12_visible_frame_hash")
+        return state == "NATIVE_PRESENT_COMPLETE" &&
+            visible_state == "NATIVE_PRESENT_COMPLETE" &&
+            content_run == expected_run_id &&
+            compositor_run == expected_run_id &&
+            current_run == "1" &&
+            source_owned == "1" &&
+            identity_complete == "1" &&
+            nonzero_decimal(content_present) &&
+            nonzero_decimal(content_completed) &&
+            nonzero_decimal(content_generation) &&
+            nonzero_decimal(visible_crc) &&
+            nonzero_decimal(visible_frame) &&
+            nonzero_decimal(visible_hash)
+    }
+    {
+        if (line_pattern != "" && $0 !~ line_pattern)
+            next
+        backend = token("display_bind_backend")
+        transport = token("display_bind_transport")
+        evidence_provider = token("evidence_provider")
+        evidence_path = token("evidence_path")
+        evidence_generation = token("evidence_generation")
+        evidence_run_id = token("evidence_run_id")
+        transport_source = token("display_bind_transport_source")
+        host_saw_packet = token("host_saw_display_bind_packet")
+        wsl_credit = token("wsl_presenthistory_completion_credit")
+        present = token("display_bind_present_id")
+        completed = token("display_bind_completed_id")
+        generation = token("display_bind_resource_generation")
+        bind_source = token("display_bind_completion_source")
+        completion_source = token("completion_source")
+        submit = token("backend_opengl_submit")
+        native_completion = token("d3d12_native_present_completion_id")
+        if (backend != "gpup_dxg_scanout_bind" ||
+            transport != "gpu-p-dxg-resource-scanout-bind" ||
+            evidence_provider != "wlcomp" ||
+            evidence_path != "/tmp/wlcomp-d3d12-present" ||
+            evidence_run_id != expected_run_id ||
+            !nonzero_decimal(evidence_generation) ||
+            transport_source != "non_wsl_linux_dxgkrnl_extension" ||
+            host_saw_packet != "1" ||
+            wsl_credit != "0" ||
+            bind_source != "display" ||
+            completion_source != "display" ||
+            submit != "1" ||
+            !nonzero_decimal(present) ||
+            !nonzero_decimal(completed) ||
+            !nonzero_decimal(generation) ||
+            completed + 0 < present + 0 ||
+            !nonzero_decimal(native_completion) ||
+            native_completion + 0 != completed + 0)
+            next
+        if (require_commit && !commit_accepted())
+            next
+        if (require_content && !content_lineage_ok())
+            next
+        print
+        found = 1
+        exit 0
+    }
+    END { exit(found ? 0 : 1) }' "${file}" ||
+        fail "missing ${why} line-scoped provider-owned display-bind record in ${file}"
+}
+
+require_provider_owned_final_handoff_file()
+{
+    local file="$1"
+    local why="$2"
+    local expected_present="$3"
+    local expected_completed="$4"
+    local expected_generation="$5"
+
+    if [[ ! -s "${file}" ]]; then
+        fail "missing prior contract evidence log ${file}"
+    fi
+
+    awk -v expected_run_id="${VALIDATION_RUN_ID}" \
+        -v expected_present="${expected_present}" \
+        -v expected_completed="${expected_completed}" \
+        -v expected_generation="${expected_generation}" '
+    function line_token(key,    i, n, parts) {
+        for (i = 1; i <= NF; i++) {
+            n = split($i, parts, "=")
+            if (n == 2 && parts[1] == key)
+                return parts[2]
+            if ($i == key && i < NF)
+                return $(i + 1)
+        }
+        return ""
+    }
+    function remember(key, value) {
+        if (value != "")
+            block[key] = value
+    }
+    function reset_block(    key) {
+        for (key in block)
+            delete block[key]
+    }
+    function nonzero_decimal(value) {
+        return value ~ /^[1-9][0-9]*$/
+    }
+    function block_complete() {
+        return block["provider"] == "wlcomp" &&
+            block["path"] == "/tmp/wlcomp-d3d12-present" &&
+            block["run_id"] == expected_run_id &&
+            block["generation"] == expected_generation &&
+            nonzero_decimal(block["generation"]) &&
+            block["host_display_commit_success"] == "1" &&
+            block["success"] == "1" &&
+            block["completion_correlated"] == "1" &&
+            block["no_cpu_map_no_readback"] == "1" &&
+            block["present_id"] == expected_present &&
+            block["completed"] == expected_completed &&
+            block["resource_generation"] == expected_generation
+    }
+    {
+        provider = line_token("d3d12_final_handoff_evidence_provider")
+        if (provider != "") {
+            reset_block()
+            block["provider"] = provider
+        }
+        remember("path", line_token("d3d12_final_handoff_evidence_path"))
+        remember("generation",
+                 line_token("d3d12_final_handoff_evidence_generation"))
+        remember("run_id", line_token("d3d12_final_handoff_run_id"))
+        remember("host_display_commit_success",
+                 line_token("d3d12_final_handoff_host_display_commit_success"))
+        remember("present_id", line_token("d3d12_final_handoff_present_id"))
+        remember("completed", line_token("d3d12_final_handoff_completed"))
+        remember("resource_generation",
+                 line_token("d3d12_final_handoff_resource_generation"))
+        remember("completion_correlated",
+                 line_token("d3d12_final_handoff_completion_correlated"))
+        remember("no_cpu_map_no_readback",
+                 line_token("d3d12_final_handoff_no_cpu_map_no_readback"))
+        remember("success", line_token("d3d12_final_handoff_success"))
+        if (block_complete()) {
+            found = 1
+            exit 0
+        }
+    }
+    END { exit(found ? 0 : 1) }' "${file}" ||
+        fail "missing ${why} provider-owned final-handoff record in ${file}"
+}
+
 require_sealed_d3d12_evidence_file()
 {
     local file="$1"
@@ -973,84 +1213,8 @@ require_provider_owned_display_bind_record_file()
     local why="$2"
     local require_commit="${3:-0}"
 
-    if [[ ! -s "${file}" ]]; then
-        fail "missing prior contract evidence log ${file}"
-    fi
-
-    awk -v require_commit="${require_commit}" \
-        -v expected_run_id="${VALIDATION_RUN_ID}" '
-    function token(key,    i, n, parts) {
-        for (i = 1; i <= NF; i++) {
-            n = split($i, parts, "=")
-            if (n == 2 && parts[1] == key)
-                return parts[2]
-            if ($i == key && i < NF)
-                return $(i + 1)
-        }
-        return ""
-    }
-    function nonzero_decimal(value) {
-        return value ~ /^[1-9][0-9]*$/
-    }
-    function commit_accepted(    value) {
-        value = token("d3d12_dxg_present_source_commit_successes")
-        if (nonzero_decimal(value)) return 1
-        value = token("d3d12_present_source_commit_successes")
-        if (nonzero_decimal(value)) return 1
-        value = token("d3d12_present_source_buffer_commit_successes")
-        if (nonzero_decimal(value)) return 1
-        value = token("dxg_present_commit_successes")
-        if (nonzero_decimal(value)) return 1
-        value = token("d3d12_present_source_commit_accepted")
-        if (nonzero_decimal(value)) return 1
-        value = token("d3d12_dxg_present_source_commit_accepted")
-        if (nonzero_decimal(value)) return 1
-        return 0
-    }
-    {
-        backend = token("display_bind_backend")
-        transport = token("display_bind_transport")
-        evidence_provider = token("evidence_provider")
-        evidence_path = token("evidence_path")
-        evidence_generation = token("evidence_generation")
-        evidence_run_id = token("evidence_run_id")
-        transport_source = token("display_bind_transport_source")
-        host_saw_packet = token("host_saw_display_bind_packet")
-        wsl_credit = token("wsl_presenthistory_completion_credit")
-        present = token("display_bind_present_id")
-        completed = token("display_bind_completed_id")
-        generation = token("display_bind_resource_generation")
-        bind_source = token("display_bind_completion_source")
-        completion_source = token("completion_source")
-        submit = token("backend_opengl_submit")
-        native_completion = token("d3d12_native_present_completion_id")
-        if (backend != "gpup_dxg_scanout_bind" ||
-            transport != "gpu-p-dxg-resource-scanout-bind" ||
-            evidence_provider != "wlcomp" ||
-            evidence_path != "/tmp/wlcomp-d3d12-present" ||
-            evidence_run_id != expected_run_id ||
-            !nonzero_decimal(evidence_generation) ||
-            transport_source != "non_wsl_linux_dxgkrnl_extension" ||
-            host_saw_packet != "1" ||
-            wsl_credit != "0" ||
-            bind_source != "display" ||
-            completion_source != "display" ||
-            submit != "1" ||
-            !nonzero_decimal(present) ||
-            !nonzero_decimal(completed) ||
-            !nonzero_decimal(generation) ||
-            completed + 0 < present + 0)
-            next
-        if (native_completion != "" &&
-            (!nonzero_decimal(native_completion) ||
-             native_completion + 0 != completed + 0))
-            next
-        if (require_commit && !commit_accepted())
-            next
-        found = 1
-    }
-    END { exit(found ? 0 : 1) }' "${file}" ||
-        fail "missing ${why} line-scoped provider-owned display-bind record in ${file}"
+    provider_owned_display_bind_line_file "${file}" "${why}" "" \
+        "${require_commit}" 0 >/dev/null
 }
 
 last_backend_opengl_submit()

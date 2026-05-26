@@ -167,6 +167,88 @@ def accepts_demo_interaction_evidence(fields):
         accepts_display_bind_contract(fields)
     )
 
+def source_isolated_credit_from_log(lines):
+    source = "unknown"
+    fields = {}
+    foreign_nonzero = []
+    source_markers = {
+        "__SRC_MESAWLEGL_FPS_BEGIN__": "mesawlegl_fps",
+        "__SRC_WLCOMP_FPS_BEGIN__": "wlcomp_fps",
+        "__SRC_WLCOMP_D3D12_PRESENT_BEGIN__": "wlcomp_d3d12_present",
+        "__SRC_FBSTAT_BEGIN__": "fbstat",
+        "__SRC_DEMO_LOG_BEGIN__": "demo_log",
+    }
+    source_ends = {
+        "__SRC_MESAWLEGL_FPS_END__",
+        "__SRC_WLCOMP_FPS_END__",
+        "__SRC_WLCOMP_D3D12_PRESENT_END__",
+        "__SRC_FBSTAT_END__",
+        "__SRC_DEMO_LOG_END__",
+    }
+    int_keys = {
+        "host_saw_display_bind_packet",
+        "wsl_presenthistory_completion_credit",
+        "display_bind_present_id",
+        "display_bind_completed_id",
+        "display_bind_resource_generation",
+        "content_progress_current_run_valid",
+        "content_progress_identity_complete",
+        "content_progress_present_id",
+        "content_progress_completed",
+        "content_progress_resource_generation",
+        "final_handoff_success",
+        "final_handoff_present_id",
+        "final_handoff_completed",
+        "final_handoff_resource_generation",
+        "content_credit",
+        "callback_release_same_frame",
+        "d3d12_dxg_present_id",
+        "d3d12_dxg_present_completed",
+        "present_id",
+        "completed",
+    }
+    token_keys = {
+        "display_bind_backend",
+        "display_bind_transport",
+        "display_bind_transport_source",
+        "display_bind_completion_source",
+    }
+    for line in lines:
+        if line in source_markers:
+            source = source_markers[line]
+            continue
+        if line in source_ends:
+            source = "unknown"
+            continue
+        tokens = {}
+        for part in line.split():
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            tokens[key] = value
+        if source == "wlcomp_d3d12_present":
+            for key in int_keys:
+                if key in tokens and tokens[key].isdigit():
+                    fields[key] = int(tokens[key])
+            for key in token_keys:
+                if key in tokens:
+                    fields[key] = tokens[key]
+            if "d3d12_dxg_present_id" in fields:
+                fields.setdefault(
+                    "display_bind_present_id",
+                    fields["d3d12_dxg_present_id"],
+                )
+            if "d3d12_dxg_present_completed" in fields:
+                fields.setdefault(
+                    "display_bind_completed_id",
+                    fields["d3d12_dxg_present_completed"],
+                )
+        elif source != "unknown":
+            for key in int_keys:
+                if key in tokens and tokens[key].isdigit() and int(tokens[key]) > 0:
+                    foreign_nonzero.append((source, key, int(tokens[key])))
+    return accepts_display_bind_contract(fields), foreign_nonzero
+
 def pass_fail(value):
     return "PASS" if value else "FAIL"
 
@@ -426,6 +508,62 @@ demo_callback_only_rejected = not accepts_demo_interaction_evidence(
 demo_forged_display_bind_rejected = not accepts_demo_interaction_evidence(
     forged_display_bind_demo
 )
+app_side_forged_log_accepted, app_side_foreign_nonzero = (
+    source_isolated_credit_from_log([
+        "__SRC_MESAWLEGL_FPS_BEGIN__",
+        "mesawlegl_fps_sample visible_fps=999.000 "
+        "display_bind_backend=gpup_dxg_scanout_bind "
+        "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+        "display_bind_transport_source=non_wsl_linux_dxgkrnl_extension "
+        "host_saw_display_bind_packet=1 "
+        "wsl_presenthistory_completion_credit=0 "
+        "display_bind_present_id=41 display_bind_completed_id=41 "
+        "display_bind_resource_generation=7 "
+        "display_bind_completion_source=display "
+        "content_progress_current_run_valid=1 "
+        "content_progress_identity_complete=1 "
+        "content_progress_present_id=41 "
+        "content_progress_completed=41 "
+        "content_progress_resource_generation=7 "
+        "final_handoff_success=1 "
+        "final_handoff_present_id=41 "
+        "final_handoff_completed=41 "
+        "final_handoff_resource_generation=7 "
+        "content_credit=1 callback_release_same_frame=1",
+        "__SRC_MESAWLEGL_FPS_END__",
+    ])
+)
+app_side_forged_source_rejected = (
+    not app_side_forged_log_accepted and bool(app_side_foreign_nonzero)
+)
+canonical_source_log_accepted, canonical_source_foreign_nonzero = (
+    source_isolated_credit_from_log([
+        "__SRC_WLCOMP_D3D12_PRESENT_BEGIN__",
+        "d3d12_run_id={run_id} "
+        "display_bind_backend=gpup_dxg_scanout_bind "
+        "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+        "display_bind_transport_source=non_wsl_linux_dxgkrnl_extension "
+        "host_saw_display_bind_packet=1 "
+        "wsl_presenthistory_completion_credit=0 "
+        "display_bind_present_id=42 display_bind_completed_id=42 "
+        "display_bind_resource_generation=8 "
+        "display_bind_completion_source=display "
+        "content_progress_current_run_valid=1 "
+        "content_progress_identity_complete=1 "
+        "content_progress_present_id=42 "
+        "content_progress_completed=42 "
+        "content_progress_resource_generation=8 "
+        "final_handoff_success=1 "
+        "final_handoff_present_id=42 "
+        "final_handoff_completed=42 "
+        "final_handoff_resource_generation=8 "
+        "content_credit=1 callback_release_same_frame=1",
+        "__SRC_WLCOMP_D3D12_PRESENT_END__",
+    ])
+)
+canonical_source_acceptance_ok = (
+    canonical_source_log_accepted and not canonical_source_foreign_nonzero
+)
 if not negative_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: 40 FPS with single-digit visible "
@@ -531,6 +669,16 @@ if not demo_forged_display_bind_rejected:
         "anti-inflation selftest failed: demo interaction accepted forged "
         "display-bind evidence"
     )
+if not app_side_forged_source_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: app-side canonical display-bind/"
+        "present/completed evidence was accepted as compositor credit"
+    )
+if not canonical_source_acceptance_ok:
+    raise SystemExit(
+        "anti-inflation selftest failed: canonical wlcomp D3D12 source "
+        "evidence was not accepted by the source-isolation model"
+    )
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
     f"validation_run_id={run_id} mode={mode} negative_rejected=1 "
@@ -543,6 +691,8 @@ line = (
     "numeric_alias_completion_source_rejected=1 "
     "mixed_display_bind_tuple_rejected=1 "
     "backend_zero_rejected=1 zero_native_ids_rejected=1 "
+    "app_side_forged_source_rejected=1 "
+    "canonical_source_acceptance=1 "
     "post_warmup_sample_window=1 native_present_delta=0 "
     "frame_callback_delta=0 buffer_release_delta=0 "
     "thumbnail_progress_delta=0 outside_overlay_crc_changes=0 "
@@ -603,6 +753,7 @@ source_isolation_line = (
     "forged_wsl_presenthistory_completion_credit=0 "
     "forged_display_bind_present_id=9 forged_display_bind_completed_id=9 "
     "forged_d3d12_dxg_present_id=9 forged_d3d12_dxg_completed=9 "
+    "app_side_forged_source_rejected=1 canonical_source_acceptance=1 "
     "quarantined_from_native_present_parser=1 rejected=1 "
     "native_present_credit=0 opengl_submit_credit=0 status=PASS"
 )
@@ -979,6 +1130,10 @@ demo_records = []
 uptimes = []
 display_completions = []
 display_presents = []
+diagnostic_display_completions = []
+diagnostic_display_presents = []
+diagnostic_backend_modes = []
+diagnostic_backend_opengl_submit_samples = []
 d3d12_present_counts = []
 d3d12_present_starts = []
 d3d12_copy_counts = []
@@ -1095,6 +1250,7 @@ in_sampling = False
 visual_counter = None
 current_artifact_source = "unknown"
 foreign_display_bind_sources = []
+foreign_canonical_credit_sources = []
 current_wlcomp_d3d12_block = None
 source_markers = {
     "__SRC_PROC_UPTIME_BEGIN__": "proc_uptime",
@@ -2201,6 +2357,34 @@ def display_bind_record_from_line(line):
         "completion_source": fields["display_bind_completion_source"],
     }, None
 
+def canonical_credit_values_from_line(line):
+    values = []
+    for key in (
+            "display_bind_present_id",
+            "display_bind_completed_id",
+            "display_bind_resource_generation",
+            "d3d12_dxg_present_id",
+            "d3d12_dxg_present_completed",
+            "present_id",
+            "completed",
+            "d3d12_gpu_present_completes",
+            "d3d12_gpu_present_complete",
+            "backend_opengl_submit"):
+        value = counter_value(line, (key,))
+        if value is not None:
+            values.append((key, value))
+    return values
+
+def line_has_canonical_credit_scalar(line):
+    return bool(canonical_credit_values_from_line(line) or
+                display_bind_record_from_line(line) != (None, None) or
+                token_value(line, (
+                    "display_bind_backend",
+                    "display_bind_transport",
+                    "display_bind_transport_source",
+                    "display_bind_completion_source",
+                )) is not None)
+
 def frame_index(path):
     match = re.fullmatch(r"frame-([0-9]+)\.raw", path.name)
     if not match:
@@ -2444,13 +2628,15 @@ for line in log.splitlines():
     line_from_mesawlegl_fps = current_artifact_source == "mesawlegl_fps"
     line_from_wlcomp_fps = current_artifact_source == "wlcomp_fps"
     line_from_fbstat = current_artifact_source == "fbstat"
+    line_from_source_block = current_artifact_source != "unknown"
+    credit_line = line if line_from_wlcomp_d3d12 else ""
     if line_from_wlcomp_d3d12:
         update_wlcomp_d3d12_evidence_block(current_wlcomp_d3d12_block, line)
     foreign_display_bind_record, foreign_incomplete_display_bind_record = (
         display_bind_record_from_line(line)
     )
-    if (current_artifact_source not in (
-            "unknown", "wlcomp_d3d12_present", "fbstat") and
+    if (line_from_source_block and
+            current_artifact_source != "wlcomp_d3d12_present" and
             (foreign_display_bind_record is not None or
              foreign_incomplete_display_bind_record is not None)):
         present_id = 0
@@ -2463,6 +2649,16 @@ for line in log.splitlines():
         foreign_display_bind_sources.append(
             (current_artifact_source, present_id)
         )
+    if (line_from_source_block and
+            current_artifact_source != "wlcomp_d3d12_present" and
+            line_has_canonical_credit_scalar(line)):
+        values = canonical_credit_values_from_line(line)
+        max_value = max((value for _key, value in values), default=0)
+        foreign_canonical_credit_sources.append((
+            current_artifact_source,
+            max_value,
+            line,
+        ))
     if line.startswith("hyperv-3d-fps-validate: sampling "):
         in_sampling = True
         continue
@@ -2493,66 +2689,72 @@ for line in log.splitlines():
         demo_interaction_content_progress.append(demo_interaction_content)
     if (demo_visible is not None or demo_closeable is not None or
             demo_resizable is not None):
-        present_id = counter_value(line, ("present_id", "d3d12_dxg_present_id"))
+        present_id = counter_value(
+            credit_line,
+            ("present_id", "d3d12_dxg_present_id"),
+        )
         if present_id is not None:
             demo_interaction_present_ids.append(present_id)
-        completed = counter_value(line, ("completed", "d3d12_dxg_present_completed"))
+        completed = counter_value(
+            credit_line,
+            ("completed", "d3d12_dxg_present_completed"),
+        )
         if completed is not None:
             demo_interaction_completed.append(completed)
-        run_id = token_value(line, run_id_keys)
+        run_id = token_value(credit_line, run_id_keys)
         if run_id is not None:
             demo_interaction_run_ids.append(run_id)
     if visual_counter is not None:
         uptime = re.match(r"^([0-9]+(?:\.[0-9]+)?)[ \t]+[0-9]+(?:\.[0-9]+)?[ \t]*$", line)
         if uptime:
             visual_uptimes.append(float(uptime.group(1)))
-        d3d12_completes = re.search(r"\bd3d12_gpu_present_complete(?:s)?=([0-9]+)", line)
+        d3d12_completes = re.search(r"\bd3d12_gpu_present_complete(?:s)?=([0-9]+)", credit_line)
         if d3d12_completes:
             visual_native_counts.append(int(d3d12_completes.group(1)))
-        d3d12_copies = re.search(r"\bd3d12_gpu_copy_completes=([0-9]+)", line)
+        d3d12_copies = re.search(r"\bd3d12_gpu_copy_completes=([0-9]+)", credit_line)
         if d3d12_copies:
             visual_copy_counts.append(int(d3d12_copies.group(1)))
-        display_handoff = re.search(r"\bd3d12_display_handoff_implemented=([0-9]+)", line)
+        display_handoff = re.search(r"\bd3d12_display_handoff_implemented=([0-9]+)", credit_line)
         if display_handoff:
             visual_display_handoffs.append(int(display_handoff.group(1)))
-        generation = re.search(r"\bd3d12_evidence_generation=([0-9]+)", line)
+        generation = re.search(r"\bd3d12_evidence_generation=([0-9]+)", credit_line)
         if generation:
             visual_evidence_generations.append(int(generation.group(1)))
-        evidence_time = re.search(r"\bd3d12_present_evidence_time_us=([0-9]+)", line)
+        evidence_time = re.search(r"\bd3d12_present_evidence_time_us=([0-9]+)", credit_line)
         if evidence_time:
             visual_evidence_times.append(int(evidence_time.group(1)))
-        resource = re.search(r"\bd3d12_present_resource=0x([0-9a-fA-F]+)", line)
+        resource = re.search(r"\bd3d12_present_resource=0x([0-9a-fA-F]+)", credit_line)
         if resource:
             visual_resources.append(int(resource.group(1), 16))
-        buffer_generation = re.search(r"\bd3d12_buffer_generation=([0-9]+)", line)
+        buffer_generation = re.search(r"\bd3d12_buffer_generation=([0-9]+)", credit_line)
         if buffer_generation:
             visual_buffer_generations.append(int(buffer_generation.group(1)))
-        present_id = re.search(r"\b(?:d3d12_dxg_present_id|present_id)=([0-9]+)", line)
+        present_id = re.search(r"\b(?:d3d12_dxg_present_id|present_id)=([0-9]+)", credit_line)
         if present_id:
             visual_present_ids.append(int(present_id.group(1)))
-        completed = re.search(r"\bcompleted=([0-9]+)", line)
+        completed = re.search(r"\bcompleted=([0-9]+)", credit_line)
         if completed:
             visual_present_completed.append(int(completed.group(1)))
-        native_completion_id = counter_value(line, native_completion_id_keys)
+        native_completion_id = counter_value(credit_line, native_completion_id_keys)
         if native_completion_id is not None:
             visual_native_completion_ids.append(native_completion_id)
-        resource_generation = counter_value(line, resource_generation_keys)
+        resource_generation = counter_value(credit_line, resource_generation_keys)
         if resource_generation is not None:
             visual_resource_generations.append(resource_generation)
-        display_bind_backend = token_value(line, ("display_bind_backend",))
+        display_bind_backend = token_value(credit_line, ("display_bind_backend",))
         if display_bind_backend is not None:
             visual_display_bind_backends.append(display_bind_backend)
-        display_bind_transport = token_value(line, ("display_bind_transport",))
+        display_bind_transport = token_value(credit_line, ("display_bind_transport",))
         if display_bind_transport is not None:
             visual_display_bind_transports.append(display_bind_transport)
-        display_bind_present_id = counter_value(line, ("display_bind_present_id",))
+        display_bind_present_id = counter_value(credit_line, ("display_bind_present_id",))
         if display_bind_present_id is not None:
             visual_display_bind_present_ids.append(display_bind_present_id)
-        display_bind_completed_id = counter_value(line, ("display_bind_completed_id",))
+        display_bind_completed_id = counter_value(credit_line, ("display_bind_completed_id",))
         if display_bind_completed_id is not None:
             visual_display_bind_completed_ids.append(display_bind_completed_id)
         display_bind_resource_generation = counter_value(
-            line,
+            credit_line,
             ("display_bind_resource_generation",),
         )
         if display_bind_resource_generation is not None:
@@ -2560,13 +2762,13 @@ for line in log.splitlines():
                 display_bind_resource_generation
             )
         completion_source = token_value(
-            line,
+            credit_line,
             ("display_bind_completion_source",),
         )
         if completion_source is not None:
             visual_display_bind_completion_sources.append(completion_source)
         display_bind_record, incomplete_display_bind_record = (
-            display_bind_record_from_line(line)
+            display_bind_record_from_line(credit_line)
         )
         if display_bind_record is not None:
             visual_display_bind_records.append(display_bind_record)
@@ -2574,94 +2776,94 @@ for line in log.splitlines():
             visual_incomplete_display_bind_records.append(
                 incomplete_display_bind_record
             )
-        gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
+        gpup_dda_commit = counter_value(credit_line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             visual_gpup_dda_commit_successes.append(gpup_dda_commit)
-        same_frame = counter_value(line, same_frame_callback_release_keys)
+        same_frame = counter_value(credit_line, same_frame_callback_release_keys)
         if same_frame is not None:
             visual_same_frame_callback_releases.append(same_frame)
-        same_frame_callback = counter_value(line, same_frame_callback_keys)
+        same_frame_callback = counter_value(credit_line, same_frame_callback_keys)
         if same_frame_callback is not None:
             visual_same_frame_callbacks.append(same_frame_callback)
-        same_frame_release = counter_value(line, same_frame_release_keys)
+        same_frame_release = counter_value(credit_line, same_frame_release_keys)
         if same_frame_release is not None:
             visual_same_frame_releases.append(same_frame_release)
-        content_crc = hex_or_int_value(line, content_crc_keys)
+        content_crc = hex_or_int_value(credit_line, content_crc_keys)
         if content_crc is not None:
             visual_content_crcs.append(content_crc)
-        content_frame = hex_or_int_value(line, content_frame_keys)
+        content_frame = hex_or_int_value(credit_line, content_frame_keys)
         if content_frame is not None:
             visual_content_frames.append(content_frame)
-        content_frame_hash = hex_or_int_value(line, content_frame_hash_keys)
+        content_frame_hash = hex_or_int_value(credit_line, content_frame_hash_keys)
         if content_frame_hash is not None:
             visual_content_frame_hashes.append(content_frame_hash)
-        content_state = token_value(line, ("d3d12_content_progress_state",))
+        content_state = token_value(credit_line, ("d3d12_content_progress_state",))
         if content_state is not None:
             visual_content_progress_states.append(content_state)
-        visible_content_state = token_value(line, ("d3d12_visible_content_progress",))
+        visible_content_state = token_value(credit_line, ("d3d12_visible_content_progress",))
         if visible_content_state is not None:
             visual_visible_content_progress_states.append(visible_content_state)
         requires_native = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_requires_native_present",),
         )
         if requires_native is not None:
             visual_content_requires_native.append(requires_native)
         native_complete = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_native_present_complete",),
         )
         if native_complete is not None:
             visual_content_native_complete.append(native_complete)
         visible_credit = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_visible_credit",),
         )
         if visible_credit is not None:
             visual_content_visible_credit.append(visible_credit)
         source_owned = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_source_owned",),
         )
         if source_owned is not None:
             visual_content_source_owned.append(source_owned)
         current_run_valid = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_current_run_valid",
              "content_progress_current_run_valid"),
         )
         if current_run_valid is not None:
             visual_content_current_run_valid.append(current_run_valid)
         identity_complete = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_identity_complete",
              "content_progress_identity_complete"),
         )
         if identity_complete is not None:
             visual_content_identity_complete.append(identity_complete)
         content_present_id = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_present_id",
              "content_progress_present_id"),
         )
         if content_present_id is not None:
             visual_content_present_ids.append(content_present_id)
         content_completed = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_completed",
              "content_progress_completed"),
         )
         if content_completed is not None:
             visual_content_completed_ids.append(content_completed)
         content_display_present = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_present_id",
              "content_progress_display_bind_present_id"),
         )
         if content_display_present is not None:
             visual_content_display_bind_present_ids.append(content_display_present)
         content_display_completed = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_completed_id",
              "content_progress_display_bind_completed_id"),
         )
@@ -2670,7 +2872,7 @@ for line in log.splitlines():
                 content_display_completed
             )
         content_display_generation = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_resource_generation",
              "content_progress_display_bind_resource_generation"),
         )
@@ -2678,35 +2880,35 @@ for line in log.splitlines():
             visual_content_display_bind_resource_generations.append(
                 content_display_generation
             )
-        run_id = token_value(line, run_id_keys)
+        run_id = token_value(credit_line, run_id_keys)
         if run_id is not None:
             visual_run_ids.append(run_id)
-        final_success = counter_value(line, ("d3d12_final_handoff_success",
+        final_success = counter_value(credit_line, ("d3d12_final_handoff_success",
                                              "final_handoff_success"))
         if final_success is not None:
             visual_final_handoff_successes.append(final_success)
-        final_present = counter_value(line, ("d3d12_final_handoff_present_id",
+        final_present = counter_value(credit_line, ("d3d12_final_handoff_present_id",
                                             "final_handoff_present_id"))
         if final_present is not None:
             visual_final_handoff_present_ids.append(final_present)
-        final_completed = counter_value(line, ("d3d12_final_handoff_completed",
+        final_completed = counter_value(credit_line, ("d3d12_final_handoff_completed",
                                               "final_handoff_completed"))
         if final_completed is not None:
             visual_final_handoff_completed_ids.append(final_completed)
         final_generation = counter_value(
-            line,
+            credit_line,
             ("d3d12_final_handoff_resource_generation",
              "final_handoff_resource_generation"),
         )
         if final_generation is not None:
             visual_final_handoff_resource_generations.append(final_generation)
-        callback_count = counter_value(line, callback_counter_keys)
+        callback_count = counter_value(credit_line, callback_counter_keys)
         if callback_count is not None:
             visual_callback_counts.append(callback_count)
-        release_count = counter_value(line, release_counter_keys)
+        release_count = counter_value(credit_line, release_counter_keys)
         if release_count is not None:
             visual_release_counts.append(release_count)
-        path = re.search(r"\bd3d12_present_path=([^ \t]+)", line)
+        path = re.search(r"\bd3d12_present_path=([^ \t]+)", credit_line)
         if path:
             visual_native_paths.append(path.group(1))
         reject = re.search(
@@ -2717,7 +2919,7 @@ for line in log.splitlines():
             r"present_dmabuf_only|dmabuf_only|dmabuf_progress_only|"
             r"dmabuf_import_only|present_errno)=([1-9][0-9]*)|"
             r"\b(callbacks_blocked|releases_blocked)=([1-9][0-9]*)",
-            line,
+            credit_line,
         )
         if reject:
             visual_reject_evidence.append(line)
@@ -2729,60 +2931,66 @@ for line in log.splitlines():
             uptimes.append(float(uptime.group(1)))
         completion = re.match(r"^display_completions[ \t]+([0-9]+)[ \t]*$", line)
         if completion:
-            display_completions.append(int(completion.group(1)))
+            if line_from_wlcomp_d3d12:
+                display_completions.append(int(completion.group(1)))
+            else:
+                diagnostic_display_completions.append(int(completion.group(1)))
         presents = re.match(r"^display_presents[ \t]+([0-9]+)[ \t]*$", line)
         if presents:
-            display_presents.append(int(presents.group(1)))
-        d3d12_completes = re.search(r"\bd3d12_gpu_present_complete(?:s)?=([0-9]+)", line)
+            if line_from_wlcomp_d3d12:
+                display_presents.append(int(presents.group(1)))
+            else:
+                diagnostic_display_presents.append(int(presents.group(1)))
+        d3d12_completes = re.search(r"\bd3d12_gpu_present_complete(?:s)?=([0-9]+)", credit_line)
         if d3d12_completes:
             d3d12_present_counts.append(int(d3d12_completes.group(1)))
-        d3d12_starts = re.search(r"\bd3d12_gpu_present_starts=([0-9]+)", line)
+        d3d12_starts = re.search(r"\bd3d12_gpu_present_starts=([0-9]+)", credit_line)
         if d3d12_starts:
             d3d12_present_starts.append(int(d3d12_starts.group(1)))
-        d3d12_copies = re.search(r"\bd3d12_gpu_copy_completes=([0-9]+)", line)
+        d3d12_copies = re.search(r"\bd3d12_gpu_copy_completes=([0-9]+)", credit_line)
         if d3d12_copies:
             d3d12_copy_counts.append(int(d3d12_copies.group(1)))
-        display_handoff = re.search(r"\bd3d12_display_handoff_implemented=([0-9]+)", line)
+        display_handoff = re.search(r"\bd3d12_display_handoff_implemented=([0-9]+)", credit_line)
         if display_handoff:
             d3d12_display_handoffs.append(int(display_handoff.group(1)))
-        generation = re.search(r"\bd3d12_evidence_generation=([0-9]+)", line)
+        generation = re.search(r"\bd3d12_evidence_generation=([0-9]+)", credit_line)
         if generation:
             d3d12_evidence_generations.append(int(generation.group(1)))
-        evidence_time = re.search(r"\bd3d12_present_evidence_time_us=([0-9]+)", line)
+        evidence_time = re.search(r"\bd3d12_present_evidence_time_us=([0-9]+)", credit_line)
         if evidence_time:
             d3d12_evidence_times.append(int(evidence_time.group(1)))
-        resource = re.search(r"\bd3d12_present_resource=0x([0-9a-fA-F]+)", line)
+        resource = re.search(r"\bd3d12_present_resource=0x([0-9a-fA-F]+)", credit_line)
         if resource:
             d3d12_resources.append(int(resource.group(1), 16))
-        buffer_generation = re.search(r"\bd3d12_buffer_generation=([0-9]+)", line)
+        buffer_generation = re.search(r"\bd3d12_buffer_generation=([0-9]+)", credit_line)
         if buffer_generation:
             d3d12_buffer_generations.append(int(buffer_generation.group(1)))
-        present_id = re.search(r"\b(?:d3d12_dxg_present_id|present_id)=([0-9]+)", line)
+        present_id = re.search(r"\b(?:d3d12_dxg_present_id|present_id)=([0-9]+)", credit_line)
         if present_id:
             d3d12_present_ids.append(int(present_id.group(1)))
-        completed = re.search(r"\bcompleted=([0-9]+)", line)
+        completed = re.search(r"\bcompleted=([0-9]+)", credit_line)
         if completed:
             d3d12_present_completed.append(int(completed.group(1)))
-        native_completion_id = counter_value(line, native_completion_id_keys)
+        native_completion_id = counter_value(credit_line, native_completion_id_keys)
         if native_completion_id is not None:
             d3d12_native_completion_ids.append(native_completion_id)
-        resource_generation = counter_value(line, resource_generation_keys)
+        resource_generation = counter_value(credit_line, resource_generation_keys)
         if resource_generation is not None:
             d3d12_resource_generations.append(resource_generation)
-        display_bind_backend = token_value(line, ("display_bind_backend",))
+        display_bind_backend = token_value(credit_line, ("display_bind_backend",))
         if display_bind_backend is not None:
             d3d12_display_bind_backends.append(display_bind_backend)
-        display_bind_transport = token_value(line, ("display_bind_transport",))
+        display_bind_transport = token_value(credit_line, ("display_bind_transport",))
         if display_bind_transport is not None:
             d3d12_display_bind_transports.append(display_bind_transport)
-        display_bind_present_id = counter_value(line, ("display_bind_present_id",))
+        display_bind_present_id = counter_value(credit_line, ("display_bind_present_id",))
         if display_bind_present_id is not None:
             d3d12_display_bind_present_ids.append(display_bind_present_id)
-        display_bind_completed_id = counter_value(line, ("display_bind_completed_id",))
+        display_bind_completed_id = counter_value(credit_line, ("display_bind_completed_id",))
         if display_bind_completed_id is not None:
             d3d12_display_bind_completed_ids.append(display_bind_completed_id)
         display_bind_resource_generation = counter_value(
-            line,
+            credit_line,
             ("display_bind_resource_generation",),
         )
         if display_bind_resource_generation is not None:
@@ -2790,13 +2998,13 @@ for line in log.splitlines():
                 display_bind_resource_generation
             )
         completion_source = token_value(
-            line,
+            credit_line,
             ("display_bind_completion_source",),
         )
         if completion_source is not None:
             d3d12_display_bind_completion_sources.append(completion_source)
         display_bind_record, incomplete_display_bind_record = (
-            display_bind_record_from_line(line)
+            display_bind_record_from_line(credit_line)
         )
         if display_bind_record is not None:
             d3d12_display_bind_records.append(display_bind_record)
@@ -2804,94 +3012,94 @@ for line in log.splitlines():
             d3d12_incomplete_display_bind_records.append(
                 incomplete_display_bind_record
             )
-        gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
+        gpup_dda_commit = counter_value(credit_line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             d3d12_gpup_dda_commit_successes.append(gpup_dda_commit)
-        same_frame = counter_value(line, same_frame_callback_release_keys)
+        same_frame = counter_value(credit_line, same_frame_callback_release_keys)
         if same_frame is not None:
             d3d12_same_frame_callback_releases.append(same_frame)
-        same_frame_callback = counter_value(line, same_frame_callback_keys)
+        same_frame_callback = counter_value(credit_line, same_frame_callback_keys)
         if same_frame_callback is not None:
             d3d12_same_frame_callbacks.append(same_frame_callback)
-        same_frame_release = counter_value(line, same_frame_release_keys)
+        same_frame_release = counter_value(credit_line, same_frame_release_keys)
         if same_frame_release is not None:
             d3d12_same_frame_releases.append(same_frame_release)
-        content_crc = hex_or_int_value(line, content_crc_keys)
+        content_crc = hex_or_int_value(credit_line, content_crc_keys)
         if content_crc is not None:
             d3d12_content_crcs.append(content_crc)
-        content_frame = hex_or_int_value(line, content_frame_keys)
+        content_frame = hex_or_int_value(credit_line, content_frame_keys)
         if content_frame is not None:
             d3d12_content_frames.append(content_frame)
-        content_frame_hash = hex_or_int_value(line, content_frame_hash_keys)
+        content_frame_hash = hex_or_int_value(credit_line, content_frame_hash_keys)
         if content_frame_hash is not None:
             d3d12_content_frame_hashes.append(content_frame_hash)
-        content_state = token_value(line, ("d3d12_content_progress_state",))
+        content_state = token_value(credit_line, ("d3d12_content_progress_state",))
         if content_state is not None:
             d3d12_content_progress_states.append(content_state)
-        visible_content_state = token_value(line, ("d3d12_visible_content_progress",))
+        visible_content_state = token_value(credit_line, ("d3d12_visible_content_progress",))
         if visible_content_state is not None:
             d3d12_visible_content_progress_states.append(visible_content_state)
         requires_native = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_requires_native_present",),
         )
         if requires_native is not None:
             d3d12_content_requires_native.append(requires_native)
         native_complete = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_native_present_complete",),
         )
         if native_complete is not None:
             d3d12_content_native_complete.append(native_complete)
         visible_credit = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_visible_credit",),
         )
         if visible_credit is not None:
             d3d12_content_visible_credit.append(visible_credit)
         source_owned = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_source_owned",),
         )
         if source_owned is not None:
             d3d12_content_source_owned.append(source_owned)
         current_run_valid = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_current_run_valid",
              "content_progress_current_run_valid"),
         )
         if current_run_valid is not None:
             d3d12_content_current_run_valid.append(current_run_valid)
         identity_complete = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_identity_complete",
              "content_progress_identity_complete"),
         )
         if identity_complete is not None:
             d3d12_content_identity_complete.append(identity_complete)
         content_present_id = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_present_id",
              "content_progress_present_id"),
         )
         if content_present_id is not None:
             d3d12_content_present_ids.append(content_present_id)
         content_completed = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_completed",
              "content_progress_completed"),
         )
         if content_completed is not None:
             d3d12_content_completed_ids.append(content_completed)
         content_display_present = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_present_id",
              "content_progress_display_bind_present_id"),
         )
         if content_display_present is not None:
             d3d12_content_display_bind_present_ids.append(content_display_present)
         content_display_completed = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_completed_id",
              "content_progress_display_bind_completed_id"),
         )
@@ -2900,7 +3108,7 @@ for line in log.splitlines():
                 content_display_completed
             )
         content_display_generation = counter_value(
-            line,
+            credit_line,
             ("d3d12_content_progress_display_bind_resource_generation",
              "content_progress_display_bind_resource_generation"),
         )
@@ -2908,35 +3116,35 @@ for line in log.splitlines():
             d3d12_content_display_bind_resource_generations.append(
                 content_display_generation
             )
-        run_id = token_value(line, run_id_keys)
+        run_id = token_value(credit_line, run_id_keys)
         if run_id is not None:
             d3d12_run_ids.append(run_id)
-        final_success = counter_value(line, ("d3d12_final_handoff_success",
+        final_success = counter_value(credit_line, ("d3d12_final_handoff_success",
                                              "final_handoff_success"))
         if final_success is not None:
             d3d12_final_handoff_successes.append(final_success)
-        final_present = counter_value(line, ("d3d12_final_handoff_present_id",
+        final_present = counter_value(credit_line, ("d3d12_final_handoff_present_id",
                                             "final_handoff_present_id"))
         if final_present is not None:
             d3d12_final_handoff_present_ids.append(final_present)
-        final_completed = counter_value(line, ("d3d12_final_handoff_completed",
+        final_completed = counter_value(credit_line, ("d3d12_final_handoff_completed",
                                               "final_handoff_completed"))
         if final_completed is not None:
             d3d12_final_handoff_completed_ids.append(final_completed)
         final_generation = counter_value(
-            line,
+            credit_line,
             ("d3d12_final_handoff_resource_generation",
              "final_handoff_resource_generation"),
         )
         if final_generation is not None:
             d3d12_final_handoff_resource_generations.append(final_generation)
-        callback_count = counter_value(line, callback_counter_keys)
+        callback_count = counter_value(credit_line, callback_counter_keys)
         if callback_count is not None:
             d3d12_callback_counts.append(callback_count)
-        release_count = counter_value(line, release_counter_keys)
+        release_count = counter_value(credit_line, release_counter_keys)
         if release_count is not None:
             d3d12_release_counts.append(release_count)
-        path = re.search(r"\bd3d12_present_path=([^ \t]+)", line)
+        path = re.search(r"\bd3d12_present_path=([^ \t]+)", credit_line)
         if path:
             d3d12_native_paths.append(path.group(1))
         reject = re.search(
@@ -2947,16 +3155,29 @@ for line in log.splitlines():
             r"present_dmabuf_only|dmabuf_only|dmabuf_progress_only|"
             r"dmabuf_import_only|present_errno)=([1-9][0-9]*)|"
             r"\b(callbacks_blocked|releases_blocked)=([1-9][0-9]*)",
-            line,
+            credit_line,
         )
         if reject:
             d3d12_reject_evidence.append(line)
-        mode = re.search(r"\bmode=([^ \t]+)", line)
+        mode = re.search(r"\bmode=([^ \t]+)", credit_line)
         if mode:
             backend_modes.append(mode.group(1))
-        opengl_submit = re.match(r"^backend_opengl_submit[ \t]+([01])[ \t]*$", line)
+        elif line_from_source_block and not line_from_wlcomp_d3d12:
+            diagnostic_mode = re.search(r"\bmode=([^ \t]+)", line)
+            if diagnostic_mode:
+                diagnostic_backend_modes.append(diagnostic_mode.group(1))
+        opengl_submit = re.match(r"^backend_opengl_submit[ \t]+([01])[ \t]*$", credit_line)
         if opengl_submit:
             backend_opengl_submit_samples.append(int(opengl_submit.group(1)))
+        else:
+            diagnostic_opengl_submit = re.match(
+                r"^backend_opengl_submit[ \t]+([01])[ \t]*$",
+                line,
+            )
+            if diagnostic_opengl_submit and not line_from_wlcomp_d3d12:
+                diagnostic_backend_opengl_submit_samples.append(
+                    int(diagnostic_opengl_submit.group(1))
+                )
     fps = re.search(r"\bvisible_fps=([0-9]+(?:\.[0-9]+)?)", line)
     seq = re.search(r"\bcallback_seq=([0-9]+)", line)
     if fps and seq and line.startswith("mesawlegl_fps_sample "):
@@ -3202,6 +3423,12 @@ max_foreign_present_id = (
     max(present_id for _source, present_id in foreign_display_bind_sources)
     if foreign_display_bind_sources else 0
 )
+canonical_sources = sorted(set(source for source, _value, _line in
+                               foreign_canonical_credit_sources))
+max_foreign_canonical_value = (
+    max(value for _source, value, _line in foreign_canonical_credit_sources)
+    if foreign_canonical_credit_sources else 0
+)
 log_validation(
     "fps_artifact_source_isolation_negative_matrix "
     f"validation_run_id={expected_run_id} "
@@ -3209,15 +3436,23 @@ log_validation(
     f"foreign_sources={','.join(sources) if sources else 'none'} "
     f"foreign_display_bind_records={len(foreign_display_bind_sources)} "
     f"max_foreign_display_bind_present_id={max_foreign_present_id} "
+    f"foreign_canonical_scalar_sources={','.join(canonical_sources) if canonical_sources else 'none'} "
+    f"foreign_canonical_scalar_records={len(foreign_canonical_credit_sources)} "
+    f"max_foreign_canonical_scalar_value={max_foreign_canonical_value} "
     "quarantined_from_native_present_parser=1 "
     "native_present_credit=0 opengl_submit_credit=0 "
     "rejected=1 status=PASS"
 )
-if max_foreign_present_id > 0:
+if max_foreign_present_id > 0 or max_foreign_canonical_value > 0:
+    bad_source, _bad_value, bad_line = (
+        foreign_canonical_credit_sources[-1]
+        if foreign_canonical_credit_sources else
+        (foreign_display_bind_sources[-1][0], max_foreign_present_id, "")
+    )
     raise SystemExit(
-        "foreign artifact source carried nonzero display-bind evidence; "
+        "foreign artifact source carried nonzero canonical credit evidence; "
         "native-present evidence must come from /tmp/wlcomp-d3d12-present "
-        "source blocks only"
+        f"source blocks only: source={bad_source} line={bad_line}"
     )
 if "hyperv-3d-fps-validate: visual thumbnails inside finite sample window" not in log:
     raise SystemExit("visible thumbnail samples were not captured inside the finite FPS sample window")
@@ -3629,9 +3864,33 @@ if len(demo_sample_times) >= 2:
 values = [fps for _, fps in window]
 avg = sum(values) / len(values)
 low = min(values)
+if len(display_completions) < 2 and len(d3d12_present_completed) >= 2:
+    display_completions = list(d3d12_present_completed)
+if len(display_presents) < 2 and len(d3d12_present_ids) >= 2:
+    display_presents = list(d3d12_present_ids)
+if diagnostic_display_completions or diagnostic_display_presents:
+    log_validation(
+        "fps_diagnostic_fbstat_display_counters_matrix "
+        f"validation_run_id={expected_run_id} "
+        f"diagnostic_display_completion_samples={len(diagnostic_display_completions)} "
+        f"diagnostic_display_present_samples={len(diagnostic_display_presents)} "
+        "canonical_source=/tmp/wlcomp-d3d12-present "
+        "credit_source=wlcomp_d3d12_present "
+        "fbstat_credit=0 status=PASS"
+    )
+if diagnostic_backend_modes or diagnostic_backend_opengl_submit_samples:
+    log_validation(
+        "fps_diagnostic_backend_scalar_quarantine_matrix "
+        f"validation_run_id={expected_run_id} "
+        f"diagnostic_backend_modes={','.join(diagnostic_backend_modes) if diagnostic_backend_modes else 'none'} "
+        f"diagnostic_backend_opengl_submit_samples={','.join(str(value) for value in diagnostic_backend_opengl_submit_samples) if diagnostic_backend_opengl_submit_samples else 'none'} "
+        "canonical_source=/tmp/wlcomp-d3d12-present "
+        "foreign_backend_credit=0 status=PASS"
+    )
 if len(uptimes) < 2 or len(display_completions) < 2:
     raise SystemExit(
-        "not enough display completion samples from fbstat/proc uptime: "
+        "not enough canonical display completion samples from "
+        "/tmp/wlcomp-d3d12-present plus proc uptime: "
         f"uptimes={len(uptimes)} completions={len(display_completions)}"
     )
 elapsed = uptimes[-1] - uptimes[0]
