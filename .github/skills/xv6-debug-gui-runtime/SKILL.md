@@ -162,6 +162,12 @@ but do not treat them as open plan items by default.
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,
   and DDA/Nouveau PCI display split from D3D12 resource import, scanout bind,
   and hardware flip completion.
+  Provider pending publication evidence must preserve WSL-shaped provenance:
+  `dxgprocess_generation`, `process_adapter_generation`,
+  `hmgr_index_unique_valid`, `parent_resource_ref_held`,
+  `opened_child_ref_held`, a `syncobject_ref_held` field (1 on wait-sync
+  pending records), and
+  `owner_close_cancelled=0` while fail-closed.
 - When planning the remaining native-present work, keep the chunks ordered:
   host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split

@@ -898,6 +898,18 @@ non-readback display handoff.
     `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
     CORE_C_SECTIONS='present-source' VALIDATION_RUN_ID=provider-pending-failclosed-3
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
+  - [x] Carry WSL-shaped process/object provenance in the fail-closed pending
+    provider record before a real sender exists.
+    The provider pending publication row now requires kernel-owned
+    `dxgprocess_generation`, `process_adapter_generation`,
+    `hmgr_index_unique_valid`, `parent_resource_ref_held`,
+    `opened_child_ref_held`, a `syncobject_ref_held` field that is 1 for
+    wait-sync pending records, and
+    `owner_close_cancelled=0` fields alongside the existing source/resource
+    generation and ref-release diagnostics. These are still zero-credit
+    fail-closed fields; they do not close the unchecked real-sender item, but
+    they make the future sender inherit WSL-style process/object/handle-table
+    lifetime requirements before it can publish a packet.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
     evidence. A DDA-backed Nouveau PCI display path is its own native-display
     lane; it is not a D3D12 resource scanout-bind path and cannot close the
