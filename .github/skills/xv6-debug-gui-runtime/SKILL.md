@@ -173,11 +173,17 @@ but do not treat them as open plan items by default.
   Keep its source-audited proof rows nearby:
   `wsl_dxg_uapi_namespace_negative_matrix`,
   `wsl_dxg_adapter_display_caps_negative_matrix`, and
-  `dda_nouveau_non_readback_display_proof_matrix`. WSL adapter display caps and
-  present-history telemetry remain negative proof, and DDA/Nouveau needs real
-  Linux-shaped display creation, non-virtual connectors, hardware vblank IRQs,
-  KMS `NOUVEAU_HW` page flips, and hardware flip completions before it can be a
-  non-readback display path.
+  `dda_nouveau_non_readback_display_proof_matrix`, plus
+  `wsl_submit_present_fields_not_bind_matrix`,
+  `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
+  `wsl_trace_display_bind_negative_matrix`, and
+  `provider_credit_gate_negative_matrix`. WSL adapter display caps,
+  submit/present metadata, written primaries, standard-allocation private data,
+  allocation flags, trace-visible open-resource/sync-file evidence, provider
+  invocation counters, and present-history telemetry remain negative proof.
+  DDA/Nouveau needs real Linux-shaped display creation, non-virtual
+  connectors, hardware vblank IRQs, KMS `NOUVEAU_HW` page flips, and hardware
+  flip completions before it can be a non-readback display path.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
