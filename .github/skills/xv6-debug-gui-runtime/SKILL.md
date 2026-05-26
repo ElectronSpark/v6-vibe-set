@@ -194,6 +194,13 @@ but do not treat them as open plan items by default.
   `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
   diagnostics. Do not replace those with credit until a documented GPU-P/DDA
   sender and display completion source exists.
+- The provider request itself must be complete before the fail-closed result is
+  accepted as useful evidence. Require
+  `d3d12_display_bind_request_metadata_matrix` with complete device, resource,
+  allocation, dimensions, format/modifier, adapter LUID, source/resource
+  generation, and sync/fence metadata; the same row must keep present ids,
+  native-present credit, and OpenGL-submit credit at zero until the real
+  GPU-P/DDA sender exists.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12

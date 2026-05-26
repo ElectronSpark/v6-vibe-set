@@ -784,6 +784,21 @@ non-readback display handoff.
   `provider_submits`, `lock_dropped_submits`, `revalidate_attempts`,
   `revalidate_successes`, and `revalidate_failures`, keeping the future
   sleepable GPU-P/DDA sender WSL-style without granting native-present credit.
+- [x] Prove the future display-bind sender receives a complete source-owned
+  request before it is allowed to fail closed.
+  `hyperv_dxg_display_bind_submit_failclosed()` now validates that the
+  provider request carries the device, resource, allocation, dimensions,
+  format/modifier, adapter LUID, source/resource generations, and sync/fence
+  metadata required for a WSL-style source-owned bind attempt. `fbstat`,
+  `dxgprobe`, `gpucorevalidate`, and the focused runner require
+  `d3d12_display_bind_request_metadata_matrix` with
+  `request_metadata_complete=1`, `request_sync_metadata_complete=1`,
+  `missing_metadata=0x0`, zero present/completed ids, zero native-present
+  credit, and zero OpenGL-submit credit. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+  `validation_run_id=core-1779758881-3213422`.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
