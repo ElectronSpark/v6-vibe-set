@@ -372,6 +372,14 @@ but do not treat them as open plan items by default.
   admission/lifetime proof only; they do not grant native-present,
   OpenGL-submit, or WebKit credit while the sender and completion contract are
   absent.
+- Keep provider shared-parent retention and sync-fence aliasing separate from
+  the broad publication row. `d3d12_display_bind_provider_shared_parent_retention_matrix`
+  must name parent fd refs, host NT refs, child refs, global share, host NT
+  handle, and opened-child parent/global/share-generation matches.
+  `d3d12_display_bind_provider_sync_fence_alias_matrix` must distinguish CPU
+  VA, kernel VA, real returned GPU VA, GPU-VA source, and KVA alias gaps. Both
+  rows remain zero-credit until a documented GPU-P/DDA sender and display
+  completion source exist.
 - Keep WSL-style packet lifetime visible even while no sender exists:
   `d3d12_display_bind_provider_packet_lifetime_matrix` must report no listed
   packet, request id, transport pending id, completion demux, host-saw packet,

@@ -975,6 +975,19 @@ non-readback display handoff.
     transport ids, demux, present/completed ids, native-present credit,
     OpenGL-submit credit, and WebKit credit remain zero until a documented
     GPU-P/DDA sender and display completion source exist.
+  - [x] Split provider shared-parent retention proof out of the generic
+    pending-publication row. `d3d12_display_bind_provider_shared_parent_retention_matrix`
+    now names WSL-style parent id, refs, fd refs, host-NT refs, child refs,
+    child count, global-share handle, host NT handle, opened-child parent-id
+    match, opened-child global-share match, and sealed-generation match while
+    keeping host-saw packet, present/completed ids, native-present,
+    OpenGL-submit, and WebKit credit at zero.
+  - [x] Split provider sync-fence alias proof out of the generic
+    pending-publication row. `d3d12_display_bind_provider_sync_fence_alias_matrix`
+    now distinguishes CPU VA, kernel VA, real returned GPU VA, GPU-VA source,
+    and the legacy KVA alias gap, and keeps sync-file/dma-fence display
+    completion credit, native-present credit, OpenGL-submit credit, and WebKit
+    credit at zero.
   - [x] Add WSL-shaped HMGR/process-scope diagnostics before a real sender is
     wired. `/dev/dxg`, `dxgprobe`, and focused validators now expose the
     local-vs-WSL HMGR type coverage gap, per-type active object counts, last
