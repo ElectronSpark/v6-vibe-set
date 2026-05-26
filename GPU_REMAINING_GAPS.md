@@ -708,6 +708,14 @@ non-readback display handoff.
     CORE_C_SECTIONS='preflight present-source final'
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
     `validation_run_id=core-1779751975-2934585`.
+  - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
+    evidence. A DDA-backed Nouveau PCI display path can only count as a native
+    display lane after it also proves a D3D12 shared-resource import,
+    scanout-bind, and hardware flip completion contract. `fb_nouveau.c` now
+    includes `NO_NOUVEAU_DISPLAY` in the fail-closed reject mask, and
+    `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused runner require
+    `d3d12_dda_nouveau_separate_display_not_bind_matrix` so DDA PCI display
+    presence cannot be confused with a D3D12 resource-to-scanout bind.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
