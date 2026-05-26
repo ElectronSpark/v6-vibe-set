@@ -721,6 +721,12 @@ require_log 'hyperv_opengl_submit_gate_matrix .*backend_opengl_submit=0 .*requir
     "Hyper-V OpenGL-submit gate matrix"
 require_log 'opengl_submit_backend_separation_matrix .*backend=hyperv-dxg .*dxg_transport=1 .*d3dkmt=1 .*virgl_opengl=0 .*backend_opengl_submit=0 .*allowed_submit_backend=virgl .*hyperv_dxg_transport_is_submit=0 .*hyperv_d3dkmt_is_submit=0 .*kvm_virgl_submit_allowed=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "backend/OpenGL-submit separation matrix"
+require_log 'wsl_dxg_uapi_namespace_negative_matrix .*uapi_namespace_checked=1 .*last_known_ioctl_nr=0x49 .*display_bind_ioctl_present=0 .*present_source_ioctl_present=0 .*present_completion_ioctl_present=0 .*linux_ioctl_contracts=0 .*resource_bind_contracts=0 .*display_completion_contracts=0 .*transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "WSL DXG UAPI namespace has no display-bind or completion ioctl"
+require_log 'wsl_dxg_adapter_display_caps_negative_matrix .*display_supported=0 .*post_device=0 .*indirect_display_device=0 .*display_sources=0 .*display_caps_cleared_by_wsl=1 .*display_bind_transport_present=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "WSL adapter display caps remain cleared and zero-credit"
+require_log 'dda_nouveau_non_readback_display_proof_matrix .*dda_pci_transport_present=GPU_P_FAIL_CLOSED .*dda_nouveau_display_present=ABSENT .*dda_nouveau_non_readback_present=ABSENT .*display_create_successes=0 .*heads=0 .*connectors=0 .*nonvirtual_connector=0 .*vblank_supported=0 .*vblank_irqs=0 .*page_flip_completions=0 .*kms_lane=0 .*kms_present_dumb=0 .*kms_present_synthvid=0 .*kms_present_nouveau_hw=0 .*kms_vblank_source_nouveau_hw=0 .*page_flip_events_native_hw=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DDA/Nouveau non-readback display proof remains absent on GPU-P-only Hyper-V"
 require_log 'd3d12_display_bind_absent_matrix .*selected=gpup_dxg_scanout_bind .*display_bind=ABSENT .*transport_present=0 .*helper_requires_completion=1 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "D3D12 display bind absent matrix"
 require_nouveau_dda_or_gpup_fail_closed
