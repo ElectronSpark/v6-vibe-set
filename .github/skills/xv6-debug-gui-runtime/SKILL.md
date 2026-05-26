@@ -1045,6 +1045,14 @@ but do not treat them as open plan items by default.
   case-changed `DISPLAY` are diagnostic text only, not final pass tokens.
   FPS acceptance must require coherent sample-window and visual-window
   display-bind tuples before any FPS credit.
+- Kernel display-bind success acceptance must be stricter than the fail-closed
+  metadata rows. A future positive result must have provider publication,
+  publish-before-send ordering, nonzero transport pending id, command id,
+  transaction id, channel, completion demux registration,
+  `host_saw_display_bind_packet=1`, and
+  `wsl_presenthistory_completion_credit=0` before nonzero present/completed ids
+  can count. `d3d12_display_bind_success_shape_matrix` should expose those
+  fields for both `fbstat` and `dxgprobe`.
 - WebKit's animated native-present fixture currently proves liveness only.
   Treat `/share/webkit/webkit-animated-content-native-present.html` title/frame
   progress as insufficient until `/tmp/wlcomp-d3d12-present` supplies matching
@@ -1068,9 +1076,14 @@ but do not treat them as open plan items by default.
   `webkit_contract_parser_negative_matrix`,
   `webkit_lineage_equality_negative_matrix`, and
   `webkit_animated_content_fixture_negative_matrix` green before trusting a
-  shell WebKit artifact: prefixed/suffixed keys, malformed numerics,
-  backend/transport aliases, completion-source aliases, stale D3D12/FPS/content
-  lineage, backend-zero nonzero-id claims, and title-only animated fixture
+  shell WebKit artifact. Also keep
+  `webkit_animated_content_native_present_negative_matrix` green: even
+  plausible compositor-owned content CRC/frame/hash plus source-authority
+  fields remain zero-credit when native present, prior finite FPS,
+  backend OpenGL-submit, or shared-surface contract evidence is missing.
+  Prefixed/suffixed keys, malformed numerics, backend/transport aliases,
+  completion-source aliases, stale D3D12/FPS/content lineage, backend-zero
+  nonzero-id claims, title-only animated fixture progress, and forged content
   progress must all remain zero-credit.
 - WebKit acceleration validation starts with the
   `webkit_evidence_rejection_matrix` policy preflight. Chrome/title/cursor-only,
