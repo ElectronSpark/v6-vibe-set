@@ -826,6 +826,17 @@ non-readback display handoff.
     owner close while a provider pending record exists must cancel the pending
     object, keep present/completed ids zero, reject any late completion as
     stale/after-release, and leave no native-present/OpenGL-submit credit.
+  - [x] Add the pure-C future contract row for provider-owned pending packet
+    publication before a real sender is wired.
+    `d3d12_display_bind_provider_pending_publication_matrix` now names the
+    required publish-before-send, transport pending id, command id,
+    transaction id, channel, completion-demux registration, resolve/cancel,
+    and ref-release fields. Today it must report `PASS_FAILCLOSED` with those
+    sender-owned fields at zero plus `provider_no_host_abi=1`,
+    `provider_no_sender=1`, `provider_no_completion=1`, zero present/completed
+    ids, zero native-present credit, and zero OpenGL-submit credit. This
+    checked row is a gate for the future provider, not evidence that the
+    unchecked real-sender item is complete.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
     evidence. A DDA-backed Nouveau PCI display path can only count as a native
     display lane after it also proves a D3D12 shared-resource import,

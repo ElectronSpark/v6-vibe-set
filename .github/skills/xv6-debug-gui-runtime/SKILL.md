@@ -260,6 +260,14 @@ but do not treat them as open plan items by default.
   `d3d12_display_bind_generation_revalidation_matrix` proves the live
   bind-contract source/resource generation and pinned resource generation
   survived the provider lock drop.
+- Keep the future real-sender publication contract explicit even while the
+  sender is absent. `d3d12_display_bind_provider_pending_publication_matrix`
+  should name publish-before-send, transport pending id, command id,
+  transaction id, channel, completion-demux registration, resolve/cancel, and
+  ref release. Until a documented GPU-P/DDA sender exists, those sender-owned
+  fields stay zero and the row must be `PASS_FAILCLOSED` with
+  `provider_no_host_abi=1`, `provider_no_sender=1`, and
+  `provider_no_completion=1`.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12
