@@ -823,6 +823,25 @@ non-readback display handoff.
   returned `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
   scalars, so a future implementation must replace the sender/completion
   contract deliberately instead of deriving credit from DXG readiness.
+  - [x] Re-audit WSL2 `dxgkrnl` as the source model before wiring a sender.
+    A read-only comparison against `/home/es/reps/WSL2-Linux-Kernel` found no
+    Linux-facing display-bind ioctl and no implemented VMBus sender/completion
+    contract that binds a D3D12 resource/allocation/fence to scanout. The WSL
+    UAPI dispatch remains ordinary D3DKMT object/allocation/share/submit/sync
+    plumbing, `DXGK_VMBCOMMAND_PRESENTHISTORYTOKEN`,
+    `SETREDIRECTEDFLIPFENCEVALUE`, `BLT`, and
+    `PROPAGATEPRESENTHISTORYTOKEN` are enum/telemetry candidates rather than a
+    Linux scanout-bind contract, and WSL adapter display caps are explicitly
+    cleared. Therefore `hyperv_dxg_display_bind_submit()` must remain
+    fail-closed unless a documented non-WSL GPU-P/DDA sender is added; do not
+    repurpose present-history, BLT, normal submit, sync-file, or
+    standard-allocation paths as native-present credit. The existing
+    `wsl_dxg_uapi_namespace_negative_matrix`,
+    `wsl_submit_present_fields_not_bind_matrix`,
+    `wsl_trace_display_bind_negative_matrix`,
+    `dxg_presenthistory_telemetry_not_completion_matrix`, and
+    `d3d12_display_bind_host_abi_discovery_matrix` are the validator evidence
+    for this audit.
   - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
     while keeping it fail-closed. `fb_dxg_present.c` now delegates the
     source/resource-generation snapshot to
@@ -1455,6 +1474,17 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `FPS_ANTI_INFLATION_SELFTEST=1
   VALIDATION_RUN_ID=selftest-display-bind-authority
   scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
+  The parser is now source-isolated as well: canonical
+  `display_bind_*`, `present_id`, `completed`, native-completion,
+  backend-OpenGL-submit, content-progress, and final-handoff counters are
+  consumed only from `__SRC_WLCOMP_D3D12_PRESENT_*` blocks. Canonical-looking
+  scalars from `mesawlegl-fps`, `wlcomp-fps`, `fbstat`, demo logs, or other
+  source blocks are quarantined as diagnostic-only zero-credit evidence, with
+  `fps_artifact_source_isolation_negative_matrix` reporting the rejected
+  foreign sources. Evidence:
+  `FPS_ANTI_INFLATION_SELFTEST=1
+  VALIDATION_RUN_ID=parent-review-source-isolation
+  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
@@ -1871,6 +1901,21 @@ alone.
     no longer accept final-handoff-only host-display aliases. Evidence:
     `WEBKIT_GPU_VALIDATE_MODE=preflight-stale-negative
     VALIDATION_RUN_ID=webkit-consumer-exact-stale
+    BUILD_DIR=/tmp/xv6-hyperv-build
+    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
+  - [x] Make WebKit open/enable shell gates consume one provider-owned tuple
+    instead of assembled whole-log scalars. `hyperv-webkit-gpu-validate.sh`
+    now selects same-line `wlcomp` display-bind/FPS/content records with
+    `evidence_provider=wlcomp`, `/tmp/wlcomp-d3d12-present`, nonzero
+    generation, current validation run id, canonical backend/transport/source
+    authority, nonzero display ids, backend OpenGL-submit, and native
+    completion equality. The animated-content and enabled-artifact emitters
+    also require provider-owned final-handoff identity for the same
+    present/completed/resource-generation tuple before they can print open
+    credit rows. Evidence: `bash -n
+    scripts/hyperv-webkit-gpu-validate.sh` and
+    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
+    VALIDATION_RUN_ID=webkit-source-isolation-parent
     BUILD_DIR=/tmp/xv6-hyperv-build
     scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
 - [ ] Produce one enabled WebKit artifact only after native present, finite

@@ -251,7 +251,8 @@ but do not treat them as open plan items by default.
   the evidence they read, but they must not emit canonical display-bind ids
   that the FPS parser could count as compositor proof. Use
   `fps_artifact_source_isolation_negative_matrix` to prove forged app-side
-  display-bind scalars stay zero-credit.
+  display-bind/native-present/backend/content/final-handoff scalars stay
+  zero-credit.
 - Treat `display_bind_*` evidence as the canonical bridge between the kernel
   present-source contract, `wlcomp`, FPS, and WebKit. The required keys are
   `display_bind_backend`, `display_bind_transport`,
