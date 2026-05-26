@@ -744,6 +744,12 @@ but do not treat them as open plan items by default.
   Nouveau scanout-bind handoff; valid foreign fd rejects, zero D3D12 import
   credit, zero Nouveau scanout-bind import credit, and zero native/OpenGL credit
   must stay visible until a real Linux-shaped external import bridge exists.
+- `public_present_api_not_guest_bind_matrix` is the public Windows/WSLg/RDP
+  source-audit guard. ReactOS/Windows KMT present declarations, DirectX shared
+  handles, and HWND-oriented sharing-contract APIs are not a guest VMBus or
+  WSLg/RDP display-bind protocol; RDP-style frame/copy/dirty transport remains
+  zero-credit for native D3D12 present until a source/resource-correlated
+  scanout completion contract exists.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,

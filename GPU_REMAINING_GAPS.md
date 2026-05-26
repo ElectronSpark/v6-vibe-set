@@ -891,6 +891,16 @@ non-readback display handoff.
     OpenGL-submit credit at zero. `fbstat` and `gpucorevalidate` require
     `foreign_prime_import_gap_matrix`, so a local xv6 dma-buf import can no
     longer be mistaken for a real DDA/Nouveau-to-D3D12 resource bridge.
+  - [x] Make public Windows/WSLg/RDP present APIs explicit zero-credit
+    evidence. A fresh audit found ReactOS/Windows KMT present declarations and
+    DirectX shared-handle/sharing-contract APIs, but no source-backed
+    guest-implementable GPU-P/DXG VMBus or WSLg/RDP protocol that binds a
+    guest D3D12 allocation/resource/fence to host scanout and returns
+    source/resource-correlated display completion. `fbstat`, `dxgprobe`, the
+    pure-C GPU validator, and the focused Hyper-V runner now require
+    `public_present_api_not_guest_bind_matrix` with WSLg/FreeRDP local source
+    absent, RDP classified as copy/dirty-frame transport, and native-present,
+    OpenGL-submit, and WebKit acceleration credit at zero.
   - [x] Make host-to-VM present-history completion observable before any
     future native-present credit. The Hyper-V DXG receive path now recognizes
     `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
