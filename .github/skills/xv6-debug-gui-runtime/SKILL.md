@@ -292,7 +292,9 @@ but do not treat them as open plan items by default.
   request/result provider boundary in `fb_dxg_present.c`. The provider may
   remain fail-closed, but it must preserve source/resource generation,
   completion source, status, block reason, and zero present/completed ids until
-  a documented DDA/GPU-P sender replaces the stub.
+  a documented DDA/GPU-P sender replaces the stub. The accept path must require
+  an exact `host_saw_packet == 1` plus provider-owned completion demux before
+  any display-bind result can become native-present credit.
 - Keep display-bind cancellation Hyper-V-owned as well as submission-owned.
   `hyperv_dxg_display_bind_cancel()` is the future async sender cancellation
   boundary for owner-close/unregister paths; while fail-closed it reports
@@ -842,6 +844,13 @@ but do not treat them as open plan items by default.
   successful provider submit it must require nonzero display-correlated
   present/completed ids, callback/release after completion, close-before-signal
   cancellation, cleanup balance, and no provider negative diagnostics.
+- `d3d12_native_completion_consumer_escrow_matrix` is the downstream credit
+  guard. While display bind is closed it must keep callback/release credit,
+  final-handoff credit, FPS-visible credit, content-progress credit, and WebKit
+  acceleration credit at zero, with `host_saw_display_bind_packet=0`, no
+  completion demux, no transport-pending id, and no native-present/
+  OpenGL-submit credit. A future positive path needs the provider-owned
+  display completion first; consumers cannot create completion authority.
 - `d3d12_display_bind_stale_source_zero_credit_matrix` is the stale-source
   guard. Owner close or explicit unregister must clear source/global
   display-bind ids, reject after-close queries, avoid late completion credit,
@@ -850,6 +859,11 @@ but do not treat them as open plan items by default.
   real-sender future guard. It keeps completion-demux, transport-pending-id,
   owner-close-cancel, and late-completion-reject semantics visible while the
   current provider remains fail-closed.
+- `dxg_host_to_vm_presenthistory_completion_matrix` must treat present-history
+  host-to-VM packets as telemetry even if they are observed. Do not require
+  packet absence for the row to pass; require zero sender/completion
+  contracts, zero display-bind completion successes, zero present/completed
+  ids, and zero native-present/OpenGL-submit credit.
 - `d3d12_dda_nouveau_separate_display_not_bind_matrix` is the DDA split guard.
   A separate DDA/Nouveau PCI display path is zero-credit for D3D12 native
   present because it is not the D3D12 resource scanout-bind path. Keep it in a

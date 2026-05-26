@@ -1522,6 +1522,20 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   vblank IRQ, KMS `NOUVEAU_HW` page-flip, and hardware completion diagnostics,
   but those fields must remain zero-credit unless they all correlate through
   Linux-shaped Nouveau/KMS hardware state in the same validation lineage.
+  The skeleton now also emits
+  `d3d12_native_completion_consumer_escrow_matrix`: while display bind is
+  closed, frame callbacks, buffer releases, final handoff, FPS-visible credit,
+  content-progress credit, and WebKit acceleration are explicitly escrowed at
+  zero until a provider-owned display completion supplies nonzero
+  present/completed ids for the same resource generation.
+  The kernel acceptance gate now requires `host_saw_packet == 1`, not merely a
+  nonzero diagnostic value, before accepting any future display-bind result as
+  native completion.
+  Present-history validation is now phrased as telemetry even when packets are
+  observed: `dxg_host_to_vm_presenthistory_completion_matrix` no longer depends
+  on packet absence and instead requires zero sender/completion contracts,
+  zero display-bind completion successes, zero present/completed ids, and zero
+  native-present/OpenGL credit.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace
