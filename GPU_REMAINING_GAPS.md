@@ -1305,6 +1305,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   `fps_sustained_post_warmup_progress_matrix`. Lightweight evidence:
   `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-sustained-freeze
   scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
+  - [x] Persist forged display-bind negative evidence into the FPS log and
+    split finite-FPS credit from OpenGL-submit credit. The validator now writes
+    `fps_forged_display_bind_negative_matrix` durably during the preflight,
+    computes outside-overlay CRC transitions before sustained-window checks,
+    and keeps `opengl_submit_credit=0` unless finite native-present FPS and
+    `backend_opengl_submit=1` are both present.
 - [x] Add a present/FPS provenance skeleton so visible demo FPS is explicitly
   zero-credit unless it is backed by current-run native D3D12 display
   completions. `wlcomp` now emits
@@ -1485,6 +1491,13 @@ alone.
   `webkit_stale_display_bind_evidence_rejection_matrix`, so stale or
   after-close display-bind evidence cannot open WebKit acceleration while the
   canonical display-bind ids and native-present credit remain zero.
+  - [x] Extend the WebKit policy-negative preflight to reject plausible but
+    incomplete lineage: nonzero display/native ids with
+    `backend_opengl_submit=0`, stale D3D12 run ids, and stale FPS artifact run
+    ids. The downstream WebKit consumer gate now reports separate
+    `backend_zero_rejected`, `display_bind_completion_source_rejected`,
+    `native_present_ids_zero_rejected`, and `lineage_rejected` fields before
+    any enabled artifact can open.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
   `webkit_enabled_artifact_contract_matrix` now names the only accepted future
