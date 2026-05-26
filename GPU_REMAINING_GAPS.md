@@ -1410,6 +1410,18 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `d3d12_visible_frame_hash`, and
     `d3d12_content_progress_source_owned=1`; client-side hashes remain
     diagnostic context and cannot open FPS/WebKit credit.
+  - [x] Reject aliased or mixed-record display-bind completion evidence in the
+    finite FPS consumers.
+    `hyperv-3d-fps-validate.sh` now requires coherent same-line
+    `display_bind_backend`, `display_bind_transport`, present id, completed
+    id, resource generation, and exact
+    `display_bind_completion_source=display` tuples in both sample and visual
+    windows. It rejects case aliases such as `DISPLAY`, numeric/enum-style
+    aliases, generic `completion_source` without a display-bind tuple, and
+    mixed tuples where completion does not cover the same present id. Evidence:
+    `FPS_ANTI_INFLATION_SELFTEST=1
+    VALIDATION_RUN_ID=selftest-consumer-exact
+    scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
@@ -1446,6 +1458,21 @@ alone.
     The current Hyper-V D3D12 contract-negative validator requires this row to
     keep `backend_opengl_submit=0`, present/completed ids at zero,
     `gate=closed`, and native-present/OpenGL/WebKit credit at zero.
+  - [x] Harden WebKit and launcher consumers to require exact provider-owned
+    display-bind evidence before any D3D12/WebKit credit.
+    `wlcomp_launcher`, `desktop`, and `webkitgpusmoke` no longer normalize
+    `host-display-channel`, enum names, numeric completion sources, alternate
+    backend names, or transport aliases into the canonical display-bind
+    contract. WebKit D3D12 credit now requires real
+    `display_bind_backend=gpup_dxg_scanout_bind`,
+    `display_bind_transport=gpu-p-dxg-resource-scanout-bind`,
+    exact `display_bind_completion_source=display`, nonzero ids, matching
+    native/final/content present and completed ids, matching resource
+    generation, and backend OpenGL-submit on the same validated contract.
+    The compositor helper now routes raw present-source completion checks
+    through the stricter provider-complete predicate instead of treating raw
+    `present_id/completed` or syncfile/generic completion progress as native
+    display-bind proof.
 - [x] Add WebKit run-id and current-run evidence matching so stale
   `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
   cannot satisfy the WebKit gate.
@@ -1531,6 +1558,18 @@ alone.
     prefix probes, and `dxgprobe` parses the `dxg_host_to_vm_last=` line with
     line-scoped fields and whole-token numeric values before emitting
     present-history telemetry/completion matrices.
+  - [x] Make shell WebKit downstream validation line-scoped for provider-owned
+    display-bind evidence.
+    `hyperv-webkit-gpu-validate.sh` now requires one provider-owned
+    display-bind record with the exact backend, transport, completion source,
+    nonzero ids/resource generation, backend OpenGL-submit, and a matching
+    native completion id before open WebKit rows can be emitted. It no longer
+    falls back to synthesized native completion ids, and commit-accepted checks
+    no longer accept final-handoff-only host-display aliases. Evidence:
+    `WEBKIT_GPU_VALIDATE_MODE=preflight-stale-negative
+    VALIDATION_RUN_ID=webkit-consumer-exact-stale
+    BUILD_DIR=/tmp/xv6-hyperv-build
+    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
   `webkit_enabled_artifact_contract_matrix` now names the only accepted future

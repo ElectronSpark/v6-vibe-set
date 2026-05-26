@@ -116,6 +116,9 @@ def accepts_display_bind_contract(fields):
         fields.get("callback_release_same_frame", 0) == 1
     )
 
+def rejects_display_bind_aliases(fields):
+    return not accepts_display_bind_contract(fields)
+
 def accepts_downstream_consumer_gate(fields):
     return (
         accepts_display_bind_contract(fields) and
@@ -185,6 +188,63 @@ forged_high_fps_rejected = not accepts_display_bind_contract({
     "display_bind_completion_source": "missing",
     "content_credit": 0,
     "callback_release_same_frame": 0,
+})
+case_alias_completion_source_rejected = rejects_display_bind_aliases({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "DISPLAY",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 9,
+    "content_progress_completed": 9,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 9,
+    "final_handoff_completed": 9,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+})
+numeric_alias_completion_source_rejected = rejects_display_bind_aliases({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "1",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 9,
+    "content_progress_completed": 9,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 9,
+    "final_handoff_completed": 9,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+})
+mixed_display_bind_tuple_rejected = not accepts_display_bind_contract({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 12,
+    "display_bind_completed_id": 11,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "display",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 12,
+    "content_progress_completed": 11,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 12,
+    "final_handoff_completed": 11,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
 })
 backend_zero_rejected = not accepts_downstream_consumer_gate({
     "display_bind_backend": "gpup_dxg_scanout_bind",
@@ -349,6 +409,21 @@ if not forged_high_fps_rejected:
         "anti-inflation selftest failed: forged high-FPS display-bind "
         "evidence without content/callback/release correlation was accepted"
     )
+if not case_alias_completion_source_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: DISPLAY completion-source alias "
+        "was accepted"
+    )
+if not numeric_alias_completion_source_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: numeric display completion-source "
+        "alias was accepted"
+    )
+if not mixed_display_bind_tuple_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: mixed display-bind tuple evidence "
+        "with completed_id below present_id was accepted"
+    )
 if not backend_zero_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: downstream FPS consumer gate accepted "
@@ -411,6 +486,9 @@ line = (
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
     "forged_high_fps_negative=1 forged_high_fps_rejected=1 "
+    "case_alias_completion_source_rejected=1 "
+    "numeric_alias_completion_source_rejected=1 "
+    "mixed_display_bind_tuple_rejected=1 "
     "backend_zero_rejected=1 zero_native_ids_rejected=1 "
     "post_warmup_sample_window=1 native_present_delta=0 "
     "frame_callback_delta=0 buffer_release_delta=0 "
@@ -482,6 +560,7 @@ dependency_line = (
     "display_bind_present_id=0 display_bind_completed_id=0 "
     "display_bind_resource_generation=0 "
     "display_bind_completion_source=missing "
+    "requires_exact_display_bind_completion_source=display "
     "requires_display_bind_backend=gpup_dxg_scanout_bind "
     "requires_display_bind_transport=gpu-p-dxg-resource-scanout-bind "
     "requires_nonzero_display_bind_present_id=1 "
@@ -824,6 +903,8 @@ d3d12_display_bind_present_ids = []
 d3d12_display_bind_completed_ids = []
 d3d12_display_bind_resource_generations = []
 d3d12_display_bind_completion_sources = []
+d3d12_display_bind_records = []
+d3d12_incomplete_display_bind_records = []
 d3d12_gpup_dda_commit_successes = []
 d3d12_same_frame_callback_releases = []
 d3d12_same_frame_callbacks = []
@@ -881,6 +962,8 @@ visual_display_bind_present_ids = []
 visual_display_bind_completed_ids = []
 visual_display_bind_resource_generations = []
 visual_display_bind_completion_sources = []
+visual_display_bind_records = []
+visual_incomplete_display_bind_records = []
 visual_gpup_dda_commit_successes = []
 visual_same_frame_callback_releases = []
 visual_same_frame_callbacks = []
@@ -929,10 +1012,8 @@ gpup_dda_commit_success_keys = (
     "d3d12_present_source_commit_successes",
     "d3d12_present_source_buffer_commit_successes",
     "dxg_present_commit_successes",
-    "d3d12_final_handoff_host_display_commit_success",
     "d3d12_present_source_commit_accepted",
     "d3d12_dxg_present_source_commit_accepted",
-    "d3d12_host_display_commit_accepted",
 )
 same_frame_callback_release_keys = (
     "d3d12_callback_release_same_frame_observed",
@@ -1105,34 +1186,109 @@ def same_run_resource_generation_completion_progress(run_ids, resources,
         seen[key] = max(seen.get(key, 0), completion_id)
     return False
 
+DISPLAY_BIND_BACKEND = "gpup_dxg_scanout_bind"
+DISPLAY_BIND_TRANSPORT = "gpu-p-dxg-resource-scanout-bind"
+DISPLAY_BIND_COMPLETION_SOURCE = "display"
+
+def display_bind_backend_ok(value):
+    return value == DISPLAY_BIND_BACKEND
+
+def display_bind_transport_ok(value):
+    return value == DISPLAY_BIND_TRANSPORT
+
 def display_bind_completion_source_ok(value):
-    return value.lower() == "display"
+    return value == DISPLAY_BIND_COMPLETION_SOURCE
+
+def display_bind_records_complete(records, incomplete_records):
+    if incomplete_records or len(records) < 2:
+        return False
+    return all(
+        display_bind_backend_ok(record["backend"]) and
+        display_bind_transport_ok(record["transport"]) and
+        display_bind_completion_source_ok(record["completion_source"]) and
+        record["present_id"] > 0 and
+        record["completed_id"] >= record["present_id"] and
+        record["resource_generation"] > 0
+        for record in records
+    )
+
+def require_display_bind_records(name, records, incomplete_records):
+    if incomplete_records:
+        bad = incomplete_records[-1]
+        raise SystemExit(
+            f"incomplete {name} display-bind tuple rejected: "
+            f"present={','.join(bad['present'])} "
+            f"missing={','.join(bad['missing'])} line={bad['line']}"
+        )
+    if len(records) < 2:
+        raise SystemExit(
+            f"missing repeated coherent {name} display-bind tuples: "
+            f"records={len(records)}"
+        )
+    for index, record in enumerate(records):
+        if not display_bind_backend_ok(record["backend"]):
+            raise SystemExit(
+                f"{name} display_bind_backend must be exactly "
+                f"{DISPLAY_BIND_BACKEND}: sample={index} "
+                f"value={record['backend']}"
+            )
+        if not display_bind_transport_ok(record["transport"]):
+            raise SystemExit(
+                f"{name} display_bind_transport must be exactly "
+                f"{DISPLAY_BIND_TRANSPORT}: sample={index} "
+                f"value={record['transport']}"
+            )
+        if not display_bind_completion_source_ok(
+                record["completion_source"]):
+            raise SystemExit(
+                f"{name} display_bind_completion_source must be exactly "
+                f"{DISPLAY_BIND_COMPLETION_SOURCE}: sample={index} "
+                f"value={record['completion_source']}"
+            )
+        if record["present_id"] <= 0:
+            raise SystemExit(
+                f"{name} display_bind_present_id must be nonzero: "
+                f"sample={index} value={record['present_id']}"
+            )
+        if record["completed_id"] <= 0:
+            raise SystemExit(
+                f"{name} display_bind_completed_id must be nonzero: "
+                f"sample={index} value={record['completed_id']}"
+            )
+        if record["completed_id"] < record["present_id"]:
+            raise SystemExit(
+                f"{name} display_bind_completed_id did not cover "
+                f"display_bind_present_id in the same tuple: "
+                f"sample={index} present_id={record['present_id']} "
+                f"completed_id={record['completed_id']}"
+            )
+        if record["resource_generation"] <= 0:
+            raise SystemExit(
+                f"{name} display_bind_resource_generation must be nonzero: "
+                f"sample={index} value={record['resource_generation']}"
+            )
 
 def require_display_bind_evidence(name, backends, transports, present_ids,
                                   completed_ids, resource_generations,
                                   completion_sources):
-    allowed_backends = {
-        "gpup_dxg_scanout_bind",
-    }
-    allowed_transports = {
-        "gpu-p-dxg-resource-scanout-bind",
-    }
     if not backends:
         raise SystemExit(f"missing {name} display_bind_backend evidence")
     bad_backends = [value for value in backends
-                    if value.lower() not in allowed_backends]
+                    if not display_bind_backend_ok(value)]
     if bad_backends:
         raise SystemExit(
-            f"{name} display_bind_backend was not gpup_dxg_scanout_bind "
+            f"{name} display_bind_backend was not exactly "
+            f"{DISPLAY_BIND_BACKEND} "
             f"values={','.join(backends)}"
         )
     if not transports:
         raise SystemExit(f"missing {name} display_bind_transport evidence")
     bad_transports = [value for value in transports
-                      if value.lower() not in allowed_transports]
+                      if not display_bind_transport_ok(value)]
     if bad_transports:
         raise SystemExit(
-            f"{name} display_bind_transport was not GPU-P/DXG scanout bind: "
+            f"{name} display_bind_transport was not exactly "
+            f"{DISPLAY_BIND_TRANSPORT}: "
             f"values={','.join(transports)}"
         )
     if len(present_ids) < 2 or any(value == 0 for value in present_ids):
@@ -1162,7 +1318,9 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
     ]
     if not completion_sources or bad_sources:
         raise SystemExit(
-            f"missing {name} native display completion_source evidence: "
+            f"missing exact {name} native display "
+            f"display_bind_completion_source={DISPLAY_BIND_COMPLETION_SOURCE} "
+            f"evidence: "
             f"values={','.join(completion_sources) if completion_sources else 'missing'}"
         )
 
@@ -1173,8 +1331,8 @@ def display_bind_dependency_complete(backends, transports, present_ids,
             resource_generations and completion_sources):
         return False
     return (
-        backends[-1].lower() == "gpup_dxg_scanout_bind" and
-        transports[-1].lower() == "gpu-p-dxg-resource-scanout-bind" and
+        display_bind_backend_ok(backends[-1]) and
+        display_bind_transport_ok(transports[-1]) and
         present_ids[-1] > 0 and
         completed_ids[-1] >= present_ids[-1] and
         resource_generations[-1] > 0 and
@@ -1185,8 +1343,8 @@ def log_fps_display_bind_dependency(
         stage, backends, transports, present_ids, completed_ids,
         resource_generations, completion_sources, *, effective_fps=0.0,
         native_fps=0.0, backend_opengl_submit=0, gate_open=False,
-        status="PASS"):
-    display_bind_ok = display_bind_dependency_complete(
+        status="PASS", records=None, incomplete_records=None):
+    display_bind_list_ok = display_bind_dependency_complete(
         backends,
         transports,
         present_ids,
@@ -1194,6 +1352,12 @@ def log_fps_display_bind_dependency(
         resource_generations,
         completion_sources,
     )
+    display_bind_tuple_ok = (
+        True
+        if records is None and incomplete_records is None
+        else display_bind_records_complete(records or [], incomplete_records or [])
+    )
+    display_bind_ok = display_bind_list_ok and display_bind_tuple_ok
     finite_credit = 1 if gate_open and display_bind_ok else 0
     opengl_credit = 1 if finite_credit and backend_opengl_submit == 1 else 0
     log_validation(
@@ -1209,11 +1373,13 @@ def log_fps_display_bind_dependency(
         f"display_bind_completion_source={completion_sources[-1] if completion_sources else 'missing'} "
         "requires_display_bind_backend=gpup_dxg_scanout_bind "
         "requires_display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+        "requires_exact_display_bind_completion_source=display "
         "requires_nonzero_display_bind_present_id=1 "
         "requires_nonzero_display_bind_completed_id=1 "
         "requires_display_bind_completed_covers_present=1 "
         "requires_display_completion_source=display "
         f"display_bind_contract={pass_missing(display_bind_ok)} "
+        f"display_bind_tuple_contract={pass_missing(display_bind_tuple_ok)} "
         f"effective_presented_fps={effective_fps:.3f} "
         f"native_present_fps={native_fps:.3f} "
         f"backend_opengl_submit={backend_opengl_submit} "
@@ -1376,6 +1542,10 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         positive_delta(d3d12_present_ids) and
         positive_delta(d3d12_present_completed) and
         display_handoff > 0 and
+        display_bind_records_complete(
+            d3d12_display_bind_records,
+            d3d12_incomplete_display_bind_records,
+        ) and
         display_bind_dependency_complete(
             d3d12_display_bind_backends,
             d3d12_display_bind_transports,
@@ -1437,6 +1607,8 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         d3d12_display_bind_completion_sources,
         backend_opengl_submit=backend_opengl_submit,
         gate_open=gate_open,
+        records=d3d12_display_bind_records,
+        incomplete_records=d3d12_incomplete_display_bind_records,
     )
     log_validation(
         "fps_native_present_gate_skeleton_matrix "
@@ -1737,6 +1909,57 @@ def hex_or_int_value(line, keys):
         if match:
             return int(match.group(1), 0)
     return None
+
+def display_bind_record_from_line(line):
+    fields = {
+        "display_bind_backend": token_value(line, ("display_bind_backend",)),
+        "display_bind_transport": token_value(line, ("display_bind_transport",)),
+        "display_bind_present_id": counter_value(
+            line,
+            ("display_bind_present_id",),
+        ),
+        "display_bind_completed_id": counter_value(
+            line,
+            ("display_bind_completed_id",),
+        ),
+        "display_bind_resource_generation": counter_value(
+            line,
+            ("display_bind_resource_generation",),
+        ),
+        "display_bind_completion_source": token_value(
+            line,
+            ("display_bind_completion_source",),
+        ),
+    }
+    present = [
+        key
+        for key, value in fields.items()
+        if value is not None
+    ]
+    alias_source = token_value(line, ("completion_source",))
+    if alias_source is not None and fields["display_bind_completion_source"] is None:
+        present.append("completion_source_alias")
+    if not present:
+        return None, None
+    missing = [
+        key
+        for key, value in fields.items()
+        if value is None
+    ]
+    if missing:
+        return None, {
+            "line": line,
+            "present": present,
+            "missing": missing,
+        }
+    return {
+        "backend": fields["display_bind_backend"],
+        "transport": fields["display_bind_transport"],
+        "present_id": fields["display_bind_present_id"],
+        "completed_id": fields["display_bind_completed_id"],
+        "resource_generation": fields["display_bind_resource_generation"],
+        "completion_source": fields["display_bind_completion_source"],
+    }, None
 
 def frame_index(path):
     match = re.fullmatch(r"frame-([0-9]+)\.raw", path.name)
@@ -2039,10 +2262,19 @@ for line in log.splitlines():
             )
         completion_source = token_value(
             line,
-            ("display_bind_completion_source", "completion_source"),
+            ("display_bind_completion_source",),
         )
         if completion_source is not None:
             visual_display_bind_completion_sources.append(completion_source)
+        display_bind_record, incomplete_display_bind_record = (
+            display_bind_record_from_line(line)
+        )
+        if display_bind_record is not None:
+            visual_display_bind_records.append(display_bind_record)
+        elif incomplete_display_bind_record is not None:
+            visual_incomplete_display_bind_records.append(
+                incomplete_display_bind_record
+            )
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             visual_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -2260,10 +2492,19 @@ for line in log.splitlines():
             )
         completion_source = token_value(
             line,
-            ("display_bind_completion_source", "completion_source"),
+            ("display_bind_completion_source",),
         )
         if completion_source is not None:
             d3d12_display_bind_completion_sources.append(completion_source)
+        display_bind_record, incomplete_display_bind_record = (
+            display_bind_record_from_line(line)
+        )
+        if display_bind_record is not None:
+            d3d12_display_bind_records.append(display_bind_record)
+        elif incomplete_display_bind_record is not None:
+            d3d12_incomplete_display_bind_records.append(
+                incomplete_display_bind_record
+            )
         gpup_dda_commit = counter_value(line, gpup_dda_commit_success_keys)
         if gpup_dda_commit is not None:
             d3d12_gpup_dda_commit_successes.append(gpup_dda_commit)
@@ -3152,6 +3393,11 @@ if d3d12_present_completed[-1] < d3d12_present_ids[-1]:
         f"present_id={d3d12_present_ids[-1]} "
         f"completed={d3d12_present_completed[-1]}"
     )
+require_display_bind_records(
+    "sample-window D3D12",
+    d3d12_display_bind_records,
+    d3d12_incomplete_display_bind_records,
+)
 require_display_bind_evidence(
     "sample-window D3D12",
     d3d12_display_bind_backends,
@@ -4301,6 +4547,11 @@ if visual_present_completed[-1] < visual_present_ids[-1]:
         f"present_id={visual_present_ids[-1]} "
         f"completed={visual_present_completed[-1]}"
     )
+require_display_bind_records(
+    "visual-window D3D12",
+    visual_display_bind_records,
+    visual_incomplete_display_bind_records,
+)
 require_display_bind_evidence(
     "visual-window D3D12",
     visual_display_bind_backends,
@@ -4695,6 +4946,8 @@ log_fps_display_bind_dependency(
     native_fps=native_fps,
     backend_opengl_submit=1,
     gate_open=True,
+    records=d3d12_display_bind_records,
+    incomplete_records=d3d12_incomplete_display_bind_records,
 )
 log_validation(
     "fps_downstream_consumer_gate_matrix "

@@ -943,9 +943,15 @@ but do not treat them as open plan items by default.
   can prove the demo is visible, closeable, and resizable.
 - Final FPS display-bind acceptance is canonical only:
   `display_bind_backend=gpup_dxg_scanout_bind` and
-  `display_bind_transport=gpu-p-dxg-resource-scanout-bind`. Legacy aliases
-  such as `hyperv-dxg`, `gpu-p`, `dda`, `nouveau`, or
-  `dxg-resource-scanout-bind` are diagnostic text only, not final pass tokens.
+  `display_bind_transport=gpu-p-dxg-resource-scanout-bind`, with exact
+  `display_bind_completion_source=display` on the same evidence record as the
+  nonzero present id, completed id, and resource generation. Legacy aliases
+  such as `hyperv-dxg`, `gpu-p`, `dda`, `nouveau`,
+  `dxg-resource-scanout-bind`, `host-display-channel`,
+  `FB_GPU_DXG_PRESENT_COMPLETION_DISPLAY`, numeric enum values, and
+  case-changed `DISPLAY` are diagnostic text only, not final pass tokens.
+  FPS acceptance must require coherent sample-window and visual-window
+  display-bind tuples before any FPS credit.
 - WebKit's animated native-present fixture currently proves liveness only.
   Treat `/share/webkit/webkit-animated-content-native-present.html` title/frame
   progress as insufficient until `/tmp/wlcomp-d3d12-present` supplies matching
@@ -969,6 +975,13 @@ but do not treat them as open plan items by default.
   `display_bind_backend=gpup_dxg_scanout_bind` and
   `display_bind_transport=gpu-p-dxg-resource-scanout-bind` as the canonical
   final tokens.
+- WebKit shell consumers must also be line-scoped. Before emitting any open
+  WebKit gate, require one provider-owned display-bind record carrying exact
+  backend, transport, `display_bind_completion_source=display`,
+  `completion_source=display`, nonzero present/completed/resource generation,
+  `backend_opengl_submit=1`, and a matching native completion id. Do not fill
+  missing native completion ids from display-bind ids, and do not count
+  final-handoff-only host-display aliases as GPU-P/DDA commit acceptance.
 - Pure-C validator consumers should use the same discipline. `gpucorevalidate`
   output checks should match whitespace/line-bounded tokens while still
   allowing deliberate `field=` prefix probes, and `dxgprobe` should parse
