@@ -1105,12 +1105,7 @@ def same_run_resource_generation_completion_progress(run_ids, resources,
     return False
 
 def display_bind_completion_source_ok(value):
-    return value.lower() in {
-        "3",
-        "display",
-        "native-display",
-        "native-display-completion",
-    }
+    return value.lower() == "display"
 
 def require_display_bind_evidence(name, backends, transports, present_ids,
                                   completed_ids, resource_generations,
@@ -1906,29 +1901,37 @@ def require_advancing_counter(name, values):
     return deltas
 
 strict_fps_sample_requirements = (
-    ("evidence_valid", "d3d12_evidence_valid"),
-    ("native_present_credit", "native_present_credit"),
-    ("native_present_complete", "native_present_complete"),
-    ("same_run_resource_generation", "same_run_resource_generation"),
-    ("same_resource_generation", "same_resource_generation"),
+    ("evidence_valid", "d3d12_evidence_valid", 1),
+    ("current_run_display_bind_complete",
+     "current_run_display_bind_complete", 1),
+    ("no_readback", "no_readback", 1),
+    ("readback_or_software_path", "readback_or_software_path", 0),
+    ("app_loop_fps_credit", "app_loop_fps_credit", 0),
+    ("overlay_fps_credit", "overlay_fps_credit", 0),
+    ("native_present_credit", "native_present_credit", 1),
+    ("effective_presented_fps_credit",
+     "effective_presented_fps_credit", 1),
+    ("native_present_complete", "native_present_complete", 1),
+    ("same_run_resource_generation", "same_run_resource_generation", 1),
+    ("same_resource_generation", "same_resource_generation", 1),
     ("compositor_owned_visible_content_crc",
-     "compositor_owned_visible_content_crc"),
+     "compositor_owned_visible_content_crc", 1),
     ("compositor_owned_visible_content_frame",
-     "compositor_owned_visible_content_frame"),
+     "compositor_owned_visible_content_frame", 1),
     ("compositor_owned_visible_frame_hash",
-     "compositor_owned_visible_frame_hash"),
-    ("client_content_progress", "client_content_progress"),
-    ("callback_release_same_frame", "callback_release_same_frame"),
-    ("finite_demo_visible", "finite_demo_visible"),
-    ("finite_demo_closeable", "finite_demo_closeable"),
-    ("finite_demo_resizable", "finite_demo_resizable"),
-    ("strict_finite_fps_evidence", "strict_finite_fps_evidence"),
+     "compositor_owned_visible_frame_hash", 1),
+    ("client_content_progress", "client_content_progress", 1),
+    ("callback_release_same_frame", "callback_release_same_frame", 1),
+    ("finite_demo_visible", "finite_demo_visible", 1),
+    ("finite_demo_closeable", "finite_demo_closeable", 1),
+    ("finite_demo_resizable", "finite_demo_resizable", 1),
+    ("strict_finite_fps_evidence", "strict_finite_fps_evidence", 1),
 )
 
 def missing_strict_fps_sample_requirements(record):
     missing = []
-    for key, label in strict_fps_sample_requirements:
-        if record.get(key) != 1:
+    for key, label, expected in strict_fps_sample_requirements:
+        if record.get(key) != expected:
             missing.append(label)
     return missing
 
@@ -2434,6 +2437,12 @@ for line in log.splitlines():
             "resource": None,
             "buffer_generation": None,
             "client_pid": None,
+            "current_run_display_bind_complete": None,
+            "no_readback": None,
+            "readback_or_software_path": None,
+            "app_loop_fps_credit": None,
+            "overlay_fps_credit": None,
+            "effective_presented_fps_credit": None,
             "native_present_credit": None,
             "native_present_complete": None,
             "same_run_resource_generation": None,
@@ -2500,6 +2509,12 @@ for line in log.splitlines():
         if demo_client_pid:
             record["client_pid"] = int(demo_client_pid.group(1))
         for key in (
+                "current_run_display_bind_complete",
+                "no_readback",
+                "readback_or_software_path",
+                "app_loop_fps_credit",
+                "overlay_fps_credit",
+                "effective_presented_fps_credit",
                 "native_present_credit",
                 "native_present_complete",
                 "same_run_resource_generation",
