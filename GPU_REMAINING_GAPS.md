@@ -975,6 +975,16 @@ non-readback display handoff.
     transport ids, demux, present/completed ids, native-present credit,
     OpenGL-submit credit, and WebKit credit remain zero until a documented
     GPU-P/DDA sender and display completion source exist.
+  - [x] Add WSL-shaped HMGR/process-scope diagnostics before a real sender is
+    wired. `/dev/dxg`, `dxgprobe`, and focused validators now expose the
+    local-vs-WSL HMGR type coverage gap, per-type active object counts, last
+    entry lifecycle state (`unique`, `instance`, destroyed/free-list status),
+    pending-invalid/unmark placeholders, process-scoped object-table identity,
+    pid/tgid namespace presence, and process-adapter device counters. These
+    rows are explicit zero-credit evidence: missing WSL HMGR types such as
+    shared-resource and monitored-fence remain named, `vpid`/`nspid` support is
+    still reported absent, and native-present/OpenGL-submit credit remains
+    zero.
   - [x] Add the provider no-send preflight ledger before the real sender is
     wired. `hyperv_dxg_display_bind_submit_failclosed()` now records that the
     selected provider reached a complete, pin-revalidated ready-to-send

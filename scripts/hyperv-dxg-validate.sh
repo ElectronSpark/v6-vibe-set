@@ -1527,6 +1527,14 @@ if [[ "${DXG_VALIDATE_SEGMENT}" == "pure-c-lifetime" ]]; then
         "WSL hmgr stale-handle rejection matrix"
     require_log 'handle_lifetime ok .*min_free:128' \
         "WSL hmgr handle lifetime/free-list diagnostics"
+    require_log 'dxg_hmgr_type_coverage_matrix .*local_types=9 .*wsl_hmgr_types=20 .*missing_sharedresource=1 .*missing_monitoredfence=1 .*status=PASS_FAILCLOSED' \
+        "WSL hmgr type coverage gap matrix"
+    require_log 'dxg_hmgr_entry_lifecycle_matrix .*destroyed_after=1 .*on_free_list=1 .*unique_reuse_changed=1 .*status=PASS' \
+        "WSL hmgr entry lifecycle matrix"
+    require_log 'dxg_object_table_scope_matrix .*scope=process .*process_generation=[1-9][0-9]* .*object_count=[1-9][0-9]* .*status=PASS' \
+        "WSL process-scoped object table matrix"
+    require_log 'dxg_process_identity_matrix .*pid_present=1 .*tgid_present=1 .*vpid_present=0 .*nspid_present=0 .*status=PASS_FAILCLOSED' \
+        "WSL dxgprocess namespace identity gap matrix"
     require_log 'shared_resource_parent_lifetime_matrix .*fd_refs=[0-9]+/[0-9]+/0 .*children=[1-9][0-9]*/[2-9][0-9]*/[2-9][0-9]* .*sealed_gen=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*status=PASS' \
         "WSL shared-resource parent lifetime matrix"
     require_log 'shared_resource_sealed_alloc_metadata_matrix .*pages0=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*model_valid=1/1/1 .*status=PASS' \
@@ -1782,6 +1790,14 @@ require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*contex
     "WSL hmgr stale-handle rejection matrix"
 require_log 'handle_lifetime ok .*min_free:128' \
     "WSL hmgr handle lifetime/free-list diagnostics"
+require_log 'dxg_hmgr_type_coverage_matrix .*local_types=9 .*wsl_hmgr_types=20 .*missing_sharedresource=1 .*missing_monitoredfence=1 .*status=PASS_FAILCLOSED' \
+    "WSL hmgr type coverage gap matrix"
+require_log 'dxg_hmgr_entry_lifecycle_matrix .*destroyed_after=1 .*on_free_list=1 .*unique_reuse_changed=1 .*status=PASS' \
+    "WSL hmgr entry lifecycle matrix"
+require_log 'dxg_object_table_scope_matrix .*scope=process .*process_generation=[1-9][0-9]* .*object_count=[1-9][0-9]* .*status=PASS' \
+    "WSL process-scoped object table matrix"
+require_log 'dxg_process_identity_matrix .*pid_present=1 .*tgid_present=1 .*vpid_present=0 .*nspid_present=0 .*status=PASS_FAILCLOSED' \
+    "WSL dxgprocess namespace identity gap matrix"
 require_log 'shared_resource_parent_lifetime_matrix .*fd_refs=[0-9]+/[0-9]+/0 .*children=[1-9][0-9]*/[2-9][0-9]*/[2-9][0-9]* .*sealed_gen=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*status=PASS' \
     "WSL shared-resource parent lifetime matrix"
 require_log 'shared_resource_sealed_alloc_metadata_matrix .*pages0=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*model_valid=1/1/1 .*status=PASS' \

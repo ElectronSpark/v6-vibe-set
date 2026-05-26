@@ -570,6 +570,20 @@ require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*contex
     "WSL-style stale DXG object rejection matrix"
 require_log 'handle_lifetime_stale_matrix .*object_classes=device,context,hwqueue,hwqueue_sync,sync,paging_queue,paging_queue_sync,resource,allocation,gpuva' \
     "WSL-style stale DXG object matrix names every tracked class"
+require_log 'dxg_hmgr_type_coverage_matrix .*local_types=9 .*wsl_hmgr_types=20 .*missing_sharedresource=1 .*missing_monitoredfence=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+    "WSL HMGR type coverage remains explicit and zero-credit"
+require_log 'dxg_object_table_type_counts_matrix .*device=[0-9]+ .*context=[0-9]+ .*hwqueue=[0-9]+ .*paging=[0-9]+ .*sync=[0-9]+ .*allocation=[0-9]+ .*resource=[0-9]+ .*gpuva=[0-9]+ .*sharedresource=0 .*monitoredfence=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+    "WSL-shaped object table type counts stay visible"
+require_log 'dxg_hmgr_entry_lifecycle_matrix .*type=[1-9][0-9]* .*destroyed_after=1 .*on_free_list=1 .*unique_reuse_changed=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "WSL HMGR entry lifecycle tracks destroyed/free-list/unique state"
+require_log 'dxg_hmgr_pending_validity_matrix .*pending_invalid_allocations=0 .*unmark_destroyed_successes=0 .*unmark_destroyed_failures=0 .*free_while_destroyed=[1-9][0-9]* .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+    "WSL HMGR pending-invalid gap is explicit and fail-closed"
+require_log 'dxg_object_table_scope_matrix .*scope=process .*process_generation=[1-9][0-9]* .*object_count=[1-9][0-9]* .*local_adapter_count=[1-9][0-9]* .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DXG object table scope is process-shaped"
+require_log 'dxg_process_identity_matrix .*pid_present=1 .*tgid_present=1 .*vpid_present=0 .*nspid_present=0 .*wsl_pid_tgid_model=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+    "DXG process identity exposes xv6 namespace gap without credit"
+require_log 'dxg_process_adapter_device_counts_matrix .*device_count=[0-9]+ .*final_close_destroyed=[0-9]+ .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
+    "DXG process-adapter device count diagnostics are visible"
 require_log 'dxg_process_mem_lifetime_matrix .*child_status=0 .*object_release_delta=[1-9][0-9]* .*mem_release_delta=[1-9][0-9]* .*mem_free_delta=[1-9][0-9]* .*status=PASS' \
     "WSL-style split DXG process object and memory lifetime"
 require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc=0 .*close_adapter_rc=0 .*child_destroy_after_final_close_rc=-1 .*status=PASS' \
