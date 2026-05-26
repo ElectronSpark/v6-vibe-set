@@ -1512,6 +1512,12 @@ alone.
     numeric tokens, truncating string tokens, and the old permissive backend
     alias that treated `gpu-p-dxg-resource-scanout-bind` as a backend instead
     of the canonical transport.
+  - [x] Harden pure-C GPU validator evidence matching so source-audited rows
+    cannot pass by substring coincidence. `gpucorevalidate` now requires
+    whitespace/line-bounded output tokens while preserving existing `field=`
+    prefix probes, and `dxgprobe` parses the `dxg_host_to_vm_last=` line with
+    line-scoped fields and whole-token numeric values before emitting
+    present-history telemetry/completion matrices.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
   `webkit_enabled_artifact_contract_matrix` now names the only accepted future
