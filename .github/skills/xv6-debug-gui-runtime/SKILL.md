@@ -144,7 +144,10 @@ but do not treat them as open plan items by default.
 - Keep the WSL present-history distinction kernel-owned: VMBus command enum
   IDs are not Linux ioctls, and the stats row must report no sender,
   resource-bind, or display-completion contract before any native-present
-  credit can be considered.
+  credit can be considered. `/dev/dxg` exposes `dxg_host_to_vm_last`, including
+  `PROPAGATEPRESENTHISTORYTOKEN` count, length, command id, and payload-head
+  bytes; keep `dxg_host_to_vm_presenthistory_completion_matrix` zero-credit
+  until a real sender and matching host-to-VM completion payload are proven.
 - Keep the fail-closed proof scalarized: WSL ioctl namespace checked,
   display-bind ioctl absent, standard allocations classified as private driver
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,

@@ -116,6 +116,18 @@ def accepts_display_bind_contract(fields):
         fields.get("callback_release_same_frame", 0) == 1
     )
 
+def accepts_downstream_consumer_gate(fields):
+    return (
+        accepts_display_bind_contract(fields) and
+        fields.get("backend_opengl_submit", 0) == 1 and
+        fields.get("native_present_id", 0) ==
+            fields.get("display_bind_present_id", 0) and
+        fields.get("native_completed", 0) ==
+            fields.get("display_bind_completed_id", 0) and
+        fields.get("fps_artifact_run_id") == run_id and
+        fields.get("backend_identity") == "FB_GPU_BACKEND_F_OPENGL_SUBMIT"
+    )
+
 negative_rejected = rejects_inflation(40.0, 5.0)
 positive_rejected = rejects_inflation(65.0, 62.0)
 stale_run_rejected = not accepts_current_run_evidence(
@@ -138,6 +150,54 @@ forged_high_fps_rejected = not accepts_display_bind_contract({
     "display_bind_completion_source": "missing",
     "content_credit": 0,
     "callback_release_same_frame": 0,
+})
+backend_zero_rejected = not accepts_downstream_consumer_gate({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "display",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 9,
+    "content_progress_completed": 9,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 9,
+    "final_handoff_completed": 9,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+    "backend_opengl_submit": 0,
+    "native_present_id": 9,
+    "native_completed": 9,
+    "fps_artifact_run_id": run_id,
+    "backend_identity": "FB_GPU_BACKEND_F_OPENGL_SUBMIT",
+})
+zero_native_ids_rejected = not accepts_downstream_consumer_gate({
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 0,
+    "display_bind_completed_id": 0,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "display",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 0,
+    "content_progress_completed": 0,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 0,
+    "final_handoff_completed": 0,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+    "backend_opengl_submit": 1,
+    "native_present_id": 0,
+    "native_completed": 0,
+    "fps_artifact_run_id": run_id,
+    "backend_identity": "FB_GPU_BACKEND_F_OPENGL_SUBMIT",
 })
 if not negative_rejected:
     raise SystemExit(
@@ -169,6 +229,16 @@ if not forged_high_fps_rejected:
         "anti-inflation selftest failed: forged high-FPS display-bind "
         "evidence without content/callback/release correlation was accepted"
     )
+if not backend_zero_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: downstream FPS consumer gate accepted "
+        "FB_GPU_BACKEND_F_OPENGL_SUBMIT=0"
+    )
+if not zero_native_ids_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: downstream FPS consumer gate accepted "
+        "zero native present ids"
+    )
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
     f"validation_run_id={run_id} mode={mode} negative_rejected=1 "
@@ -176,6 +246,7 @@ line = (
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
     "forged_high_fps_negative=1 forged_high_fps_rejected=1 "
+    "backend_zero_rejected=1 zero_native_ids_rejected=1 "
     "post_warmup_sample_window=1 native_present_delta=0 "
     "frame_callback_delta=0 buffer_release_delta=0 "
     "thumbnail_progress_delta=0 outside_overlay_crc_changes=0 "
@@ -220,6 +291,22 @@ forged_line = (
     "rejected=1 status=PASS"
 )
 print(forged_line)
+downstream_line = (
+    "hyperv-3d-fps-validate: fps_downstream_consumer_gate_matrix "
+    f"validation_run_id={run_id} fps_artifact_run_id={run_id} "
+    "backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT "
+    "backend_opengl_submit=0 backend_zero_rejected=1 "
+    "display_bind_backend=gpup_dxg_scanout_bind "
+    "display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    "display_bind_present_id=0 display_bind_completed_id=0 "
+    "display_bind_resource_generation=0 native_present_id=0 "
+    "native_completed=0 native_present_ids_zero_rejected=1 "
+    "current_run_display_bind_identity=0 finite_480p_fps_artifact=0 "
+    "current_run_fps_backend_identity=0 rejected=1 "
+    "gate=closed native_present_credit=0 opengl_submit_credit=0 "
+    "fps_credit=0 status=PASS"
+)
+print(downstream_line)
 content_line = (
     "hyperv-3d-fps-validate: fps_visible_progress_negative_matrix "
     f"validation_run_id={run_id} outside_overlay_crc_changes=0 "
@@ -290,6 +377,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(line + "\n")
     out.write(overlay_line + "\n")
     out.write(credit_line + "\n")
+    out.write(downstream_line + "\n")
     out.write(content_line + "\n")
     out.write(frozen_reject_line + "\n")
     out.write(interaction_line + "\n")
@@ -4282,6 +4370,29 @@ log_validation(
     f"visual_window_content_frame_fps={visual_content_frame_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
     f"app_visible_avg={avg:.3f}"
+)
+log_validation(
+    "fps_downstream_consumer_gate_matrix "
+    f"validation_run_id={expected_run_id} "
+    f"fps_artifact_run_id={expected_run_id} "
+    "backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT "
+    "backend_opengl_submit=1 backend_zero_rejected=PASS "
+    f"backend_mode={backend_mode} "
+    f"display_bind_backend={d3d12_display_bind_backends[-1]} "
+    f"display_bind_transport={d3d12_display_bind_transports[-1]} "
+    f"display_bind_present_id={d3d12_display_bind_present_ids[-1]} "
+    f"display_bind_completed_id={d3d12_display_bind_completed_ids[-1]} "
+    f"display_bind_resource_generation={d3d12_display_bind_resource_generations[-1]} "
+    f"native_present_id={d3d12_present_ids[-1]} "
+    f"native_completed={d3d12_present_completed[-1]} "
+    "native_present_ids_zero_rejected=PASS "
+    "current_run_display_bind_identity=PASS "
+    "current_run_native_present_identity=PASS "
+    "current_run_fps_backend_identity=PASS "
+    "finite_480p_fps_artifact=PASS "
+    f"effective_presented_fps={effective_presented_fps:.3f} "
+    "gate=open native_present_credit=1 opengl_submit_credit=1 "
+    "fps_credit=1 status=PASS"
 )
 print(
     "hyperv-3d-fps-validate: ok "

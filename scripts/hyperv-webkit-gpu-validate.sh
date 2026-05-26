@@ -117,6 +117,8 @@ run_policy_negative_preflight()
         tee -a "${LOG}"
     echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=0 finite_480p_fps_artifact=0 backend_opengl_submit=0 shared_resource_fence_identity=0 compositor_owned_content_crc_frame_hash_identity=0 display_bind_present_id=0 display_bind_completed_id=0 display_bind_resource_generation=0 content_crc=0 content_frame=0 content_frame_hash=0 gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
+    echo "hyperv-webkit-gpu-validate: webkit_downstream_consumer_gate_matrix validation_run_id=${VALIDATION_RUN_ID} webkit_run_id=${VALIDATION_RUN_ID} prior_dxg_run_id=none prior_fps_run_id=none fps_artifact_run_id=none backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT dxg_backend_opengl_submit=0 fps_backend_opengl_submit=0 backend_opengl_submit=0 backend_zero_rejected=1 display_bind_backend=none display_bind_transport=none display_bind_present_id=0 display_bind_completed_id=0 display_bind_resource_generation=0 native_present_id=0 native_completed=0 native_present_ids_zero_rejected=1 current_run_display_bind_completion=0 current_run_native_present_identity=0 finite_480p_fps_artifact=0 rejected_reason=preflight-zero-credit gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
+        tee -a "${LOG}"
     echo "hyperv-webkit-gpu-validate: webkit_stale_display_bind_evidence_rejection_matrix stale_display_bind_present_id=123 stale_display_bind_completed_id=123 stale_resource_generation=77 current_run_display_bind_completion=0 current_run_resource_generation=0 after_close_query_rejected=1 late_completion_after_release=0 effective_accel=0 native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
         tee -a "${LOG}"
 }
@@ -738,6 +740,22 @@ last_any_log_counter()
     done
 }
 
+last_any_log_token()
+{
+    local file="$1"
+    local key
+    local value
+    shift
+
+    for key in "$@"; do
+        value="$(last_log_token "${file}" "${key}")"
+        if [[ -n "${value}" ]]; then
+            printf '%s\n' "${value}"
+            return 0
+        fi
+    done
+}
+
 last_log_token()
 {
     local file="$1"
@@ -746,6 +764,70 @@ last_log_token()
     sed -nE \
         "s/.*(^|[[:space:]])${key}([ =])([^[:space:]]+).*/\\3/p" \
         "${file}" | tail -n 1
+}
+
+last_backend_opengl_submit()
+{
+    local file="$1"
+
+    if [[ ! -s "${file}" ]]; then
+        printf 'missing\n'
+        return 0
+    fi
+    sed -nE \
+        's/.*(^|[[:space:]])backend_opengl_submit([ =])([01])($|[[:space:]]).*/\3/p' \
+        "${file}" | tail -n 1
+}
+
+emit_downstream_consumer_gate_closed()
+{
+    local reason="$1"
+    local dxg_submit
+    local fps_submit
+    local dxg_run
+    local fps_run
+    local fps_artifact_run
+    local display_bind_backend
+    local display_bind_transport
+    local display_bind_present_id
+    local display_bind_completed_id
+    local display_bind_generation
+    local native_present_id
+    local native_completed
+
+    dxg_submit="$(last_backend_opengl_submit "${DXG_CONTRACT_LOG}")"
+    fps_submit="$(last_backend_opengl_submit "${FPS_CONTRACT_LOG}")"
+    dxg_run="$(last_any_log_token "${DXG_CONTRACT_LOG}" \
+        validation_run_id xv6_validation_run_id d3d12_validation_run_id d3d12_run_id)"
+    fps_run="$(last_any_log_token "${FPS_CONTRACT_LOG}" \
+        validation_run_id xv6_validation_run_id d3d12_validation_run_id d3d12_run_id)"
+    fps_artifact_run="$(last_any_log_token "${FPS_CONTRACT_LOG}" \
+        fps_artifact_run_id validation_run_id)"
+    display_bind_backend="$(last_log_token "${FPS_CONTRACT_LOG}" display_bind_backend)"
+    display_bind_transport="$(last_log_token "${FPS_CONTRACT_LOG}" display_bind_transport)"
+    display_bind_present_id="$(last_log_counter "${FPS_CONTRACT_LOG}" display_bind_present_id)"
+    display_bind_completed_id="$(last_log_counter "${FPS_CONTRACT_LOG}" display_bind_completed_id)"
+    display_bind_generation="$(last_log_counter "${FPS_CONTRACT_LOG}" display_bind_resource_generation)"
+    native_present_id="$(last_any_log_counter "${FPS_CONTRACT_LOG}" \
+        native_present_id d3d12_dxg_present_id present_id)"
+    native_completed="$(last_any_log_counter "${FPS_CONTRACT_LOG}" \
+        native_completed d3d12_dxg_present_completed completed)"
+
+    dxg_submit="${dxg_submit:-missing}"
+    fps_submit="${fps_submit:-missing}"
+    dxg_run="${dxg_run:-none}"
+    fps_run="${fps_run:-none}"
+    fps_artifact_run="${fps_artifact_run:-none}"
+    display_bind_backend="${display_bind_backend:-none}"
+    display_bind_transport="${display_bind_transport:-none}"
+    display_bind_present_id="${display_bind_present_id:-0}"
+    display_bind_completed_id="${display_bind_completed_id:-0}"
+    display_bind_generation="${display_bind_generation:-0}"
+    native_present_id="${native_present_id:-0}"
+    native_completed="${native_completed:-0}"
+
+    echo "hyperv-webkit-gpu-validate: webkit_downstream_consumer_gate_matrix validation_run_id=${VALIDATION_RUN_ID} webkit_run_id=${VALIDATION_RUN_ID} prior_dxg_run_id=${dxg_run} prior_fps_run_id=${fps_run} fps_artifact_run_id=${fps_artifact_run} backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT dxg_backend_opengl_submit=${dxg_submit} fps_backend_opengl_submit=${fps_submit} backend_opengl_submit=0 backend_zero_rejected=1 display_bind_backend=${display_bind_backend} display_bind_transport=${display_bind_transport} display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} native_present_id=${native_present_id} native_completed=${native_completed} native_present_ids_zero_rejected=1 current_run_display_bind_completion=0 current_run_native_present_identity=0 finite_480p_fps_artifact=0 rejected_reason=${reason} gate=closed native_present_credit=0 opengl_submit_credit=0 webkit_accel_credit=0 status=PASS" |
+        tee -a "${LOG}"
 }
 
 require_last_token_eq()
@@ -1162,6 +1244,8 @@ require_prior_shared_surface_contract()
         "prior DXG/native-present D3D12 fence-sharing policy"
     if grep -Eq 'backend_opengl_submit 0' "${FPS_CONTRACT_LOG}" ||
        grep -Eq 'backend_opengl_submit 0' "${DXG_CONTRACT_LOG}"; then
+        emit_downstream_consumer_gate_closed \
+            "FB_GPU_BACKEND_F_OPENGL_SUBMIT-zero"
         reject_file_log "${DXG_CONTRACT_LOG}" \
             'backend_opengl_submit 1|d3d12sharedsmoke: shared-surface OpenGL-submit contract ok|hyperv-3d-fps-validate: ok' \
             "prior accelerated shared-surface contract while Hyper-V OpenGL-submit is gated"
@@ -1527,6 +1611,8 @@ run_contract_negative_validate()
         "WebKit animated-content/native-present gate closed on Hyper-V"
     require_log 'webkit_enabled_artifact_contract_matrix .*required_current_run_display_bind_completion=1 .*required_finite_480p_fps_artifact=1 .*required_backend_opengl_submit=1 .*required_shared_resource_fence_identity=1 .*required_compositor_owned_content_crc_frame_hash_identity=1 .*current_run_display_bind_completion=0 .*finite_480p_fps_artifact=0 .*backend_opengl_submit=0 .*shared_resource_fence_identity=0 .*compositor_owned_content_crc_frame_hash_identity=0 .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit enabled artifact contract remains closed on Hyper-V"
+    require_log 'webkit_downstream_consumer_gate_matrix .*backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT .*backend_opengl_submit=0 .*backend_zero_rejected=1 .*display_bind_present_id=0 .*display_bind_completed_id=0 .*native_present_id=0 .*native_completed=0 .*native_present_ids_zero_rejected=1 .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+        "WebKit downstream consumer gate rejects zero backend/native-present ids"
     require_log 'webkit_stale_display_bind_evidence_rejection_matrix .*stale_display_bind_present_id=[1-9][0-9]* .*current_run_display_bind_completion=0 .*after_close_query_rejected=1 .*late_completion_after_release=0 .*effective_accel=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit rejects stale display-bind evidence"
     require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=0 .*opengl_submit=0 .*shared_surface=0 .*validated_shared_surface=0 .*d3d12_present=0 .*gpu_contract=none .*fallback=opengl_submit_unavailable' \
