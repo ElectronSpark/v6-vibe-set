@@ -187,6 +187,7 @@ but do not treat them as open plan items by default.
   `wsl_trace_display_bind_negative_matrix`, and
   `provider_credit_gate_negative_matrix`,
   `host_display_bind_source_catalog_matrix`,
+  `d3d12_display_bind_host_abi_discovery_matrix`,
   `d3d12_completion_source_authority_matrix`, and
   `native_present_completion_source_namespace_matrix`. WSL adapter display caps,
   submit/present metadata, written primaries, standard-allocation private data,
@@ -750,6 +751,19 @@ but do not treat them as open plan items by default.
   WSLg/RDP display-bind protocol; RDP-style frame/copy/dirty transport remains
   zero-credit for native D3D12 present until a source/resource-correlated
   scanout completion contract exists.
+- `d3d12_display_bind_host_abi_discovery_matrix` is the bounded host-ABI
+  source-audit gate. It must prove no custom host tool, no WSL display-bind
+  ioctl, WSLg/FreeRDP absent, RDP copy/dirty-frame only, GPU-P sender contract
+  zero, completion-demux contract zero, DDA/Nouveau D3D12 import/scanout/
+  hardware flip absent, provider fail-closed, transport/present/completed ids
+  zero, and native-present/OpenGL/WebKit credit zero.
+- For sampled fail-closed provider submits,
+  `d3d12_display_bind_provider_pending_publication_matrix` should show the
+  no-host-ABI pending path resolved and refs released
+  (`resolved_or_cancelled=1`, `refs_released=1`,
+  `no_host_abi_cancelled=1`, `no_host_abi_refs_released=1`) while sender-owned
+  publish-before-send, command/channel, completion demux, native-present, and
+  OpenGL-submit fields remain zero.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,
