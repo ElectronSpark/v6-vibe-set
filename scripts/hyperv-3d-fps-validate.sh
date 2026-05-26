@@ -919,6 +919,8 @@ d3d12_callback_counts = []
 d3d12_release_counts = []
 d3d12_evidence_generations = []
 d3d12_evidence_times = []
+d3d12_evidence_seals = []
+d3d12_unsealed_display_bind_blocks = []
 d3d12_resources = []
 d3d12_buffer_generations = []
 d3d12_present_ids = []
@@ -978,6 +980,8 @@ visual_callback_counts = []
 visual_release_counts = []
 visual_evidence_generations = []
 visual_evidence_times = []
+visual_evidence_seals = []
+visual_unsealed_display_bind_blocks = []
 visual_resources = []
 visual_buffer_generations = []
 visual_present_ids = []
@@ -1023,6 +1027,7 @@ in_sampling = False
 visual_counter = None
 current_artifact_source = "unknown"
 foreign_display_bind_sources = []
+current_wlcomp_d3d12_block = None
 source_markers = {
     "__SRC_PROC_UPTIME_BEGIN__": "proc_uptime",
     "__SRC_MESAWLEGL_FPS_BEGIN__": "mesawlegl_fps",
@@ -1232,6 +1237,76 @@ def same_run_resource_generation_completion_progress(run_ids, resources,
         seen[key] = max(seen.get(key, 0), completion_id)
     return False
 
+def new_wlcomp_d3d12_evidence_block():
+    return {
+        "seal_begin": 0,
+        "seal_end": 0,
+        "seal_complete": 0,
+        "seal_generation": 0,
+        "seal_end_generation": 0,
+        "evidence_generation": 0,
+        "run_id": "",
+        "compositor_run_id": "",
+        "seal_run_id": "",
+        "seal_end_run_id": "",
+        "has_canonical_display_bind": False,
+        "has_canonical_evidence": False,
+    }
+
+def update_wlcomp_d3d12_evidence_block(block, line):
+    if block is None:
+        return
+    for key, field in (
+            ("d3d12_evidence_seal_begin", "seal_begin"),
+            ("d3d12_evidence_seal_end", "seal_end"),
+            ("d3d12_evidence_seal_complete", "seal_complete"),
+            ("d3d12_evidence_seal_generation", "seal_generation"),
+            ("d3d12_evidence_seal_end_generation", "seal_end_generation"),
+            ("d3d12_evidence_generation", "evidence_generation")):
+        value = counter_value(line, (key,))
+        if value is not None:
+            block[field] = value
+    for key, field in (
+            ("d3d12_run_id", "run_id"),
+            ("d3d12_present_identity_compositor_run_id", "compositor_run_id"),
+            ("d3d12_evidence_seal_run_id", "seal_run_id"),
+            ("d3d12_evidence_seal_end_run_id", "seal_end_run_id")):
+        value = token_value(line, (key,))
+        if value is not None:
+            block[field] = value
+    if re.search(r"(^|[ \t])display_bind_(backend|transport|present_id|completed_id|resource_generation|completion_source)([ =]|$)", line):
+        block["has_canonical_display_bind"] = True
+    if re.search(r"(^|[ \t])d3d12_(evidence_generation|present_evidence_time_us|dxg_present_id|dxg_present_completed)([ =]|$)", line):
+        block["has_canonical_evidence"] = True
+
+def wlcomp_d3d12_evidence_block_sealed(block):
+    if block is None:
+        return False
+    return (
+        block["seal_begin"] == 1 and
+        block["seal_end"] == 1 and
+        block["seal_complete"] == 1 and
+        block["evidence_generation"] > 0 and
+        block["seal_generation"] == block["evidence_generation"] and
+        block["seal_end_generation"] == block["evidence_generation"] and
+        block["run_id"] == expected_run_id and
+        block["compositor_run_id"] == expected_run_id and
+        block["seal_run_id"] == block["run_id"] and
+        block["seal_end_run_id"] == block["run_id"]
+    )
+
+def require_sealed_wlcomp_d3d12_evidence(name, seals, unsealed_blocks):
+    if unsealed_blocks:
+        raise SystemExit(
+            f"{name} accepted unsealed /tmp/wlcomp-d3d12-present evidence: "
+            f"{unsealed_blocks[-1]}"
+        )
+    if len(seals) < 2 or any(value != 1 for value in seals):
+        raise SystemExit(
+            f"{name} missing repeated sealed /tmp/wlcomp-d3d12-present "
+            f"evidence: values={','.join(str(value) for value in seals)}"
+        )
+
 DISPLAY_BIND_BACKEND = "gpup_dxg_scanout_bind"
 DISPLAY_BIND_TRANSPORT = "gpu-p-dxg-resource-scanout-bind"
 DISPLAY_BIND_COMPLETION_SOURCE = "display"
@@ -1389,7 +1464,12 @@ def log_fps_display_bind_dependency(
         stage, backends, transports, present_ids, completed_ids,
         resource_generations, completion_sources, *, effective_fps=0.0,
         native_fps=0.0, backend_opengl_submit=0, gate_open=False,
-        status="PASS", records=None, incomplete_records=None):
+        status="PASS", records=None, incomplete_records=None,
+        evidence_seals=None):
+    evidence_seals = evidence_seals or []
+    evidence_seal_ok = bool(evidence_seals) and all(
+        value == 1 for value in evidence_seals
+    )
     display_bind_list_ok = display_bind_dependency_complete(
         backends,
         transports,
@@ -1403,7 +1483,8 @@ def log_fps_display_bind_dependency(
         if records is None and incomplete_records is None
         else display_bind_records_complete(records or [], incomplete_records or [])
     )
-    display_bind_ok = display_bind_list_ok and display_bind_tuple_ok
+    display_bind_ok = (display_bind_list_ok and display_bind_tuple_ok and
+                       evidence_seal_ok)
     finite_credit = 1 if gate_open and display_bind_ok else 0
     opengl_credit = 1 if finite_credit and backend_opengl_submit == 1 else 0
     log_validation(
@@ -1424,8 +1505,10 @@ def log_fps_display_bind_dependency(
         "requires_nonzero_display_bind_completed_id=1 "
         "requires_display_bind_completed_covers_present=1 "
         "requires_display_completion_source=display "
+        "requires_atomic_evidence_seal=1 "
         f"display_bind_contract={pass_missing(display_bind_ok)} "
         f"display_bind_tuple_contract={pass_missing(display_bind_tuple_ok)} "
+        f"evidence_seal_contract={pass_missing(evidence_seal_ok)} "
         f"effective_presented_fps={effective_fps:.3f} "
         f"native_present_fps={native_fps:.3f} "
         f"backend_opengl_submit={backend_opengl_submit} "
@@ -1599,7 +1682,9 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
             d3d12_display_bind_completed_ids,
             d3d12_display_bind_resource_generations,
             d3d12_display_bind_completion_sources,
-        )
+        ) and
+        bool(d3d12_evidence_seals) and
+        all(value == 1 for value in d3d12_evidence_seals)
     )
     content_contract_ok = native_content_progress_complete(
         d3d12_content_progress_states,
@@ -1655,6 +1740,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         gate_open=gate_open,
         records=d3d12_display_bind_records,
         incomplete_records=d3d12_incomplete_display_bind_records,
+        evidence_seals=d3d12_evidence_seals,
     )
     log_validation(
         "fps_native_present_gate_skeleton_matrix "
@@ -1662,6 +1748,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         f"native_present_completion={pass_missing(native_completion_ok)} "
         f"content_progress={pass_missing(content_progress_ok)} "
         f"display_handoff={pass_missing(display_handoff > 0)} "
+        f"evidence_seal={pass_missing(bool(d3d12_evidence_seals) and all(value == 1 for value in d3d12_evidence_seals))} "
         f"native_present_delta={format_optional(native_delta)} "
         f"present_id_delta={format_optional(present_id_delta)} "
         f"completed_delta={format_optional(completed_delta)} "
@@ -2212,14 +2299,46 @@ def missing_strict_fps_sample_requirements(record):
 for line in log.splitlines():
     if line in source_markers:
         current_artifact_source = source_markers[line]
+        if current_artifact_source == "wlcomp_d3d12_present":
+            current_wlcomp_d3d12_block = new_wlcomp_d3d12_evidence_block()
         continue
     if line in source_end_markers:
+        if (current_artifact_source == "wlcomp_d3d12_present" and
+                current_wlcomp_d3d12_block is not None):
+            sealed = 1 if wlcomp_d3d12_evidence_block_sealed(
+                current_wlcomp_d3d12_block
+            ) else 0
+            if in_sampling:
+                d3d12_evidence_seals.append(sealed)
+                if (current_wlcomp_d3d12_block["has_canonical_display_bind"] and
+                        sealed != 1):
+                    d3d12_unsealed_display_bind_blocks.append(
+                        f"generation={current_wlcomp_d3d12_block['evidence_generation']} "
+                        f"run_id={current_wlcomp_d3d12_block['run_id']} "
+                        f"seal_begin={current_wlcomp_d3d12_block['seal_begin']} "
+                        f"seal_end={current_wlcomp_d3d12_block['seal_end']} "
+                        f"seal_complete={current_wlcomp_d3d12_block['seal_complete']}"
+                    )
+            if visual_counter is not None:
+                visual_evidence_seals.append(sealed)
+                if (current_wlcomp_d3d12_block["has_canonical_display_bind"] and
+                        sealed != 1):
+                    visual_unsealed_display_bind_blocks.append(
+                        f"generation={current_wlcomp_d3d12_block['evidence_generation']} "
+                        f"run_id={current_wlcomp_d3d12_block['run_id']} "
+                        f"seal_begin={current_wlcomp_d3d12_block['seal_begin']} "
+                        f"seal_end={current_wlcomp_d3d12_block['seal_end']} "
+                        f"seal_complete={current_wlcomp_d3d12_block['seal_complete']}"
+                    )
+            current_wlcomp_d3d12_block = None
         current_artifact_source = "unknown"
         continue
     line_from_wlcomp_d3d12 = current_artifact_source == "wlcomp_d3d12_present"
     line_from_mesawlegl_fps = current_artifact_source == "mesawlegl_fps"
     line_from_wlcomp_fps = current_artifact_source == "wlcomp_fps"
     line_from_fbstat = current_artifact_source == "fbstat"
+    if line_from_wlcomp_d3d12:
+        update_wlcomp_d3d12_evidence_block(current_wlcomp_d3d12_block, line)
     foreign_display_bind_record, foreign_incomplete_display_bind_record = (
         display_bind_record_from_line(line)
     )
@@ -3081,6 +3200,11 @@ if len(set(demo_process_ids)) != 1:
         f"process_ids={','.join(str(value) for value in demo_process_ids)}"
     )
 require_run_id_samples("D3D12 sample-window evidence", d3d12_run_ids)
+require_sealed_wlcomp_d3d12_evidence(
+    "D3D12 sample-window evidence",
+    d3d12_evidence_seals,
+    d3d12_unsealed_display_bind_blocks,
+)
 require_display_handoff_samples(
     "D3D12 sample-window evidence",
     d3d12_display_handoffs,
@@ -4370,6 +4494,11 @@ if len(visual_uptimes) < 2 or len(visual_native_counts) < 2:
         f"native_counts={len(visual_native_counts)}"
     )
 require_run_id_samples("visual-window D3D12 evidence", visual_run_ids)
+require_sealed_wlcomp_d3d12_evidence(
+    "visual-window D3D12 evidence",
+    visual_evidence_seals,
+    visual_unsealed_display_bind_blocks,
+)
 require_display_handoff_samples(
     "visual-window D3D12 evidence",
     visual_display_handoffs,
@@ -5044,6 +5173,7 @@ log_fps_display_bind_dependency(
     gate_open=True,
     records=d3d12_display_bind_records,
     incomplete_records=d3d12_incomplete_display_bind_records,
+    evidence_seals=d3d12_evidence_seals,
 )
 log_validation(
     "fps_downstream_consumer_gate_matrix "

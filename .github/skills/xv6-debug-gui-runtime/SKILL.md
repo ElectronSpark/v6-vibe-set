@@ -208,6 +208,15 @@ but do not treat them as open plan items by default.
   `display_bind_completion_source=missing` with zero ids. Demo-side
   `effective_presented_fps` should be derived from native completion deltas,
   not visible/app-loop FPS.
+- Treat `/tmp/wlcomp-d3d12-present` as an atomically sealed compositor
+  artifact. The producer should write a temp file, flush/fsync it, then rename
+  it into place. Consumers must require
+  `d3d12_evidence_seal_begin=1`, `d3d12_evidence_seal_end=1`,
+  `d3d12_evidence_seal_complete=1`, matching begin/end generation, and seal
+  run ids equal to both `d3d12_run_id` and
+  `d3d12_present_identity_compositor_run_id`. Unsealed or partial files are
+  stale/partial evidence and must not supply native-present, FPS, backend, or
+  WebKit credit.
 - Keep FPS evidence source-isolated. `hyperv-3d-fps-validate.sh` wraps sampled
   `/tmp/wlcomp-d3d12-present`, `/tmp/mesawlegl-fps`, `/tmp/wlcomp-fps`,
   `fbstat`, and `/proc/uptime` output in source markers; canonical
@@ -952,7 +961,10 @@ but do not treat them as open plan items by default.
 - Treat `/tmp/wlcomp-d3d12-present` as the durable handoff file for those
   provenance rows. It should carry both the matrix row and
   `d3d12_fps_provenance_*` scalar keys so FPS/WebKit validators do not depend
-  on stderr timing.
+  on stderr timing. It must also carry the evidence-seal keys described in the
+  native-present dependency tree; FPS/WebKit parsers should reject canonical
+  `display_bind_*` rows from that file until the seal generation and run id
+  match the current validation run.
 - Treat visible-content progress as zero-credit until native D3D12 display
   completion is proven for the same resource/generation. The compositor should
   emit `d3d12_wayland_content_progress_matrix` and
@@ -1012,8 +1024,9 @@ but do not treat them as open plan items by default.
   `d3d12_present_identity_compositor_run_id`, and reject acceleration unless
   compositor-owned content CRC/frame/hash progress matches the provider-owned
   display-bind present/completed ids and resource generation. Policy artifacts
-  should expose `d3d12_run_id_match` and `d3d12_content_progress` so shell
-  validators can fail stale, prefixed, or chrome/title-only evidence.
+  should expose `d3d12_run_id_match`, `d3d12_content_progress`, and
+  `d3d12_evidence_seal` so shell validators can fail stale, unsealed,
+  prefixed, or chrome/title-only evidence.
 - `webkitgpusmoke --negative-selftests` is the pure-C consumer-negative
   validator for WebKit evidence. Keep
   `webkit_contract_parser_negative_matrix`,

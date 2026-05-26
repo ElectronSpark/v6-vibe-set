@@ -300,6 +300,8 @@ emit_webkit_enabled_artifact_contract_matrix_open()
         "WebKit enabled artifact finite 480p FPS contract"
     require_file_fps_gt "${FPS_CONTRACT_LOG}" effective_presented_fps 60 \
         "WebKit enabled artifact effective 480p presented FPS"
+    require_sealed_d3d12_evidence_file "${FPS_CONTRACT_LOG}" \
+        "WebKit enabled artifact FPS contract"
     require_provider_owned_display_bind_record_file "${FPS_CONTRACT_LOG}" \
         "WebKit enabled artifact FPS contract D3D12 display-bind evidence"
     require_file_log "${FPS_CONTRACT_LOG}" 'backend_opengl_submit 1' \
@@ -882,6 +884,51 @@ line_log_token()
         tail -n 1
 }
 
+require_sealed_d3d12_evidence_file()
+{
+    local file="$1"
+    local why="$2"
+    local generation
+    local seal_begin
+    local seal_end
+    local seal_complete
+    local seal_generation
+    local seal_end_generation
+    local run_id
+    local compositor_run_id
+    local seal_run_id
+    local seal_end_run_id
+
+    generation="$(last_log_counter "${file}" d3d12_evidence_generation)"
+    seal_begin="$(last_log_counter "${file}" d3d12_evidence_seal_begin)"
+    seal_end="$(last_log_counter "${file}" d3d12_evidence_seal_end)"
+    seal_complete="$(last_log_counter "${file}" d3d12_evidence_seal_complete)"
+    seal_generation="$(last_log_counter "${file}" d3d12_evidence_seal_generation)"
+    seal_end_generation="$(last_log_counter "${file}" d3d12_evidence_seal_end_generation)"
+    run_id="$(last_log_token "${file}" d3d12_run_id)"
+    compositor_run_id="$(last_log_token "${file}" d3d12_present_identity_compositor_run_id)"
+    seal_run_id="$(last_log_token "${file}" d3d12_evidence_seal_run_id)"
+    seal_end_run_id="$(last_log_token "${file}" d3d12_evidence_seal_end_run_id)"
+
+    if [[ -z "${generation}" || -z "${seal_begin}" ||
+          -z "${seal_end}" || -z "${seal_complete}" ||
+          -z "${seal_generation}" || -z "${seal_end_generation}" ||
+          -z "${run_id}" || -z "${compositor_run_id}" ||
+          -z "${seal_run_id}" || -z "${seal_end_run_id}" ]]; then
+        fail "missing ${why} sealed D3D12 evidence fields in ${file}"
+    fi
+    if [[ "${seal_begin}" -ne 1 || "${seal_end}" -ne 1 ||
+          "${seal_complete}" -ne 1 || "${generation}" -lt 1 ||
+          "${seal_generation}" -ne "${generation}" ||
+          "${seal_end_generation}" -ne "${generation}" ||
+          "${run_id}" != "${VALIDATION_RUN_ID}" ||
+          "${compositor_run_id}" != "${VALIDATION_RUN_ID}" ||
+          "${seal_run_id}" != "${run_id}" ||
+          "${seal_end_run_id}" != "${run_id}" ]]; then
+        fail "${why} D3D12 evidence seal mismatch: generation=${generation} seal_begin=${seal_begin} seal_end=${seal_end} seal_complete=${seal_complete} seal_generation=${seal_generation} seal_end_generation=${seal_end_generation} run_id=${run_id} compositor_run_id=${compositor_run_id} seal_run_id=${seal_run_id} seal_end_run_id=${seal_end_run_id}"
+    fi
+}
+
 require_provider_owned_display_bind_record_file()
 {
     local file="$1"
@@ -1293,6 +1340,7 @@ require_holistic_d3d12_display_bind_evidence_file()
     local completed
     local native_completion_id
 
+    require_sealed_d3d12_evidence_file "${file}" "${why}"
     require_provider_owned_display_bind_record_file "${file}" "${why} D3D12 display-bind evidence"
     require_counter_ge "${file}" display_bind_present_id 1 \
         "${why} D3D12 display_bind_present_id"
@@ -1627,7 +1675,8 @@ require_prior_core_gpu_contract()
 webkit_shared_surface_contract_validated()
 {
 	    grep -Eq 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*shared_surface=1 .*validated_shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*gpu_contract=d3d12-shared-surface .*fallback=none' "${LOG}" &&
-		    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_identity_ok=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
+        grep -Eq 'webkit_gpu_policy .*d3d12_evidence_seal=1 .*gpu_contract=d3d12-shared-surface' "${LOG}" &&
+		    grep -Eq 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_evidence_seal=1 .*d3d12_identity_ok=1 .*d3d12_callback_release_ok=1 .*d3d12_content_progress=1 .*d3d12_content_source_owned=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' "${LOG}" &&
 	    grep -Eq "webkitgpusmoke: gpu-contract .*d3d12_run_id=${VALIDATION_RUN_ID} .*d3d12_compositor_run_id=${VALIDATION_RUN_ID} .*env_run_id=${VALIDATION_RUN_ID} .*d3d12_run_id_match=1 .*ok=1" "${LOG}" &&
 	    grep -Eq 'd3d12sharedsmoke: present validation ok frame=1 release=1 gpu_present=[0-9]+->[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12sharedsmoke: native present evidence ok path=d3d12-dxg-present-source-display-handoff .*present_id=[1-9][0-9]* completed=[1-9][0-9]* .*mtime_ms=[1-9][0-9]* min_mtime_ms=[1-9][0-9]* .*starts=[1-9][0-9]* copy=[1-9][0-9]* completes=[1-9][0-9]* .*resource=0x[1-9a-fA-F][0-9a-fA-F]* allocations=[1-9][0-9]* fence=0x[1-9a-fA-F][0-9a-fA-F]* target=1 release=[1-9][0-9]* .*source_luid=([0-9a-fA-F]{8}):([0-9a-fA-F]{8}) matched_luid=\1:\2 no_cpu_readback=1' "${LOG}" &&
@@ -1701,6 +1750,8 @@ require_current_native_present_contract()
         d3d12_gpu_present_releases d3d12_release_count
     require_counter_ge "${LOG}" d3d12_evidence_generation 1 \
         "WebKit current-run D3D12 evidence generation"
+    require_sealed_d3d12_evidence_file "${LOG}" \
+        "WebKit current-run D3D12 evidence"
     require_counter_ge "${LOG}" d3d12_present_evidence_time_us 1 \
         "WebKit current-run D3D12 evidence timestamp"
     require_counter_ge "${LOG}" d3d12_present_resource 1 \
@@ -1809,7 +1860,7 @@ run_webkit_negative_selftests()
         tee -a "${LOG}"
     run_guest "webkitgpusmoke --negative-selftests; echo webkit_negative_selftests_status=\$?" \
         "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
-    require_log 'webkitgpusmoke: webkit_contract_parser_negative_matrix .*prefix_key_rejected=PASS .*suffix_key_rejected=PASS .*malformed_numeric_rejected=PASS .*backend_alias_rejected=PASS .*completion_source_alias_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+    require_log 'webkitgpusmoke: webkit_contract_parser_negative_matrix .*prefix_key_rejected=PASS .*suffix_key_rejected=PASS .*malformed_numeric_rejected=PASS .*backend_alias_rejected=PASS .*completion_source_alias_rejected=PASS .*unsealed_display_bind_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit pure-C parser negative matrix"
     require_log 'webkitgpusmoke: webkit_lineage_equality_negative_matrix .*stale_d3d12_run_rejected=PASS .*stale_fps_run_rejected=PASS .*mixed_content_run_rejected=PASS .*backend_zero_with_ids_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit pure-C lineage equality negative matrix"
@@ -2025,7 +2076,7 @@ if webkit_shared_surface_contract_validated; then
         "WebKit D3D12 shared-surface/OpenGL-submit acceleration gate"
     require_log 'webkit_gpu_policy .*gpu_contract=d3d12-shared-surface .*d3d12_native_present_required=1 .*d3d12_copy_export=0 .*d3d12_readback=0 .*fallback=none' \
         "WebKit D3D12 native-present/no-readback policy"
-	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' \
+	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*render_node=1 .*shared_surface=1 .*d3d12_present=1 .*opengl_submit=1 .*dxg_transport=1 .*d3dkmt=1 .*d3d12_contract_evidence=1 .*d3d12_same_adapter=1 .*d3d12_no_readback=1 .*d3d12_shared_resource=1 .*d3d12_fence=1 .*d3d12_evidence_seal=1 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=1' \
 	        "WebKit in-process D3D12 GPU contract audit"
 	    require_log "webkitgpusmoke: gpu-contract .*d3d12_run_id=${VALIDATION_RUN_ID} .*d3d12_compositor_run_id=${VALIDATION_RUN_ID} .*env_run_id=${VALIDATION_RUN_ID} .*d3d12_run_id_match=1 .*ok=1" \
 	        "WebKit D3D12 evidence belongs to the current WebKit run"
