@@ -972,6 +972,25 @@ non-readback display handoff.
     enum-only present-history source audit by naming the Linux in-band display
     completion handler as absent instead of treating packet telemetry as a
     display-bind completion contract.
+  - [x] Add explicit zero-credit display-bind sender/source classification
+    before a real sender exists. The kernel provider result, `fb_gpu_stats`,
+    `FB_GPU_DXG_PRESENT_SOURCE_QUERY`, and
+    `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` now carry
+    `host_saw_display_bind_packet=0`,
+    `display_bind_transport_source=none`, and
+    `wsl_presenthistory_completion_credit=0` while the provider is
+    fail-closed. `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused
+    Hyper-V runner require those fields in the source catalog, host-ABI
+    discovery, query-fields, and provider-pending rows, so WSL present-history
+    telemetry cannot satisfy the future GPU-P/DDA display-bind sender gate.
+    This checked row only closes the zero-credit classification skeleton; the
+    unchecked real-sender items still require
+    `host_saw_display_bind_packet=1`, a non-WSL/DDA transport source, provider
+    completion demux, and source/resource-correlated display completion.
+    Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+    CORE_C_SECTIONS='present-source final'
+    VALIDATION_RUN_ID=core-display-bind-source-boundary
+    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
