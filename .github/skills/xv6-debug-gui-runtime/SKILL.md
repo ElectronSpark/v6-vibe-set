@@ -162,11 +162,12 @@ but do not treat them as open plan items by default.
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,
   and DDA/Nouveau PCI display split from D3D12 resource import, scanout bind,
   and hardware flip completion.
-  Provider pending publication evidence must preserve WSL-shaped provenance:
-  `dxgprocess_generation`, `process_adapter_generation`,
-  `hmgr_index_unique_valid`, `parent_resource_ref_held`,
-  `opened_child_ref_held`, a `syncobject_ref_held` field (1 on wait-sync
-  pending records), and
+  Provider pending publication evidence must preserve WSL-shaped provenance
+  without overstating retained krefs: `dxgprocess_generation`,
+  `process_adapter_generation`, `hmgr_index_unique_valid`,
+  `device_object_ref_active`, `resource_object_ref_active`,
+  `allocation_object_ref_active`, `shared_parent_snapshot_valid`,
+  `opened_child_snapshot_valid`, `syncobject_object_ref_active`, and
   `owner_close_cancelled=0` while fail-closed.
   Sender/source classification is also explicit zero-credit evidence while the
   provider is fail-closed: require `host_saw_display_bind_packet=0`,
@@ -265,6 +266,14 @@ but do not treat them as open plan items by default.
   `host_saw_display_bind_packet=1`, and
   `wsl_presenthistory_completion_credit=0`; WSL present-history telemetry is
   not display-bind source authority.
+- Credit-bearing D3D12 evidence rows must also be provider-owned and
+  line-scoped. Require `evidence_provider=wlcomp`,
+  `evidence_path=/tmp/wlcomp-d3d12-present`, a nonzero evidence generation,
+  and the current validation run id on the same display-bind dependency, FPS,
+  content-progress, or WebKit-open record that carries the canonical
+  backend/transport/source-authority/native-completion tuple. Do not assemble
+  a passing tuple from separate scalar lines, older logs, or app-side
+  diagnostic copies.
 - Display-bind source cleanup can be observed in two phases. A same-process
   `dxgprobe` stale-source row may report
   `cleanup_state=deferred_until_process_exit` when stale queries reject and all

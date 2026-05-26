@@ -977,7 +977,8 @@ require_provider_owned_display_bind_record_file()
         fail "missing prior contract evidence log ${file}"
     fi
 
-    awk -v require_commit="${require_commit}" '
+    awk -v require_commit="${require_commit}" \
+        -v expected_run_id="${VALIDATION_RUN_ID}" '
     function token(key,    i, n, parts) {
         for (i = 1; i <= NF; i++) {
             n = split($i, parts, "=")
@@ -1009,6 +1010,10 @@ require_provider_owned_display_bind_record_file()
     {
         backend = token("display_bind_backend")
         transport = token("display_bind_transport")
+        evidence_provider = token("evidence_provider")
+        evidence_path = token("evidence_path")
+        evidence_generation = token("evidence_generation")
+        evidence_run_id = token("evidence_run_id")
         transport_source = token("display_bind_transport_source")
         host_saw_packet = token("host_saw_display_bind_packet")
         wsl_credit = token("wsl_presenthistory_completion_credit")
@@ -1021,6 +1026,10 @@ require_provider_owned_display_bind_record_file()
         native_completion = token("d3d12_native_present_completion_id")
         if (backend != "gpup_dxg_scanout_bind" ||
             transport != "gpu-p-dxg-resource-scanout-bind" ||
+            evidence_provider != "wlcomp" ||
+            evidence_path != "/tmp/wlcomp-d3d12-present" ||
+            evidence_run_id != expected_run_id ||
+            !nonzero_decimal(evidence_generation) ||
             transport_source != "non_wsl_linux_dxgkrnl_extension" ||
             host_saw_packet != "1" ||
             wsl_credit != "0" ||

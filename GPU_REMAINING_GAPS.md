@@ -1767,6 +1767,23 @@ alone.
     `/tmp/wlcomp-d3d12-present`, require the future-positive tuple before
     selecting the D3D12 WebKit path, and echo those fields in
     `webkit_gpu_policy` and `wlcomp: webkit_gpu_contract_matrix`.
+  - [x] Stamp and require compositor-owned provider identity on D3D12
+    credit-bearing evidence. `wlcomp` now includes
+    `evidence_provider=wlcomp`, `evidence_path=/tmp/wlcomp-d3d12-present`,
+    a nonzero seal generation, and the current validation run id on
+    display-bind dependency, FPS provenance, content-progress, and final
+    handoff records. `hyperv-webkit-gpu-validate.sh` rejects open WebKit
+    contract rows unless the provider-owned display-bind record carries those
+    fields on the same line as the canonical backend, transport,
+    source-authority tuple, nonzero display-bind ids, backend OpenGL-submit,
+    and native completion id. Validation on 2026-05-26:
+    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
+    `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=fps-provider-lineage
+    scripts/hyperv-3d-fps-validate.sh`, and
+    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
+    VALIDATION_RUN_ID=webkit-provider-lineage
+    BUILD_DIR=/tmp/xv6-hyperv-build
+    scripts/hyperv-webkit-gpu-validate.sh` passed.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.
