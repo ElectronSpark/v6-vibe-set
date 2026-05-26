@@ -747,6 +747,18 @@ being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
   `nouveau_display_failclosed_matrix`, and
   `kms_present_discriminator_failclosed_matrix`; validation passed on
   2026-05-25 with `validation_run_id=core-1779720971-1215307`.
+- [x] Granularize the DDA/Nouveau native-display skeleton against Linux
+  Nouveau's display creation path before using it as evidence.
+  The readiness ABI now tracks the Linux-shaped prerequisites separately:
+  display-engine object creation, DRM `mode_config`, CRTC/head, encoder/outp,
+  primary-plane, linear-modifier gate, NVIF outp/connector/head masks,
+  `nvif_head` construction, connector HPD/DP IRQ event hooks, per-head vblank
+  event registration, atomic commit-tail readiness, and page-flip completion
+  source. GPU-P-only Hyper-V must report all of these as absent except the
+  explicit linear-required policy, and `fbstat`, `gpucorevalidate`, plus
+  `hyperv-gpu-core-validate.sh` now require
+  `nouveau_linux_display_readiness_matrix ... status=PASS_FAILCLOSED` before
+  any DDA/Nouveau display or OpenGL-submit credit can be claimed.
 
 ### 4. Native D3D12 Shared-Resource Present
 
