@@ -185,7 +185,7 @@ emit_webkit_animated_content_native_present_gate_open()
 
     native_credit="$(last_log_counter "${LOG}" d3d12_native_present_completion_id)"
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
-        native_credit=1
+        fail "cannot open WebKit animated content gate without provider native completion id"
     fi
     content_line="$(last_log_line "${LOG}" 'd3d12_wayland_content_progress_matrix .*status=PASS')"
     fps_line="$(last_log_line "${LOG}" 'd3d12_wayland_present_fps_provenance_matrix .*status=PASS')"
@@ -240,6 +240,9 @@ emit_webkit_animated_content_native_present_gate_open()
           "${final_handoff_completed}" -ne "${display_bind_completed_id}" ||
           "${final_handoff_generation}" -ne "${display_bind_generation}" ]]; then
         fail "cannot open WebKit animated content gate without line-scoped content/display-bind/final-handoff identity"
+    fi
+    if [[ "${native_credit}" -ne "${display_bind_completed_id}" ]]; then
+        fail "cannot open WebKit animated content gate with mixed native completion/display-bind ids: native=${native_credit} display_bind_completed=${display_bind_completed_id}"
     fi
     if [[ "${display_bind_backend}" != "gpup_dxg_scanout_bind" ||
           "${display_bind_transport}" != "gpu-p-dxg-resource-scanout-bind" ||
@@ -297,6 +300,8 @@ emit_webkit_enabled_artifact_contract_matrix_open()
         "WebKit enabled artifact finite 480p FPS contract"
     require_file_fps_gt "${FPS_CONTRACT_LOG}" effective_presented_fps 60 \
         "WebKit enabled artifact effective 480p presented FPS"
+    require_provider_owned_display_bind_record_file "${FPS_CONTRACT_LOG}" \
+        "WebKit enabled artifact FPS contract D3D12 display-bind evidence"
     require_file_log "${FPS_CONTRACT_LOG}" 'backend_opengl_submit 1' \
         "WebKit enabled artifact FPS backend OpenGL-submit flag"
 
@@ -317,7 +322,7 @@ emit_webkit_enabled_artifact_contract_matrix_open()
     content_generation="$(last_log_counter "${LOG}" d3d12_content_progress_display_bind_resource_generation)"
 
     if [[ -z "${native_credit}" || "${native_credit}" -lt 1 ]]; then
-        native_credit="${display_bind_completed_id}"
+        fail "missing WebKit enabled artifact provider native completion id"
     fi
     if [[ -z "${display_bind_present_id}" || -z "${display_bind_completed_id}" ||
           -z "${display_bind_generation}" || -z "${native_credit}" ||
@@ -335,6 +340,9 @@ emit_webkit_enabled_artifact_contract_matrix_open()
           content_completed != display_bind_completed_id ||
           content_generation != display_bind_generation )); then
         fail "WebKit enabled artifact content identity does not match display-bind completion"
+    fi
+    if (( native_credit != display_bind_completed_id )); then
+        fail "WebKit enabled artifact native completion id does not match display-bind completion"
     fi
 
     echo "hyperv-webkit-gpu-validate: webkit_enabled_artifact_contract_matrix validation_run_id=${VALIDATION_RUN_ID} d3d12_run_id=${VALIDATION_RUN_ID} d3d12_compositor_run_id=${VALIDATION_RUN_ID} required_current_run_display_bind_completion=1 required_finite_480p_fps_artifact=1 required_backend_opengl_submit=1 required_shared_resource_fence_identity=1 required_compositor_owned_content_crc_frame_hash_identity=1 current_run_display_bind_completion=PASS finite_480p_fps_artifact=PASS backend_opengl_submit=1 shared_resource_fence_identity=PASS compositor_owned_content_crc_frame_hash_identity=PASS display_bind_present_id=${display_bind_present_id} display_bind_completed_id=${display_bind_completed_id} display_bind_resource_generation=${display_bind_generation} shared_resource=${resource} allocations=${allocations} fence=${fence} fence_target=${fence_target} release_fence=${release_fence} content_crc=${content_crc} content_frame=${content_frame} content_frame_hash=${content_frame_hash} content_present_id=${content_present_id} content_completed=${content_completed} content_resource_generation=${content_generation} gate=open native_present_credit=${native_credit} opengl_submit_credit=1 webkit_accel_credit=1 status=PASS" |
@@ -874,6 +882,77 @@ line_log_token()
         tail -n 1
 }
 
+require_provider_owned_display_bind_record_file()
+{
+    local file="$1"
+    local why="$2"
+    local require_commit="${3:-0}"
+
+    if [[ ! -s "${file}" ]]; then
+        fail "missing prior contract evidence log ${file}"
+    fi
+
+    awk -v require_commit="${require_commit}" '
+    function token(key,    i, n, parts) {
+        for (i = 1; i <= NF; i++) {
+            n = split($i, parts, "=")
+            if (n == 2 && parts[1] == key)
+                return parts[2]
+            if ($i == key && i < NF)
+                return $(i + 1)
+        }
+        return ""
+    }
+    function nonzero_decimal(value) {
+        return value ~ /^[1-9][0-9]*$/
+    }
+    function commit_accepted(    value) {
+        value = token("d3d12_dxg_present_source_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_buffer_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("dxg_present_commit_successes")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_present_source_commit_accepted")
+        if (nonzero_decimal(value)) return 1
+        value = token("d3d12_dxg_present_source_commit_accepted")
+        if (nonzero_decimal(value)) return 1
+        return 0
+    }
+    {
+        backend = token("display_bind_backend")
+        transport = token("display_bind_transport")
+        present = token("display_bind_present_id")
+        completed = token("display_bind_completed_id")
+        generation = token("display_bind_resource_generation")
+        bind_source = token("display_bind_completion_source")
+        completion_source = token("completion_source")
+        submit = token("backend_opengl_submit")
+        native_completion = token("d3d12_native_present_completion_id")
+        if (backend != "gpup_dxg_scanout_bind" ||
+            transport != "gpu-p-dxg-resource-scanout-bind" ||
+            bind_source != "display" ||
+            completion_source != "display" ||
+            submit != "1" ||
+            !nonzero_decimal(present) ||
+            !nonzero_decimal(completed) ||
+            !nonzero_decimal(generation) ||
+            completed + 0 < present + 0)
+            next
+        if (native_completion != "" &&
+            (!nonzero_decimal(native_completion) ||
+             native_completion + 0 != completed + 0))
+            next
+        if (require_commit && !commit_accepted())
+            next
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }' "${file}" ||
+        fail "missing ${why} line-scoped provider-owned display-bind record in ${file}"
+}
+
 last_backend_opengl_submit()
 {
     local file="$1"
@@ -1193,16 +1272,15 @@ require_d3d12_gpup_dda_commit_accepted_file()
     local file="$1"
     local why="$2"
 
+    require_provider_owned_display_bind_record_file "${file}" "${why} D3D12 GPU-P/DDA commit accepted" 1
     require_any_counter_ge "${file}" 1 \
         "${why} D3D12 GPU-P/DDA present-source commit accepted" \
         d3d12_dxg_present_source_commit_successes \
         d3d12_present_source_commit_successes \
         d3d12_present_source_buffer_commit_successes \
         dxg_present_commit_successes \
-        d3d12_final_handoff_host_display_commit_success \
         d3d12_present_source_commit_accepted \
-        d3d12_dxg_present_source_commit_accepted \
-        d3d12_host_display_commit_accepted
+        d3d12_dxg_present_source_commit_accepted
 }
 
 require_holistic_d3d12_display_bind_evidence_file()
@@ -1213,25 +1291,15 @@ require_holistic_d3d12_display_bind_evidence_file()
     local display_bind_completed_id
     local present_id
     local completed
+    local native_completion_id
 
-    require_file_log "${file}" \
-        '(^|[[:space:]])display_bind_backend[ =]gpup_dxg_scanout_bind($|[[:space:]])' \
-        "${why} D3D12 display_bind_backend"
-    require_file_log "${file}" \
-        '(^|[[:space:]])display_bind_transport[ =]gpu-p-dxg-resource-scanout-bind($|[[:space:]])' \
-        "${why} D3D12 display_bind_transport"
+    require_provider_owned_display_bind_record_file "${file}" "${why} D3D12 display-bind evidence"
     require_counter_ge "${file}" display_bind_present_id 1 \
         "${why} D3D12 display_bind_present_id"
     require_counter_ge "${file}" display_bind_completed_id 1 \
         "${why} D3D12 display_bind_completed_id"
     require_counter_ge "${file}" display_bind_resource_generation 1 \
         "${why} D3D12 display_bind_resource_generation"
-    require_file_log "${file}" \
-        '(^|[[:space:]])display_bind_completion_source[ =]display($|[[:space:]])' \
-        "${why} D3D12 native display_bind_completion_source"
-    require_file_log "${file}" \
-        '(^|[[:space:]])completion_source[ =]display($|[[:space:]])' \
-        "${why} D3D12 native display completion_source"
     require_file_log "${file}" \
         '(^|[[:space:]])d3d12_content_progress_state[ =]NATIVE_PRESENT_COMPLETE($|[[:space:]])' \
         "${why} D3D12 content progress state"
@@ -1258,8 +1326,12 @@ require_holistic_d3d12_display_bind_evidence_file()
     display_bind_completed_id="$(last_log_counter "${file}" display_bind_completed_id)"
     present_id="$(last_any_log_counter "${file}" d3d12_dxg_present_id present_id)"
     completed="$(last_any_log_counter "${file}" d3d12_dxg_present_completed completed)"
+    native_completion_id="$(last_log_counter "${file}" d3d12_native_present_completion_id)"
     if (( display_bind_completed_id < display_bind_present_id )); then
         fail "${why} display_bind_completed_id does not cover display_bind_present_id: present_id=${display_bind_present_id} completed_id=${display_bind_completed_id}"
+    fi
+    if [[ -z "${native_completion_id}" || "${native_completion_id}" -ne "${display_bind_completed_id}" ]]; then
+        fail "${why} native completion id does not match display-bind completion: native=${native_completion_id:-missing} display_bind_completed=${display_bind_completed_id}"
     fi
     if [[ -n "${present_id}" && "${display_bind_present_id}" -ne "${present_id}" ]]; then
         fail "${why} display_bind_present_id does not match D3D12 present_id: display_bind_present_id=${display_bind_present_id} present_id=${present_id}"
@@ -1563,6 +1635,8 @@ webkit_shared_surface_contract_validated()
     grep -Eq 'd3d12_gpu_present_starts=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_gpu_copy_completes=[1-9][0-9]*' "${LOG}" &&
     grep -Eq 'd3d12_display_handoff_implemented[ =]1' "${LOG}" &&
+    require_provider_owned_display_bind_record_file "${LOG}" \
+        "WebKit shared-surface contract D3D12 display-bind evidence" &&
     grep -Eq '(^|[[:space:]])display_bind_backend[ =]gpup_dxg_scanout_bind($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])display_bind_transport[ =]gpu-p-dxg-resource-scanout-bind($|[[:space:]])' "${LOG}" &&
     grep -Eq '(^|[[:space:]])display_bind_present_id[ =][1-9][0-9]*($|[[:space:]])' "${LOG}" &&
