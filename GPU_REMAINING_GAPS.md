@@ -816,6 +816,16 @@ non-readback display handoff.
     CORE_C_SECTIONS='preflight present-source final'
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
     `validation_run_id=core-1779751975-2934585`.
+  - [ ] When a real GPU-P/DDA sender is found, replace the current
+    synchronous fail-closed pending ledger with provider-owned pending packet
+    publication: publish-before-send, transport pending id, command id,
+    transaction id, channel, completion-demux registration, resolve/cancel
+    result, and ref release must be visible in a pure-C
+    `d3d12_display_bind_provider_pending_publication_matrix`.
+  - [ ] Add stale async completion proof for the real sender: unregister or
+    owner close while a provider pending record exists must cancel the pending
+    object, keep present/completed ids zero, reject any late completion as
+    stale/after-release, and leave no native-present/OpenGL-submit credit.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
     evidence. A DDA-backed Nouveau PCI display path can only count as a native
     display lane after it also proves a D3D12 shared-resource import,
@@ -911,6 +921,24 @@ non-readback display handoff.
   CORE_C_SECTIONS='present-source final'
   scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
   `validation_run_id=core-1779758881-3213422`.
+- [x] Add a WSL-style pending display-bind request lifetime ledger before any
+  sleepable host sender exists.
+  `fb_dxg_present.c` now publishes a source-owned pending request before
+  dropping `fb_state.lock`, preserves source/resource generations on that
+  pending object, resolves it fail-closed when the provider returns
+  `EOPNOTSUPP`, and cancels outstanding pending requests during unregister or
+  owner close. `dxgprobe` separates the lifecycle proof from the live-source
+  generation proof: `d3d12_display_bind_pending_lifetime_matrix` requires
+  created requests to drain to zero active entries with zero completions,
+  nonzero failclosed resolves, zero native-present credit, and zero
+  OpenGL-submit credit, while
+  `d3d12_display_bind_generation_revalidation_matrix` requires the provider
+  lock-drop revalidation to preserve the live bind-contract source/resource
+  generations and pinned resource generation. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  VALIDATION_RUN_ID=core-display-bind-pending-lifetime
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
 - [x] Keep WSL present-history style command IDs as explicit rejected
   candidates until a source-backed sender and completion contract exists.
   The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
