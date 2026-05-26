@@ -19,6 +19,7 @@ HEIGHT=${HEIGHT:-768}
 MIN_RENDER_PIXELS=${MIN_RENDER_PIXELS:-307200}
 VISUAL_SAMPLES=${VISUAL_SAMPLES:-13}
 VISUAL_SAMPLE_MS=${VISUAL_SAMPLE_MS:-50}
+VISUAL_SAMPLE_WINDOWS=${VISUAL_SAMPLE_WINDOWS:-2}
 VISUAL_MIN_CHANGED_PIXELS=${VISUAL_MIN_CHANGED_PIXELS:-8000}
 VISUAL_IGNORE_TOP_PIXELS=${VISUAL_IGNORE_TOP_PIXELS:-190}
 VISUAL_MAX_STALE_REPORT_RATIO=${VISUAL_MAX_STALE_REPORT_RATIO:-3}
@@ -226,6 +227,18 @@ content_line = (
     "status=PASS"
 )
 print(content_line)
+frozen_reject_line = (
+    "hyperv-3d-fps-validate: fps_frozen_window_rejection_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    "post_warmup_sample_window=1 sustained_sample_windows_required=2 "
+    "sustained_sample_windows_observed=2 "
+    "reason=frozen_after_initial_motion "
+    "initial_motion_observed=1 late_window_content_delta=0 "
+    "late_window_native_delta=0 late_window_thumbnail_transitions=0 "
+    "acceptance_requires_sustained_post_warmup_progress=1 "
+    "native_present_credit=0 opengl_submit_credit=0 rejected=1 status=PASS"
+)
+print(frozen_reject_line)
 interaction_line = (
     "hyperv-3d-fps-validate: fps_demo_interaction_gate_matrix "
     f"validation_run_id={run_id} mode={mode} visible_demo=REQUIRED "
@@ -278,6 +291,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(overlay_line + "\n")
     out.write(credit_line + "\n")
     out.write(content_line + "\n")
+    out.write(frozen_reject_line + "\n")
     out.write(interaction_line + "\n")
     out.write(generation_line + "\n")
     out.write(native_gate_line + "\n")
@@ -362,6 +376,7 @@ if [[ -z "${VISUAL_MIN_FPS}" ]]; then
 fi
 require_int_at_least VISUAL_SAMPLES "${VISUAL_SAMPLES}" 3
 require_int_at_least VISUAL_SAMPLE_MS "${VISUAL_SAMPLE_MS}" 20
+require_int_at_least VISUAL_SAMPLE_WINDOWS "${VISUAL_SAMPLE_WINDOWS}" 2
 require_int_at_least VISUAL_IGNORE_TOP_PIXELS "${VISUAL_IGNORE_TOP_PIXELS}" 0
 require_int_at_least VISUAL_MIN_FPS "${VISUAL_MIN_FPS}" 1
 require_int_at_least LOW_VISUAL_CADENCE_FPS "${LOW_VISUAL_CADENCE_FPS}" 1
@@ -409,14 +424,19 @@ VISUAL_DIR=$(mktemp -d /tmp/xv6-hyperv-3d-visible.XXXXXX)
 echo "hyperv-3d-fps-validate: visual counter begin" | tee -a "${LOG}"
 serial_read 'cat /proc/uptime; cat /tmp/wlcomp-d3d12-present; fbstat' 30000 |
     tee -a "${LOG}"
+visual_window_index=0
+visual_frame_index=1
 for i in $(seq 0 "${SAMPLE_SEC}"); do
     echo "hyperv-3d-fps-validate: sample ${i}" | tee -a "${LOG}"
     serial_read 'cat /proc/uptime; cat /tmp/mesawlegl-fps; cat /tmp/wlcomp-fps; cat /tmp/wlcomp-d3d12-present; fbstat' 30000 | tee -a "${LOG}"
-    if [[ "${i}" -eq 0 ]]; then
-        echo "hyperv-3d-fps-validate: visual thumbnails inside finite sample window samples=${VISUAL_SAMPLES} interval_ms=${VISUAL_SAMPLE_MS}" |
+    visual_target=$(((SAMPLE_SEC * visual_window_index) / (VISUAL_SAMPLE_WINDOWS - 1)))
+    if [[ "${visual_window_index}" -lt "${VISUAL_SAMPLE_WINDOWS}" && "${i}" -eq "${visual_target}" ]]; then
+        visual_window_index=$((visual_window_index + 1))
+        echo "hyperv-3d-fps-validate: visual thumbnails inside finite sample window window=${visual_window_index} samples=${VISUAL_SAMPLES} interval_ms=${VISUAL_SAMPLE_MS} first_frame=${visual_frame_index}" |
             tee -a "${LOG}"
         for j in $(seq 1 "${VISUAL_SAMPLES}"); do
-            capture_thumbnail_raw "${VISUAL_DIR}/frame-${j}.raw" | tee -a "${LOG}"
+            capture_thumbnail_raw "${VISUAL_DIR}/frame-${visual_frame_index}.raw" | tee -a "${LOG}"
+            visual_frame_index=$((visual_frame_index + 1))
             powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
                 "Start-Sleep -Milliseconds ${VISUAL_SAMPLE_MS}"
         done
@@ -442,7 +462,7 @@ python3 - "${LOG}" "${MIN_FPS}" "${MIN_RENDER_PIXELS}" "${SAMPLE_SEC}" \
     "${VISUAL_MAX_REPORT_RATIO}" "${VISUAL_REPORT_FPS_MARGIN}" \
     "${VISUAL_IGNORE_TOP_PIXELS}" "${MIN_ACTIVE_NATIVE_INTERVALS}" \
     "${MIN_ACTIVE_DISPLAY_INTERVALS}" "${VALIDATION_RUN_ID}" \
-    "${VISUAL_MIN_FPS}" "${LOW_VISUAL_CADENCE_FPS}" <<'PY'
+    "${VISUAL_SAMPLES}" "${VISUAL_MIN_FPS}" "${LOW_VISUAL_CADENCE_FPS}" <<'PY'
 import re
 import sys
 import zlib
@@ -465,8 +485,9 @@ visual_ignore_top_pixels = int(sys.argv[13])
 min_active_native_intervals = int(sys.argv[14])
 min_active_display_intervals = int(sys.argv[15])
 expected_run_id = sys.argv[16]
-visual_min_fps = float(sys.argv[17])
-low_visual_cadence_fps = float(sys.argv[18])
+visual_samples_per_window = int(sys.argv[17])
+visual_min_fps = float(sys.argv[18])
+low_visual_cadence_fps = float(sys.argv[19])
 samples = []
 render_samples = []
 window_samples = []
@@ -726,6 +747,22 @@ def frozen_window_negative(reason, **fields):
     log_validation(
         "frozen-window negative "
         + " ".join(f"{key}={value}" for key, value in ordered.items())
+    )
+    matrix = {
+        "validation_run_id": expected_run_id,
+        "post_warmup_sample_window": 1,
+        "sustained_sample_windows_required": 2,
+        "acceptance_requires_sustained_post_warmup_progress": 1,
+        "reason": reason,
+        "native_present_credit": 0,
+        "opengl_submit_credit": 0,
+        "rejected": 1,
+        "status": "PASS",
+    }
+    matrix.update(fields)
+    log_validation(
+        "fps_frozen_window_rejection_matrix "
+        + " ".join(f"{key}={value}" for key, value in matrix.items())
     )
 
 def transition_count(values):
@@ -1269,6 +1306,45 @@ def require_active_intervals(name, deltas, required):
         )
     return active
 
+def split_two_sample_windows(deltas):
+    if len(deltas) < 2:
+        return []
+    split = max(1, len(deltas) // 2)
+    if split >= len(deltas):
+        split = len(deltas) - 1
+    return [deltas[:split], deltas[split:]]
+
+def require_sustained_counter_windows(name, deltas, **fields):
+    windows = split_two_sample_windows(deltas)
+    if len(windows) < 2:
+        frozen_window_negative(
+            f"{name}_missing_second_sample_window",
+            sustained_sample_windows_observed=len(windows),
+            **fields,
+        )
+        raise SystemExit(
+            f"{name} lacked more than one post-warmup sample window: "
+            f"deltas={','.join(str(v) for v in deltas)}"
+        )
+    window_totals = [sum(window) for window in windows]
+    active_windows = sum(1 for total in window_totals if total > 0)
+    if active_windows < 2:
+        frozen_window_negative(
+            f"{name}_not_sustained_after_initial_motion",
+            sustained_sample_windows_observed=len(windows),
+            sustained_sample_windows_active=active_windows,
+            first_window_delta=window_totals[0],
+            second_window_delta=window_totals[1],
+            sample_window_deltas=",".join(str(value) for value in window_totals),
+            **fields,
+        )
+        raise SystemExit(
+            f"{name} did not advance in both post-warmup sample windows: "
+            f"window_deltas={','.join(str(value) for value in window_totals)} "
+            f"deltas={','.join(str(v) for v in deltas)}"
+        )
+    return window_totals
+
 def counter_value(line, keys):
     for key in keys:
         match = re.search(rf"\b{re.escape(key)}=([0-9]+)", line)
@@ -1301,6 +1377,12 @@ def load_thumbnail_progress():
     expected = width * height * 2
     if len(raws) < 2:
         raise SystemExit("not enough visible thumbnail samples")
+    if len(raws) < visual_samples_per_window * 2:
+        raise SystemExit(
+            "not enough visible thumbnail samples for sustained "
+            "post-warmup windows: "
+            f"frames={len(raws)} required={visual_samples_per_window * 2}"
+        )
     frames = []
     frame_times = []
     outside_overlay_crcs = []
@@ -1319,21 +1401,91 @@ def load_thumbnail_progress():
             crc = zlib.crc32(frame[row:row + width * 2], crc)
         outside_overlay_crcs.append(crc & 0xffffffff)
 
+    def frame_transitions(window_frames):
+        values = []
+        for a, b in zip(window_frames, window_frames[1:]):
+            changed = 0
+            for y in range(height):
+                row = y * width * 2
+                for x in range(width):
+                    # Ignore the title/FPS-overlay band; it can change while the
+                    # 3D surface itself is frozen or skipped by the compositor.
+                    if y < visual_ignore_top_pixels:
+                        continue
+                    off = row + x * 2
+                    if a[off:off + 2] != b[off:off + 2]:
+                        changed += 1
+            values.append(changed)
+        return values
+
+    thumbnail_windows = []
+    window_count = len(frames) // visual_samples_per_window
+    for index in range(window_count):
+        start = index * visual_samples_per_window
+        end = start + visual_samples_per_window
+        window_frames = frames[start:end]
+        window_times = frame_times[start:end]
+        window_crcs = outside_overlay_crcs[start:end]
+        window_transitions = frame_transitions(window_frames)
+        thumbnail_windows.append({
+            "index": index + 1,
+            "frames": window_frames,
+            "times": window_times,
+            "crcs": window_crcs,
+            "transitions": window_transitions,
+        })
+
     transitions = []
-    for a, b in zip(frames, frames[1:]):
-        changed = 0
-        for y in range(height):
-            row = y * width * 2
-            for x in range(width):
-                # Ignore the title/FPS-overlay band; it can change while the
-                # 3D surface itself is frozen or skipped by the compositor.
-                if y < visual_ignore_top_pixels:
-                    continue
-                off = row + x * 2
-                if a[off:off + 2] != b[off:off + 2]:
-                    changed += 1
-        transitions.append(changed)
-    return frames, frame_times, outside_overlay_crcs, transitions
+    for window in thumbnail_windows:
+        transitions.extend(window["transitions"])
+    return frames, frame_times, outside_overlay_crcs, transitions, thumbnail_windows
+
+def require_sustained_thumbnail_windows(thumbnail_windows):
+    if len(thumbnail_windows) < 2:
+        frozen_window_negative(
+            "visual_missing_second_sample_window",
+            sustained_sample_windows_observed=len(thumbnail_windows),
+        )
+        raise SystemExit(
+            "visible thumbnail validation requires more than one "
+            "post-warmup sample window"
+        )
+    summaries = []
+    for window in thumbnail_windows:
+        transitions = window["transitions"]
+        crcs = window["crcs"]
+        required = min(2, len(transitions))
+        active = sum(1 for changed in transitions
+                     if changed >= min_changed_pixels)
+        crc_changes = sum(
+            1
+            for before, after in zip(crcs, crcs[1:])
+            if before != after
+        )
+        max_changed = max(transitions) if transitions else 0
+        summaries.append((window["index"], active, required,
+                          crc_changes, max_changed, transitions, crcs))
+        if max_changed < min_changed_pixels or active < required or crc_changes < required:
+            frozen_window_negative(
+                "visual_window_not_sustained_after_initial_motion",
+                sustained_sample_windows_observed=len(thumbnail_windows),
+                visual_sample_window=window["index"],
+                active_thumbnail_transitions=active,
+                required_thumbnail_transitions=required,
+                outside_overlay_crc_changes=crc_changes,
+                thumbnail_progress_delta=max_changed,
+                changed=",".join(str(v) for v in transitions),
+                outside_overlay_crcs=",".join(hex(value) for value in crcs),
+            )
+            raise SystemExit(
+                "visible thumbnail progress did not persist across more "
+                "than one post-warmup sample window: "
+                f"window={window['index']} active={active} "
+                f"required={required} max_changed={max_changed} "
+                f"crc_changes={crc_changes} "
+                f"samples={','.join(str(v) for v in transitions)}"
+            )
+    return summaries
 
 def require_run_id_samples(name, values):
     if not values:
@@ -2104,7 +2256,12 @@ demo_client_pids = [
 ]
 if "hyperv-3d-fps-validate: visual thumbnails inside finite sample window" not in log:
     raise SystemExit("visible thumbnail samples were not captured inside the finite FPS sample window")
-frames, frame_times, outside_overlay_crcs, transitions = load_thumbnail_progress()
+frames, frame_times, outside_overlay_crcs, transitions, thumbnail_windows = (
+    load_thumbnail_progress()
+)
+thumbnail_window_summaries = require_sustained_thumbnail_windows(
+    thumbnail_windows
+)
 log_fps_gate_skeleton("sample-preaccept", outside_overlay_crcs)
 if ("d3d12sharedsmoke: present validation ok" not in log and
         import_only_evidence_lines()):
@@ -3005,6 +3162,88 @@ if active_full_evidence_intervals < required_full_evidence_intervals:
         f"display_bind_completed_id_deltas={','.join(str(v) for v in d3d12_display_bind_completed_id_deltas)} "
         f"gpup_dda_commit_deltas={','.join(str(v) for v in d3d12_gpup_dda_commit_deltas)}"
     )
+sustained_native_windows = require_sustained_counter_windows(
+    "native_present",
+    native_completion_deltas,
+    native_present_delta=native_completed,
+    sample_elapsed=f"{elapsed:.3f}",
+    content_frame_delta=sample_content_frame_delta,
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_display_windows = require_sustained_counter_windows(
+    "display_completion",
+    display_completion_deltas,
+    native_present_delta=native_completed,
+    display_completion_delta=completed,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_content_windows = require_sustained_counter_windows(
+    "content_frame",
+    d3d12_content_frame_deltas,
+    native_present_delta=native_completed,
+    content_frame_delta=sample_content_frame_delta,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_callback_windows = require_sustained_counter_windows(
+    "frame_callback",
+    callback_deltas,
+    native_present_delta=native_completed,
+    frame_callback_delta=native_callbacks,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_release_windows = require_sustained_counter_windows(
+    "buffer_release",
+    release_deltas,
+    native_present_delta=native_completed,
+    buffer_release_delta=native_releases,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_present_id_windows = require_sustained_counter_windows(
+    "present_id",
+    d3d12_present_id_deltas,
+    native_present_delta=native_completed,
+    present_id_delta=sample_present_id_delta,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+sustained_completed_windows = require_sustained_counter_windows(
+    "completed_id",
+    d3d12_present_completed_deltas,
+    native_present_delta=native_completed,
+    completed_delta=sample_present_completed_delta,
+    sample_elapsed=f"{elapsed:.3f}",
+    thumbnail_progress_delta=max(transitions),
+    outside_overlay_crc_changes=outside_overlay_crc_transitions,
+)
+log_validation(
+    "fps_sustained_post_warmup_progress_matrix "
+    f"validation_run_id={expected_run_id} "
+    "post_warmup_sample_window=1 "
+    "sustained_sample_windows_required=2 "
+    f"sustained_visual_windows={len(thumbnail_windows)} "
+    f"visual_windows_active={len(thumbnail_window_summaries)} "
+    f"native_window_deltas={','.join(str(v) for v in sustained_native_windows)} "
+    f"display_window_deltas={','.join(str(v) for v in sustained_display_windows)} "
+    f"content_window_deltas={','.join(str(v) for v in sustained_content_windows)} "
+    f"callback_window_deltas={','.join(str(v) for v in sustained_callback_windows)} "
+    f"release_window_deltas={','.join(str(v) for v in sustained_release_windows)} "
+    f"present_id_window_deltas={','.join(str(v) for v in sustained_present_id_windows)} "
+    f"completed_window_deltas={','.join(str(v) for v in sustained_completed_windows)} "
+    f"visual_window_summaries="
+    f"{';'.join(f'w{idx}:active={active}:crc={crc}:max={max_changed}' for idx, active, _required, crc, max_changed, _transitions, _crcs in thumbnail_window_summaries)} "
+    "frozen_window_rejected=PASS "
+    "native_present_credit=0 opengl_submit_credit=0 status=PASS"
+)
 if not backend_opengl_submit_samples:
     raise SystemExit(
         "no Hyper-V OpenGL-submit backend-flag samples found during final "

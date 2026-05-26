@@ -840,6 +840,21 @@ non-readback display handoff.
   `validation_run_id=core-1779731829-1780191`, then re-validated after
   parent/global-share propagation and detailed pin diagnostics with
   `validation_run_id=core-1779742515-2470561`.
+- [x] Seal display-bind metadata on unregister and owner close so stale source
+  handles cannot retain native-present ids after lifetime teardown.
+  `fb_dxg_present.c` now clears source/global display-bind ids and completion
+  status during explicit source release and owner cleanup, records
+  stale-source, generation, completion, late-completion, and after-close query
+  counters, and keeps native-present/OpenGL/WebKit credit at zero for every
+  stale query. `dxgprobe`, `fbstat`, `gpucorevalidate`, and the focused runner
+  require `d3d12_display_bind_stale_source_zero_credit_matrix`. Evidence:
+  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+  CORE_C_SECTIONS='preflight present-source final'
+  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
+  `validation_run_id=core-1779754227-3036304`; the present-source row showed
+  `release_sources_delta=3`, `after_close_queries=3`,
+  `stale_source_rejects=3`, `release_clears=3`, zero after-close ids, and
+  zero native-present/OpenGL/WebKit credit.
 - [x] Add a WSL-style sync-file acquire pre-open guard for the present-source
   path: export a monitored fence to a sync-file fd, reopen it to a D3DKMT sync
   object before present admission, reject wrong fd kinds, preserve fence value
@@ -998,6 +1013,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   standard-allocation private metadata is treated as a scanout bind. Evidence:
   focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
   `validation_run_id=core-1779750432-2876003`.
+  `d3d12_native_completion_lifetime_matrix` now also accepts the preflight
+  fail-closed state where no provider submit has happened yet, then requires
+  `provider_no_completion=1` after a fail-closed provider submit or a real
+  display completion after a future successful provider submit. Evidence:
+  focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
+  `validation_run_id=core-1779754227-3036304`.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace
@@ -1083,6 +1104,11 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   D3D12 run id, client pid, nonzero present/completion counters, and native
   requirements; the validator emits `fps_overlay_inflation_rejection_matrix`
   and rejects those context-only samples before any FPS pass.
+  The validator now also samples multiple visual windows and rejects "moved
+  briefly, then froze" evidence with `fps_frozen_window_rejection_matrix` and
+  `fps_sustained_post_warmup_progress_matrix`. Lightweight evidence:
+  `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-sustained-freeze
+  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
 - [x] Add a present/FPS provenance skeleton so visible demo FPS is explicitly
   zero-credit unless it is backed by current-run native D3D12 display
   completions. `wlcomp` now emits
@@ -1251,8 +1277,17 @@ alone.
   `hyperv-webkit-gpu-validate.sh` now runs a default policy-negative preflight
   that emits `webkit_evidence_rejection_matrix` and proves those evidence
   classes are rejected before any WebKit acceleration artifact is accepted.
+  It also requires
+  `webkit_stale_display_bind_evidence_rejection_matrix`, so stale or
+  after-close display-bind evidence cannot open WebKit acceleration while the
+  canonical display-bind ids and native-present credit remain zero.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
+  `webkit_enabled_artifact_contract_matrix` now names the only accepted future
+  enabled shape: current-run D3D12 display-bind completion, finite 480p FPS,
+  `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, shared-resource/fence identity, and
+  compositor-owned content CRC/frame/hash identity all from the same validation
+  lineage.
 
 ## Section Validation Rhythm
 
