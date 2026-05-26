@@ -128,6 +128,27 @@ def accepts_downstream_consumer_gate(fields):
         fields.get("backend_identity") == "FB_GPU_BACKEND_F_OPENGL_SUBMIT"
     )
 
+def accepts_demo_interaction_evidence(fields):
+    return (
+        fields.get("demo_visible", 0) == 1 and
+        fields.get("demo_closeable", 0) == 1 and
+        fields.get("demo_resizable", 0) == 1 and
+        fields.get("demo_interaction_run_id") == run_id and
+        fields.get("demo_interaction_native_present_complete", 0) == 1 and
+        fields.get("demo_interaction_content_progress", 0) == 1 and
+        fields.get("demo_interaction_present_id", 0) > 0 and
+        fields.get("demo_interaction_completed", 0) >=
+            fields.get("demo_interaction_present_id", 0) and
+        fields.get("demo_interaction_present_id", 0) ==
+            fields.get("display_bind_present_id", 0) and
+        fields.get("demo_interaction_completed", 0) ==
+            fields.get("display_bind_completed_id", 0) and
+        accepts_display_bind_contract(fields)
+    )
+
+def pass_fail(value):
+    return "PASS" if value else "FAIL"
+
 negative_rejected = rejects_inflation(40.0, 5.0)
 positive_rejected = rejects_inflation(65.0, 62.0)
 stale_run_rejected = not accepts_current_run_evidence(
@@ -199,6 +220,71 @@ zero_native_ids_rejected = not accepts_downstream_consumer_gate({
     "fps_artifact_run_id": run_id,
     "backend_identity": "FB_GPU_BACKEND_F_OPENGL_SUBMIT",
 })
+valid_demo_interaction = {
+    "demo_visible": 1,
+    "demo_closeable": 1,
+    "demo_resizable": 1,
+    "demo_interaction_run_id": run_id,
+    "demo_interaction_native_present_complete": 1,
+    "demo_interaction_content_progress": 1,
+    "demo_interaction_present_id": 9,
+    "demo_interaction_completed": 9,
+    "display_bind_backend": "gpup_dxg_scanout_bind",
+    "display_bind_transport": "gpu-p-dxg-resource-scanout-bind",
+    "display_bind_present_id": 9,
+    "display_bind_completed_id": 9,
+    "display_bind_resource_generation": 4,
+    "display_bind_completion_source": "display",
+    "content_progress_current_run_valid": 1,
+    "content_progress_identity_complete": 1,
+    "content_progress_present_id": 9,
+    "content_progress_completed": 9,
+    "content_progress_resource_generation": 4,
+    "final_handoff_success": 1,
+    "final_handoff_present_id": 9,
+    "final_handoff_completed": 9,
+    "final_handoff_resource_generation": 4,
+    "content_credit": 1,
+    "callback_release_same_frame": 1,
+}
+stale_demo = dict(valid_demo_interaction)
+stale_demo["demo_interaction_run_id"] = "stale-preflight"
+missing_resize_demo = dict(valid_demo_interaction)
+missing_resize_demo["demo_resizable"] = 0
+source_only_demo = {
+    "demo_visible": 1,
+    "demo_closeable": 1,
+    "demo_resizable": 1,
+    "demo_interaction_run_id": run_id,
+    "demo_interaction_native_present_complete": 0,
+    "demo_interaction_content_progress": 0,
+    "demo_interaction_present_id": 0,
+    "demo_interaction_completed": 0,
+}
+callback_only_demo = dict(valid_demo_interaction)
+callback_only_demo["demo_interaction_native_present_complete"] = 0
+callback_only_demo["demo_interaction_present_id"] = 0
+callback_only_demo["demo_interaction_completed"] = 0
+callback_only_demo["display_bind_present_id"] = 0
+callback_only_demo["display_bind_completed_id"] = 0
+callback_only_demo["final_handoff_present_id"] = 0
+callback_only_demo["final_handoff_completed"] = 0
+forged_display_bind_demo = dict(valid_demo_interaction)
+forged_display_bind_demo["display_bind_completion_source"] = "missing"
+forged_display_bind_demo["final_handoff_completed"] = 8
+demo_stale_run_rejected = not accepts_demo_interaction_evidence(stale_demo)
+demo_missing_resize_rejected = not accepts_demo_interaction_evidence(
+    missing_resize_demo
+)
+demo_source_only_rejected = not accepts_demo_interaction_evidence(
+    source_only_demo
+)
+demo_callback_only_rejected = not accepts_demo_interaction_evidence(
+    callback_only_demo
+)
+demo_forged_display_bind_rejected = not accepts_demo_interaction_evidence(
+    forged_display_bind_demo
+)
 if not negative_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: 40 FPS with single-digit visible "
@@ -238,6 +324,31 @@ if not zero_native_ids_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: downstream FPS consumer gate accepted "
         "zero native present ids"
+    )
+if not demo_stale_run_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: demo interaction accepted stale "
+        "run-id evidence"
+    )
+if not demo_missing_resize_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: demo interaction accepted missing "
+        "resize evidence"
+    )
+if not demo_source_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: demo interaction accepted "
+        "source-only evidence"
+    )
+if not demo_callback_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: demo interaction accepted "
+        "callback-only evidence"
+    )
+if not demo_forged_display_bind_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: demo interaction accepted forged "
+        "display-bind evidence"
     )
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
@@ -337,6 +448,20 @@ interaction_line = (
     "native_present_credit=0 opengl_submit_credit=0 gate=closed status=PASS"
 )
 print(interaction_line)
+interaction_selftest_line = (
+    "hyperv-3d-fps-validate: fps_demo_interaction_selftest_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    f"stale_run_rejected={pass_fail(demo_stale_run_rejected)} "
+    f"missing_resize_rejected={pass_fail(demo_missing_resize_rejected)} "
+    f"source_only_rejected={pass_fail(demo_source_only_rejected)} "
+    f"callback_only_rejected={pass_fail(demo_callback_only_rejected)} "
+    f"forged_display_bind_rejected={pass_fail(demo_forged_display_bind_rejected)} "
+    "requires_visible_demo=1 requires_closeable_demo=1 "
+    "requires_resizable_demo=1 requires_current_run=1 "
+    "requires_native_present_completion=1 requires_content_progress=1 "
+    "native_present_credit=0 opengl_submit_credit=0 gate=closed status=PASS"
+)
+print(interaction_selftest_line)
 generation_line = (
     "hyperv-3d-fps-validate: fps_stale_frozen_content_generation_matrix "
     f"validation_run_id={run_id} mode={mode} "
@@ -381,6 +506,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(content_line + "\n")
     out.write(frozen_reject_line + "\n")
     out.write(interaction_line + "\n")
+    out.write(interaction_selftest_line + "\n")
     out.write(generation_line + "\n")
     out.write(native_gate_line + "\n")
     out.write(visible_preflight_line + "\n")

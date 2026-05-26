@@ -251,6 +251,12 @@ but do not treat them as open plan items by default.
   KMS/vblank/OUT_FENCE/display-wait progress is not native D3D12 completion
   and should be reported by an explicit zero-credit
   `d3d12_native_completion_not_kms_matrix`.
+- `webkitgpusmoke` emits
+  `webkit_inprocess_contract_gate_matrix` from the pure-C contract validator.
+  Keep that row zero-credit on Hyper-V until `FB_GPU_BACKEND_F_OPENGL_SUBMIT`,
+  nonzero display-bind/native-present ids, shared-resource/fence identity, and
+  compositor-owned content identity all pass together; the shell WebKit
+  validator remains responsible for the downstream finite-480p FPS artifact.
 - KMS/DRM remains a generic software-present compatibility path until a real
   DDA/Nouveau display engine exists. `gpu_kms_present_fb()` must try the
   native-present discriminator first and record reject reasons, then fall back
@@ -825,6 +831,11 @@ but do not treat them as open plan items by default.
   validation run id, client pid, mapped/closeable/resize state, geometry, and
   zero native/OpenGL-submit credit. Do not let these lifecycle rows carry fake
   present ids, completed ids, or content-progress credit.
+- The lightweight FPS selftest emits
+  `fps_demo_interaction_selftest_matrix`. Keep stale run-id, missing-resize,
+  source-only, callback-only, and forged display-bind cases rejected with zero
+  native-present/OpenGL-submit credit until the final native-present/FPS run
+  can prove the demo is visible, closeable, and resizable.
 - Final FPS display-bind acceptance is canonical only:
   `display_bind_backend=gpup_dxg_scanout_bind` and
   `display_bind_transport=gpu-p-dxg-resource-scanout-bind`. Legacy aliases

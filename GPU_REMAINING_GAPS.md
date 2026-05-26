@@ -1102,6 +1102,10 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `resizable_demo` requires an actual resize count, and its native/content
     interaction fields come from the same strict D3D12 evidence reader used by
     FPS samples.
+  - [x] Add a lightweight `fps_demo_interaction_selftest_matrix` so the FPS
+    validator proves stale run ids, missing resize evidence, source-only
+    lifecycle evidence, callback-only evidence, and forged display-bind ids are
+    rejected with zero native-present/OpenGL-submit credit.
 - [x] Require visible content progress outside title/FPS overlay areas and
   correlate content hashes or thumbnail deltas with native present completions.
   The finite FPS gate now requires outside-overlay thumbnail CRC/progression,
@@ -1231,6 +1235,14 @@ alone.
   OpenGL-submit, same-run identity, same adapter, no readback,
   shared-resource/fence evidence, native present completion, callback/release
   ordering, and native-present-complete content progress all pass together.
+  - [x] Add a pure-C WebKit in-process consumer gate row so
+    `webkitgpusmoke` reports the backend OpenGL-submit bit, display-bind ids,
+    native-present ids, resource generation, shared-resource/fence identity,
+    compositor-owned content identity, and zero-credit rejection before the
+    shell validator decides whether a downstream FPS/WebKit artifact may open.
+    The current Hyper-V D3D12 contract-negative validator requires this row to
+    keep `backend_opengl_submit=0`, present/completed ids at zero,
+    `gate=closed`, and native-present/OpenGL/WebKit credit at zero.
 - [x] Add WebKit run-id and current-run evidence matching so stale
   `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
   cannot satisfy the WebKit gate.
