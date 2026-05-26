@@ -185,11 +185,14 @@ these chunks in order:
      now also require `wsl_submit_present_fields_not_bind_matrix`,
      `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
      `wsl_trace_display_bind_negative_matrix`, and
-     `provider_credit_gate_negative_matrix`, so WSL submit metadata,
-     present-history fields, written primaries, standard-allocation private
-     data, allocation flags, trace-visible resource sharing, sync-file
-     plumbing, and provider invocation counters cannot become native-present
-     credit without a real host ABI, sender, and display-completion contract.
+     `provider_credit_gate_negative_matrix`. The current skeleton also
+     requires `host_display_bind_source_catalog_matrix`, so WSL submit
+     metadata, present-history fields, written primaries, standard-allocation
+     private data, allocation flags, trace-visible resource sharing, sync-file
+     plumbing, provider invocation counters, WSLg-channel absence, synthvid
+     GPA-dirty evidence, and DDA/Nouveau display separation cannot become
+     native-present credit without a real host ABI, sender, and
+     display-completion contract.
      These follow the WSL `dxgkrnl` UAPI/display-cap clearing and Linux
      Nouveau DRM/KMS shape: WSL enum, adapter, standard-allocation,
      submit/present, trace replay, and present-history telemetry fields are
@@ -757,6 +760,11 @@ non-readback display handoff.
   private driver data rather than scanout binding, synthvid is only a GPA dirty
   rectangle display path, and DDA/Nouveau PCI display presence is separate from
   D3D12 resource import, scanout bind, and hardware flip completion.
+  `host_display_bind_source_catalog_matrix` now ties those audited sources
+  together as the root source catalog: selected source missing, WSLg channel
+  absent, no custom host tool, no GPU-P/DXG sender/completion contract, no
+  synthvid D3D12 bind, no DDA D3D12 import/scanout/hardware-flip completion,
+  provider fail-closed, and zero native-present/OpenGL/WebKit credit.
   The Hyper-V-owned provider boundary is now a generic
   `hyperv_dxg_display_bind_submit()` slot backed by the current fail-closed
   implementation. Kernel stats and pure-C validators require the provider's
