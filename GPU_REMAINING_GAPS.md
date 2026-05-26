@@ -871,9 +871,14 @@ non-readback display handoff.
     `d3d12_display_bind_provider_pending_publication_matrix`. The pending
     object must also carry WSL-shaped process/object provenance:
     `dxgprocess_generation`, `process_adapter_generation`,
-    `hmgr_index_unique_valid`, `parent_resource_ref_held`,
-    `opened_child_ref_held`, `syncobject_ref_held`, and owner-close
-    cancellation state before any send is issued.
+    `hmgr_index_unique_valid`, active device/resource/allocation object-table
+    refs, `shared_parent_snapshot_valid`, `opened_child_snapshot_valid`,
+    `syncobject_object_ref_active`, and owner-close cancellation state before
+    any send is issued. These snapshot fields are not a substitute for a
+    future WSL-style retained kref/token pin; the real sender must either
+    acquire and release explicit parent/child/sync pin tokens or keep the
+    provider pending object under already-held VFS/object ownership until
+    completion/cancel.
   - [ ] Add stale async completion proof for the real sender: unregister or
     owner close while a provider pending record exists must cancel the pending
     object, keep present/completed ids zero, reject any late completion as
@@ -909,14 +914,17 @@ non-readback display handoff.
     provider record before a real sender exists.
     The provider pending publication row now requires kernel-owned
     `dxgprocess_generation`, `process_adapter_generation`,
-    `hmgr_index_unique_valid`, `parent_resource_ref_held`,
-    `opened_child_ref_held`, a `syncobject_ref_held` field that is 1 for
-    wait-sync pending records, and
-    `owner_close_cancelled=0` fields alongside the existing source/resource
-    generation and ref-release diagnostics. These are still zero-credit
-    fail-closed fields; they do not close the unchecked real-sender item, but
-    they make the future sender inherit WSL-style process/object/handle-table
-    lifetime requirements before it can publish a packet.
+    `hmgr_index_unique_valid`, `device_object_ref_active`,
+    `resource_object_ref_active`, `allocation_object_ref_active`,
+    `shared_parent_snapshot_valid`, `opened_child_snapshot_valid`, a
+    `syncobject_object_ref_active` field that is 1 for wait-sync pending
+    records, and `owner_close_cancelled=0` fields alongside the existing
+    source/resource generation and fail-closed ref-release diagnostics. These
+    are still zero-credit fail-closed fields and are deliberately named as
+    active object-table refs/snapshots rather than retained WSL krefs; they do
+    not close the unchecked real-sender item, but they make the future sender
+    inherit WSL-style process/object/handle-table lifetime requirements before
+    it can publish a packet.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
     evidence. A DDA-backed Nouveau PCI display path is its own native-display
     lane; it is not a D3D12 resource scanout-bind path and cannot close the
