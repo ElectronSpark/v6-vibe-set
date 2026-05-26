@@ -170,7 +170,7 @@ these chunks in order:
      KVM/virgl recheck, WebKit route, WebKit content, and final WebKit artifact
      in one current-run dependency row so later sections cannot open from
      isolated partial evidence.
-   - `dxgprobe` and `gpucorevalidate` now emit
+  - `dxgprobe` and `gpucorevalidate` now emit
      `gpu_remaining_plan_dependency_skeleton_matrix`, requiring the WSL
      display-bind ioctl and in-band present-history completion handler to be
      absent, GPU-P sender/completion contracts to be zero, DDA/Nouveau import,
@@ -178,6 +178,16 @@ these chunks in order:
      present/OpenGL/WebKit credit to remain zero while the root display-bind
      gate is closed. The focused core runner requires this row before any
      later native-present/FPS/WebKit evidence can be trusted.
+   - The skeleton is backed by source-audited negative-proof rows:
+     `wsl_dxg_uapi_namespace_negative_matrix`,
+     `wsl_dxg_adapter_display_caps_negative_matrix`, and
+     `dda_nouveau_non_readback_display_proof_matrix`. These follow the WSL
+     `dxgkrnl` UAPI/display-cap clearing and Linux Nouveau DRM/KMS shape:
+     WSL enum, adapter, standard-allocation, and present-history telemetry
+     fields are not a display-bind ABI; DDA PCI BAR/DMA/IRQ acceptance is not
+     non-readback display proof until Nouveau display creation, non-virtual
+     connectors, hardware vblank IRQs, and hardware page-flip completions all
+     correlate through the KMS `NOUVEAU_HW` lane.
 
 ### 1. WSL2 DXG Parity
 
