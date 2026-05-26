@@ -1014,6 +1014,15 @@ but do not treat them as open plan items by default.
   display-bind present/completed ids and resource generation. Policy artifacts
   should expose `d3d12_run_id_match` and `d3d12_content_progress` so shell
   validators can fail stale, prefixed, or chrome/title-only evidence.
+- `webkitgpusmoke --negative-selftests` is the pure-C consumer-negative
+  validator for WebKit evidence. Keep
+  `webkit_contract_parser_negative_matrix`,
+  `webkit_lineage_equality_negative_matrix`, and
+  `webkit_animated_content_fixture_negative_matrix` green before trusting a
+  shell WebKit artifact: prefixed/suffixed keys, malformed numerics,
+  backend/transport aliases, completion-source aliases, stale D3D12/FPS/content
+  lineage, backend-zero nonzero-id claims, and title-only animated fixture
+  progress must all remain zero-credit.
 - WebKit acceleration validation starts with the
   `webkit_evidence_rejection_matrix` policy preflight. Chrome/title/cursor-only,
   callback-only, release-only, render-node-only, dmabuf-only, env-only, and
