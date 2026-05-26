@@ -716,6 +716,14 @@ non-readback display handoff.
     `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused runner require
     `d3d12_dda_nouveau_separate_display_not_bind_matrix` so DDA PCI display
     presence cannot be confused with a D3D12 resource-to-scanout bind.
+  - [x] Make host-to-VM present-history completion observable before any
+    future native-present credit. The Hyper-V DXG receive path now recognizes
+    `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
+    length, and payload head bytes in `/dev/dxg`, and the present-source C
+    validators require
+    `dxg_host_to_vm_presenthistory_completion_matrix` with zero present-history
+    packets, zero completion contracts, zero native-present credit, and zero
+    OpenGL-submit credit on the current fail-closed path.
 - [x] Make the selected bind lane's missing host ABI explicit and validator
   owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
   `gpucorevalidate` now emit and require
