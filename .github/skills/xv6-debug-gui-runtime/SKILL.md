@@ -825,17 +825,26 @@ but do not treat them as open plan items by default.
   scanout completion contract exists.
 - `d3d12_display_bind_host_abi_discovery_matrix` is the bounded host-ABI
   source-audit gate. It must prove no custom host tool, no WSL display-bind
-  ioctl, WSLg/FreeRDP absent, RDP copy/dirty-frame only, GPU-P sender contract
-  zero, completion-demux contract zero, DDA/Nouveau D3D12 import/scanout/
-  hardware flip absent, provider fail-closed, transport/present/completed ids
-  zero, and native-present/OpenGL/WebKit credit zero.
+  ioctl, WSLg/FreeRDP absent, RDP copy/dirty-frame only, hv_sock display-bind
+  service absent, GPU-P sender contract zero, completion-demux contract zero,
+  DDA/Nouveau D3D12 import/scanout/hardware flip absent, provider
+  fail-closed, transport/present/completed ids zero, and
+  native-present/OpenGL/WebKit credit zero.
 - `d3d12_negative_abi_manifest_matrix` is the canonical source-audited
   negative ABI manifest. It must keep WSL `d3dkmthk.h`/`dxgvmbus.c`
-  display-bind absent, present-history/redirected-flip/BLT/HWQUEUE enum
-  candidates classified as telemetry or normal submit rather than scanout bind,
-  synthvid classified as GPA dirty-rect display, DDA/Nouveau classified as a
-  separate PCI display path, and host packet/completion/native-present credit
-  at zero.
+  display-bind absent, hv_sock display-bind service absent,
+  present-history/redirected-flip/BLT/HWQUEUE enum candidates classified as
+  telemetry or normal submit rather than scanout bind, synthvid classified as
+  GPA dirty-rect display, DDA/Nouveau classified as a separate PCI display
+  path, and host packet/completion/native-present credit at zero.
+- `nouveau_kms_acceptance_shape_matrix` and
+  `nouveau_dda_display_positive_shape_matrix` keep DDA/Nouveau display work
+  Linux-shaped without granting D3D12 credit. The KMS native-present gate must
+  require display engine, mode_config, CRTCs/encoders/primary planes,
+  outp/connector/head masks, NVIF head construction, non-virtual connector,
+  HPD/DP IRQ events, per-head vblank IRQ source, atomic commit tail, hardware
+  page-flip completion, linear scanout policy, and no unvalidated nonlinear
+  modifiers before any DDA display credit is accepted.
 - For sampled fail-closed provider submits,
   `d3d12_display_bind_provider_pending_publication_matrix` should show the
   no-host-ABI pending path resolved and refs released
