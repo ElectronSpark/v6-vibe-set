@@ -356,6 +356,15 @@ but do not treat them as open plan items by default.
   zero until a documented sender exists. Pair this with
   `d3d12_display_bind_stale_source_zero_credit_matrix`; stale/after-release
   rejects may advance, but any late present/completed ids must remain zero.
+- Keep the provider pending publication object graph granular and WSL-shaped.
+  `d3d12_display_bind_provider_pending_publication_matrix` should expose
+  process namespace validity, per-object HMGR validity for
+  device/resource/allocation, active object refs, shared-parent id/ref/child
+  and global-share identity, opened-child snapshot validity, and monitored
+  sync-object fence value/CPU-VA/kernel-VA/map-size fields. These are
+  admission/lifetime proof only; they do not grant native-present,
+  OpenGL-submit, or WebKit credit while the sender and completion contract are
+  absent.
 - Keep WSL-style packet lifetime visible even while no sender exists:
   `d3d12_display_bind_provider_packet_lifetime_matrix` must report no listed
   packet, request id, transport pending id, completion demux, host-saw packet,

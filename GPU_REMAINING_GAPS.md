@@ -966,6 +966,15 @@ non-readback display handoff.
     demux, no host-saw display-bind packet, no transport source, zero
     present/completed ids, and zero native-present/OpenGL/WebKit credit with
     `PASS_FAILCLOSED`.
+  - [x] Granularize the provider pending publication proof with the WSL-shaped
+    object graph before a real sender is wired. The provider row now carries
+    process namespace, per-object HMGR validity for device/resource/allocation,
+    shared-parent id/ref/child/global-share identity, opened-child snapshot
+    validity, and monitored sync-object fence value/VA/map-size diagnostics.
+    These tokens are still zero-credit fail-closed evidence: sender-owned
+    transport ids, demux, present/completed ids, native-present credit,
+    OpenGL-submit credit, and WebKit credit remain zero until a documented
+    GPU-P/DDA sender and display completion source exist.
   - [x] Add the provider no-send preflight ledger before the real sender is
     wired. `hyperv_dxg_display_bind_submit_failclosed()` now records that the
     selected provider reached a complete, pin-revalidated ready-to-send
