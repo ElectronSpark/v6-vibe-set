@@ -281,6 +281,12 @@ but do not treat them as open plan items by default.
   presence, no-host/no-sender/no-completion diagnostics, pin revalidation, and
   zero native-present/OpenGL-submit credit until a documented GPU-P/DDA sender
   replaces the fail-closed provider.
+  The May 26, 2026 follow-up audit also found no WSL Linux UAPI ioctl, VMBus
+  sender, or host-to-VM demux that binds a D3D12 resource/allocation/fence to
+  scanout and returns source/resource-correlated present completion. Treat
+  `VM_PKT_COMP` transaction replies and `PROPAGATEPRESENTHISTORYTOKEN` as
+  zero-credit telemetry until a provider-owned sender/completion contract
+  exists.
 - A future provider-success result must pass the full source-local accept
   shape before `fb_dxg_present.c` may copy out native ids: provider status
   success, real transport, scanout-bind operation, host ABI present, sender
@@ -948,6 +954,12 @@ but do not treat them as open plan items by default.
   ids. Downstream gate rows should keep separate reason fields for backend-zero,
   display-bind completion-source rejection, native-id rejection, and lineage
   rejection so a future enabled artifact cannot hide which dependency opened.
+- WebKit C consumers must parse policy and D3D12 evidence as whitespace/line
+  bounded `key=value` tokens. Raw substring searches can accept prefixed keys,
+  suffixed keys, malformed numeric values, or backend/transport aliases; keep
+  `display_bind_backend=gpup_dxg_scanout_bind` and
+  `display_bind_transport=gpu-p-dxg-resource-scanout-bind` as the canonical
+  final tokens.
 - WebKit also requires
   `webkit_stale_display_bind_evidence_rejection_matrix` and
   `webkit_enabled_artifact_contract_matrix`. Stale/after-close display-bind

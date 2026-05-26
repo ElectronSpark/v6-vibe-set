@@ -746,6 +746,14 @@ non-readback display handoff.
   completion. The current implementation must remain fail-closed until a
   documented GPU-P/DXG display-bind packet exists or the separate DDA/Nouveau
   native display path can provide equivalent non-readback completion.
+  A follow-up WSL2 audit on 2026-05-26 confirmed the same root gap against
+  `drivers/hv/dxgkrnl` and `include/uapi/misc/d3dkmthk.h`: WSL has
+  shared-resource, sync-file, submit, standard-allocation, and present-history
+  telemetry primitives, but no Linux UAPI ioctl, VMBus sender, or implemented
+  host-to-VM demux that binds a D3D12 resource/allocation/fence to scanout and
+  returns source/resource-correlated present completion. `VM_PKT_COMP`
+  transaction replies and `PROPAGATEPRESENTHISTORYTOKEN` remain zero-credit
+  telemetry until a provider-owned sender/completion contract is documented.
   `dxg_native_present_lane_rejection_matrix` now names each rejected lane
   separately so future work cannot treat WSL present-history enum knowledge,
   synthvid/GPA dirty rectangles, Linux Hyper-V DRM shadow blits, or a separate
@@ -1498,6 +1506,12 @@ alone.
     `backend_zero_rejected`, `display_bind_completion_source_rejected`,
     `native_present_ids_zero_rejected`, and `lineage_rejected` fields before
     any enabled artifact can open.
+  - [x] Harden the C WebKit evidence readers so policy and D3D12 evidence keys
+    are token-boundary and line-aware. `wlcomp_launcher` and
+    `webkitgpusmoke` now reject prefix/suffix substring matches, malformed
+    numeric tokens, truncating string tokens, and the old permissive backend
+    alias that treated `gpu-p-dxg-resource-scanout-bind` as a backend instead
+    of the canonical transport.
 - [ ] Produce one enabled WebKit artifact only after native present, finite
   480p FPS, backend flag, and shared-surface contract all pass.
   `webkit_enabled_artifact_contract_matrix` now names the only accepted future
