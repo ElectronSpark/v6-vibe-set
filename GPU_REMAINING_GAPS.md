@@ -1251,6 +1251,15 @@ non-readback display handoff.
      callbacks only after that native completion.
   5. Validators/credit: add the native completion validators and only then let
      FPS, backend OpenGL-submit, and WebKit gates consume the evidence.
+  The future-success accept gate is now source-authority hard: kernel
+  `fb_dxg_present_display_bind_result_accepts()` requires provider
+  publication, publish-before-send ordering, nonzero transport pending id,
+  command id, transaction id, channel, completion demux registration,
+  `host_saw_display_bind_packet=1`, and
+  `wsl_presenthistory_completion_credit=0` in addition to nonzero
+  display-correlated present/completed ids. `fbstat` and `dxgprobe` now expose
+  the same requirements in `d3d12_display_bind_success_shape_matrix`, so a
+  partial sender cannot open native-present credit.
 - [x] Add per-client, per-resource, per-generation native-present counters so
   one client's progress cannot satisfy another client's validator.
   `wlcomp` records `d3d12_client_native_present_*`,
@@ -1696,11 +1705,15 @@ alone.
     `webkitgpusmoke --negative-selftests` now emits
     `webkit_contract_parser_negative_matrix`,
     `webkit_lineage_equality_negative_matrix`, and
-    `webkit_animated_content_fixture_negative_matrix`. These rows prove
-    prefixed/suffixed keys, malformed numeric values, backend/transport and
-    completion-source aliases, unsealed display-bind claims, stale
-    D3D12/FPS/content lineage, backend-zero nonzero-id claims, and title-only
-    animated fixture progress all remain
+    `webkit_animated_content_fixture_negative_matrix`. It also emits
+    `webkit_animated_content_native_present_negative_matrix`, which rejects a
+    forged plausible content-progress/source-authority tuple unless native
+    present, prior finite FPS, backend OpenGL-submit, and shared-surface
+    contract evidence are all present. These rows prove prefixed/suffixed
+    keys, malformed numeric values, backend/transport and completion-source
+    aliases, unsealed display-bind claims, stale D3D12/FPS/content lineage,
+    backend-zero nonzero-id claims, title-only animated fixture progress, and
+    forged content progress all remain
     zero-credit. `hyperv-webkit-gpu-validate.sh` requires those rows during
     guest WebKit validation. Validation on 2026-05-26:
     `bash -n scripts/hyperv-webkit-gpu-validate.sh`,

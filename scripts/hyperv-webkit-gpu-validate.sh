@@ -1927,6 +1927,8 @@ run_webkit_negative_selftests()
         "WebKit pure-C lineage equality negative matrix"
     require_log 'webkitgpusmoke: webkit_animated_content_fixture_negative_matrix .*title_only_liveness=1 .*compositor_owned_visible_content=MISSING .*content_crc_progress=MISSING .*frame_hash_progress=MISSING .*title_only_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
         "WebKit pure-C animated fixture negative matrix"
+    require_log 'webkitgpusmoke: webkit_animated_content_native_present_negative_matrix .*forged_content_progress=PASS .*source_authority_present=PASS .*forged_content_rejected=PASS .*missing_native_present_rejected=PASS .*missing_prior_fps_rejected=PASS .*backend_zero_rejected=PASS .*missing_shared_surface_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_content_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+        "WebKit pure-C animated native-present negative matrix"
     require_log 'webkit_negative_selftests_status=0' \
         "WebKit pure-C negative selftest exit status"
 }
