@@ -161,6 +161,15 @@ but do not treat them as open plan items by default.
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split
   those into independent pass claims; each later chunk depends on nonzero
   display-correlated completion from the earlier source/resource generation.
+- Keep the remaining GPU plan wired through
+  `gpu_remaining_plan_dependency_skeleton_matrix`: this row ties the root
+  display-bind gate, native completion validators, finite 480p gate, demo
+  interaction, Hyper-V OpenGL-submit, KVM/virgl recheck, WebKit route/content,
+  and final WebKit artifact together. It should stay green only while WSL has
+  no Linux display-bind ioctl or in-band present-history completion handler,
+  GPU-P sender/completion contracts are zero, DDA/Nouveau import/scanout-bind/
+  hardware-flip completion are absent, and native-present/OpenGL/WebKit credit
+  is zero.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
