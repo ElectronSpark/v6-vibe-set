@@ -216,10 +216,14 @@ but do not treat them as open plan items by default.
   present-history telemetry remain negative proof. Completion authority is
   narrower than progress telemetry: only the source-local display-bind provider
   may issue D3D12 present/completed ids, while KMS vblank/page-flip and Nouveau
-  IRQ-cause counters stay in a separate native-display namespace. DDA/Nouveau needs real
-  Linux-shaped display creation, non-virtual
-  connectors, hardware vblank IRQs, KMS `NOUVEAU_HW` page flips, and hardware
-  flip completions before it can be a non-readback display path.
+  IRQ-cause counters stay in a separate native-display namespace. DDA/Nouveau
+  needs real Linux-shaped display creation, non-virtual connectors, hardware
+  vblank IRQs, KMS `NOUVEAU_HW` page flips, and hardware flip completions
+  before it can receive `dda_native_display_credit`, and even that remains
+  separate from `d3d12_native_present_credit`. A D3D12 display-bind result must
+  use `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`; do not
+  let `dda_nouveau_native_display` satisfy the D3D12 resource-to-display bind
+  gate.
 - WebKit and FPS validators should consume `/tmp/wlcomp-d3d12-present` as the
   current-run evidence source and reject title/chrome/cursor-only progress,
   stale logs, dmabuf/render-node-only evidence, and app-loop FPS numbers.
@@ -1049,10 +1053,12 @@ but do not treat them as open plan items by default.
   id to match both `d3d12_run_id` and
   `d3d12_present_identity_compositor_run_id`, and reject acceleration unless
   compositor-owned content CRC/frame/hash progress matches the provider-owned
-  display-bind present/completed ids and resource generation. Policy artifacts
-  should expose `d3d12_run_id_match`, `d3d12_content_progress`, and
-  `d3d12_evidence_seal` so shell validators can fail stale, unsealed,
-  prefixed, or chrome/title-only evidence.
+  display-bind present/completed ids, resource generation, and source-authority
+  tuple. Policy artifacts should expose `d3d12_run_id_match`,
+  `d3d12_content_progress`, `d3d12_evidence_seal`,
+  `display_bind_transport_source`, `host_saw_display_bind_packet`, and
+  `wsl_presenthistory_completion_credit` so shell validators can fail stale,
+  unsealed, prefixed, WSL-telemetry, host-copy, or chrome/title-only evidence.
 - `webkitgpusmoke --negative-selftests` is the pure-C consumer-negative
   validator for WebKit evidence. Keep
   `webkit_contract_parser_negative_matrix`,
@@ -1102,6 +1108,13 @@ but do not treat them as open plan items by default.
   current-run D3D12 display-bind completion, finite 480p FPS,
   `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, shared-resource/fence identity, and
   compositor-owned content CRC/frame/hash identity from the same lineage.
+  The enabled artifact row must also echo and require the provider-owned
+  source-authority tuple:
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+  `host_saw_display_bind_packet=1`, and
+  `wsl_presenthistory_completion_credit=0`; WSL present-history telemetry and
+  host-copy aliases remain zero-credit even if other display-bind ids are
+  nonzero.
 - For WSL `hmgrtable` parity, keep local adapter handles and normal DXG object
   handles distinct:
   - `hvdxg_process_state` should keep WSL-shaped process object refs separate
