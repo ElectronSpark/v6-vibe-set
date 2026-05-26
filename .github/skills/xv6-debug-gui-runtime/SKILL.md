@@ -609,6 +609,16 @@ but do not treat them as open plan items by default.
   They must show absent display bind/transport, zero present/completion ids,
   blocked or deferred callback/release ordering, required per-client
   generation matching, and zero native-present/OpenGL-submit credit.
+- `d3d12_native_completion_lifetime_matrix` is the order/lifetime guard. It
+  may pass preflight before any provider submit, but after a fail-closed
+  provider submit it must show `provider_no_completion=1`; after a future
+  successful provider submit it must require nonzero display-correlated
+  present/completed ids, callback/release after completion, close-before-signal
+  cancellation, cleanup balance, and no provider negative diagnostics.
+- `d3d12_display_bind_stale_source_zero_credit_matrix` is the stale-source
+  guard. Owner close or explicit unregister must clear source/global
+  display-bind ids, reject after-close queries, avoid late completion credit,
+  and keep native-present/OpenGL/WebKit credit at zero.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,
@@ -754,6 +764,12 @@ but do not treat them as open plan items by default.
   before heavy Hyper-V sampling. The required negative is the observed around-40
   displayed/demo FPS with single-digit visible cadence, stale run id, static
   content, or frozen-window evidence.
+- `fps_frozen_window_rejection_matrix` and
+  `fps_sustained_post_warmup_progress_matrix` are the freeze-after-motion
+  guards. The FPS validator must sample more than one visual window and reject
+  runs where native/display/content/callback/release/present/completed counters
+  or thumbnails move briefly and then stop, even if the overlay still prints a
+  plausible FPS number.
 - `mesawlegl` owns `/tmp/mesawlegl-fps` app telemetry. Treat its visible/app
   FPS as context-only unless each sample has matching validation run id,
   `process_id == d3d12_client_pid`, nonzero DXG present/completed counters,
@@ -818,6 +834,13 @@ but do not treat them as open plan items by default.
   callback-only, release-only, render-node-only, dmabuf-only, env-only, and
   software-fallback evidence must all fail before any enabled WebKit artifact is
   considered.
+- WebKit also requires
+  `webkit_stale_display_bind_evidence_rejection_matrix` and
+  `webkit_enabled_artifact_contract_matrix`. Stale/after-close display-bind
+  evidence is always zero-credit. A future enabled artifact must prove
+  current-run D3D12 display-bind completion, finite 480p FPS,
+  `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, shared-resource/fence identity, and
+  compositor-owned content CRC/frame/hash identity from the same lineage.
 - For WSL `hmgrtable` parity, keep local adapter handles and normal DXG object
   handles distinct:
   - `hvdxg_process_state` should keep WSL-shaped process object refs separate

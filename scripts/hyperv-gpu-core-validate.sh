@@ -682,6 +682,10 @@ require_log 'd3d12_display_bind_backend_boundary_matrix .*backend=gpup_dxg_scano
     "D3D12 display-bind backend boundary is explicit and fail-closed"
 require_log 'd3d12_native_completion_future_contract_matrix .*display_bind_gate=closed .*requires_present_id=1 .*requires_completed_ge_present=1 .*requires_same_resource_generation=1 .*requires_callback_release_after_completion=1 .*requires_close_before_signal_cancel=1 .*requires_cleanup_balance=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
     "native D3D12 completion future contract remains armed but fail-closed"
+require_log 'd3d12_native_completion_lifetime_matrix .*callbacks_after_completion_required=1 .*releases_after_completion_required=1 .*close_before_signal_cancel_required=1 .*cleanup_balance_required=1 .*failclosed_callbacks_after_completion=0 .*failclosed_releases_after_completion=0 .*native_present_credit=0 .*backend_opengl_submit=0 .*status=PASS' \
+    "native D3D12 completion lifetime/order contract remains fail-closed"
+require_log 'd3d12_display_bind_stale_source_zero_credit_matrix .*release_sources_delta=[1-9][0-9]* .*after_close_queries=[1-9][0-9]* .*stale_source_rejects=[1-9][0-9]* .*release_clears=[1-9][0-9]* .*late_completion_after_release=0 .*after_close_present_id=0 .*after_close_completed=0 .*global_present_id_after_close=0 .*global_completed_after_close=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+    "stale display-bind source evidence remains zero-credit after owner close"
 require_log 'd3d12_present_commit_result_copyout_contract_matrix .*copyout_on_success=IMPLEMENTED .*failure_returns_errno=PASS .*failure_preserves_present_id=0 .*failure_preserves_completed=0 .*present_id=0 completed=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
     "D3D12 present commit result copyout contract"
 require_log 'gpubuftest: completed 3 buffer cycles' "BO/fence validator"
