@@ -270,6 +270,15 @@ but do not treat them as open plan items by default.
   row must be `PASS_FAILCLOSED` with
   `provider_no_host_abi=1`, `provider_no_sender=1`, and
   `provider_no_completion=1`.
+- The fail-closed provider pending row must use provider-owned lifetime
+  fields, not validator inference: provider owner/source/resource generations
+  must match the kernel pending owner/source/resource generations, while
+  `no_host_abi_cancelled`, `no_host_abi_refs_released`,
+  publish-before-send, transport pending id, command id, transaction id,
+  channel, completion demux, and native-present/OpenGL-submit credit remain
+  zero until a documented sender exists. Pair this with
+  `d3d12_display_bind_stale_source_zero_credit_matrix`; stale/after-release
+  rejects may advance, but any late present/completed ids must remain zero.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12
