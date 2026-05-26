@@ -960,6 +960,11 @@ but do not treat them as open plan items by default.
   `display_bind_backend=gpup_dxg_scanout_bind` and
   `display_bind_transport=gpu-p-dxg-resource-scanout-bind` as the canonical
   final tokens.
+- Pure-C validator consumers should use the same discipline. `gpucorevalidate`
+  output checks should match whitespace/line-bounded tokens while still
+  allowing deliberate `field=` prefix probes, and `dxgprobe` should parse
+  `/dev/dxg` host-to-VM status fields on one line with whole-token numeric
+  values before using present-history telemetry rows.
 - WebKit also requires
   `webkit_stale_display_bind_evidence_rejection_matrix` and
   `webkit_enabled_artifact_contract_matrix`. Stale/after-close display-bind
