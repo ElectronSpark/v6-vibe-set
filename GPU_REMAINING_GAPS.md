@@ -823,6 +823,14 @@ non-readback display handoff.
   private driver data rather than scanout binding, synthvid is only a GPA dirty
   rectangle display path, and DDA/Nouveau PCI display presence is separate from
   D3D12 resource import, scanout bind, and hardware flip completion.
+  The executable WSL namespace proof now also includes
+  `wsl_dxg_ioctl_namespace_probe_matrix`: malformed `/dev/dxg` ioctl probes
+  with the wrong type, wrong size, wrong direction, the first post-WSL command
+  number (`0x4a`), and a high future command number (`0x7f`) must all be
+  rejected and leave Linux ioctl/resource-bind/completion contracts, transport,
+  present/completed ids, native-present credit, and OpenGL-submit credit at
+  zero. This keeps a future non-WSL sender from being inferred through an
+  accidental WSL ioctl alias.
   `gpu_remaining_holistic_skeleton_matrix` names the open plan count,
   ordered chunks (`display_bind,native_completion,fps,backend,webkit`), selected
   GPU-P/DDA lane, display-bind-provider completion authority, and every
