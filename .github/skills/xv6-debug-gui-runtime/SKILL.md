@@ -867,6 +867,12 @@ but do not treat them as open plan items by default.
   runs where native/display/content/callback/release/present/completed counters
   or thumbnails move briefly and then stop, even if the overlay still prints a
   plausible FPS number.
+- The FPS validator's preflight must leave durable rejection evidence, not only
+  console text. `fps_forged_display_bind_negative_matrix` belongs in the log,
+  outside-overlay CRC transitions must be computed before sustained-window
+  checks, and `finite_fps_credit` must stay separate from
+  `opengl_submit_credit`; the latter requires both finite native-present FPS
+  and `backend_opengl_submit=1`.
 - `mesawlegl` owns `/tmp/mesawlegl-fps` app telemetry. Treat its visible/app
   FPS as context-only unless each sample has matching validation run id,
   `process_id == d3d12_client_pid`, nonzero DXG present/completed counters,
@@ -936,6 +942,12 @@ but do not treat them as open plan items by default.
   callback-only, release-only, render-node-only, dmabuf-only, env-only, and
   software-fallback evidence must all fail before any enabled WebKit artifact is
   considered.
+- WebKit policy preflight should also reject plausible but incomplete
+  acceleration-looking rows: nonzero display/native ids while
+  `backend_opengl_submit=0`, stale D3D12 run ids, and stale FPS artifact run
+  ids. Downstream gate rows should keep separate reason fields for backend-zero,
+  display-bind completion-source rejection, native-id rejection, and lineage
+  rejection so a future enabled artifact cannot hide which dependency opened.
 - WebKit also requires
   `webkit_stale_display_bind_evidence_rejection_matrix` and
   `webkit_enabled_artifact_contract_matrix`. Stale/after-close display-bind

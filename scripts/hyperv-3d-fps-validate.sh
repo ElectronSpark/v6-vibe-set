@@ -581,6 +581,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(line + "\n")
     out.write(overlay_line + "\n")
     out.write(credit_line + "\n")
+    out.write(forged_line + "\n")
     out.write(downstream_line + "\n")
     out.write(dependency_line + "\n")
     out.write(content_line + "\n")
@@ -1183,7 +1184,8 @@ def display_bind_dependency_complete(backends, transports, present_ids,
 def log_fps_display_bind_dependency(
         stage, backends, transports, present_ids, completed_ids,
         resource_generations, completion_sources, *, effective_fps=0.0,
-        native_fps=0.0, gate_open=False, status="PASS"):
+        native_fps=0.0, backend_opengl_submit=0, gate_open=False,
+        status="PASS"):
     display_bind_ok = display_bind_dependency_complete(
         backends,
         transports,
@@ -1193,6 +1195,7 @@ def log_fps_display_bind_dependency(
         completion_sources,
     )
     finite_credit = 1 if gate_open and display_bind_ok else 0
+    opengl_credit = 1 if finite_credit and backend_opengl_submit == 1 else 0
     log_validation(
         "fps_display_bind_dependency_matrix "
         f"validation_run_id={expected_run_id} stage={stage} "
@@ -1213,13 +1216,14 @@ def log_fps_display_bind_dependency(
         f"display_bind_contract={pass_missing(display_bind_ok)} "
         f"effective_presented_fps={effective_fps:.3f} "
         f"native_present_fps={native_fps:.3f} "
+        f"backend_opengl_submit={backend_opengl_submit} "
         "app_loop_progress_rejected=PASS title_only_progress_rejected=PASS "
         "readback_progress_rejected=PASS dmabuf_only_progress_rejected=PASS "
         "app_loop_progress_credit=0 title_progress_credit=0 "
         "readback_progress_credit=0 dmabuf_progress_credit=0 "
         f"finite_fps_credit={finite_credit} "
         f"native_present_credit={finite_credit} "
-        f"opengl_submit_credit={finite_credit} "
+        f"opengl_submit_credit={opengl_credit} "
         f"gate={'open' if finite_credit else 'closed'} status={status}"
     )
 
@@ -1431,6 +1435,7 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         d3d12_display_bind_completed_ids,
         d3d12_display_bind_resource_generations,
         d3d12_display_bind_completion_sources,
+        backend_opengl_submit=backend_opengl_submit,
         gate_open=gate_open,
     )
     log_validation(
@@ -3551,6 +3556,11 @@ if active_full_evidence_intervals < required_full_evidence_intervals:
         f"display_bind_completed_id_deltas={','.join(str(v) for v in d3d12_display_bind_completed_id_deltas)} "
         f"gpup_dda_commit_deltas={','.join(str(v) for v in d3d12_gpup_dda_commit_deltas)}"
     )
+outside_overlay_crc_transitions = sum(
+    1
+    for before, after in zip(outside_overlay_crcs, outside_overlay_crcs[1:])
+    if before != after
+)
 sustained_native_windows = require_sustained_counter_windows(
     "native_present",
     native_completion_deltas,
@@ -4683,6 +4693,7 @@ log_fps_display_bind_dependency(
     d3d12_display_bind_completion_sources,
     effective_fps=effective_presented_fps,
     native_fps=native_fps,
+    backend_opengl_submit=1,
     gate_open=True,
 )
 log_validation(
