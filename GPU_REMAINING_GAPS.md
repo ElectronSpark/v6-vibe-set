@@ -1011,6 +1011,22 @@ non-readback display handoff.
     native-present credit, and zero OpenGL-submit credit. This locks the exact
     replacement point for a future documented GPU-P/DDA sender without
     closing the unchecked real-sender item.
+  - [x] Add a display-bind authority-chain skeleton before the real sender is
+    wired. `d3d12_display_bind_authority_chain_matrix` now ties the required
+    order together as host ABI, provider send, host packet, provider demux,
+    display completion, resource generation, and consumer credit. Today the
+    host-ABI/provider-send/host-packet/demux/display-completion/consumer gates
+    are closed, source and resource generation gates are only armed, WSL
+    present-history, KMS completion, sync-file fences, and DDA native display
+    are explicitly zero-credit, and native-present/OpenGL/WebKit credit remains
+    zero.
+  - [x] Split DDA/Nouveau bridge separation out from the generic DDA display
+    rejection. `dda_nouveau_d3d12_bridge_disjoint_matrix` now requires
+    `dda_d3d12_import_path=0`, `dda_d3d12_scanout_bind=0`,
+    `dda_hw_flip_completion_for_d3d12=0`, `kms_lane_is_d3d12=0`, zero
+    D3D12 display-bind ids, and zero native-present/OpenGL credit. This keeps a
+    future Linux-shaped DDA/Nouveau native-display path visible without letting
+    it satisfy the D3D12 shared-resource scanout-bind root.
   - [x] Make the fail-closed provider pending/stale diagnostics provider-owned
     instead of inferred by user-space.
     The Hyper-V provider result and `fb_gpu_stats` now expose owner,
