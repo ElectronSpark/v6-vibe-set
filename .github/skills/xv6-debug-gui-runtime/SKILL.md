@@ -177,6 +177,13 @@ but do not treat them as open plan items by default.
   needs a non-WSL/DDA transport source, `host_saw_display_bind_packet=1`,
   provider completion demux, and source/resource-correlated display
   completion; WSL present-history telemetry remains zero-credit.
+  Keep the WSL HMGR/process-scope diagnostics beside provider-pending work:
+  `dxg_hmgr_type_coverage_matrix`, `dxg_object_table_type_counts_matrix`,
+  `dxg_hmgr_entry_lifecycle_matrix`, `dxg_hmgr_pending_validity_matrix`,
+  `dxg_object_table_scope_matrix`, `dxg_process_identity_matrix`, and
+  `dxg_process_adapter_device_counts_matrix` must name missing WSL HMGR types,
+  process-scoped object tables, pid/tgid identity, absent xv6 `vpid`/`nspid`
+  namespace support, and zero native-present/OpenGL-submit credit.
 - When planning the remaining native-present work, keep the chunks ordered:
   host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split
