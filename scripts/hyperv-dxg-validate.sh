@@ -213,7 +213,7 @@ require_no_malformed_validator_markers() {
 
     bad=$(normalized_log_lines |
         grep -E '^[VD]:' |
-        grep -Ev '^[VD]:(sl|sp|bl|eo|rp|pe|dx|lc|in|cp)$' || true)
+        grep -Ev '^[VD]:(sl|sp|bl|eo|rp|pe|dx|lc|in|cp|oh|hl|sr|sf)$' || true)
     if [[ -n "${bad}" ]]; then
         echo "hyperv-dxg-validate: malformed or merged validator marker" >&2
         printf '%s\n' "${bad}" >&2
@@ -410,10 +410,10 @@ require_import_negative_matrix() {
         "D3D12 sync NT share copyout-failure cleanup PASS"
     require_log 'ntshare_copyout_cleanup_matrix kind=sync .*fault_share_rc=-1 .*reclaimed=1 .*refs_after=0 .*valid_share_after_fault=1 .*returned_fd_valid=1' \
         "D3D12 sync NT share copyout failure reclaimed fd/ref and recovered"
-    require_log 'createallocation_unwind_matrix .*create_rc=-14 .*destroy_ctx=5 .*destroy_count=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
-        "D3D12 CREATEALLOCATION copyout-failure cleanup PASS"
-    require_log 'openresource_unwind_matrix .*open_rc=-14 .*destroy_ctx=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
-        "D3D12 OPENRESOURCE copyout-failure cleanup PASS"
+    require_log 'createallocation_unwind_matrix .*create_rc=-[0-9]+ .*copyout_fault=1 .*destroy_target_match=1 .*destroy_ctx=5 .*destroy_count=0 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*status=PASS' \
+        "D3D12 CREATEALLOCATION copyout-failure resource cleanup PASS"
+    require_log 'openresource_unwind_matrix .*open_rc=-[0-9]+ .*copyout_fault=1 .*destroy_ctx=1 .*destroy_ret=0 .*same_process_cleanup=1 .*pin_balanced=1 .*no_local_leak=1 .*parent_same=1 .*parent_refs_balanced=1 .*parent_child_unlinked=1 .*sealed_generation_coherent=1 .*status=PASS' \
+        "D3D12 OPENRESOURCE copyout-failure cleanup and parent rollback PASS"
     require_log 'dxg_tgid_pre_dispatch_matrix .*status=PASS' \
         "DXG inherited fd pre-dispatch TGID gate matrix PASS"
     require_log 'dxg_tgid_pre_dispatch_matrix .*inherited_enum_rc=-1 .*inherited_openadapter_rc=-1 .*inherited_query_rc=-1 .*inherited_create_rc=-1 .*inherited_opensync_rc=-1' \
@@ -1411,10 +1411,13 @@ run_guest 'dxgprobe' "${READ_MS}"
 run_guest 'dxgprobe --try-submit; cat /dev/dxg' 180000
 run_guest 'dxgprobe --owner-isolation' 120000
 run_guest 'echo V:cp; dxgprobe --create-publication-faults-validate; cat /dev/dxg; echo D:cp' 180000
+run_guest 'echo V:hl; dxgprobe --handle-lifetime-validate; cat /dev/dxg; echo D:hl' 180000
 run_guest 'echo V:sl; dxgprobe --shared-lifetime-validate; cat /dev/dxg' 180000
+run_guest 'echo V:sr; dxgprobe --shared-seal-provenance-validate; cat /dev/dxg; echo D:sr' 180000
 run_guest 'echo V:sp; dxgprobe --shared-private-validate; cat /dev/dxg' 180000
 run_guest 'echo V:in; dxgprobe --import-negative; cat /dev/dxg; echo D:in' 180000
 run_guest 'echo V:oh; dxgprobe --sync-handle-source-matrix; cat /dev/dxg; echo D:oh' 180000
+run_guest 'echo V:sf; dxgprobe --syncfile; cat /dev/dxg; echo D:sf' 180000
 run_guest 'echo V:bl; d3d12sharedsmoke --bad-luid' 120000
 run_guest 'echo V:eo; d3d12sharedsmoke' 180000
 run_guest 'echo V:rp' 10000
@@ -1543,8 +1546,16 @@ require_log 'share_object_with_host (ok|failed)' "DXG share-with-host probe"
 require_log 'dxg_shareobject_last=len:' "DXG share-with-host diagnostics"
 require_no_guest_exec_failures
 require_no_malformed_validator_markers
+require_log_line 'V:hl' \
+    "WSL DXG handle/process lifetime validator invocation"
+require_log_line 'D:hl' \
+    "WSL DXG handle/process lifetime validator completion marker"
 require_log_line 'V:sl' \
     "DXG shared-resource lifetime validator invocation"
+require_log_line 'V:sr' \
+    "DXG shared-resource seal/provenance validator invocation"
+require_log_line 'D:sr' \
+    "DXG shared-resource seal/provenance validator completion marker"
 require_log_line 'V:sp' \
     "DXG real-private-payload validator invocation"
 require_log_line 'V:in' \
@@ -1555,6 +1566,10 @@ require_log_line 'V:oh' \
     "OpenSync handle-source validator invocation"
 require_log_line 'D:oh' \
     "OpenSync handle-source validator completion marker"
+require_log_line 'V:sf' \
+    "DXG sync-file lifetime validator invocation"
+require_log_line 'D:sf' \
+    "DXG sync-file lifetime validator completion marker"
 require_log_line 'V:bl' \
     "D3D12 bad-LUID validator invocation"
 require_log_line 'V:eo' \
@@ -1580,6 +1595,22 @@ require_log 'shared_lifetime sealed_add denied' \
     "DXG sealed shared-resource mutation rejection"
 require_log 'shared_private ok' \
     "DXG real-private-payload shared-resource validation"
+require_log 'dxg_process_mem_lifetime_matrix .*object_release_delta=[1-9][0-9]* .*mem_release_delta=[1-9][0-9]* .*mem_free_delta=[1-9][0-9]* .*status=PASS' \
+    "WSL dxgprocess object/memory lifetime release matrix"
+require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc=0 .*close_adapter_rc=0 .*child_destroy_after_final_close_rc=-1 .*status=PASS' \
+    "WSL dxgprocess local-adapter namespace matrix"
+require_log 'dxgprocess_adapter_parent_matrix child_status=0 status=PASS' \
+    "WSL dxgprocess adapter child completion matrix"
+require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*context_rejected=1 .*hwqueue_rejected=1 .*hwqueue_sync_rejected=1 .*sync_rejected=1 .*paging_queue_rejected=1 .*paging_queue_sync_rejected=1 .*resource_rejected=1 .*allocation_rejected=1 .*gpuva_rejected=1 .*device_final_rejected=1 .*status=PASS' \
+    "WSL hmgr stale-handle rejection matrix"
+require_log 'handle_lifetime ok .*min_free:128' \
+    "WSL hmgr handle lifetime/free-list diagnostics"
+require_log 'shared_resource_parent_lifetime_matrix .*fd_refs=[0-9]+/[0-9]+/0 .*children=[1-9][0-9]*/[2-9][0-9]*/[2-9][0-9]* .*sealed_gen=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*status=PASS' \
+    "WSL shared-resource parent lifetime matrix"
+require_log 'shared_resource_sealed_alloc_metadata_matrix .*pages0=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*model_valid=1/1/1 .*status=PASS' \
+    "WSL shared-resource sealed allocation metadata matrix"
+require_log 'shared_resource_seal_provenance_matrix .*refcounts_coherent=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*shared_model_coherent=1 .*no_present_credit=1 .*status=PASS' \
+    "WSL shared-resource seal/provenance zero-credit matrix"
 require_shared_resource_seal_provenance_if_present
 require_import_negative_matrix
 require_opensyncobject_source_matrix_if_present
@@ -1646,10 +1677,14 @@ require_log 'update_alloc_property unsupported' "DXG update-allocation-property 
 require_log 'query_clock_calibration unsupported' "DXG clock-calibration unsupported marker"
 require_log 'enum_processes unsupported' "DXG enum-processes unsupported marker"
 require_log 'dxg_unsupported_last=.*ret:-95' "DXG misc unsupported diagnostics"
-require_log 'sync_file_create unsupported' "DXG sync-file create unsupported marker"
-require_log 'sync_file_wait unsupported' "DXG sync-file wait unsupported marker"
-require_log 'sync_file_open unsupported' "DXG sync-file open unsupported marker"
-require_log 'dxg_syncfile_last=.*ret:-95' "DXG sync-file diagnostics"
+require_log 'sync_file_matrix .*create_rc=0 .*sync_file=[1-9][0-9]* .*open_rc=0 .*open_sync=0x[1-9a-fA-F][0-9a-fA-F]* .*child_status=0 .*child_rc=0' \
+    "DXG sync-file create/open/child-open matrix"
+require_log 'dxg_syncfile_create_unwind_matrix create_fault_rc=-[0-9]+ .*fd_visible=0 .*balanced=1 .*status=PASS' \
+    "DXG sync-file create copyout-failure unwind matrix"
+require_log 'dxg_syncfile_open_unwind_matrix open_fault_rc=-[0-9]+ .*destroy_ret=0 .*source_fd_valid=1 .*no_local_leak=1 .*status=PASS' \
+    "DXG sync-file open copyout-failure unwind matrix"
+require_log 'dxg_syncfile_lifetime=.*create_faults:[1-9][0-9]* .*fd_reclaimed:[1-9][0-9]* .*open_faults:[1-9][0-9]* .*open_destroy:[1-9][0-9]*/[1-9][0-9]*/0' \
+    "DXG sync-file lifetime cleanup diagnostics"
 if [[ "${REQUIRE_BOOT_GLSMOKE}" != "0" ]]; then
     require_log 'glsmoke pid=[0-9]+ exited=1 status=0' \
         "boot-time Mesa Wayland EGL smoke completion"
