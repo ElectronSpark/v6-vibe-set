@@ -162,6 +162,11 @@ but do not treat them as open plan items by default.
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,
   and DDA/Nouveau PCI display split from D3D12 resource import, scanout bind,
   and hardware flip completion.
+  Keep `wsl_dxg_ioctl_namespace_probe_matrix` beside the source-audited WSL
+  namespace rows: wrong ioctl type, wrong size, wrong direction, first
+  post-WSL command `0x4a`, and a high future command such as `0x7f` must all
+  fail and leave Linux ioctl/resource-bind/completion contracts plus
+  native-present/OpenGL-submit credit at zero.
   Provider pending publication evidence must preserve WSL-shaped provenance
   without overstating retained krefs: `dxgprocess_generation`,
   `process_adapter_generation`, `hmgr_index_unique_valid`,
