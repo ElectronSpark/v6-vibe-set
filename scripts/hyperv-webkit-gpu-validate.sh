@@ -1803,6 +1803,22 @@ run_webkit_animated_fixture_liveness()
         tee -a "${LOG}"
 }
 
+run_webkit_negative_selftests()
+{
+    echo "hyperv-webkit-gpu-validate: running WebKit pure-C negative selftests" |
+        tee -a "${LOG}"
+    run_guest "webkitgpusmoke --negative-selftests; echo webkit_negative_selftests_status=\$?" \
+        "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+    require_log 'webkitgpusmoke: webkit_contract_parser_negative_matrix .*prefix_key_rejected=PASS .*suffix_key_rejected=PASS .*malformed_numeric_rejected=PASS .*backend_alias_rejected=PASS .*completion_source_alias_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+        "WebKit pure-C parser negative matrix"
+    require_log 'webkitgpusmoke: webkit_lineage_equality_negative_matrix .*stale_d3d12_run_rejected=PASS .*stale_fps_run_rejected=PASS .*mixed_content_run_rejected=PASS .*backend_zero_with_ids_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+        "WebKit pure-C lineage equality negative matrix"
+    require_log 'webkitgpusmoke: webkit_animated_content_fixture_negative_matrix .*title_only_liveness=1 .*compositor_owned_visible_content=MISSING .*content_crc_progress=MISSING .*frame_hash_progress=MISSING .*title_only_rejected=PASS .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+        "WebKit pure-C animated fixture negative matrix"
+    require_log 'webkit_negative_selftests_status=0' \
+        "WebKit pure-C negative selftest exit status"
+}
+
 run_contract_negative_validate()
 {
     echo "hyperv-webkit-gpu-validate: mode=contract-negative" | tee -a "${LOG}"
@@ -1833,6 +1849,7 @@ run_contract_negative_validate()
         "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
     run_guest "webkitgpusmoke --expect-d3d12-gpu-contract-fail; echo webkit_contract_negative_status=\$?" \
         "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
+    run_webkit_negative_selftests
     run_guest "fbstat; ps; cat /proc/uptime; echo __WEBKIT_CONTRACT_NEG_END__" \
         "${WEBKIT_GPU_CONTRACT_NEGATIVE_READ_MS:-60000}"
 
@@ -1992,6 +2009,7 @@ run_guest "cat /proc/cmdline; cat /proc/uptime; rm -f /tmp/wlcomp-d3d12-present;
     "${READ_MS}"
 
 run_webkit_animated_fixture_liveness
+run_webkit_negative_selftests
 
 require_log 'webkit=1 .*webkit_accel=1 .*webkit_contract_wait_ms=120000 .*webkit_api_smoke=1 .*webkit_webgl_smoke=1 .*webkit_logging=1' \
     "WebKit local GPU/API smoke command line"

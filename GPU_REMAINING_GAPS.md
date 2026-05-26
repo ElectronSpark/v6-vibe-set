@@ -1588,6 +1588,20 @@ alone.
     present/completed ids and resource generation. The policy artifact exposes
     `d3d12_run_id_match` and `d3d12_content_progress` so stale, prefixed, or
     chrome/title-only evidence remains zero-credit.
+  - [x] Add pure-C WebKit negative selftests for parser, lineage, and
+    animated-fixture evidence rejection.
+    `webkitgpusmoke --negative-selftests` now emits
+    `webkit_contract_parser_negative_matrix`,
+    `webkit_lineage_equality_negative_matrix`, and
+    `webkit_animated_content_fixture_negative_matrix`. These rows prove
+    prefixed/suffixed keys, malformed numeric values, backend/transport and
+    completion-source aliases, stale D3D12/FPS/content lineage, backend-zero
+    nonzero-id claims, and title-only animated fixture progress all remain
+    zero-credit. `hyperv-webkit-gpu-validate.sh` requires those rows during
+    guest WebKit validation. Validation on 2026-05-26:
+    `bash -n scripts/hyperv-webkit-gpu-validate.sh`,
+    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
+    and staged `webkitgpusmoke --negative-selftests` passed.
 - [ ] Add an animated WebKit content fixture and correlate content CRC/frame
   hash progress with native-present completions for the same client/resource
   generation.
