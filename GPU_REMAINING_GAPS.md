@@ -760,6 +760,11 @@ non-readback display handoff.
   private driver data rather than scanout binding, synthvid is only a GPA dirty
   rectangle display path, and DDA/Nouveau PCI display presence is separate from
   D3D12 resource import, scanout bind, and hardware flip completion.
+  `gpu_remaining_holistic_skeleton_matrix` names the open plan count,
+  ordered chunks (`display_bind,native_completion,fps,backend,webkit`), selected
+  GPU-P/DDA lane, display-bind-provider completion authority, and every
+  downstream gate with zero native-present/OpenGL/WebKit credit until a real
+  sender and display completion source replace the fail-closed provider.
   `host_display_bind_source_catalog_matrix` now ties those audited sources
   together as the root source catalog: selected source missing, WSLg channel
   absent, no custom host tool, no GPU-P/DXG sender/completion contract, no

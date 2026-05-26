@@ -170,6 +170,10 @@ but do not treat them as open plan items by default.
   GPU-P sender/completion contracts are zero, DDA/Nouveau import/scanout-bind/
   hardware-flip completion are absent, and native-present/OpenGL/WebKit credit
   is zero.
+  `gpu_remaining_holistic_skeleton_matrix` is the same dependency graph in
+  execution order. It names the active open plan count, ordered chunks, selected
+  lane, completion authority, and all downstream gates so future edits cannot
+  open FPS, backend, or WebKit credit before display-bind completion exists.
   Keep its source-audited proof rows nearby:
   `wsl_dxg_uapi_namespace_negative_matrix`,
   `wsl_dxg_adapter_display_caps_negative_matrix`, and

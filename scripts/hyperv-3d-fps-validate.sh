@@ -128,6 +128,20 @@ def accepts_downstream_consumer_gate(fields):
         fields.get("backend_identity") == "FB_GPU_BACKEND_F_OPENGL_SUBMIT"
     )
 
+def accepts_finite_fps_dependency(fields):
+    return (
+        accepts_display_bind_contract(fields) and
+        fields.get("effective_presented_fps", 0.0) > 60.0 and
+        fields.get("app_loop_progress_only", 0) == 0 and
+        fields.get("title_progress_only", 0) == 0 and
+        fields.get("readback_progress_only", 0) == 0 and
+        fields.get("dmabuf_progress_only", 0) == 0 and
+        fields.get("app_loop_progress_credit", 0) == 0 and
+        fields.get("title_progress_credit", 0) == 0 and
+        fields.get("readback_progress_credit", 0) == 0 and
+        fields.get("dmabuf_progress_credit", 0) == 0
+    )
+
 def accepts_demo_interaction_evidence(fields):
     return (
         fields.get("demo_visible", 0) == 1 and
@@ -219,6 +233,26 @@ zero_native_ids_rejected = not accepts_downstream_consumer_gate({
     "native_completed": 0,
     "fps_artifact_run_id": run_id,
     "backend_identity": "FB_GPU_BACKEND_F_OPENGL_SUBMIT",
+})
+app_loop_only_rejected = not accepts_finite_fps_dependency({
+    "effective_presented_fps": 40.0,
+    "app_loop_progress_only": 1,
+    "app_loop_progress_credit": 1,
+})
+title_only_rejected = not accepts_finite_fps_dependency({
+    "effective_presented_fps": 40.0,
+    "title_progress_only": 1,
+    "title_progress_credit": 1,
+})
+readback_only_rejected = not accepts_finite_fps_dependency({
+    "effective_presented_fps": 40.0,
+    "readback_progress_only": 1,
+    "readback_progress_credit": 1,
+})
+dmabuf_only_rejected = not accepts_finite_fps_dependency({
+    "effective_presented_fps": 40.0,
+    "dmabuf_progress_only": 1,
+    "dmabuf_progress_credit": 1,
 })
 valid_demo_interaction = {
     "demo_visible": 1,
@@ -325,6 +359,26 @@ if not zero_native_ids_rejected:
         "anti-inflation selftest failed: downstream FPS consumer gate accepted "
         "zero native present ids"
     )
+if not app_loop_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: finite FPS dependency gate accepted "
+        "app-loop progress without display-bind completion"
+    )
+if not title_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: finite FPS dependency gate accepted "
+        "title-only progress without display-bind completion"
+    )
+if not readback_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: finite FPS dependency gate accepted "
+        "readback progress without display-bind completion"
+    )
+if not dmabuf_only_rejected:
+    raise SystemExit(
+        "anti-inflation selftest failed: finite FPS dependency gate accepted "
+        "dmabuf-only progress without display-bind completion"
+    )
 if not demo_stale_run_rejected:
     raise SystemExit(
         "anti-inflation selftest failed: demo interaction accepted stale "
@@ -418,6 +472,31 @@ downstream_line = (
     "fps_credit=0 status=PASS"
 )
 print(downstream_line)
+dependency_line = (
+    "hyperv-3d-fps-validate: fps_display_bind_dependency_matrix "
+    f"validation_run_id={run_id} mode={mode} "
+    "evidence_file=/tmp/wlcomp-d3d12-present "
+    "accepted_completion_source=display_bind_provider "
+    "display_bind_backend=missing "
+    "display_bind_transport=missing "
+    "display_bind_present_id=0 display_bind_completed_id=0 "
+    "display_bind_resource_generation=0 "
+    "display_bind_completion_source=missing "
+    "requires_display_bind_backend=gpup_dxg_scanout_bind "
+    "requires_display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+    "requires_nonzero_display_bind_present_id=1 "
+    "requires_nonzero_display_bind_completed_id=1 "
+    "requires_display_bind_completed_covers_present=1 "
+    "requires_display_completion_source=display "
+    "effective_presented_fps=0.000 native_present_fps=0.000 "
+    "app_loop_progress_rejected=PASS title_only_progress_rejected=PASS "
+    "readback_progress_rejected=PASS dmabuf_only_progress_rejected=PASS "
+    "app_loop_progress_credit=0 title_progress_credit=0 "
+    "readback_progress_credit=0 dmabuf_progress_credit=0 "
+    "finite_fps_credit=0 native_present_credit=0 "
+    "opengl_submit_credit=0 gate=closed status=PASS"
+)
+print(dependency_line)
 content_line = (
     "hyperv-3d-fps-validate: fps_visible_progress_negative_matrix "
     f"validation_run_id={run_id} outside_overlay_crc_changes=0 "
@@ -503,6 +582,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(overlay_line + "\n")
     out.write(credit_line + "\n")
     out.write(downstream_line + "\n")
+    out.write(dependency_line + "\n")
     out.write(content_line + "\n")
     out.write(frozen_reject_line + "\n")
     out.write(interaction_line + "\n")
@@ -1090,6 +1170,64 @@ def require_display_bind_evidence(name, backends, transports, present_ids,
             f"values={','.join(completion_sources) if completion_sources else 'missing'}"
         )
 
+def display_bind_dependency_complete(backends, transports, present_ids,
+                                     completed_ids, resource_generations,
+                                     completion_sources):
+    if not (backends and transports and present_ids and completed_ids and
+            resource_generations and completion_sources):
+        return False
+    return (
+        backends[-1].lower() == "gpup_dxg_scanout_bind" and
+        transports[-1].lower() == "gpu-p-dxg-resource-scanout-bind" and
+        present_ids[-1] > 0 and
+        completed_ids[-1] >= present_ids[-1] and
+        resource_generations[-1] > 0 and
+        display_bind_completion_source_ok(completion_sources[-1])
+    )
+
+def log_fps_display_bind_dependency(
+        stage, backends, transports, present_ids, completed_ids,
+        resource_generations, completion_sources, *, effective_fps=0.0,
+        native_fps=0.0, gate_open=False, status="PASS"):
+    display_bind_ok = display_bind_dependency_complete(
+        backends,
+        transports,
+        present_ids,
+        completed_ids,
+        resource_generations,
+        completion_sources,
+    )
+    finite_credit = 1 if gate_open and display_bind_ok else 0
+    log_validation(
+        "fps_display_bind_dependency_matrix "
+        f"validation_run_id={expected_run_id} stage={stage} "
+        "evidence_file=/tmp/wlcomp-d3d12-present "
+        "accepted_completion_source=display_bind_provider "
+        f"display_bind_backend={backends[-1] if backends else 'missing'} "
+        f"display_bind_transport={transports[-1] if transports else 'missing'} "
+        f"display_bind_present_id={present_ids[-1] if present_ids else 0} "
+        f"display_bind_completed_id={completed_ids[-1] if completed_ids else 0} "
+        f"display_bind_resource_generation={resource_generations[-1] if resource_generations else 0} "
+        f"display_bind_completion_source={completion_sources[-1] if completion_sources else 'missing'} "
+        "requires_display_bind_backend=gpup_dxg_scanout_bind "
+        "requires_display_bind_transport=gpu-p-dxg-resource-scanout-bind "
+        "requires_nonzero_display_bind_present_id=1 "
+        "requires_nonzero_display_bind_completed_id=1 "
+        "requires_display_bind_completed_covers_present=1 "
+        "requires_display_completion_source=display "
+        f"display_bind_contract={pass_missing(display_bind_ok)} "
+        f"effective_presented_fps={effective_fps:.3f} "
+        f"native_present_fps={native_fps:.3f} "
+        "app_loop_progress_rejected=PASS title_only_progress_rejected=PASS "
+        "readback_progress_rejected=PASS dmabuf_only_progress_rejected=PASS "
+        "app_loop_progress_credit=0 title_progress_credit=0 "
+        "readback_progress_credit=0 dmabuf_progress_credit=0 "
+        f"finite_fps_credit={finite_credit} "
+        f"native_present_credit={finite_credit} "
+        f"opengl_submit_credit={finite_credit} "
+        f"gate={'open' if finite_credit else 'closed'} status={status}"
+    )
+
 def require_display_bind_identity(name, present_ids, completed_ids,
                                   buffer_generations,
                                   display_bind_present_ids,
@@ -1238,7 +1376,15 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         positive_delta(d3d12_present_counts) and
         positive_delta(d3d12_present_ids) and
         positive_delta(d3d12_present_completed) and
-        display_handoff > 0
+        display_handoff > 0 and
+        display_bind_dependency_complete(
+            d3d12_display_bind_backends,
+            d3d12_display_bind_transports,
+            d3d12_display_bind_present_ids,
+            d3d12_display_bind_completed_ids,
+            d3d12_display_bind_resource_generations,
+            d3d12_display_bind_completion_sources,
+        )
     )
     content_contract_ok = native_content_progress_complete(
         d3d12_content_progress_states,
@@ -1281,6 +1427,16 @@ def log_fps_gate_skeleton(stage, outside_overlay_values):
         native_completion_ok and
         content_progress_ok and
         demo_interaction_ok
+    )
+    log_fps_display_bind_dependency(
+        stage,
+        d3d12_display_bind_backends,
+        d3d12_display_bind_transports,
+        d3d12_display_bind_present_ids,
+        d3d12_display_bind_completed_ids,
+        d3d12_display_bind_resource_generations,
+        d3d12_display_bind_completion_sources,
+        gate_open=gate_open,
     )
     log_validation(
         "fps_native_present_gate_skeleton_matrix "
@@ -1470,7 +1626,9 @@ def reject_protocol_only_strict_present_artifact():
                 r"\bd3d12_dxg_present_source_commit_attempts[ =]0\b|"
                 r"\bdxg_present_commit_attempts 0\b|"
                 r"\bd3d12_frame_callback_observed[ =]0\b|"
-                r"\bd3d12_buffer_release_observed[ =]0\b",
+                r"\bd3d12_buffer_release_observed[ =]0\b|"
+                r"\bd3d12_(?:present_)?dmabuf_only[ =][1-9][0-9]*\b|"
+                r"\bd3d12_dmabuf_(?:progress|import)_only[ =][1-9][0-9]*\b",
                 log,
             )):
         fail_validation(
@@ -2017,7 +2175,8 @@ for line in log.splitlines():
             r"native_present_unimplemented|present_state_only|"
             r"present_fence_only|present_import_only|present_open_only|"
             r"present_callback_only|present_release_only|"
-            r"present_errno)=([1-9][0-9]*)|"
+            r"present_dmabuf_only|dmabuf_only|dmabuf_progress_only|"
+            r"dmabuf_import_only|present_errno)=([1-9][0-9]*)|"
             r"\b(callbacks_blocked|releases_blocked)=([1-9][0-9]*)",
             line,
         )
@@ -2237,7 +2396,8 @@ for line in log.splitlines():
             r"native_present_unimplemented|present_state_only|"
             r"present_fence_only|present_import_only|present_open_only|"
             r"present_callback_only|present_release_only|"
-            r"present_errno)=([1-9][0-9]*)|"
+            r"present_dmabuf_only|dmabuf_only|dmabuf_progress_only|"
+            r"dmabuf_import_only|present_errno)=([1-9][0-9]*)|"
             r"\b(callbacks_blocked|releases_blocked)=([1-9][0-9]*)",
             line,
         )
@@ -3141,8 +3301,8 @@ if any(value == 0 for value in d3d12_same_frame_releases):
     )
 if d3d12_reject_evidence:
     raise SystemExit(
-        "D3D12 present sample contained CPU/readback or partial-present "
-        f"evidence: {d3d12_reject_evidence[-1]}"
+        "D3D12 present sample contained CPU/readback, dmabuf-only, or "
+        f"partial-present evidence: {d3d12_reject_evidence[-1]}"
     )
 if native_completed <= 0:
     raise SystemExit(
@@ -3709,7 +3869,8 @@ if re.search(
     r"d3d12_(cpu_readback|cpu_mapping|cpu_copy|readback|"
     r"native_present_unimplemented|present_state_only|present_fence_only|"
     r"present_import_only|present_open_only|present_callback_only|"
-    r"present_release_only|present_errno)=[1-9][0-9]*|"
+    r"present_release_only|present_dmabuf_only|dmabuf_only|"
+    r"dmabuf_progress_only|dmabuf_import_only|present_errno)=[1-9][0-9]*|"
     r"\b(callbacks_blocked|releases_blocked)=[1-9][0-9]*",
     log,
 ):
@@ -4094,8 +4255,8 @@ if bad_visual_paths:
     )
 if visual_reject_evidence:
     raise SystemExit(
-        "visual-window D3D12 present sample contained CPU/readback or "
-        f"partial-present evidence: {visual_reject_evidence[-1]}"
+        "visual-window D3D12 present sample contained CPU/readback, "
+        f"dmabuf-only, or partial-present evidence: {visual_reject_evidence[-1]}"
     )
 if (len(visual_present_ids) < 2 or
         any(value == 0 for value in visual_present_ids)):
@@ -4496,6 +4657,18 @@ log_validation(
     f"visual_window_content_frame_fps={visual_content_frame_fps:.3f} "
     f"effective_presented_fps={effective_presented_fps:.3f} "
     f"app_visible_avg={avg:.3f}"
+)
+log_fps_display_bind_dependency(
+    "sample-accepted",
+    d3d12_display_bind_backends,
+    d3d12_display_bind_transports,
+    d3d12_display_bind_present_ids,
+    d3d12_display_bind_completed_ids,
+    d3d12_display_bind_resource_generations,
+    d3d12_display_bind_completion_sources,
+    effective_fps=effective_presented_fps,
+    native_fps=native_fps,
+    gate_open=True,
 )
 log_validation(
     "fps_downstream_consumer_gate_matrix "
