@@ -17,8 +17,23 @@ STOP_VM_TIMEOUT_SEC=${STOP_VM_TIMEOUT_SEC:-60}
 GUEST_MARKER_RETRY_MS=${GUEST_MARKER_RETRY_MS:-5000}
 GUEST_MARKER_RETRIES=${GUEST_MARKER_RETRIES:-3}
 GUEST_CMD_MAX_CHARS=${GUEST_CMD_MAX_CHARS:-150}
-HYPERV_CMDLINE=${HYPERV_CMDLINE:-BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=4 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6}
-REQUIRE_BOOT_GLSMOKE=${REQUIRE_BOOT_GLSMOKE:-1}
+DXG_VALIDATE_SEGMENT=${DXG_VALIDATE_SEGMENT:-full}
+if [[ -z "${HYPERV_CMDLINE+x}" ]]; then
+    case "${DXG_VALIDATE_SEGMENT}" in
+        pure-c-lifetime)
+            HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=0 glsmoke_demo=0 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6'
+            ;;
+        *)
+            HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=4 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6'
+            ;;
+    esac
+fi
+if [[ -z "${REQUIRE_BOOT_GLSMOKE+x}" ]]; then
+    case "${DXG_VALIDATE_SEGMENT}" in
+        pure-c-lifetime) REQUIRE_BOOT_GLSMOKE=0 ;;
+        *) REQUIRE_BOOT_GLSMOKE=1 ;;
+    esac
+fi
 REQUIRE_WDDM_TRACE_COMPARE=${REQUIRE_WDDM_TRACE_COMPARE:-1}
 WDDM_TRACE_CAPTURE_PLAN=${WDDM_TRACE_CAPTURE_PLAN:-0}
 WSL_DXG_ADAPTER_NAME=${WSL_DXG_ADAPTER_NAME:-NVIDIA}
@@ -28,7 +43,6 @@ WSL_MESAGLFEATURE=${WSL_MESAGLFEATURE:-mesaglfeature}
 WSL_DXG_TRACE=${WSL_DXG_TRACE:-${WSL_DXG_TRACE_DIR}/mesaglfeature-${WSL_DXG_ADAPTER_NAME,,}-live.trace}
 HYPERV_D3D12_ADAPTER_NAME=${HYPERV_D3D12_ADAPTER_NAME:-${WSL_DXG_ADAPTER_NAME}}
 MESA_DXCORE_DIAGNOSTIC_VERSION=${MESA_DXCORE_DIAGNOSTIC_VERSION:-20260519}
-DXG_VALIDATE_SEGMENT=${DXG_VALIDATE_SEGMENT:-full}
 
 KERNEL_BIN=${KERNEL_BIN:-${BUILD_DIR}/kernel/build/kernel/xv6.bin}
 ROOTFS_IMG=${ROOTFS_IMG:-${BUILD_DIR}/fs.img}
@@ -186,6 +200,18 @@ require_no_guest_exec_failures() {
             true
         echo "hyperv-dxg-validate: log: ${LOG}" >&2
         exit 1
+    fi
+}
+
+require_no_fatal_dxg_log_signatures() {
+    if grep -Eq 'wddm_payload_validate makeresident_mismatch' "${LOG}"; then
+        fail "WDDM make-resident diagnostics reported a hard mismatch"
+    fi
+    if grep -Eiq 'D3D12: Removing Device|DXGI_ERROR_DEVICE_REMOVED|DEVICE_REMOVED|device removed' "${LOG}"; then
+        fail "D3D12 device removal was reported"
+    fi
+    if grep -Eiq 'panic|fatal page fault|coredump|assert' "${LOG}"; then
+        fail "guest log contains a crash signature"
     fi
 }
 
@@ -1318,7 +1344,8 @@ if [[ "${WDDM_TRACE_CAPTURE_PLAN}" != "0" ]]; then
     exit 0
 fi
 
-if [[ "${REQUIRE_WDDM_TRACE_COMPARE}" != "0" &&
+if [[ "${DXG_VALIDATE_SEGMENT}" == "full" &&
+      "${REQUIRE_WDDM_TRACE_COMPARE}" != "0" &&
       ! -s "${WSL_DXG_TRACE}" ]]; then
     print_wddm_trace_capture_plan
     fail "missing required same-adapter WSL_DXG_TRACE: ${WSL_DXG_TRACE}"
@@ -1457,6 +1484,10 @@ if [[ "${DXG_VALIDATE_SEGMENT}" == "pure-c-lifetime" ]]; then
     require_log 'dxg_shareobject_last=len:' "DXG share-with-host diagnostics"
     require_no_guest_exec_failures
     require_no_malformed_validator_markers
+    require_log_line 'V:cp' \
+        "DXG create-publication fault validator invocation"
+    require_log_line 'D:cp' \
+        "DXG create-publication fault validator completion marker"
     require_log_line 'V:hl' \
         "WSL DXG handle/process lifetime validator invocation"
     require_log_line 'D:hl' \
@@ -1507,7 +1538,7 @@ if [[ "${DXG_VALIDATE_SEGMENT}" == "pure-c-lifetime" ]]; then
     require_opensyncobject_source_matrix_if_present
     require_opensync_handle_source_matrix_if_present
     require_ntshared_close_behavior_matrix_if_present
-    require_log 'wddm_payload_validate (ok|predevice_pending) context_len=[0-9]+ context_priv=[0-9]+ .* hwqueue_priv=[0-9]+ .* submit_priv=[0-9]+' \
+    require_log 'wddm_payload_validate (ok|predevice_pending) context_len=[1-9][0-9]* context_priv=[1-9][0-9]* .* hwqueue_priv=[1-9][0-9]* .* submit_priv=[1-9][0-9]*' \
         "real UMD WDDM private payload diagnostics"
     require_log 'dxg_packet_shape_matrix .*createprocess=1 .*createdevice=1 .*createcontext=1 .*createhwqueue=1 .*createallocation=1 .*makeresident=1 .*openresource=1 .*sync_create=1 .*opensync=1 .*shareobject=1 .*waitgpu=1 .*unwind=1 .*status=PASS' \
         "DXG packet-shape aggregate validator"
@@ -1523,6 +1554,7 @@ if [[ "${DXG_VALIDATE_SEGMENT}" == "pure-c-lifetime" ]]; then
     require_log 'dxg_syncfile_lifetime=.*create_faults:[1-9][0-9]* .*fd_reclaimed:[1-9][0-9]* .*open_faults:[1-9][0-9]* .*open_destroy:[1-9][0-9]*/[1-9][0-9]*/0' \
         "DXG sync-file lifetime cleanup diagnostics"
     require_no_guest_exec_failures
+    require_no_fatal_dxg_log_signatures
     require_no_malformed_validator_markers
     echo "hyperv-dxg-validate: passed pure-C DXG lifetime segment (${LOG})" |
         tee -a "${LOG}"
@@ -1687,6 +1719,10 @@ require_log 'share_object_with_host (ok|failed)' "DXG share-with-host probe"
 require_log 'dxg_shareobject_last=len:' "DXG share-with-host diagnostics"
 require_no_guest_exec_failures
 require_no_malformed_validator_markers
+require_log_line 'V:cp' \
+    "DXG create-publication fault validator invocation"
+require_log_line 'D:cp' \
+    "DXG create-publication fault validator completion marker"
 require_log_line 'V:hl' \
     "WSL DXG handle/process lifetime validator invocation"
 require_log_line 'D:hl' \
@@ -1837,15 +1873,7 @@ fi
 if grep -Eiq 'mesaglfeature: EGL .*renderer=.*(softpipe|llvmpipe)|mesaglfeature: required D3D12 renderer but got' "${LOG}"; then
     fail "mesaglfeature used a software renderer in the D3D12 validation lane"
 fi
-if grep -Eq 'wddm_payload_validate makeresident_mismatch' "${LOG}"; then
-    fail "WDDM make-resident diagnostics reported a hard mismatch"
-fi
-if grep -Eiq 'D3D12: Removing Device|DXGI_ERROR_DEVICE_REMOVED|DEVICE_REMOVED|device removed' "${LOG}"; then
-    fail "D3D12 device removal was reported"
-fi
-if grep -Eiq 'panic|fatal page fault|coredump|assert' "${LOG}"; then
-    fail "guest log contains a crash signature"
-fi
+require_no_fatal_dxg_log_signatures
 require_no_d3d12_cpu_or_partial_present_path
 require_no_guest_exec_failures
 require_no_malformed_validator_markers

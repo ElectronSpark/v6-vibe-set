@@ -1,6 +1,6 @@
 # GPU Remaining Gaps
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
 This file tracks only the work that is still missing or needs fresh parity
 proof. Completed wave logs and historical evidence should live in the runtime
@@ -116,6 +116,54 @@ dependency:
 Until item 1 exists, later validators should be strict, source-correlated, and
 fail-closed; they should not be reworded into "done" by accepting import-only,
 callback-only, title-only, or readback evidence.
+
+### Holistic Work Breakdown
+
+This is the active skeleton for the remaining work. Later sections keep the
+detailed source/evidence history, but new implementation should move through
+these chunks in order:
+
+1. **Host Display-Bind Source**
+   - Find or prove absent a non-custom GPU-P/DXG, WSLg-like, or DDA bridge
+     that can bind a guest D3D12 resource/allocation/fence to host scanout.
+   - If a source exists, document its sender packet, return layout,
+     completion payload, resource-generation identity, and same-adapter
+     requirements against WSL/Linux source or same-adapter traces.
+   - If the source is absent, keep the provider fail-closed and keep the
+     missing-host-ABI matrix as the checked result for this chunk; do not turn
+     synthvid, present-history enum names, or DDA PCI display presence into
+     native-present credit.
+2. **Kernel Provider Replacement**
+   - Replace `hyperv_dxg_display_bind_submit()` only after chunk 1 has a
+     real sender/completion contract.
+   - Preserve the existing source/resource-generation accept gate, typed
+     DXG fd pinning, sync-file acquire metadata, and zero-id stale-source
+     cleanup.
+   - Add kernel-side host-saw diagnostics for every display-bind packet or
+     completion payload the provider sends or consumes.
+3. **Compositor Native Handoff**
+   - Unblock D3D12 resource-buffer callbacks/releases only for nonzero
+     display-bind present/completed ids from the same current run, source, and
+     resource generation.
+   - Populate compositor-owned visible content CRC/frame/hash fields from
+     the native handoff, not from app-loop telemetry or title/FPS overlays.
+4. **Finite 480p FPS**
+   - Run the 480p demo through the native handoff after warmup, with
+     visible, closeable, and resizable lifecycle evidence.
+   - Require effective FPS to be clamped by native completion cadence and
+     compositor-owned content cadence; the around-40 inflated/readback case
+     must remain a negative artifact.
+5. **Backend Flag and Controls**
+   - Set Hyper-V `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only after chunks 1-4
+     pass in one current validation lineage.
+   - Re-run the KVM/virgl control path to prove it remains the permitted
+     OpenGL-submit backend while Hyper-V changes are isolated.
+6. **WebKit Contract**
+   - Route WebKitGTK through the same Mesa D3D12 shared-resource,
+     sync-file, native-present, FPS, and backend-flag contract.
+   - Produce the single enabled WebKit artifact only after the same current
+     validation lineage proves native present, finite 480p FPS, backend flag,
+     and compositor-owned content identity.
 
 ### 1. WSL2 DXG Parity
 
