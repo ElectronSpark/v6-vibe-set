@@ -739,6 +739,11 @@ but do not treat them as open plan items by default.
   present because it is not the D3D12 resource scanout-bind path. Keep it in a
   native-display namespace unless a future source documents an explicit bridge
   from a D3D12 resource generation into the Nouveau display engine.
+- `foreign_prime_import_gap_matrix` is the DDA/Nouveau PRIME bridge guard.
+  Local xv6 dma-buf/PRIME imports are not a D3D12 foreign-resource import or a
+  Nouveau scanout-bind handoff; valid foreign fd rejects, zero D3D12 import
+  credit, zero Nouveau scanout-bind import credit, and zero native/OpenGL credit
+  must stay visible until a real Linux-shaped external import bridge exists.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,

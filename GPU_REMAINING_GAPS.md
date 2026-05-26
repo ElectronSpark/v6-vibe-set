@@ -883,6 +883,14 @@ non-readback display handoff.
     lineage correlates Linux-shaped display create, nonvirtual
     heads/connectors, hardware vblank IRQ, KMS `NOUVEAU_HW` page flip, and
     hardware flip completion.
+  - [x] Make the DDA/Nouveau foreign PRIME/dma-buf import gap explicit before
+    any D3D12 scanout-bind claim. The BO and DRM PRIME fd-to-handle paths now
+    count local imports, bad-fd rejects, and valid non-local fd rejects through
+    the shared `fb_dmabuf_file_ops` gate, while keeping D3D12 foreign-resource
+    imports, Nouveau scanout-bind imports, native-present credit, and
+    OpenGL-submit credit at zero. `fbstat` and `gpucorevalidate` require
+    `foreign_prime_import_gap_matrix`, so a local xv6 dma-buf import can no
+    longer be mistaken for a real DDA/Nouveau-to-D3D12 resource bridge.
   - [x] Make host-to-VM present-history completion observable before any
     future native-present credit. The Hyper-V DXG receive path now recognizes
     `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
