@@ -1067,6 +1067,15 @@ non-readback display handoff.
     `redirected_flip_fence=35`, `blt=38`, and
     `propagate_presenthistory=1`/`cmds_known=4` while still requiring zero
     sender/resource-bind/display-completion contracts.
+  - [x] Add an explicit present-history orphan-completion rejection row.
+    `dxgprobe` and `gpucorevalidate` now emit
+    `dxg_presenthistory_orphan_completion_rejection_matrix`, which requires
+    `PROPAGATEPRESENTHISTORYTOKEN` to remain unmatched to any provider pending
+    record (`provider_pending_match=0`), with no completion demux, no provider
+    resolve, unchanged completion successes, zero display-bind ids, and zero
+    native-present/OpenGL-submit credit. This codifies the WSL rule that
+    present-history telemetry is not a source/resource-correlated display-bind
+    completion.
 - [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
   before adding any native display-bind behavior. The Hyper-V DXG VMBus
   standard-allocation command now carries the same shared-primary, shadow,

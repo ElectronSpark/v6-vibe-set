@@ -151,6 +151,12 @@ but do not treat them as open plan items by default.
   `dxg_presenthistory_telemetry_not_completion_matrix` should stay green with
   `linux_inband_handler=absent`; present-history telemetry is not a
   display-bind completion contract.
+  `dxg_presenthistory_orphan_completion_rejection_matrix` is the stricter
+  downstream guard: even if present-history packets are observed, they are
+  zero-credit unless they match a provider pending record and completion demux.
+  Today that row must report `provider_pending_match=0`,
+  `completion_demux_registered=0`, zero display-bind ids, and zero
+  native-present/OpenGL-submit credit.
 - Keep the fail-closed proof scalarized: WSL ioctl namespace checked,
   display-bind ioctl absent, standard allocations classified as private driver
   data rather than scanout binding, synthvid limited to GPA dirty rectangles,
