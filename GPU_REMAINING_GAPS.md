@@ -164,6 +164,20 @@ these chunks in order:
    - Produce the single enabled WebKit artifact only after the same current
      validation lineage proves native present, finite 480p FPS, backend flag,
      and compositor-owned content identity.
+7. **Whole-Plan Dependency Skeleton**
+   - Keep the root display-bind dependency, native-completion validators,
+     finite 480p gate, demo interaction gate, backend OpenGL-submit gate,
+     KVM/virgl recheck, WebKit route, WebKit content, and final WebKit artifact
+     in one current-run dependency row so later sections cannot open from
+     isolated partial evidence.
+   - `dxgprobe` and `gpucorevalidate` now emit
+     `gpu_remaining_plan_dependency_skeleton_matrix`, requiring the WSL
+     display-bind ioctl and in-band present-history completion handler to be
+     absent, GPU-P sender/completion contracts to be zero, DDA/Nouveau import,
+     scanout-bind, and hardware-flip completion to be absent, and all native
+     present/OpenGL/WebKit credit to remain zero while the root display-bind
+     gate is closed. The focused core runner requires this row before any
+     later native-present/FPS/WebKit evidence can be trusted.
 
 ### 1. WSL2 DXG Parity
 
