@@ -486,7 +486,7 @@ if not demo_forged_display_bind_rejected:
 line = (
     "hyperv-3d-fps-validate: anti-inflation selftest ok "
     f"validation_run_id={run_id} mode={mode} negative_rejected=1 "
-    "displayed_fps=40.000 visual_progress_fps=5.000 "
+    "app_loop_fps=40.000 overlay_fps=0.000 visual_progress_fps=5.000 "
     "stale_run_rejected=1 static_content_rejected=1 "
     "frozen_window_negative=1 frozen_window_rejected=1 "
     "forged_high_fps_negative=1 forged_high_fps_rejected=1 "
@@ -499,12 +499,14 @@ line = (
     "thumbnail_progress_delta=0 outside_overlay_crc_changes=0 "
     f"low_visual_cadence_fps={low_visual_cadence_fps:.3f} "
     f"ratio_limit={ratio_limit:.3f} margin={margin:.3f} "
-    "positive_accepted=1 displayed_fps=65.000 visual_progress_fps=62.000"
+    "positive_accepted=1 credited_presented_fps=65.000 "
+    "overlay_fps=65.000 visual_progress_fps=62.000"
 )
 print(line)
 overlay_line = (
     "hyperv-3d-fps-validate: fps_overlay_inflation_rejection_matrix "
-    f"validation_run_id={run_id} displayed_fps=40.000 "
+    f"validation_run_id={run_id} app_loop_fps=40.000 "
+    "overlay_fps=0.000 "
     "visual_progress_fps=5.000 source=app-draw-loop-context-only "
     "displayed_fps_context_only=1 native_present_delta=0 "
     "d3d12_evidence_valid=0 rejected=1 status=PASS"
@@ -512,7 +514,8 @@ overlay_line = (
 print(overlay_line)
 credit_line = (
     "hyperv-3d-fps-validate: mesawlegl_fps_present_credit_matrix "
-    f"validation_run_id={run_id} visible_fps=40.000 "
+    f"validation_run_id={run_id} visible_fps=0.000 "
+    "app_loop_fps=40.000 overlay_fps=0.000 "
     "effective_presented_fps=0.000 strict_anti_inflation=1 "
     "d3d12_evidence_valid=0 native_present_delta=0 present_id=0 "
     "completed=0 displayed_fps_context_only=1 visible_fps_ignored=1 "
@@ -2886,6 +2889,8 @@ for line in log.splitlines():
             "in_sampling": in_sampling,
             "seq": int(seq.group(1)),
             "visible_fps": float(fps.group(1)),
+            "app_loop_fps": None,
+            "overlay_fps": None,
             "render": None,
             "render_div": 0,
             "window": None,
@@ -2932,6 +2937,12 @@ for line in log.splitlines():
         window = re.search(r"\bwindow=([0-9]+)x([0-9]+)", line)
         if window:
             record["window"] = (int(window.group(1)), int(window.group(2)))
+        app_loop_fps = re.search(r"\bapp_loop_fps=([0-9]+(?:\.[0-9]+)?)", line)
+        if app_loop_fps:
+            record["app_loop_fps"] = float(app_loop_fps.group(1))
+        overlay_fps = re.search(r"\boverlay_fps=([0-9]+(?:\.[0-9]+)?)", line)
+        if overlay_fps:
+            record["overlay_fps"] = float(overlay_fps.group(1))
         demo_count = re.search(r"\bnative_present_count=([0-9]+)", line)
         if demo_count:
             record["native_count"] = int(demo_count.group(1))
@@ -3157,10 +3168,21 @@ context_only_records = [
 ]
 if context_only_records:
     last = context_only_records[-1]
+    untrusted_fps = (
+        last["app_loop_fps"]
+        if last["app_loop_fps"] is not None
+        else last["visible_fps"]
+    )
+    overlay_fps = (
+        last["overlay_fps"]
+        if last["overlay_fps"] is not None
+        else last["visible_fps"]
+    )
     log_validation(
         "fps_overlay_inflation_rejection_matrix "
         f"validation_run_id={expected_run_id} "
-        f"displayed_fps={last['visible_fps']:.3f} "
+        f"app_loop_fps={untrusted_fps:.3f} "
+        f"overlay_fps={overlay_fps:.3f} "
         "source=app-draw-loop-context-only displayed_fps_context_only=1 "
         "d3d12_evidence_valid=0 native_present_delta=0 rejected=1 "
         "status=PASS"

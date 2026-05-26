@@ -1458,6 +1458,14 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   D3D12 run id, client pid, nonzero present/completion counters, and native
   requirements; the validator emits `fps_overlay_inflation_rejection_matrix`
   and rejects those context-only samples before any FPS pass.
+  The demo overlay/title no longer displays that untrusted app-loop rate as
+  FPS: `mesawlegl` records it as `app_loop_fps`, keeps `overlay_fps=0.000`
+  and `visible_fps=0.000` without strict native-present credit, and only shows
+  `effective_presented_fps` after current-run display-bind/content evidence
+  passes. Lightweight evidence:
+  `FPS_ANTI_INFLATION_SELFTEST=1
+  VALIDATION_RUN_ID=selftest-displayed-fps-credit-v2
+  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
   The validator now also samples multiple visual windows and rejects "moved
   briefly, then froze" evidence with `fps_frozen_window_rejection_matrix` and
   `fps_sustained_post_warmup_progress_matrix`. Lightweight evidence:

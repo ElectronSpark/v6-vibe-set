@@ -954,8 +954,10 @@ but do not treat them as open plan items by default.
     present and OpenGL-submit credit remain zero.
 - The finite 480p FPS validator runs the anti-inflation preflight by default
   before heavy Hyper-V sampling. The required negative is the observed around-40
-  displayed/demo FPS with single-digit visible cadence, stale run id, static
-  content, or frozen-window evidence.
+  app-loop/demo FPS with single-digit visible cadence, stale run id, static
+  content, or frozen-window evidence. `mesawlegl` must keep the on-screen
+  overlay/title at `0.0` FPS until strict native-present credit exists; the
+  untrusted draw-loop rate belongs in `app_loop_fps` diagnostics only.
 - `fps_frozen_window_rejection_matrix` and
   `fps_sustained_post_warmup_progress_matrix` are the freeze-after-motion
   guards. The FPS validator must sample more than one visual window and reject
@@ -968,11 +970,13 @@ but do not treat them as open plan items by default.
   checks, and `finite_fps_credit` must stay separate from
   `opengl_submit_credit`; the latter requires both finite native-present FPS
   and `backend_opengl_submit=1`.
-- `mesawlegl` owns `/tmp/mesawlegl-fps` app telemetry. Treat its visible/app
+- `mesawlegl` owns `/tmp/mesawlegl-fps` app telemetry. Treat its app-loop
   FPS as context-only unless each sample has matching validation run id,
   `process_id == d3d12_client_pid`, nonzero DXG present/completed counters,
   `d3d12_native_present_requirements_satisfied=1`, no readback, and current
   compositor evidence generation/time/resource/buffer-generation metadata.
+  The displayed `visible_fps`/`overlay_fps` fields should remain `0.000`
+  without that credit, while `app_loop_fps` may carry the raw draw-loop number.
   `mesawlegl_fps_context_only_matrix` and
   `fps_overlay_inflation_rejection_matrix` are rejection evidence, not pass
   evidence for the 60 FPS gate.
@@ -980,8 +984,8 @@ but do not treat them as open plan items by default.
   `wlcomp` emits `d3d12_wayland_present_fps_provenance_matrix`, and
   `mesawlegl` emits `mesawlegl_fps_present_credit_matrix`. On fail-closed
   Hyper-V these must show `effective_presented_fps=0.000`,
-  `visible_fps_ignored=1`, and zero native-present/OpenGL-submit credit even
-  if the overlay prints a higher number.
+  `visible_fps_ignored=1`, `overlay_fps=0.000`, and zero
+  native-present/OpenGL-submit credit even if `app_loop_fps` is higher.
 - Treat `/tmp/wlcomp-d3d12-present` as the durable handoff file for those
   provenance rows. It should carry both the matrix row and
   `d3d12_fps_provenance_*` scalar keys so FPS/WebKit validators do not depend
