@@ -168,6 +168,14 @@ but do not treat them as open plan items by default.
   `opened_child_ref_held`, a `syncobject_ref_held` field (1 on wait-sync
   pending records), and
   `owner_close_cancelled=0` while fail-closed.
+  Sender/source classification is also explicit zero-credit evidence while the
+  provider is fail-closed: require `host_saw_display_bind_packet=0`,
+  `display_bind_transport_source=none`, and
+  `wsl_presenthistory_completion_credit=0` in the source catalog, host-ABI
+  discovery, query-fields, and provider-pending rows. Future positive credit
+  needs a non-WSL/DDA transport source, `host_saw_display_bind_packet=1`,
+  provider completion demux, and source/resource-correlated display
+  completion; WSL present-history telemetry remains zero-credit.
 - When planning the remaining native-present work, keep the chunks ordered:
   host ABI discovery/proof, kernel scanout-bind path, compositor handoff,
   native completion/lifetime, then FPS/backend/WebKit credit. Do not split
