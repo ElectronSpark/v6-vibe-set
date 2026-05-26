@@ -773,6 +773,13 @@ non-readback display handoff.
   returns source/resource-correlated present completion. `VM_PKT_COMP`
   transaction replies and `PROPAGATEPRESENTHISTORYTOKEN` remain zero-credit
   telemetry until a provider-owned sender/completion contract is documented.
+  Any future sender must be labelled as a non-WSL Linux `dxgkrnl` extension
+  unless a real upstream WSL UAPI or packet is cited. The acceptance evidence
+  must keep explicit zero-credit WSL rows (`wsl_display_bind_ioctl_present=0`,
+  `wsl_presenthistory_completion_credit=0`) beside the positive sender rows
+  (`host_saw_display_bind_packet=1`, `provider_completion_demux=1`,
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`) so WSL
+  telemetry cannot be reinterpreted as a display completion path.
   `dxg_native_present_lane_rejection_matrix` now names each rejected lane
   separately so future work cannot treat WSL present-history enum knowledge,
   synthvid/GPA dirty rectangles, Linux Hyper-V DRM shadow blits, or a separate
@@ -854,11 +861,18 @@ non-readback display handoff.
     publication: publish-before-send, transport pending id, command id,
     transaction id, channel, completion-demux registration, resolve/cancel
     result, and ref release must be visible in a pure-C
-    `d3d12_display_bind_provider_pending_publication_matrix`.
+    `d3d12_display_bind_provider_pending_publication_matrix`. The pending
+    object must also carry WSL-shaped process/object provenance:
+    `dxgprocess_generation`, `process_adapter_generation`,
+    `hmgr_index_unique_valid`, `parent_resource_ref_held`,
+    `opened_child_ref_held`, `syncobject_ref_held`, and owner-close
+    cancellation state before any send is issued.
   - [ ] Add stale async completion proof for the real sender: unregister or
     owner close while a provider pending record exists must cancel the pending
     object, keep present/completed ids zero, reject any late completion as
-    stale/after-release, and leave no native-present/OpenGL-submit credit.
+    stale/after-release, report `late_completion_rejected=1` and
+    `owner_close_cancelled=1`, and leave no native-present/OpenGL-submit
+    credit.
   - [x] Add the pure-C future contract row for provider-owned pending packet
     publication before a real sender is wired.
     `d3d12_display_bind_provider_pending_publication_matrix` is now backed by
@@ -1346,7 +1360,12 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   generations must match. `wlcomp` now exports final-handoff resource
   generation and content-progress current-run/identity fields, and
   `hyperv-3d-fps-validate.sh` requires exact sample-window and visual-window
-  identity before accepting finite FPS. Lightweight anti-inflation selftest
+  identity before accepting finite FPS. The same validator now also requires
+  each sampled `/tmp/wlcomp-d3d12-present` block to be atomically sealed with
+  matching begin/end generation and run-id fields before any canonical
+  `display_bind_*` tuple can count. Unsealed compositor evidence remains
+  zero-credit even if the ids are otherwise coherent. Lightweight
+  anti-inflation selftest
   evidence:
   `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-identity
   scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
@@ -1586,8 +1605,20 @@ alone.
     run id, and keeps D3D12/WebKit acceleration closed unless compositor-owned
     content CRC/frame/hash progress matches the provider-owned display-bind
     present/completed ids and resource generation. The policy artifact exposes
-    `d3d12_run_id_match` and `d3d12_content_progress` so stale, prefixed, or
-    chrome/title-only evidence remains zero-credit.
+    `d3d12_run_id_match`, `d3d12_content_progress`, and
+    `d3d12_evidence_seal` so stale, unsealed, prefixed, or chrome/title-only
+    evidence remains zero-credit.
+  - [x] Seal the compositor-owned D3D12 evidence artifact and require that seal
+    in downstream consumers.
+    `wlcomp` now writes `/tmp/wlcomp-d3d12-present` through a temporary file,
+    `fsync()`, and `rename()`, with matching
+    `d3d12_evidence_seal_begin/end`, generation, complete, and run-id fields.
+    `mesawlegl`, `wlcomp_launcher`, `desktop`, `webkitgpusmoke`,
+    `hyperv-3d-fps-validate.sh`, and `hyperv-webkit-gpu-validate.sh` reject
+    canonical display-bind/native-present evidence unless the seal generation
+    and run id match the current validation run. This closes stale/partial
+    file publication as a source of FPS or WebKit credit, but does not open
+    native-present credit on Hyper-V.
   - [x] Add pure-C WebKit negative selftests for parser, lineage, and
     animated-fixture evidence rejection.
     `webkitgpusmoke --negative-selftests` now emits
@@ -1595,8 +1626,9 @@ alone.
     `webkit_lineage_equality_negative_matrix`, and
     `webkit_animated_content_fixture_negative_matrix`. These rows prove
     prefixed/suffixed keys, malformed numeric values, backend/transport and
-    completion-source aliases, stale D3D12/FPS/content lineage, backend-zero
-    nonzero-id claims, and title-only animated fixture progress all remain
+    completion-source aliases, unsealed display-bind claims, stale
+    D3D12/FPS/content lineage, backend-zero nonzero-id claims, and title-only
+    animated fixture progress all remain
     zero-credit. `hyperv-webkit-gpu-validate.sh` requires those rows during
     guest WebKit validation. Validation on 2026-05-26:
     `bash -n scripts/hyperv-webkit-gpu-validate.sh`,
