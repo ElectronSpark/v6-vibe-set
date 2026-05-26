@@ -619,6 +619,10 @@ but do not treat them as open plan items by default.
   guard. Owner close or explicit unregister must clear source/global
   display-bind ids, reject after-close queries, avoid late completion credit,
   and keep native-present/OpenGL/WebKit credit at zero.
+- `d3d12_dda_nouveau_separate_display_not_bind_matrix` is the DDA split guard.
+  A separate DDA/Nouveau PCI display path is zero-credit for D3D12 native
+  present until it also proves a D3D12 shared-resource import, scanout-bind,
+  and hardware flip completion contract for the same resource generation.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,
