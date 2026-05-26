@@ -339,6 +339,14 @@ but do not treat them as open plan items by default.
   row must be `PASS_FAILCLOSED` with
   `provider_no_host_abi=1`, `provider_no_sender=1`, and
   `provider_no_completion=1`.
+- Also require the no-send preflight handoff row. A sampled fail-closed
+  provider must emit `d3d12_display_bind_provider_no_send_preflight_matrix`
+  with complete request metadata, `provider_pin_revalidated=1`,
+  source/resource generation matches, `preflight_ready=1`, zero send and
+  completion-demux attempts, nonzero no-ABI/no-contract blocked counters, no
+  host-saw packet, no transport source, zero present/completed ids, and zero
+  native-present/OpenGL-submit credit. This is the replacement point for a
+  future documented GPU-P/DDA sender, not proof that one exists.
 - The fail-closed provider pending row must use provider-owned lifetime
   fields, not validator inference: provider owner/source/resource generations
   must match the kernel pending owner/source/resource generations, while
@@ -828,6 +836,12 @@ but do not treat them as open plan items by default.
   `no_host_abi_cancelled=1`, `no_host_abi_refs_released=1`) while sender-owned
   publish-before-send, command/channel, completion demux, native-present, and
   OpenGL-submit fields remain zero.
+- The matching `d3d12_display_bind_provider_no_send_preflight_matrix` should
+  prove the same sample was ready to send but intentionally performed no send:
+  `preflight_ready=1`, `send_attempts=0`,
+  `send_blocked_no_host_abi>0`, `completion_demux_attempts=0`, and
+  `completion_demux_blocked_no_contract>0`, with source/resource generation
+  matches and zero host-saw packet/native-present/OpenGL-submit credit.
 - `d3d12_display_bind_backend_boundary_matrix` is the canonical boundary row.
   It should mirror kernel `dxg_display_bind_*` stats and keep the current
   GPU-P-only path at `backend=gpup_dxg_scanout_bind`, transport absent,

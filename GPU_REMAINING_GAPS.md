@@ -928,6 +928,19 @@ non-readback display handoff.
     present/completed ids, zero native-present credit, and zero OpenGL-submit
     credit. This checked row is a gate for the future provider, not evidence
     that the unchecked real-sender item is complete.
+  - [x] Add the provider no-send preflight ledger before the real sender is
+    wired. `hyperv_dxg_display_bind_submit_failclosed()` now records that the
+    selected provider reached a complete, pin-revalidated ready-to-send
+    boundary, then blocked with `send_attempts=0`,
+    `send_blocked_no_host_abi>0`, `completion_demux_attempts=0`, and
+    `completion_demux_blocked_no_contract>0`. `fbstat`,
+    `gpucorevalidate`, and `scripts/hyperv-gpu-core-validate.sh` require
+    `d3d12_display_bind_provider_no_send_preflight_matrix` to preserve
+    matching source/resource generations, no host-saw packet, no transport
+    source, no provider sender/completion, zero present/completed ids, zero
+    native-present credit, and zero OpenGL-submit credit. This locks the exact
+    replacement point for a future documented GPU-P/DDA sender without
+    closing the unchecked real-sender item.
   - [x] Make the fail-closed provider pending/stale diagnostics provider-owned
     instead of inferred by user-space.
     The Hyper-V provider result and `fb_gpu_stats` now expose owner,
