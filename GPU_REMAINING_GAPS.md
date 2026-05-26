@@ -846,6 +846,19 @@ non-readback display handoff.
     present/completed ids, zero native-present credit, and zero OpenGL-submit
     credit. This checked row is a gate for the future provider, not evidence
     that the unchecked real-sender item is complete.
+  - [x] Make the fail-closed provider pending/stale diagnostics provider-owned
+    instead of inferred by user-space.
+    The Hyper-V provider result and `fb_gpu_stats` now expose owner,
+    source, and resource generations for the provider-owned pending object,
+    plus no-host-ABI cancel/ref-release fields and stale-after-release reject
+    accounting. `dxgprobe`, `fbstat`, and `gpucorevalidate` require the
+    provider/pending generation fields to match each other, prove sender-owned
+    publish-before-send/transport/command/channel fields stay zero while the
+    host ABI is absent, and keep stale/late completion paths at zero
+    native-present/OpenGL-submit/WebKit credit. Evidence:
+    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
+    CORE_C_SECTIONS='present-source' VALIDATION_RUN_ID=provider-pending-failclosed-3
+    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
   - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
     evidence. A DDA-backed Nouveau PCI display path can only count as a native
     display lane after it also proves a D3D12 shared-resource import,
