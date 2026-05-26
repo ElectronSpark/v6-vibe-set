@@ -254,11 +254,17 @@ but do not treat them as open plan items by default.
 - Treat `display_bind_*` evidence as the canonical bridge between the kernel
   present-source contract, `wlcomp`, FPS, and WebKit. The required keys are
   `display_bind_backend`, `display_bind_transport`,
-  `display_bind_present_id`, `display_bind_completed_id`,
-  `display_bind_resource_generation`, and
+  `display_bind_transport_source`, `host_saw_display_bind_packet`,
+  `wsl_presenthistory_completion_credit`, `display_bind_present_id`,
+  `display_bind_completed_id`, `display_bind_resource_generation`, and
   `display_bind_completion_source`/`completion_source`. Fail-closed Hyper-V
   evidence may name the selected backend/transport, but present/completed ids
   must stay zero and no consumer may grant native-present credit from that.
+  Future-positive FPS/demo/WebKit evidence must use
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+  `host_saw_display_bind_packet=1`, and
+  `wsl_presenthistory_completion_credit=0`; WSL present-history telemetry is
+  not display-bind source authority.
 - Display-bind source cleanup can be observed in two phases. A same-process
   `dxgprobe` stale-source row may report
   `cleanup_state=deferred_until_process_exit` when stale queries reject and all
@@ -269,6 +275,11 @@ but do not treat them as open plan items by default.
   remain fail-closed, but it must preserve source/resource generation,
   completion source, status, block reason, and zero present/completed ids until
   a documented DDA/GPU-P sender replaces the stub.
+- Keep display-bind cancellation Hyper-V-owned as well as submission-owned.
+  `hyperv_dxg_display_bind_cancel()` is the future async sender cancellation
+  boundary for owner-close/unregister paths; while fail-closed it reports
+  no host packet, zero WSL present-history credit, zero present/completed ids,
+  and no native-present/OpenGL-submit credit.
 - `scripts/hyperv-dxg-validate.sh` supports
   `DXG_VALIDATE_SEGMENT=pure-c-lifetime` for the WSL-style DXG lifetime,
   handle-table, shared-resource, sync-file, WDDM payload, and residency

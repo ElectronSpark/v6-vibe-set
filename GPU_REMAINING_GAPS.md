@@ -967,6 +967,17 @@ non-readback display handoff.
     CORE_C_SECTIONS='preflight present-source final'
     VALIDATION_RUN_ID=host-abi-discovery-provider-release
     scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
+  - [x] Add the Hyper-V-owned cancel provider boundary before a real async
+    sender exists. `hyperv_dxg_display_bind_cancel()` now routes to a
+    no-credit fail-closed implementation that reports zero transport pending
+    id, no sender/completion, no host packet, zero WSL present-history credit,
+    `resolved_or_cancelled=1`, `refs_released=1`,
+    `no_host_abi_cancelled=1`, `no_host_abi_refs_released=1`, and
+    `pending_owner_close_cancelled=1` for owner-close/unregister cancellation
+    paths. `fb_dxg_present.c` consumes this provider result only when a
+    source-local pending record is active; it keeps present/completed ids,
+    native-present credit, and OpenGL-submit credit at zero. This is a future
+    async-sender boundary and does not close the unchecked real-sender item.
   - [x] Make host-to-VM present-history completion observable before any
     future native-present credit. The Hyper-V DXG receive path now recognizes
     `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
@@ -1425,6 +1436,17 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   evidence:
   `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-identity
   scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
+  `mesawlegl`, `wlcomp`, and `hyperv-3d-fps-validate.sh` now also carry the
+  display-bind source-authority tuple through the FPS path:
+  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
+  `host_saw_display_bind_packet=1`, and
+  `wsl_presenthistory_completion_credit=0` are required before coherent
+  display-bind ids can satisfy current-run FPS/demo gates. The anti-inflation
+  selftest rejects WSL present-history authority and source-missing forged
+  display-bind rows with zero native-present/OpenGL-submit credit. Evidence:
+  `FPS_ANTI_INFLATION_SELFTEST=1
+  VALIDATION_RUN_ID=selftest-display-bind-authority
+  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
 - [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
   The finite FPS validator already rejects non-480p or divided renders; its
   final pass token now records `window=640x480 render=640x480 render_div=1`,
