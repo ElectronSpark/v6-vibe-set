@@ -356,6 +356,14 @@ but do not treat them as open plan items by default.
   zero until a documented sender exists. Pair this with
   `d3d12_display_bind_stale_source_zero_credit_matrix`; stale/after-release
   rejects may advance, but any late present/completed ids must remain zero.
+- Keep the stale async completion contract separate from stale-source cleanup.
+  `d3d12_display_bind_stale_async_completion_contract_matrix` must report
+  `real_sender=0`, no completion demux, no transport pending id, no host-saw
+  display-bind packet, no transport source, zero present/completed ids, and
+  zero native-present/OpenGL/WebKit credit while the real sender is absent. It
+  may only become positive after a documented sender publishes a pending packet
+  and owner-close/unregister cancels that packet before a late completion is
+  rejected against the same source/resource generation.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12
@@ -807,6 +815,10 @@ but do not treat them as open plan items by default.
   guard. Owner close or explicit unregister must clear source/global
   display-bind ids, reject after-close queries, avoid late completion credit,
   and keep native-present/OpenGL/WebKit credit at zero.
+- `d3d12_display_bind_stale_async_completion_contract_matrix` is the stricter
+  real-sender future guard. It keeps completion-demux, transport-pending-id,
+  owner-close-cancel, and late-completion-reject semantics visible while the
+  current provider remains fail-closed.
 - `d3d12_dda_nouveau_separate_display_not_bind_matrix` is the DDA split guard.
   A separate DDA/Nouveau PCI display path is zero-credit for D3D12 native
   present because it is not the D3D12 resource scanout-bind path. Keep it in a
