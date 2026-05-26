@@ -169,7 +169,11 @@ but do not treat them as open plan items by default.
   no Linux display-bind ioctl or in-band present-history completion handler,
   GPU-P sender/completion contracts are zero, DDA/Nouveau import/scanout-bind/
   hardware-flip completion are absent, and native-present/OpenGL/WebKit credit
-  is zero.
+  is zero. The pure-C row must also spell out the granular closed gates:
+  `real_display_bind_sender=0`, `real_display_bind_completion=0`,
+  `native_completion_validator_gate=closed`, `finite_480p_gate=closed`,
+  `backend_opengl_submit_gate=closed`, `webkit_enabled_artifact_gate=closed`,
+  and `DDA/Nouveau-separate-display-not-D3D12-bind`.
   `gpu_remaining_holistic_skeleton_matrix` is the same dependency graph in
   execution order. It names the active open plan count, ordered chunks, selected
   lane, completion authority, and all downstream gates so future edits cannot
