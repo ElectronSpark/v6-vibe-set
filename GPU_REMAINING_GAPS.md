@@ -181,10 +181,19 @@ these chunks in order:
    - The skeleton is backed by source-audited negative-proof rows:
      `wsl_dxg_uapi_namespace_negative_matrix`,
      `wsl_dxg_adapter_display_caps_negative_matrix`, and
-     `dda_nouveau_non_readback_display_proof_matrix`. These follow the WSL
-     `dxgkrnl` UAPI/display-cap clearing and Linux Nouveau DRM/KMS shape:
-     WSL enum, adapter, standard-allocation, and present-history telemetry
-     fields are not a display-bind ABI; DDA PCI BAR/DMA/IRQ acceptance is not
+     `dda_nouveau_non_readback_display_proof_matrix`. The pure-C validators
+     now also require `wsl_submit_present_fields_not_bind_matrix`,
+     `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
+     `wsl_trace_display_bind_negative_matrix`, and
+     `provider_credit_gate_negative_matrix`, so WSL submit metadata,
+     present-history fields, written primaries, standard-allocation private
+     data, allocation flags, trace-visible resource sharing, sync-file
+     plumbing, and provider invocation counters cannot become native-present
+     credit without a real host ABI, sender, and display-completion contract.
+     These follow the WSL `dxgkrnl` UAPI/display-cap clearing and Linux
+     Nouveau DRM/KMS shape: WSL enum, adapter, standard-allocation,
+     submit/present, trace replay, and present-history telemetry fields are
+     not a display-bind ABI; DDA PCI BAR/DMA/IRQ acceptance is not
      non-readback display proof until Nouveau display creation, non-virtual
      connectors, hardware vblank IRQs, and hardware page-flip completions all
      correlate through the KMS `NOUVEAU_HW` lane.
