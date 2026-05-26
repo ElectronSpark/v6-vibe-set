@@ -183,8 +183,9 @@ but do not treat them as open plan items by default.
   `DXG_VALIDATE_SEGMENT=pure-c-lifetime` for the WSL-style DXG lifetime,
   handle-table, shared-resource, sync-file, WDDM payload, and residency
   validators. Use this segment before Mesa-heavy runs when validating a full
-  lifetime subsection, because Mesa readback/device-removal probes can freeze
-  before pure-C rows are collected. Full mode must still run before claiming
+  lifetime subsection; its default command line disables boot-time glsmoke so
+  Mesa readback/device-removal probes cannot freeze before pure-C rows are
+  collected. Full mode must still run before claiming
   Mesa/native-present/FPS/WebKit completion.
 - The display-bind provider boundary must be sleepable-safe: snapshot under
   `fb_state.lock`, submit outside that lock, then revalidate the present source
