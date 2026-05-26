@@ -28,6 +28,7 @@ WSL_MESAGLFEATURE=${WSL_MESAGLFEATURE:-mesaglfeature}
 WSL_DXG_TRACE=${WSL_DXG_TRACE:-${WSL_DXG_TRACE_DIR}/mesaglfeature-${WSL_DXG_ADAPTER_NAME,,}-live.trace}
 HYPERV_D3D12_ADAPTER_NAME=${HYPERV_D3D12_ADAPTER_NAME:-${WSL_DXG_ADAPTER_NAME}}
 MESA_DXCORE_DIAGNOSTIC_VERSION=${MESA_DXCORE_DIAGNOSTIC_VERSION:-20260519}
+DXG_VALIDATE_SEGMENT=${DXG_VALIDATE_SEGMENT:-full}
 
 KERNEL_BIN=${KERNEL_BIN:-${BUILD_DIR}/kernel/build/kernel/xv6.bin}
 ROOTFS_IMG=${ROOTFS_IMG:-${BUILD_DIR}/fs.img}
@@ -1336,6 +1337,12 @@ fi
 if [[ ! "${VALIDATION_RUN_ID}" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
     fail "VALIDATION_RUN_ID contains unsupported characters: ${VALIDATION_RUN_ID}"
 fi
+case "${DXG_VALIDATE_SEGMENT}" in
+    full|pure-c-lifetime) ;;
+    *)
+        fail "unsupported DXG_VALIDATE_SEGMENT=${DXG_VALIDATE_SEGMENT}"
+        ;;
+esac
 
 mkdir -p "${BUILD_DIR}"
 : >"${LOG}"
@@ -1387,6 +1394,140 @@ for attempt in 1 2 3 4; do
     fi
     sleep 5
 done
+
+if [[ "${DXG_VALIDATE_SEGMENT}" == "pure-c-lifetime" ]]; then
+    echo "hyperv-dxg-validate: running pure-C DXG lifetime segment"
+    run_guest 'cat /proc/cmdline; cat /proc/version; cat /proc/uptime' 30000
+    run_guest 'cat /tmp/wlcomp-fps; fbstat' 30000
+    run_guest 'dxgprobe' "${READ_MS}"
+    run_guest 'dxgprobe --wddm-payload-validate; dxgprobe --residency-batch-validate; cat /dev/dxg' 180000
+    run_guest 'dxgprobe --try-submit; cat /dev/dxg' 180000
+    run_guest 'dxgprobe --owner-isolation' 120000
+    run_guest 'echo V:cp; dxgprobe --create-publication-faults-validate; cat /dev/dxg; echo D:cp' 180000
+    run_guest 'echo V:hl; dxgprobe --handle-lifetime-validate; cat /dev/dxg; echo D:hl' 180000
+    run_guest 'echo V:sl; dxgprobe --shared-lifetime-validate; cat /dev/dxg' 180000
+    run_guest 'echo V:sr; dxgprobe --shared-seal-provenance-validate; cat /dev/dxg; echo D:sr' 180000
+    run_guest 'echo V:sp; dxgprobe --shared-private-validate; cat /dev/dxg' 180000
+    run_guest 'echo V:in; dxgprobe --import-negative; cat /dev/dxg; echo D:in' 180000
+    run_guest 'echo V:oh; dxgprobe --sync-handle-source-matrix; cat /dev/dxg; echo D:oh' 180000
+    run_guest 'echo V:sf; dxgprobe --syncfile; cat /dev/dxg; echo D:sf' 180000
+
+    require_log 'BOOT_IMAGE=/xv6\.bin .*root=/dev/disk0p2' "expected Hyper-V command line"
+    require_log 'Linux version .*xv6' "guest kernel version"
+    require_log 'backend hyperv-dxg flags' "Hyper-V backend"
+    require_log 'backend_dxg_transport 1' "DXG transport flag"
+    require_log 'backend_d3dkmt 1' "D3DKMT readiness flag"
+    require_log 'backend_opengl_submit 0' "Hyper-V OpenGL submit gating"
+    require_no_premature_opengl_submit_claim
+    require_log 'dxgprobe: ok' "dxgprobe success"
+    require_log 'dxg_adapters3 [1-9][0-9]* handle[0-9]+=0x[1-9a-fA-F][0-9a-fA-F]*' \
+        "DXG enum-adapters3 diagnostics"
+    require_existing_sysmem_allocation_marker
+    require_d3d12_current_run_display_provenance_if_present
+    require_log 'dxgprobe: owner isolation rejected (foreign|exec-child) destroy' \
+        "DXG owner-isolation rejection"
+    require_log 'dxgprobe: owner-isolation ok' \
+        "DXG owner-isolation validator"
+    require_log 'dxg_createdevice_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+        "DXG create-device copyout unwind"
+    require_log 'dxg_createcontext_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+        "DXG create-context copyout unwind"
+    require_log 'dxg_createhwqueue_copyout_unwind_matrix .*rc=-14 .*no_local_publication=1 .*status=PASS' \
+        "DXG create-HW-queue copyout unwind"
+    require_log 'dxg_create_publication_faults_matrix device=PASS context=PASS hwqueue=PASS status=PASS' \
+        "DXG create-publication fault aggregate"
+    require_log 'sync_legacy_signal (ok|failed)' \
+        "DXG legacy sync signal probe marker"
+    require_log 'sync_legacy_wait (ok|failed)' \
+        "DXG legacy sync wait probe marker"
+    require_log 'sync_legacy_wait_multi_matrix rc=-22 expected=-22 status=PASS' \
+        "WSL legacy wait multi-object fail-closed validator"
+    require_log 'sync_signal_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*status=PASS' \
+        "WSL enqueue_cpu_event signal validator"
+    require_log 'sync_fromcpu_cpu_event_failclosed_matrix .*rc=-22 expected=-22 status=PASS' \
+        "DXG FROMCPU enqueue_cpu_event fail-closed validator"
+    require_log 'sync_gpu2_cpu_event_matrix .*rc=0 .*objects=0 contexts=1 .*flags=0x2 .*status=PASS' \
+        "WSL enqueue_cpu_event GPU2 signal validator"
+    require_log 'dxg_async_message_matrix .*status=(PASS|DEFERRED)' \
+        "WSL async-message send-path validator"
+    require_log 'd3dkmt_ioctls=.*ready=1' "D3DKMT ioctl diagnostics"
+    require_log 'escape_driver_private ok' "DXG escape probe success"
+    require_log 'dxg_escape_last=.*ret:0' "DXG escape diagnostics"
+    require_log 'share_object_with_host (ok|failed)' "DXG share-with-host probe"
+    require_log 'dxg_shareobject_last=len:' "DXG share-with-host diagnostics"
+    require_no_guest_exec_failures
+    require_no_malformed_validator_markers
+    require_log_line 'V:hl' \
+        "WSL DXG handle/process lifetime validator invocation"
+    require_log_line 'D:hl' \
+        "WSL DXG handle/process lifetime validator completion marker"
+    require_log_line 'V:sl' \
+        "DXG shared-resource lifetime validator invocation"
+    require_log_line 'V:sr' \
+        "DXG shared-resource seal/provenance validator invocation"
+    require_log_line 'D:sr' \
+        "DXG shared-resource seal/provenance validator completion marker"
+    require_log_line 'V:sp' \
+        "DXG real-private-payload validator invocation"
+    require_log_line 'V:in' \
+        "D3D12 import-negative validator invocation"
+    require_log_line 'D:in' \
+        "D3D12 import-negative validator completion marker"
+    require_log_line 'V:oh' \
+        "OpenSync handle-source validator invocation"
+    require_log_line 'D:oh' \
+        "OpenSync handle-source validator completion marker"
+    require_log_line 'V:sf' \
+        "DXG sync-file lifetime validator invocation"
+    require_log_line 'D:sf' \
+        "DXG sync-file lifetime validator completion marker"
+    require_log 'shared_lifetime ok' "DXG shared-resource lifetime validation"
+    require_log 'shared_lifetime sealed_add denied' \
+        "DXG sealed shared-resource mutation rejection"
+    require_log 'shared_private ok' \
+        "DXG real-private-payload shared-resource validation"
+    require_log 'dxg_process_mem_lifetime_matrix .*object_release_delta=[1-9][0-9]* .*mem_release_delta=[1-9][0-9]* .*mem_free_delta=[1-9][0-9]* .*status=PASS' \
+        "WSL dxgprocess object/memory lifetime release matrix"
+    require_log 'dxgprocess_adapter_matrix .*raw_host_create_rc=-1 .*local_create_rc=0 .*close_adapter_rc=0 .*child_destroy_after_final_close_rc=-1 .*status=PASS' \
+        "WSL dxgprocess local-adapter namespace matrix"
+    require_log 'dxgprocess_adapter_parent_matrix child_status=0 status=PASS' \
+        "WSL dxgprocess adapter child completion matrix"
+    require_log 'handle_lifetime_stale_matrix .*device_second_fd_rejected=1 .*context_rejected=1 .*hwqueue_rejected=1 .*hwqueue_sync_rejected=1 .*sync_rejected=1 .*paging_queue_rejected=1 .*paging_queue_sync_rejected=1 .*resource_rejected=1 .*allocation_rejected=1 .*gpuva_rejected=1 .*device_final_rejected=1 .*status=PASS' \
+        "WSL hmgr stale-handle rejection matrix"
+    require_log 'handle_lifetime ok .*min_free:128' \
+        "WSL hmgr handle lifetime/free-list diagnostics"
+    require_log 'shared_resource_parent_lifetime_matrix .*fd_refs=[0-9]+/[0-9]+/0 .*children=[1-9][0-9]*/[2-9][0-9]*/[2-9][0-9]* .*sealed_gen=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*status=PASS' \
+        "WSL shared-resource parent lifetime matrix"
+    require_log 'shared_resource_sealed_alloc_metadata_matrix .*pages0=[1-9][0-9]*/[1-9][0-9]*/[1-9][0-9]* .*model_valid=1/1/1 .*status=PASS' \
+        "WSL shared-resource sealed allocation metadata matrix"
+    require_log 'shared_resource_seal_provenance_matrix .*refcounts_coherent=1 .*record_generation_coherent=1 .*canonical_record_coherent=1 .*shared_model_coherent=1 .*no_present_credit=1 .*status=PASS' \
+        "WSL shared-resource seal/provenance zero-credit matrix"
+    require_shared_resource_seal_provenance_if_present
+    require_import_negative_matrix
+    require_opensyncobject_source_matrix_if_present
+    require_opensync_handle_source_matrix_if_present
+    require_ntshared_close_behavior_matrix_if_present
+    require_log 'wddm_payload_validate (ok|predevice_pending) context_len=[0-9]+ context_priv=[0-9]+ .* hwqueue_priv=[0-9]+ .* submit_priv=[0-9]+' \
+        "real UMD WDDM private payload diagnostics"
+    require_log 'dxg_packet_shape_matrix .*createprocess=1 .*createdevice=1 .*createcontext=1 .*createhwqueue=1 .*createallocation=1 .*makeresident=1 .*openresource=1 .*sync_create=1 .*opensync=1 .*shareobject=1 .*waitgpu=1 .*unwind=1 .*status=PASS' \
+        "DXG packet-shape aggregate validator"
+    require_wddm_payload_residency
+    require_makeresident_count2_packet_shape
+    require_wddm_layout_or_predevice_pending
+    require_log 'sync_file_matrix .*create_rc=0 .*sync_file=[1-9][0-9]* .*open_rc=0 .*open_sync=0x[1-9a-fA-F][0-9a-fA-F]* .*child_status=0 .*child_rc=0' \
+        "DXG sync-file create/open/child-open matrix"
+    require_log 'dxg_syncfile_create_unwind_matrix create_fault_rc=-[0-9]+ .*fd_visible=0 .*balanced=1 .*status=PASS' \
+        "DXG sync-file create copyout-failure unwind matrix"
+    require_log 'dxg_syncfile_open_unwind_matrix open_fault_rc=-[0-9]+ .*destroy_ret=0 .*source_fd_valid=1 .*no_local_leak=1 .*status=PASS' \
+        "DXG sync-file open copyout-failure unwind matrix"
+    require_log 'dxg_syncfile_lifetime=.*create_faults:[1-9][0-9]* .*fd_reclaimed:[1-9][0-9]* .*open_faults:[1-9][0-9]* .*open_destroy:[1-9][0-9]*/[1-9][0-9]*/0' \
+        "DXG sync-file lifetime cleanup diagnostics"
+    require_no_guest_exec_failures
+    require_no_malformed_validator_markers
+    echo "hyperv-dxg-validate: passed pure-C DXG lifetime segment (${LOG})" |
+        tee -a "${LOG}"
+    exit 0
+fi
 
 echo "hyperv-dxg-validate: running guest probes"
 run_guest 'cat /proc/cmdline; cat /proc/version; cat /proc/uptime' 30000

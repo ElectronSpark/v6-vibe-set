@@ -179,6 +179,13 @@ but do not treat them as open plan items by default.
   remain fail-closed, but it must preserve source/resource generation,
   completion source, status, block reason, and zero present/completed ids until
   a documented DDA/GPU-P sender replaces the stub.
+- `scripts/hyperv-dxg-validate.sh` supports
+  `DXG_VALIDATE_SEGMENT=pure-c-lifetime` for the WSL-style DXG lifetime,
+  handle-table, shared-resource, sync-file, WDDM payload, and residency
+  validators. Use this segment before Mesa-heavy runs when validating a full
+  lifetime subsection, because Mesa readback/device-removal probes can freeze
+  before pure-C rows are collected. Full mode must still run before claiming
+  Mesa/native-present/FPS/WebKit completion.
 - The display-bind provider boundary must be sleepable-safe: snapshot under
   `fb_state.lock`, submit outside that lock, then revalidate the present source
   and resource generation before accepting or recording any provider result.
