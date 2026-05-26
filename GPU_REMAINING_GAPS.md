@@ -829,6 +829,13 @@ non-readback display handoff.
   contract zero, completion demux contract zero, DDA/Nouveau import/scanout/
   hardware flip absent, provider fail-closed, and transport/present/completed
   ids plus native-present/OpenGL/WebKit credit all zero.
+  `d3d12_negative_abi_manifest_matrix` now records the exact WSL/Linux source
+  audit as a single machine-validated manifest: WSL `d3dkmthk.h` has no
+  display-bind ioctl, `dxgvmbus.c` has no resource scanout-bind sender or
+  present-history completion demux, present-history/redirected-flip/BLT/
+  HWQUEUE ids are not a display-bind contract, synthvid is GPA dirty-rect only,
+  DDA/Nouveau is a separate PCI display path, and native-present/OpenGL credit
+  remains zero.
   The Hyper-V-owned provider boundary is now a generic
   `hyperv_dxg_display_bind_submit()` slot backed by the current fail-closed
   implementation. Kernel stats and pure-C validators require the provider's

@@ -829,6 +829,13 @@ but do not treat them as open plan items by default.
   zero, completion-demux contract zero, DDA/Nouveau D3D12 import/scanout/
   hardware flip absent, provider fail-closed, transport/present/completed ids
   zero, and native-present/OpenGL/WebKit credit zero.
+- `d3d12_negative_abi_manifest_matrix` is the canonical source-audited
+  negative ABI manifest. It must keep WSL `d3dkmthk.h`/`dxgvmbus.c`
+  display-bind absent, present-history/redirected-flip/BLT/HWQUEUE enum
+  candidates classified as telemetry or normal submit rather than scanout bind,
+  synthvid classified as GPA dirty-rect display, DDA/Nouveau classified as a
+  separate PCI display path, and host packet/completion/native-present credit
+  at zero.
 - For sampled fail-closed provider submits,
   `d3d12_display_bind_provider_pending_publication_matrix` should show the
   no-host-ABI pending path resolved and refs released
