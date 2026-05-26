@@ -251,6 +251,15 @@ but do not treat them as open plan items by default.
   generation, and sync/fence metadata; the same row must keep present ids,
   native-present credit, and OpenGL-submit credit at zero until the real
   GPU-P/DDA sender exists.
+- Treat the display-bind request as a source-owned pending object before any
+  sleepable host sender runs. Publish the pending id and source/resource
+  generations before dropping `fb_state.lock`, resolve it on provider return,
+  and cancel it on source unregister or owner close. Validate lifecycle and
+  revalidation separately: `d3d12_display_bind_pending_lifetime_matrix` proves
+  pending entries drain with zero credit, while
+  `d3d12_display_bind_generation_revalidation_matrix` proves the live
+  bind-contract source/resource generation and pinned resource generation
+  survived the provider lock drop.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12
