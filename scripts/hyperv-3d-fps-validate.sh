@@ -534,6 +534,17 @@ forged_line = (
     "rejected=1 status=PASS"
 )
 print(forged_line)
+source_isolation_line = (
+    "hyperv-3d-fps-validate: "
+    "fps_artifact_source_isolation_negative_matrix "
+    f"validation_run_id={run_id} canonical_source=/tmp/wlcomp-d3d12-present "
+    "forged_source=mesawlegl_fps "
+    "forged_display_bind_present_id=9 forged_display_bind_completed_id=9 "
+    "forged_d3d12_dxg_present_id=9 forged_d3d12_dxg_completed=9 "
+    "quarantined_from_native_present_parser=1 rejected=1 "
+    "native_present_credit=0 opengl_submit_credit=0 status=PASS"
+)
+print(source_isolation_line)
 downstream_line = (
     "hyperv-3d-fps-validate: fps_downstream_consumer_gate_matrix "
     f"validation_run_id={run_id} fps_artifact_run_id={run_id} "
@@ -661,6 +672,7 @@ with log_path.open("a", encoding="utf-8") as out:
     out.write(overlay_line + "\n")
     out.write(credit_line + "\n")
     out.write(forged_line + "\n")
+    out.write(source_isolation_line + "\n")
     out.write(downstream_line + "\n")
     out.write(dependency_line + "\n")
     out.write(content_line + "\n")
@@ -721,6 +733,22 @@ serial_read() {
         "& '${SERIAL_SCRIPT}' -Cmd '${cmd}' -ReadMs ${read_ms}"
 }
 
+sample_sources_cmd() {
+    printf '%s' \
+        'echo __SRC_PROC_UPTIME_BEGIN__; cat /proc/uptime; echo __SRC_PROC_UPTIME_END__; ' \
+        'echo __SRC_MESAWLEGL_FPS_BEGIN__; cat /tmp/mesawlegl-fps; echo __SRC_MESAWLEGL_FPS_END__; ' \
+        'echo __SRC_WLCOMP_FPS_BEGIN__; cat /tmp/wlcomp-fps; echo __SRC_WLCOMP_FPS_END__; ' \
+        'echo __SRC_WLCOMP_D3D12_PRESENT_BEGIN__; cat /tmp/wlcomp-d3d12-present; echo __SRC_WLCOMP_D3D12_PRESENT_END__; ' \
+        'echo __SRC_FBSTAT_BEGIN__; fbstat; echo __SRC_FBSTAT_END__'
+}
+
+present_sources_cmd() {
+    printf '%s' \
+        'echo __SRC_PROC_UPTIME_BEGIN__; cat /proc/uptime; echo __SRC_PROC_UPTIME_END__; ' \
+        'echo __SRC_WLCOMP_D3D12_PRESENT_BEGIN__; cat /tmp/wlcomp-d3d12-present; echo __SRC_WLCOMP_D3D12_PRESENT_END__; ' \
+        'echo __SRC_FBSTAT_BEGIN__; fbstat; echo __SRC_FBSTAT_END__'
+}
+
 capture_thumbnail_raw() {
     local out_raw=$1
     local raw_win
@@ -777,7 +805,7 @@ require_core_gpu_contract
 
 echo "hyperv-3d-fps-validate: checking native D3D12 present smoke" |
     tee -a "${LOG}"
-serial_read "rm -f /tmp/wlcomp-d3d12-present; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} d3d12sharedsmoke --runtime --require-present; cat /tmp/wlcomp-d3d12-present; cat /tmp/wlcomp-fps; fbstat" 180000 |
+serial_read "rm -f /tmp/wlcomp-d3d12-present; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} d3d12sharedsmoke --runtime --require-present; echo __SRC_WLCOMP_D3D12_PRESENT_BEGIN__; cat /tmp/wlcomp-d3d12-present; echo __SRC_WLCOMP_D3D12_PRESENT_END__; echo __SRC_WLCOMP_FPS_BEGIN__; cat /tmp/wlcomp-fps; echo __SRC_WLCOMP_FPS_END__; echo __SRC_FBSTAT_BEGIN__; fbstat; echo __SRC_FBSTAT_END__" 180000 |
     tee -a "${LOG}"
 
 echo "hyperv-3d-fps-validate: starting finite 480p demo frames=${DEMO_FRAMES}" |
@@ -796,13 +824,13 @@ OUT_RAW=/mnt/c/Temp/xv6-hyperv-3d-fps-validate.raw \
 echo "hyperv-3d-fps-validate: sampling ${SAMPLE_SEC}s" | tee -a "${LOG}"
 VISUAL_DIR=$(mktemp -d /tmp/xv6-hyperv-3d-visible.XXXXXX)
 echo "hyperv-3d-fps-validate: visual counter begin" | tee -a "${LOG}"
-serial_read 'cat /proc/uptime; cat /tmp/wlcomp-d3d12-present; fbstat' 30000 |
+serial_read "$(present_sources_cmd)" 30000 |
     tee -a "${LOG}"
 visual_window_index=0
 visual_frame_index=1
 for i in $(seq 0 "${SAMPLE_SEC}"); do
     echo "hyperv-3d-fps-validate: sample ${i}" | tee -a "${LOG}"
-    serial_read 'cat /proc/uptime; cat /tmp/mesawlegl-fps; cat /tmp/wlcomp-fps; cat /tmp/wlcomp-d3d12-present; fbstat' 30000 | tee -a "${LOG}"
+    serial_read "$(sample_sources_cmd)" 30000 | tee -a "${LOG}"
     visual_target=$(((SAMPLE_SEC * visual_window_index) / (VISUAL_SAMPLE_WINDOWS - 1)))
     if [[ "${visual_window_index}" -lt "${VISUAL_SAMPLE_WINDOWS}" && "${i}" -eq "${visual_target}" ]]; then
         visual_window_index=$((visual_window_index + 1))
@@ -821,11 +849,11 @@ for i in $(seq 0 "${SAMPLE_SEC}"); do
     fi
 done
 echo "hyperv-3d-fps-validate: visual counter end" | tee -a "${LOG}"
-serial_read 'cat /proc/uptime; cat /tmp/wlcomp-d3d12-present; fbstat' 30000 |
+serial_read "$(present_sources_cmd)" 30000 |
     tee -a "${LOG}"
 echo "hyperv-3d-fps-validate: sample window end" | tee -a "${LOG}"
 
-serial_read 'cat /tmp/hyperv-3d-fps-demo.log; cat /tmp/mesawlegl-fps; fbstat' 30000 |
+serial_read 'echo __SRC_DEMO_LOG_BEGIN__; cat /tmp/hyperv-3d-fps-demo.log; echo __SRC_DEMO_LOG_END__; echo __SRC_MESAWLEGL_FPS_BEGIN__; cat /tmp/mesawlegl-fps; echo __SRC_MESAWLEGL_FPS_END__; echo __SRC_FBSTAT_BEGIN__; fbstat; echo __SRC_FBSTAT_END__' 30000 |
     tee -a "${LOG}"
 serial_read 'kill $(cat /tmp/hyperv-3d-fps-demo.pid); cat /tmp/hyperv-3d-fps-demo.log' 30000 |
     tee -a "${LOG}" || true
@@ -993,6 +1021,24 @@ visual_native_paths = []
 visual_reject_evidence = []
 in_sampling = False
 visual_counter = None
+current_artifact_source = "unknown"
+foreign_display_bind_sources = []
+source_markers = {
+    "__SRC_PROC_UPTIME_BEGIN__": "proc_uptime",
+    "__SRC_MESAWLEGL_FPS_BEGIN__": "mesawlegl_fps",
+    "__SRC_WLCOMP_FPS_BEGIN__": "wlcomp_fps",
+    "__SRC_WLCOMP_D3D12_PRESENT_BEGIN__": "wlcomp_d3d12_present",
+    "__SRC_FBSTAT_BEGIN__": "fbstat",
+    "__SRC_DEMO_LOG_BEGIN__": "demo_log",
+}
+source_end_markers = {
+    "__SRC_PROC_UPTIME_END__",
+    "__SRC_MESAWLEGL_FPS_END__",
+    "__SRC_WLCOMP_FPS_END__",
+    "__SRC_WLCOMP_D3D12_PRESENT_END__",
+    "__SRC_FBSTAT_END__",
+    "__SRC_DEMO_LOG_END__",
+}
 callback_counter_keys = (
     "d3d12_frame_callbacks",
     "d3d12_frame_callback_observed",
@@ -2164,6 +2210,33 @@ def missing_strict_fps_sample_requirements(record):
     return missing
 
 for line in log.splitlines():
+    if line in source_markers:
+        current_artifact_source = source_markers[line]
+        continue
+    if line in source_end_markers:
+        current_artifact_source = "unknown"
+        continue
+    line_from_wlcomp_d3d12 = current_artifact_source == "wlcomp_d3d12_present"
+    line_from_mesawlegl_fps = current_artifact_source == "mesawlegl_fps"
+    line_from_wlcomp_fps = current_artifact_source == "wlcomp_fps"
+    line_from_fbstat = current_artifact_source == "fbstat"
+    foreign_display_bind_record, foreign_incomplete_display_bind_record = (
+        display_bind_record_from_line(line)
+    )
+    if (current_artifact_source not in (
+            "unknown", "wlcomp_d3d12_present", "fbstat") and
+            (foreign_display_bind_record is not None or
+             foreign_incomplete_display_bind_record is not None)):
+        present_id = 0
+        if foreign_display_bind_record is not None:
+            present_id = foreign_display_bind_record["present_id"]
+        else:
+            value = counter_value(line, ("display_bind_present_id",))
+            if value is not None:
+                present_id = value
+        foreign_display_bind_sources.append(
+            (current_artifact_source, present_id)
+        )
     if line.startswith("hyperv-3d-fps-validate: sampling "):
         in_sampling = True
         continue
@@ -2889,6 +2962,29 @@ demo_client_pids = [
     for record in accepted_demo_records
     if record["client_pid"] is not None
 ]
+sources = sorted(set(source for source, _present_id in
+                     foreign_display_bind_sources))
+max_foreign_present_id = (
+    max(present_id for _source, present_id in foreign_display_bind_sources)
+    if foreign_display_bind_sources else 0
+)
+log_validation(
+    "fps_artifact_source_isolation_negative_matrix "
+    f"validation_run_id={expected_run_id} "
+    "canonical_source=/tmp/wlcomp-d3d12-present "
+    f"foreign_sources={','.join(sources) if sources else 'none'} "
+    f"foreign_display_bind_records={len(foreign_display_bind_sources)} "
+    f"max_foreign_display_bind_present_id={max_foreign_present_id} "
+    "quarantined_from_native_present_parser=1 "
+    "native_present_credit=0 opengl_submit_credit=0 "
+    "rejected=1 status=PASS"
+)
+if max_foreign_present_id > 0:
+    raise SystemExit(
+        "foreign artifact source carried nonzero display-bind evidence; "
+        "native-present evidence must come from /tmp/wlcomp-d3d12-present "
+        "source blocks only"
+    )
 if "hyperv-3d-fps-validate: visual thumbnails inside finite sample window" not in log:
     raise SystemExit("visible thumbnail samples were not captured inside the finite FPS sample window")
 frames, frame_times, outside_overlay_crcs, transitions, thumbnail_windows = (
