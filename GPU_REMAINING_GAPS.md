@@ -1157,6 +1157,15 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
   display completion after a future successful provider submit. Evidence:
   focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
   `validation_run_id=core-1779754227-3036304`.
+  The skeleton now also separates completion authority from progress telemetry.
+  `d3d12_completion_source_authority_matrix` names the only acceptable D3D12
+  native-completion authority as the display-bind provider and keeps NTSTATUS,
+  present-history telemetry, sync-file fences, callback release, and KMS
+  vblank/page-flip evidence at zero credit.
+  `native_present_completion_source_namespace_matrix` keeps D3D12 display-bind
+  completion ids, Nouveau KMS vblank/page-flip sequences, and IRQ-cause counters
+  in separate namespaces so a later DDA/Nouveau display path cannot be mistaken
+  for D3D12 resource scanout-bind completion.
 - [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
   fail if xv6 rewrites packets without matching host-saw diagnostics.
   The same-adapter NVIDIA WSL replay now uses the full-private trace

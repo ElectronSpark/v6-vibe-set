@@ -177,12 +177,17 @@ but do not treat them as open plan items by default.
   `wsl_submit_present_fields_not_bind_matrix`,
   `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
   `wsl_trace_display_bind_negative_matrix`, and
-  `provider_credit_gate_negative_matrix`, and
-  `host_display_bind_source_catalog_matrix`. WSL adapter display caps,
+  `provider_credit_gate_negative_matrix`,
+  `host_display_bind_source_catalog_matrix`,
+  `d3d12_completion_source_authority_matrix`, and
+  `native_present_completion_source_namespace_matrix`. WSL adapter display caps,
   submit/present metadata, written primaries, standard-allocation private data,
   allocation flags, trace-visible open-resource/sync-file evidence, provider
   invocation counters, WSLg-channel absence, synthvid GPA-dirty evidence, and
-  present-history telemetry remain negative proof. DDA/Nouveau needs real
+  present-history telemetry remain negative proof. Completion authority is
+  narrower than progress telemetry: only the source-local display-bind provider
+  may issue D3D12 present/completed ids, while KMS vblank/page-flip and Nouveau
+  IRQ-cause counters stay in a separate native-display namespace. DDA/Nouveau needs real
   Linux-shaped display creation, non-virtual
   connectors, hardware vblank IRQs, KMS `NOUVEAU_HW` page flips, and hardware
   flip completions before it can be a non-readback display path.
@@ -202,6 +207,11 @@ but do not treat them as open plan items by default.
   `display_bind_completion_source`/`completion_source`. Fail-closed Hyper-V
   evidence may name the selected backend/transport, but present/completed ids
   must stay zero and no consumer may grant native-present credit from that.
+- Display-bind source cleanup can be observed in two phases. A same-process
+  `dxgprobe` stale-source row may report
+  `cleanup_state=deferred_until_process_exit` when stale queries reject and all
+  present/completed ids remain zero; the parent C validator must still observe
+  nonzero `release_clears` after the child exits before the section passes.
 - Kernel native-present work should go through the source-local display-bind
   request/result provider boundary in `fb_dxg_present.c`. The provider may
   remain fail-closed, but it must preserve source/resource generation,
