@@ -1619,6 +1619,8 @@ run_contract_negative_validate()
         "WebKit desktop policy stays gated without shared-surface contract"
 	    require_log 'webkitgpusmoke: gpu-contract backend=hyperv-dxg .*shared_surface=0 .*d3d12_present=0 .*opengl_submit=0 .*env_contract=d3d12-shared-surface .*env_d3d12=1 .*env_virgl=0 .*env_software=0 .*env_d3d12_driver=1 .*env_d3d12_loader=1 .*env_d3d12_xv6gpu=1 .*env_d3d12_inplace=1 .*env_d3d12_throttle0=1 .*env_d3d12_perf0=1 .*env_d3d12_vblank0=1 .*env_egl_wayland=1 .*env_libgl_dri=1 .*env_d3d12_native_present_enabled=1 .*env_d3d12_native_present_required=1 .*env_d3d12_native_present_disabled=0 .*env_d3d12_copy_export=0 .*force_compositing=1 .*require=1 .*ok=0' \
 	        "WebKit C contract validator rejects unavailable D3D12 shared-surface contract"
+	    require_log 'webkitgpusmoke: webkit_inprocess_contract_gate_matrix .*backend_identity=FB_GPU_BACKEND_F_OPENGL_SUBMIT .*backend_opengl_submit=0 .*backend_zero_rejected=1 .*display_bind_present_id=0 .*display_bind_completed_id=0 .*native_present_id=0 .*native_completed=0 .*native_present_ids_zero_rejected=1 .*gate=closed .*native_present_credit=0 .*opengl_submit_credit=0 .*webkit_accel_credit=0 .*status=PASS' \
+	        "WebKit C contract validator emits zero-credit consumer gate"
 	    require_log 'webkitgpusmoke: gpu-contract .*env_run_id=d3d12-contract-negative .*d3d12_run_id_match=0 .*ok=0' \
 	        "WebKit C contract validator rejects missing/mismatched WebKit run id"
     require_log 'webkitgpusmoke: d3d12-contract-only expected=fail rc=-1' \
