@@ -216,6 +216,7 @@ but do not treat them as open plan items by default.
   `provider_credit_gate_negative_matrix`,
   `host_display_bind_source_catalog_matrix`,
   `d3d12_display_bind_host_abi_discovery_matrix`,
+  `d3d12_display_bind_authority_chain_matrix`,
   `d3d12_completion_source_authority_matrix`, and
   `native_present_completion_source_namespace_matrix`. WSL adapter display caps,
   submit/present metadata, written primaries, standard-allocation private data,
@@ -854,6 +855,11 @@ but do not treat them as open plan items by default.
   present because it is not the D3D12 resource scanout-bind path. Keep it in a
   native-display namespace unless a future source documents an explicit bridge
   from a D3D12 resource generation into the Nouveau display engine.
+- `dda_nouveau_d3d12_bridge_disjoint_matrix` is the bridge-specific DDA split
+  guard. It must keep DDA D3D12 import, DDA D3D12 scanout bind, D3D12 hardware
+  flip completion, KMS-as-D3D12 lane credit, D3D12 display-bind ids,
+  native-present credit, and OpenGL-submit credit at zero while DDA/Nouveau is
+  only a separate PCI/KMS display diagnostic path.
 - `foreign_prime_import_gap_matrix` is the DDA/Nouveau PRIME bridge guard.
   Local xv6 dma-buf/PRIME imports are not a D3D12 foreign-resource import or a
   Nouveau scanout-bind handoff; valid foreign fd rejects, zero D3D12 import
@@ -879,6 +885,13 @@ but do not treat them as open plan items by default.
   telemetry or normal submit rather than scanout bind, synthvid classified as
   GPA dirty-rect display, DDA/Nouveau classified as a separate PCI display
   path, and host packet/completion/native-present credit at zero.
+- `d3d12_display_bind_authority_chain_matrix` is the ordered authority guard.
+  It must show host ABI, provider send, host packet, provider completion demux,
+  display completion, resource generation, and consumer credit as one chain.
+  Until a real sender exists, only the source/resource generation gates may be
+  armed; host ABI, provider send, packet, demux, completion, and consumer
+  credit must stay closed with zero WSL present-history, KMS, sync-file,
+  DDA-native-display, native-present, OpenGL-submit, and WebKit credit.
 - `nouveau_kms_acceptance_shape_matrix` and
   `nouveau_dda_display_positive_shape_matrix` keep DDA/Nouveau display work
   Linux-shaped without granting D3D12 credit. The KMS native-present gate must
