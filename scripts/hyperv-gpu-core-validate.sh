@@ -270,6 +270,8 @@ require_nouveau_dda_or_gpup_fail_closed() {
         "GPU-P-only Nouveau vblank IRQ source remains absent"
     require_log 'nouveau_primary_plane_modifier_failclosed_matrix .*nonlinear_modifiers=0 .*nouveau_hw_scanout=0 .*native_display_ready=0 .*modifier_credit=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "GPU-P-only Nouveau primary-plane modifiers stay fail-closed"
+    require_log 'nouveau_linux_display_readiness_matrix .*display_engine_object=0 .*mode_config_ready=0 .*crtcs=0 .*encoders=0 .*primary_planes=0 .*linear_required=1 .*nonlinear_modifiers=0 .*vblank_event_registered=0 .*page_flip_event_source=none .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS_FAILCLOSED' \
+        "GPU-P-only Nouveau Linux display readiness stays fail-closed"
     require_log 'kms_scanout_cpu_convert_separation_matrix .*kms_present_nouveau_hw=0 .*cpu_convert_native_present=0 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \
         "CPU-converted/generic scanout stays separate from native present"
     require_log 'kms_gem_fb_plane_ref_matrix .*plane_ref_fields=bounded .*existing_kernel_fields=1 .*native_present_credit=0 .*opengl_submit_credit=0 .*status=PASS' \

@@ -932,6 +932,12 @@ but do not treat them as open plan items by default.
   native-present/OpenGL-submit credit and `reject_reasons=0x7f` until a real
   DDA/Nouveau display object, heads/connectors, vblank source, and hardware
   flip completion exist.
+  The Linux-shaped Nouveau display skeleton is more granular than those first
+  counters: require `nouveau_linux_display_readiness_matrix` to show absent
+  display-engine object, `mode_config`, CRTC/head, encoder/outp,
+  primary-plane, outp/connector/head masks, `nvif_head`, HPD/DP IRQ event,
+  per-head vblank event, atomic commit-tail, and page-flip completion source
+  on GPU-P-only Hyper-V, with only the linear-required policy set.
 - Linux-shaped KMS/Nouveau/TTM diagnostics are allowed to pass only as
   fail-closed mismatch rows until the matching native layer exists. Keep rows
   such as `nouveau_display_kms_registration_matrix`,
