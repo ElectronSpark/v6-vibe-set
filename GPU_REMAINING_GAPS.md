@@ -1493,6 +1493,23 @@ Goal: accept only current-run, source-correlated, finite validation evidence.
     `FPS_ANTI_INFLATION_SELFTEST=1
     VALIDATION_RUN_ID=selftest-consumer-exact
     scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
+  - [x] Source-isolate FPS evidence so app diagnostics cannot masquerade as
+    compositor-owned native-present proof. The FPS validator now wraps sampled
+    `/tmp/wlcomp-d3d12-present`, `/tmp/mesawlegl-fps`, `/tmp/wlcomp-fps`,
+    `fbstat`, and `/proc/uptime` output in source markers and emits
+    `fps_artifact_source_isolation_negative_matrix`, which rejects forged
+    `mesawlegl` display-bind/native-present scalars with zero native-present
+    and OpenGL-submit credit. `mesawlegl` still reports the evidence it read,
+    but its echoed present/display-bind/content/final-handoff ids are
+    diagnostic-prefixed rather than canonical `display_bind_*` or
+    `present_id` fields, so the finite FPS parser only accepts those canonical
+    ids from the compositor-owned `/tmp/wlcomp-d3d12-present` source block.
+    Evidence:
+    `FPS_ANTI_INFLATION_SELFTEST=1
+    VALIDATION_RUN_ID=selftest-source-isolation
+    scripts/hyperv-3d-fps-validate.sh` passed and
+    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
+    rebuilt the updated Wayland clients on 2026-05-26.
 - [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
   present and the finite FPS validator pass.
 - [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control

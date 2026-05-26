@@ -208,6 +208,16 @@ but do not treat them as open plan items by default.
   `display_bind_completion_source=missing` with zero ids. Demo-side
   `effective_presented_fps` should be derived from native completion deltas,
   not visible/app-loop FPS.
+- Keep FPS evidence source-isolated. `hyperv-3d-fps-validate.sh` wraps sampled
+  `/tmp/wlcomp-d3d12-present`, `/tmp/mesawlegl-fps`, `/tmp/wlcomp-fps`,
+  `fbstat`, and `/proc/uptime` output in source markers; canonical
+  `display_bind_*`, `present_id`, and `completed` native-present evidence
+  belongs to the compositor-owned `/tmp/wlcomp-d3d12-present` block. Client
+  logs such as `mesawlegl_fps_sample` may carry diagnostic-prefixed copies of
+  the evidence they read, but they must not emit canonical display-bind ids
+  that the FPS parser could count as compositor proof. Use
+  `fps_artifact_source_isolation_negative_matrix` to prove forged app-side
+  display-bind scalars stay zero-credit.
 - Treat `display_bind_*` evidence as the canonical bridge between the kernel
   present-source contract, `wlcomp`, FPS, and WebKit. The required keys are
   `display_bind_backend`, `display_bind_transport`,
