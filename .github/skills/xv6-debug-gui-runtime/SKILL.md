@@ -390,18 +390,20 @@ but do not treat them as open plan items by default.
   completion source exist.
 - Keep WSL-style packet lifetime visible even while no sender exists:
   `d3d12_display_bind_provider_packet_lifetime_matrix` must report no listed
-  packet, request id, transport pending id, completion demux, host-saw packet,
-  transport source, or packet completion/removal credit. A future sender must
-  replace those zeroes with real request-list publication and cancel/remove
-  evidence before completion can carry native-present credit.
+  packet, request id, transport pending id, command id, transaction id,
+  `channel=0`, completion demux, host-saw packet, transport source, or packet
+  completion/removal credit. A future sender must replace those zeroes with
+  real request-list publication and cancel/remove evidence before completion
+  can carry native-present credit.
 - Keep the stale async completion contract separate from stale-source cleanup.
   `d3d12_display_bind_stale_async_completion_contract_matrix` must report
   `real_sender=0`, no completion demux, no transport pending id, no host-saw
   display-bind packet, no transport source, zero present/completed ids, and
   zero native-present/OpenGL/WebKit credit while the real sender is absent. It
-  may only become positive after a documented sender publishes a pending packet
-  and owner-close/unregister cancels that packet before a late completion is
-  rejected against the same source/resource generation.
+  should keep `late_completion_reject_gate=armed` with
+  `late_completion_rejected=not_sampled` until a documented sender publishes a
+  pending packet and owner-close/unregister cancels that packet before a late
+  completion is rejected against the same source/resource generation.
 - WSL 6.6.87 and 6.18 dxgkrnl source audits found shared-resource,
   present-history, and sync-file primitives, but no Linux UAPI display-bind
   ioctl and no exposed Linux display-completion handler for binding a D3D12
