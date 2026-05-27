@@ -216,6 +216,7 @@ but do not treat them as open plan items by default.
   `wsl_dxg_adapter_display_caps_negative_matrix`, and
   `dda_nouveau_non_readback_display_proof_matrix`, plus
   `wsl_submit_present_fields_not_bind_matrix`,
+  `wsl_submit_ntstatus_not_completion_matrix`,
   `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
   `wsl_trace_display_bind_negative_matrix`, and
   `provider_credit_gate_negative_matrix`,

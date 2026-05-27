@@ -877,10 +877,20 @@ non-readback display handoff.
     standard-allocation paths as native-present credit. The existing
     `wsl_dxg_uapi_namespace_negative_matrix`,
     `wsl_submit_present_fields_not_bind_matrix`,
+    `wsl_submit_ntstatus_not_completion_matrix`,
     `wsl_trace_display_bind_negative_matrix`,
     `dxg_presenthistory_telemetry_not_completion_matrix`, and
     `d3d12_display_bind_host_abi_discovery_matrix` are the validator evidence
     for this audit.
+  - [x] Preserve raw WSL HWQUEUE submit NTSTATUS as diagnostics without letting
+    it become display completion evidence. `/dev/dxg` now reports
+    `submit_status` for `LX_DXSUBMITCOMMANDTOHWQUEUE`; `dxgprobe` proves the
+    same-adapter replay returned `submit_ntstatus=0x0` while
+    `submit_ntstatus_is_display_completion=0`, `host_saw_display_bind_packet=0`,
+    no completion demux is registered, and native/OpenGL credit remains zero.
+    `fbstat`, `gpucorevalidate`, and `hyperv-gpu-core-validate.sh` require the
+    same zero-credit namespace split through
+    `wsl_submit_ntstatus_not_completion_matrix`.
   - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
     while keeping it fail-closed. `fb_dxg_present.c` now delegates the
     source/resource-generation snapshot to
