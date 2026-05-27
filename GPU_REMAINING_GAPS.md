@@ -949,9 +949,11 @@ non-readback display handoff.
     host-saw display-bind packet, no transport source, zero present/completed
     ids, and zero native-present/OpenGL/WebKit credit, while requiring the
     future owner-close-cancel and late-completion-rejection contract to stay
-    visible. It reports `PASS_FAILCLOSED` today; it does not close the real
-    sender item until an actual post-send pending record can be cancelled and a
-    late matching completion is rejected with `owner_close_cancelled=1`.
+    visible as `late_completion_reject_gate=armed` with
+    `late_completion_rejected=not_sampled`. It reports `PASS_FAILCLOSED` today;
+    it does not close the real sender item until an actual post-send pending
+    record can be cancelled and a late matching completion is rejected with
+    `owner_close_cancelled=1` and sampled late-completion rejection evidence.
   - [x] Add the pure-C future contract row for provider-owned pending packet
     publication before a real sender is wired.
     `d3d12_display_bind_provider_pending_publication_matrix` is now backed by
@@ -971,7 +973,8 @@ non-readback display handoff.
     transaction id, channel, completion demux, packet completion, wait cancel,
     packet removal on cancel, host-saw packet, and transport source. Today it
     must report `packet_listed=0`, `request_id=0`, no transport pending id, no
-    demux, no host-saw display-bind packet, no transport source, zero
+    command id, no transaction id, `channel=0`, no demux, no host-saw
+    display-bind packet, no transport source, zero
     present/completed ids, and zero native-present/OpenGL/WebKit credit with
     `PASS_FAILCLOSED`.
   - [x] Granularize the provider pending publication proof with the WSL-shaped
