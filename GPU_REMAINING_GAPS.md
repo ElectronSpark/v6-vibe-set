@@ -955,15 +955,18 @@ non-readback display handoff.
     credit.
     The fail-closed precursor is now explicit:
     `d3d12_display_bind_stale_async_completion_contract_matrix` records that
-    there is no real sender, no completion demux, no transport pending id, no
-    host-saw display-bind packet, no transport source, zero present/completed
-    ids, and zero native-present/OpenGL/WebKit credit, while requiring the
-    future owner-close-cancel and late-completion-rejection contract to stay
-    visible as `late_completion_reject_gate=armed` with
-    `late_completion_rejected=not_sampled`. It reports `PASS_FAILCLOSED` today;
-    it does not close the real sender item until an actual post-send pending
-    record can be cancelled and a late matching completion is rejected with
-    `owner_close_cancelled=1` and sampled late-completion rejection evidence.
+    there is no real sender, no async completion path, no completion demux, no
+    transport pending id, no host-saw display-bind packet, no transport source,
+    zero present/completed ids, and zero native-present/OpenGL/WebKit credit.
+    It labels the scope as `sender_state=absent` and
+    `stale_async_scope=no_sender_failclosed` while keeping future
+    owner-close-cancel and late-completion-rejection requirements visible as
+    after-real-send requirements, deferred-until-sender, untested, and
+    `late_completion_rejected=not_sampled`. It reports `PASS_FAILCLOSED`
+    today; it does not close the real sender item until an actual post-send
+    pending record can be cancelled and a late matching completion is rejected
+    with `owner_close_cancelled=1` and sampled late-completion rejection
+    evidence.
   - [x] Add the pure-C future contract row for provider-owned pending packet
     publication before a real sender is wired.
     `d3d12_display_bind_provider_pending_publication_matrix` is now backed by
