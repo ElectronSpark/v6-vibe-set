@@ -14,3 +14,7 @@ __pycache__/
 
 # Local Docker WebKit runtime context; large binary payload, never commit.
 /.docker-webkit-ref-sysroot/
+
+# Local Hyper-V VM disk image; large binary payload, never commit.
+*.vhdx
+*.vhd

@@ -1,2101 +1,484 @@
-# GPU Remaining Gaps
+# GPU Plan: Real NVIDIA GPU via Hyper-V DDA + Nouveau
 
-Last updated: 2026-05-26
+Last updated: 2026-05-28
 
-This file tracks only the work that is still missing or needs fresh parity
-proof. Completed wave logs and historical evidence should live in the runtime
-skills or validation artifacts, not in this active plan.
+## Mission (Non-Negotiable Invariant)
 
-## Reference Baseline
+This plan has exactly one goal, stated three ways. All three must be literally
+true in the same validation run before any success is claimed:
 
-### WSL2 Linux DXG Baseline
+1. **Aim for Nouveau.** The guest GPU driver is the in-tree Nouveau port
+   (`kernel/kernel/dev/fb/fb_nouveau.c` and its PCI/DRM/KMS support). Mesa's
+   Nouveau / NVK userspace is the rendering stack. We do **not** chase the
+   GPU-P / DXG / D3DKMT paravirtual path for acceleration credit.
+2. **Invoke Hyper-V.** The transport is a real Hyper-V virtual machine. The
+   physical GPU reaches the guest over the Hyper-V virtual-PCI (vPCI / VMBus)
+   bus that already exists in `kernel/kernel/dev/hyperv/` and `kernel/kernel/pci.c`.
+3. **Genuinely invoke the host NVIDIA GPU.** The acceptance path is **Discrete
+   Device Assignment (DDA)** — the physical NVIDIA PCIe GPU is dismounted from
+   the Windows host and assigned to the xv6 VM. Nouveau then drives the *real
+   silicon*: it reads the real chipset ID from MMIO, sizes real VRAM, loads
+   real signed firmware, submits real commands to a real engine, and gets back
+   real hardware fences. No emulation, no synthetic GETPARAM answers, no host
+   proxy, no readback-as-present.
 
-Audited against `/tmp/wsl2-linux-kernel-audit` at commit `85ceaf8`
-(`linux-msft-wsl-6.18.y`).
+> Why this replaces the old plan: the previous tracker (now archived at
+> `GPU_REMAINING_GAPS.dxg-failclosed-archive.md`) was blocked forever on a
+> `dxg-resource-scanout-bind` host ABI that does not exist in WSL `dxgkrnl`
+> (re-confirmed 2026-05-28 against `/home/es/reps/WSL2-Linux-Kernel` commit
+> `427645e3db`: zero scanout/display-bind ioctls or VMBus senders). DDA is the
+> only honest way to reach a *real* NVIDIA GPU under Hyper-V, so the whole plan
+> is re-centered on it. The archived DXG fail-closed skeleton stays as-is and
+> is no longer the acceleration path.
 
-The WSL2 GPU-PV driver is under `drivers/hv/dxgkrnl`, not
-`drivers/gpu/dxgkrnl`. Its userspace ABI is
-`include/uapi/misc/d3dkmthk.h`. It is a D3DKMT/DXG transport and object-lifetime
-reference; it is not the Linux DRM/KMS/Nouveau display stack.
+## How To Use This Plan (read first — written for a fresh agent)
 
-Use these WSL files as anchors when changing the Hyper-V DXG path:
+- Work **top to bottom**. Each section depends on the one before it. Do not
+  skip ahead; a later section cannot pass if an earlier one is faked.
+- Each `[ ]` item lists: **what to build**, **which files**, **how to prove
+  it**, and the **acceptance evidence** that lets you check the box.
+- "Real-hardware evidence" always means a value that *could only come from the
+  physical GPU* (chipset ID register, VRAM size probe, a completed hardware
+  fence, a GL/Vulkan draw result). A counter that you set in software is **not**
+  evidence.
+- **Never** mark an item `[x]` from build-success alone. You need build +
+  runtime evidence + a negative test (proving the fail-closed path still
+  rejects fakes).
+- If the real GPU is unavailable in your environment, you may implement and
+  build the code, but you must leave the item `[ ]` and write
+  `BLOCKED: no DDA hardware available` under it. Do not invent passing runs.
 
-- `dxgkrnl.h`: canonical `dxgprocess`, `dxgadapter`, `dxgdevice`,
-  `dxgcontext`, `dxghwqueue`, `dxgresource`, `dxgallocation`,
-  `dxgsharedresource`, `dxgsyncobject`, and `dxgsharedsyncobject` ownership.
-- `hmgr.h` and `hmgr.c`: process handle-table shape, handle bit layout,
-  unique/index/instance validation, destroyed tombstones, free-list reuse, and
-  typed lookup.
-- `dxgprocess.c`: process creation/destruction, adapter-local handle table,
-  process adapter records, host process lifetime, and cleanup ordering.
-- `ioctl.c`: D3DKMT ioctl marshalling, resource/sync NT sharing,
-  `dxgsharedresource_seal()`, `open_resource()`, and process handle checks.
-- `dxgsyncfile.c`: WSL's bridge from DXG monitored fences to Linux
-  `sync_file`/`dma_fence`.
-- `dxgvmbus.c` and `dxgvmbus.h`: host wire packet construction and return
-  layouts for process, adapter, device, context, HW queue, allocation,
-  residency, resource-open, sync, submit, and query paths.
+## Build And Run Commands
 
-### Linux GPU Interface Baseline
+The configured kernel build directory is `build-codex-x86_64` (NOT
+`/tmp/xv6-hyperv-build`, which does not exist on this checkout).
 
-Use Linux DRM/GEM/TTM/KMS/Nouveau as the reference for `/dev/dri`,
-render-node, PRIME/dma-buf, `dma_fence`, `dma_resv`, KMS atomic, PCI runtime,
-and Nouveau behavior. Do not cite WSL `dxgkrnl` as evidence for DRM/KMS
-scanout or Nouveau correctness.
+```sh
+# Kernel only (fast inner loop):
+cmake --build build-codex-x86_64 --target kernel -j"$(nproc)"
 
-## Non-Negotiable Gates
+# Full world (kernel + user + ports + rootfs) — reuse existing toolchain:
+mkdir -p build-x86_64/toolchain
+cp -al build-toolchain-x86_64/* build-x86_64/toolchain/ 2>/dev/null || true
+cmake -S . -B build-x86_64 -DXV6_ARCH=x86_64
+cmake --build build-x86_64 --target world -j"$(nproc)"
+```
 
-- Hyper-V must keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` until all of these
-  are true in the same current validation lineage:
-  `mesaglfeature` passes without device removal, D3D12 shared-resource present
-  is native and non-readback, the 480p desktop 3D demo sustains more than
-  60 FPS after warmup, and WebKit uses the same shared-surface contract.
-- KVM/virgl is the only backend that may currently advertise OpenGL submit.
-- Hyper-V present work must use GPU-P, DDA, or a WSLg-like display channel. Do
-  not add custom host tools as the acceptance path.
-- A D3D12 resource import, fence import, frame callback, release callback,
-  dmabuf request, render-node presence, or displayed FPS number is not native
-  present evidence by itself.
-- If the kernel transforms a DXG packet, add kernel diagnostics proving the
-  packet and return layout the host actually saw.
-- Heavy Hyper-V validation runs after a whole section is implemented, not after
-  every small edit. Prefer pure-C guest validators for slice-level checks.
+Build artifacts:
+- kernel ELF: `build-x86_64/kernel/build/kernel/kernel`
+- rootfs:     `build-x86_64/fs.img`
+
+The Hyper-V image used for DDA testing is `xv6-hyperv.vhdx` at the repo root.
+Refresh it from the built kernel/rootfs with the existing image script in
+`cmake/BuildImage.cmake` / `scripts/` before each hardware run.
+
+## Reference Baselines (cite these, not WSL dxgkrnl)
+
+- **Linux Nouveau** (`drivers/gpu/drm/nouveau` and `drm/nouveau/nvkm`): the
+  authoritative model for PCI probe, MMIO register map, VRAM/instmem, FIFO
+  channels, GPFIFO/pushbuf, firmware (GSP-RM / FECS / GPCCS), and KMS display.
+  Use a current upstream Linux tree as the anchor.
+- **Mesa Nouveau / NVK** (`src/nouveau`, `src/gallium/drivers/nouveau`): the
+  userspace winsys, the `nouveau_ws_device` open path, and the GL/Vulkan
+  command streams. NVK targets Turing (TU10x) and newer via GSP; classic
+  Gallium Nouveau GL targets up to Pascal/Maxwell.
+- **NVIDIA open-gpu-kernel-modules** and **envytools/nvgpu register DB**: the
+  register definitions and firmware boot sequences for the real silicon.
+- **Microsoft DDA docs** ("Plan for deploying devices using Discrete Device
+  Assignment", `Dismount-VMHostAssignableDevice` / `Add-VMAssignableDevice`):
+  the host-side passthrough procedure.
+- The existing in-tree **Hyper-V vPCI** code (`HVPCI_*` messages in
+  `kernel/kernel/dev/hyperv/hyperv_defs_state.c`) mirrors Linux `pci-hyperv.c`.
+
+## Hardware And Host Prerequisites (do this before any guest code runs)
+
+These are operational steps on the **Windows Hyper-V host**, not xv6 code, but
+the guest path cannot work until they are done. Record the exact output of each
+command in the validation log.
+
+- [ ] **H1. Confirm the host can do DDA.**
+  - IOMMU enabled in firmware (Intel VT-d or AMD-Vi) and SR-IOV/ACS such that
+    the GPU sits in its own IOMMU group.
+  - Hyper-V role installed; Windows Server 2019+ or Windows 11 Pro/Enterprise
+    with a GPU that supports Function Level Reset (FLR) or a PCIe reset method
+    Hyper-V accepts.
+  - The GPU must **not** be the host's primary/boot display. Use the iGPU or a
+    second GPU for the host console.
+  - Honesty note: the old repo memory claim "DDA needs SR-IOV-class GPU" is
+    wrong — that was RemoteFX vGPU. DDA is plain IOMMU PCIe passthrough and
+    works with many consumer GeForce cards, *if* FLR/reset and isolation hold.
+    If your specific card cannot be cleanly reset, record
+    `BLOCKED: GPU not DDA-capable` and stop.
+  - Evidence: `Get-VMHostAssignableDevice` lists nothing yet;
+    `(Get-PnpDevice -PresentOnly).Where{$_.InstanceId -match 'PCI\\VEN_10DE'}`
+    shows the NVIDIA device; record its `LocationPath` from
+    `Get-PnpDeviceProperty -KeyName DEVPKEY_Device_LocationPaths`.
+
+- [ ] **H2. Dismount the GPU from the host and assign it to the VM.**
+  - Disable the host's NVIDIA driver for the device, then:
+    `Dismount-VMHostAssignableDevice -Force -LocationPath "<path>"`.
+  - `Add-VMAssignableDevice -LocationPath "<path>" -VMName "<xv6-vm>"`.
+  - Give the VM enough MMIO window for the GPU BARs:
+    `Set-VM -VMName "<xv6-vm>" -GuestControlledCacheTypes $true \
+      -LowMemoryMappedIoSpace 3Gb -HighMemoryMappedIoSpace 33Gb`
+    (raise HighMemoryMappedIoSpace to cover the card's large BAR1/resizable
+    BAR; a 24 GB card needs >= 32 GB).
+  - Evidence: `Get-VMAssignableDevice -VMName "<xv6-vm>"` lists the NVIDIA
+    device; the VM starts without an MMIO-space error.
+
+- [ ] **H3. Stage Nouveau firmware for the guest.**
+  - Identify the chipset family (Maxwell GM20x / Pascal GP10x / Turing TU10x /
+    Ampere GA10x / Ada AD10x). This decides the firmware and the userspace
+    stack (classic Gallium GL vs NVK).
+  - Copy the matching `linux-firmware` `nvidia/<chip>/` blobs (and for Turing+
+    the GSP-RM firmware image) into the rootfs overlay under
+    `rootfs-overlay/lib/firmware/nouveau/` so the guest can load them.
+  - Evidence: the firmware files are present in `build-x86_64/fs.img` after a
+    `world` build; list them from the running guest.
+
+## Current Honest State (2026-05-28)
+
+- Hyper-V vPCI/VMBus transport exists; `pci_note_nvidia_gpu` already records an
+  NVIDIA PCIe candidate (vendor `0x10DE`), its BARs, and MSI/MSI-X caps.
+- The Nouveau driver is a **scaffold**: `fb_nouveau.c` registers a
+  `drm_core_driver` named "nouveau", has GETPARAM/channel/NVIF/submit entry
+  points, and a large set of `nouveau_*` stats/diagnostic fields — but every
+  hardware-facing answer is currently **fail-closed / synthetic-rejected**.
+  No real chipset ID is read, no real VRAM is sized, no firmware is loaded, no
+  real command reaches an engine, and no real KMS scanout happens.
+- Linux-shaped PCI wrappers exist (`dma_set_mask_and_coherent`, `pci_enable_msi`,
+  `pci_request_irq`, `pm_runtime_*`, claim-before-iomap) and Nouveau uses them
+  in fail-closed mode.
+- `FB_GPU_BACKEND_F_OPENGL_SUBMIT` is `0` on Hyper-V and must stay `0` until the
+  real Nouveau-on-DDA OpenGL path proves itself.
+- No DDA hardware is attached to the current development checkout (it is WSL).
+  All hardware-evidence items below are therefore `[ ]` until run on a real
+  Hyper-V + NVIDIA host.
+
+## Honesty Gates (carry over, adapted to real hardware)
+
+- Keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` on Hyper-V until: Nouveau opens the
+  **real** assigned GPU, a **real** command submission completes with a **real**
+  hardware fence, Mesa renders a frame on the GPU, and the 480p demo sustains
+  > 60 FPS after warmup — all in one lineage.
+- A PCI probe, a mapped BAR, an allocated channel handle, a synthetic GETPARAM,
+  a render-node node, a dmabuf request, or a displayed FPS number is **not**
+  real-GPU evidence by itself.
+- Every hardware fact must be traceable to a register read or DMA result from
+  the assigned device. Add kernel diagnostics that print the raw register
+  offset and value the driver actually read.
+- No synthetic/emulated GPU answers may earn credit. If the real device is
+  absent, the path must fail closed, not fabricate values.
+- Heavy GUI/FPS/WebKit validation runs after a whole section is code-complete,
+  not after every edit. Use pure-C guest validators (`gpucorevalidate`,
+  `drmiftest`, `nouveauabitest`, `dxgprobe`) for slice checks.
 
 ## Current Source Map
 
-- Hyper-V DXG/D3DKMT:
-  `kernel/kernel/dev/hyperv/module.c` and `kernel/kernel/dev/hyperv/*.c`.
-  This is still a unity-style root with fragment files; do not assume
-  separately compiled internal APIs until the shared state and helper
-  boundaries are made explicit.
-- Framebuffer, DRM/KMS, GEM/TTM/dma-buf, sync, virtgpu, Nouveau, and present
-  bridge:
-  `kernel/kernel/dev/fb/module.c` and `kernel/kernel/dev/fb/*.c`.
-  This is also still a unity-style root. Treat broad status counters and debug
-  fields as diagnostics unless a validator names them as an acceptance gate.
-- D3DKMT ABI:
-  `kernel/kernel/inc/uabi/d3dkmthk.h`.
-- Main guest validators:
-  `dxgprobe`, `drmiftest`, `gpucorevalidate`, `d3d12sharedsmoke`,
-  `mesaglfeature`, `mesawlegl`, WebKit GPU validators, and the Hyper-V FPS
-  validator scripts.
+- NVIDIA PCIe candidate probe + BAR/MSI capture: `kernel/kernel/pci.c`
+  (`pci_note_nvidia_gpu`, `nvidia_gpu_pci_devs`).
+- Hyper-V vPCI/VMBus transport: `kernel/kernel/dev/hyperv/hyperv_defs_state.c`
+  (`HVPCI_*`), `kernel/kernel/dev/hyperv/*.c`.
+- Nouveau driver + DRM/KMS/PCI runtime: `kernel/kernel/dev/fb/fb_nouveau.c`,
+  `kernel/kernel/dev/fb/fb_internal.c`, `kernel/kernel/dev/fb/fb_drm_*.c`.
+- Linux-shaped PCI wrappers: `kernel/kernel/pci.c` and the `nouveau_pci_*`
+  matrices in `fbstat` / `gpucorevalidate`.
+- Stats/diagnostic ABI: `kernel/kernel/inc/dev/fb.h` (`nouveau_*` fields).
+- Guest validators: `dxgprobe`, `drmiftest`, `gpucorevalidate`,
+  `nouveauabitest`, `mesaglfeature`, `mesawlegl`, and the
+  `scripts/hyperv-*-validate.sh` runners.
 
-## Current Honest State
+## Dependency Graph (new)
 
-- Hyper-V DXG transport and D3DKMT readiness exist.
-- Real Mesa D3D12 on Hyper-V reaches renderer selection, real contexts,
-  real HW queues, allocations, GPUVA work, submit paths, and the
-  MakeResident `count=2 flags=0x1` case without the old device-removal blocker.
-- D3D12 shared-resource export/open has reached the compositor protocol and
-  fail-closed present-source path. It has not reached native display handoff.
-- Hyper-V still reports `backend_opengl_submit 0`.
-- The 480p FPS validator is intentionally strict and expected to fail until
-  native D3D12 present is complete.
-- WebKit acceleration is correctly gated off on Hyper-V while that contract is
-  incomplete.
-- The plan previously mixed active items, historical waves, and duplicate
-  roll-ups. This redesign keeps one active hierarchy below.
+```
+H1 host DDA capable
+  -> H2 GPU assigned to VM
+       -> 1 guest enumerates the REAL NVIDIA device on vPCI
+            -> 2 Nouveau real-hardware bring-up (MMIO id, VRAM, firmware)
+                 -> 3 real command submission (FIFO/GPFIFO + HW fence)
+                      -> 4 real KMS display / scanout (or headless present)
+                           -> 5 Mesa Nouveau/NVK OpenGL on the real GPU
+                                -> 6 backend OpenGL-submit flag + 480p FPS
+                                     -> 7 WebKit consumer on the same contract
+```
 
-## Active Plan
+Until item 1 produces a real chipset ID, every later validator stays
+fail-closed and must reject synthetic/emulated evidence.
 
-### Current Dependency Graph
+---
 
-The remaining unchecked work is intentionally ordered around one root
-dependency:
+## Section 1. Enumerate the Real NVIDIA Device on Hyper-V vPCI
 
-1. `dxg-resource-scanout-bind` or an equivalent GPU-P/DXG/WSLg-style
-   resource-to-display transport must produce a nonzero present id and
-   display-completion counter for the same D3D12 resource generation.
-   DDA/Nouveau is tracked as a separate native-display path, not as evidence
-   that the D3D12 resource scanout-bind root exists.
-2. The compositor may then unblock callbacks/releases and grant visible content
-   and FPS credit only for that completed resource generation.
-3. Hyper-V may advertise `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only after the native
-   present path and finite 480p FPS validator pass.
-4. WebKit acceleration may turn on only after it consumes that exact same
-   shared-resource, sync-file, native-present, FPS, and backend-flag contract.
+Goal: prove the assigned physical GPU appears in the guest over Hyper-V vPCI and
+that xv6 captures its real identity and BARs.
 
-Until item 1 exists, later validators should be strict, source-correlated, and
-fail-closed; they should not be reworded into "done" by accepting import-only,
-callback-only, title-only, or readback evidence.
+- [ ] **1.1 Receive the assigned device through the Hyper-V vPCI bus.**
+  - File: `kernel/kernel/dev/hyperv/hyperv_defs_state.c` and the vPCI handling
+    in `kernel/kernel/dev/hyperv/*.c`; `kernel/kernel/pci.c`.
+  - Implement/verify the `HVPCI_QUERY_BUS_RELATIONS` / `BUS_RELATIONS2` handling
+    so the assigned NVIDIA function is reported to the guest PCI layer with its
+    real BDF, vendor `0x10DE`, device id, and class `0x030000` (VGA) or
+    `0x030200` (3D controller).
+  - Prove `pci_note_nvidia_gpu` runs for the DDA device and records real BARs
+    (BAR0 MMIO ~16 MB, BAR1 VRAM aperture, BAR3 if present), real IRQ
+    line/pin, and real MSI/MSI-X capability offsets.
+  - Acceptance evidence: boot log line `PCI: NVIDIA GPU candidate at B:D:F
+    device=0x.... class=0x30000 ... bar0=0x..../0x....` with **nonzero,
+    plausible** BAR sizes that match the physical card. A zero/absent BAR means
+    the MMIO window (H2) is too small — fix and re-run.
 
-### Holistic Work Breakdown
+- [ ] **1.2 Distinguish DDA passthrough from GPU-P and from absence.**
+  - Add a stats field + matrix (extend `nouveau_pci_runtime_interface_matrix`
+    or add `nouveau_dda_device_presence_matrix`) that reports:
+    `dda_nvidia_present`, real `vendor_id`, `device_id`, `class_code`, BAR
+    count and sizes, `transport=hyperv_vpci`, and `gpup_dxg_path=0` (this is the
+    DDA lane, not DXG).
+  - Fail-closed rule: if no `0x10DE` function is present on vPCI, the matrix
+    must report `dda_nvidia_present=0` and every later section must reject.
+  - Acceptance evidence: `gpucorevalidate` prints the matrix with the real
+    device id and `dda_nvidia_present=1`; on a non-DDA image it prints
+    `dda_nvidia_present=0 status=PASS_FAILCLOSED`.
 
-This is the active skeleton for the remaining work. Later sections keep the
-detailed source/evidence history, but new implementation should move through
-these chunks in order:
+- [ ] **1.3 Claim BARs and enable bus mastering on the real device.**
+  - Use the existing claim-before-iomap path in `kernel/kernel/pci.c`. Claim
+    BAR0/BAR1, `ioremap` BAR0 (registers), set the PCI command register
+    `MEMORY` + `BUS_MASTER` bits, and program a usable DMA mask via
+    `dma_set_mask_and_coherent()`.
+  - Acceptance evidence: counters show `claim` and `iomap` succeeded for the
+    NVIDIA BDF, bus-master bit reads back set, and no `unclaimed_iomap` events.
 
-1. **Host Display-Bind Source**
-   - Find or prove absent a non-custom GPU-P/DXG or WSLg-like bridge
-     that can bind a guest D3D12 resource/allocation/fence to host scanout.
-     Keep DDA/Nouveau on its own native-display readiness track unless a
-     future source documents an explicit bridge from the D3D12 resource
-     generation into that display engine.
-   - If a source exists, document its sender packet, return layout,
-     completion payload, resource-generation identity, and same-adapter
-     requirements against WSL/Linux source or same-adapter traces.
-   - If the source is absent, keep the provider fail-closed and keep the
-     missing-host-ABI matrix as the checked result for this chunk; do not turn
-     synthvid, present-history enum names, or DDA PCI display presence into
-     native-present credit.
-2. **Kernel Provider Replacement**
-   - Replace `hyperv_dxg_display_bind_submit()` only after chunk 1 has a
-     real sender/completion contract.
-   - Preserve the existing source/resource-generation accept gate, typed
-     DXG fd pinning, sync-file acquire metadata, and zero-id stale-source
-     cleanup.
-   - Add kernel-side host-saw diagnostics for every display-bind packet or
-     completion payload the provider sends or consumes.
-3. **Compositor Native Handoff**
-   - Unblock D3D12 resource-buffer callbacks/releases only for nonzero
-     display-bind present/completed ids from the same current run, source, and
-     resource generation.
-   - Populate compositor-owned visible content CRC/frame/hash fields from
-     the native handoff, not from app-loop telemetry or title/FPS overlays.
-4. **Finite 480p FPS**
-   - Run the 480p demo through the native handoff after warmup, with
-     visible, closeable, and resizable lifecycle evidence.
-   - Require effective FPS to be clamped by native completion cadence and
-     compositor-owned content cadence; the around-40 inflated/readback case
-     must remain a negative artifact.
-5. **Backend Flag and Controls**
-   - Set Hyper-V `FB_GPU_BACKEND_F_OPENGL_SUBMIT` only after chunks 1-4
-     pass in one current validation lineage.
-   - Re-run the KVM/virgl control path to prove it remains the permitted
-     OpenGL-submit backend while Hyper-V changes are isolated.
-6. **WebKit Contract**
-   - Route WebKitGTK through the same Mesa D3D12 shared-resource,
-     sync-file, native-present, FPS, and backend-flag contract.
-   - Produce the single enabled WebKit artifact only after the same current
-     validation lineage proves native present, finite 480p FPS, backend flag,
-     and compositor-owned content identity.
-7. **Whole-Plan Dependency Skeleton**
-   - Keep the root display-bind dependency, native-completion validators,
-     finite 480p gate, demo interaction gate, backend OpenGL-submit gate,
-     KVM/virgl recheck, WebKit route, WebKit content, and final WebKit artifact
-     in one current-run dependency row so later sections cannot open from
-     isolated partial evidence.
-  - `fbstat` and `gpucorevalidate` now emit
-     `gpu_remaining_plan_dependency_skeleton_matrix`, requiring the WSL
-     display-bind ioctl and in-band present-history completion handler to be
-     absent, GPU-P sender/completion contracts to be zero, DDA/Nouveau import,
-     scanout-bind, and hardware-flip completion to be absent, and all native
-     present/OpenGL/WebKit credit to remain zero while the root display-bind
-     gate is closed. The focused core runner requires this row before any
-     later native-present/FPS/WebKit evidence can be trusted.
-     The row now names the still-closed sub-gates directly:
-     `real_display_bind_sender=0`, `real_display_bind_completion=0`,
-     `native_completion_validator_gate=closed`, `finite_480p_gate=closed`,
-     `backend_opengl_submit_gate=closed`, and
-     `webkit_enabled_artifact_gate=closed`, with
-     `DDA/Nouveau-separate-display-not-D3D12-bind` kept as a separate display
-     path rather than D3D12 scanout-bind evidence.
-   - The skeleton is backed by source-audited negative-proof rows:
-     `wsl_dxg_uapi_namespace_negative_matrix`,
-     `wsl_dxg_adapter_display_caps_negative_matrix`, and
-     `dda_nouveau_non_readback_display_proof_matrix`. The pure-C validators
-     now also require `wsl_submit_present_fields_not_bind_matrix`,
-     `wsl_stdalloc_and_alloc_flags_not_bind_matrix`,
-     `wsl_trace_display_bind_negative_matrix`, and
-     `provider_credit_gate_negative_matrix`. The current skeleton also
-     requires `host_display_bind_source_catalog_matrix`, so WSL submit
-     metadata, present-history fields, written primaries, standard-allocation
-     private data, allocation flags, trace-visible resource sharing, sync-file
-     plumbing, provider invocation counters, WSLg-channel absence, synthvid
-     GPA-dirty evidence, and DDA/Nouveau display separation cannot become
-     native-present credit without a real host ABI, sender, and
-     display-completion contract.
-     The bounded host-ABI source audit is
-     `d3d12_display_bind_host_abi_discovery_matrix`: it must keep custom host
-     tooling absent, the WSL display-bind ioctl absent, WSLg/FreeRDP/RDP paths
-     absent or copy/dirty-frame only, GPU-P sender and completion-demux
-     contracts at zero, DDA/Nouveau D3D12 import/scanout/hardware flip absent,
-     the provider fail-closed, transport/present/completed ids zero, and
-     native-present/OpenGL/WebKit credit at zero.
-     These follow the WSL `dxgkrnl` UAPI/display-cap clearing and Linux
-     Nouveau DRM/KMS shape: WSL enum, adapter, standard-allocation,
-     submit/present, trace replay, and present-history telemetry fields are
-     not a display-bind ABI; DDA PCI BAR/DMA/IRQ acceptance is not
-     non-readback display proof until Nouveau display creation, non-virtual
-     connectors, hardware vblank IRQs, and hardware page-flip completions all
-     correlate through the KMS `NOUVEAU_HW` lane.
-  - `fb_dxg_present_display_bind_result_accepts()` now requires
-    `FB_GPU_DXG_DISPLAY_BIND_SOURCE_NON_WSL_DXGKRNL_EXTENSION` before a
-    provider result can become D3D12 native-present credit, so a future
-    DDA/Nouveau native-display source cannot be accidentally counted as the
-    D3D12 resource scanout-bind lane. The DDA/Nouveau proof rows now split
-    `dda_native_display_credit` from `d3d12_native_present_credit=0` while
-    preserving legacy `native_present_credit=0` for existing validators.
+---
 
-### 1. WSL2 DXG Parity
+## Section 2. Nouveau Real-Hardware Bring-Up
 
-Goal: make the Hyper-V DXG path match WSL2 `dxgkrnl` where WSL is the right
-reference: process lifetime, typed handles, D3DKMT packet shape, shared
-resource/sync lifetime, and monitored-fence sync-file behavior.
+Goal: replace synthetic Nouveau answers with values read from the real silicon.
 
-- [x] Re-audit `hvdxg_process_state` against WSL `struct dxgprocess`:
-  host-process creation/destruction, refcount lifetime, process memory
-  lifetime, `tgid`/namespace behavior, retained process reuse, and final
-  `DESTROYPROCESS` ordering.
-  - [x] Remove cross-TGID retained host-process reuse from
-    `hvdxg_process_get_current`; retained host processes can only be reused by
-    the same TGID namespace, matching WSL's TGID-keyed `dxgprocess` lookup.
-  - [x] Add a common pre-dispatch TGID ownership gate for D3DKMT ioctls so
-    stale or wrong-process file descriptors fail before packet forwarding.
-  - [x] Split process object lifetime from process memory lifetime, or add
-    validated equivalent references for shared fds and async cleanup paths.
-- [x] Re-audit the xv6 DXG handle table against WSL `hmgrtable`: local adapter
-  handles versus normal object handles, index/unique/instance fields, destroyed
-  tombstones, free-list reuse delay, typed lookup, stale-handle rejection, and
-  `ignore_destroyed` callers.
-  - [x] Mirror WSL handle bit layout for diagnostics: index, unique, and
-    instance fields are decoded for tracked DXG objects, and local adapter
-    handles now carry a nonzero unique field.
-  - [x] Add WSL-style minimum-free reuse delay for per-process local adapter
-    handles, with pure-C `dxgprobe --handle-lifetime-validate` coverage proving
-    no immediate same-handle reuse and `min_free=128`.
-  - [x] Add destroyed-entry serial diagnostics for tracked DXG objects and
-    expose object/local-adapter reuse delay counters through `/dev/dxg`.
-  - [x] Replace unordered linear normal-object lookup with index-addressed
-    handle-table lookup keyed by WSL handle index/unique/instance fields.
-  - [x] Add pure-C stale-handle matrix output for device, sync object, paging
-    queue, paging-queue sync object, allocation/resource destroy, and GPUVA
-    free attempts, and require matching denied-counter deltas.
-  - [x] Replace the remaining growable-array approximation with a true
-    free-list table for normal DXG objects, including free-count/head/tail,
-    unique bump on free, chunk expansion, and explicit `ignore_destroyed`
-    callers matching WSL.
-  - [x] Validate stale handle rejection after delayed reuse for every object
-    class: device, context, HW queue, paging queue, sync object, resource,
-    allocation, and GPUVA reservation.
-- [x] Re-audit `dxgprocess_adapter` equivalents: per-process adapter records,
-  adapter/device list locking, multiple opens of the same adapter, and close
-  behavior while child objects still exist.
-- [x] Re-audit DXG object teardown order against WSL:
-  HW queues, contexts, paging queues, sync objects, allocations, resources,
-  GPUVA reservations, devices, adapters, and process host handles.
-- [x] Compare xv6 packet structs and marshalling against WSL `dxgvmbus.c` for
-  `CREATEPROCESS`, `OPENADAPTER`, `QUERYADAPTERINFO`, `CREATEDEVICE`,
-  `CREATECONTEXTVIRTUAL`, `CREATEHWQUEUE`, `CREATEALLOCATION`,
-  `DESTROYALLOCATION`, `MAKERESIDENT`, `OPENRESOURCE`, sync-object
-  create/open/signal/wait, sync-file create/open/wait, and HW-queue submit.
-  - [x] Align the obvious WSL packet-shape divergences found in the source
-    audit: keep `CREATEDEVICE.cdd_device` zeroed like WSL, remove the
-    non-WSL trailing dword from `MAKERESIDENT`, and require the validator to
-    prove the resulting count=2 packet length.
-  - [x] Send VGPU D3DKMT packets through the per-open/owner-bound host process
-    handle instead of the global process fallback wherever the ioctl has an
-    owner, matching WSL's `process->host_handle` forwarding model.
-  - [x] Add host-destroy unwind and pure-C fault coverage for
-    `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`, and `CREATEHWQUEUE` failures after
-    host creation but before local/user publication. `dxgprobe
-    --create-publication-faults-validate` now faults the final user result
-    page, proves same-process host destroy, and proves stale local destroy
-    retries fail for the unpublished device/context/HW-queue/fence handles.
-  - [x] Implement and validate WSL-equivalent CPU-event signal packets for
-    `enqueue_cpu_event`; `SIGNALSYNCHRONIZATIONOBJECT` and
-    `SIGNALSYNCHRONIZATIONOBJECTFROMGPU2` now allocate eventfd-backed host
-    events, send the host event id as `cpu_event_handle`, clean up on send
-    failure, and expose `sync_signal_cpu_event_matrix`,
-    `sync_gpu2_cpu_event_matrix`, and `dxg_synccpuevent_signal` diagnostics.
-  - [x] Add async-message parity or a same-adapter trace-backed decision for
-    signal/wait/HW-queue submit paths where WSL can set `hdr.async_msg`;
-    submit-command, signal-sync-object, GPU-wait, and HWQUEUE submit now use
-    WSL's async send path when the host advertises it, CPU wait remains
-    synchronous, and `dxg_async_message_matrix`/`dxg_async_send_last` prove
-    async or explicit sync fallback.
-  - [x] Reject legacy GPU waits with `object_count > 1` so the
-    wire packet obeys WSL's legacy single-object rule.
-  - [x] Extend packet diagnostics/validators to cover command length,
-    result length, owner process, private blob order, first handles, and
-    post-copyout unwind status for every path in this packet-marshalling row;
-    `dxgprobe --wddm-payload-validate` now emits
-    `dxg_packet_shape_matrix` over create/open/share/sync/wait/HWQUEUE/
-    destroy/unwind diagnostics, and the Hyper-V DXG validator requires it.
-- [x] Re-audit WSL `CREATEALLOCATION` and `OPENRESOURCE` failure unwind:
-  runtime/resource/allocation private blob copyout, local handle publication,
-  host resource destruction after late failure, standard-allocation substitution,
-  and result-private-data return layout.
-  - [x] Send `DESTROYALLOCATION` late-failure cleanup through the same
-    per-open DXG process handle used for the corresponding `CREATEALLOCATION`
-    or `OPENRESOURCE` packet, with existing destroy-allocation diagnostics
-    recording the process handle sent to the host.
-  - [x] Make create/open local tracking failures visible to callers instead of
-    best-effort drops: resource/allocation publication now returns errors,
-    unwinds partial local state, and destroys host-created resources on failure.
-  - [x] Move `LX_DXOPENRESOURCEFROMNTHANDLE` local resource/allocation graph
-    publication before any user handle copyout, matching WSL's
-    assign-before-expose ordering. If local tracking or a late copyout fails,
-    xv6 now unwinds the tracked resource/allocation state and destroys the
-    host-opened resource through the same owner-bound process handle before any
-    stale handle can be considered published.
-  - [x] Add a pure-C fault-injection validator that forces post-host
-    `CREATEALLOCATION` and `OPENRESOURCE` publication failures, then proves
-    same-process host cleanup, original errno preservation, no leaked local
-    handles, and balanced pinned sysmem pages.
-  - [x] Split shared-resource metadata into explicit WSL-like
-    resource/allocation records so seal/query/open lifetimes are not stored
-    only as flat blobs on `hvdxg_tracked_resource`.
-- [x] Re-audit NT fd publication against WSL `dxgkio_share_objects()`:
-  `object_count == 1`, anon-inode kind, `O_CLOEXEC`, copyout-before-install,
-  cleanup of unused fd/file references on failure, and wrong-kind rejection.
-  - [x] Keep `LX_DXSHAREOBJECTS` single-object only and publish custom NT
-    shared-resource/sync fds with `FD_CLOEXEC`; the shared-resource C
-    validator now fails unless the returned fd reports close-on-exec.
-  - [x] Add explicit copyout-failure fault injection for `shared_handle` so
-    cleanup of the fd/file reference and NT shared-object ref is proven without
-    relying on ordinary close paths.
-  - [x] Add a wrong-kind matrix that exports resource and sync NT fds, then
-    proves resource-open rejects sync fds and sync-open rejects resource fds.
-- [x] Re-audit WSL `CREATESYNCFILE`, `OPENSYNCOBJECTFROMSYNCFILE`, and
-  `WAITSYNCFILE`: monitored-fence `dma_fence` creation, host event
-  registration, CPU wait submission, temporary local sync-object lifetime,
-  GPU wait submission, and unwind on copyout or fd failure.
-  - [x] Keep the current xv6 custom sync-file fd honest as a WSL-style DXG
-    sync-file parity skeleton, while documenting that it is not yet Linux
-    `sync_file`/`dma_fence`.
-  - [x] Add source diagnostics for sync-file fd live/release counts,
-    host-event active/allocation/removal counts, create-copyout unwind, and
-    open-copyout unwind.
-  - [x] Destroy the host-opened sync object if
-    `OPENSYNCOBJECTFROMSYNCFILE` succeeds on the host but user copyout fails,
-    and prove that no local sync handle was published.
-  - [x] Make sync-object tracking failures first-class and apply WSL-style
-    track-before-copyout ordering to sync open paths. `hvdxg_track_sync()` now
-    returns errors, `OPENSYNCOBJECTFROMNTHANDLE2` and
-    `OPENSYNCOBJECTFROMSYNCFILE` track the opened sync object before copying
-    the handle back to userspace, and failures unwind both the local handle
-    table entry and host-opened sync object.
-  - [x] Extend WSL assign-before-expose ordering to the host-create paths:
-    `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`, `CREATEALLOCATION`,
-    `CREATESYNCOBJECT`, `CREATEPAGINGQUEUE`, and `CREATEHWQUEUE` now commit
-    local dxgprocess/object-table state before copying newly created handles
-    to userspace, and late failures untrack local state plus destroy the
-    host-created object where a host destroy command exists.
-  - [x] Add WSL-like monitored-fence stop semantics for tracked sync objects:
-    tracked sync rows now record fence map size and owning VM, kernel fence
-    aliases are PFNMAP mappings, `hvdxg_untrack_sync()` unmaps both user and
-    kernel fence aliases, and `dxg_fence_map` exposes unmap attempt/success/
-    failure diagnostics.
-  - [x] Add pure-C sync-file validators covering create-copyout fd/event
-    cleanup, wait temporary sync-object destruction, open-copyout cleanup, and
-    child-process open from the same sync-file fd.
-- [x] Replace the by-value shared-resource fd clone with a WSL-style parent
-  shared-resource object:
-  - [x] Add parent-resource scaffold diagnostics while preserving existing
-    clone semantics: resource fds now carry parent id, fd refs, parent refs,
-    opened-child counters, creator/opened child snapshots, and
-    `dxg_sharedresource_parent` status output.
-  - [x] Add a refcounted parent resource object with fd refs, host NT refs,
-    sealed generation, private-data ownership, allocation metadata, and an
-    opened-resource list.
-  - [x] Link creator and opener `hvdxg_tracked_resource` children to that
-    parent instead of deep-cloning fd-private resource state.
-  - [x] Move seal/query/open metadata reads to the parent and keep per-open
-    children responsible only for process-local handles and cleanup.
-  - [x] Thread parent id/ref/opened-child evidence through display-bind pin
-    snapshots, fail-closed provider validation, `FB_GPU_GET_STATS`, and the
-    pure-C display-bind diagnostics.
-  - [x] Update display-bind snapshots to pin the real parent object and
-    validate the matching opened child/resource generation before accepting
-    native-present credit.
-  - [x] Preserve the WSL shared-resource NT/global-share metadata on the
-    parent resource and every opened child. The display-bind pin path now
-    rejects with explicit `dxg_display_bind_pin_diag` fields if the typed fd,
-    opened child, parent id, global share, or sealed generation diverge, so a
-    future sleepable display-bind provider cannot silently pin a by-value clone
-    or a child stripped of its parent sharing state.
-- [x] Finish WSL sealed-allocation metadata parity:
-  - [x] Add sealed allocation `num_pages` and `cached` metadata to shared
-    allocation records.
-  - [x] Populate the metadata from create/open allocation state and expose it
-    in shared-resource model diagnostics.
-  - [x] Preserve sealed allocation metadata across query/open/exporter-destroy
-    lifetimes on the real WSL-style parent object.
-  - [x] Add pure-C validators for duplicate fd/open-child close ordering,
-    sealed `num_pages`/`cached` stability, and parent/child ref balance.
-- [x] Keep same-adapter WSL trace replay current for the NVIDIA/Hyper-V test
-  adapter whenever the driver store, UMD payload sizes, or D3DKMT packet
-  shaping changes. `dxgprobe --wsl-trace-replay` now emits
-  `wsl_trace_replay_packet_matrix` rows for the replayed packet sequence and a
-  `wsl_trace_replay_signature` tied to the selected OPENADAPTER LUID and the
-  current NVIDIA WSL trace reference; the focused core runner requires those
-  rows before accepting the WSL replay segment.
-- [x] Finish direct D3D12 fence sharing parity: decide whether the final native
-  path requires direct `ID3D12Device::OpenSharedHandle(fence)` success or only
-  WSL-style DXG sync-file acquire, then validate the chosen behavior against
-  same-adapter WSL traces.
-  The native Wayland/D3D12 contract now selects WSL-style DXG sync-file acquire
-  as the required fence handoff. `d3d12sharedsmoke` emits
-  `d3d12_fence_sharing_policy_matrix` and
-  `d3d12_fence_sharing_validation_matrix` with direct D3D12 fence fd import
-  unused, the same-adapter NVIDIA WSL trace recorded as the parity source, and
-  no native-present/OpenGL-submit credit.
-- [x] Preserve WSL-style shared resource semantics as regression coverage:
-  one-time seal, stable runtime/resource/allocation metadata, repeated
-  query/open, exporter-destroy survival, child open, wrong-kind rejection, and
-  NT fd close separate from explicit D3DKMT destroy. The core runner now
-  consumes `shared_resource_seal_provenance_matrix`,
-  `shared_mutation_rejection_matrix`, `shared_lifetime_record_matrix`,
-  `resource_import_negative_matrix`, `ntshare_object_kind_matrix`, and
-  `dxg_sharedfd_close` diagnostics.
-- [x] Preserve WSL-style shared sync semantics as regression coverage:
-  NT fd export/open, stale-close rejection, process namespace separation,
-  monitored-fence target values, sync-file import/export, and cleanup ordering.
-  The focused runner requires `opensync_layout_source_matrix`,
-  `sync_import_negative_matrix`, `sync_file_matrix`,
-  `dxg_syncfile_*_unwind_matrix`, `dxg_syncfile_lifetime`, and the
-  `dxg_opensync_*` packet diagnostics.
-- [x] Promote WSL lifetime parity rows into the top-level Hyper-V DXG
-  validator after the display-bind metadata boundary. `hyperv-dxg-validate.sh`
-  now runs and requires process/object handle lifetime rows, shared-resource
-  parent lifetime and sealed-allocation metadata rows, sync-file create/open
-  unwind rows, and `OPENRESOURCE` parent rollback fields
-  (`parent_same`, `parent_refs_balanced`, `parent_child_unlinked`, and
-  `sealed_generation_coherent`) while keeping all native-present/OpenGL-submit
-  credit gated.
-  Evidence: focused Hyper-V C validators on the 6-vCPU image passed
-  `shared_resource_parent_lifetime_matrix` with `fd_refs=1/1/0`,
-  `shared_resource_seal_provenance_matrix ... no_present_credit=1 status=PASS`,
-  `dxg_syncfile_create_unwind_matrix ... status=PASS`,
-  `dxg_syncfile_open_unwind_matrix ... status=PASS`, and the process/handle
-  lifetime rows required by the runner.
+- [ ] **2.1 Read the real chipset ID from MMIO `PMC_BOOT_0` (register 0x0).**
+  - File: `kernel/kernel/dev/fb/fb_nouveau.c`.
+  - After BAR0 is mapped, read the 32-bit value at offset `0x000000`
+    (`NV_PMC_BOOT_0`). Decode chipset (e.g. bits identify GM20x/GP10x/TU10x/
+    GA10x). This is the single most important "real GPU" proof.
+  - Replace the synthetic chipset GETPARAM answer with this decoded value;
+    leave it fail-closed (return error) if BAR0 is unmapped or the read returns
+    `0xffffffff` (device not responding).
+  - Acceptance evidence: boot log prints `nouveau: PMC_BOOT_0=0x........
+    chipset=NV1xx family=...` with a value matching the physical card; the
+    `nouveau_chipset_real` stat is nonzero; `nouveauabitest` reports the real
+    chipset and `synthetic_gpup_rejected` no longer applies.
 
-### 2. Linux DRM/GEM/TTM/KMS Interfaces
+- [ ] **2.2 Size real VRAM and set up instance memory (instmem).**
+  - Probe the framebuffer/VRAM size from the real registers (chip-family
+    dependent: `PFB`/`PBFB` config or the GSP-reported FB size on Turing+).
+    Map the BAR1 VRAM aperture for CPU access to a small window.
+  - Acceptance evidence: `nouveau_vram_bytes` reports the real card size
+    (e.g. 8/12/24 GiB), readable via `fbstat`; a CPU write/read round-trip to a
+    scratch VRAM offset through BAR1 returns the written pattern (proves real
+    VRAM access, not a synthetic number).
 
-Goal: keep the Linux-facing GPU driver surface honest enough for Mesa, libdrm,
-Wayland, and Nouveau without claiming native Hyper-V present prematurely.
+- [ ] **2.3 Load real signed firmware for the chipset.**
+  - Maxwell GM20x+: load FECS/GPCCS ucode. Turing+ (TU10x and newer): load and
+    boot the GSP-RM firmware (this is mandatory for NVK and for any modern
+    card). Read blobs from `rootfs-overlay/lib/firmware/nouveau/` (staged in
+    H3).
+  - Implement the boot/handshake sequence per the Linux nvkm model for the
+    detected family. Fail closed (no engine init) if firmware is missing or the
+    handshake times out.
+  - Acceptance evidence: log prints firmware name, size, and a successful
+    boot/ack (`gsp boot ok` or `fecs/gpccs loaded`); `nouveau_fw_loaded=1`.
+    Missing firmware reports `nouveau_fw_loaded=0 status=FAIL_CLOSED` and blocks
+    Section 3.
 
-- [x] Replace diagnostic-only `dma_fence` pieces with a real fence lifetime
-  model across GEM, PRIME/dma-buf, KMS, syncobj, timelines, poll, callback
-  removal, and final object release.
-  The kernel uses the refcounted `fb_gpu_fence` backing object for fence fd
-  export/query/wait, syncobj sync-file import/export, KMS OUT_FENCE, poll
-  callback fire/remove/late accounting, and final release. `gpucorevalidate`
-  now emits `drm_dma_fence_lifetime_contract_matrix`, and the Hyper-V core
-  runner requires it while granting no native-present/OpenGL-submit credit.
-  - [x] Make DRM syncobj timeline transfer copy pending source state instead
-    of requiring the source point to be signaled first. The pure-C DRM matrix
-    now requires `syncobj_pending_transfer_matrix` plus transfer wakeup
-    provenance, with no native-present or OpenGL-submit credit.
-- [x] Replace the global-lock approximation with Linux-shaped `dma_resv` and
-  ww-mutex rules throughout TTM validation, eviction, migration, PRIME export,
-  KMS prepare/cleanup, and teardown.
-  The TTM reservation path now has a `ww_acquire_ctx`-shaped validation lane
-  for ordered two-object reservation, reversed-order retry/backoff, balanced
-  release, and multi-object accounting while retaining the existing shared and
-  exclusive fence propagation used by PRIME/dma-buf, KMS pin/unpin, syncobj,
-  sync-file, eviction, and teardown. The focused Hyper-V core validator passed
-  on 2026-05-24 with `validation_run_id=core-1779668794-2747803`, including
-  `ttm_dma_resv_ww_mutex_matrix ... max_acquired=2
-  validate_failures_delta=0 native_accel_credit_delta=0 status=PASS`.
-- [x] Implement real KMS atomic `IN_FENCE_FD` and `OUT_FENCE_PTR` behavior with
-  display-correlated completion, not immediate software completion.
-  Atomic commits now validate and balance `IN_FENCE_FD` refs, reject stale,
-  duplicate, future, and nonblocking fence paths, export an `OUT_FENCE_PTR`
-  fd, and signal it from the recorded display-completion sequence rather than
-  the old software-scanout provenance counter. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=whole-section
-  CORE_C_SECTIONS='preflight drm final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779670401-2842329`, including
-  `atomic_fence_matrix atomic_fence_kernel=real`,
-  `atomic_out_fence_provenance_matrix out_fence_source=display_completion
-  ... out_fence_display_correlated=1
-  out_fence_software_scanout_correlated=0`, and zero
-  native-present/OpenGL-submit credit.
-  - [x] Keep the atomic OUT_FENCE provenance honest: the successful commit
-    now increments `kms_atomic_out_fence_display_correlated` only after the
-    framebuffer present path records display completion, while the
-    `kms_atomic_out_fence_software_scanout_correlated` fallback counter stays
-    zero in the validator and still grants no native-present/OpenGL-submit
-    credit.
-- [x] Keep the current KMS modifier path self-consistent while scanout remains
-  XRGB/ARGB-only: `DRM_CAP_ADDFB2_MODIFIERS` advertises the accepted linear
-  metadata contract, `ADDFB2`/`GETFB2` round-trip linear NV12 metadata, and
-  non-linear, mixed-plane, and unsupported present paths fail before side
-  effects or native/OpenGL-submit credit. The primary plane now also exposes a
-  Linux-style immutable `IN_FORMATS` blob for the actual scanout subset only:
-  XRGB8888/ARGB8888 with `DRM_FORMAT_MOD_LINEAR`, while NV12 and non-linear
-  modifiers remain excluded from scanout credit. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight drm final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779671849-2925678`, including
-  `kms_in_formats_blob_matrix ... xrgb8888_linear=1 argb8888_linear=1
-  nv12_scanout=0 nonlinear_modifiers=0 native_present_credit=0
-  opengl_submit_credit=0 status=PASS`.
-- [x] Extend actual primary-plane scanout formats/modifiers beyond XRGB/ARGB
-  only when the primary plane can present them without the software fallback.
-  The primary plane now advertises XRGB8888, ARGB8888, XBGR8888, and ABGR8888
-  linear through the shared GETPLANE/IN_FORMATS table. XBGR/ABGR scanout uses
-  an explicit CPU R/B conversion in the framebuffer blit path, while NV12
-  remains metadata-only and fail-closed for primary scanout/direct FB_ID
-  property changes. Evidence: full focused Hyper-V core validation passed on
-  2026-05-24 with `validation_run_id=core-1779706363-461479`, including
-  `kms_primary_scanout_format_mod_matrix`,
-  `kms_primary_scanout_actual_format_matrix`, and
-  `kms_present_completion_failclosed_matrix`.
-  - [x] Keep GBM scanout support aligned with the KMS primary-plane contract:
-    `xv6-gbm` now rejects `GBM_BO_USE_SCANOUT` for `GBM_FORMAT_NV12`, while
-    leaving NV12 available for metadata/import-render paths.
-- [x] Keep vblank/page-flip display-correlation separate from native-present
-  credit until the same frame also proves native D3D12 display completion.
-  `fbstat` now emits `kms_vblank_native_present_separation_matrix`, the
-  pure-C core validator requires it, and the Hyper-V core runner checks that
-  vblank samples/page flips can be display-correlated while still granting
-  zero native-present/OpenGL-submit credit.
-  - [x] Add explicit page-flip/vblank provenance counters so software display
-    completion is not mistaken for native hardware: validators now require
-    `page_flip_events_native_hw=0` and `vblank_source_native_hw=0` while the
-    current KMS path remains software/fail-closed.
-- [x] Keep DRM leases, user blobs, legacy ioctls, render-node lifecycle, and
-  event queues covered by focused validators after any DRM refactor.
-- [x] Separate generic scanout/DRM diagnostics from D3D12-specific alignment,
-  DXG-present state, WebKit harness tracing, and ioctl-name tracing so debug
-  helpers do not become accidental capability gates.
-  Generic GPU/DRM ioctl tracing now uses `fb-gpu-trace` instead of
-  WebKit-specific labels. `fbstat` emits
-  `gpu_diagnostics_separation_matrix`, and the focused core runner requires
-  generic DRM/KMS/fb diagnostics to stay separate from DXG-present and WebKit
-  policy evidence while granting zero native-present/OpenGL-submit credit.
-  - [x] Stop reporting generic `display_last_complete` as
-    `d3d12_native_present_credit`. The matrix now prints
-    `generic_display_last_complete` separately and keeps
-    `d3d12_native_present_credit=0`.
-- [x] Add Linux-shaped fail-closed mismatch rows for KMS/Nouveau/TTM/GEM/GPUVM
-  interfaces that are not native DDA hardware yet.
-  `fbstat`, `gpucorevalidate`, and the focused runner now require diagnostic
-  rows for Nouveau KMS registration, Nouveau vblank IRQ source, primary-plane
-  modifier policy, CPU-converted scanout separation, GEM framebuffer plane refs,
-  atomic plane-state and prepare/cleanup lifecycle, page-flip feature gates,
-  TTM real-move backend, Nouveau GEM mmap backing, Nouveau GPUVM mapping, and
-  DXG sync-file admission versus KMS completion. These rows are explicitly
-  zero-credit and fail closed until real DDA/Nouveau display, TTM, and engine
-  evidence exists.
+- [ ] **2.4 Bring up the IRQ handler against the real device.**
+  - Tighten the existing Nouveau IRQ path: read `NV_PMC_INTR_0` gated by
+    `NV_PMC_INTR_EN_0`, ack real causes, and only count `delivery_claimed` when
+    a real interrupt fires from the assigned device (MSI/MSI-X preferred,
+    legacy INTx fallback).
+  - Acceptance evidence: `nouveau_pci_irq_provenance_matrix` shows nonzero
+    real interrupt deliveries with decoded causes during bring-up; spurious
+    count stays low; on no-hardware images it stays zero/fail-closed.
 
-### 3. PCI Runtime And Nouveau
+---
 
-Goal: support Nouveau through Linux-shaped PCI/runtime/DRM interfaces, while
-being explicit when the current Hyper-V GPU-P environment is not DDA hardware.
+## Section 3. Real Command Submission (FIFO + Hardware Fence)
 
-- [x] Extend PCI runtime support beyond probe scaffolding: DMA mask/coherency
-  ownership, MSI/MSI-X setup, legacy IRQ fallback policy, interrupt delivery,
-  resource claim/release, runtime PM suspend/resume usage, and remove-path
-  validation.
-  The PCI core now has Linux-shaped wrappers for DMA masks, BAR mmap,
-  MSI/MSI-X, IRQ request/free, and runtime PM; Nouveau uses that surface while
-  GPU-P-only Hyper-V remains fail-closed with no fake BAR/DMA/IRQ/native-present
-  or OpenGL-submit credit. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
-  CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-  `validation_run_id=core-1779714735-891533`.
-- [x] Add explicit GPU-P-only PCI/Nouveau runtime contract diagnostics.
-  `fbstat` and `gpucorevalidate` now emit
-  `nouveau_pci_runtime_contract_matrix`, which records DMA/coherent masks,
-  BAR claims, MSI/MSI-X setup, legacy IRQ fallback, IRQ handler/delivery,
-  runtime PM, remove-path state, and zero native-present/OpenGL-submit credit.
-  On GPU-P-only Hyper-V this row must pass with no fabricated BAR/DMA/IRQ
-  state; accepted DDA hardware remains diagnostic until real IRQ/runtime-PM and
-  native engine evidence exist. Validated on 2026-05-24 with
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`,
-  `validation_run_id=core-1779674606-3042655`.
-- [x] Split the PCI/Nouveau runtime TODO into a fail-closed interface matrix
-  that mirrors the Linux driver layers without fabricating GPU-P hardware.
-  `fbstat`, `gpucorevalidate`, and the focused runner now require
-  `nouveau_pci_runtime_interface_matrix` with resource-tree ownership,
-  DMA-mapping API, MSI/MSI-X programming, legacy IRQ fallback, IRQ delivery,
-  runtime PM, remove/hot-remove, native engine, native-present credit, and
-  OpenGL-submit credit fields. On GPU-P-only Hyper-V this must pass as
-  `GPU_P_FAIL_CLOSED`/deferred/absent; a real DDA/Nouveau function remains
-  diagnostic until hardware proves those interfaces. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779679708-3257998`.
-- [x] Enforce PCI claim-before-iomap resource ownership and real DDA legacy
-  IRQ handler arm/disarm for Nouveau without fabricating GPU-P hardware.
-  The PCI core now records claim, release, iomap, owner-mismatch,
-  unclaimed-iomap, and unclaimed-release counters; Nouveau DDA probe claims
-  BARs before mapping, fails closed if the legacy IRQ vector/handler cannot be
-  armed, unregisters the handler on remove/unwind, and only increments
-  delivery-claimed when the handler actually fires. `fbstat` and
-  `gpucorevalidate` expose those counters through
-  `nouveau_pci_dma_resource_matrix` and
-  `nouveau_pci_runtime_interface_matrix`; GPU-P-only Hyper-V remains
-  fail-closed with zero fake resource, IRQ, native-present, or OpenGL-submit
-  credit. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
-  passed on 2026-05-25 with
-  `validation_run_id=core-1779689395-3730908`.
-- [x] Add Linux-shaped PCI DMA mask and streaming map diagnostics for
-  DDA/Nouveau without granting GPU-P fake DMA state.
-  The PCI core now tracks requested/effective streaming and coherent DMA mask
-  bits, 64-to-32 fallback counters, and direct `pci_dma_map_single()` /
-  `pci_dma_unmap_single()` calls. Nouveau probes those APIs only after a real
-  BAR-backed DDA function is enabled and bus mastering is set; GPU-P-only
-  Hyper-V remains `GPU_P_FAIL_CLOSED` with zero DMA mask/map attempts.
-  `fbstat` and `gpucorevalidate` expose the fields through
-  `nouveau_pci_dma_resource_matrix`,
-  `nouveau_pci_runtime_contract_matrix`, and
-  `nouveau_pci_runtime_interface_matrix`. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
-  passed on 2026-05-25 with
-  `validation_run_id=core-1779702023-161062`.
-- [x] Add Linux-shaped MSI/MSI-X fail-closed and IRQ provenance diagnostics
-  for DDA/Nouveau without granting GPU-P fake interrupt state.
-  The PCI core now tracks IRQ-vector allocation attempts/failures,
-  MSI/MSI-X requests that remain unsupported, and legacy IRQ request/grant
-  counts. Nouveau publishes those fields plus handler invocation, device-cause,
-  ack, and spurious counters through `nouveau_pci_dma_resource_matrix`,
-  `nouveau_pci_runtime_contract_matrix`,
-  `nouveau_pci_runtime_interface_matrix`, and the focused
-  `nouveau_pci_irq_provenance_matrix`. GPU-P-only Hyper-V passes only when
-  there is a real DDA/Nouveau reject reason or no DDA/Nouveau PCI candidate at
-  all, with zero fabricated IRQ/native-present/OpenGL-submit credit. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
-  passed on 2026-05-25 with
-  `validation_run_id=core-1779703653-280807`.
-- [x] Add Linux-shaped PCI runtime-PM/remove provenance diagnostics for
-  DDA/Nouveau without granting GPU-P fake hot-remove or teardown state.
-  The PCI core now records resume-before-remove attempts, PM barriers,
-  hot-remove events, and removed state; Nouveau publishes teardown-phase
-  counters for BAR unmaps, IRQ unregister, vector free, bus-master clear,
-  device disable, and drvdata clear through
-  `nouveau_pci_remove_pm_matrix`. Placeholder IRQ handler entries no longer
-  claim delivery until a real device cause and ack path exists. GPU-P-only
-  Hyper-V passes only with zero fabricated remove/PM/IRQ/native-present/
-  OpenGL-submit state. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
-  passed on 2026-05-25 with
-  `validation_run_id=core-1779704735-342800`.
-- [x] Tighten the accepted-DDA PCI runtime skeleton so it no longer only
-  flips diagnostic booleans: runtime suspend now saves the PCI command
-  register and disables memory/I/O/bus-master decode, runtime resume restores
-  that command state before the driver resume callback, and the Nouveau IRQ
-  handler reads `NV_PMC_INTR_0` gated by `NV_PMC_INTR_EN_0` before acking and
-  claiming delivery. GPU-P-only boots still report zero fabricated BAR/DMA/IRQ
-  state. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final' scripts/hyperv-gpu-core-validate.sh`
-  passed on 2026-05-25 with
-  `validation_run_id=core-1779707157-496144`.
-- [x] Add the Linux-shaped PCI wrapper surface Nouveau expects before deeper
-  driver porting: `dma_set_mask_and_coherent()`, `pci_enable_msi()`,
-  `pci_enable_msix_range()`, `pci_request_irq()`, `pci_free_irq()`,
-  `pci_mmap_bar()`, `pm_runtime_resume_and_get()`, `pm_runtime_put()`,
-  no-resume/no-idle refs, and `pm_runtime_barrier()`. Nouveau now uses the
-  wrapper surface for DMA mask setup, MSI/MSI-X fail-closed probes, and IRQ
-  registration while GPU-P-only Hyper-V still reports no fabricated BAR/DMA/IRQ
-  or native-present/OpenGL-submit credit. This is an interface skeleton, not a
-  claim that DDA hardware validation or native present is complete.
-- [x] Keep GPU-P-only Hyper-V images fail-closed for native Nouveau: no fake
-  BAR, VRAM, IRQ, command submission, native-present, or OpenGL-submit credit.
-  The focused core runner now requires `nouveau_gpup_failclosed_matrix` from
-  `fbstat` whenever no DDA/Nouveau PCI function is accepted.
-- [x] Replace synthetic Nouveau `GETPARAM` answers with DDA-sourced
-  chipset/class, BAR, VRAM/GART, engine, and firmware facts when DDA hardware
-  is present. Hardware-looking answers now come from the accepted DDA PCI
-  device/resource apertures or fail closed; local answers such as
-  `HAS_BO_USAGE`, `HAS_PAGEFLIP`, `EXEC_PUSH_MAX`, and `HAS_VMA_TILEMODE`
-  are tracked separately as driver capabilities, and validators reject any
-  remaining synthetic hardware facts.
-- [x] Implement Nouveau channel/FIFO/GROBJ/notifier allocation semantics rather
-  than no-op channel handles.
-  Legacy channel allocation now creates per-open channel state, tracks
-  notifier and GROBJ objects, rejects duplicate/unsupported objects, frees
-  objects explicitly through `GPUOBJ_FREE`, and reclaims leaked objects on fd
-  close. Channel allocation and VM init now publish owner state only after
-  successful ioctl copyout, so an `-EFAULT` user ABI failure cannot leave an
-  active channel or VM marker behind. `drmiftest` emits
-  `nouveau_channel_object_matrix` for this contract;
-  the separate `DRM_NOUVEAU_NVIF` row below remains open for Mesa's newer
-  subchannel object path.
-- [x] Implement `DRM_NOUVEAU_NVIF` far enough for the Mesa Nouveau winsys path,
-  or add precise fail-closed validation for each unsupported NVIF class.
-  xv6 now parses NVIF v0 headers for SCLASS, NEW, DEL, method/register/map,
-  and notification operations. It advertises no NVIF classes until a real
-  class hierarchy exists, rejects NEW for would-be engine classes, rejects
-  methods/register/map/notify operations explicitly, and validates this with
-  `nouveau_nvif_failclosed_matrix`.
-- [x] Implement non-empty Nouveau command submission on DDA hardware, or
-  return source-audited fail-closed tokens that Mesa/Nouveau validators check.
-  Until a real DDA command engine exists, non-empty GEM pushbuf, EXEC, and
-  VM_BIND paths reject after validating their user buffers and object
-  references. Dedicated counters and `nouveau_submit_failclosed_matrix` prove
-  the no-op/fence-only paths are separate from non-empty command rejection and
-  that no native-present/OpenGL-submit credit is granted.
-- [x] Add a Mesa Nouveau smoke that reaches winsys/device-info on the intended
-  hardware and cannot pass on synthetic GPU-P-only answers.
-  `nouveauabitest` is the Mesa/libdrm smoke gate. On DDA it must open the
-  Nouveau device and reach libdrm winsys/device-info, channel, BO, map, and
-  PRIME paths; on GPU-P-only images it can only pass as explicit no-DDA
-  fail-closed evidence with `synthetic_gpup_rejected=PASS`.
-- [x] Add a kernel-owned native-display readiness and KMS present-discriminator
-  skeleton before any DDA/Nouveau native-present claims.
-  The stats ABI now has explicit Nouveau display readiness fields for DDA
-  native display presence, display-create attempts/successes, heads,
-  connectors, vblank support/IRQs, hardware page-flip completions, and reject
-  reasons. KMS native-present lanes are separately named as none, dumb,
-  synthvid, or Nouveau hardware, with zero-credit reject reasons required on
-  GPU-P-only Hyper-V. `fbstat`, `gpucorevalidate`, and the focused runner now
-  require `native_display_readiness_failclosed_matrix`,
-  `nouveau_display_failclosed_matrix`, and
-  `kms_present_discriminator_failclosed_matrix`; validation passed on
-  2026-05-25 with `validation_run_id=core-1779720971-1215307`.
-- [x] Granularize the DDA/Nouveau native-display skeleton against Linux
-  Nouveau's display creation path before using it as evidence.
-  The readiness ABI now tracks the Linux-shaped prerequisites separately:
-  display-engine object creation, DRM `mode_config`, CRTC/head, encoder/outp,
-  primary-plane, linear-modifier gate, NVIF outp/connector/head masks,
-  `nvif_head` construction, connector HPD/DP IRQ event hooks, per-head vblank
-  event registration, atomic commit-tail readiness, and page-flip completion
-  source. GPU-P-only Hyper-V must report all of these as absent except the
-  explicit linear-required policy, and `fbstat`, `gpucorevalidate`, plus
-  `hyperv-gpu-core-validate.sh` now require
-  `nouveau_linux_display_readiness_matrix ... status=PASS_FAILCLOSED` before
-  any DDA/Nouveau display or OpenGL-submit credit can be claimed.
-  The kernel KMS native-present gate now uses the same full Linux-shaped
-  acceptance tuple instead of a loose subset: display engine object,
-  `mode_config`, CRTC/encoder/primary plane, outp/connector/head masks,
-  NVIF head construction, non-virtual connector, HPD/DP IRQ events, per-head
-  vblank event/IRQ source, atomic commit tail, hardware page-flip completion,
-  linear scanout policy, and no unvalidated nonlinear modifiers. Validators
-  require `nouveau_kms_acceptance_shape_matrix` and
-  `nouveau_dda_display_positive_shape_matrix` so future DDA/Nouveau display
-  credit stays separate from D3D12 native-present, OpenGL-submit, and WebKit
-  credit.
+Goal: push a real command to a real engine and observe a real completion fence.
 
-### 4. Native D3D12 Shared-Resource Present
+- [ ] **3.1 Create a real FIFO channel with USERD/GPFIFO.**
+  - Model on nvkm `fifo`/`chan`: allocate the channel instance block, USERD,
+    GPFIFO ring in VRAM/instmem, and program the channel into the host FIFO.
+    Wire this under the existing `nouveau_channel_object_matrix` path in
+    `fb_nouveau.c`, replacing the no-op channel handle with a real channel.
+  - Acceptance evidence: channel creation reads back a valid channel/runlist
+    state from hardware registers; `nouveau_channel_real=1`. Fail closed if the
+    runlist submit register does not acknowledge.
 
-Goal: turn the current fail-closed D3D12 shared-resource lane into a real
-non-readback display handoff.
+- [ ] **3.2 Submit a minimal real pushbuffer and signal a semaphore/fence.**
+  - Build a tiny GPFIFO entry that writes a known value to a VRAM semaphore via
+    the host/copy engine, then kick it. Poll the semaphore for the value.
+  - This is the keystone real-hardware proof: a value that only appears if the
+    GPU executed the pushbuffer.
+  - Acceptance evidence: log prints `nouveau: submit fence target=0xAA55
+    observed=0xAA55 (HW)`; a new `nouveau_real_submit_matrix` in
+    `gpucorevalidate` requires the observed value to equal the target and the
+    completion to be a hardware semaphore write (not a CPU store). On
+    no-hardware images it must report `submit=fail_closed observed=0`.
 
-- [x] Select one final display handoff lane and document why it matches a
-  working model: WSLg-like display channel, GPU-P/DDA resource-to-scanout
-  binding, or trace-proven synthvid/VRAM bridge.
-  The selected lane is GPU-P/DDA `dxg-resource-scanout-bind`: a source-owned
-  D3D12 resource, allocation, adapter LUID, dimensions, format/modifier, and
-  sync-file/fence target must bind to a real display completion source. WSLg's
-  display channel is not exposed by xv6/WSL `dxgkrnl`, synthvid is GPA
-  dirty-rectangle VRAM rather than a D3D12 resource bind, DDA Nouveau is a
-  separate PCI path, and no custom host tool is allowed. `fbstat` now emits
-  `dxg_present_lane_selection_matrix` for this selection while keeping native
-  present and OpenGL-submit credit at zero.
-- [ ] Implement the selected `dxg-resource-scanout-bind` equivalent without
-  custom host tooling.
-  Fresh source audit on 2026-05-25 found no existing WSL `dxgkrnl`, Linux
-  Hyper-V DRM/synthvid, or current DDA/Nouveau host ABI that can honestly bind
-  a D3D12 resource/allocation/fence to host scanout and return display
-  completion. The current implementation must remain fail-closed until a
-  documented GPU-P/DXG display-bind packet exists or the separate DDA/Nouveau
-  native display path can provide equivalent non-readback completion.
-  A follow-up WSL2 audit on 2026-05-26 confirmed the same root gap against
-  `drivers/hv/dxgkrnl` and `include/uapi/misc/d3dkmthk.h`: WSL has
-  shared-resource, sync-file, submit, standard-allocation, and present-history
-  telemetry primitives, but no Linux UAPI ioctl, VMBus sender, or implemented
-  host-to-VM demux that binds a D3D12 resource/allocation/fence to scanout and
-  returns source/resource-correlated present completion. `VM_PKT_COMP`
-  transaction replies and `PROPAGATEPRESENTHISTORYTOKEN` remain zero-credit
-  telemetry until a provider-owned sender/completion contract is documented.
-  Any future sender must be labelled as a non-WSL Linux `dxgkrnl` extension
-  unless a real upstream WSL UAPI or packet is cited. The acceptance evidence
-  must keep explicit zero-credit WSL rows (`wsl_display_bind_ioctl_present=0`,
-  `wsl_presenthistory_completion_credit=0`) beside the positive sender rows
-  (`host_saw_display_bind_packet=1`, `provider_completion_demux=1`,
-  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`) so WSL
-  telemetry cannot be reinterpreted as a display completion path.
-  `dxg_native_present_lane_rejection_matrix` now names each rejected lane
-  separately so future work cannot treat WSL present-history enum knowledge,
-  synthvid/GPA dirty rectangles, Linux Hyper-V DRM shadow blits, or a separate
-  DDA/Nouveau PCI path as D3D12 native-present credit without a real sender and
-  completion contract. The candidate IDs and rejection reasons are now
-  kernel-owned stats as well as user-space validator text: the kernel records
-  the WSL VMBus enum namespace, the absence of a Linux display-bind ioctl,
-  sender/resource-bind/completion contracts, and explicit zero-credit reject
-  reasons before any validator can consume the row.
-  The fail-closed proof now also records that the WSL ioctl namespace was
-  audited, no display-bind ioctl is present, standard-allocation payloads are
-  private driver data rather than scanout binding, synthvid is only a GPA dirty
-  rectangle display path, and DDA/Nouveau PCI display presence is separate from
-  D3D12 resource import, scanout bind, and hardware flip completion.
-  The executable WSL namespace proof now also includes
-  `wsl_dxg_ioctl_namespace_probe_matrix`: malformed `/dev/dxg` ioctl probes
-  with the wrong type, wrong size, wrong direction, the first post-WSL command
-  number (`0x4a`), and a high future command number (`0x7f`) must all be
-  rejected and leave Linux ioctl/resource-bind/completion contracts, transport,
-  present/completed ids, native-present credit, and OpenGL-submit credit at
-  zero. This keeps a future non-WSL sender from being inferred through an
-  accidental WSL ioctl alias.
-  `gpu_remaining_holistic_skeleton_matrix` names the open plan count,
-  ordered chunks (`display_bind,native_completion,fps,backend,webkit`), selected
-  GPU-P/DDA lane, display-bind-provider completion authority, and every
-  downstream gate with zero native-present/OpenGL/WebKit credit until a real
-  sender and display completion source replace the fail-closed provider.
-  `host_display_bind_source_catalog_matrix` now ties those audited sources
-  together as the root source catalog: selected source missing, WSLg channel
-  absent, no custom host tool, no GPU-P/DXG sender/completion contract, no
-  synthvid D3D12 bind, no DDA D3D12 import/scanout/hardware-flip completion,
-  provider fail-closed, and zero native-present/OpenGL/WebKit credit.
-  `d3d12_display_bind_host_abi_discovery_matrix` is the bounded source-audited
-  gate under that catalog: no custom host tool, no WSL display-bind ioctl,
-  WSLg/FreeRDP absent, RDP frame transport copy/dirty-frame only, no hv_sock
-  display-bind service, GPU-P sender contract zero, completion demux contract
-  zero, DDA/Nouveau import/scanout/hardware flip absent, provider fail-closed,
-  and transport/present/completed ids plus native-present/OpenGL/WebKit credit
-  all zero.
-  `d3d12_negative_abi_manifest_matrix` now records the exact WSL/Linux source
-  audit as a single machine-validated manifest: WSL `d3dkmthk.h` has no
-  display-bind ioctl, `dxgvmbus.c` has no resource scanout-bind sender or
-  present-history completion demux, hv_sock is generic AF_VSOCK plumbing with
-  no display-bind service contract, present-history/redirected-flip/BLT/
-  HWQUEUE ids are not a display-bind contract, synthvid is GPA dirty-rect only,
-  DDA/Nouveau is a separate PCI display path, and native-present/OpenGL credit
-  remains zero.
-  The Hyper-V-owned provider boundary is now a generic
-  `hyperv_dxg_display_bind_submit()` slot backed by the current fail-closed
-  implementation. Kernel stats and pure-C validators require the provider's
-  returned `pin_revalidated`, `no_host_abi`, `no_sender`, and `no_completion`
-  scalars, so a future implementation must replace the sender/completion
-  contract deliberately instead of deriving credit from DXG readiness.
-  - [x] Re-audit WSL2 `dxgkrnl` as the source model before wiring a sender.
-    A read-only comparison against `/home/es/reps/WSL2-Linux-Kernel` found no
-    Linux-facing display-bind ioctl and no implemented VMBus sender/completion
-    contract that binds a D3D12 resource/allocation/fence to scanout. The WSL
-    UAPI dispatch remains ordinary D3DKMT object/allocation/share/submit/sync
-    plumbing, `DXGK_VMBCOMMAND_PRESENTHISTORYTOKEN`,
-    `SETREDIRECTEDFLIPFENCEVALUE`, `BLT`, and
-    `PROPAGATEPRESENTHISTORYTOKEN` are enum/telemetry candidates rather than a
-    Linux scanout-bind contract, and WSL adapter display caps are explicitly
-    cleared. Therefore `hyperv_dxg_display_bind_submit()` must remain
-    fail-closed unless a documented non-WSL GPU-P/DDA sender is added; do not
-    repurpose present-history, BLT, normal submit, sync-file, or
-    standard-allocation paths as native-present credit. The existing
-    `wsl_dxg_uapi_namespace_negative_matrix`,
-    `wsl_submit_present_fields_not_bind_matrix`,
-    `wsl_submit_ntstatus_not_completion_matrix`,
-    `wsl_trace_display_bind_negative_matrix`,
-    `dxg_presenthistory_telemetry_not_completion_matrix`, and
-    `d3d12_display_bind_host_abi_discovery_matrix` are the validator evidence
-    for this audit.
-  - [x] Preserve raw WSL HWQUEUE submit NTSTATUS as diagnostics without letting
-    it become display completion evidence. `/dev/dxg` now reports
-    `submit_status` for `LX_DXSUBMITCOMMANDTOHWQUEUE`; `dxgprobe` proves the
-    same-adapter replay returned `submit_ntstatus=0x0` while
-    `submit_ntstatus_is_display_completion=0`, `host_saw_display_bind_packet=0`,
-    no completion demux is registered, and native/OpenGL credit remains zero.
-    `fbstat`, `gpucorevalidate`, and `hyperv-gpu-core-validate.sh` require the
-    same zero-credit namespace split through
-    `wsl_submit_ntstatus_not_completion_matrix`.
-  - [x] Move the selected scanout-bind provider slot under Hyper-V ownership
-    while keeping it fail-closed. `fb_dxg_present.c` now delegates the
-    source/resource-generation snapshot to
-    `hyperv_dxg_display_bind_submit_failclosed()`, which revalidates the
-    WSL-style pinned `/dev/dxg` + `anon_inode:dxgresource` metadata and
-    returns explicit `no_host_abi`, `no_sender`, and `no_completion`
-    diagnostics with zero present/completed ids and zero native-present or
-    OpenGL-submit credit.
-  - [x] Add the future-success accept shape without enabling today's
-    fail-closed path. `fb_dxg_present.c` now accepts a provider result only
-    when the provider returns success, a real transport, scanout-bind
-    operation, host ABI present, sender present, display completion present,
-    revalidated pins, no negative provider diagnostics, matching
-    source/resource generations, a nonzero present id, completed >= present
-    id, and display completion source. The current
-    `hyperv_dxg_display_bind_submit()` implementation still returns zero ids
-    plus `no_host_abi`, `no_sender`, and `no_completion`, so Hyper-V receives
-    no native-present or OpenGL-submit credit. Evidence:
-    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-    CORE_C_SECTIONS='preflight present-source final'
-    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-    `validation_run_id=core-1779750432-2876003`.
-  - [x] Expose the source/resource-generation-preserving query and
-    future-success validator shape for the fail-closed provider boundary.
-    `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` and the provider result now
-    report matching source/resource generations, provider status/block reason,
-    completion source, dirty sequence/rect counts, host-ABI/sender/completion
-    presence, negative provider diagnostics, and pin revalidation. `fbstat`,
-    `dxgprobe`, and `gpucorevalidate` require
-    `d3d12_display_bind_success_shape_matrix` and
-    `d3d12_display_bind_query_fields_matrix`, accepting today's fail-closed
-    zero-credit state while defining the complete future-success shape. A
-    fresh WSL2 source comparison against local 6.6.87 and public 6.18
-    confirmed WSL has D3DKMT shared-resource, present-history, and sync-file
-    primitives but no Linux UAPI display-bind ioctl or exposed display
-    completion handler, so the root host ABI item remains open. Evidence:
-    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-    CORE_C_SECTIONS='preflight present-source final'
-    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-    `validation_run_id=core-1779751975-2934585`.
-  - [ ] When a real GPU-P/DDA sender is found, replace the current
-    synchronous fail-closed pending ledger with provider-owned pending packet
-    publication: publish-before-send, transport pending id, command id,
-    transaction id, channel, completion-demux registration, resolve/cancel
-    result, and ref release must be visible in a pure-C
-    `d3d12_display_bind_provider_pending_publication_matrix`. The pending
-    object must also carry WSL-shaped process/object provenance:
-    `dxgprocess_generation`, `process_adapter_generation`,
-    `hmgr_index_unique_valid`, active device/resource/allocation object-table
-    refs, `shared_parent_snapshot_valid`, `opened_child_snapshot_valid`,
-    `syncobject_object_ref_active`, and owner-close cancellation state before
-    any send is issued. These snapshot fields are not a substitute for a
-    future WSL-style retained kref/token pin; the real sender must either
-    acquire and release explicit parent/child/sync pin tokens or keep the
-    provider pending object under already-held VFS/object ownership until
-    completion/cancel.
-  - [ ] Add stale async completion proof for the real sender: unregister or
-    owner close while a provider pending record exists must cancel the pending
-    object, keep present/completed ids zero, reject any late completion as
-    stale/after-release, report `late_completion_rejected=1` and
-    `owner_close_cancelled=1`, and leave no native-present/OpenGL-submit
-    credit.
-    The fail-closed precursor is now explicit:
-    `d3d12_display_bind_stale_async_completion_contract_matrix` records that
-    there is no real sender, no async completion path, no completion demux, no
-    transport pending id, no host-saw display-bind packet, no transport source,
-    zero present/completed ids, and zero native-present/OpenGL/WebKit credit.
-    It labels the scope as `sender_state=absent` and
-    `stale_async_scope=no_sender_failclosed` while keeping future
-    owner-close-cancel and late-completion-rejection requirements visible as
-    after-real-send requirements, deferred-until-sender, untested, and
-    `late_completion_rejected=not_sampled`. It reports `PASS_FAILCLOSED`
-    today; it does not close the real sender item until an actual post-send
-    pending record can be cancelled and a late matching completion is rejected
-    with `owner_close_cancelled=1` and sampled late-completion rejection
-    evidence.
-  - [x] Add the pure-C future contract row for provider-owned pending packet
-    publication before a real sender is wired.
-    `d3d12_display_bind_provider_pending_publication_matrix` is now backed by
-    provider-owned kernel stats for publication attempts,
-    publish-before-send, transport pending id, command id, transaction id,
-    channel, completion-demux registration, resolve/cancel, and ref-release
-    fields. Today it must report `PASS_FAILCLOSED` with publication attempts
-    advancing, sender-owned fields at zero, `provider_no_host_abi=1`,
-    `provider_no_sender=1`, `provider_no_completion=1`, zero
-    present/completed ids, zero native-present credit, and zero OpenGL-submit
-    credit. This checked row is a gate for the future provider, not evidence
-    that the unchecked real-sender item is complete.
-  - [x] Add the WSL-shaped provider packet lifetime skeleton before a real
-    sender is wired. `d3d12_display_bind_provider_packet_lifetime_matrix`
-    names the future `dxgvmbus`-style request-list slot separately from the
-    provider publication row: request id, transport pending id, command id,
-    transaction id, channel, completion demux, packet completion, wait cancel,
-    packet removal on cancel, host-saw packet, and transport source. Today it
-    must report `packet_listed=0`, `request_id=0`, no transport pending id, no
-    command id, no transaction id, `channel=0`, no demux, no host-saw
-    display-bind packet, no transport source, zero
-    present/completed ids, and zero native-present/OpenGL/WebKit credit with
-    `PASS_FAILCLOSED`.
-  - [x] Granularize the provider pending publication proof with the WSL-shaped
-    object graph before a real sender is wired. The provider row now carries
-    process namespace, per-object HMGR validity for device/resource/allocation,
-    shared-parent id/ref/child/global-share identity, opened-child snapshot
-    validity, and monitored sync-object fence value/VA/map-size diagnostics.
-    These tokens are still zero-credit fail-closed evidence: sender-owned
-    transport ids, demux, present/completed ids, native-present credit,
-    OpenGL-submit credit, and WebKit credit remain zero until a documented
-    GPU-P/DDA sender and display completion source exist.
-  - [x] Split provider shared-parent retention proof out of the generic
-    pending-publication row. `d3d12_display_bind_provider_shared_parent_retention_matrix`
-    now names WSL-style parent id, refs, fd refs, host-NT refs, child refs,
-    child count, global-share handle, host NT handle, opened-child parent-id
-    match, opened-child global-share match, and sealed-generation match while
-    keeping host-saw packet, present/completed ids, native-present,
-    OpenGL-submit, and WebKit credit at zero.
-  - [x] Split provider sync-fence alias proof out of the generic
-    pending-publication row. `d3d12_display_bind_provider_sync_fence_alias_matrix`
-    now distinguishes CPU VA, kernel VA, real returned GPU VA, GPU-VA source,
-    and the legacy KVA alias gap, and keeps sync-file/dma-fence display
-    completion credit, native-present credit, OpenGL-submit credit, and WebKit
-    credit at zero.
-  - [x] Add WSL-shaped HMGR/process-scope diagnostics before a real sender is
-    wired. `/dev/dxg`, `dxgprobe`, and focused validators now expose the
-    local-vs-WSL HMGR type coverage gap, per-type active object counts, last
-    entry lifecycle state (`unique`, `instance`, destroyed/free-list status),
-    pending-invalid/unmark placeholders, process-scoped object-table identity,
-    pid/tgid namespace presence, and process-adapter device counters. These
-    rows are explicit zero-credit evidence: missing WSL HMGR types such as
-    shared-resource and monitored-fence remain named, `vpid`/`nspid` support is
-    still reported absent, and native-present/OpenGL-submit credit remains
-    zero.
-  - [x] Add the provider no-send preflight ledger before the real sender is
-    wired. `hyperv_dxg_display_bind_submit_failclosed()` now records that the
-    selected provider reached a complete, pin-revalidated ready-to-send
-    boundary, then blocked with `send_attempts=0`,
-    `send_blocked_no_host_abi>0`, `completion_demux_attempts=0`, and
-    `completion_demux_blocked_no_contract>0`. `fbstat`,
-    `gpucorevalidate`, and `scripts/hyperv-gpu-core-validate.sh` require
-    `d3d12_display_bind_provider_no_send_preflight_matrix` to preserve
-    matching source/resource generations, no host-saw packet, no transport
-    source, no provider sender/completion, zero present/completed ids, zero
-    native-present credit, and zero OpenGL-submit credit. This locks the exact
-    replacement point for a future documented GPU-P/DDA sender without
-    closing the unchecked real-sender item.
-  - [x] Add a display-bind authority-chain skeleton before the real sender is
-    wired. `d3d12_display_bind_authority_chain_matrix` now ties the required
-    order together as host ABI, provider send, host packet, provider demux,
-    display completion, resource generation, and consumer credit. Today the
-    host-ABI/provider-send/host-packet/demux/display-completion/consumer gates
-    are closed, source and resource generation gates are only armed, WSL
-    present-history, KMS completion, sync-file fences, and DDA native display
-    are explicitly zero-credit, and native-present/OpenGL/WebKit credit remains
-    zero.
-  - [x] Split DDA/Nouveau bridge separation out from the generic DDA display
-    rejection. `dda_nouveau_d3d12_bridge_disjoint_matrix` now requires
-    `dda_d3d12_import_path=0`, `dda_d3d12_scanout_bind=0`,
-    `dda_hw_flip_completion_for_d3d12=0`, `kms_lane_is_d3d12=0`, zero
-    D3D12 display-bind ids, and zero native-present/OpenGL credit. This keeps a
-    future Linux-shaped DDA/Nouveau native-display path visible without letting
-    it satisfy the D3D12 shared-resource scanout-bind root.
-  - [x] Make the fail-closed provider pending/stale diagnostics provider-owned
-    instead of inferred by user-space.
-    The Hyper-V provider result and `fb_gpu_stats` now expose owner,
-    source, and resource generations for the provider-owned pending object,
-    plus no-host-ABI cancel/ref-release fields and stale-after-release reject
-    accounting. `dxgprobe`, `fbstat`, and `gpucorevalidate` require the
-    provider/pending generation fields to match each other, prove sender-owned
-    publish-before-send/transport/command/channel fields stay zero while the
-    host ABI is absent, and keep stale/late completion paths at zero
-    native-present/OpenGL-submit/WebKit credit. Evidence:
-    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-    CORE_C_SECTIONS='present-source' VALIDATION_RUN_ID=provider-pending-failclosed-3
-    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
-  - [x] Carry WSL-shaped process/object provenance in the fail-closed pending
-    provider record before a real sender exists.
-    The provider pending publication row now requires kernel-owned
-    `dxgprocess_generation`, `process_adapter_generation`,
-    `hmgr_index_unique_valid`, `device_object_ref_active`,
-    `resource_object_ref_active`, `allocation_object_ref_active`,
-    `shared_parent_snapshot_valid`, `opened_child_snapshot_valid`, a
-    `syncobject_object_ref_active` field that is 1 for wait-sync pending
-    records, and `owner_close_cancelled=0` fields alongside the existing
-    source/resource generation and fail-closed ref-release diagnostics. These
-    are still zero-credit fail-closed fields and are deliberately named as
-    active object-table refs/snapshots rather than retained WSL krefs; they do
-    not close the unchecked real-sender item, but they make the future sender
-    inherit WSL-style process/object/handle-table lifetime requirements before
-    it can publish a packet.
-  - [x] Make the DDA/Nouveau display split explicit as zero-credit D3D12
-    evidence. A DDA-backed Nouveau PCI display path is its own native-display
-    lane; it is not a D3D12 resource scanout-bind path and cannot close the
-    `dxg-resource-scanout-bind` root item. `fb_nouveau.c` now includes
-    `NO_NOUVEAU_DISPLAY` in the fail-closed reject mask, and `fbstat`,
-    `dxgprobe`, `gpucorevalidate`, and the focused runner require
-    `d3d12_dda_nouveau_separate_display_not_bind_matrix` so DDA PCI display
-    presence cannot be confused with a D3D12 resource-to-scanout bind.
-    The DDA/Nouveau native-display lane remains zero-credit until one current
-    lineage correlates Linux-shaped display create, nonvirtual
-    heads/connectors, hardware vblank IRQ, KMS `NOUVEAU_HW` page flip, and
-    hardware flip completion.
-  - [x] Make the DDA/Nouveau foreign PRIME/dma-buf import gap explicit before
-    any D3D12 scanout-bind claim. The BO and DRM PRIME fd-to-handle paths now
-    count local imports, bad-fd rejects, and valid non-local fd rejects through
-    the shared `fb_dmabuf_file_ops` gate, while keeping D3D12 foreign-resource
-    imports, Nouveau scanout-bind imports, native-present credit, and
-    OpenGL-submit credit at zero. `fbstat` and `gpucorevalidate` require
-    `foreign_prime_import_gap_matrix`, so a local xv6 dma-buf import can no
-    longer be mistaken for a real DDA/Nouveau-to-D3D12 resource bridge.
-  - [x] Make public Windows/WSLg/RDP present APIs explicit zero-credit
-    evidence. A fresh audit found ReactOS/Windows KMT present declarations and
-    DirectX shared-handle/sharing-contract APIs, but no source-backed
-    guest-implementable GPU-P/DXG VMBus or WSLg/RDP protocol that binds a
-    guest D3D12 allocation/resource/fence to host scanout and returns
-    source/resource-correlated display completion. `fbstat`, `dxgprobe`, the
-    pure-C GPU validator, and the focused Hyper-V runner now require
-    `public_present_api_not_guest_bind_matrix` with WSLg/FreeRDP local source
-    absent, RDP classified as copy/dirty-frame transport, and native-present,
-    OpenGL-submit, and WebKit acceleration credit at zero.
-  - [x] Add the bounded host-ABI discovery contract row without checking off
-    the root sender. `d3d12_display_bind_host_abi_discovery_matrix` is required
-    by `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused Hyper-V runner
-    as a source-audited fail-closed gate: no custom host tool, no WSL
-    display-bind ioctl, WSLg/FreeRDP absent, RDP copy/dirty-frame only, GPU-P
-    sender and completion-demux contracts zero, DDA/Nouveau import/scanout/
-    hardware flip absent, provider fail-closed, zero present/completed ids, and
-    zero native-present/OpenGL/WebKit credit.
-  - [x] Move no-host-ABI pending resolution/ref-release accounting into the
-    Hyper-V provider result without opening a sender. The fail-closed provider
-    now reports `resolved_or_cancelled=1`, `refs_released=1`,
-    `no_host_abi_cancelled=1`, and `no_host_abi_refs_released=1` after a
-    sampled provider submit, while keeping publish-before-send, transport
-    pending id, command id, transaction id, channel, completion demux, present
-    id, completed id, native-present credit, OpenGL-submit credit, and WebKit
-    credit at zero. Evidence:
-    `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-    CORE_C_SECTIONS='preflight present-source final'
-    VALIDATION_RUN_ID=host-abi-discovery-provider-release
-    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
-  - [x] Add the Hyper-V-owned cancel provider boundary before a real async
-    sender exists. `hyperv_dxg_display_bind_cancel()` now routes to a
-    no-credit fail-closed implementation that reports zero transport pending
-    id, no sender/completion, no host packet, zero WSL present-history credit,
-    `resolved_or_cancelled=1`, `refs_released=1`,
-    `no_host_abi_cancelled=1`, `no_host_abi_refs_released=1`, and
-    `pending_owner_close_cancelled=1` for owner-close/unregister cancellation
-    paths. `fb_dxg_present.c` consumes this provider result only when a
-    source-local pending record is active; it keeps present/completed ids,
-    native-present credit, and OpenGL-submit credit at zero. This is a future
-    async-sender boundary and does not close the unchecked real-sender item.
-  - [x] Make host-to-VM present-history completion observable before any
-    future native-present credit. The Hyper-V DXG receive path now recognizes
-    `PROPAGATEPRESENTHISTORYTOKEN`, records packet count, command id, payload
-    length, and payload head bytes in `/dev/dxg`, and the present-source C
-    validators require
-    `dxg_host_to_vm_presenthistory_completion_matrix` with zero present-history
-    packets, zero completion contracts, zero native-present credit, and zero
-    OpenGL-submit credit on the current fail-closed path. The validators also
-    emit `dxg_presenthistory_telemetry_not_completion_matrix`, matching WSL's
-    enum-only present-history source audit by naming the Linux in-band display
-    completion handler as absent instead of treating packet telemetry as a
-    display-bind completion contract.
-  - [x] Add explicit zero-credit display-bind sender/source classification
-    before a real sender exists. The kernel provider result, `fb_gpu_stats`,
-    `FB_GPU_DXG_PRESENT_SOURCE_QUERY`, and
-    `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` now carry
-    `host_saw_display_bind_packet=0`,
-    `display_bind_transport_source=none`, and
-    `wsl_presenthistory_completion_credit=0` while the provider is
-    fail-closed. `fbstat`, `dxgprobe`, `gpucorevalidate`, and the focused
-    Hyper-V runner require those fields in the source catalog, host-ABI
-    discovery, query-fields, and provider-pending rows, so WSL present-history
-    telemetry cannot satisfy the future GPU-P/DDA display-bind sender gate.
-    This checked row only closes the zero-credit classification skeleton; the
-    unchecked real-sender items still require
-    `host_saw_display_bind_packet=1`, a non-WSL/DDA transport source, provider
-    completion demux, and source/resource-correlated display completion.
-    Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-    CORE_C_SECTIONS='present-source final'
-    VALIDATION_RUN_ID=core-display-bind-source-boundary
-    scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
-- [x] Make the selected bind lane's missing host ABI explicit and validator
-  owned instead of implicit in `/dev/dxg` readiness. `dxgprobe` and
-  `gpucorevalidate` now emit and require
-  `dxg_resource_scanout_bind_host_abi_matrix`, proving the selected lane is
-  GPU-P/DXG scanout-bind, no custom host tool is used, WSL dxgkrnl exposes no
-  display-bind ioctl, synthvid remains GPA-dirty-only, D3DKMT handles and the
-  same-adapter shared resource are only admission evidence, and no display
-  target, present id, native-present credit, or OpenGL-submit credit is granted.
-  Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779675508-3085051`.
-- [x] Add a first-class scanout-bind skeleton beneath the selected lane rather
-  than treating the missing transport as only a bind-contract query result.
-  The kernel now records `dxg_scanout_bind_*` attempts, rejects,
-  weak-evidence rejects, completion polls, last source/resource generation,
-  present id, completion id, dirty sequence, and dirty-rect count. `fbstat`,
-  `dxgprobe`, `gpucorevalidate`, and the focused runner require
-  `dxg_scanout_bind_skeleton_matrix` so D3DKMT handle readiness, shared-resource
-  metadata, query calls, or callback-only evidence cannot accidentally earn
-  native-present or OpenGL-submit credit before a real GPU-P/DDA display-bind
-  transport exists. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
-  CORE_C_MODE=sections CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-  `validation_run_id=core-1779708956-589366`.
-- [x] Add a canonical display-bind backend boundary that every later consumer
-  must use instead of inferring native present from loose DXG readiness.
-  The kernel stats ABI now mirrors the selected bind backend, transport,
-  operation, metadata/lifetime requirements, block reason, display-completion
-  source, source/resource generations, and present/completed ids as
-  `dxg_display_bind_*`. `fbstat`, `gpucorevalidate`, and the focused runner
-  require `d3d12_display_bind_backend_boundary_matrix`, while `wlcomp`, the
-  FPS validator, and the WebKit gate consume the same `display_bind_*` keys
-  from `/tmp/wlcomp-d3d12-present` and log matrices. Consumer/user-facing
-  evidence normalizes the Hyper-V GPU-P bind lane to
-  `display_bind_backend=gpup_dxg_scanout_bind`,
-  keeps `display_bind_transport=gpu-p-dxg-resource-scanout-bind`, and keeps
-  `display_bind_completion_source=display`, while still accepting older log
-  spellings where validators need historical compatibility. The current Hyper-V
-  path remains fail-closed with zero ids, zero native-present credit, zero
-  OpenGL-submit credit, and no custom host tooling.
-- [x] Add a source-local display-bind provider boundary and ledger before
-  wiring any host sender.
-  `fb_dxg_present.c` now builds an internal display-bind request/result for
-  the selected GPU-P/DDA lane and records the result on the owning present
-  source with source/resource generations, present/completed ids, completion
-  source, status, and block reason. The provider currently returns the same
-  `EOPNOTSUPP` no-transport/no-completion result because there is still no
-  documented non-custom GPU-P/DDA display-bind packet. This keeps later work
-  focused on replacing the provider backend instead of inferring credit from
-  D3DKMT handles, sync-files, or synthvid dirty rectangles.
-- [x] Split the display-bind provider call away from the framebuffer lock and
-  revalidate the source/resource generation before recording a result.
-  The selected bind provider now receives a source snapshot, runs outside
-  `fb_state.lock`, then reacquires the lock and accepts the result only if the
-  present source handle, source generation, and resource generation still match.
-  `fbstat`, `dxgprobe`, and `gpucorevalidate` expose
-  `provider_submits`, `lock_dropped_submits`, `revalidate_attempts`,
-  `revalidate_successes`, and `revalidate_failures`, keeping the future
-  sleepable GPU-P/DDA sender WSL-style without granting native-present credit.
-- [x] Prove the future display-bind sender receives a complete source-owned
-  request before it is allowed to fail closed.
-  `hyperv_dxg_display_bind_submit_failclosed()` now validates that the
-  provider request carries the device, resource, allocation, dimensions,
-  format/modifier, adapter LUID, source/resource generations, and sync/fence
-  metadata required for a WSL-style source-owned bind attempt. `fbstat`,
-  `dxgprobe`, `gpucorevalidate`, and the focused runner require
-  `d3d12_display_bind_request_metadata_matrix` with
-  `request_metadata_complete=1`, `request_sync_metadata_complete=1`,
-  `missing_metadata=0x0`, zero present/completed ids, zero native-present
-  credit, and zero OpenGL-submit credit. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-  `validation_run_id=core-1779758881-3213422`.
-- [x] Add a WSL-style pending display-bind request lifetime ledger before any
-  sleepable host sender exists.
-  `fb_dxg_present.c` now publishes a source-owned pending request before
-  dropping `fb_state.lock`, preserves source/resource generations on that
-  pending object, resolves it fail-closed when the provider returns
-  `EOPNOTSUPP`, and cancels outstanding pending requests during unregister or
-  owner close. `dxgprobe` separates the lifecycle proof from the live-source
-  generation proof: `d3d12_display_bind_pending_lifetime_matrix` requires
-  created requests to drain to zero active entries with zero completions,
-  nonzero failclosed resolves, zero native-present credit, and zero
-  OpenGL-submit credit, while
-  `d3d12_display_bind_generation_revalidation_matrix` requires the provider
-  lock-drop revalidation to preserve the live bind-contract source/resource
-  generations and pinned resource generation. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  VALIDATION_RUN_ID=core-display-bind-pending-lifetime
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-26.
-- [x] Keep WSL present-history style command IDs as explicit rejected
-  candidates until a source-backed sender and completion contract exists.
-  The DXG present path now exposes `dxg_scanout_bind_candidate_command_matrix`
-  and `dxg_scanout_bind_weak_evidence_matrix`: WSL guest-to-host enum IDs
-  34/35/38 plus the host-to-VM `PROPAGATEPRESENTHISTORYTOKEN` completion
-  enum ID 1 are known, but sender/completion contracts remain zero. D3DKMT
-  handle readiness, same-adapter resources, sync-file acquire, and synthvid
-  GPA-dirty evidence are rejected as weak evidence, and native-present/
-  OpenGL-submit credit stays zero.
-  - [x] Keep validators synchronized with that four-command diagnostic set:
-    core, DXG, FPS, and WebKit validators now require `presenthistory=34`,
-    `redirected_flip_fence=35`, `blt=38`, and
-    `propagate_presenthistory=1`/`cmds_known=4` while still requiring zero
-    sender/resource-bind/display-completion contracts.
-  - [x] Add an explicit present-history orphan-completion rejection row.
-    `dxgprobe` and `gpucorevalidate` now emit
-    `dxg_presenthistory_orphan_completion_rejection_matrix`, which requires
-    `PROPAGATEPRESENTHISTORYTOKEN` to remain unmatched to any provider pending
-    record (`provider_pending_match=0`), with no completion demux, no provider
-    resolve, unchanged completion successes, zero display-bind ids, and zero
-    native-present/OpenGL-submit credit. This codifies the WSL rule that
-    present-history telemetry is not a source/resource-correlated display-bind
-    completion.
-- [x] Restore the WSL-equivalent standard-allocation surface ABI skeleton
-  before adding any native display-bind behavior. The Hyper-V DXG VMBus
-  standard-allocation command now carries the same shared-primary, shadow,
-  staging, and GDI surface union shape used by WSL2 `dxgkrnl`; `dxgprobe`,
-  `gpucorevalidate`, and the focused core runner require
-  `wsl_standard_alloc_surface_abi_matrix` to prove the surface layouts are
-  present and still grant zero native-present/OpenGL-submit credit. This keeps
-  WSL private-driver-data parity separate from the still-missing
-  `dxg-resource-scanout-bind` host ABI.
-- [x] Add a zero-credit native-completion matrix before any real display-bind
-  implementation. `dxgprobe`, `fbstat`, `gpucorevalidate`, and the focused
-  runner now require `d3d12_native_completion_zero_credit_matrix` and
-  `d3d12_display_bind_absent_matrix`: display bind is absent, transport is
-  absent, present ids and completion counters are zero, callback/release
-  ordering is blocked/deferred, per-client generation matching is required,
-  and no native-present/OpenGL-submit credit is granted. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779679708-3257998`.
-- [x] Add the commit-result copyout skeleton required by any future nonzero
-  `present_id/completed` path. `FB_GPU_DXG_PRESENT_SOURCE_COMMIT` now copies
-  the commit struct back to userspace only on success; the current fail-closed
-  path still returns an errno and preserves zero present/completion credit.
-  `dxgprobe`, `gpucorevalidate`, and the focused runner require
-  `d3d12_present_commit_result_copyout_contract_matrix` so the missing real
-  host bind cannot be hidden behind an ioctl ABI that would discard success
-  results.
-- [x] Replace present-source resource-fd provenance with a typed WSL-style
-  DXG shared-resource admission snapshot: the FB present source must prove the
-  fd is `anon_inode:dxgresource`, the shared-resource metadata is sealed, the
-  allocation/resource handles match the D3DKMT register payload, the sealed
-  generation feeds the bind-contract resource generation, stale fds/sources are
-  rejected, and no native-present/OpenGL-submit credit is granted until the
-  real display-bind transport exists. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-  `validation_run_id=core-1779681659-3341588`.
-- [x] Pin WSL-style display-bind source lifetime at registration time.
-  `fb_dxg_present.c` now pins the owning `/dev/dxg` fd and typed
-  `anon_inode:dxgresource` fd for every verified source before a future
-  sleepable display-bind provider can drop framebuffer locks. The pin snapshot
-  records resource generation, process generation, process refs, sealed
-  shared-resource metadata, and balanced unpin cleanup on source unregister or
-  owner close. The intentionally unverified `resource_fd=-1` negative lane
-  still registers and fails closed at commit with
-  `RESOURCE_FD_UNVERIFIED`, so validator evidence continues to prove the
-  correct rejection point. Evidence: `d3d12_display_bind_pin_lifetime_matrix`
-  passed with `pin_attempts=2`, `pin_successes=2`, `pin_failures=0`,
-  `unpins=2`, pinned dxg/resource fd evidence, nonzero process/resource
-  generations, and zero native-present/OpenGL-submit credit in
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
-  `validation_run_id=core-1779731829-1780191`, then re-validated after
-  parent/global-share propagation and detailed pin diagnostics with
-  `validation_run_id=core-1779742515-2470561`.
-- [x] Seal display-bind metadata on unregister and owner close so stale source
-  handles cannot retain native-present ids after lifetime teardown.
-  `fb_dxg_present.c` now clears source/global display-bind ids and completion
-  status during explicit source release and owner cleanup, records
-  stale-source, generation, completion, late-completion, and after-close query
-  counters, and keeps native-present/OpenGL/WebKit credit at zero for every
-  stale query. `dxgprobe`, `fbstat`, `gpucorevalidate`, and the focused runner
-  require `d3d12_display_bind_stale_source_zero_credit_matrix`. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-25 with
-  `validation_run_id=core-1779754227-3036304`; the present-source row showed
-  `release_sources_delta=3`, `after_close_queries=3`,
-  `stale_source_rejects=3`, `release_clears=3`, zero after-close ids, and
-  zero native-present/OpenGL/WebKit credit.
-- [x] Add a WSL-style sync-file acquire pre-open guard for the present-source
-  path: export a monitored fence to a sync-file fd, reopen it to a D3DKMT sync
-  object before present admission, reject wrong fd kinds, preserve fence value
-  metadata, and keep native-present/OpenGL-submit credit at zero until a real
-  display-bind transport exists.
-  Evidence: `d3d12_present_syncfile_preopen_matrix` and final zero-credit
-  checks passed in
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` on 2026-05-25 with
-  `validation_run_id=core-1779683691-3428894`.
-- [x] Make the D3D12 Wayland resource-buffer path pass on the current Hyper-V
-  runtime: same adapter LUID, shared resource fd, acquire fence or sync-file,
-  compositor import/open, and present admission.
-  The runtime path now exports a real D3D12 shared resource, creates a DXG
-  sync-file acquire fd with `LX_DXCREATESYNCFILE`, validates direct
-  `LX_DXOPENSYNCOBJECTFROMSYNCFILE`, and sends that fd through the Wayland
-  resource-buffer protocol. `wlcomp` opens the resource and acquire fence on
-  the same adapter, registers the compositor-opened resource/allocation as a
-  DXG present source, then fails closed only at the selected but still-missing
-  GPU-P/DDA `dxg-resource-scanout-bind` host ABI. The kernel admission check
-  now validates per-open resource handles through the compositor `/dev/dxg`
-  owner table plus the shared fd's canonical global share, instead of requiring
-  the fd's creator-side handles to equal `OPENRESOURCEFROMNTHANDLE` results.
-  Evidence: `XV6_WLCOMP_D3D12_RUN_ID=opened d3d12sharedsmoke --runtime
-  --allow-failclosed-present` passed on the focused 6-vCPU Hyper-V image on
-  2026-05-25, including
-  `d3d12_fence_sharing_validation_matrix`,
-  `d3d12_wayland_dxg_syncfile_acquire_matrix`,
-  `d3d12_wayland_resource_buffer_admission_matrix`,
-  `d3d12_wayland_present_failclosed_identity_matrix`,
-  `d3d12_failclosed_lifecycle_matrix`, and
-  `d3d12_wayland_resource_buffer_runtime_matrix`, all with
-  `native_present_claim=0` and `opengl_submit_credit=0`.
-- [x] Add compositor-side admission and fail-closed identity matrices for that
-  path without granting native-present credit. `wlcomp` now emits
-  `d3d12_wayland_resource_buffer_admission_matrix` after same-LUID
-  resource/fence import and protocol acceptance, and
-  `d3d12_wayland_present_failclosed_identity_matrix` when the imported buffer
-  reaches GPU-copy proof but still lacks native display completion. The DXG and
-  WebKit validators classify those rows as intermediate evidence, not as native
-  present. Build evidence:
-  `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
-  passed on 2026-05-24.
-- [ ] Replace the fail-closed bind-contract skeleton with a real selected
-  display-bind source. This is the unchecked root dependency for this section:
-  do not treat it as closed until a source-owned D3D12 resource/allocation,
-  adapter LUID, dimensions/format/modifier, and sync-file/fence target are
-  consumed by a GPU-P/DDA display-bind lane that returns display-correlated
-  completion.
-  Recommended disjoint chunks:
-  1. Host ABI discovery/proof: identify or add the narrow packet/protocol
-     boundary and keep the existing fail-closed matrix green while it is absent.
-  2. Kernel bind path: wire the source/admission record into a real
-     scanout-bind attempt, preserving source/resource generation, dirty metadata,
-     and zero-credit rejection counters on every failure path.
-  3. Compositor handoff: replace the current GPU-copy-only proof with a
-     display-bind submission path that still avoids CPU map/readback and DRI
-     software present.
-  4. Completion/lifetime: return nonzero present ids and completed ids for the
-     same submitted resource generation, then release buffers and send frame
-     callbacks only after that native completion.
-  5. Validators/credit: add the native completion validators and only then let
-     FPS, backend OpenGL-submit, and WebKit gates consume the evidence.
-  The future-success accept gate is now source-authority hard: kernel
-  `fb_dxg_present_display_bind_result_accepts()` requires provider
-  publication, publish-before-send ordering, nonzero transport pending id,
-  command id, transaction id, channel, completion demux registration,
-  `host_saw_display_bind_packet=1`, and
-  `wsl_presenthistory_completion_credit=0` in addition to nonzero
-  display-correlated present/completed ids. `fbstat` and `dxgprobe` now expose
-  the same requirements in `d3d12_display_bind_success_shape_matrix`, so a
-  partial sender cannot open native-present credit.
-- [x] Add per-client, per-resource, per-generation native-present counters so
-  one client's progress cannot satisfy another client's validator.
-  `wlcomp` records `d3d12_client_native_present_*`,
-  `d3d12_resource_native_present_*`, and
-  `d3d12_resource_generation_native_present_*` counters in
-  `/tmp/wlcomp-d3d12-present`; `d3d12sharedsmoke` validates that attempts,
-  completions, rejects, and resource generations match the current client and
-  buffer generation before any native-present credit is accepted. The current
-  Hyper-V path remains zero-credit because native display completion is absent.
-- [x] Add the source-level skeleton for the narrow DXG/Hyper-V to KMS/scanout
-  interface: `FB_GPU_DXG_PRESENT_BIND_CONTRACT_QUERY` now reports a registered
-  present-source-owned resource, source/resource generations, required metadata,
-  the selected GPU-P/DDA bind lane, and a required display-completion source
-  while remaining fail-closed. Build evidence:
-  `cmake --build /tmp/xv6-hyperv-build --target kernel user -j2` passed on
-  2026-05-24.
-- [x] Validate the bind-contract skeleton in the guest pure-C path:
-  `dxgprobe --present-source-failclosed` must prove the contract is tied to the
-  registered source, returns no present id/completion, reports display
-  completion as required, rejects stale or foreign source handles, and grants no
-  native-present/OpenGL-submit credit. The focused runner now includes this as
-  the `dxg-present-source` step in `scripts/hyperv-gpu-core-validate.sh`.
-  Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=whole-section
-  CORE_C_SECTIONS='preflight drm dxg-share dxg-sync present-source buffers
-  final' scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779667968-2704585`, including
-  `present_bind_contract_skeleton_matrix`, stale/foreign source rejection,
-  wait-sync metadata rejection, and zero native-present/OpenGL-submit credit.
-- [x] Prove framebuffer blit, CPU map/readback, DRI software present,
-  copy-export fallback, and callback-only/release-only paths are rejected by
-  the same validator. Evidence: `BUILD_DIR=/tmp/xv6-hyperv-build
-  CORE_C_MODE=whole-section CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779669683-2798390`, including
-  `present_source_software_path_rejection_matrix` with framebuffer blit,
-  CPU map/readback, DRI software present, copy-export fallback,
-  callback-only, and release-only all rejected, while keeping
-  `native_present_claim=0` and `opengl_submit_credit=0`.
-- [x] Keep `backend_opengl_submit 0` until this section and the FPS section
-  both pass. Hyper-V still reports `backend_opengl_submit 0` and
-  `backend_opengl_submit_gate closed`; the focused core validator rejects any
-  premature `backend_opengl_submit 1` claim while native present/FPS/WebKit
-  gates remain open. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779676616-3128276`, including
-  `hyperv_opengl_submit_gate_matrix ... backend_gate=closed status=PASS`.
-  Source now also emits `opengl_submit_backend_separation_matrix` so the next
-  focused rerun can prove Hyper-V has DXG transport and D3DKMT while
-  `backend_opengl_submit=0`; KVM/virgl remains the only allowed OpenGL-submit
-  backend.
+- [ ] **3.3 Wire non-empty EXEC / VM_BIND / pushbuf to the real engine.**
+  - Replace the current fail-closed rejection of non-empty GEM pushbuf / EXEC /
+    VM_BIND (see `nouveau_submit_failclosed_matrix`) with real GPU address-space
+    mapping (GPUVM/VMM page tables) and real engine submission for the
+    Mesa Nouveau winsys.
+  - Acceptance evidence: `nouveau_submit_real_matrix` shows real GPUVA maps and
+    a completed engine submit with a hardware fence; the old fail-closed matrix
+    still rejects malformed/foreign buffers.
 
-### 5. Validation And Performance
+---
 
-Goal: accept only current-run, source-correlated, finite validation evidence.
+## Section 4. Real Display / Scanout on the Assigned GPU
 
-- [x] Add source-contained pure-C D3D12 shared-resource validators for the
-  current fail-closed present-source contract. Evidence:
-  `BUILD_DIR=/tmp/xv6-hyperv-build CORE_C_MODE=sections
-  CORE_C_SECTIONS='preflight present-source final'
-  scripts/hyperv-gpu-core-validate.sh` passed on 2026-05-24 with
-  `validation_run_id=core-1779672997-2972287`, including
-  `d3d12_shared_resource_fd_lifetime_matrix`,
-  `d3d12_present_source_admission_matrix`,
-  `d3d12_acquire_fence_lifetime_matrix`, and
-  `d3d12_present_bind_contract_failclosed_matrix`. These prove live fd
-  registration, invalid/unverified/stale fd rejection, same-adapter admission,
-  D3DKMT handle metadata, monitored-fence acquire metadata, owner cleanup, and
-  zero native-present/OpenGL-submit credit.
-- [ ] Add native D3D12 completion validators once the real display-bind lane
-  exists: nonzero present ids, completion counters, close-before-signal
-  cancellation, frame callback/release ordering, and cleanup balance after
-  native completion.
-  A pure-C fail-closed row,
-  `d3d12_native_completion_future_contract_matrix`, now names these required
-  checks before the real lane exists: nonzero present id, completed >= present
-  id, same resource generation, callback/release after completion,
-  close-before-signal cancellation, and cleanup balance. It grants zero native
-  present or OpenGL-submit credit until the display-bind gate opens.
-  `gpucorevalidate` also emits `d3d12_native_completion_not_kms_matrix`, which
-  proves generic `FB_GPU_DISPLAY_WAIT`, KMS vblank, KMS OUT_FENCE, page-flip,
-  and software-blit progress remain zero-credit unless the future D3D12
-  display-bind completion path supplies nonzero source/resource-correlated
-  present/completed ids.
-  The current pure-C validators additionally emit and require
-  `d3d12_display_bind_id_shape_matrix`,
-  `d3d12_provider_credit_gate_matrix`, and
-  `wsl_standard_alloc_not_display_bind_matrix`. These fail if display-bind ids
-  are forged/stale, if native/OpenGL credit appears while provider
-  `no_host_abi/no_sender/no_completion` diagnostics remain set, or if WSL
-  standard-allocation private metadata is treated as a scanout bind. Evidence:
-  focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
-  `validation_run_id=core-1779750432-2876003`.
-  `d3d12_native_completion_lifetime_matrix` now also accepts the preflight
-  fail-closed state where no provider submit has happened yet, then requires
-  `provider_no_completion=1` after a fail-closed provider submit or a real
-  display completion after a future successful provider submit. Evidence:
-  focused 6-vCPU Hyper-V validation passed on 2026-05-25 with
-  `validation_run_id=core-1779754227-3036304`.
-  The skeleton now also separates completion authority from progress telemetry.
-  `d3d12_completion_source_authority_matrix` names the only acceptable D3D12
-  native-completion authority as the display-bind provider and keeps NTSTATUS,
-  present-history telemetry, sync-file fences, callback release, and KMS
-  vblank/page-flip evidence at zero credit.
-  `native_present_completion_source_namespace_matrix` keeps D3D12 display-bind
-  completion ids, Nouveau KMS vblank/page-flip sequences, and IRQ-cause counters
-  in separate namespaces so a later DDA/Nouveau display path cannot be mistaken
-  for D3D12 resource scanout-bind completion. A DDA/Nouveau native-display
-  skeleton may collect display-create, nonvirtual head/connector, hardware
-  vblank IRQ, KMS `NOUVEAU_HW` page-flip, and hardware completion diagnostics,
-  but those fields must remain zero-credit unless they all correlate through
-  Linux-shaped Nouveau/KMS hardware state in the same validation lineage.
-  The skeleton now also emits
-  `d3d12_native_completion_consumer_escrow_matrix`: while display bind is
-  closed, frame callbacks, buffer releases, final handoff, FPS-visible credit,
-  content-progress credit, and WebKit acceleration are explicitly escrowed at
-  zero until a provider-owned display completion supplies nonzero
-  present/completed ids for the same resource generation.
-  The kernel acceptance gate now requires `host_saw_packet == 1`, not merely a
-  nonzero diagnostic value, before accepting any future display-bind result as
-  native completion.
-  Present-history validation is now phrased as telemetry even when packets are
-  observed: `dxg_host_to_vm_presenthistory_completion_matrix` no longer depends
-  on packet absence and instead requires zero sender/completion contracts,
-  zero display-bind completion successes, zero present/completed ids, and zero
-  native-present/OpenGL credit.
-- [x] Keep WSL-trace replay equivalence current for the real UMD sequence and
-  fail if xv6 rewrites packets without matching host-saw diagnostics.
-  The same-adapter NVIDIA WSL replay now uses the full-private trace
-  `/tmp/xv6-wsl-probe/mesaglfeature-nvidia-fullpriv-20260525-034404.trace`:
-  3200-byte DX12 context private data, 594-byte queue-allocation private data,
-  WSL map-before-resident order, `LX_DXMAKERESIDENT flags=0x1`, 124-byte HW
-  queue private data with the live allocation handle at offset `0x24`, and
-  1880-byte HW queue submit private data. The kernel records host-saw packet
-  diagnostics for the transformed/forwarded packets, and the cleanup path now
-  accepts WSL-style local-adapter aliases against the tracked host-adapter
-  GPUVA range before sending `FREEGPUVIRTUALADDRESS`. Evidence:
-  focused 6-vCPU Hyper-V run on 2026-05-25 printed
-  `wsl_trace_replay_host_saw_matrix ... make_flags:0x1 ... submit_cmd_len:4096
-  submit_priv:1880 ... status=PASS` and
-  `wsl_trace_replay_signature ... equivalence=wsl_private_hwqueue_submit_success
-  ... packets:10/10 ... status=PASS`.
-- [x] Build and validate completed sections with `/tmp/xv6-hyperv-build` and
-  focused 6-vCPU Hyper-V images before marking section items done.
-  Evidence: the focused Hyper-V core validator rebuilt kernel/rootfs, deployed
-  a 6-vCPU image, and passed `preflight`, `drm`, `dxg-share`, `dxg-sync`,
-  `present-source`, `buffers`, and `final` pure-C sections on 2026-05-24
-  (`validation_run_id=core-1779667968-2704585`). Native-present, FPS, and
-  WebKit artifacts remain separate unchecked gates.
-- [ ] Make the finite 480p desktop 3D validator pass only on native D3D12
-  presented frames after warmup.
-  Skeleton/preflight evidence is now explicit: `hyperv-3d-fps-validate.sh`
-  emits `fps_native_present_gate_skeleton_matrix` and
-  `fps_visible_content_preflight_matrix` before heavy FPS acceptance, with the
-  gate closed until native D3D12 present completions and visible content
-  progress are both present. It also emits
-  `fps_demo_interaction_gate_matrix` and
-  `fps_visible_native_content_gate_matrix`, so visible/closeable/resizable demo
-  evidence and content-progress-native-present correlation are required before
-  the finite FPS gate can open.
-  `mesawlegl` and the FPS validator now require exact native/content identity:
-  content progress state must be `NATIVE_PRESENT_COMPLETE`, visible content
-  progress must be `NATIVE_PRESENT_COMPLETE`, content progress must be
-  compositor-owned, content present/completed ids must match the canonical DXG
-  and display-bind ids, display-bind completion sources must all be native
-  display sources, final handoff ids must match, and buffer/resource
-  generations must match. `wlcomp` now exports final-handoff resource
-  generation and content-progress current-run/identity fields, and
-  `hyperv-3d-fps-validate.sh` requires exact sample-window and visual-window
-  identity before accepting finite FPS. The same validator now also requires
-  each sampled `/tmp/wlcomp-d3d12-present` block to be atomically sealed with
-  matching begin/end generation and run-id fields before any canonical
-  `display_bind_*` tuple can count. Unsealed compositor evidence remains
-  zero-credit even if the ids are otherwise coherent. Lightweight
-  anti-inflation selftest
-  evidence:
-  `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-identity
-  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
-  `mesawlegl`, `wlcomp`, and `hyperv-3d-fps-validate.sh` now also carry the
-  display-bind source-authority tuple through the FPS path:
-  `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
-  `host_saw_display_bind_packet=1`, and
-  `wsl_presenthistory_completion_credit=0` are required before coherent
-  display-bind ids can satisfy current-run FPS/demo gates. The anti-inflation
-  selftest rejects WSL present-history authority and source-missing forged
-  display-bind rows with zero native-present/OpenGL-submit credit. Evidence:
-  `FPS_ANTI_INFLATION_SELFTEST=1
-  VALIDATION_RUN_ID=selftest-display-bind-authority
-  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
-  The parser is now source-isolated as well: canonical
-  `display_bind_*`, `present_id`, `completed`, native-completion,
-  backend-OpenGL-submit, content-progress, and final-handoff counters are
-  consumed only from `__SRC_WLCOMP_D3D12_PRESENT_*` blocks. Canonical-looking
-  scalars from `mesawlegl-fps`, `wlcomp-fps`, `fbstat`, demo logs, or other
-  source blocks are quarantined as diagnostic-only zero-credit evidence, with
-  `fps_artifact_source_isolation_negative_matrix` reporting the rejected
-  foreign sources. Evidence:
-  `FPS_ANTI_INFLATION_SELFTEST=1
-  VALIDATION_RUN_ID=parent-review-source-isolation
-  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
-- [x] Require full 640x480 or equivalent 480p rendering with `render_div == 1`.
-  The finite FPS validator already rejects non-480p or divided renders; its
-  final pass token now records `window=640x480 render=640x480 render_div=1`,
-  and WebKit's prior-FPS contract requires that exact token before acceleration
-  can consume the FPS artifact.
-- [ ] Confirm the demo is visible, closeable, and resizable during the passing
-  run.
-  - [x] Add compositor-owned lifecycle evidence separate from app-loop FPS:
-    `wlcomp` now appends `wayland_demo_visible_close_resize_matrix` rows to
-    `/tmp/mesawlegl-fps` with current validation run id, client pid, mapped
-    state, closeable path, resize request/configure/ack or buffer-size-change
-    state, final window geometry, and zero native/OpenGL-submit credit.
-  - [x] Make the finite FPS launch exercise resize instead of relying on a
-    disabled-resize workaround: `hyperv-3d-fps-validate.sh` starts
-    `mesademo` with `--resize-every=${DEMO_RESIZE_EVERY:-120}`, and
-    `mesademo` forwards that option to `mesawlegl`.
-  - [x] Tighten `mesawlegl_demo_interaction_matrix` so source-side
-    `resizable_demo` requires an actual resize count, and its native/content
-    interaction fields come from the same strict D3D12 evidence reader used by
-    FPS samples.
-  - [x] Add a lightweight `fps_demo_interaction_selftest_matrix` so the FPS
-    validator proves stale run ids, missing resize evidence, source-only
-    lifecycle evidence, callback-only evidence, and forged display-bind ids are
-    rejected with zero native-present/OpenGL-submit credit.
-- [x] Require visible content progress outside title/FPS overlay areas and
-  correlate content hashes or thumbnail deltas with native present completions.
-  The finite FPS gate now requires outside-overlay thumbnail CRC/progression,
-  compositor-owned content CRC, frame, and frame-hash progress, matching
-  run/resource/generation/completion ids, and content-frame FPS above 60 in
-  both the sample and visual windows before a passing FPS artifact can be
-  consumed by WebKit or OpenGL-submit.
-- [x] Preserve a negative artifact where inflated displayed/demo FPS, including
-  the observed around-40 FPS case, fails without native completion and visible
-  content progress.
-  `hyperv-3d-fps-validate.sh` now runs the 40-FPS anti-inflation negative
-  preflight by default before heavy VM sampling, covering stale run ids, static
-  content CRC/frame evidence, frozen-window evidence, and positive matching
-  visible/native cadence. `mesawlegl` now writes `/tmp/mesawlegl-fps` with
-  `mesawlegl_fps_context_only_matrix` while app-draw FPS lacks matching
-  D3D12 run id, client pid, nonzero present/completion counters, and native
-  requirements; the validator emits `fps_overlay_inflation_rejection_matrix`
-  and rejects those context-only samples before any FPS pass.
-  The demo overlay/title no longer displays that untrusted app-loop rate as
-  FPS: `mesawlegl` records it as `app_loop_fps`, keeps `overlay_fps=0.000`
-  and `visible_fps=0.000` without strict native-present credit, and only shows
-  `effective_presented_fps` after current-run display-bind/content evidence
-  passes. Lightweight evidence:
-  `FPS_ANTI_INFLATION_SELFTEST=1
-  VALIDATION_RUN_ID=selftest-displayed-fps-credit-v2
-  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
-  The validator now also samples multiple visual windows and rejects "moved
-  briefly, then froze" evidence with `fps_frozen_window_rejection_matrix` and
-  `fps_sustained_post_warmup_progress_matrix`. Lightweight evidence:
-  `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=selftest-sustained-freeze
-  scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-25.
-  - [x] Persist forged display-bind negative evidence into the FPS log and
-    split finite-FPS credit from OpenGL-submit credit. The validator now writes
-    `fps_forged_display_bind_negative_matrix` durably during the preflight,
-    computes outside-overlay CRC transitions before sustained-window checks,
-    and keeps `opengl_submit_credit=0` unless finite native-present FPS and
-    `backend_opengl_submit=1` are both present.
-- [x] Add a present/FPS provenance skeleton so visible demo FPS is explicitly
-  zero-credit unless it is backed by current-run native D3D12 display
-  completions. `wlcomp` now emits
-  `d3d12_wayland_present_fps_provenance_matrix`, and `mesawlegl` emits
-  `mesawlegl_fps_present_credit_matrix` with
-  `effective_presented_fps=0.000`, `visible_fps_ignored=1`, and
-  `native_present_credit=0` on the current fail-closed Hyper-V path.
-- [x] Promote the Wayland present/FPS provenance row into the file-backed
-  D3D12 evidence contract, not just stderr. `/tmp/wlcomp-d3d12-present` now
-  records `d3d12_wayland_present_fps_provenance_matrix` plus scalar
-  `d3d12_fps_provenance_*` keys, so FPS and WebKit validators can reject
-  visible app-loop FPS unless the same resource/generation has a native
-  display completion.
-- [x] Make D3D12 display-bind evidence self-contained for FPS/WebKit
-  consumers. `/tmp/wlcomp-d3d12-present`, the compositor stderr matrices, and
-  `mesawlegl_fps_present_credit_matrix` now carry canonical
-  `display_bind_backend=gpup_dxg_scanout_bind`,
-  `display_bind_transport=gpu-p-dxg-resource-scanout-bind`,
-  present/completed ids, resource generation, and completion source.
-  Fail-closed rows report `display_bind_completion_source=missing` with zero
-  ids. `mesawlegl` computes `effective_presented_fps` from native completion
-  deltas instead of app-loop FPS, and the FPS/WebKit preflights require
-  display-bind, content-progress, and callback/release correlation.
-- [x] Add a fail-closed content-progress provenance skeleton to the same
-  D3D12 evidence contract. `/tmp/wlcomp-d3d12-present` now records
-  `d3d12_wayland_content_progress_matrix` plus
-  `d3d12_content_progress_*` scalar keys; on the current Hyper-V path it
-  reports `d3d12_content_progress_state=DEFERRED`,
-  `d3d12_visible_content_progress=DEFERRED`,
-  `d3d12_content_progress_requires_native_present=1`,
-  `d3d12_visible_content_requires_native_present_completion=1`,
-  `d3d12_visible_content_credit_before_native_present=0`, and zero
-  native-present/OpenGL-submit credit. This does not close the later
-  content-hash/thumbnail-progress requirement; it makes visible-content
-  credit explicitly impossible before native display completion.
-  - [x] Emit explicit zero-credit content sample fields so consumers cannot
-    confuse missing data with passing data:
-    `d3d12_present_content_crc`, `d3d12_visible_content_crc`,
-    `d3d12_present_content_frame`, `d3d12_visible_content_frame`,
-    `d3d12_present_frame_hash`, and `d3d12_visible_frame_hash` are present in
-    the compositor evidence and remain zero until a real native-present
-    content source exists.
-  - [x] Add compositor-owned content sample bookkeeping to the D3D12 buffer
-    lifetime. `wlcomp` now resets per-buffer content CRC/frame/hash sample
-    fields on each D3D12 shared-resource commit, records the display-bind
-    present/completed/resource generation on native completion, and has the
-    evidence writer consume only those compositor-owned fields. The sampler
-    still reports `source_owned=0` and grants no visible/native content credit
-    until a non-readback native-present content sampler exists.
-  - [x] Keep the FPS demo source-side content telemetry separate from native
-    proof. `mesawlegl` now writes `client_content_hash`,
-    `client_content_frame`, `content_region=client-content-no-title-fps`, and
-    `mesawlegl_demo_interaction_matrix`, while still requiring compositor
-    native-present content fields before granting effective presented FPS.
-  - [x] Remove the loose compositor stderr-only content-credit claim: the
-    display-completion log now carries explicit zero CRC/frame/hash content
-    fields and reports `PASS_FAILCLOSED` until real compositor-owned content
-    samples exist.
-  - [x] Tighten the finite FPS/WebKit handoff gates so content progress
-    requires compositor-owned frame-hash progress as well as CRC/frame
-    counters. `hyperv-3d-fps-validate.sh` now rejects both sample-window and
-    visual-window evidence unless `d3d12_present_frame_hash`/
-    `d3d12_visible_frame_hash` advance with the same native-present evidence,
-    and `wlcomp_launcher` refuses WebKit acceleration unless the same
-    frame-hash evidence is present.
-  - [x] Clamp finite-FPS acceptance to compositor-owned content cadence, not
-    only native/display completion counters. `effective_presented_fps` now
-    takes the minimum of native present FPS, display completion FPS,
-    visual-window native FPS, sample-window content-frame FPS, and
-    visual-window content-frame FPS; WebKit's prior-FPS gate requires those
-    content-frame FPS values to exceed 60 as well. This specifically rejects
-    the "looks one digit but reports around 40" class of inflated artifacts.
-  - [x] Split compositor-owned visible content from client/app diagnostics in
-    the final gates. FPS, `wlcomp_launcher`, and `webkitgpusmoke` now require
-    `d3d12_visible_content_crc`, `d3d12_visible_content_frame`,
-    `d3d12_visible_frame_hash`, and
-    `d3d12_content_progress_source_owned=1`; client-side hashes remain
-    diagnostic context and cannot open FPS/WebKit credit.
-  - [x] Reject aliased or mixed-record display-bind completion evidence in the
-    finite FPS consumers.
-    `hyperv-3d-fps-validate.sh` now requires coherent same-line
-    `display_bind_backend`, `display_bind_transport`, present id, completed
-    id, resource generation, and exact
-    `display_bind_completion_source=display` tuples in both sample and visual
-    windows. It rejects case aliases such as `DISPLAY`, numeric/enum-style
-    aliases, generic `completion_source` without a display-bind tuple, and
-    mixed tuples where completion does not cover the same present id. Evidence:
-    `FPS_ANTI_INFLATION_SELFTEST=1
-    VALIDATION_RUN_ID=selftest-consumer-exact
-    scripts/hyperv-3d-fps-validate.sh` passed on 2026-05-26.
-  - [x] Source-isolate FPS evidence so app diagnostics cannot masquerade as
-    compositor-owned native-present proof. The FPS validator now wraps sampled
-    `/tmp/wlcomp-d3d12-present`, `/tmp/mesawlegl-fps`, `/tmp/wlcomp-fps`,
-    `fbstat`, and `/proc/uptime` output in source markers and emits
-    `fps_artifact_source_isolation_negative_matrix`, which rejects forged
-    `mesawlegl` display-bind/native-present scalars with zero native-present
-    and OpenGL-submit credit. `mesawlegl` still reports the evidence it read,
-    but its echoed present/display-bind/content/final-handoff ids are
-    diagnostic-prefixed rather than canonical `display_bind_*` or
-    `present_id` fields, so the finite FPS parser only accepts those canonical
-    ids from the compositor-owned `/tmp/wlcomp-d3d12-present` source block.
-    Evidence:
-    `FPS_ANTI_INFLATION_SELFTEST=1
-    VALIDATION_RUN_ID=selftest-source-isolation
-    scripts/hyperv-3d-fps-validate.sh` passed and
-    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`
-    rebuilt the updated Wayland clients on 2026-05-26.
-  - [x] Require compositor-owned display-bind source authority before any
-    downstream consumer accepts native-present, FPS, or WebKit credit.
-    `/tmp/wlcomp-d3d12-present` now carries
-    `display_bind_transport_source`, `host_saw_display_bind_packet`, and
-    `wsl_presenthistory_completion_credit` in both fail-closed and
-    future-success writes. `d3d12sharedsmoke`, the FPS validator, the DXG
-    validator, and WebKit validators reject native-present/WebKit/FPS credit
-    unless the tuple is future-positive, line-scoped to the same
-    display-bind present/completed ids and resource generation, and explicitly
-    zero-credit for WSL present-history telemetry. Evidence:
-    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
-    `d3d12sharedsmoke --present-evidence-selftest`,
-    `webkitgpusmoke --contract-parser-negative`,
-    `webkitgpusmoke --negative-selftests`, and
-    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
-    VALIDATION_RUN_ID=webkit-source-boundary
-    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
-- [ ] Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V only after native
-  present and the finite FPS validator pass.
-- [ ] Re-check KVM/virgl after the Hyper-V backend flag changes so the control
-  backend still reports the existing OpenGL-submit contract.
-  - [x] Add a positive KVM/virgl control assertion to the existing substrate
-    validator. `scripts/gpu-validate.sh` now requires the KVM run to report
-    `backend virgl`, `backend_opengl_submit 1`,
-    `backend_opengl_submit_gate open`, `backend_virgl_opengl 1`, and an
-    `opengl_submit_backend_separation_matrix` with `backend=virgl`,
-    `dxg_transport=0`, `d3dkmt=0`, `virgl_opengl=1`,
-    `allowed_submit_backend=virgl`, and `opengl_submit_credit=1`. This is
-    control-backend evidence only and grants no Hyper-V credit. The parent
-    re-check item remains open until the Hyper-V backend flag actually changes
-    after native-present/FPS/WebKit gates pass.
+Goal: present rendered frames through real hardware, not CPU readback.
 
-### 6. WebKit Consumer Contract
+Pick the path that matches your setup and record which one you used:
 
-Goal: WebKit acceleration must consume the exact same contract as native Mesa
-clients; it cannot be enabled from render-node presence or dmabuf requests
-alone.
+- **Path A (monitor on the passed-through GPU):** drive the GPU's own display
+  engine (nvkm `disp`, CRTC, EVO/NVDisplay channel, real vblank IRQ, hardware
+  page-flip). Output goes to a physical monitor attached to the card.
+- **Path B (headless render, present to the VM console):** render on the real
+  GPU into a VRAM BO, export it as a dma-buf, and have the compositor import it.
+  The final blit to the Hyper-V synthvid console is allowed **only** as the
+  display transport; the *rendering* must be on the real GPU. A pure CPU
+  readback-and-memcpy with no GPU rendering earns **zero** credit.
 
-- [x] Keep Hyper-V WebKit acceleration gated off while any earlier active-plan
-  section remains open.
-  The WebKit launcher still requires `FB_GPU_BACKEND_F_OPENGL_SUBMIT` plus a
-  validated D3D12 shared-surface/native-present contract before selecting the
-  D3D12 environment. While earlier sections remain open, Hyper-V stays on the
-  stable software WebKit path and `hyperv-webkit-gpu-validate.sh` rejects
-  `effective_accel=1` or stale contract evidence.
-- [ ] Route WebKitGTK through the same Mesa D3D12 render-node path, Wayland
-  D3D12 shared-resource protocol, monitored-fence/sync-file acquire path,
-  adapter-LUID validation, native present path, and backend flag as native
-  Mesa clients.
-  The WebKit launcher now reads the same `/tmp/wlcomp-d3d12-present` evidence
-  keys as native Mesa clients and emits `webkit_gpu_contract_matrix` even on
-  the current fail-closed Hyper-V path. It still refuses acceleration unless
-  OpenGL-submit, same-run identity, same adapter, no readback,
-  shared-resource/fence evidence, native present completion, callback/release
-  ordering, and native-present-complete content progress all pass together.
-  - [x] Add a pure-C WebKit in-process consumer gate row so
-    `webkitgpusmoke` reports the backend OpenGL-submit bit, display-bind ids,
-    native-present ids, resource generation, shared-resource/fence identity,
-    compositor-owned content identity, and zero-credit rejection before the
-    shell validator decides whether a downstream FPS/WebKit artifact may open.
-    The current Hyper-V D3D12 contract-negative validator requires this row to
-    keep `backend_opengl_submit=0`, present/completed ids at zero,
-    `gate=closed`, and native-present/OpenGL/WebKit credit at zero.
-  - [x] Harden WebKit and launcher consumers to require exact provider-owned
-    display-bind evidence before any D3D12/WebKit credit.
-    `wlcomp_launcher`, `desktop`, and `webkitgpusmoke` no longer normalize
-    `host-display-channel`, enum names, numeric completion sources, alternate
-    backend names, or transport aliases into the canonical display-bind
-    contract. WebKit D3D12 credit now requires real
-    `display_bind_backend=gpup_dxg_scanout_bind`,
-    `display_bind_transport=gpu-p-dxg-resource-scanout-bind`,
-    exact `display_bind_completion_source=display`, nonzero ids, matching
-    native/final/content present and completed ids, matching resource
-    generation, and backend OpenGL-submit on the same validated contract.
-    The compositor helper now routes raw present-source completion checks
-    through the stricter provider-complete predicate instead of treating raw
-    `present_id/completed` or syncfile/generic completion progress as native
-    display-bind proof.
-  - [x] Add WebKit run-id and current-run evidence matching so stale
-    `/tmp/wlcomp-d3d12-present`, stale FPS logs, or another client's counters
-    cannot satisfy the WebKit gate.
-    `wlcomp_launcher` now passes the generated WebKit run id into the D3D12
-    evidence admission check, requires both `d3d12_run_id` and
-    `d3d12_present_identity_compositor_run_id` to match before the D3D12 WebKit
-    environment can be selected, and emits `webkit_gpu_contract_matrix` for the
-    run-id/same-adapter/native-present decision.
-  - [x] Apply the same token-bounded current-run and content-progress gate to
-    the desktop autostart WebKit path.
-    `desktop` now parses D3D12 evidence as bounded `key=value` tokens, compares
-    the generated WebKit run id with both the compositor run id and the D3D12
-    run id, and keeps D3D12/WebKit acceleration closed unless compositor-owned
-    content CRC/frame/hash progress matches the provider-owned display-bind
-    present/completed ids and resource generation. The policy artifact exposes
-    `d3d12_run_id_match`, `d3d12_content_progress`, and
-    `d3d12_evidence_seal` so stale, unsealed, prefixed, or chrome/title-only
-    evidence remains zero-credit.
-  - [x] Seal the compositor-owned D3D12 evidence artifact and require that seal
-    in downstream consumers.
-    `wlcomp` now writes `/tmp/wlcomp-d3d12-present` through a temporary file,
-    `fsync()`, and `rename()`, with matching
-    `d3d12_evidence_seal_begin/end`, generation, complete, and run-id fields.
-    `mesawlegl`, `wlcomp_launcher`, `desktop`, `webkitgpusmoke`,
-    `hyperv-3d-fps-validate.sh`, and `hyperv-webkit-gpu-validate.sh` reject
-    canonical display-bind/native-present evidence unless the seal generation
-    and run id match the current validation run. This closes stale/partial
-    file publication as a source of FPS or WebKit credit, but does not open
-    native-present credit on Hyper-V.
-  - [x] Add pure-C WebKit negative selftests for parser, lineage, and
-    animated-fixture evidence rejection.
-    `webkitgpusmoke --negative-selftests` now emits
-    `webkit_contract_parser_negative_matrix`,
-    `webkit_lineage_equality_negative_matrix`, and
-    `webkit_animated_content_fixture_negative_matrix`. It also emits
-    `webkit_animated_content_native_present_negative_matrix`, which rejects a
-    forged plausible content-progress/source-authority tuple unless native
-    present, prior finite FPS, backend OpenGL-submit, and shared-surface
-    contract evidence are all present. These rows prove prefixed/suffixed
-    keys, malformed numeric values, backend/transport and completion-source
-    aliases, unsealed display-bind claims, stale D3D12/FPS/content lineage,
-    backend-zero nonzero-id claims, title-only animated fixture progress, and
-    forged content progress all remain
-    zero-credit. `hyperv-webkit-gpu-validate.sh` requires those rows during
-    guest WebKit validation. Validation on 2026-05-26:
-    `bash -n scripts/hyperv-webkit-gpu-validate.sh`,
-    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
-    and staged `webkitgpusmoke --negative-selftests` passed.
-  - [x] Carry display-bind source authority through the final WebKit enabled
-    artifact gate. `hyperv-webkit-gpu-validate.sh` now refuses to emit or
-    accept an open `webkit_enabled_artifact_contract_matrix` unless the same
-    current-run provider-owned record also carries
-    `display_bind_transport_source=non_wsl_linux_dxgkrnl_extension`,
-    `host_saw_display_bind_packet=1`, and
-    `wsl_presenthistory_completion_credit=0`. `webkitgpusmoke`'s parser
-    negative selftest names `source_authority_rejected=PASS`, so WSL
-    present-history telemetry or host-copy aliases cannot become WebKit
-    acceleration proof.
-  - [x] Require the same source-authority tuple in WebKit launch and policy
-    consumers, not only in post-hoc validators. `desktop` and
-    `wlcomp_launcher` now parse
-    `display_bind_transport_source`, `host_saw_display_bind_packet`, and
-    `wsl_presenthistory_completion_credit` from
-    `/tmp/wlcomp-d3d12-present`, require the future-positive tuple before
-    selecting the D3D12 WebKit path, and echo those fields in
-    `webkit_gpu_policy` and `wlcomp: webkit_gpu_contract_matrix`.
-  - [x] Stamp and require compositor-owned provider identity on D3D12
-    credit-bearing evidence. `wlcomp` now includes
-    `evidence_provider=wlcomp`, `evidence_path=/tmp/wlcomp-d3d12-present`,
-    a nonzero seal generation, and the current validation run id on
-    display-bind dependency, FPS provenance, content-progress, and final
-    handoff records. `hyperv-webkit-gpu-validate.sh` rejects open WebKit
-    contract rows unless the provider-owned display-bind record carries those
-    fields on the same line as the canonical backend, transport,
-    source-authority tuple, nonzero display-bind ids, backend OpenGL-submit,
-    and native completion id. Validation on 2026-05-26:
-    `cmake --build /tmp/xv6-hyperv-build/ports --target port-wayland -j2`,
-    `FPS_ANTI_INFLATION_SELFTEST=1 VALIDATION_RUN_ID=fps-provider-lineage
-    scripts/hyperv-3d-fps-validate.sh`, and
-    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
-    VALIDATION_RUN_ID=webkit-provider-lineage
-    BUILD_DIR=/tmp/xv6-hyperv-build
-    scripts/hyperv-webkit-gpu-validate.sh` passed.
-- [ ] Add an animated WebKit content fixture and correlate content CRC/frame
-  hash progress with native-present completions for the same client/resource
-  generation.
-  `hyperv-webkit-gpu-validate.sh` now adds
-  `webkit_animated_content_native_present_gate_matrix`, which requires the
-  animated fixture, content CRC progress, frame-hash progress, same
-  client/resource/generation identity, prior native-present FPS contract,
-  backend OpenGL-submit, and native present completion. Current Hyper-V keeps
-  this gate closed with zero WebKit acceleration credit.
-  The validator also deletes stale D3D12/WebKit policy artifacts before the
-  liveness-only fixture and requires any generated policy to remain
-  `effective_accel=0`, `validated_shared_surface=0`, `d3d12_present=0`, and
-  `gpu_contract=none` while native present is absent.
-  - [x] Stage a deterministic animated-content fixture at
-    `/share/webkit/webkit-animated-content-native-present.html`; the smoke
-    probe recognizes its advancing frame title as fixture liveness only.
-  - [x] Require canonical final display-bind names in the WebKit validator and
-    launcher before any D3D12 WebKit environment is selected:
-    `display_bind_backend=gpup_dxg_scanout_bind` and
-    `display_bind_transport=gpu-p-dxg-resource-scanout-bind`.
-  - [x] Run the animated fixture in the Hyper-V WebKit validator as
-    liveness-only evidence while native present is still fail-closed.
-    `hyperv-webkit-gpu-validate.sh` emits
-    `webkit_animated_content_fixture_liveness_matrix` with title-frame
-    progress accepted only as fixture liveness, missing CRC/hash/native
-    completion called out explicitly, and zero native-present, OpenGL-submit,
-    or WebKit acceleration credit.
-  - [x] Tighten the pure-C WebKit smoke contract so content progress requires
-    nonzero content CRC, frame counter, frame hash,
-    `NATIVE_PRESENT_COMPLETE` content states, and explicit visible/native
-    content credits before `webkit_gpu_contract_matrix ok=1`.
-  - [x] Replace the fixture-liveness-only check with compositor-owned content
-    CRC/frame/hash correlation for the same WebKit run id, client pid,
-    resource generation, and native display completion.
-    `webkitgpusmoke` now parses and prints compositor run id, client pid,
-    client-buffer id, manager resource id, buffer generation, content
-    present/completed ids, and content resource generation before allowing
-    `ok=1`. `hyperv-webkit-gpu-validate.sh` requires compositor-owned visible
-    CRC/frame/hash fields, `d3d12_content_progress_source_owned=1`, current
-    WebKit run-id identity, callback/release ordering, and matching native
-    present/completion/resource-generation evidence before opening the
-    animated-content acceleration gate; title-only fixture liveness remains
-    zero-credit.
-  - [x] Require final-handoff identity before any WebKit animated-content gate
-    can open. The WebKit validator now checks the exact current run id,
-    content/display-bind/final-handoff present ids, completed ids, and
-    resource generation before emitting an enabled gate; fail-closed Hyper-V
-    remains zero-credit.
-- [x] Reject WebKit acceleration evidence based only on chrome/cursor/title
-  updates, callbacks, releases, render-node presence, dmabuf request,
-  environment variables, or software fallback.
-  `hyperv-webkit-gpu-validate.sh` now runs a default policy-negative preflight
-  that emits `webkit_evidence_rejection_matrix` and proves those evidence
-  classes are rejected before any WebKit acceleration artifact is accepted.
-  It also requires
-  `webkit_stale_display_bind_evidence_rejection_matrix`, so stale or
-  after-close display-bind evidence cannot open WebKit acceleration while the
-  canonical display-bind ids and native-present credit remain zero.
-  - [x] Extend the WebKit policy-negative preflight to reject plausible but
-    incomplete lineage: nonzero display/native ids with
-    `backend_opengl_submit=0`, stale D3D12 run ids, and stale FPS artifact run
-    ids. The downstream WebKit consumer gate now reports separate
-    `backend_zero_rejected`, `display_bind_completion_source_rejected`,
-    `native_present_ids_zero_rejected`, and `lineage_rejected` fields before
-    any enabled artifact can open.
-  - [x] Harden the C WebKit evidence readers so policy and D3D12 evidence keys
-    are token-boundary and line-aware. `wlcomp_launcher` and
-    `webkitgpusmoke` now reject prefix/suffix substring matches, malformed
-    numeric tokens, truncating string tokens, and the old permissive backend
-    alias that treated `gpu-p-dxg-resource-scanout-bind` as a backend instead
-    of the canonical transport.
-  - [x] Harden pure-C GPU validator evidence matching so source-audited rows
-    cannot pass by substring coincidence. `gpucorevalidate` now requires
-    whitespace/line-bounded output tokens while preserving existing `field=`
-    prefix probes, and `dxgprobe` parses the `dxg_host_to_vm_last=` line with
-    line-scoped fields and whole-token numeric values before emitting
-    present-history telemetry/completion matrices.
-  - [x] Make shell WebKit downstream validation line-scoped for provider-owned
-    display-bind evidence.
-    `hyperv-webkit-gpu-validate.sh` now requires one provider-owned
-    display-bind record with the exact backend, transport, completion source,
-    nonzero ids/resource generation, backend OpenGL-submit, and a matching
-    native completion id before open WebKit rows can be emitted. It no longer
-    falls back to synthesized native completion ids, and commit-accepted checks
-    no longer accept final-handoff-only host-display aliases. Evidence:
-    `WEBKIT_GPU_VALIDATE_MODE=preflight-stale-negative
-    VALIDATION_RUN_ID=webkit-consumer-exact-stale
-    BUILD_DIR=/tmp/xv6-hyperv-build
-    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
-  - [x] Make WebKit open/enable shell gates consume one provider-owned tuple
-    instead of assembled whole-log scalars. `hyperv-webkit-gpu-validate.sh`
-    now selects same-line `wlcomp` display-bind/FPS/content records with
-    `evidence_provider=wlcomp`, `/tmp/wlcomp-d3d12-present`, nonzero
-    generation, current validation run id, canonical backend/transport/source
-    authority, nonzero display ids, backend OpenGL-submit, and native
-    completion equality. The animated-content and enabled-artifact emitters
-    also require provider-owned final-handoff identity for the same
-    present/completed/resource-generation tuple before they can print open
-    credit rows. Evidence: `bash -n
-    scripts/hyperv-webkit-gpu-validate.sh` and
-    `WEBKIT_GPU_VALIDATE_MODE=contract-negative
-    VALIDATION_RUN_ID=webkit-source-isolation-parent
-    BUILD_DIR=/tmp/xv6-hyperv-build
-    scripts/hyperv-webkit-gpu-validate.sh` passed on 2026-05-26.
-- [ ] Produce one enabled WebKit artifact only after native present, finite
-  480p FPS, backend flag, and shared-surface contract all pass.
-  `webkit_enabled_artifact_contract_matrix` now names the only accepted future
-  enabled shape: current-run D3D12 display-bind completion, finite 480p FPS,
-  `FB_GPU_BACKEND_F_OPENGL_SUBMIT`, shared-resource/fence identity, and
-  compositor-owned content CRC/frame/hash identity all from the same validation
-  lineage.
+- [ ] **4.1 Bring up the chosen display/scanout path on real hardware.**
+  - Files: `fb_nouveau.c`, `fb_drm_*.c`. For Path A, satisfy the Linux-shaped
+    prerequisites already tracked by `nouveau_linux_display_readiness_matrix`:
+    display-engine object, `mode_config`, CRTC/encoder/primary-plane, NVIF
+    head/connector masks, HPD/DP IRQ events, per-head vblank IRQ, atomic commit
+    tail, and **hardware** page-flip completion — but now backed by the real
+    device instead of fail-closed.
+  - Acceptance evidence: `nouveau_linux_display_readiness_matrix` flips from
+    `PASS_FAILCLOSED` to `PASS` with `vblank_source_native_hw=1` and
+    `page_flip_events_native_hw=1` (Path A), OR a `nouveau_headless_present_matrix`
+    shows a real-GPU-rendered dma-buf reaching the compositor with the render
+    proven by Section 3 fences (Path B).
 
-## Section Validation Rhythm
+- [ ] **4.2 Keep vblank/page-flip correlation honest.**
+  - Real hardware vblank/page-flip counters must advance from device IRQs.
+    Software/emulated completion stays zero-credit (reuse
+    `kms_vblank_native_present_separation_matrix`).
+  - Acceptance evidence: page-flip and vblank provenance counters are nonzero
+    and sourced from real IRQs in the same run that renders frames.
 
-For each active section:
+---
 
-1. Implement the whole section or a clearly bounded subsection.
-2. Run build-only checks first.
-3. Run focused pure-C validators for that section.
-4. Run heavy Hyper-V GUI/FPS/WebKit validation only after the section's code is
-   complete enough for that validation to be meaningful.
-5. Mark checklist items only when source, runtime evidence, and negative cases
-   all agree.
+## Section 5. Mesa Nouveau / NVK OpenGL on the Real GPU
 
-## Acceptance Gate
+Goal: a real GL (or Vulkan→GL via Zink) frame rendered by the assigned NVIDIA
+GPU through Mesa Nouveau.
 
-Hyper-V GPU/OpenGL support is complete only when all of these are true:
+- [ ] **5.1 Select and build the right Mesa userspace for the chipset.**
+  - Turing+ (TU10x and newer): NVK (Vulkan) + Zink for GL, or NVK directly.
+  - Pascal/Maxwell and older: classic Gallium `nouveau` GL driver.
+  - Build the matching Mesa port (`ports/mesa`) against the guest libdrm/Nouveau
+    UAPI exposed by Sections 2–3.
+  - Acceptance evidence: `world`/ports build succeeds; the guest exposes
+    `/dev/dri/renderD128` backed by the real Nouveau device (not the dumb
+    framebuffer fallback).
 
-- `mesaglfeature` passes on Hyper-V D3D12 without tracing or device removal.
-- A Mesa Wayland client presents a D3D12-rendered surface through a shared GPU
-  resource/fence path, not DRI software readback.
-- The desktop-launched 640x480 or equivalent 480p 3D demo is visible,
-  closeable, resizable, and sustains more than 60 FPS after warmup.
-- `fbstat` honestly reports `backend_opengl_submit 1` on Hyper-V.
-- WebKit acceleration uses the same validated shared-surface/OpenGL-submit
-  contract and stays gated off when that contract is unavailable.
+- [ ] **5.2 Pass `nouveauabitest` and `mesaglfeature` on the real device.**
+  - `nouveauabitest` must open the real Nouveau device and reach
+    winsys/device-info, channel, BO, map, and PRIME paths using **real**
+    chipset/VRAM/engine facts. It must **not** pass on synthetic answers.
+  - `mesaglfeature` must select the Nouveau renderer, create a real context, and
+    render without device removal or software fallback.
+  - Acceptance evidence: `nouveauabitest` reports the real chipset and a real
+    BO round-trip; `mesaglfeature` passes naming the Nouveau hardware renderer.
+
+- [ ] **5.3 Render a Mesa Wayland client frame through the real GPU.**
+  - A Mesa EGL/Wayland client (`mesawlegl`) renders a frame on the real Nouveau
+    GPU and presents it through the compositor via the Section 4 path (dma-buf
+    import, no DRI software readback).
+  - Acceptance evidence: `mesawlegl` frame reaches the compositor with the
+    render backed by Section 3 hardware fences; no `llvmpipe`/software renderer
+    string appears.
+
+---
+
+## Section 6. Backend OpenGL-Submit Flag + 480p FPS
+
+Goal: only now may Hyper-V advertise OpenGL submit, and only with a finite,
+source-correlated FPS proof.
+
+- [ ] **6.1 Enable `FB_GPU_BACKEND_F_OPENGL_SUBMIT` on Hyper-V — DDA/Nouveau path.**
+  - File: `kernel/kernel/dev/fb/fb_drm_core_kms.c` (`gpu_backend_fill`). Add a
+    Nouveau-real branch that sets the flag **only** when: real chipset id (2.1),
+    real submit fence (3.2), and real Mesa render (5.2/5.3) are all true in the
+    current run. Keep the DXG branch unchanged (it never sets the flag).
+  - Acceptance evidence: `fbstat` reports `backend nouveau` (or
+    `hyperv-nouveau-dda`), `backend_opengl_submit 1`, with an
+    `opengl_submit_backend_separation_matrix` showing `nouveau_real=1`,
+    `dxg_transport` irrelevant, and the flag gated on real-GPU evidence.
+
+- [ ] **6.2 Make the finite 480p 3D demo pass on real Nouveau frames.**
+  - The 640x480 demo must be visible, closeable, resizable, and sustain
+    > 60 FPS after warmup, with each presented frame backed by a real-GPU render
+    (Section 3 fence + Section 4 present). Reuse the anti-inflation machinery in
+    `scripts/hyperv-3d-fps-validate.sh` but point the native-completion source
+    at the Nouveau hardware fence instead of the DXG display-bind id.
+  - Acceptance evidence: `hyperv-3d-fps-validate.sh` passes with
+    `render=640x480 render_div=1`, sustained content-frame FPS > 60 in both the
+    sample and visual windows, and native completion sourced from Nouveau HW.
+    The 40-FPS / inflated / frozen-window negatives still fail.
+
+- [ ] **6.3 Re-check the KVM/virgl control backend is unchanged.**
+  - `scripts/gpu-validate.sh` on KVM still reports `backend virgl`,
+    `backend_opengl_submit 1`. The new Nouveau branch must not regress it.
+
+---
+
+## Section 7. WebKit Consumer on the Same Contract
+
+Goal: WebKit acceleration consumes the exact real-Nouveau contract.
+
+- [ ] **7.1 Route WebKitGTK through the real Nouveau render-node + present path.**
+  - WebKit uses the same `/dev/dri/renderD128` (real Nouveau), the same dma-buf
+    present path, and the same backend flag as Mesa clients. It stays gated off
+    until Sections 5–6 pass.
+  - Acceptance evidence: `hyperv-webkit-gpu-validate.sh` keeps `effective_accel=0`
+    until real-Nouveau native present + finite FPS + backend flag are all true,
+    then emits one enabled artifact tied to that lineage.
+
+- [ ] **7.2 Animated WebKit fixture correlated with real-GPU frames.**
+  - Correlate the animated fixture's content CRC/frame-hash progress with real
+    Nouveau hardware-fenced present completions for the same client/resource.
+  - Acceptance evidence: `webkit_animated_content_native_present_gate_matrix`
+    opens only with real-GPU-backed content progress; title-only/chrome-only
+    evidence stays zero-credit.
+
+---
+
+## Validation Rhythm
+
+For each section: (1) implement the whole section or a bounded subsection,
+(2) build-only check, (3) run the focused pure-C validator
+(`gpucorevalidate` / `nouveauabitest` / `drmiftest`), (4) run heavy GUI/FPS/
+WebKit validation only after the section is code-complete, (5) mark `[x]` only
+when source, real-hardware runtime evidence, and the negative (fail-closed)
+case all agree.
+
+## Acceptance Gate (the whole plan is done only when ALL are true on real DDA hardware)
+
+- The guest enumerates the real assigned NVIDIA device on Hyper-V vPCI and reads
+  a real `PMC_BOOT_0` chipset id.
+- Nouveau sizes real VRAM, loads real firmware, and completes a real command
+  submission observed via a real hardware fence.
+- A frame is rendered by the real NVIDIA GPU (Mesa Nouveau / NVK) and presented
+  without CPU-readback-as-render.
+- `fbstat` honestly reports `backend_opengl_submit 1` on Hyper-V, gated on the
+  real-GPU evidence above.
+- The 480p 3D demo is visible, closeable, resizable, and sustains > 60 FPS after
+  warmup on real Nouveau frames.
+- WebKit acceleration uses the same real-Nouveau contract and stays gated off
+  when the real GPU is unavailable.
+- Every fail-closed negative test still rejects synthetic/emulated/readback
+  evidence with zero credit.
