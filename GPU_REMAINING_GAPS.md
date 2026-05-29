@@ -238,6 +238,24 @@ that xv6 captures its real identity and BARs.
   - Acceptance evidence: `gpucorevalidate` prints the matrix with the real
     device id and `dda_nvidia_present=1`; on a non-DDA image it prints
     `dda_nvidia_present=0 status=PASS_FAILCLOSED`.
+  - CODE DONE 2026-05-28 (fail-closed side validated, accept side BLOCKED):
+    - `struct fb_gpu_stats` gained `nouveau_dda_present`,
+      `nouveau_dda_vendor_id`, `nouveau_dda_device_id`,
+      `nouveau_dda_class_code`, `nouveau_dda_bar_count`
+      (`kernel/kernel/inc/dev/fb.h`); all copied verbatim from the probed
+      `pci_device_info`, never synthesized.
+    - `gpu_nouveau_pci_probe()` populates them in the accept path and the
+      remove path resets them to zero (`kernel/kernel/dev/fb/fb_nouveau.c`).
+    - `gpucorevalidate` emits `nouveau_dda_device_presence_matrix` with
+      `transport=hyperv_vpci gpup_dxg_path=0` and
+      `status=PASS` when `dda_nvidia_present=1`, else `PASS_FAILCLOSED`.
+    - `scripts/hyperv-gpu-core-validate.sh` asserts the fail-closed row
+      (`dda_nvidia_present=0 ... status=PASS_FAILCLOSED`).
+    - Kernel builds clean (`build-codex-x86_64`); validator C compiles clean.
+  - BLOCKED: no DDA hardware available — the `dda_nvidia_present=1` accept row
+    cannot be produced on this WSL/no-NVIDIA dev box. Leave `[ ]` until a real
+    Hyper-V + assigned NVIDIA host runs the validator and shows the real
+    device id with `dda_nvidia_present=1`.
 
 - [ ] **1.3 Claim BARs and enable bus mastering on the real device.**
   - Use the existing claim-before-iomap path in `kernel/kernel/pci.c`. Claim
