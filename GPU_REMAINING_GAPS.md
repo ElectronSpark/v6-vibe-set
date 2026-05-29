@@ -227,6 +227,40 @@ that xv6 captures its real identity and BARs.
     plausible** BAR sizes that match the physical card. A zero/absent BAR means
     the MMIO window (H2) is too small — fix and re-run.
 
+- [ ] **1.1a Discover the high-MMIO window and assign assigned-device BARs.**
+  - On Hyper-V the host does **not** pre-program BAR base addresses; the guest
+    bus driver must allocate them from the bus MMIO window (the Linux
+    `hv_pci_allocate_bridge_windows` + `hv_pci_assign_resources` step) and write
+    them back through config space, or BAR0/BAR1 read back as zero and 1.1/1.3
+    can never see nonzero, usable BARs.
+  - File: `kernel/arch/x86_64/platform_x86.c` (ACPI), the vPCI handling in
+    `kernel/kernel/dev/hyperv/*.c`.
+  - CODE DONE 2026-05-28 (BLOCKED on hardware for the assigned-BAR evidence):
+    - ACPI now discovers the high-MMIO aperture: `platform_info` gained
+      `high_mmio[ACPI_HIGH_MMIO_MAX]` and `x86_acpi_scan_mmio_windows()` parses
+      QWord Address Space Descriptors (large tag `0x8A`, memory type, base
+      >= 4 GiB) from the DSDT/SSDT — these are the Hyper-V Gen2 VMBus `_CRS`
+      producer windows (the aperture set by host `-HighMemoryMappedIoSpace`).
+      Values are copied verbatim from the real ACPI descriptors; none invented.
+      Boot log: `ACPI: high MMIO window base=0x.. size=0x.. (DDA BAR pool)`.
+    - `hvpci` state gained a device-BAR window (`bar_window_base/size/next`,
+      `bar_assign_count/fail`); `hvpci_bar_window_init()` selects the largest
+      ACPI window clamped to the host offer MMIO budget, and **fails closed**
+      (assignment disabled) when no window is advertised — never guesses a base.
+    - `hvpci_assign_child_bars()` probes each child's memory BAR sizes through
+      the config window, bump-allocates naturally aligned guest-physical
+      addresses from the window, writes them back to the BAR registers, and
+      enables Memory Space + Bus Master. Runs before PCI-core registration so
+      the device is presented with usable resources. Boot log:
+      `hyperv-pci: assigned slot=0x.. barN base=0x.. size=0x..`.
+    - Kernel builds clean (`build-codex-x86_64`).
+  - BLOCKED: no DDA hardware **assigned** yet — the dev box has a real Hyper-V
+    host + NVIDIA RTX 4060, but DDA-dismounting the laptop's only GPU is
+    destructive and not yet authorized. Leave `[ ]` until a boot on a VM with an
+    assigned NVIDIA function shows `ACPI: high MMIO window ...` followed by
+    `hyperv-pci: assigned slot=... bar0 ...` with nonzero BAR sizes that match
+    the card. Do not invent passing runs.
+
 - [ ] **1.2 Distinguish DDA passthrough from GPU-P and from absence.**
   - Add a stats field + matrix (extend `nouveau_pci_runtime_interface_matrix`
     or add `nouveau_dda_device_presence_matrix`) that reports:
