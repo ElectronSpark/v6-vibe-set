@@ -43,9 +43,9 @@ find_kernel() {
 
 if ! find_kernel || [[ ! -f "${FSIMG}" ]]; then
     if [[ "${AUTO_BUILD}" == "1" ]] && command -v docker >/dev/null 2>&1 \
-            && [[ -x "${ROOT}/scripts/container/enter-container.sh" ]]; then
+            && [[ -f "${ROOT}/compose.yml" ]]; then
         echo "launch-gui: build artifacts missing — running xv6-build via container..." >&2
-        "${ROOT}/scripts/container/enter-container.sh" xv6-build
+        docker compose -f "${ROOT}/compose.yml" run --rm xv6 xv6-build
         find_kernel || true
     fi
 fi

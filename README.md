@@ -122,79 +122,47 @@ artifacts should stay out of the repository.
 Build the development image:
 
 ```sh
-docker build --target dev -t xv6-os-dev .
-```
-
-Running the image with no command prints usage:
-
-```sh
-docker run --rm xv6-os-dev
-```
-
-Build the full OS in the container:
-
-```sh
-docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-build
+docker compose build
 ```
 
 Build everything and launch the GUI in one command:
 
 ```sh
-scripts/container/enter-container.sh xv6-launch
+docker compose run --rm xv6 xv6-launch
 ```
 
-This builds the full OS (kernel, userland, ports, `fs.img`) and then boots QEMU
-with KVM and a GTK display window.  The `scripts/launch/launch-gui.sh` script
-also triggers this build automatically when artifacts are missing.
+This builds the full OS (kernel, userland, ports, `fs.img`) and boots QEMU with
+KVM and a GTK display window.  `scripts/launch/launch-gui.sh` also triggers this
+build automatically when artifacts are missing.
 
-Build the Hyper-V VHDX in the container:
+Other useful one-liners:
 
 ```sh
-docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-hyperv-image
+docker compose run --rm xv6 xv6-build         # build only (no launch)
+docker compose run --rm xv6 bash              # interactive shell
+docker compose run --rm xv6 xv6-help          # list all container commands
+docker compose run --rm xv6 xv6-hyperv-image  # build Hyper-V VHDX
+docker compose run --rm xv6 xv6-launch-nokvm  # build + boot without KVM
 ```
 
-Launch the OS from the container without KVM:
-
-```sh
-docker run --rm -it \
-  -v "$PWD":/src/xv6-os \
-  -e DISPLAY_MODE=nographic \
-  xv6-os-dev xv6-launch-nokvm
-```
-
-For an interactive GUI boot with WebKit/video acceleration, run the container
-with the host display, KVM, GPU render nodes, and udmabuf exposed:
-
-```sh
-docker run --rm -it \
-  -v "$PWD":/src/xv6-os \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -e DISPLAY="$DISPLAY" \
-  -e WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-  -v "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" \
-  -e XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-  --device /dev/kvm \
-  --device /dev/dri \
-  --device /dev/udmabuf \
-  xv6-os-dev bash
-```
-
-Inside that shell, run `xv6-check-gui-accel`, then build and launch with
-`DISPLAY_MODE=gtk USE_KVM=1`. If `/dev/dri` is not present, QEMU falls back to
-Mesa llvmpipe software GL; the VM will still boot, but browser video can jitter
-on CPU-rendered frames. If `/dev/udmabuf` is not present, the launcher disables
-virtio-gpu blob hostmem. On hosts where the kernel module is available, create
-that device before starting Docker with:
+The `compose.yml` at the repo root defines the container: it bind-mounts the
+source tree, forwards the host Wayland/X11 display sockets, and exposes
+`/dev/kvm`, `/dev/dri`, and `/dev/udmabuf`.  Remove any `devices:` entry your
+host does not have.  If `/dev/udmabuf` is not present, create it first with:
 
 ```sh
 sudo modprobe udmabuf
 ```
 
-The `scripts/container/enter-container.sh` helper forwards `/dev/kvm`, `/dev/dri`,
-`/dev/udmabuf`, and the host display socket automatically when they exist at
-container creation time.
+`scripts/container/enter-container.sh` is a thin wrapper around
+`docker compose run --rm xv6` for convenience:
 
-For fail-fast accelerated launches, add:
+```sh
+scripts/container/enter-container.sh xv6-launch   # same as docker compose run
+scripts/container/enter-container.sh               # interactive shell
+```
+
+For fail-fast accelerated launches from the host, add:
 
 ```sh
 QEMU_REQUIRE_HOST_DRI=1 QEMU_REQUIRE_UDMABUF=1 ./scripts/launch/launch-gui.sh
