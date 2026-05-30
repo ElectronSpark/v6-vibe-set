@@ -272,6 +272,192 @@ static UINT32 count_acpi_cpus(UINT64 rsdp_addr)
     return 0;
 }
 
+/*
+ * Scan one ACPI table blob (DSDT/SSDT) for a QWord Address Space Descriptor
+ * (large resource tag 0x8A) describing a memory producer window above 4 GiB.
+ * On Hyper-V Gen2 the VMBus/PCI root _CRS exposes the high-MMIO aperture this
+ * way; the same descriptors back the window the host sets via
+ * -HighMemoryMappedIoSpace, from which assigned-device (DDA) BARs are
+ * allocated. Returns the largest qualifying window found; values are copied
+ * verbatim from the real ACPI descriptors. Mirrors the kernel scan but runs
+ * here, where ACPI-reclaim memory is still valid under EFI boot services.
+ */
+static void scan_table_high_mmio(const UINT8 *tbl, UINT64 *best_base,
+                                 UINT64 *best_size)
+{
+    UINT32 len;
+
+    if (tbl == NULL)
+        return;
+    len = rd32(tbl, 4);
+    if (len < 36 + 46 || !acpi_checksum_ok(tbl, len))
+        return;
+
+    for (UINT32 i = 36; i + 46 <= len; i++) {
+        UINT16 dlen;
+        UINT8 res_type;
+        UINT64 addr_min;
+        UINT64 addr_max;
+        UINT64 addr_len;
+
+        if (tbl[i] != 0x8A)
+            continue;
+        dlen = rd16(tbl, i + 1);
+        if (dlen < 43 || (UINT64)i + 3 + dlen > len)
+            continue;
+        res_type = tbl[i + 3];
+        if (res_type != 0) /* 0 == memory range */
+            continue;
+        addr_min = rd64(tbl, i + 14);
+        addr_max = rd64(tbl, i + 22);
+        addr_len = rd64(tbl, i + 38);
+        if (addr_len == 0 && addr_max >= addr_min)
+            addr_len = addr_max - addr_min + 1;
+        if (addr_len == 0 || addr_min < 0x100000000ULL)
+            continue;
+        if ((addr_min & 0xFFFULL) != 0)
+            continue;
+        if (addr_max >= addr_min && addr_len > (addr_max - addr_min + 1))
+            continue;
+        if (addr_len > *best_size) {
+            *best_base = addr_min;
+            *best_size = addr_len;
+        }
+    }
+}
+
+/*
+ * Walk XSDT/RSDT to find the FACP (-> DSDT) and every SSDT, scanning each for
+ * the high-MMIO producer window. Returns the largest window via out params.
+ */
+static int find_acpi_high_mmio(UINT64 rsdp_addr, UINT64 *out_base,
+                               UINT64 *out_size)
+{
+    const UINT8 *rsdp = (const UINT8 *)(UINTN)rsdp_addr;
+    const UINT8 *root;
+    UINT32 root_len;
+    UINT32 entries;
+    UINT64 best_base = 0;
+    UINT64 best_size = 0;
+    int use_xsdt;
+
+    *out_base = 0;
+    *out_size = 0;
+    if (rsdp == NULL || !mem_equal(rsdp, "RSD PTR ", 8) ||
+        !acpi_checksum_ok(rsdp, 20))
+        return 0;
+
+    use_xsdt = rsdp[15] >= 2 && rd64(rsdp, 24) != 0 &&
+               rd32(rsdp, 20) >= 36 &&
+               acpi_checksum_ok(rsdp, rd32(rsdp, 20));
+    root = (const UINT8 *)(UINTN)(use_xsdt ? rd64(rsdp, 24) :
+                                  (UINT64)rd32(rsdp, 16));
+    if (root == NULL)
+        return 0;
+    root_len = rd32(root, 4);
+    if (root_len < 36 || !acpi_checksum_ok(root, root_len))
+        return 0;
+    if (use_xsdt ? !acpi_sig_eq(root, "XSDT") : !acpi_sig_eq(root, "RSDT"))
+        return 0;
+
+    entries = use_xsdt ? (root_len - 36) / 8 : (root_len - 36) / 4;
+    for (UINT32 i = 0; i < entries; i++) {
+        const UINT8 *hdr = use_xsdt ?
+            (const UINT8 *)(UINTN)rd64(root, 36 + i * 8) :
+            (const UINT8 *)(UINTN)rd32(root, 36 + i * 4);
+
+        if (hdr == NULL)
+            continue;
+        if (acpi_sig_eq(hdr, "SSDT")) {
+            scan_table_high_mmio(hdr, &best_base, &best_size);
+        } else if (acpi_sig_eq(hdr, "FACP")) {
+            UINT32 facp_len = rd32(hdr, 4);
+            UINT64 dsdt_addr = 0;
+            const UINT8 *dsdt;
+
+            if (facp_len >= 148)
+                dsdt_addr = rd64(hdr, 140);
+            if (dsdt_addr == 0 && facp_len >= 44)
+                dsdt_addr = (UINT64)rd32(hdr, 40);
+            dsdt = (const UINT8 *)(UINTN)dsdt_addr;
+            if (dsdt != NULL && acpi_sig_eq(dsdt, "DSDT"))
+                scan_table_high_mmio(dsdt, &best_base, &best_size);
+        }
+    }
+
+    if (best_size == 0)
+        return 0;
+    *out_base = best_base;
+    *out_size = best_size;
+    return 1;
+}
+
+/*
+ * Discover the high-MMIO aperture from the live UEFI memory map. Hyper-V Gen2
+ * firmware describes the assigned-device (DDA) MMIO gap as EfiMemoryMappedIO
+ * descriptors; the configured -HighMemoryMappedIoSpace window appears here as
+ * one or more MMIO regions above 4 GiB. This is authoritative firmware data
+ * (no AML evaluation needed) and is available while boot services are live.
+ * Returns the largest qualifying region. Also logs every >=4 GiB MMIO/reserved
+ * region to the UEFI console for diagnostics.
+ */
+static int find_uefi_high_mmio(UINT64 *out_base, UINT64 *out_size)
+{
+    EFI_MEMORY_DESCRIPTOR *map = NULL;
+    UINTN map_size = 0, map_key = 0, desc_size = 0;
+    UINT32 desc_ver = 0;
+    EFI_STATUS st;
+    UINT64 best_base = 0;
+    UINT64 best_size = 0;
+
+    *out_base = 0;
+    *out_size = 0;
+
+    st = uefi_call_wrapper(g_bs->GetMemoryMap, 5, &map_size, map, &map_key,
+                           &desc_size, &desc_ver);
+    if (st != EFI_BUFFER_TOO_SMALL || desc_size == 0)
+        return 0;
+    map_size += desc_size * 16;
+    st = uefi_call_wrapper(g_bs->AllocatePool, 3, EfiLoaderData, map_size,
+                           (void **)&map);
+    if (EFI_ERROR(st))
+        return 0;
+    st = uefi_call_wrapper(g_bs->GetMemoryMap, 5, &map_size, map, &map_key,
+                           &desc_size, &desc_ver);
+    if (EFI_ERROR(st)) {
+        uefi_call_wrapper(g_bs->FreePool, 1, map);
+        return 0;
+    }
+
+    UINTN count = map_size / desc_size;
+    for (UINTN i = 0; i < count; i++) {
+        EFI_MEMORY_DESCRIPTOR *d =
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)map + i * desc_size);
+        UINT64 start = d->PhysicalStart;
+        UINT64 size = d->NumberOfPages * 4096ULL;
+
+        if (size == 0 || start < 0x100000000ULL)
+            continue;
+        if (d->Type != EfiMemoryMappedIO &&
+            d->Type != EfiMemoryMappedIOPortSpace &&
+            d->Type != EfiReservedMemoryType)
+            continue;
+        Print(L"xv6 loader: UEFI MMIO region type=%d base=0x%lx size=0x%lx\r\n",
+              d->Type, start, size);
+        if (size > best_size) {
+            best_base = start;
+            best_size = size;
+        }
+    }
+    uefi_call_wrapper(g_bs->FreePool, 1, map);
+
+    if (best_size == 0)
+        return 0;
+    *out_base = best_base;
+    *out_size = best_size;
+    return 1;
+}
+
 static EFI_STATUS open_root(EFI_FILE_PROTOCOL **root)
 {
     EFI_LOADED_IMAGE *loaded = NULL;
@@ -525,11 +711,26 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     UINT64 rsdp = find_acpi_rsdp();
     if (rsdp != 0) {
         UINT32 acpi_cpus = count_acpi_cpus(rsdp);
+        UINT64 mmio_base = 0;
+        UINT64 mmio_size = 0;
         append_str8(cmdline, sizeof(cmdline), " acpi_rsdp=");
         append_hex64(cmdline, sizeof(cmdline), rsdp);
         if (acpi_cpus != 0) {
             append_str8(cmdline, sizeof(cmdline), " acpi_cpus=");
             append_dec(cmdline, sizeof(cmdline), acpi_cpus);
+        }
+        /*
+         * Discover the high-MMIO aperture for assigned (DDA) device BARs and
+         * pass it on the cmdline (the kernel cannot read ACPI-reclaim memory or
+         * the UEFI memory map once it boots). Prefer the live UEFI memory map
+         * (authoritative firmware data); fall back to a static ACPI QWord scan.
+         */
+        if (find_uefi_high_mmio(&mmio_base, &mmio_size) ||
+            find_acpi_high_mmio(rsdp, &mmio_base, &mmio_size)) {
+            append_str8(cmdline, sizeof(cmdline), " acpi_high_mmio_base=");
+            append_hex64(cmdline, sizeof(cmdline), mmio_base);
+            append_str8(cmdline, sizeof(cmdline), " acpi_high_mmio_size=");
+            append_hex64(cmdline, sizeof(cmdline), mmio_size);
         }
     }
     EFI_PHYSICAL_ADDRESS cmd_addr;
