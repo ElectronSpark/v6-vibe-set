@@ -36,7 +36,7 @@ services:
     environment:
       XV6_SOURCE_DIR: /src/xv6-os
       XV6_ARCH: ${XV6_ARCH:-x86_64}
-      XV6_PARALLEL_JOBS: ${XV6_PARALLEL_JOBS:-0}
+      XV6_PARALLEL_JOBS: ${XV6_PARALLEL_JOBS:-}
       DISPLAY: ${DISPLAY:-}
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
