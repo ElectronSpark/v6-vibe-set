@@ -1,0 +1,49 @@
+# xv6-os development container
+#
+# Common commands:
+#   docker compose run --rm xv6 xv6-launch        # build everything + boot QEMU (KVM + GTK GUI)
+#   docker compose run --rm xv6 xv6-build         # build only (kernel, userland, ports, fs.img)
+#   docker compose run --rm xv6 bash              # interactive shell
+#   docker compose run --rm xv6 xv6-help          # list all available commands
+#
+# Or via the helper script (same effect):
+#   scripts/container/enter-container.sh xv6-launch
+#   scripts/container/enter-container.sh
+#
+# Build the image first if it doesn't exist:
+#   docker compose build
+#
+# Devices (remove entries your host does not have):
+#   /dev/kvm      - KVM hardware acceleration (recommended for GUI)
+#   /dev/dri      - GPU render nodes for host-side Mesa / QEMU virtio-gpu
+#   /dev/udmabuf  - virtio-gpu blob hostmem; create with: sudo modprobe udmabuf
+
+name: xv6-os
+
+services:
+  xv6:
+    image: xv6-os-dev
+    build:
+      context: .
+      target: dev
+    volumes:
+      # source tree / build output
+      - .:/src/xv6-os
+      # Wayland display socket (the whole runtime dir covers any WAYLAND_DISPLAY value)
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}:${XDG_RUNTIME_DIR:-/run/user/1000}
+      # X11 socket (WSLg / standard Linux desktop)
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    environment:
+      XV6_SOURCE_DIR: /src/xv6-os
+      XV6_ARCH: ${XV6_ARCH:-x86_64}
+      XV6_PARALLEL_JOBS: ${XV6_PARALLEL_JOBS:-0}
+      DISPLAY: ${DISPLAY:-}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
+    devices:
+      - /dev/kvm:/dev/kvm
+      - /dev/dri:/dev/dri
+      - /dev/udmabuf:/dev/udmabuf
+    working_dir: /src/xv6-os
+    stdin_open: true
+    tty: true
