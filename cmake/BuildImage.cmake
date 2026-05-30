@@ -27,14 +27,14 @@ set(_hyperv_cmdline "BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 gl
 file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
 
-set(_rootfs_deps user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh)
+set(_rootfs_deps user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh)
 set(_rootfs_command
-	${CMAKE_SOURCE_DIR}/scripts/make-rootfs.sh
+	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
 		${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb})
 
 # ---------------------------------------------------------------------
 # Primary path: ext4 rootfs built from the populated sysroot.
-# This is what scripts/run-qemu.sh actually boots, and what the
+# This is what scripts/launch/run-qemu.sh actually boots, and what the
 # session demo (Python + Flask) depends on.
 # ---------------------------------------------------------------------
 add_custom_target(rootfs
@@ -45,18 +45,18 @@ add_custom_target(rootfs
 
 # ---------------------------------------------------------------------
 # Legacy initrd / boot-image path (unused by current run-qemu.sh, but
-# kept until scripts/make-initrd.sh and make-image.sh are removed).
+# kept until scripts/image/make-initrd.sh and make-image.sh are removed).
 # ---------------------------------------------------------------------
 add_custom_command(
 	OUTPUT  ${_initrd}
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/make-initrd.sh
+	COMMAND ${CMAKE_SOURCE_DIR}/scripts/image/make-initrd.sh
 	            ${XV6_SYSROOT} ${_initrd}
 	DEPENDS user ports
 	COMMENT "Building initrd from ${XV6_SYSROOT}")
 
 add_custom_command(
 	OUTPUT  ${_image}
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/make-image.sh
+	COMMAND ${CMAKE_SOURCE_DIR}/scripts/image/make-image.sh
 	            ${XV6_KERNEL_ARTIFACTS}/kernel.elf
 	            ${_initrd}
 	            ${_image}
@@ -69,7 +69,7 @@ add_custom_target(image DEPENDS ${_image} rootfs)
 add_custom_target(hyperv-image
 	COMMAND ${CMAKE_COMMAND} -E env
 	            HYPERV_CMDLINE=${_hyperv_cmdline}
-	            ${CMAKE_SOURCE_DIR}/scripts/make-hyperv-image.sh
+	            ${CMAKE_SOURCE_DIR}/scripts/image/make-hyperv-image.sh
 	            ${_x86_linux_img}
 	            ${_fsimg}
 	            ${_hyperv_vhdx}
@@ -82,7 +82,7 @@ add_custom_target(hyperv-image
 # qemu boot — uses fs.img (the rootfs target).
 # ---------------------------------------------------------------------
 add_custom_target(qemu
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/run-qemu.sh
+	COMMAND ${CMAKE_SOURCE_DIR}/scripts/launch/run-qemu.sh
 	            ${XV6_ARCH}
 	            ${_qemu_kernel}
 	            ${_fsimg}
@@ -91,7 +91,7 @@ add_custom_target(qemu
 	COMMENT "Booting ${XV6_ARCH} kernel in qemu")
 
 add_custom_target(webkit-runtime-check
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/validate-webkit-runtime.sh
+	COMMAND ${CMAKE_SOURCE_DIR}/scripts/gpu/validate-webkit-runtime.sh
 	            ${XV6_SYSROOT} ${_fsimg}
 	DEPENDS rootfs
 	COMMENT "Validating staged WebKitGTK runtime in sysroot and fs.img")

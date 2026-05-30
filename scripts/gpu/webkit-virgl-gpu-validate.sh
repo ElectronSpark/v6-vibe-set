@@ -2,7 +2,7 @@
 # Validate forced accelerated WebKit WebGL on the OpenGL-submit backend.
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
 BUILD_DIR="${BUILD_DIR:-/tmp/xv6-hyperv-build}"

@@ -2,7 +2,7 @@
 # Validate the xv6 GPU substrate without relying on browser/toolkit behavior.
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
 BUILD_DIR="${BUILD_DIR:-build-x86_64}"
@@ -58,7 +58,7 @@ validate_launch_contract()
         QEMU_VIRTIO_GPU_XRES="${GPU_VALIDATE_XRES}" \
         QEMU_VIRTIO_GPU_YRES="${GPU_VALIDATE_YRES}" \
         QEMU_INPUT=virtio QEMU_NET=0 QEMU_APPEND="${APPEND_BASE}" \
-        bash scripts/run-qemu.sh x86_64 \
+        bash scripts/launch/run-qemu.sh x86_64 \
         "${BUILD_DIR}/kernel/build/kernel/xv6.bin" "${BUILD_DIR}/fs.img")"
     printf '%s\n' "${dry}" >>"${LOG}"
     grep -q -- '-display gtk,gl=on' <<<"${dry}" ||
@@ -112,7 +112,7 @@ set env(QEMU_VIRTIO_GPU_XRES) "${GPU_VALIDATE_XRES}"
 set env(QEMU_VIRTIO_GPU_YRES) "${GPU_VALIDATE_YRES}"
 set env(QEMU_ALLOW_WSL_SDL_GL) "${QEMU_ALLOW_WSL_SDL_GL:-1}"
 set env(QEMU_APPEND) "${APPEND_BASE}"
-spawn timeout --foreground ${TIMEOUT} bash scripts/launch-gui.sh
+spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
 expect -re {wlcomp: entering main loop}
 expect -re {__GPUV_READY__}
 expect -re {__GPUV_FBSTAT_DONE_0__}
@@ -217,7 +217,7 @@ set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=1280x800"
 set env(QEMU_EXTRA) "-monitor unix:${sock},server,nowait ${QEMU_EXTRA:-}"
-spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch-gui.sh
+spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch/launch-gui.sh
 wait_prompt
 after 8000
 send "export XDG_RUNTIME_DIR=/tmp\r"

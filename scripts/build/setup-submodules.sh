@@ -4,7 +4,7 @@
 # Idempotent: safe to rerun after cloning or after submodule URL changes.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
 if [[ ! -f .gitmodules ]]; then

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 IMAGE="${XV6_CONTAINER_IMAGE:-xv6-os-dev}"
 NAME="${XV6_CONTAINER_NAME:-xv6-os-dev}"

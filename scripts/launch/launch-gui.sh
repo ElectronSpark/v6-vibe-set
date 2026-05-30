@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"

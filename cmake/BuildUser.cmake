@@ -15,9 +15,9 @@ find_program(_linux_host_cc NAMES cc gcc clang REQUIRED)
 add_custom_target(user
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${XV6_SYSROOT}/bin
 	COMMAND ${CMAKE_COMMAND} -E env HOST_CC=${_linux_host_cc}
-		${CMAKE_SOURCE_DIR}/scripts/build-linux-host-probes.sh ${XV6_SYSROOT}
-	DEPENDS ${CMAKE_SOURCE_DIR}/scripts/build-linux-host-probes.sh
-	        ${CMAKE_SOURCE_DIR}/scripts/build-linux-host-libs.sh
+		${CMAKE_SOURCE_DIR}/scripts/build/build-linux-host-probes.sh ${XV6_SYSROOT}
+	DEPENDS ${CMAKE_SOURCE_DIR}/scripts/build/build-linux-host-probes.sh
+	        ${CMAKE_SOURCE_DIR}/scripts/build/build-linux-host-libs.sh
 	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 	COMMENT "Building x86_64 user programs with host compiler/glibc"
 	VERBATIM)

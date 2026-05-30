@@ -77,7 +77,7 @@ cmake -S . -B build-x86_64 -G Ninja -DXV6_ARCH=x86_64 -DXV6_PARALLEL_JOBS=2
 cmake --build build-x86_64 --target world -j2
 
 # launch the GUI OS
-./scripts/launch-gui.sh
+./scripts/launch/launch-gui.sh
 ```
 
 For a headless/non-KVM launch, use the CMake QEMU target:
@@ -180,21 +180,21 @@ that device before starting Docker with:
 sudo modprobe udmabuf
 ```
 
-The `scripts/enter-container.sh` helper forwards `/dev/kvm`, `/dev/dri`,
+The `scripts/container/enter-container.sh` helper forwards `/dev/kvm`, `/dev/dri`,
 `/dev/udmabuf`, and the host display socket automatically when they exist at
 container creation time.
 
 For fail-fast accelerated launches, add:
 
 ```sh
-QEMU_REQUIRE_HOST_DRI=1 QEMU_REQUIRE_UDMABUF=1 ./scripts/launch-gui.sh
+QEMU_REQUIRE_HOST_DRI=1 QEMU_REQUIRE_UDMABUF=1 ./scripts/launch/launch-gui.sh
 ```
 
 For WebKitGTK, provide a host-glibc WebKit runtime sysroot explicitly. The repo
 does not commit `ports/webkit/sysroot`:
 
 ```sh
-scripts/docker-build-webkit.sh /path/to/host-glibc-webkit-sysroot
+scripts/container/docker-build-webkit.sh /path/to/host-glibc-webkit-sysroot
 ```
 
 The Docker image installs the GStreamer media packages needed by WebKit video

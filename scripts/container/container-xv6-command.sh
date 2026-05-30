@@ -35,8 +35,8 @@ usage() {
 xv6-os container usage
 
 Quick start (from host):
-  scripts/enter-container.sh xv6-build   # one-shot: start container and build everything
-  scripts/enter-container.sh             # interactive shell inside container
+  scripts/container/enter-container.sh xv6-build   # one-shot: start container and build everything
+  scripts/container/enter-container.sh             # interactive shell inside container
 
 Build commands (inside container or via enter-container.sh <cmd>):
   xv6-build           configure and build kernel, userland, ports, and fs.img
@@ -66,7 +66,7 @@ GUI acceleration:
 
 WebKit:
   The repo does not carry ports/webkit/sysroot. Provide a host-glibc runtime via
-  XV6_WEBKIT_REF_SYSROOT or build one with scripts/docker-build-webkit.sh.
+  XV6_WEBKIT_REF_SYSROOT or build one with scripts/container/docker-build-webkit.sh.
 USAGE
 }
 
