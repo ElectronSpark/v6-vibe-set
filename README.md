@@ -137,6 +137,16 @@ Build the full OS in the container:
 docker run --rm -it -v "$PWD":/src/xv6-os xv6-os-dev xv6-build
 ```
 
+Build everything and launch the GUI in one command:
+
+```sh
+scripts/container/enter-container.sh xv6-launch
+```
+
+This builds the full OS (kernel, userland, ports, `fs.img`) and then boots QEMU
+with KVM and a GTK display window.  The `scripts/launch/launch-gui.sh` script
+also triggers this build automatically when artifacts are missing.
+
 Build the Hyper-V VHDX in the container:
 
 ```sh
