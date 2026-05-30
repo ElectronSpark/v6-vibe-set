@@ -8,7 +8,7 @@ IMAGE="${XV6_CONTAINER_IMAGE:-xv6-os-dev}"
 NAME="${XV6_CONTAINER_NAME:-xv6-os-dev}"
 ARCH="${XV6_ARCH:-x86_64}"
 BUILD_DIR="${XV6_BUILD_DIR:-/src/xv6-os/build-${ARCH}}"
-JOBS="${XV6_PARALLEL_JOBS:-2}"
+JOBS="${XV6_PARALLEL_JOBS:-$(nproc)}"
 if ! command -v docker >/dev/null 2>&1; then
     echo "enter-container: docker is not installed or not on PATH" >&2
     exit 1

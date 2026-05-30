@@ -14,7 +14,7 @@ fi
 
 arch="${XV6_ARCH:-x86_64}"
 build_dir="${XV6_BUILD_DIR:-${source_dir}/build-${arch}}"
-jobs="${XV6_PARALLEL_JOBS:-2}"
+jobs="${XV6_PARALLEL_JOBS:-$(nproc)}"
 
 cmake_args=(
     -S "${source_dir}"
@@ -34,43 +34,39 @@ usage() {
     cat <<'USAGE'
 xv6-os container usage
 
-Build the OS:
+Quick start (from host):
+  scripts/enter-container.sh xv6-build   # one-shot: start container and build everything
+  scripts/enter-container.sh             # interactive shell inside container
+
+Build commands (inside container or via enter-container.sh <cmd>):
   xv6-build           configure and build kernel, userland, ports, and fs.img
   xv6-kernel-x86      configure x86_64 and build only the kernel
   xv6-user-ports      build user programs and all ports
   xv6-images          build fs.img, initrd.cpio.gz, and boot.img
   xv6-hyperv-image    build a Hyper-V Gen2 bootable xv6-hyperv.vhdx
 
-Launch the OS:
+Launch commands (inside container):
   xv6-launch-nokvm    build kernel/rootfs, then boot QEMU with USE_KVM=0
   xv6-qemu-nokvm      alias for xv6-launch-nokvm
   xv6-check-gui-accel check host/container KVM, DRI, and udmabuf devices
 
-Shell:
-  docker run --rm -it <image> bash
-  scripts/enter-container.sh starts/reuses a writable helper container and, at
-  creation time, forwards /dev/kvm, /dev/dri, /dev/udmabuf, and host display
-  sockets when they exist.
-
 Environment:
-  XV6_SOURCE_DIR                 source checkout, default: current repo or /src/xv6-os
-  XV6_BUILD_DIR                  build directory, default: $XV6_SOURCE_DIR/build-$XV6_ARCH
-  XV6_ARCH                       target arch, default: x86_64
-  XV6_PARALLEL_JOBS              build jobs, default: 2
-  DISPLAY_MODE                   qemu display, default for launch: nographic
-  XV6_WEBKIT_REF_SYSROOT         optional mounted WebKitGTK runtime sysroot
+  XV6_SOURCE_DIR        source checkout          default: current repo or /src/xv6-os
+  XV6_BUILD_DIR         build directory          default: \$XV6_SOURCE_DIR/build-\$XV6_ARCH
+  XV6_ARCH              target arch              default: x86_64
+  XV6_PARALLEL_JOBS     build parallelism        default: nproc
+  DISPLAY_MODE          qemu display mode        default for launch: nographic
+  XV6_WEBKIT_REF_SYSROOT  optional WebKitGTK runtime sysroot
 
 GUI acceleration:
-  For DISPLAY_MODE=gtk with virgl/WebKit video, run Docker with --device /dev/dri,
-  --device /dev/udmabuf, and --device /dev/kvm plus your host display socket
-  mounted. Without /dev/dri, QEMU uses software GL (llvmpipe), which can make
-  video playback jitter even on a fast host CPU. Without /dev/udmabuf,
-  virtio-gpu blob hostmem stays disabled.
+  Pass --device /dev/dri --device /dev/udmabuf --device /dev/kvm and mount the
+  host display socket. Without /dev/dri QEMU falls back to llvmpipe (slow).
+  Without /dev/udmabuf, virtio-gpu blob hostmem is disabled.
+  enter-container.sh forwards all of these automatically when present.
 
-WebKit runtime note:
-  The repository does not carry ports/webkit/sysroot. To include WebKitGTK,
-  provide a host-glibc runtime sysroot through XV6_WEBKIT_REF_SYSROOT or use
-  scripts/docker-build-webkit.sh <webkit-ref-sysroot>.
+WebKit:
+  The repo does not carry ports/webkit/sysroot. Provide a host-glibc runtime via
+  XV6_WEBKIT_REF_SYSROOT or build one with scripts/docker-build-webkit.sh.
 USAGE
 }
 

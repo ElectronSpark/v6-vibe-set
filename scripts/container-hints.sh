@@ -7,29 +7,25 @@ export XV6_HINTS_SHOWN=1
 
 cat <<'HINTS'
 
-xv6 container commands:
-  xv6-build         build kernel, userland, ports, and fs.img
-  xv6-kernel-x86    compile the x86_64 kernel
-  xv6-user-ports    compile user programs and all ports
-  xv6-images        build fs.img, initrd.cpio.gz, and boot.img
-  xv6-hyperv-image  build a Hyper-V Gen2 bootable VHDX
-  xv6-launch-nokvm  boot x86_64 in QEMU with USE_KVM=0
-  xv6-check-gui-accel
-                    check KVM, DRI, and udmabuf passthrough for GUI video
-  xv6-help          print full usage
+Host one-liner:
+  scripts/enter-container.sh xv6-build   # start container and build everything
 
-Useful environment:
-  XV6_SOURCE_DIR=/src/xv6-os
-  XV6_BUILD_DIR=/src/xv6-os/build-x86_64
-  XV6_PARALLEL_JOBS=2
-  DISPLAY_MODE=nographic|gtk|sdl
-  XV6_WEBKIT_REF_SYSROOT=/path/to/host-glibc-webkit-sysroot
+Build commands:
+  xv6-build           kernel + userland + ports + fs.img  (default jobs: nproc)
+  xv6-kernel-x86      x86_64 kernel only
+  xv6-user-ports      user programs and all ports
+  xv6-images          fs.img, initrd.cpio.gz, boot.img
+  xv6-hyperv-image    Hyper-V Gen2 bootable VHDX
 
-For smooth WebKit video in Docker, pass --device /dev/kvm, --device /dev/dri,
-and --device /dev/udmabuf, then run xv6-check-gui-accel inside the container.
+Launch commands:
+  xv6-launch-nokvm    build kernel/rootfs then boot QEMU (KVM disabled)
+  xv6-check-gui-accel check KVM / DRI / udmabuf passthrough
 
-Host shortcut:
-  scripts/enter-container.sh
-  It forwards KVM, DRI, udmabuf, and host display sockets when they exist.
+Environment:
+  XV6_PARALLEL_JOBS   parallelism (default: nproc)
+  DISPLAY_MODE        nographic | gtk | sdl
+  XV6_WEBKIT_REF_SYSROOT  host-glibc WebKitGTK runtime sysroot
+
+  xv6-help  — full usage and GUI acceleration notes
 
 HINTS
