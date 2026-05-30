@@ -67,7 +67,7 @@ shopt -u nullglob
 # 5. Apply the rootfs overlay (e.g. /etc/startup) on top of everything staged
 #    so far. Path is resolved relative to this script so the default works
 #    regardless of the caller's cwd.
-OVERLAY="${ROOTFS_OVERLAY:-${SCRIPT_DIR}/../rootfs-overlay}"
+OVERLAY="${ROOTFS_OVERLAY:-${REPO_ROOT}/rootfs-overlay}"
 if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
