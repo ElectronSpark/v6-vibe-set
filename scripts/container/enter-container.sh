@@ -23,8 +23,14 @@ if ! docker image inspect "${XV6_CONTAINER_IMAGE:-xv6-os-dev}" >/dev/null 2>&1; 
     exit 1
 fi
 
+# Pass --device for each node that exists on the host (KVM/GPU for in-container QEMU)
+device_args=()
+for dev in /dev/kvm /dev/dri /dev/udmabuf; do
+    [[ -e "${dev}" ]] && device_args+=(--device "${dev}")
+done
+
 if [[ $# -eq 0 ]]; then
-    exec docker compose -f "${COMPOSE}" run --rm xv6 bash
+    exec docker compose -f "${COMPOSE}" run --rm "${device_args[@]}" xv6 bash
 else
-    exec docker compose -f "${COMPOSE}" run --rm xv6 "$@"
+    exec docker compose -f "${COMPOSE}" run --rm "${device_args[@]}" xv6 "$@"
 fi

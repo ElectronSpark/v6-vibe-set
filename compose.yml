@@ -40,10 +40,8 @@ services:
       DISPLAY: ${DISPLAY:-}
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
-    devices:
-      - /dev/kvm:/dev/kvm
-      - /dev/dri:/dev/dri
-      - /dev/udmabuf:/dev/udmabuf
+    # devices are NOT listed here so bare 'docker compose run' works on any host.
+    # enter-container.sh adds --device flags conditionally for existing nodes.
     working_dir: /src/xv6-os
     stdin_open: true
     tty: true
