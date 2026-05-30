@@ -508,7 +508,8 @@ but do not treat them as open plan items by default.
   owned fragments under `kernel/dev/hyperv/`. Route VMBus/SynIC work to
   `hyperv_vmbus_core.c`, synthetic input/storage/network/video work to
   `hyperv_synth_devices.c`, vPCI work to `hyperv_vpci_config.c`, DXG
-  object/shared-resource lifetime to `hyperv_dxg_objects_shared.c`, D3DKMT
+  object/shared-resource lifetime to the `hyperv_dxg_handle_manager.c` /
+  `hyperv_dxg_allocations.c` / `hyperv_dxg_shared_objects.c` group, D3DKMT
   ioctl shaping to `hyperv_dxg_ioctls.c`, and DXG status/readiness exports to
   `hyperv_dxg_device.c` or `hyperv_dxg_status_device.c`.
 
@@ -752,12 +753,26 @@ but do not treat them as open plan items by default.
   structs, and shared per-channel/device state.
 - `kernel/dev/hyperv/hyperv_vpci_config.c`: Hyper-V vPCI config-window backend
   and bus-relations parsing.
-- `kernel/dev/hyperv/hyperv_dxg_state_diag.c`: DXG adapter admission, WSL
-  parity diagnostics, payload caches, and status text helpers.
+- `kernel/dev/hyperv/hyperv_dxg_state.c`: shared `hvdxg` state struct and
+  cross-file forward declarations.
+- `kernel/dev/hyperv/hyperv_dxg_pci_version.c`: cmdline host LUID, vmbus version
+  negotiation, and PCI guestcaps discovery.
+- `kernel/dev/hyperv/hyperv_dxg_queryadapter_hwid.c`: QueryAdapter admission and
+  adapter hardware-id resolution.
+- `kernel/dev/hyperv/hyperv_dxg_diag.c`: WSL parity diagnostics, payload caches,
+  d3d12 capture, and status text helpers.
 - `kernel/dev/hyperv/hyperv_dxg_status_device.c`: `/dev/dxg` status read path,
   IO-space/MMIO helpers, and existing-sysmem mapping helpers.
-- `kernel/dev/hyperv/hyperv_dxg_objects_shared.c`: DXG process/object/handle,
-  allocation/resource/sync tracking, NT shared resource/sync fds, and teardown.
+- `kernel/dev/hyperv/hyperv_dxg_memory.c`: iospace mapping, sysmem pinning, and
+  u32 table helpers.
+- `kernel/dev/hyperv/hyperv_dxg_handle_manager.c`: DXG process/object/handle and
+  object/sync/process tracking.
+- `kernel/dev/hyperv/hyperv_dxg_allocations.c`: allocation/resource/sync
+  tracking, queues, and resource linking.
+- `kernel/dev/hyperv/hyperv_dxg_shared_objects.c`: NT shared resource/sync fds
+  and shared-object operations.
+- `kernel/dev/hyperv/hyperv_dxg_ioctl_queryadapter.c`: QueryAdapterInfo ioctl and
+  its helpers.
 - `kernel/dev/hyperv/hyperv_dxg_ioctls.c`: D3DKMT ioctl validation,
   ownership checks, packet shaping, forwarding, and completion handling.
 - `kernel/dev/hyperv/hyperv_dxg_device.c`: DXG cdev/file operations and public

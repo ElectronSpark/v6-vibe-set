@@ -1,145 +1,204 @@
-# GPU Plan: Real NVIDIA GPU via Hyper-V GPU-P + DXG/D3DKMT
+# GPU Plan: virtio-gpu 3D (virgl) under KVM acceleration
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
-## Mission (Re-centered after the 2026-05-29 hardware verdict)
+## Mission
 
-The goal is unchanged in spirit — **genuinely use the physical NVIDIA GPU from
-the xv6 guest under Hyper-V** — but the *route* has changed, because the
-previous route (DDA + Nouveau on raw silicon) was proven **physically
-impossible on this host**. The feasible route is **GPU Partitioning (GPU-P) +
-the DXG / D3DKMT paravirtual stack** that already has a skeleton in this repo.
+The active goal is **hardware-accelerated 3D from the xv6 guest through
+virtio-gpu virgl on a KVM/QEMU host** — real OpenGL/GLES rendering executed by
+the host's GL stack (virglrenderer) on behalf of the guest, surfaced to guest
+userspace (Mesa's `virgl` Gallium driver) and ultimately to the Wayland desktop
+and WebKit.
 
-What "genuinely use the GPU" means under GPU-P, stated so success cannot be
-faked:
+What "genuinely accelerated" means here, stated so success cannot be faked:
 
-1. **Use the real host GPU through the host driver, not emulation.** Work is
-   submitted as D3D12 / compute command lists over the Hyper-V DXG VMBus
-   channel and executed by the host's real NVIDIA driver on the real silicon.
-   Evidence must be a value that could only come from the GPU executing the
-   work (a monitored-fence value the GPU signalled, a compute result read back
-   from a GPU-written allocation), never a counter set in software.
-2. **Invoke Hyper-V GPU-P transport.** The adapter reaches the guest as a
-   GPU-P partition over VMBus (`GPUPARAV`), driven by the in-tree DXG
-   device (`kernel/kernel/dev/hyperv/hyperv_dxg_*.c`) and D3DKMT ABI
-   (`kernel/kernel/inc/uabi/d3dkmthk.h`). There are **no** raw PCI BARs on this
-   path by design — do not look for them.
-3. **Fail closed when the host GPU is absent.** If the DXG channel, adapter,
-   or host driver is unavailable, every path must reject with zero credit and
-   never fabricate a chipset id, a fence, or a present.
+1. **Real host GL execution, not software rasterization in the guest.** Draw and
+   compute work is encoded into virgl command buffers, submitted over the
+   virtio-gpu control queue, and executed by host virglrenderer against a real
+   host GL/EGL context. Evidence must be a value or pixel that could only come
+   from host GL executing the work (a `glReadPixels` result from a host-rendered
+   FBO, a host-signalled virtio-gpu fence), never a counter set in guest
+   software.
+2. **Invoke the virtio-gpu 3D / virgl transport.** The adapter reaches the guest
+   as a `virtio-gpu` PCI device with the `VIRTIO_GPU_F_VIRGL` feature and a
+   virgl capset; the in-tree driver (`kernel/kernel/virtio_gpu.c`) drives the
+   3D control commands (`CREATE_CONTEXT`, `RESOURCE_CREATE_3D`,
+   `TRANSFER_*_HOST_3D`, `SUBMIT_3D`) with real host fences.
+3. **Fail closed when virgl is absent.** If the host did not negotiate
+   `VIRTIO_GPU_F_VIRGL` or expose a virgl capset (e.g. QEMU without
+   `virtio-gpu-gl`, or a host with no GL), every 3D path must reject and the
+   backend must fall back to the dumb-buffer / software render node — never
+   advertise `OPENGL_SUBMIT` or fabricate a fence.
 
-> **Why the route changed (2026-05-29 hardware verdict — definitive).**
-> Two sessions of vPCI BAR debugging were resolved by checking the host:
-> - `Get-VMGpuPartitionAdapter -VMName xv6-os-hyperv` reports InstancePath
->   `\\?\PCI#VEN_10DE&DEV_28A0&...\GPUPARAV`. The RTX 4060 is attached via
->   **GPU Partitioning (GPU-P)**, not DDA. `Get-VMAssignableDevice` and
->   `Get-VMHostAssignableDevice` are both **empty** — there is no DDA device.
->   GPU-P does **not** project the GPU's real MMIO BARs into the guest, which is
->   exactly why every config-space BAR read back `0x0` and config writes were
->   no-ops. The Nouveau-on-raw-BAR path therefore **cannot work** here.
-> - A full true-DDA reconfiguration was attempted and `Start-VM` failed with
->   `Virtual Pci Express Port ... Failed to Power on with Error 'A hypervisor
->   feature is not available to the user.' (0xC035001E)` — the classic
->   consumer/laptop dGPU DDA isolation block (no ACS/FLR/interrupt-remap on the
->   PCIe bridge). The system was rolled back to GPU-P and verified booting.
->
-> Conclusion: **DDA + Nouveau is unreachable on this hardware.** It is preserved
-> below (Sections 1–7) only as a reference for a *different* host with a
-> DDA-capable GPU. The active, feasible plan is the GPU-P / DXG sections (G0–G6)
-> that follow. The standalone Nouveau bring-up code stays in the tree but is
-> not the acceleration path here.
+> The previously-active **Hyper-V GPU-P / DXG (D3D12)** ladder is **complete and
+> hardware-proven** (real RTX 4060 compute + offscreen GL in-guest). It is
+> preserved as **Appendix A** for reference. The Nouveau / DDA route remains out
+> of scope (see end). This plan now centers the **KVM virgl** path, which is the
+> portable acceleration route for non-Hyper-V hosts.
 
-## Feasibility Summary (what is and is not reachable on this host)
+## Status summary (virtio-gpu virgl on KVM)
 
-| Capability | Reachable here? | Why |
+| Capability | State | Notes |
 |---|---|---|
-| Real GPU compute / D3D12 submit + HW fence | **Yes (in-guest proven 2026-05-29)** | `d3d12probe` PASS *inside the xv6 GPU-P guest* on the real RTX 4060 (`PASS GPU copied 16384 bytes, fence signalled`); SUBMITCOMMAND + monitored fence routed through the xv6 `/dev/dxg` forwarding path |
-| Real GPU offscreen render to an allocation | **Likely yes** | Same DXG submit + allocation/residency ABIs |
-| Native display / scanout handoff | **Open / blocked** | `dxg-resource-scanout-bind` ABI does **not** exist in WSL `dxgkrnl`; present route is unsolved (see G5 — investigation, not a committed design) |
-| Nouveau on raw PCI BARs (DDA) | **No** | GPU-P = no BARs; true DDA = `0xC035001E` hardware block |
+| 2D scanout / display (virtio-gpu) | **Working** | `RESOURCE_CREATE_2D` + `SET_SCANOUT` + `TRANSFER_TO_HOST_2D` + flush back the framebuffer; desktop displays |
+| virgl capset detection + 3D context | **Kernel code present** | `virtio_gpu_query_capsets`, `CREATE_CONTEXT`, `virtio_gpu_has_virgl()` gate |
+| 3D resource / transfer / submit + fence | **Kernel code present** | `RESOURCE_CREATE_3D`, `TRANSFER_*_HOST_3D`, `SUBMIT_3D`, sync + async fences; `/dev/gpu0` `FB_GPU_VIRGL_*` ioctls |
+| Kernel virgl ioctl self-test | **To re-verify under KVM** | `user/programs/virgltest` exercises submit / fence / negative paths |
+| Mesa `virgl` GL consumer in-guest | **To verify under KVM** | `gldemo` / `mesaglfeature` ran on the DXG `d3d12` Gallium driver; need the same on the `virgl` driver |
+| Backend flag `OPENGL_SUBMIT` | **Set when `virtio_gpu_has_virgl()`** | `fb_drm_core_kms.c` `gpu_backend_fill` — but see boot-race blocker B1 |
+| WebKit / Skia GL via virgl | **Blocked** | `SkiaGPUWorker` SIGSEGV at GL-context creation under `virtio-gpu-gl` (blocker B2) |
+| Host requirement | **Host GL / `/dev/dri` needed** | QEMU `virtio-gpu-gl`; without host GL, virgl falls back to software (`check-gui-accel.sh`) |
 
-Honesty gate carried forward: **keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` on
-Hyper-V** until a real GPU-P/DXG render *and* a real present (or an explicitly
-accepted blit-present, if G5 concludes that is the only path) are both proven in
-one lineage. Do not mark Section 1/1.1a/1.3 (`[x]`) — they are dead on this host.
+Honesty gate: **keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` unless a real virgl GL
+render *and* an on-screen present are proven in one lineage on a KVM host whose
+virgl is backed by real host GL.** A host that silently falls back to software
+GL must not flip the flag.
 
-## Verified Code State (2026-05-29 source audit)
+## Verified code state — virtio-gpu virgl (2026-05-30 source audit)
 
-A full audit of the in-tree DXG stack (`kernel/kernel/dev/hyperv/hyperv_dxg_*.c`,
-`kernel/kernel/dev/fb/fb_dxg_present.c`, `kernel/kernel/inc/uabi/d3dkmthk.h`)
-established what already exists in the kernel, independent of hardware proof:
+`kernel/kernel/virtio_gpu.c` (standalone TU, ~3.3K lines) is the KVM/QEMU GPU
+driver. Independent of a fresh runtime capture, the source establishes:
 
-- **G1 channel + adapter: IMPLEMENTED in kernel.** The DXG VMBus channels open
-  (`hvdxg.global_open_ok` / `vgpu_open_ok`), the v40 interface is negotiated,
-  and `QUERYADAPTERINFO` / `OPENADAPTER` forward to the host with a real LUID /
-  UMD driver path captured (`hyperv_dxg_ioctls.c` `LX_DXQUERYADAPTERINFO`,
-  `hyperv_vmbus_core.c` `hvdxg_send_sync_vgpu`).
-- **G2 process/device/context: IMPLEMENTED in kernel.** `CREATEPROCESS`,
-  `CREATEDEVICE`, `CREATECONTEXTVIRTUAL` forward to the host and real handles
-  round-trip through the handle manager (`hyperv_dxg_objects_shared.c`).
-- **G3 allocations/residency/GPUVA: IMPLEMENTED in kernel.** `CREATEALLOCATION`,
-  `CREATEPAGINGQUEUE`, `MAKERESIDENT`, `RESERVE/MAP/FREE/UPDATEGPUVIRTUALADDRESS`
-  all marshal and forward; paging-fence values come back from the host.
-- **G4 submit + fence: HARDWARE-PROVEN IN-GUEST 2026-05-29.**
-  `LX_DXSUBMITCOMMAND` / `LX_DXSUBMITCOMMANDTOHWQUEUE` forward the
-  **UMD-built command buffer** (`priv_drv_data`) to the host;
-  `LX_DXWAITFORSYNCHRONIZATIONOBJECT(FROMCPU/GPU)` and
-  `SIGNALSYNCHRONIZATIONOBJECT` forward; monitored fences expose a host-written
-  CPU VA (`_D3DDDI_MONITORED_FENCE`). The kernel does **not** fabricate a fence
-  result. Proven: `/bin/d3d12probe` run **inside the xv6 GPU-P guest** enumerated
-  the real adapter (`NVIDIA GeForce RTX 4060 Laptop GPU` hw=1 vram=7957MiB) and
-  printed `D3D12PROBE: PASS GPU copied 16384 bytes, fence signalled`; the serial
-  log shows the `hyperv-dxg` create-sync / lock2 / submit / `unlock2 ...
-  forwarded=1` cycle reaching the host GPU-P endpoint. Evidence saved at
-  `tmp/d3d12probe-inguest-pass.log`.
-- **G5 present: BLOCKED (host ABI absent) — investigation complete.** See G5.1.
-- **G6 backend flag: CORRECTLY GATED AT 0.** `fb_drm_core_kms.c` `gpu_backend_fill`
-  sets the Hyper-V DXG backend type but never sets
-  `FB_GPU_BACKEND_F_OPENGL_SUBMIT` (only the KVM/virgl backend does).
+- **Device + queues: implemented.** virtio-pci discovery, control + cursor
+  virtqueues, IRQ completion with a polled fallback, and fence-id tracking
+  (`virtio_gpu_intr`, `virtio_gpu_complete_pending_locked`, async submit ring).
+- **2D scanout: implemented.** `RESOURCE_CREATE_2D`, `SET_SCANOUT`,
+  `TRANSFER_TO_HOST_2D`, and resource flush back the framebuffer (this is what
+  the desktop currently displays).
+- **virgl 3D: implemented (control path).** `virtio_gpu_query_capsets` finds the
+  virgl capset (`virtio_gpu: virgl capset ready id=.. version=.. size=..`);
+  `CREATE_CONTEXT`, `RESOURCE_CREATE_3D`, `TRANSFER_TO/FROM_HOST_3D`, and
+  `SUBMIT_3D` marshal real commands with optional `VIRTIO_GPU_FLAG_FENCE` and
+  sync **or** async fence completion. `virtio_gpu_has_virgl()` returns true only
+  when initialized **and** a virgl capset is present.
+- **Userspace ABI: present.** `/dev/gpu0` exposes `FB_GPU_VIRGL_SUBMIT`, context
+  create/destroy, fence wait, and resource create/destroy/transfer. The in-tree
+  self-test `user/programs/virgltest` covers async submit + fence wait, sync
+  submit, a forced-failure negative path, and failed-context rejection.
+- **Backend advertise: implemented.** When `virtio_gpu_has_virgl()` is true,
+  `fb_drm_core_kms.c` `gpu_backend_fill` reports `FB_GPU_BACKEND_VIRGL` and sets
+  `FB_GPU_BACKEND_F_VIRGL_OPENGL | FB_GPU_BACKEND_F_OPENGL_SUBMIT` (renderer
+  string "OpenGL via virtio-gpu virgl").
 
-### The real critical path (revised after the audit)
+### Known blockers (must fix before claiming KVM acceleration)
 
-The kernel D3DKMT path is essentially complete. A real GPU compute round-trip
-cannot be produced by a hand-written pure-C program, because a valid GPU command
-buffer must be built by a **user-mode driver** (the UMD compiles shaders to the
-engine's command stream). Therefore the genuine remaining work is **userspace +
-host staging + hardware validation**, in this order:
-
-1. **G0.2 (DONE 2026-05-29): the D3D12/compute UMD is obtained and staged.**
-   The WSL/Hyper-V GPU-PV runtime (`libd3d12.so`, `libd3d12core.so`,
-   `libdxcore.so`, NVIDIA UMD `libnvwgf2umx.so`, `libnvidia-ml.so.1`) lives on
-   this host under `/usr/lib/wsl/lib`. `scripts/stage-gpup-umd.sh` copies it into
-   `rootfs-overlay/usr/lib/wsl/lib` (gitignored — proprietary) and writes the
-   loader path config. Mesa `dzn` is therefore **not** required: the native
-   NVIDIA UMD builds real GPU command buffers.
-2. **A real D3D12 compute/copy client (DONE in userspace 2026-05-29).**
-   `user/programs/d3d12probe/d3d12probe.cpp` enumerates the adapter via dxcore,
-   creates a D3D12 device, records a GPU copy-engine command buffer
-   (UPLOAD→DEFAULT→READBACK), submits it, waits on a **GPU-signalled** fence,
-   and verifies the GPU-copied bytes. Built by `build-host.sh`; **PASS on the
-   real RTX 4060 on the WSL host** (`adapter[0] "NVIDIA GeForce RTX 4060 Laptop
-   GPU"`, `D3D12PROBE: PASS GPU copied 16384 bytes, fence signalled`). This
-   proves the runtime + ABI; it has **not** yet been run against the xv6
-   kernel's `/dev/dxg` emulation.
-3. **Runtime validation on the GPU-P host (DONE 2026-05-29).**
-   The xv6 GPU-P guest (`xv6-os-hyperv`, RTX 4060 GPU-P) booted with the staged
-   runtime + `/bin/d3d12probe`; the in-guest run printed
-   `D3D12PROBE: PASS GPU copied 16384 bytes, fence signalled` after enumerating
-   the real RTX 4060. This exercised the xv6 DXG kernel forwarding path end to
-   end (create-sync / lock2 / submit / unlock2 `forwarded=1`). G3/G4 are now
-   `[x]`. Evidence: `tmp/d3d12probe-inguest-pass.log`.
-
-G3/G4 are proven hardware-backed. The fail-closed discipline still holds — never
-report a synthetic fence/readback as success.
+- **B1 — virgl-ready boot race.** `fbdevinit` prints
+  `GPU: virgl unavailable; exposing dumb-buffer DRM only` because
+  `virtio_gpu_has_virgl()` is still false when the framebuffer initializes, yet
+  the capset becomes ready moments later (`virtio_gpu: virgl capset ready`). Any
+  consumer that latches the GPU backend flag once at init can miss virgl, or —
+  worse — see `OPENGL_SUBMIT` flip on after a software decision was already
+  taken. The backend capability must be evaluated **after** capset
+  initialization completes (or be re-queried lazily), not latched early.
+- **B2 — WebKit/Skia GL-context crash under `virtio-gpu-gl`.** With
+  `webkit_accel=1`, the WebProcess `SkiaGPUWorker` thread takes a fatal NULL
+  deref (`cr2=0x28`) at GL/EGL context creation and the page never loads;
+  software mode (`webkit_accel=0`) renders fine. Root-cause whether this is the
+  guest Mesa `virgl` EGL path, a missing host GL capability, or B1 handing
+  WebKit a half-ready backend.
 
 ---
 
-## Active Feasible Plan — GPU-P / DXG (do this top to bottom)
+## Active plan — virtio 3D (virgl) under KVM (do this top to bottom)
 
-This is the live plan for this hardware. Each item lists **what to build**,
-**which files**, and the **real-hardware evidence** that lets you check the box.
-The same rules apply: build-success alone is never enough; you need runtime
-evidence from the host GPU plus a passing fail-closed negative.
+Each item lists **what to build/verify**, **which files**, and the **runtime
+evidence** that lets you check the box. Build-success alone is never enough: you
+need runtime evidence from a KVM host with virgl, plus a passing fail-closed
+negative (a no-virgl image must fall back to the dumb buffer and never advertise
+`OPENGL_SUBMIT`).
+
+### Section V0. Host + launch prerequisites (KVM/QEMU)
+
+- [ ] **V0.1 Confirm the host can run virgl.** Host has a usable GL/EGL stack and
+  a `/dev/dri` render node; QEMU launches with `virtio-gpu-gl` (or
+  `virtio-vga-gl-primary`). `scripts/check-gui-accel.sh` must not warn
+  "no host /dev/dri nodes are visible". Record the host GL renderer string.
+- [ ] **V0.2 Boot xv6 under KVM with virtio-gpu-gl** via `scripts/run-qemu.sh`
+  (`QEMU_GPU=virtio-gpu-gl`) and capture the serial log showing
+  `virtio_gpu: virgl capset ready id=.. version=.. size=..`. Fail-closed check:
+  a plain `virtio-gpu` (no `-gl`) launch must log `no virgl capset found` and
+  `GPU: virgl unavailable; exposing dumb-buffer DRM only`.
+
+### Section V1. Fix the virgl-ready boot race (blocker B1)
+
+- [ ] **V1.1 Evaluate the GPU backend capability after capset init, not before.**
+  Files: `kernel/kernel/dev/fb/fb_init_panic.c` (the early
+  `virtio_gpu_has_virgl()` print) and `fb_drm_core_kms.c` `gpu_backend_fill`.
+  Ensure `virtio_gpu_query_capsets` has completed before any consumer latches
+  the backend flag, or make `gpu_backend_fill` reflect late capset readiness.
+  Evidence: a boot where the framebuffer no longer prints "virgl unavailable"
+  while virgl is in fact present, and `fbstat` reports the `virgl` backend with
+  `OPENGL_SUBMIT` consistently across reads.
+
+### Section V2. Kernel virgl ioctl self-test under KVM
+
+- [ ] **V2.1 Run `virgltest` in-guest on the virtio-gpu-gl host.** It must pass
+  sync submit, async submit + fence wait, and the two negative paths
+  (`FB_GPU_VIRGL_SUBMIT_FORCE_FAIL` rejected; a failed context rejects later
+  submits). Evidence: `virgltest: async-submit queued ... final_signaled` past
+  `initial_signaled` with a real host-advanced fence, plus the negative paths
+  failing closed. A no-virgl image must make `virgltest` fail closed at the open
+  or capset gate.
+
+### Section V3. Mesa virgl GL consumer in-guest
+
+- [ ] **V3.1 Offscreen GLES render via the Mesa `virgl` Gallium driver.** Run
+  `gldemo` (offscreen GLES2 FBO triangle + `glReadPixels`) with
+  `GALLIUM_DRIVER=virgl` and verify the pixels came from host GL, not softpipe.
+  Evidence: the renderer string identifies virgl / host GL and the readback
+  center/corner pixels match the drawn triangle. (`gldemo`/`mesaglfeature`
+  already pass on the DXG `d3d12` Gallium driver; this proves the `virgl` path.)
+- [ ] **V3.2 Broaden coverage** with `mesaglfeature` (shader compile/link, VBO,
+  texture sampling, FBO depth/stencil, blending, depth-test) on
+  `GALLIUM_DRIVER=virgl`, with two-size readback verification.
+
+### Section V4. On-screen present via virgl
+
+- [ ] **V4.1 GPU render → scanout present.** Drive a virgl-rendered resource to
+  the framebuffer scanout (or a Wayland surface) and confirm an on-screen frame
+  the GPU produced, not a CPU blit. Evidence: a host-GL-rendered frame visible
+  in the QEMU window; honesty gate — a CPU readback+blit gets no present credit.
+
+### Section V5. WebKit / Skia GL via virgl (blocker B2)
+
+- [ ] **V5.1 Root-cause and fix the `SkiaGPUWorker` GL-context crash.** Determine
+  whether the NULL deref is the guest Mesa `virgl` EGL path, a missing host GL
+  capability, or B1 handing WebKit a half-ready backend. Files: the WebKit GPU
+  policy/selection in `ports/wayland/src/desktop.c`, the Mesa virgl EGL port,
+  and the backend flag from V1. Evidence: `webkit_accel=1` loads a page and
+  renders a GPU-composited frame without `SkiaGPUWorker` SIGSEGV; the
+  fail-closed software fallback still works when virgl is absent.
+
+### Section V6. Backend flag + consumers (gated on V1–V4)
+
+- [ ] **V6.1 Keep `OPENGL_SUBMIT` honest.** Advertise it only when a real virgl
+  GL submit + present lineage is proven (V3 render + V4 present). Until then,
+  gate it so consumers do not select the accelerated path on a host that
+  silently falls back to software GL. Evidence: `fbstat` /
+  `scripts/check-gui-accel.sh` report virgl only when host GL is real; otherwise
+  the dumb-buffer render node.
+
+### virtio virgl dependency graph
+
+```
+V0 host GL + virtio-gpu-gl launch
+  -> V1 fix virgl-ready boot race (B1)
+       -> V2 kernel virgl ioctl self-test (virgltest)
+            -> V3 Mesa virgl GL consumer (gldemo/mesaglfeature)
+                 -> V4 on-screen present via virgl
+                      -> V5 WebKit/Skia GL via virgl (B2)
+                           -> V6 honest backend flag + consumers
+```
+
+---
+
+## Appendix A: Hyper-V GPU-P / DXG ladder (COMPLETE — reference)
+
+The DXG / D3D12 ladder below is **complete and hardware-proven** on a Hyper-V
+GPU-P host (real RTX 4060: in-guest `d3d12probe` compute PASS and offscreen GLES
+via Mesa's `d3d12` Gallium driver). It is retained for reference and for any
+future Hyper-V GPU-P host; it is **not** the active KVM virgl plan above. The
+same honesty gates apply (never report a synthetic fence/readback as success).
 
 ### Section G0. Host GPU-P Prerequisites (Windows host, not guest code)
 
@@ -205,7 +264,7 @@ evidence from the host GPU plus a passing fail-closed negative.
 ### Section G2. Process / device / context lifetime
 
 - [x] **G2.1 Create the DXG process, device, and context objects. — DONE (in-guest 2026-05-29).**
-  - Files: `kernel/kernel/dev/hyperv/hyperv_dxg_objects_shared.c`,
+  - Files: `kernel/kernel/dev/hyperv/hyperv_dxg_handle_manager.c`,
     `hyperv_dxg_ioctls.c`; ABI `kernel/kernel/inc/uabi/d3dkmthk.h`. Model
     ownership on WSL `dxgkrnl` (`dxgprocess`/`dxgdevice`/`dxgcontext`).
   - Commands: `CREATEPROCESS`, `CREATEDEVICE`, `CREATECONTEXTVIRTUAL`.
@@ -371,9 +430,12 @@ GPU). The scaffold files (`kernel/kernel/dev/fb/fb_nouveau.c` and the
 DDA-capable host, but no further Nouveau bring-up is on this plan. Do not spend
 effort implementing Nouveau MMIO/VRAM/firmware/channel/submit paths.
 
-## Next focus: WebKit + YouTube
+## Next focus: virtio virgl bring-up + WebKit
 
-With the GPU-P / DXG compute and offscreen-GL ladder (G0–G6) complete, the
-active engineering goal is the browser path: get **WebKit** to load a functional
-YouTube and play a video smoothly. Track that work in
+The active engineering goal is the **KVM virgl ladder above (V0–V6)**: confirm
+host GL + `virtio-gpu-gl`, fix the virgl-ready boot race (B1), prove the kernel
+virgl ioctls and a Mesa `virgl` GL consumer in-guest, then reach an on-screen
+present and unblock WebKit/Skia GL (B2). The browser path — getting **WebKit** to
+load a functional YouTube and play video smoothly — depends on V5 for the
+accelerated route; the software route already works and is tracked in
 `YOUTUBE_KERNEL_GAP_REPORT.md`.
