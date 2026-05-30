@@ -23,6 +23,10 @@ if ! docker image inspect "${XV6_CONTAINER_IMAGE:-xv6-os-dev}" >/dev/null 2>&1; 
     exit 1
 fi
 
+# Run as the calling user so build artifacts are not root-owned on the host.
+export XV6_UID="$(id -u)"
+export XV6_GID="$(id -g)"
+
 # Pass --device for each node that exists on the host (KVM/GPU for in-container QEMU)
 device_args=()
 for dev in /dev/kvm /dev/dri /dev/udmabuf; do

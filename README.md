@@ -125,37 +125,46 @@ Build the development image:
 docker compose build
 ```
 
-Build everything and launch the GUI in one command:
+Build everything and launch the GUI in one command (via the helper wrapper):
 
 ```sh
-docker compose run --rm xv6 xv6-launch
+scripts/container/enter-container.sh xv6-launch
 ```
 
-This builds the full OS (kernel, userland, ports, `fs.img`) and boots QEMU with
-KVM and a GTK display window.  `scripts/launch/launch-gui.sh` also triggers this
-build automatically when artifacts are missing.
-
-Other useful one-liners:
+Or call `docker compose` directly — pass your UID/GID so build artifacts are
+not root-owned on the host:
 
 ```sh
-docker compose run --rm xv6 xv6-build         # build only (no launch)
-docker compose run --rm xv6 bash              # interactive shell
-docker compose run --rm xv6 xv6-help          # list all container commands
-docker compose run --rm xv6 xv6-hyperv-image  # build Hyper-V VHDX
-docker compose run --rm xv6 xv6-launch-nokvm  # build + boot without KVM
+XV6_UID=$(id -u) XV6_GID=$(id -g) docker compose run --rm xv6 xv6-build
+```
+
+`enter-container.sh` exports `XV6_UID`/`XV6_GID` automatically, so the
+helper is the more convenient interface for interactive use.  Either way the
+container runs as your host user and all output in `build-x86_64/` stays
+owned by you.
+
+Other useful one-liners (all via the helper or with the UID prefix above):
+
+```sh
+scripts/container/enter-container.sh xv6-build         # build only (no launch)
+scripts/container/enter-container.sh bash              # interactive shell
+scripts/container/enter-container.sh xv6-help          # list all container commands
+scripts/container/enter-container.sh xv6-hyperv-image  # build Hyper-V VHDX
+scripts/container/enter-container.sh xv6-launch-nokvm  # build + boot without KVM
 ```
 
 The `compose.yml` at the repo root defines the container: it bind-mounts the
-source tree, forwards the host Wayland/X11 display sockets, and exposes
-`/dev/kvm`, `/dev/dri`, and `/dev/udmabuf`.  Remove any `devices:` entry your
-host does not have.  If `/dev/udmabuf` is not present, create it first with:
+source tree, forwards the host Wayland/X11 display sockets, and conditionally
+exposes `/dev/kvm`, `/dev/dri`, and `/dev/udmabuf` (only nodes that exist).
+If `/dev/udmabuf` is not present, create it first with:
 
 ```sh
 sudo modprobe udmabuf
 ```
 
 `scripts/container/enter-container.sh` is a thin wrapper around
-`docker compose run --rm xv6` for convenience:
+`docker compose run --rm xv6` that automatically exports your UID/GID and
+passes any present `/dev/kvm`, `/dev/dri`, `/dev/udmabuf` devices:
 
 ```sh
 scripts/container/enter-container.sh xv6-launch   # same as docker compose run
