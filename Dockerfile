@@ -83,6 +83,7 @@ RUN chmod 0755 /usr/local/bin/xv6-command \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
     && ln -s xv6-command /usr/local/bin/xv6-hyperv-image \
+    && ln -s xv6-command /usr/local/bin/xv6-launch \
     && ln -s xv6-command /usr/local/bin/xv6-launch-nokvm \
     && ln -s xv6-command /usr/local/bin/xv6-qemu-nokvm \
     && printf '\n# xv6 command hints\nif [[ $- == *i* && -r /usr/local/bin/xv6-hints ]]; then\n    . /usr/local/bin/xv6-hints\nfi\n' >> /etc/bash.bashrc

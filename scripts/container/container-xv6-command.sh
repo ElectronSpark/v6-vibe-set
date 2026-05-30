@@ -46,6 +46,7 @@ Build commands (inside container or via enter-container.sh <cmd>):
   xv6-hyperv-image    build a Hyper-V Gen2 bootable xv6-hyperv.vhdx
 
 Launch commands (inside container):
+  xv6-launch          build everything (world), then boot QEMU with KVM + GTK GUI
   xv6-launch-nokvm    build kernel/rootfs, then boot QEMU with USE_KVM=0
   xv6-qemu-nokvm      alias for xv6-launch-nokvm
   xv6-check-gui-accel check host/container KVM, DRI, and udmabuf devices
@@ -119,6 +120,11 @@ case "${command_name}" in
         ;;
     xv6-hyperv-image)
         build_targets hyperv-image
+        ;;
+    xv6-launch)
+        build_targets world
+        DISPLAY_MODE="${DISPLAY_MODE:-gtk}" \
+            exec "${source_dir}/scripts/launch/launch-gui.sh"
         ;;
     xv6-launch-nokvm|xv6-qemu-nokvm)
         configure
