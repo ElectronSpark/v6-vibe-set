@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/docker-build-webkit.sh <webkit-ref-sysroot> [docker-build-args...]
+usage: scripts/container/docker-build-webkit.sh <webkit-ref-sysroot> [docker-build-args...]
 
 Build the Docker image with a local host-glibc WebKit runtime available to
 CMake, without committing or uploading that runtime to GitHub. The repository
@@ -30,7 +30,7 @@ if [[ ! -x "${ref_sysroot}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
     exit 1
 fi
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 image_tag="${IMAGE_TAG:-xv6-os-webkit}"
 build_target="${BUILD_TARGET:-world}"
 xv6_arch="${XV6_ARCH:-x86_64}"

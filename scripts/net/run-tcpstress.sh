@@ -34,7 +34,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
@@ -169,7 +169,7 @@ QEMU_NET_BACKEND="${NET_BACKEND}" \
 QEMU_GPU=none \
 QEMU_APPEND="root=/dev/disk0 netsurf=0 webkit=0 video=80x25 ${GUEST_IP_OPT}" \
 timeout "${TIMEOUT_SECS}" \
-    bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}" \
+    bash "${SCRIPT_DIR}/../launch/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}" \
     <"${INPUT_PIPE}" \
     >"${LOG_PATH}" 2>&1
 QEMU_RC=$?

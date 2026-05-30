@@ -2,7 +2,7 @@
 # Validate repeated local WebKit GPU/API smoke without using network pages.
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
 BUILD_DIR="${BUILD_DIR:-/tmp/xv6-hyperv-build}"

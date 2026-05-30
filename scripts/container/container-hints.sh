@@ -8,7 +8,7 @@ export XV6_HINTS_SHOWN=1
 cat <<'HINTS'
 
 Host one-liner:
-  scripts/enter-container.sh xv6-build   # start container and build everything
+  scripts/container/enter-container.sh xv6-build   # start container and build everything
 
 Build commands:
   xv6-build           kernel + userland + ports + fs.img  (default jobs: nproc)

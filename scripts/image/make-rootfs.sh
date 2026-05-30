@@ -18,7 +18,7 @@ OUT="${2:?usage: $0 <sysroot_dir> <out_img> [size_mb]}"
 SIZE_MB="${3:-64}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 if [[ ! -d "${SYSROOT}/bin" ]]; then
     echo "make-rootfs: ${SYSROOT}/bin not found - did you run 'cmake --build user --target install'?" >&2

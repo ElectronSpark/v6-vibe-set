@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 BUILD_DIR=${BUILD_DIR:-/tmp/xv6-hyperv-build}
 VM_NAME=${VM_NAME:-xv6-os-hyperv}
 SERIAL_SCRIPT=${SERIAL_SCRIPT:-C:\\Temp\\com-tcp-read.ps1}
@@ -910,7 +910,7 @@ require_core_gpu_contract() {
     local age
 
     [[ -s "${CORE_CONTRACT_LOG}" ]] ||
-        fail "missing prior core GPU validator log: ${CORE_CONTRACT_LOG}; run scripts/hyperv-gpu-core-validate.sh first"
+        fail "missing prior core GPU validator log: ${CORE_CONTRACT_LOG}; run scripts/gpu/hyperv-gpu-core-validate.sh first"
     now="$(date +%s)"
     mtime="$(stat -c %Y "${CORE_CONTRACT_LOG}")"
     age=$((now - mtime))
@@ -1038,7 +1038,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
 
 OUT_PNG=/mnt/c/Temp/xv6-hyperv-3d-fps-validate.png \
 OUT_RAW=/mnt/c/Temp/xv6-hyperv-3d-fps-validate.raw \
-    "${REPO_ROOT}/scripts/hyperv-3d-visual-check.sh" 2>&1 | tee -a "${LOG}"
+    "${REPO_ROOT}/scripts/gpu/hyperv-3d-visual-check.sh" 2>&1 | tee -a "${LOG}"
 
 echo "hyperv-3d-fps-validate: sampling ${SAMPLE_SEC}s" | tee -a "${LOG}"
 VISUAL_DIR=$(mktemp -d /tmp/xv6-hyperv-3d-visible.XXXXXX)

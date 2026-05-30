@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 HOST_CC="${HOST_CC:-gcc}"
 HOST_AR="${HOST_AR:-ar}"
 HOST_RANLIB="${HOST_RANLIB:-ranlib}"

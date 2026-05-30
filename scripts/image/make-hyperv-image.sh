@@ -31,7 +31,7 @@ OUT_VHDX=$3
 SIZE_MB=${4:-0}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
+REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
 LOADER_SRC="${SCRIPT_DIR}/hyperv-efiloader.c"
 
 for tool in gcc ld objcopy sgdisk mformat mmd mcopy qemu-img stat; do

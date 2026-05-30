@@ -71,9 +71,9 @@ RUN apt-get update \
     && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2' \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scripts/container-xv6-command.sh /usr/local/bin/xv6-command
-COPY scripts/container-hints.sh /usr/local/bin/xv6-hints
-COPY scripts/check-gui-accel.sh /usr/local/bin/xv6-check-gui-accel
+COPY scripts/container/container-xv6-command.sh /usr/local/bin/xv6-command
+COPY scripts/container/container-hints.sh /usr/local/bin/xv6-hints
+COPY scripts/container/check-gui-accel.sh /usr/local/bin/xv6-check-gui-accel
 RUN chmod 0755 /usr/local/bin/xv6-command \
     && chmod 0755 /usr/local/bin/xv6-hints \
     && chmod 0755 /usr/local/bin/xv6-check-gui-accel \

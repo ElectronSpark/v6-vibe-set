@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 BUILD_DIR=${BUILD_DIR:-/tmp/xv6-hyperv-build}
 VM_NAME=${VM_NAME:-xv6-os-hyperv}
 DEPLOY_VHDX=${DEPLOY_VHDX:-/mnt/c/Temp/xv6-hyperv.vhdx}
@@ -54,7 +54,7 @@ mkdir -p "${BUILD_DIR}"
 if [[ "${REUSE_RUNNING_VM}" != "1" ]]; then
     echo "hyperv-gpu-stress: building ${OUT_VHDX}" | tee -a "${LOG}"
     HYPERV_CMDLINE="${HYPERV_CMDLINE}" \
-        "${REPO_ROOT}/scripts/make-hyperv-image.sh" \
+        "${REPO_ROOT}/scripts/image/make-hyperv-image.sh" \
         "${KERNEL_BIN}" "${ROOTFS_IMG}" "${OUT_VHDX}" 0 | tee -a "${LOG}"
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
         "Stop-VM -Name '${VM_NAME}' -TurnOff -Force -ErrorAction SilentlyContinue"
@@ -69,7 +69,7 @@ fi
 serial_read 'cat /proc/cmdline; ps' 30000 | tee -a "${LOG}"
 OUT_PNG=/mnt/c/Temp/xv6-hyperv-gpu-stress.png \
 OUT_RAW=/mnt/c/Temp/xv6-hyperv-gpu-stress.raw \
-    "${REPO_ROOT}/scripts/hyperv-3d-visual-check.sh" 2>&1 | tee -a "${LOG}"
+    "${REPO_ROOT}/scripts/gpu/hyperv-3d-visual-check.sh" 2>&1 | tee -a "${LOG}"
 serial_read 'gpubuftest 3; dmabufsmoke --nv12 --explicit-sync; drmgpuprobe; dxgprobe --owner-isolation; fbstat' 240000 |
     tee -a "${LOG}"
 
