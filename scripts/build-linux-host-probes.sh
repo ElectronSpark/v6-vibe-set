@@ -112,6 +112,43 @@ for name in "${HOST_USER_PROGRAMS[@]}"; do
                 echo "build-linux-host-probes: warning: skipping nouveauabitest until libdrm_nouveau is staged" >&2
             fi
             ;;
+        d3d12probe)
+            # C++ D3D12 GPU-P validation client; needs the vendored DirectX
+            # headers + dxguids and links the GPU-PV runtime. Built by its own
+            # script so it stays in sync with the host sanity-check build.
+            dxh="${REPO_ROOT}/ports/mesa/src/subprojects/DirectX-Headers-1.0"
+            host_cxx="${HOST_CXX:-g++}"
+            if [[ -d "${dxh}/include/directx" ]] && command -v "${host_cxx}" >/dev/null 2>&1; then
+                "${host_cxx}" -std=c++17 -O2 -Wall \
+                    -I"${dxh}/include" -I"${dxh}/include/wsl/stubs" \
+                    "${REPO_ROOT}/user/programs/d3d12probe/d3d12probe.cpp" \
+                    "${dxh}/src/dxguids.cpp" \
+                    -ld3d12 -ldxcore -ldl -lpthread \
+                    -L/usr/lib/wsl/lib -Wl,-rpath,/usr/lib/wsl/lib \
+                    -o "${OUT_DIR}/d3d12probe" \
+                    || echo "build-linux-host-probes: warning: d3d12probe build failed; skipping" >&2
+            else
+                echo "build-linux-host-probes: warning: skipping d3d12probe (DirectX-Headers or g++ missing)" >&2
+            fi
+            ;;
+        gldemo)
+            # Offscreen GLES2 "3D demo": renders a shaded triangle to an FBO
+            # and reads it back. With GALLIUM_DRIVER=d3d12 it runs on the host
+            # GPU over /dev/dxg; otherwise it falls back to Mesa softpipe.
+            if [[ -e "${SYSROOT}/lib/libEGL.so" &&
+                  -e "${SYSROOT}/lib/libGLESv2.so" ]]; then
+                "${HOST_CC}" ${HOST_USER_WARN_CFLAGS} ${HOST_USER_CFLAGS} \
+                    -I"${SYSROOT}/include" \
+                    "${REPO_ROOT}/user/programs/gldemo/gldemo.c" \
+                    -L"${SYSROOT}/lib" \
+                    -Wl,-rpath-link,"${SYSROOT}/lib" -Wl,-rpath,/lib \
+                    -lEGL -lGLESv2 \
+                    -o "${OUT_DIR}/gldemo" \
+                    || echo "build-linux-host-probes: warning: gldemo build failed; skipping" >&2
+            else
+                echo "build-linux-host-probes: warning: skipping gldemo until Mesa EGL/GLESv2 are staged" >&2
+            fi
+            ;;
         *)
             build_host_user_program "${name}"
             ;;

@@ -18,3 +18,11 @@ __pycache__/
 # Local Hyper-V VM disk image; large binary payload, never commit.
 *.vhdx
 *.vhd
+
+# Hyper-V/WSL GPU-PV D3D12 user-mode runtime staged by scripts/stage-gpup-umd.sh.
+# Proprietary NVIDIA/Microsoft binaries; never commit, never redistribute.
+/rootfs-overlay/usr/lib/wsl/
+
+# d3d12probe build artifacts and staged binary (built from source on demand).
+/user/programs/d3d12probe/d3d12probe-host
+/rootfs-overlay/bin/d3d12probe
