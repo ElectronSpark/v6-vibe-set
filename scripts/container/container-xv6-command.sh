@@ -74,9 +74,22 @@ configure() {
     cmake "${cmake_args[@]}"
 }
 
+fix_build_ownership() {
+    # The dev container runs as root, so artifacts written into the
+    # bind-mounted build dir end up root-owned on the host and block
+    # host-side tools (e.g. qemu reading fs.img). Re-own the build dir to
+    # match the bind-mounted source tree's owner.
+    [[ "$(id -u)" -eq 0 ]] || return 0
+    local owner
+    owner="$(stat -c '%u:%g' "${source_dir}" 2>/dev/null)" || return 0
+    [[ -n "${owner}" && "${owner}" != "0:0" ]] || return 0
+    [[ -d "${build_dir}" ]] && chown -R "${owner}" "${build_dir}" 2>/dev/null || true
+}
+
 build_targets() {
     configure
     cmake --build "${build_dir}" --target "$@" -j "${jobs}"
+    fix_build_ownership
 }
 
 case "${command_name}" in
@@ -110,6 +123,7 @@ case "${command_name}" in
     xv6-launch-nokvm|xv6-qemu-nokvm)
         configure
         cmake --build "${build_dir}" --target kernel rootfs -j "${jobs}"
+        fix_build_ownership
         USE_KVM=0 DISPLAY_MODE="${DISPLAY_MODE:-nographic}" \
             cmake --build "${build_dir}" --target qemu
         ;;
