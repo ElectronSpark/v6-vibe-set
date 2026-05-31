@@ -206,6 +206,63 @@ IconChar=3
 IconColor=0xFF6EA63D
 EOF
 
+if [[ -x "${STAGE}/bin/glmaze" ]]; then
+cat > "${STAGE}/root/desktop/glmaze.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=GL Maze
+Exec=/bin/glmaze
+IconChar=G
+IconColor=0xFF3DA67C
+EOF
+fi
+
+if [[ -x "${STAGE}/bin/glsmoke" ]]; then
+cat > "${STAGE}/root/desktop/glsmoke.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=GL Smoke
+Exec=/bin/glsmoke
+IconChar=G
+IconColor=0xFF7C3DA6
+EOF
+fi
+
+if [[ -x "${STAGE}/bin/mesaglsmoke" ]]; then
+cat > "${STAGE}/root/desktop/glsphere.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=GL Sphere
+Exec=/bin/mesaglsmoke --demo
+IconChar=S
+IconColor=0xFF3D7CA6
+EOF
+fi
+
+if [[ -x "${STAGE}/bin/mesawlegl" ]]; then
+cat > "${STAGE}/root/desktop/egl-demo.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=EGL Demo
+Exec=/bin/mesawlegl --demo
+IconChar=E
+IconColor=0xFFA67C3D
+EOF
+fi
+
+if [[ -x "${STAGE}/bin/peanutgb" &&
+      -f "${STAGE}/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb" ]]; then
+cat > "${STAGE}/root/desktop/peanutgb.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Game Boy
+Exec=/bin/peanutgb
+Arg=/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb
+IconChar=G
+IconColor=0xFFA63D7C
+EOF
+fi
+
 cat > "${STAGE}/root/desktop/editor.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application

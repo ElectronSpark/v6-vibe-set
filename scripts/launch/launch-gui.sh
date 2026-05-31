@@ -18,6 +18,44 @@ AUTO_BUILD="${AUTO_BUILD:-1}"
 export DISPLAY_MODE
 export QEMU_GPU
 
+newer_than_fsimg() {
+    local path
+
+    [[ -f "${FSIMG}" ]] || return 1
+    for path in "$@"; do
+        [[ -e "${path}" ]] || continue
+        if find "${path}" -newer "${FSIMG}" -print -quit 2>/dev/null | grep -q .; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+maybe_rebuild_stale_gui_image() {
+    [[ "${AUTO_BUILD}" == "1" ]] || return 0
+    [[ "${DRY_RUN:-0}" != "1" ]] || return 0
+    [[ -f "${FSIMG}" ]] || return 0
+    command -v docker >/dev/null 2>&1 || return 0
+    [[ -x "${ROOT}/scripts/container/enter-container.sh" ]] || return 0
+
+    if newer_than_fsimg \
+            "${ROOT}/ports/wayland/src" \
+            "${ROOT}/ports/wayland/CMakeLists.txt" \
+            "${ROOT}/ports/gtk3/CMakeLists.txt" \
+            "${ROOT}/ports/gtk3/src/gdk/wayland/gdkscreen-wayland.c" \
+            "${ROOT}/ports/gtk3/src/gtk/gtkheaderbar.c"; then
+        echo "launch-gui: GUI port sources are newer than ${FSIMG}; rebuilding ports image..." >&2
+        "${ROOT}/scripts/container/enter-container.sh" xv6-user-ports
+        "${ROOT}/scripts/container/enter-container.sh" xv6-images
+        return 0
+    fi
+
+    if newer_than_fsimg "${ROOT}/rootfs-overlay"; then
+        echo "launch-gui: rootfs overlay is newer than ${FSIMG}; rebuilding image..." >&2
+        "${ROOT}/scripts/container/enter-container.sh" xv6-images
+    fi
+}
+
 if [[ "${ARCH}" != "x86_64" ]]; then
     echo "launch-gui: only x86_64 GUI launch is wired right now (ARCH=${ARCH})" >&2
     exit 2
@@ -70,6 +108,8 @@ if [[ ! -f "${FSIMG}" ]]; then
     echo "launch-gui: build first with: scripts/container/enter-container.sh xv6-build" >&2
     exit 1
 fi
+
+maybe_rebuild_stale_gui_image
 
 cmd=(bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}")
 

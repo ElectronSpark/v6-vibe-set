@@ -31,12 +31,16 @@ RUN apt-get update \
         gstreamer1.0-plugins-good \
         gstreamer1.0-tools \
         libevdev2 \
+        libdrm2 \
+        libegl-mesa0 \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
         libegl1 \
+        libepoxy0 \
         libgbm1 \
         libgl1 \
         libgl1-mesa-dri \
+        libglx-mesa0 \
         libgmp-dev \
         libsecret-1-0 \
         libltdl-dev \
@@ -56,6 +60,7 @@ RUN apt-get update \
         python3-yaml \
         mesa-utils \
         qemu-system-gui \
+        qemu-system-modules-opengl \
         qemu-system-x86 \
         qemu-utils \
         libvirglrenderer1 \
