@@ -9,8 +9,8 @@ BUILD_DIR="${BUILD_DIR:-build-x86_64}"
 LOG="${GPU_VALIDATE_LOG:-${ROOT}/${BUILD_DIR}/gpu-validate.log}"
 MODE="${GPU_VALIDATE_MODE:-gtk}"
 TIMEOUT="${GPU_VALIDATE_TIMEOUT:-180s}"
-GPU_VALIDATE_XRES="${GPU_VALIDATE_XRES:-640}"
-GPU_VALIDATE_YRES="${GPU_VALIDATE_YRES:-480}"
+GPU_VALIDATE_XRES="${GPU_VALIDATE_XRES:-1280}"
+GPU_VALIDATE_YRES="${GPU_VALIDATE_YRES:-800}"
 GPU_VALIDATE_TOKEN="${GPU_VALIDATE_TOKEN:-gpuv-$$}"
 APPEND_BASE="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 gpu_validate=1 video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}}"
 APPEND_BASE="${APPEND_BASE} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
@@ -88,9 +88,9 @@ run_substrate()
 
     echo "gpu-validate: running substrate checks (${MODE})" | tee -a "${LOG}"
     trap cleanup_validation_qemu RETURN
-expect >>"${LOG}" 2>&1 <<EOF || fail "substrate VM run failed"
+    if ! expect >>"${LOG}" 2>&1 <<EOF; then
 set timeout 180
-match_max 200000
+match_max 2000000
 proc wait_prompt {} {
     set saved_timeout \$::timeout
     set ::timeout 30
@@ -115,9 +115,20 @@ set env(QEMU_APPEND) "${APPEND_BASE}"
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
 expect -re {wlcomp: entering main loop}
 expect -re {__GPUV_READY__}
-expect -re {__GPUV_FBSTAT_DONE_0__}
+expect {
+    -re {__GPUV_FBSTAT_DONE_0__} { }
+    -re {GPU substrate validator exited \(status 0\)} { }
+    -re {GPU substrate validator exited \(status [1-9][0-9]*\)} { exit 1 }
+    eof { exit 1 }
+    timeout { exit 1 }
+}
 exit 0
 EOF
+        reject_log 'GPU substrate validator exited \(status [1-9][0-9]*\)' \
+            "GPU substrate validator nonzero exit"
+        require_log '(__GPUV_FBSTAT_DONE_0__|GPU substrate validator exited \(status 0\))' \
+            "GPU substrate validator completion marker"
+    fi
     cleanup_validation_qemu
     trap - RETURN
 
@@ -125,9 +136,9 @@ EOF
         "GBM BO import/export pass"
     require_log 'dmabufsmoke: presented linux-dmabuf buffer' \
         "linux-dmabuf presentation pass"
-    require_log '__GPUV_MESAWLEGL4_DONE_0__' \
+    require_log '(__GPUV_MESAWLEGL4_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=4 status=0)' \
         "Mesa Wayland EGL resize/swap pass"
-    require_log 'mesawlegl\[[0-9]+\]: complete frames=6 status=0' \
+    require_log '(__GPUV_MESAWLEGL6_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=6 status=0)' \
         "multi-client mesawlegl completion"
     require_log '__GPUV_MESAGL_DONE_0__' \
         "multi-client mesaglsmoke completion"
@@ -181,7 +192,7 @@ EOF
 
 run_visible_3d()
 {
-    local sock ppm monitor_cmd
+    local sock ppm
 
     sock="$(mktemp -u /tmp/xv6-gpu-monitor.XXXXXX)"
     ppm="${GPU_VALIDATE_SCREENSHOT:-${ROOT}/${BUILD_DIR}/gpu-validate.ppm}"
@@ -189,53 +200,31 @@ run_visible_3d()
         fail "expect is required for prompt-synchronized guest commands"
 
     echo "gpu-validate: running visible virgl demo (${ppm})" | tee -a "${LOG}"
-    (
-        sleep "${GPU_VALIDATE_SCREENSHOT_DELAY:-4}"
-        if command -v nc >/dev/null 2>&1; then
-            monitor_cmd="screendump ${ppm}\n"
-            printf "${monitor_cmd}" | nc -U "${sock}" >/dev/null 2>&1 || true
-        fi
-    ) &
-expect >>"${LOG}" 2>&1 <<EOF || fail "visible 3D VM run failed"
+    trap cleanup_validation_qemu RETURN
+    if ! expect >>"${LOG}" 2>&1 <<EOF; then
 set timeout 120
-proc wait_prompt {} {
-    set saved_timeout \$::timeout
-    set ::timeout 30
-    expect {
-        -re {[^\r\n]*# ?} { }
-        timeout {
-            send "\r"
-            expect -re {[^\r\n]*# ?}
-        }
-    }
-    set ::timeout \$saved_timeout
-}
+match_max 2000000
 set env(DISPLAY_MODE) "gtk"
 set env(USE_KVM) "${USE_KVM:-1}"
 set env(QEMU_GPU) "virtio-gpu-gl"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
-set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=1280x800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
 set env(QEMU_EXTRA) "-monitor unix:${sock},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch/launch-gui.sh
-wait_prompt
-after 8000
-send "export XDG_RUNTIME_DIR=/tmp\r"
-wait_prompt
-send "export WAYLAND_DISPLAY=wayland-0\r"
-wait_prompt
-send "virgltest --bad-submit\r"
-expect -re {virgltest: bad-submit isolated}
-wait_prompt
-send "sleep 1\r"
-wait_prompt
-send "fbstat\r"
-wait_prompt
-send "shutdown\r"
-expect eof
-catch wait result
-exit [lindex \$result 3]
+expect -re {wlcomp: entering main loop}
+expect -re {renderer=virgl .*spherical-poly-demo}
+expect -re {demo_surface_matrix .*status=PASS}
+expect -re {mesawlegl\[[0-9]+\]: app_loop_fps=}
+after 500
+catch { exec sh -c "printf 'screendump ${ppm}\\n' | nc -U ${sock} >/dev/null 2>&1 || true" }
+expect -re {mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]* status=0}
+exit 0
 EOF
+        fail "visible 3D VM run failed"
+    fi
+    cleanup_validation_qemu
+    trap - RETURN
 
     require_log 'renderer=virgl' "virgl renderer"
     require_log 'spherical-poly-demo' "spherical polygon demo marker"

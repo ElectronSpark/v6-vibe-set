@@ -12,6 +12,8 @@ __pycache__/
 /musl-xv6/
 /tmp/
 *.log
+*.gb
+/rootfs-overlay/root/roms/
 
 # Local Docker WebKit runtime context; large binary payload, never commit.
 /.docker-webkit-ref-sysroot/

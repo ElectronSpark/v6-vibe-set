@@ -14,8 +14,10 @@
 #   QEMU_VIRTIO_GPU_BLOB=auto
 #                           Enable virtio-gpu blob resources with hostmem when
 #                           /dev/udmabuf is available on this launcher path.
-#   QEMU_VIRTIO_GPU_HOSTMEM=256M
+#   QEMU_VIRTIO_GPU_HOSTMEM=1G
 #                           Host-visible memory size for blob resources.
+#   QEMU_VIRTIO_GPU_MAX_HOSTMEM=1G
+#                           Maximum host-visible blob memory aperture.
 #   QEMU_REQUIRE_HOST_DRI=0 Fail instead of warning when an accelerated GTK
 #                           GPU launch cannot see host /dev/dri.
 #   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
@@ -26,6 +28,10 @@
 #   QEMU_HOST_GL=auto       Host OpenGL provider. auto selects WSL D3D12 when
 #                           /dev/dxg and Mesa d3d12 are available. Set
 #                           default to leave Mesa selection alone.
+#   QEMU_WSL_D3D12_ADAPTER=auto
+#                           Preferred WSL D3D12 adapter for host GL. auto
+#                           selects NVIDIA when nvidia-smi is available;
+#                           set Intel, NVIDIA, or empty/default to override.
 #   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
 #                           The default keeps Bochs VGA visible and attaches a
 #                           separate virgl GPU for WebKit acceleration.
@@ -43,6 +49,9 @@
 #                           can fail to deliver absolute tablet motion on WSLg
 #                           while relative devices can be host-edge clamped.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
+#   QEMU_GTK_GL=auto        GTK OpenGL mode for QEMU. auto uses GLES on WSL
+#                           virgl because gtk,gl=on can stop at GtkGLArea
+#                           DMABUF setup before the xv6 desktop appears.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
 #   QEMU_GTK_SHOW_CURSOR=off
@@ -90,11 +99,13 @@ QEMU_GDB_ARGS=()
 QEMU_VIRTIO_GPU_XRES="${QEMU_VIRTIO_GPU_XRES:-1280}"
 QEMU_VIRTIO_GPU_YRES="${QEMU_VIRTIO_GPU_YRES:-800}"
 QEMU_VIRTIO_GPU_BLOB="${QEMU_VIRTIO_GPU_BLOB:-auto}"
-QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-256M}"
+QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-1G}"
+QEMU_VIRTIO_GPU_MAX_HOSTMEM="${QEMU_VIRTIO_GPU_MAX_HOSTMEM:-${QEMU_VIRTIO_GPU_HOSTMEM}}"
 QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
 QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
 QEMU_REQUIRE_KVM="${QEMU_REQUIRE_KVM:-auto}"
 QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
+QEMU_WSL_D3D12_ADAPTER="${QEMU_WSL_D3D12_ADAPTER:-auto}"
 QEMU_WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY:-gtk}"
 QEMU_ALLOW_WSL_SDL_GL="${QEMU_ALLOW_WSL_SDL_GL:-0}"
 QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-x11}"
@@ -104,6 +115,7 @@ QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
 QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
 QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
 QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
+QEMU_GTK_GL="${QEMU_GTK_GL:-auto}"
 QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
 QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
 QEMU_SDL_GRAB_MOD="${QEMU_SDL_GRAB_MOD:-lctrl-lalt}"
@@ -276,6 +288,11 @@ host_wsl_d3d12_available() {
         return 0
 }
 
+host_wsl_has_nvidia_adapter() {
+        [[ -x /usr/lib/wsl/lib/nvidia-smi ]] || return 1
+        /usr/lib/wsl/lib/nvidia-smi >/dev/null 2>&1
+}
+
 print_host_gpu_hint() {
         echo "run-qemu: expose host GPU acceleration before expecting smooth WebKit video:" >&2
         echo "run-qemu:   bare host: ensure a hardware /dev/dri/renderD* is readable/writable" >&2
@@ -324,11 +341,25 @@ case "${ARCH}" in
                                         echo "run-qemu: QEMU_HOST_GL=wsl-d3d12 requested, but /dev/dxg or Mesa d3d12 is missing" >&2
                                         exit 2
                                 fi
+                                WSL_D3D12_ADAPTER="${QEMU_WSL_D3D12_ADAPTER}"
+                                if [[ "${WSL_D3D12_ADAPTER}" == "auto" ]]; then
+                                        if host_wsl_has_nvidia_adapter; then
+                                                WSL_D3D12_ADAPTER="NVIDIA"
+                                        else
+                                                WSL_D3D12_ADAPTER=""
+                                        fi
+                                fi
                                 QEMU_ENV_ARGS+=(
                                         MESA_LOADER_DRIVER_OVERRIDE=d3d12
                                         GALLIUM_DRIVER=d3d12
                                         LIBGL_ALWAYS_SOFTWARE=0
                                 )
+                                if [[ -n "${WSL_D3D12_ADAPTER}" &&
+                                      "${WSL_D3D12_ADAPTER}" != "default" ]]; then
+                                        QEMU_ENV_ARGS+=(
+                                                "MESA_D3D12_DEFAULT_ADAPTER_NAME=${WSL_D3D12_ADAPTER}"
+                                        )
+                                fi
                                 ;;
                         *)
                                 echo "unsupported QEMU_HOST_GL: ${QEMU_HOST_GL}" >&2
@@ -370,6 +401,15 @@ case "${ARCH}" in
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]]; then
                         QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
                 fi
+                GTK_GL_MODE="${QEMU_GTK_GL}"
+                if [[ "${GTK_GL_MODE}" == "auto" ]]; then
+                        if host_is_wsl && [[ "${DISPLAY_MODE}" == "gtk" &&
+                              "${QEMU_GPU}" == *"-gl"* ]]; then
+                                GTK_GL_MODE="es"
+                        else
+                                GTK_GL_MODE="on"
+                        fi
+                fi
                 if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* &&
                       "${HOST_GL_MODE}" != "wsl-d3d12" ]] &&
                    ! host_dri_available; then
@@ -386,6 +426,11 @@ case "${ARCH}" in
                         if [[ "${QEMU_REQUIRE_HOST_DRI}" == "1" ]]; then
                                 exit 2
                         fi
+                fi
+                if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* &&
+                      "${HOST_GL_MODE}" == "wsl-d3d12" ]]; then
+                        echo "run-qemu: WSL D3D12 host GL selected for virgl${WSL_D3D12_ADAPTER:+ (${WSL_D3D12_ADAPTER})}; GTK may still print harmless DMABUF warnings" >&2
+                        echo "run-qemu: guest boot log is mirrored to /tmp/xv6-debugcon.log" >&2
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
@@ -407,7 +452,7 @@ case "${ARCH}" in
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_GPU}" == *"-gl"* ]]; then
-                        DISPLAY_ARGS=(-display "gtk,gl=on,grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
+                        DISPLAY_ARGS=(-display "gtk,gl=${GTK_GL_MODE},grab-on-hover=${QEMU_GTK_GRAB_ON_HOVER},show-cursor=${QEMU_GTK_SHOW_CURSOR},full-screen=${QEMU_GTK_FULLSCREEN},zoom-to-fit=${QEMU_GTK_ZOOM_TO_FIT},show-menubar=${QEMU_GTK_SHOW_MENUBAR},show-tabs=${QEMU_GTK_SHOW_TABS}"
                                       -serial mon:stdio)
                 elif [[ "${DISPLAY_MODE}" == "sdl" && "${QEMU_GPU}" == *"-gl"* ]]; then
                         DISPLAY_ARGS=(-display "sdl,gl=on,show-cursor=${QEMU_SDL_SHOW_CURSOR},grab-mod=${QEMU_SDL_GRAB_MOD}"
@@ -479,7 +524,7 @@ case "${ARCH}" in
                                 print_host_gpu_hint
                                 exit 2
                         fi
-                        gpu_gl_opts+=",blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM}"
+                        gpu_gl_opts+=",blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM},max_hostmem=${QEMU_VIRTIO_GPU_MAX_HOSTMEM}"
                 elif [[ "${QEMU_REQUIRE_UDMABUF}" == "1" ]]; then
                         echo "run-qemu: QEMU_REQUIRE_UDMABUF=1 but /dev/udmabuf is unavailable." >&2
                         print_host_gpu_hint
