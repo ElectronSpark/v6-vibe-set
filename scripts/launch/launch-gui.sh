@@ -13,8 +13,10 @@ ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
+QEMU_GPU="${QEMU_GPU:-virtio-gpu-gl}"
 AUTO_BUILD="${AUTO_BUILD:-1}"
 export DISPLAY_MODE
+export QEMU_GPU
 
 if [[ "${ARCH}" != "x86_64" ]]; then
     echo "launch-gui: only x86_64 GUI launch is wired right now (ARCH=${ARCH})" >&2
@@ -73,6 +75,7 @@ cmd=(bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}")
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     printf 'DISPLAY_MODE=%q' "${DISPLAY_MODE}"
+    printf ' QEMU_GPU=%q' "${QEMU_GPU}"
     printf ' %q' "${cmd[@]}"
     printf '\n'
     exit 0
