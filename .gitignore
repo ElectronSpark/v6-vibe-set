@@ -10,6 +10,7 @@ __pycache__/
 
 # Generated / scratch
 /musl-xv6/
+/tmp/
 *.log
 
 # Local Docker WebKit runtime context; large binary payload, never commit.
