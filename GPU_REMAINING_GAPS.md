@@ -1,6 +1,6 @@
 # GPU Plan: virtio-gpu 3D (virgl) under KVM acceleration
 
-Last updated: 2026-05-30
+Last updated: 2026-06-01
 
 ## Mission
 
@@ -48,6 +48,19 @@ What "genuinely accelerated" means here, stated so success cannot be faked:
 | Backend flag `OPENGL_SUBMIT` | **Set when `virtio_gpu_has_virgl()`** | `fb_drm_core_kms.c` `gpu_backend_fill` — but see boot-race blocker B1 |
 | WebKit / Skia GL via virgl | **Blocked** | `SkiaGPUWorker` SIGSEGV at GL-context creation under `virtio-gpu-gl` (blocker B2) |
 | Host requirement | **Host GL / `/dev/dri` needed** | QEMU `virtio-gpu-gl`; without host GL, virgl falls back to software (`check-gui-accel.sh`) |
+
+2026-06-01 update: xv6 now proves the Mesa Wayland demo is rendering through
+`renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` on WSL/QEMU and
+shows the rendered sphere on screen. Alpine `kmscube` on the same host reaches
+about 85 FPS because it page-flips a virgl-rendered resource fullscreen. xv6's
+windowed compositor path still cannot claim native GPU-present credit:
+`VIRGL_CCMD_RESOURCE_COPY_REGION` from the client resource into the desktop
+scanout is accepted by QEMU/virglrenderer, but validation reads back nonblack
+source pixels and black destination pixels. The kernel now detects that failed
+GPU-side copy and falls back automatically to the readback/CPU-present lane
+instead of leaving a blank window. That fallback is correct and visible at about
+40-52 FPS; the remaining smoothness gap is a real virgl compositor pass or a
+safe full-size KMS-style page-flip/direct-scanout path.
 
 Honesty gate: **keep `FB_GPU_BACKEND_F_OPENGL_SUBMIT == 0` unless a real virgl GL
 render *and* an on-screen present are proven in one lineage on a KVM host whose
@@ -154,10 +167,16 @@ negative (a no-virgl image must fall back to the dumb buffer and never advertise
 
 ### Section V4. On-screen present via virgl
 
-- [ ] **V4.1 GPU render → scanout present.** Drive a virgl-rendered resource to
-  the framebuffer scanout (or a Wayland surface) and confirm an on-screen frame
-  the GPU produced, not a CPU blit. Evidence: a host-GL-rendered frame visible
-  in the QEMU window; honesty gate — a CPU readback+blit gets no present credit.
+- [x] **V4.1 Host-GL render visible on screen, fallback present only.** The
+  Mesa Wayland demo renders with the `virgl` Gallium driver and the host NVIDIA
+  D3D12 renderer, and the sphere is visible in QEMU. The visible lane currently
+  uses the validated readback/CPU-present fallback, so this does **not** grant
+  native present credit.
+- [ ] **V4.2 Native windowed GPU present.** Implement a real virgl compositor
+  pass, or an equally safe full-size page-flip/direct-scanout path. Evidence:
+  nonblack destination pixels after GPU-side composition into the desktop
+  scanout, no readback/CPU copy in the present path, stable QEMU window size,
+  and a sustained post-warmup FPS closer to the Alpine `kmscube` control.
 
 ### Section V5. WebKit / Skia GL via virgl (blocker B2)
 
