@@ -201,7 +201,7 @@ cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=3D Demo
-Exec=/bin/mesademo
+X-XV6-Builtin=3ddemo
 IconChar=3
 IconColor=0xFF6EA63D
 EOF
