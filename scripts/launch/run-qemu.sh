@@ -130,6 +130,20 @@ qemu_append_has_enabled_flag() {
         [[ " ${QEMU_APPEND} " == *" ${key}=1 "* ]]
 }
 
+qemu_append_has_key() {
+        local key="$1"
+        [[ " ${QEMU_APPEND} " == *" ${key}="* ]]
+}
+
+qemu_append_default_flag() {
+        local key="$1"
+        local value="$2"
+
+        if ! qemu_append_has_key "${key}"; then
+                QEMU_APPEND="${QEMU_APPEND} ${key}=${value}"
+        fi
+}
+
 print_kvm_hint() {
         echo "run-qemu: smooth WebKit video needs KVM; the current launch would fall back to slow TCG." >&2
         echo "run-qemu: make /dev/kvm readable/writable by this user, then restart the shell/WSL session." >&2
@@ -431,6 +445,12 @@ case "${ARCH}" in
                       "${HOST_GL_MODE}" == "wsl-d3d12" ]]; then
                         echo "run-qemu: WSL D3D12 host GL selected for virgl${WSL_D3D12_ADAPTER:+ (${WSL_D3D12_ADAPTER})}; GTK may still print harmless DMABUF warnings" >&2
                         echo "run-qemu: guest boot log is mirrored to /tmp/xv6-debugcon.log" >&2
+                fi
+                if [[ "${QEMU_GPU}" == *"-gl"* ]]; then
+                        qemu_append_default_flag virtio_gpu_3d_scanout 1
+                        qemu_append_default_flag wlcomp_gpu_compose 1
+                        qemu_append_default_flag wlcomp_gpu_virgl_copy 1
+                        qemu_append_default_flag virtio_gpu_present_copy_region 1
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
