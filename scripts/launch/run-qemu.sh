@@ -33,8 +33,8 @@
 #                           selects NVIDIA when nvidia-smi is available;
 #                           set Intel, NVIDIA, or empty/default to override.
 #   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
-#                           The default keeps Bochs VGA visible and attaches a
-#                           separate virgl GPU for WebKit acceleration.
+#                           The default uses GTK with the virgl adapter as the
+#                           visible primary display.
 #   QEMU_ALLOW_WSL_SDL_GL=0 SDL GL presents a black QEMU window on WSLg/D3D12
 #                           on tested hosts, so virgl launches are switched
 #                           back to GTK unless this is set to 1.
@@ -543,11 +543,12 @@ case "${ARCH}" in
                                 GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl-primary)
-                                # Compatibility alias for the historical
-                                # two-adapter setup: Bochs remains the visible
-                                # console while virtio-gpu-gl supplies render
-                                # nodes.  For smoother WebKit video, prefer
-                                # QEMU_GPU=virtio-vga-gl-primary.
+                                # Historical two-adapter setup: Bochs remains
+                                # the visible console while virtio-gpu-gl
+                                # supplies render nodes.  This is useful as a
+                                # fallback if the primary virtio-vga path
+                                # regresses, but it keeps display presentation
+                                # on the slower BGA path.
                                 GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
                                 ;;
                         virtio-vga-gl-primary)

@@ -13,7 +13,7 @@ ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
-QEMU_GPU="${QEMU_GPU:-virtio-gpu-gl}"
+QEMU_GPU="${QEMU_GPU:-virtio-vga-gl-primary}"
 AUTO_BUILD="${AUTO_BUILD:-1}"
 export DISPLAY_MODE
 export QEMU_GPU
