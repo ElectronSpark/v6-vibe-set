@@ -2,14 +2,18 @@
 
 Last updated: 2026-06-04
 
-> **Active focus (2026-06-04): windowed virgl desktop FPS parity reached.**
-> V0-V3 and V4 Tier 0-2 are done on the default `-gl` path. The desktop now
-> uses the page-flip scanout swap, three virgl scanout resources, nonblocking GL
-> submit fences, and queued release after GL/display readiness, so
-> `displayed_fps` tracks `app_loop_fps` in the 60+ FPS band with real demo
-> pixels in a full 1280x800 screenshot. Keep the strict screenshot/pixel gate
-> for regressions. Everything outside V4 is either done (reference), optional
-> Tier 3, or deferred (WebKit B2).
+> **Active focus (2026-06-04): V4 default `-gl` path revalidated and closed.**
+> A fresh default `-gl` run in
+> `build-x86_64/virgl-bisect/t24-current-default.log` did **not** reproduce the
+> earlier per-frame CPU-upload regression. The client imports as dma-buf
+> (`gl_bufs/frame=1`, `path_gl_preflush`, `path_cpu_only=0` on steady samples),
+> the window content is flipped once into the correct orientation, and
+> `displayed_fps` tracks `app_loop_fps` at sustained 60+ FPS. The scanout trace
+> intentionally rotates the three page-flip resources every frame; that resource
+> ring is expected and is not evidence of two stale visible frames. V4 Tier 0,
+> Tier 1, Tier 2, readback fallback, and no-virgl fail-closed validation are
+> complete. Everything outside V4 is either done (reference), optional Tier 3, or
+> deferred (WebKit B2).
 
 ## Mission
 
@@ -228,6 +232,23 @@ readiness without a fixed frame-number limit. The strict full-frame screenshot
 gate now passes with real demo pixels, closing the earlier blank/blue client
 body failure.
 
+**Superseded regression note (2026-06-04):** one fresh DEFAULT `-gl` run
+briefly reported `app_loop_fps ~31-37` / `displayed_fps ~30-37` with a
+per-frame CPU upload:
+
+```
+frame_avg_us=19517  cpu_upload_avg_us=19480  cpu_rects/frame=1
+gl_bufs/frame=0  gl_compose_avg_us=9  scanout_avg_us=0
+path_gl_preflush=0  path_cpu_only=1  scanout_submits=1  scanout_rebinds=1
+```
+
+That did **not** reproduce on the later same-day validation
+`build-x86_64/virgl-bisect/t24-current-default.log`: the client imports as a
+dma-buf, steady samples show `path_gl_preflush`, `gl_bufs/frame=1`,
+`path_cpu_only=0`, and `cpu_upload_avg_us` in the single/low-double digits, and
+tail-20 averages `app_loop_fps=64.8 displayed_fps=64.0`. Treat the CPU-upload
+trace above as historical diagnostic context, not current V4 status.
+
 #### Completed prerequisites (do not redo)
 
 - [x] **V4.1 Host-GL render visible on screen (fallback present).** Mesa Wayland
@@ -272,7 +293,7 @@ reached on its own (the old default path had `displayed_fps ~28`, about half of
 scanout buffer. Tier 1 fixed that on the default `-gl` path. Do not re-do Tier
 0 work; continue with Tier 2.
 
-#### Tier 1 — double-buffered scanout + page-flip (THE LIVE GAP). Target: ~28 -> ~55-60 FPS.
+#### Tier 1 — double-buffered scanout + page-flip (DONE). Target: ~28 -> ~55-60 FPS.
 
 State (validated at runtime 2026-06-03): the page-flip front/back swap is
 **implemented, works, and is default-on for `-gl`**: compose routes into the
@@ -410,9 +431,43 @@ inactive target, present flips it, and the resource ids alternate every frame so
     within ~10% on the steady samples and both are >=60 FPS.
   - **Passing criteria:** `app_loop_fps` and `displayed_fps` both ~60 and within
     ~10% of each other.
-- **Tier 2 gate:** met on the default `-gl` run: `displayed_fps` sustained
-  **>= 60 FPS** post-warmup, frequently in the 66-73 FPS Alpine simple-EGL
-  band, with full-frame demo pixels validated.
+- **Tier 2 gate:** **CLOSED (revalidated 2026-06-04).** The default `-gl` path
+  keeps the client on the dma-buf/GL compose path, rotates the three framebuffer
+  targets correctly, and sustains the target FPS band with displayed/app parity.
+  Current evidence:
+  `build-x86_64/virgl-bisect/t24-current-default.log` tail-20 averages
+  `app_loop_fps=64.8 displayed_fps=64.0` (min `53.4/53.3`, max gap `9.2%`),
+  with steady present-trace samples such as `path_gl_preflush=70
+  path_cpu_only=0 gl_bufs/frame=1 cpu_upload_avg_us=11`.
+
+- [x] **V4.T2.4 Keep the client surface on the GL/dma-buf zero-copy compose
+  path (eliminate steady `path_cpu_only`).** **DONE (revalidated 2026-06-04).**
+  The previously observed `path_cpu_only=1` / `cpu_upload_avg_us~19480`
+  regression did not reproduce on the current image. The default `-gl` run
+  imports the Mesa-EGL client buffers as dma-bufs and composes them as GL
+  textures into the active virgl framebuffer target; occasional one-second
+  trace windows with `path_cpu_only=1` are isolated clock/acquire/chrome ticks,
+  not the per-frame client upload path, and remain near-zero CPU upload.
+  - Files: `ports/wayland/src/wlcomp_buffer_shm.inc` (client buffer import /
+    dma-buf vs shm copy decision), `ports/wayland/src/wlcomp_gl_compose.inc`
+    (texture import into the compose target), `ports/wayland/src/desktop.c`,
+    `ports/wayland/src/wlcomp_render_loop.inc` (path selection per frame), and
+    the `-gl` defaults in `scripts/launch/run-qemu.sh`
+    (`wlcomp_gl_flush_after_scanout`, `wlcomp_gl_submit_fence`).
+  - Evidence: `t24-current-default.log` reports `extensions_dma_buf=1`,
+    `wlcomp: gl-compose dmabuf import ok ... source=client-fd size=640x480`,
+    `wlcomp: gl-compose drew ... target_origin=top-left source_origin=top-left`,
+    tail-20 `app_loop_fps=64.8 displayed_fps=64.0`, and steady present-trace
+    samples with `path_cpu_only=0`, `gl_bufs/frame=1`, and
+    `cpu_upload_avg_us` in the single/low-double digits. Pixels:
+    `build-x86_64/virgl-bisect/t24-current-default.ppm` /
+    `.png` show the overlay at the top-left and the sphere oriented warm-top /
+    cool-bottom.
+  - **Passing criteria:** on the DEFAULT `-gl` run the steady-state present-trace
+    shows `path_cpu_only=0`, `gl_bufs/frame>=1`, and `cpu_upload_avg_us` drops
+    to near zero on animating frames; `displayed_fps` returns to sustained
+    >= 60 FPS tracking `app_loop_fps`; full-frame demo pixels still validate; the
+    path still fails closed (CPU fallback) when virgl/dma-buf is unavailable.
 
 #### Tier 3 — windowed unredirection (optional; single full-window client).
 
@@ -434,59 +489,61 @@ inactive target, present flips it, and the resource ids alternate every frame so
 #### V4 global acceptance (the definition of done for this section)
 
 1. [x] `displayed_fps` within ~10% of `app_loop_fps`, sustained **>= 60 FPS**
-   post-warmup (Tier 2 complete). Evidence:
-   `build-x86_64/virgl-bisect/final-default-completion.log` tail-20 average
-   `app_loop_fps=68.3 displayed_fps=67.7`, max app/display gap `7.5%`,
-   with the final sample `68.3/72.6`.
+   post-warmup. Evidence:
+   `build-x86_64/virgl-bisect/t24-current-default.log` tail-20 averaged
+   `app_loop_fps=64.8 displayed_fps=64.0`, tail-30 averaged `64.8/64.3`, min
+   `53.4/53.3`, max gap `9.2%`; steady samples include `69.6/69.1`,
+   `71.5/69.8`, and `70.5/69.9`.
 2. [x] QEMU window stays 1280x800 throughout; no host-window resize at any
    point. Evidence: the same log's QEMU trace rejects non-desktop post-desktop
    `SET_SCANOUT`, and its page-flip matrix reports full-size scanouts cycling
    resources 4/5/6:
-   `page_flip_trace_matrix scanouts=8877 unique=4,5,6 ... status=PASS`.
+   `page_flip_trace_matrix scanouts=9290 unique=4,5,6 ... status=PASS`.
 3. [x] No panel/desktop blinking; correct Y orientation; demo **and** chrome
    both visible and updating. Evidence: full-frame screenshot matrix in
-   `final-default-completion.log` passes with real centered demo pixels and
-   nonblank desktop/chrome pixels:
-   `demo_bright=9873 demo_cyan=13645 demo_dark=197246
-   demo_colorful=31692 status=PASS`.
+   `t24-current-default.log` passes with real centered demo pixels, nonblank
+   desktop/chrome pixels, and correct one-time Y orientation:
+   `demo_bright=9017 demo_cyan=13526 demo_dark=199128 demo_colorful=30381
+   demo_top_warm=14233 demo_bottom_warm=0 demo_top_cool=4486
+   demo_bottom_cool=18233 status=PASS`.
 4. [x] Pixels validated with `fbstat ppm-current` / `fbstat sample` — never FPS
    text or counters alone. Evidence:
-   `build-x86_64/virgl-bisect/final-default-completion.ppm`,
-   `build-x86_64/virgl-bisect/final-readback-virglcopy-pass.ppm`, and
-   `build-x86_64/virgl-bisect/final-nogl-failclosed-desktop.ppm` all pass
-   pixel matrices and were visually inspected.
+   `build-x86_64/virgl-bisect/t24-current-default.ppm`,
+   `build-x86_64/virgl-bisect/t24-readback-fallback.ppm`, and
+   `build-x86_64/virgl-bisect/t24-nogl-failclosed2.ppm` all pass pixel
+   matrices and were visually inspected.
 5. [x] Every new path is flag-gated and fails closed when virgl is absent: a
    plain `virtio-gpu` (no `-gl`) image falls back to the dumb buffer, never sets
    `OPENGL_SUBMIT`, and does not panic. Evidence:
-   `build-x86_64/virgl-bisect/final-nogl-failclosed-desktop.log` reports
+   `build-x86_64/virgl-bisect/t24-nogl-failclosed2.log` reports
    `virtio_gpu: no 3D capsets advertised`, `GPU: virgl unavailable; exposing
    dumb-buffer DRM only`, `dumb render node`, `linux-dmabuf disabled (no
    virgl)`, no `OPENGL_SUBMIT`, no page-flip logs, no panic, and
-   `nogl_screenshot_matrix ... width=1280 height=800 ... status=PASS`.
+   `nogl_screenshot_matrix bright=590654 dark=694 unique_sample=136
+   total=1024000 status=PASS`.
 6. [x] The existing readback/CPU-present fallback lane still works (no
    regression). Evidence:
-   `build-x86_64/virgl-bisect/final-readback-virglcopy-pass.log` forced the
+   `build-x86_64/virgl-bisect/t24-readback-fallback.log` forced the
    fallback shape explicitly with
    `wlcomp_gl_compose=0 wlcomp_virgl_fb=0 wlcomp_page_flip_present=0
    wlcomp_virgl_fb_damage_flip=0 wlcomp_gl_submit_fence=0
    wlcomp_gpu_virgl_copy=1`; it stayed on `path_cpu_only` with
    `scanout_submits=0 scanout_rebinds=0`, tail-10 average
-   `app_loop_fps=54.9 displayed_fps=54.5`, and the full-frame screenshot matrix
-   passed with `demo_bright=8386 demo_cyan=13879 demo_dark=198790
-   demo_colorful=32271 status=PASS`.
+   `app_loop_fps=51.9 displayed_fps=52.6`, and the full-frame screenshot matrix
+   passed with `demo_bright=8337 demo_cyan=13971 demo_dark=198927
+   demo_colorful=29593 status=PASS`.
 
-**Revalidated 2026-06-04 after the submit-fence throttle fix and explicit
-opt-out parser fix.** Strict default `-gl` validation passed in
-`build-x86_64/virgl-bisect/final-default-completion.log`: tail-20 averaged
-`app_loop_fps=68.3 displayed_fps=67.7`, full-frame pixels passed
-(`final-default-completion.ppm`, `demo_bright=9873 demo_cyan=13645
+**Revalidated 2026-06-04 after the plan was reopened.** Strict default `-gl`
+validation passed in `build-x86_64/virgl-bisect/t24-current-default.log`:
+tail-20 averaged `app_loop_fps=64.8 displayed_fps=64.0`, full-frame pixels
+passed (`t24-current-default.ppm`, `demo_bright=9017 demo_cyan=13526
 status=PASS`), and QEMU trace page-flip validation cycled full-size resources
 `4,5,6` only. Plain no-`-gl` fail-closed validation passed in
-`final-nogl-failclosed-desktop.log` / `.ppm`: dumb backend, no virgl, no
+`t24-nogl-failclosed2.log` / `.ppm`: dumb backend, no virgl, no
 OpenGL-submit/page-flip markers, and visible 1280x800 desktop pixels. Forced
-readback/CPU-present fallback passed in `final-readback-virglcopy-pass.log` /
-`.ppm`, staying on `path_cpu_only` with `scanout_submits=0 scanout_rebinds=0`
-and tail-10 average `54.9/54.5`.
+readback/CPU-present fallback passed in `t24-readback-fallback.log` / `.ppm`,
+staying on `path_cpu_only` with `scanout_submits=0 scanout_rebinds=0` and
+tail-10 average `51.9/52.6`.
 
 #### Honesty gates (carry through every step)
 
@@ -537,44 +594,39 @@ fbstat ppm-current /current.ppm 0 0 1280 800
 
 ```
 You are continuing a single, well-defined task in the xv6-os repo at
-/home/es/xv6-os: maintain the WINDOWED virgl Wayland desktop FPS parity work on
-the DEFAULT -gl RUN by following Section V4 of GPU_REMAINING_GAPS.md. Tier 0,
-Tier 1 (V4.T1.1-T1.4), and Tier 2 (V4.T2.1-T2.3) are DONE and validated.
-Future work should start with regression triage or optional Tier 3, not by
-redoing the closed Tier 2 pipeline.
+/home/es/xv6-os. Section V4 of GPU_REMAINING_GAPS.md is complete and
+revalidated on 2026-06-04. Do not reopen V4 without a fresh default `-gl` run
+that contradicts the evidence below.
 
-Verified current status (2026-06-04):
-- The double-buffered page-flip swap and Tier 2 triple-buffer cycle are
-  IMPLEMENTED, WORK, and are DEFAULT-ON for the virgl `-gl` path. Default
-  validation `build-x86_64/virgl-bisect/final-default-completion.log` showed
-  `displayed_fps` tracking `app_loop_fps` with tail-20 average
-  `68.3/67.7`, max gap `7.5%`, and QEMU trace alternation
-  `page_flip_trace_matrix scanouts=8877 unique=4,5,6 ... status=PASS`.
-- V4.T2.2/T2.3 are complete after moving submit-fence waiting out of the
-  compose hot path and flushing compositor GL after scanout handoff. The same
-  default strict validation passed full-frame screenshot pixels
-  (`final-default-completion.ppm`,
-  `demo_bright=9873 demo_cyan=13645 demo_dark=197246 status=PASS`) with
-  no sub-fullscreen `SET_SCANOUT`.
-- Plain `QEMU_GPU=virtio-gpu` fail-closed validation passed in
-  `build-x86_64/virgl-bisect/final-nogl-failclosed-desktop.log` /
-  `.ppm`: no 3D capsets, dumb render node, virgl unavailable,
-  `linux-dmabuf disabled (no virgl)`, no `OPENGL_SUBMIT`, no page-flip logs,
-  no panic, and `nogl_screenshot_matrix ... status=PASS`.
-- The readback/CPU-present fallback lane still works when forced explicitly:
-  `build-x86_64/virgl-bisect/final-readback-virglcopy-pass.log` used
-  `wlcomp_gl_compose=0 wlcomp_virgl_fb=0 wlcomp_page_flip_present=0
-  wlcomp_virgl_fb_damage_flip=0 wlcomp_gl_submit_fence=0
-  wlcomp_gpu_virgl_copy=1`, stayed on `path_cpu_only` with
-  `scanout_submits=0 scanout_rebinds=0`, produced tail-10 average
-  `54.9/54.5`, and passed full-frame screenshot validation.
+Verified current status (2026-06-04, fresh default -gl run):
+- Default `-gl` validation passed in
+  `build-x86_64/virgl-bisect/t24-current-default.log`. Tail-20 averaged
+  `app_loop_fps=64.8 displayed_fps=64.0`; tail-30 averaged `64.8/64.3`; max
+  gap was `9.2%`.
+- The client surface stayed on the GL/dma-buf compose path:
+  `extensions_dma_buf=1`, `gl-compose dmabuf import ok ... source=client-fd`,
+  steady `path_gl_preflush`, `path_cpu_only=0`, `gl_bufs/frame=1`, and
+  `cpu_upload_avg_us` in the single/low-double digits. A few isolated
+  `path_cpu_only=1` one-second windows are clock/acquire/chrome ticks, not the
+  old per-frame client upload regression.
+- The page-flip swap and triple-buffer cycle are armed by default and rotate
+  correctly through resources `4,5,6`. That resource rotation is expected; it is
+  not evidence of two stale visible frames.
+- Pixels passed screenshot validation:
+  `build-x86_64/virgl-bisect/t24-current-default.ppm` / `.png` show the window
+  content flipped exactly once, overlay at top-left, sphere warm-top/cool-bottom,
+  and visible desktop chrome. No host-window resize occurred.
+- Fail-closed no-virgl validation passed in
+  `build-x86_64/virgl-bisect/t24-nogl-failclosed2.log` / `.ppm`: dumb backend,
+  no virgl, no OPENGL_SUBMIT, no page-flip markers, no panic, visible desktop.
+- Forced readback fallback passed in
+  `build-x86_64/virgl-bisect/t24-readback-fallback.log` / `.ppm`, staying on
+  `path_cpu_only` with `scanout_submits=0 scanout_rebinds=0` and tail-10
+  `app_loop_fps=51.9 displayed_fps=52.6`.
 
-THE TASK FOR FUTURE REGRESSION WORK: preserve the Tier 2 pipeline and rerun the
-strict screenshot validator before claiming success. Relevant files include
-`ports/wayland/src/wlcomp_gl_compose.inc`,
-`ports/wayland/src/wlcomp_buffer_shm.inc`,
-`ports/wayland/src/wlcomp_render_loop.inc`, `ports/wayland/src/wlcomp_fb.inc`,
-and the `-gl` defaults in `scripts/launch/run-qemu.sh`.
+Next work should move past V4, for example to deferred WebKit/Skia virgl work
+or optional Tier 3 unredirection. Keep the V4 validation commands and screenshot
+checks available for regression testing.
 
 Ground truth you must accept:
 - The host is NOT the limit. Alpine hits 141 FPS glxgears / 66-73 FPS
