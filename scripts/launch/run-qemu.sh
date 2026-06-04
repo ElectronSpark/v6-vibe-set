@@ -448,9 +448,38 @@ case "${ARCH}" in
                 fi
                 if [[ "${QEMU_GPU}" == *"-gl"* ]]; then
                         qemu_append_default_flag virtio_gpu_3d_scanout 1
+                        # Keep the VM desktop at the configured guest mode.
+                        # The full-screen pageflip-copy path is useful for
+                        # KMS experiments, but it can make the host window
+                        # appear to jump between a client-sized surface and
+                        # the desktop.  Prefer compositor-owned GPU composition
+                        # into the desktop framebuffer by default.
+                        qemu_append_default_flag virtio_gpu_disable_pageflip_copy 1
+                        qemu_append_default_flag virtio_gpu_present_no_drain 1
                         qemu_append_default_flag wlcomp_gpu_compose 1
+                        qemu_append_default_flag wlcomp_virgl_fb 1
+                        qemu_append_default_flag wlcomp_virgl_fb_buffers 3
+                        qemu_append_default_flag wlcomp_page_flip_present 1
+                        qemu_append_default_flag wlcomp_virgl_fb_damage_flip 1
                         qemu_append_default_flag wlcomp_gpu_virgl_copy 1
-                        qemu_append_default_flag virtio_gpu_present_copy_region 1
+                        # Submit compositor GL work cheaply enough for scanout
+                        # to see real client pixels, then release client buffers
+                        # from the present-ready queue instead of inline.
+                        qemu_append_default_flag wlcomp_gl_submit_fence 1
+                        qemu_append_default_flag wlcomp_gl_flush_after_scanout 1
+                        # Pipeline the steady-state scanout RESOURCE_FLUSH
+                        # instead of blocking the compositor present loop on
+                        # the host flush-ack (~15ms on the WSL D3D12 virgl
+                        # host).  This keeps the displayed FPS in step with the
+                        # application's render rate, matching the Alpine/Weston
+                        # pipelined-present behaviour.
+                        qemu_append_default_flag vgpu_async_flush 1
+                        qemu_append_default_flag vgpu_async_pf 1
+                        # Virgl/D3D12 can spend more than the historical
+                        # five-second controlq deadline compiling/validating
+                        # early GL work.  Do not abort the guest GL contexts
+                        # during that one-time warmup.
+                        qemu_append_default_flag virtio_gpu_irq_wait_ms 30000
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).
@@ -554,13 +583,13 @@ case "${ARCH}" in
                         bochs)
                                 ;;
                         virtio-gpu)
-                                GPU_ARGS=(-device "virtio-gpu-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                GPU_ARGS=(-device "virtio-gpu-pci,id=xv6gpu0,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-primary)
-                                GPU_ARGS=(-vga none -device "virtio-gpu-pci,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                GPU_ARGS=(-vga none -device "virtio-gpu-pci,id=xv6gpu0,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
                                 ;;
                         virtio-gpu-gl)
-                                GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
+                                GPU_ARGS=(-device "virtio-gpu-gl-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl-primary)
                                 # Historical two-adapter setup: Bochs remains
@@ -569,7 +598,7 @@ case "${ARCH}" in
                                 # fallback if the primary virtio-vga path
                                 # regresses, but it keeps display presentation
                                 # on the slower BGA path.
-                                GPU_ARGS=(-device "virtio-gpu-gl-pci,${gpu_gl_opts}")
+                                GPU_ARGS=(-device "virtio-gpu-gl-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-vga-gl-primary)
                                 # Experimental direct GL scanout path.  This
@@ -579,7 +608,7 @@ case "${ARCH}" in
                                 # indirection on native Linux, but xv6 needs
                                 # virtio-gpu scanout/fb support for the
                                 # desktop to start.
-                                GPU_ARGS=(-vga none -device "virtio-vga-gl,${gpu_gl_opts}")
+                                GPU_ARGS=(-vga none -device "virtio-vga-gl,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         none)
                                 GPU_ARGS=(-vga none)

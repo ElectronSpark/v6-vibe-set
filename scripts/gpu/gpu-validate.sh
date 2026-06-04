@@ -54,14 +54,14 @@ validate_launch_contract()
 {
     local dry
 
-    dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-gpu-gl \
+    dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-vga-gl-primary \
         QEMU_VIRTIO_GPU_XRES="${GPU_VALIDATE_XRES}" \
         QEMU_VIRTIO_GPU_YRES="${GPU_VALIDATE_YRES}" \
         QEMU_INPUT=virtio QEMU_NET=0 QEMU_APPEND="${APPEND_BASE}" \
         bash scripts/launch/run-qemu.sh x86_64 \
         "${BUILD_DIR}/kernel/build/kernel/xv6.bin" "${BUILD_DIR}/fs.img")"
     printf '%s\n' "${dry}" >>"${LOG}"
-    grep -q -- '-display gtk,gl=on' <<<"${dry}" ||
+    grep -Eq -- '-display gtk,gl=(on|es)' <<<"${dry}" ||
         fail "GTK/GL display contract missing"
     grep -q -- 'zoom-to-fit=off' <<<"${dry}" ||
         fail "GTK launch must not scale the guest canvas"
@@ -71,8 +71,10 @@ validate_launch_contract()
         fail "GTK menubar must stay hidden for deterministic geometry"
     grep -q -- 'show-tabs=off' <<<"${dry}" ||
         fail "GTK tabs must stay hidden for deterministic geometry"
-    grep -q -- "virtio-gpu-gl-pci,xres=${GPU_VALIDATE_XRES},yres=${GPU_VALIDATE_YRES}" <<<"${dry}" ||
-        fail "virtio-gpu-gl geometry contract missing"
+    grep -q -- '-vga none' <<<"${dry}" ||
+        fail "primary virtio-gpu launch must disable default VGA"
+    grep -q -- "virtio-vga-gl,xres=${GPU_VALIDATE_XRES},yres=${GPU_VALIDATE_YRES}" <<<"${dry}" ||
+        fail "virtio-vga-gl primary geometry contract missing"
     grep -q -- 'virtio-tablet-pci' <<<"${dry}" ||
         fail "virtio tablet input contract missing"
     grep -q -- "video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}" <<<"${dry}" ||
@@ -105,7 +107,7 @@ proc wait_prompt {} {
 }
 set env(DISPLAY_MODE) "${MODE}"
 set env(USE_KVM) "${USE_KVM:-1}"
-set env(QEMU_GPU) "${QEMU_GPU:-virtio-gpu-gl}"
+set env(QEMU_GPU) "${QEMU_GPU:-virtio-vga-gl-primary}"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
 set env(QEMU_VIRTIO_GPU_XRES) "${GPU_VALIDATE_XRES}"
@@ -140,16 +142,26 @@ EOF
         "Mesa Wayland EGL resize/swap pass"
     require_log '(__GPUV_MESAWLEGL6_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=6 status=0)' \
         "multi-client mesawlegl completion"
-    require_log '__GPUV_MESAGL_DONE_0__' \
+    require_log '(__GPUV_MESAGL_DONE_0__|mesaglsmoke\[[0-9]+\]: complete frames=6 status=0)' \
         "multi-client mesaglsmoke completion"
     require_log 'virgltest: ctx=[0-9]+ res=[0-9]+ map=[0-9]+ fence=[0-9]+ signaled=[0-9]+' \
         "virgl resource/submit/fence pass"
+    require_log 'virgltest: copy-region ok' \
+        "virgl resource copy pass"
+    require_log 'virgltest: copy-region-scanout ok' \
+        "virgl scanout-bind resource copy pass"
+    require_log 'virgltest: copy-region-clear-src ok' \
+        "virgl GPU-cleared source copy pass"
+    require_log 'virgltest: copy-region-clear-src-render-bind ok' \
+        "virgl render-target source copy pass"
     require_log 'virgltest: async-submit queued' \
         "virgl async submit/fence pass"
     require_log 'virgltest: invalid-submit rejected invalid ioctls' \
         "virgl invalid ioctl rejection pass"
     require_log 'virgltest: bad-submit isolated' \
         "virgl forced failure isolation pass"
+    require_log 'virgltest: dmabuf-resource-import ok .*imported_resource=[1-9][0-9]*' \
+        "virgl dmabuf import preserves resource identity"
     require_log '^backend virgl flags 0x[0-9a-fA-F]+ renderer ' \
         "KVM/virgl backend selected"
     require_log '^backend_opengl_submit 1[[:space:]]*$' \
@@ -206,7 +218,7 @@ set timeout 120
 match_max 2000000
 set env(DISPLAY_MODE) "gtk"
 set env(USE_KVM) "${USE_KVM:-1}"
-set env(QEMU_GPU) "virtio-gpu-gl"
+set env(QEMU_GPU) "virtio-vga-gl-primary"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES} gpu_validate_token=${GPU_VALIDATE_TOKEN}"

@@ -60,7 +60,7 @@ match_max 500000
 set env(BUILD_DIR) "${BUILD_DIR}"
 set env(DISPLAY_MODE) "gtk"
 set env(USE_KVM) "${USE_KVM:-1}"
-set env(QEMU_GPU) "virtio-gpu-gl"
+set env(QEMU_GPU) "virtio-vga-gl-primary"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
 set env(QEMU_VIRTIO_GPU_XRES) "${WEBKIT_VIRGL_XRES:-1024}"
