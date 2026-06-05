@@ -2,18 +2,39 @@
 
 Last updated: 2026-06-04
 
-> **Active focus (2026-06-04): V4 default `-gl` path revalidated and closed.**
-> A fresh default `-gl` run in
-> `build-x86_64/virgl-bisect/t24-current-default.log` did **not** reproduce the
-> earlier per-frame CPU-upload regression. The client imports as dma-buf
-> (`gl_bufs/frame=1`, `path_gl_preflush`, `path_cpu_only=0` on steady samples),
-> the window content is flipped once into the correct orientation, and
-> `displayed_fps` tracks `app_loop_fps` at sustained 60+ FPS. The scanout trace
-> intentionally rotates the three page-flip resources every frame; that resource
-> ring is expected and is not evidence of two stale visible frames. V4 Tier 0,
-> Tier 1, Tier 2, readback fallback, and no-virgl fail-closed validation are
-> complete. Everything outside V4 is either done (reference), optional Tier 3, or
-> deferred (WebKit B2).
+> **Active focus (2026-06-04): V4 GL-path STALL FIXED — the client now stays on
+> the GL/dma-buf path for the WHOLE demo across repeated runs. Remaining work is
+> FPS tuning (demo settles ~54 FPS, target band is 66-73).**
+> The earlier intermittent mid-session collapse to the CPU-fallback path is
+> gone after the `wlcomp_fb.inc` / `wlcomp_xdg.inc` /
+> `wlcomp_compositor_subsurface.inc` edits (fs.img 2026-06-04 19:50). Three
+> four consecutive default `-gl` runs each ran ~595-598 of the demo's 600 frames
+> on the GL path with NO mid-demo stall:
+> - run A: present windows `frames=211 gl_bufs_total=208 path_cpu_only=3`,
+>   `frames=279 gl_bufs_total=279 path_cpu_only=0`,
+>   `frames=113 gl_bufs_total=108 path_cpu_only=5` (≈595/600 GL).
+> - run B: `250 (248 GL)`, `337 (337 GL)`, `17 (11 GL)` (≈596 GL).
+> - run C: `272 (269 GL)`, `326 (324 GL)` (≈593 GL).
+> - run D (2026-06-04 21:39 fs.img, after wlcomp_gl_compose.inc 20:20 +
+>   wlcomp_render_loop.inc 20:42 + run-qemu.sh 21:33 edits): `211 (209 GL,
+>   path_cpu_only=2)`, `294 (294 GL, path_cpu_only=0, frame_avg_us=6727
+>   cpu_upload_avg_us=224 gl_compose_avg_us=3406 scanout_avg_us=3015)`,
+>   `100 (95 GL)` (≈598/600 GL); `complete frames=600 status=0 fps=53.9`, with a
+>   new `app_loop_fps=59.9 displayed_fps=58.6` sample (best so far).
+> Runs A-C completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
+> fps=54.5`. The big GL window in run A shows `frame_avg_us=6468`,
+> `cpu_upload_avg_us=234`, `gl_compose_avg_us=3274`, `path_gl_preflush=279` over
+> 279 consecutive frames — i.e. real zero-copy dma-buf compose, not CPU upload.
+> The `path_cpu_only=5` "tail" windows (`frames=5`, `gl_bufs_total=0`,
+> `gl_compose_avg_us~6`) all appear AFTER `surface destroy ... title='Mesa 3D
+> Demo'`; they are post-demo desktop-idle chrome repaints, NOT a regression.
+> The prior `kernel/kernel/virtio_gpu.c` change did not fix this — the
+> compositor edits did. REMAINING: the demo's own `fps=54.5` (and sparse
+> app_loop samples 47-58) is below the 66-73 Alpine band, so V4 acceptance #1
+> stays open as an FPS-tuning item (not a stall/path item). V4 Tier 0, Tier 1,
+> Tier 2 swap/triple-buffer/fence work, readback fallback, and no-virgl
+> fail-closed validation are otherwise complete. Everything outside V4 is either
+> done (reference), optional Tier 3, or deferred (WebKit B2).
 
 ## Mission
 
@@ -232,22 +253,53 @@ readiness without a fixed frame-number limit. The strict full-frame screenshot
 gate now passes with real demo pixels, closing the earlier blank/blue client
 body failure.
 
-**Superseded regression note (2026-06-04):** one fresh DEFAULT `-gl` run
-briefly reported `app_loop_fps ~31-37` / `displayed_fps ~30-37` with a
-per-frame CPU upload:
+**Stall FIXED (2026-06-04) — the GL path now holds for the whole demo.** The
+intermittent mid-session collapse described above was eliminated by the
+`wlcomp_fb.inc` / `wlcomp_xdg.inc` / `wlcomp_compositor_subsurface.inc` edits
+(fs.img 19:50). Three consecutive default `-gl` runs each kept ~595 of the
+demo's 600 frames on the GL path with NO mid-demo stall:
 
 ```
-frame_avg_us=19517  cpu_upload_avg_us=19480  cpu_rects/frame=1
-gl_bufs/frame=0  gl_compose_avg_us=9  scanout_avg_us=0
-path_gl_preflush=0  path_cpu_only=1  scanout_submits=1  scanout_rebinds=1
+# run A present windows (frames / gl_bufs_total / path_cpu_only):
+frames=211 gl_bufs_total=208 path_cpu_only=3
+frames=279 gl_bufs_total=279 path_cpu_only=0   # 279 consecutive GL frames
+frames=113 gl_bufs_total=108 path_cpu_only=5
+#   big GL window detail: frame_avg_us=6468 cpu_upload_avg_us=234
+#   gl_compose_avg_us=3274 path_gl_preflush=279  (real zero-copy compose)
+# run B: 250(248 GL), 337(337 GL), 17(11 GL)
+# run C: 272(269 GL), 326(324 GL)
+# all three: mesawlegl complete frames=600 status=0 elapsed=11.000s fps=54.5
 ```
 
-That did **not** reproduce on the later same-day validation
-`build-x86_64/virgl-bisect/t24-current-default.log`: the client imports as a
-dma-buf, steady samples show `path_gl_preflush`, `gl_bufs/frame=1`,
-`path_cpu_only=0`, and `cpu_upload_avg_us` in the single/low-double digits, and
-tail-20 averages `app_loop_fps=64.8 displayed_fps=64.0`. Treat the CPU-upload
-trace above as historical diagnostic context, not current V4 status.
+The `path_cpu_only=5` `frames=5` windows (`gl_bufs_total=0`,
+`gl_compose_avg_us~6`, `scanout=0`) all appear AFTER
+`surface destroy ... title='Mesa 3D Demo'` — they are post-demo desktop-idle
+chrome repaints, not the old per-frame client upload. The prior
+`kernel/kernel/virtio_gpu.c` change did not fix the stall; these compositor
+edits did. REMAINING for V4 acceptance #1: the demo's own `fps=54.5` is below
+the 66-73 Alpine band, so the open item is now **FPS tuning of the stable GL
+path**, not stall/fallback elimination.
+
+<details><summary>Historical: the intermittent-stall regression (now fixed)</summary>
+
+In an earlier `/tmp/xv6-debugcon.log` the run started healthy (13 windows
+`path_cpu_only=0`, `gl_bufs/frame=1`) then hit a single stall window and
+collapsed:
+
+```
+# stall window: client frame production blew out
+frames=5  frame_avg_us=109504  cpu_upload_avg_us=54633
+gl_compose_avg_us=48439  gl_bufs/frame=0  path_cpu_only=3
+damage stats ... avg_interval=226ms max_interval=314ms late25=3 late40=3
+# then ~88 degraded windows:
+frames=1  cpu_upload_avg_us 8000-28000  gl_bufs/frame=0  path_cpu_only=1
+```
+
+After the stall it settled at `app_loop_fps ~43-49` on the CPU-fallback path and
+never recovered. That run-to-run variability is what the compositor edits above
+resolved.
+
+</details>
 
 #### Completed prerequisites (do not redo)
 
@@ -431,43 +483,60 @@ inactive target, present flips it, and the resource ids alternate every frame so
     within ~10% on the steady samples and both are >=60 FPS.
   - **Passing criteria:** `app_loop_fps` and `displayed_fps` both ~60 and within
     ~10% of each other.
-- **Tier 2 gate:** **CLOSED (revalidated 2026-06-04).** The default `-gl` path
-  keeps the client on the dma-buf/GL compose path, rotates the three framebuffer
-  targets correctly, and sustains the target FPS band with displayed/app parity.
-  Current evidence:
-  `build-x86_64/virgl-bisect/t24-current-default.log` tail-20 averages
-  `app_loop_fps=64.8 displayed_fps=64.0` (min `53.4/53.3`, max gap `9.2%`),
-  with steady present-trace samples such as `path_gl_preflush=70
-  path_cpu_only=0 gl_bufs/frame=1 cpu_upload_avg_us=11`.
+- **Tier 2 gate:** **STALL STABILITY MET 2026-06-04 — FPS tuning remains.** The
+  default `-gl` run now keeps the client on the dma-buf/GL compose path for the
+  WHOLE demo across three consecutive runs (~595/600 frames GL, no mid-demo
+  fallback), rotating the three framebuffer targets correctly. The big GL window
+  shows real zero-copy compose (`frame_avg_us=6468 cpu_upload_avg_us=234
+  gl_compose_avg_us=3274 path_gl_preflush=279`). The remaining open item is FPS:
+  the demo settles `fps=54.5`, below the 66-73 band — see V4.T2.5.
 
-- [x] **V4.T2.4 Keep the client surface on the GL/dma-buf zero-copy compose
-  path (eliminate steady `path_cpu_only`).** **DONE (revalidated 2026-06-04).**
-  The previously observed `path_cpu_only=1` / `cpu_upload_avg_us~19480`
-  regression did not reproduce on the current image. The default `-gl` run
-  imports the Mesa-EGL client buffers as dma-bufs and composes them as GL
-  textures into the active virgl framebuffer target; occasional one-second
-  trace windows with `path_cpu_only=1` are isolated clock/acquire/chrome ticks,
-  not the per-frame client upload path, and remain near-zero CPU upload.
-  - Files: `ports/wayland/src/wlcomp_buffer_shm.inc` (client buffer import /
-    dma-buf vs shm copy decision), `ports/wayland/src/wlcomp_gl_compose.inc`
-    (texture import into the compose target), `ports/wayland/src/desktop.c`,
-    `ports/wayland/src/wlcomp_render_loop.inc` (path selection per frame), and
-    the `-gl` defaults in `scripts/launch/run-qemu.sh`
-    (`wlcomp_gl_flush_after_scanout`, `wlcomp_gl_submit_fence`).
-  - Evidence: `t24-current-default.log` reports `extensions_dma_buf=1`,
-    `wlcomp: gl-compose dmabuf import ok ... source=client-fd size=640x480`,
-    `wlcomp: gl-compose drew ... target_origin=top-left source_origin=top-left`,
-    tail-20 `app_loop_fps=64.8 displayed_fps=64.0`, and steady present-trace
-    samples with `path_cpu_only=0`, `gl_bufs/frame=1`, and
-    `cpu_upload_avg_us` in the single/low-double digits. Pixels:
-    `build-x86_64/virgl-bisect/t24-current-default.ppm` /
-    `.png` show the overlay at the top-left and the sphere oriented warm-top /
-    cool-bottom.
-  - **Passing criteria:** on the DEFAULT `-gl` run the steady-state present-trace
-    shows `path_cpu_only=0`, `gl_bufs/frame>=1`, and `cpu_upload_avg_us` drops
-    to near zero on animating frames; `displayed_fps` returns to sustained
-    >= 60 FPS tracking `app_loop_fps`; full-frame demo pixels still validate; the
-    path still fails closed (CPU fallback) when virgl/dma-buf is unavailable.
+- [x] **V4.T2.4 Stabilize the GL/dma-buf compose path — eliminate the
+  intermittent mid-session fallback to `path_cpu_only`.** **DONE (validated
+  2026-06-04, 3 consecutive runs).** Fixed by the `wlcomp_fb.inc` /
+  `wlcomp_xdg.inc` / `wlcomp_compositor_subsurface.inc` edits (fs.img 19:50).
+  The demo's ~600 frames now stay on the GL/dma-buf path with no mid-demo stall
+  or latch-to-CPU. The previously observed ~109ms `gl_compose` stall window and
+  the ~88-window `path_cpu_only=1` collapse do not recur.
+  - Evidence: three default `-gl` runs, present windows
+    `211(208 GL)/279(279 GL)/113(108 GL)`, `250(248)/337(337)/17(11)`, and
+    `272(269)/326(324)` — all ≈593-596 of ~600 frames on `path_gl_preflush`.
+    Each completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
+    fps=54.5`. The only `path_cpu_only` windows are the post-demo
+    `frames=5 gl_bufs_total=0` desktop-idle chrome repaints after
+    `surface destroy ... title='Mesa 3D Demo'`.
+  - Note: the prior `kernel/kernel/virtio_gpu.c` change did NOT fix this; the
+    compositor edits did. The kernel scanout/present was not the bottleneck.
+  - **Passing criteria (met):** repeated DEFAULT `-gl` runs stay on the GL path
+    for the whole demo — no multi-window mid-demo CPU-fallback phase; dma-buf
+    import holds; fails closed when virgl/dma-buf is genuinely unavailable.
+
+- [ ] **V4.T2.5 Raise the stable GL path from ~54 FPS to the 66-73 band.**
+  **LIVE GAP (2026-06-04).** With the stall fixed, the demo runs end-to-end on
+  the GL path but reports `fps=54.5` (run D `fps=53.9`; sparse app_loop samples
+  47-58, with a single 59.9 in run D), below the 66-73 Alpine simple-EGL band.
+  The big GL present window shows headroom (run A `frame_avg_us=6468`, run D
+  `frame_avg_us=6727` ≈ 150 FPS of pure present cost), so the cap is elsewhere
+  in the loop — likely pacing, callback dispatch, or a per-frame
+  serialization. NOTE the booted cmdline forces `wlcomp_frame_ms=1` and
+  `wlcomp_callback_poll_ms=1`; check whether these (or the `gl_submit_fence` /
+  `gl_flush_after_scanout` ordering) bound the rate. The 06-04 20:20/20:42/21:33
+  edits to `wlcomp_gl_compose.inc` / `wlcomp_render_loop.inc` / `run-qemu.sh`
+  produced run D's 59.9 peak but did not yet lift the steady demo `fps` above
+  the band floor.
+  - Files: `ports/wayland/src/wlcomp_render_loop.inc` (frame pacing,
+    callback dispatch, the `wlcomp_frame_ms` / `wlcomp_callback_poll_ms`
+    handling), `ports/wayland/src/wlcomp_gl_compose.inc` (per-frame fence/flush
+    ordering), and the `-gl` defaults in `scripts/launch/run-qemu.sh`.
+  - Investigate: (1) is the loop frame-paced to ~54 FPS by `wlcomp_frame_ms` /
+    callback poll cadence; (2) does `wlcomp_gl_submit_fence` /
+    `wlcomp_gl_flush_after_scanout` add a per-frame serialization that caps the
+    rate; (3) what the steady app_loop_fps actually is between the sparse
+    samples (raise `wlcomp_stats_ms` resolution or count present frames/sec).
+  - **Passing criteria:** DEFAULT `-gl` run sustains `displayed_fps` >= 60
+    (ideally in the 66-73 band) tracking `app_loop_fps` within ~10%, still
+    entirely on the GL path (no CPU-fallback phase), with full-frame demo pixels
+    validated and the window staying 1280x800.
 
 #### Tier 3 — windowed unredirection (optional; single full-window client).
 
@@ -488,12 +557,14 @@ inactive target, present flips it, and the resource ids alternate every frame so
 
 #### V4 global acceptance (the definition of done for this section)
 
-1. [x] `displayed_fps` within ~10% of `app_loop_fps`, sustained **>= 60 FPS**
-   post-warmup. Evidence:
-   `build-x86_64/virgl-bisect/t24-current-default.log` tail-20 averaged
-   `app_loop_fps=64.8 displayed_fps=64.0`, tail-30 averaged `64.8/64.3`, min
-   `53.4/53.3`, max gap `9.2%`; steady samples include `69.6/69.1`,
-   `71.5/69.8`, and `70.5/69.9`.
+1. [ ] **FPS TUNING OPEN 2026-06-04 (stall fixed).** `displayed_fps` within
+   ~10% of `app_loop_fps`, sustained **>= 60 FPS** post-warmup, **on every
+   default run**. The GL-path STALL is now fixed (V4.T2.4): three consecutive
+   default `-gl` runs kept ~595/600 demo frames on the GL path with no
+   mid-demo CPU fallback. BUT the stable GL path now settles at the demo's
+   `fps=54.5` (app_loop samples 47-58), below the 60+ / 66-73 target. Closing
+   this item now depends on V4.T2.5 (raise the stable GL path into the band),
+   not on stall elimination.
 2. [x] QEMU window stays 1280x800 throughout; no host-window resize at any
    point. Evidence: the same log's QEMU trace rejects non-desktop post-desktop
    `SET_SCANOUT`, and its page-flip matrix reports full-size scanouts cycling
@@ -594,39 +665,50 @@ fbstat ppm-current /current.ppm 0 0 1280 800
 
 ```
 You are continuing a single, well-defined task in the xv6-os repo at
-/home/es/xv6-os. Section V4 of GPU_REMAINING_GAPS.md is complete and
-revalidated on 2026-06-04. Do not reopen V4 without a fresh default `-gl` run
-that contradicts the evidence below.
+/home/es/xv6-os: make the WINDOWED virgl Wayland desktop hold sustained >= 60
+FPS (target band 66-73) on EVERY default `-gl` run by following Section V4 of
+GPU_REMAINING_GAPS.md. Tier 0, Tier 1, the Tier 2 swap/triple-buffer/fence work,
+AND V4.T2.4 (GL-path stall) are DONE. The LIVE GAP is V4.T2.5: the stable GL
+path settles at ~54 FPS, below the band. Start there. This is an FPS-tuning
+task, NOT a path/stall task.
 
-Verified current status (2026-06-04, fresh default -gl run):
-- Default `-gl` validation passed in
-  `build-x86_64/virgl-bisect/t24-current-default.log`. Tail-20 averaged
-  `app_loop_fps=64.8 displayed_fps=64.0`; tail-30 averaged `64.8/64.3`; max
-  gap was `9.2%`.
-- The client surface stayed on the GL/dma-buf compose path:
-  `extensions_dma_buf=1`, `gl-compose dmabuf import ok ... source=client-fd`,
-  steady `path_gl_preflush`, `path_cpu_only=0`, `gl_bufs/frame=1`, and
-  `cpu_upload_avg_us` in the single/low-double digits. A few isolated
-  `path_cpu_only=1` one-second windows are clock/acquire/chrome ticks, not the
-  old per-frame client upload regression.
-- The page-flip swap and triple-buffer cycle are armed by default and rotate
-  correctly through resources `4,5,6`. That resource rotation is expected; it is
-  not evidence of two stale visible frames.
-- Pixels passed screenshot validation:
-  `build-x86_64/virgl-bisect/t24-current-default.ppm` / `.png` show the window
-  content flipped exactly once, overlay at top-left, sphere warm-top/cool-bottom,
-  and visible desktop chrome. No host-window resize occurred.
-- Fail-closed no-virgl validation passed in
-  `build-x86_64/virgl-bisect/t24-nogl-failclosed2.log` / `.ppm`: dumb backend,
-  no virgl, no OPENGL_SUBMIT, no page-flip markers, no panic, visible desktop.
-- Forced readback fallback passed in
-  `build-x86_64/virgl-bisect/t24-readback-fallback.log` / `.ppm`, staying on
-  `path_cpu_only` with `scanout_submits=0 scanout_rebinds=0` and tail-10
-  `app_loop_fps=51.9 displayed_fps=52.6`.
+Verified current status (2026-06-04, three consecutive default -gl runs):
+- The GL-path STALL IS FIXED. After the `wlcomp_fb.inc` / `wlcomp_xdg.inc` /
+  `wlcomp_compositor_subsurface.inc` edits (fs.img 19:50), the demo's ~600
+  frames stay on the GL/dma-buf path with NO mid-demo fallback. Present windows
+  per run: A=211(208 GL)/279(279 GL)/113(108 GL), B=250(248)/337(337)/17(11),
+  C=272(269)/326(324) — ~593-596 of ~600 frames on `path_gl_preflush`. The big
+  GL window is real zero-copy compose: `frame_avg_us=6468 cpu_upload_avg_us=234
+  gl_compose_avg_us=3274 path_gl_preflush=279`.
+- All three completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
+  fps=54.5`. The ONLY `path_cpu_only` windows are post-demo `frames=5
+  gl_bufs_total=0` desktop-idle chrome repaints AFTER `surface destroy ...
+  title='Mesa 3D Demo'` — NOT a regression.
+- The page-flip swap + triple-buffer cycle stay armed and rotate resources
+  4,5,6; the swap is not the problem.
+- A `kernel/kernel/virtio_gpu.c` edit did NOT fix the old stall; the compositor
+  edits did. Do not chase the stall in the kernel.
 
-Next work should move past V4, for example to deferred WebKit/Skia virgl work
-or optional Tier 3 unredirection. Keep the V4 validation commands and screenshot
-checks available for regression testing.
+THE TASK (V4.T2.5): raise the STABLE GL path from ~54 FPS into the 66-73 band
+WITHOUT regressing the path (it must stay on GL/dma-buf the whole demo). The big
+GL present window shows headroom (`frame_avg_us=6468` ≈ 155 FPS of pure present
+cost), so the cap is elsewhere in the loop. Investigate: (1) is the loop
+frame-paced by the booted `wlcomp_frame_ms=1` / `wlcomp_callback_poll_ms=1`
+cadence; (2) does `wlcomp_gl_submit_fence` / `wlcomp_gl_flush_after_scanout` add
+a per-frame serialization that caps the rate; (3) measure the real steady
+app_loop_fps between the sparse stats samples (the demo's own fps=54.5 may
+undercount). Files: `ports/wayland/src/wlcomp_render_loop.inc` (pacing +
+callback dispatch + the frame_ms/poll handling), `ports/wayland/src/wlcomp_gl_compose.inc`
+(per-frame fence/flush ordering), and the `-gl` defaults in
+`scripts/launch/run-qemu.sh`.
+
+Reproduce/validate by running the default `-gl` trace launch SEVERAL times,
+confirming (a) NO multi-window mid-demo `path_cpu_only` phase (V4.T2.4 must stay
+fixed) and (b) the demo `fps` and steady app_loop_fps reach >= 60.
+
+Next work after V4.T2.5 closes: deferred WebKit/Skia virgl work or optional
+Tier 3 unredirection. Keep the V4 validation commands and screenshot checks for
+regression testing.
 
 Ground truth you must accept:
 - The host is NOT the limit. Alpine hits 141 FPS glxgears / 66-73 FPS

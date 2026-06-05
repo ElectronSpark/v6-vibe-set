@@ -381,13 +381,13 @@ case "${ARCH}" in
                                 ;;
                 esac
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
-                        # Keep plain GUI boots on the simple framebuffer path,
-                        # but WebKit acceleration needs the displayed fb0 to be
-                        # the virtio-gpu scanout.  Otherwise every video frame
-                        # lands in virgl and is then copied through Bochs VGA.
+                        # Prefer the accelerated virtio-gpu scanout for GTK GUI
+                        # launches whenever the host can provide a GL backend.
+                        # Fall back to Bochs on non-GL hosts so plain boots
+                        # remain fail-closed instead of forcing virgl/llvmpipe.
                         if [[ "${DISPLAY_MODE}" == "gtk" &&
-                              ( " ${QEMU_APPEND} " == *" webkit_accel=1 "* ||
-                                " ${QEMU_APPEND} " == *" glsmoke_accel=1 "* ) ]]; then
+                              ( "${HOST_GL_MODE}" == "wsl-d3d12" ||
+                                host_dri_available ) ]]; then
                                 QEMU_GPU="virtio-vga-gl-primary"
                         else
                                 QEMU_GPU="bochs"
@@ -462,11 +462,16 @@ case "${ARCH}" in
                         qemu_append_default_flag wlcomp_page_flip_present 1
                         qemu_append_default_flag wlcomp_virgl_fb_damage_flip 1
                         qemu_append_default_flag wlcomp_gpu_virgl_copy 1
-                        # Submit compositor GL work cheaply enough for scanout
-                        # to see real client pixels, then release client buffers
+                        # Keep Mesa's Wayland frame-callback throttle paced
+                        # just above immediate mode.  A 1ms compositor cadence
+                        # avoids the old ~20ms callback stalls without letting
+                        # the client outrun displayed presents.
+                        qemu_append_default_flag wlcomp_frame_ms 1
+                        qemu_append_default_flag wlcomp_callback_poll_ms 1
+                        # Submit compositor GL work before scanout so the host
+                        # sees real client pixels, then release client buffers
                         # from the present-ready queue instead of inline.
                         qemu_append_default_flag wlcomp_gl_submit_fence 1
-                        qemu_append_default_flag wlcomp_gl_flush_after_scanout 1
                         # Pipeline the steady-state scanout RESOURCE_FLUSH
                         # instead of blocking the compositor present loop on
                         # the host flush-ack (~15ms on the WSL D3D12 virgl
