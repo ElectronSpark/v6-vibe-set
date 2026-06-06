@@ -1,40 +1,42 @@
 # GPU Plan: virtio-gpu 3D (virgl) under KVM acceleration
 
-Last updated: 2026-06-04
+Last updated: 2026-06-07
 
-> **Active focus (2026-06-04): V4 GL-path STALL FIXED — the client now stays on
-> the GL/dma-buf path for the WHOLE demo across repeated runs. Remaining work is
-> FPS tuning (demo settles ~54 FPS, target band is 66-73).**
-> The earlier intermittent mid-session collapse to the CPU-fallback path is
-> gone after the `wlcomp_fb.inc` / `wlcomp_xdg.inc` /
-> `wlcomp_compositor_subsurface.inc` edits (fs.img 2026-06-04 19:50). Three
-> four consecutive default `-gl` runs each ran ~595-598 of the demo's 600 frames
-> on the GL path with NO mid-demo stall:
-> - run A: present windows `frames=211 gl_bufs_total=208 path_cpu_only=3`,
->   `frames=279 gl_bufs_total=279 path_cpu_only=0`,
->   `frames=113 gl_bufs_total=108 path_cpu_only=5` (≈595/600 GL).
-> - run B: `250 (248 GL)`, `337 (337 GL)`, `17 (11 GL)` (≈596 GL).
-> - run C: `272 (269 GL)`, `326 (324 GL)` (≈593 GL).
-> - run D (2026-06-04 21:39 fs.img, after wlcomp_gl_compose.inc 20:20 +
->   wlcomp_render_loop.inc 20:42 + run-qemu.sh 21:33 edits): `211 (209 GL,
->   path_cpu_only=2)`, `294 (294 GL, path_cpu_only=0, frame_avg_us=6727
->   cpu_upload_avg_us=224 gl_compose_avg_us=3406 scanout_avg_us=3015)`,
->   `100 (95 GL)` (≈598/600 GL); `complete frames=600 status=0 fps=53.9`, with a
->   new `app_loop_fps=59.9 displayed_fps=58.6` sample (best so far).
-> Runs A-C completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
-> fps=54.5`. The big GL window in run A shows `frame_avg_us=6468`,
-> `cpu_upload_avg_us=234`, `gl_compose_avg_us=3274`, `path_gl_preflush=279` over
-> 279 consecutive frames — i.e. real zero-copy dma-buf compose, not CPU upload.
-> The `path_cpu_only=5` "tail" windows (`frames=5`, `gl_bufs_total=0`,
-> `gl_compose_avg_us~6`) all appear AFTER `surface destroy ... title='Mesa 3D
-> Demo'`; they are post-demo desktop-idle chrome repaints, NOT a regression.
-> The prior `kernel/kernel/virtio_gpu.c` change did not fix this — the
-> compositor edits did. REMAINING: the demo's own `fps=54.5` (and sparse
-> app_loop samples 47-58) is below the 66-73 Alpine band, so V4 acceptance #1
-> stays open as an FPS-tuning item (not a stall/path item). V4 Tier 0, Tier 1,
-> Tier 2 swap/triple-buffer/fence work, readback fallback, and no-virgl
-> fail-closed validation are otherwise complete. Everything outside V4 is either
-> done (reference), optional Tier 3, or deferred (WebKit B2).
+> **Status:** V4 desktop-wide virgl acceleration is accepted by default-run
+> evidence. The GL/dma-buf zero-copy present path is stable for the 3D demo,
+> desktop chrome, generic Wayland EGL clients, and WebKit's smoke page. Tier P
+> is fully closed: P2 (scanout-rebind elimination) caches the full-screen
+> page-flip resource set in the kernel so steady flips skip `SET_SCANOUT`
+> (`scanout_rebinds=0`, `SET_SCANOUT=6` total per run), and P3/P4 are done.
+> A fresh canonical glsmoke trace (2026-06-06) sustains `displayed_fps`
+> tracking `app_loop_fps` at **80–96 FPS** on `path_cpu_only=0` with
+> `frame_avg_us≈2.4ms` — well above the old 66–73 target band. The pointer runs
+> on the virtio-gpu hardware cursor queue (Section V4.HC). Tier 0/1/2, the
+> readback fallback, and no-virgl fail-closed are complete. The Hyper-V
+> GPU-P/DXG ladder is done (Appendix A, reference only).
+>
+> **Open work:** optional Tier 3 windowed unredirection and V6 backend-flag
+> honesty guardrails. The WebKit video-load host `SUBMIT_3D` stall on WSL d3d12
+> virgl is narrowed and mitigated by defaulting WebKit's virgl winsys submits to
+> synchronous mode; an opt-out remains for host-stall diagnostics. Reconcile
+> the interactive `scripts/launch/launch-gui.sh` path with the trace harness:
+> the interactive launcher currently presents in `mode=bo-present`
+> (`displayed_fps=0.0` metric artifact, `path_cpu_only` high) instead of the
+> GL-scanout page-flip path the canonical trace flags engage. The fix that
+> mattered for the GL-path stall was in the compositor `.inc` files, not the
+> kernel.
+>
+> **2026-06-07 — two reported regressions closed/diagnosed.** (1) The *idle
+> 2-3s desktop-update* bug is **fixed** (Section V4.IDLE): when no toplevel is
+> mapped the bare desktop now promotes its 1 Hz clock present to a full-surface
+> flush, defeating the WSL d3d12 host's coalescing of sparse partial rects.
+> (2) A **real-network** WebKit YouTube run (`QEMU_NET=1` SLIRP, live
+> `youtube.com/watch`) proved the *YouTube "slowness"* is **not** the
+> compositor/present path and **not** a virgl host stall — the YouTube SPA
+> loads, renders real titles, and even autoplay-advances while the compositor
+> stays on the accelerated GL page-flip path at ~42-71 FPS with zero `0x207`
+> timeouts and zero faults. The gap is the **media-decode pipeline** (MSE/DASH
+> → GStreamer produced no decoded frames). Full evidence in Section V4.D3.
 
 ## Mission
 
@@ -80,40 +82,22 @@ What "genuinely accelerated" means here, stated so success cannot be faked:
 | Kernel virgl ioctl self-test | **Working under KVM/virgl** | `user/programs/virgltest` exercises submit / fence / negative paths |
 | Mesa `virgl` GL consumer in-guest | **Working under KVM/virgl** | `mesakmsgl` proves GBM/EGL/GLES on the `virgl` driver, with renderer `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` |
 | Backend flag `OPENGL_SUBMIT` | **Set when `virtio_gpu_has_virgl()`** | Honest for the KVM/virgl backend after direct KMS visible-render proof; does not grant native wlcomp desktop-present credit |
-| WebKit / Skia GL via virgl | **Blocked** | `SkiaGPUWorker` SIGSEGV at GL-context creation under `virtio-gpu-gl` (blocker B2) |
+| WebKit / Skia GL via virgl | **Working (smoke + video-load mitigation + forced-loss tolerance)** | Renders the accelerated smoke page on `path_cpu_only=0`; video playback reaches `event:ended`; failed-context recovery survives forced virgl context loss; WebKit uses synchronous virgl submits by default to avoid the WSL d3d12 host `SUBMIT_3D` wedge (see V4.D3) |
 | Host requirement | **Host GL / `/dev/dri` needed** | QEMU `virtio-gpu-gl`; without host GL, virgl falls back to software (`check-gui-accel.sh`) |
 
-2026-06-01 update: xv6 now proves both paths separately. The Mesa Wayland demo
-renders through `renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`
-on WSL/QEMU and shows the rendered sphere on screen, but wlcomp's windowed
-present path still cannot claim native GPU-present credit:
-`VIRGL_CCMD_RESOURCE_COPY_REGION`, `VIRGL_CCMD_BLIT`, and the
-`VIRGL_CCMD_COPY_TRANSFER3D` diagnostic are accepted by QEMU/virglrenderer but
-strict source/destination sample validation shows that they leave the
-destination black on this D3D12 virgl host. The kernel detects those failed
-GPU-side copies and falls back automatically to the readback/CPU-present lane
-instead of leaving a blank window. That fallback is correct and visible at about
-40-52 FPS.
+**KMS scanout note.** Full-screen `DRM_IOCTL_MODE_SETCRTC` / `MODE_PAGE_FLIP`
+framebuffers attempt `FB_GPU_BO_PRESENT_F_VIRGL_SCANOUT` first (full-resource
+`SET_SCANOUT` + `RESOURCE_FLUSH`, no CPU copy), falling back to readback/CPU on
+failure. This is limited to exact scanout-sized framebuffers — partial/window
+resources must not be bound directly (QEMU treats that as a scanout resize and
+the host window jumps). Validated by `mesakmsgl` +
+`scripts/gpu/virgl-kms-validate.sh` (KMS 1280x800, `DRM_CAP_PRIME` export,
+virgl NVIDIA renderer, FPS near refresh).
 
-The Alpine trace has been reproduced in the xv6 KMS path for the case it
-actually exercises: full-screen `DRM_IOCTL_MODE_SETCRTC` /
-`DRM_IOCTL_MODE_PAGE_FLIP` framebuffers now attempt `FB_GPU_BO_PRESENT_F_VIRGL_SCANOUT`
-first, which issues a full-resource `SET_SCANOUT` + `RESOURCE_FLUSH` instead of
-copying the framebuffer through CPU memory. The `mesakmsgl` probe mirrors
-Alpine's GBM/EGL/KMS shape and `scripts/gpu/virgl-kms-validate.sh` validates
-KMS mode 1280x800, `DRM_CAP_PRIME` export/import (`has_export=1`), the virgl
-NVIDIA renderer, and post-warmup FPS samples near the display refresh rate. If
-scanout bind fails, the existing readback/CPU-present fallback is retried. This
-is deliberately limited to exact scanout-sized KMS framebuffers; partial/window
-sized resources must not be bound directly because QEMU treats that as a
-scanout resize and the host window jumps. The remaining smoothness gap is a
-real virgl compositor pass for windowed surfaces, or converting wlcomp itself
-into a full-screen page-flippable virgl compositor.
-
-Honesty gate: **`FB_GPU_BACKEND_F_OPENGL_SUBMIT` is only credit for the
-KVM/virgl render backend.** It is justified by the direct KMS `mesakmsgl`
-lineage on this host, but it must not be treated as wlcomp/native-present
-credit. A host that silently falls back to software GL must not flip the flag.
+**Honesty gate.** `FB_GPU_BACKEND_F_OPENGL_SUBMIT` is credit only for the
+KVM/virgl render backend (justified by the direct KMS `mesakmsgl` lineage). It
+must not be treated as wlcomp/native-present credit, and a host that silently
+falls back to software GL must not flip the flag.
 
 ## Verified code state — virtio-gpu virgl (2026-05-30 source audit)
 
@@ -141,22 +125,15 @@ driver. Independent of a fresh runtime capture, the source establishes:
   `FB_GPU_BACKEND_F_VIRGL_OPENGL | FB_GPU_BACKEND_F_OPENGL_SUBMIT` (renderer
   string "OpenGL via virtio-gpu virgl").
 
-### Known blockers (must fix before claiming KVM acceleration)
+### Known blockers — both resolved
 
-- **B1 — virgl-ready boot race.** `fbdevinit` prints
-  `GPU: virgl unavailable; exposing dumb-buffer DRM only` because
-  `virtio_gpu_has_virgl()` is still false when the framebuffer initializes, yet
-  the capset becomes ready moments later (`virtio_gpu: virgl capset ready`). Any
-  consumer that latches the GPU backend flag once at init can miss virgl, or —
-  worse — see `OPENGL_SUBMIT` flip on after a software decision was already
-  taken. The backend capability must be evaluated **after** capset
-  initialization completes (or be re-queried lazily), not latched early.
-- **B2 — WebKit/Skia GL-context crash under `virtio-gpu-gl`.** With
-  `webkit_accel=1`, the WebProcess `SkiaGPUWorker` thread takes a fatal NULL
-  deref (`cr2=0x28`) at GL/EGL context creation and the page never loads;
-  software mode (`webkit_accel=0`) renders fine. Root-cause whether this is the
-  guest Mesa `virgl` EGL path, a missing host GL capability, or B1 handing
-  WebKit a half-ready backend.
+- **B1 — virgl-ready boot race (RESOLVED).** The GPU backend capability is now
+  evaluated after capset init (not latched early), so consumers no longer miss
+  virgl or see `OPENGL_SUBMIT` flip on after a software decision. See V1.
+- **B2 — WebKit/Skia GL-context crash (RESOLVED).** The old `SkiaGPUWorker`
+  NULL deref at GL/EGL context creation is fixed; `webkit_accel=1` now imports
+  WebKit client dma-bufs and renders the smoke page on `path_cpu_only=0`. The
+  separate WebKit video-load host stall is mitigated in V4.D3.
 
 ---
 
@@ -168,138 +145,39 @@ need runtime evidence from a KVM host with virgl, plus a passing fail-closed
 negative (a no-virgl image must fall back to the dumb buffer and never advertise
 `OPENGL_SUBMIT`).
 
-### Section V0. Host + launch prerequisites (KVM/QEMU)
+### Sections V0–V3 — prerequisites (DONE)
 
-- [ ] **V0.1 Confirm the host can run virgl.** Host has a usable GL/EGL stack and
-  a `/dev/dri` render node; QEMU launches with `virtio-gpu-gl` (or
-  `virtio-vga-gl-primary`). `scripts/check-gui-accel.sh` must not warn
-  "no host /dev/dri nodes are visible". Record the host GL renderer string.
-- [ ] **V0.2 Boot xv6 under KVM with virtio-gpu-gl** via `scripts/run-qemu.sh`
-  (`QEMU_GPU=virtio-gpu-gl`) and capture the serial log showing
-  `virtio_gpu: virgl capset ready id=.. version=.. size=..`. Fail-closed check:
-  a plain `virtio-gpu` (no `-gl`) launch must log `no virgl capset found` and
-  `GPU: virgl unavailable; exposing dumb-buffer DRM only`.
+- [x] **V0 Host + launch.** Host GL/EGL + `/dev/dri` render node; QEMU launches
+  `virtio-gpu-gl` and logs `virtio_gpu: virgl capset ready`. Plain `virtio-gpu`
+  (no `-gl`) fails closed (`no virgl capset found`, dumb-buffer DRM only).
+- [x] **V1 virgl-ready boot race (B1).** Backend capability evaluated after
+  capset init; `fbstat` reports the `virgl` backend with `OPENGL_SUBMIT`
+  consistently. Files: `kernel/kernel/dev/fb/fb_init_panic.c`,
+  `fb_drm_core_kms.c` `gpu_backend_fill`.
+- [x] **V2 Kernel virgl ioctl self-test.** `virgltest` passes sync + async
+  submit/fence and the two negative paths; a no-virgl image fails closed at the
+  open/capset gate.
+- [x] **V3 Mesa virgl GL consumer.** `gldemo`/`mesaglfeature` render offscreen
+  GLES via `GALLIUM_DRIVER=virgl` with host GL renderer string and two-size
+  readback verification.
 
-### Section V1. Fix the virgl-ready boot race (blocker B1)
+### Section V4. Desktop-wide GPU present (COMPLETE; optional Tier 3 parked)
 
-- [ ] **V1.1 Evaluate the GPU backend capability after capset init, not before.**
-  Files: `kernel/kernel/dev/fb/fb_init_panic.c` (the early
-  `virtio_gpu_has_virgl()` print) and `fb_drm_core_kms.c` `gpu_backend_fill`.
-  Ensure `virtio_gpu_query_capsets` has completed before any consumer latches
-  the backend flag, or make `gpu_backend_fill` reflect late capset readiness.
-  Evidence: a boot where the framebuffer no longer prints "virgl unavailable"
-  while virgl is in fact present, and `fbstat` reports the `virgl` backend with
-  `OPENGL_SUBMIT` consistently across reads.
+Goal achieved: every surface the user sees is **GPU-presented through the virgl
+GL/dma-buf compose path** — the 3D demo, the desktop chrome, and any Wayland
+client — at a sustained **60+ FPS** (host band 66-73 FPS), with no host-window
+resize, no blinking, correct Y orientation. Tier 0/1/2, Tier P, Tier D, V4.HC,
+readback fallback, and no-virgl fail-closed are validated. Tier 3 below is an
+optional future unredirection optimization, not part of V4 global acceptance.
 
-### Section V2. Kernel virgl ioctl self-test under KVM
-
-- [ ] **V2.1 Run `virgltest` in-guest on the virtio-gpu-gl host.** It must pass
-  sync submit, async submit + fence wait, and the two negative paths
-  (`FB_GPU_VIRGL_SUBMIT_FORCE_FAIL` rejected; a failed context rejects later
-  submits). Evidence: `virgltest: async-submit queued ... final_signaled` past
-  `initial_signaled` with a real host-advanced fence, plus the negative paths
-  failing closed. A no-virgl image must make `virgltest` fail closed at the open
-  or capset gate.
-
-### Section V3. Mesa virgl GL consumer in-guest
-
-- [ ] **V3.1 Offscreen GLES render via the Mesa `virgl` Gallium driver.** Run
-  `gldemo` (offscreen GLES2 FBO triangle + `glReadPixels`) with
-  `GALLIUM_DRIVER=virgl` and verify the pixels came from host GL, not softpipe.
-  Evidence: the renderer string identifies virgl / host GL and the readback
-  center/corner pixels match the drawn triangle. (`gldemo`/`mesaglfeature`
-  already pass on the DXG `d3d12` Gallium driver; this proves the `virgl` path.)
-- [ ] **V3.2 Broaden coverage** with `mesaglfeature` (shader compile/link, VBO,
-  texture sampling, FBO depth/stencil, blending, depth-test) on
-  `GALLIUM_DRIVER=virgl`, with two-size readback verification.
-
-### Section V4. Windowed GPU present + FPS maximization (ACTIVE)
-
-Goal of this section: make the **windowed** desktop present at a sustained
-**60+ FPS** (Alpine simple-EGL band is 66-73 FPS on this exact host), with the
-3D demo and the desktop chrome both GPU-presented, no host-window resize, no
-blinking, correct Y orientation.
-
-#### Why this is reachable (decisive evidence)
-
-The reference captures already in the tree settle that the **host is not the
-limit**: Alpine on this same WSL-d3d12 / RTX 4060 / single virtio-gpu control
-queue runs `glxgears` at **141 FPS** and `weston-simple-egl` at **66-73 FPS**
-(`build-x86_64/alpine-trace/...`). The gap is entirely the xv6 **guest
-compositor present architecture**.
-
-Two configurations measured 2026-06-03:
-
-- **Swap OFF (default path, `/tmp/xv6-gui-pipe.log`):** `app_loop_fps ~46-56`
-  but `displayed_fps stuck ~25-29` — display advances at **roughly half** the
-  app loop. Present breakdown: `cpu_upload ~0.2ms` (Tier 0 chrome-skip working,
-  `cpu_rects/frame=0`), `gl_compose ~6ms`, `scanout ~8ms`, `frame_avg ~14-16ms`.
-  The kernel collapses the scanout rects to a single `RESOURCE_FLUSH`, so the
-  host-submit count is already 1.
-- **Swap ON (`wlcomp_page_flip_present=1 wlcomp_virgl_fb_damage_flip=1
-  wlcomp_virgl_fb_buffers=1`, clean run `/tmp/xv6-flip-validate.log`):**
-  `displayed_fps` **tracks** `app_loop_fps` — ~48-54 on virgl/D3D12 and ~67-70
-  on LLVMpipe. The trace shows front/back resources alternating every frame
-  (`virgl framebuffer flip render_res=5 back_res=4` ... `render_res=4
-  back_res=5`), `double-buffer prep ready front_res=4 back_res=5`, and two
-  imported GL targets. **The ~2x gap is closed in this configuration.**
-
-**Status of the page-flip pipeline (verified at runtime 2026-06-03):** the
-double-buffered front/back swap is **implemented, works, and is default-on for
-the `-gl` path**; Tier 2 triple-buffering and compositor GL submit fences are
-also default-on for `-gl`. Compose routes into the inactive target, present
-flips it, resource ids cycle 4/5/6, and queued releases wait for GL/display
-readiness without a fixed frame-number limit. The strict full-frame screenshot
-gate now passes with real demo pixels, closing the earlier blank/blue client
-body failure.
-
-**Stall FIXED (2026-06-04) — the GL path now holds for the whole demo.** The
-intermittent mid-session collapse described above was eliminated by the
-`wlcomp_fb.inc` / `wlcomp_xdg.inc` / `wlcomp_compositor_subsurface.inc` edits
-(fs.img 19:50). Three consecutive default `-gl` runs each kept ~595 of the
-demo's 600 frames on the GL path with NO mid-demo stall:
-
-```
-# run A present windows (frames / gl_bufs_total / path_cpu_only):
-frames=211 gl_bufs_total=208 path_cpu_only=3
-frames=279 gl_bufs_total=279 path_cpu_only=0   # 279 consecutive GL frames
-frames=113 gl_bufs_total=108 path_cpu_only=5
-#   big GL window detail: frame_avg_us=6468 cpu_upload_avg_us=234
-#   gl_compose_avg_us=3274 path_gl_preflush=279  (real zero-copy compose)
-# run B: 250(248 GL), 337(337 GL), 17(11 GL)
-# run C: 272(269 GL), 326(324 GL)
-# all three: mesawlegl complete frames=600 status=0 elapsed=11.000s fps=54.5
-```
-
-The `path_cpu_only=5` `frames=5` windows (`gl_bufs_total=0`,
-`gl_compose_avg_us~6`, `scanout=0`) all appear AFTER
-`surface destroy ... title='Mesa 3D Demo'` — they are post-demo desktop-idle
-chrome repaints, not the old per-frame client upload. The prior
-`kernel/kernel/virtio_gpu.c` change did not fix the stall; these compositor
-edits did. REMAINING for V4 acceptance #1: the demo's own `fps=54.5` is below
-the 66-73 Alpine band, so the open item is now **FPS tuning of the stable GL
-path**, not stall/fallback elimination.
-
-<details><summary>Historical: the intermittent-stall regression (now fixed)</summary>
-
-In an earlier `/tmp/xv6-debugcon.log` the run started healthy (13 windows
-`path_cpu_only=0`, `gl_bufs/frame=1`) then hit a single stall window and
-collapsed:
-
-```
-# stall window: client frame production blew out
-frames=5  frame_avg_us=109504  cpu_upload_avg_us=54633
-gl_compose_avg_us=48439  gl_bufs/frame=0  path_cpu_only=3
-damage stats ... avg_interval=226ms max_interval=314ms late25=3 late40=3
-# then ~88 degraded windows:
-frames=1  cpu_upload_avg_us 8000-28000  gl_bufs/frame=0  path_cpu_only=1
-```
-
-After the stall it settled at `app_loop_fps ~43-49` on the CPU-fallback path and
-never recovered. That run-to-run variability is what the compositor edits above
-resolved.
-
-</details>
+**Why this is reachable:** the host is not the limit — Alpine on the same
+WSL-d3d12 / RTX 4060 / single virtio-gpu control queue runs `glxgears` at 141
+FPS and `weston-simple-egl` at 66-73 FPS (`build-x86_64/alpine-trace/...`). The
+gap was the xv6 guest compositor present architecture, now built: the
+double/triple-buffered page-flip swap is default-on for `-gl` (resource ids
+cycle 4/5/6, queued releases wait for GL/display readiness), the GL/dma-buf
+zero-copy compose is stable, and the mid-session `path_cpu_only` stall is fixed
+(compositor `.inc` edits, not the kernel).
 
 #### Completed prerequisites (do not redo)
 
@@ -326,217 +204,486 @@ resolved.
 - [x] **V4.T0.3 Async scanout flush taken on windowed frames.**
   `virtio_gpu_async_scanout_flush` default-on; no async-command-timeout panic.
 
-#### Step M (baseline) — record the starting numbers before changing anything
+#### Tier 0 — submit-count reduction (DONE)
 
-- **Do:** Build, run the trace launch (see Validation harness), capture
-  `app_loop_fps`, `displayed_fps`, and the `present-trace` line
-  (`frame_avg_us`, `gl_compose_avg_us`, `scanout_avg_us`,
-  `scanout_rects/frame`, `cpu_rects/frame`). Save them to a baseline note.
-- **Passing criteria:** A recorded baseline log exists with all of the above
-  numbers. No code changed yet. This is the reference every later step is
-  compared against.
+`cpu_rects/frame=0` on GPU-only frames, scanout coalesced to one host
+`RESOURCE_FLUSH`, async flush default-on. The Tier 0 FPS gate was not reached on
+its own (the structural limiter was the single shared scanout buffer); Tier 1
+fixed that. Do not redo Tier 0 work.
 
-#### Tier 0 — submit-count reduction (low risk). DONE (see Completed prerequisites).
+#### Tier 1 — double-buffered scanout + page-flip (DONE). ~28 → ~55-60 FPS.
 
-Tier 0 is complete: `cpu_rects/frame=0` on GPU-only frames, scanout coalesced to
-one host `RESOURCE_FLUSH`, async flush default-on. The Tier 0 FPS gate was *not*
-reached on its own (the old default path had `displayed_fps ~28`, about half of
-`app_loop_fps ~50`) because the structural limiter was the single shared
-scanout buffer. Tier 1 fixed that on the default `-gl` path. Do not re-do Tier
-0 work; continue with Tier 2.
+The page-flip front/back swap is implemented and default-on for `-gl`: compose
+routes into the inactive target, present flips it, and resource ids alternate
+every frame so `displayed_fps` tracks `app_loop_fps`. Files:
+`ports/wayland/src/wlcomp_fb.inc`, the `-gl` launch defaults in
+`scripts/launch/run-qemu.sh` / `scripts/launch/launch-gui.sh`.
 
-#### Tier 1 — double-buffered scanout + page-flip (DONE). Target: ~28 -> ~55-60 FPS.
+- [x] **V4.T1.1** Allocate two full-screen scanout BOs (front/back).
+- [x] **V4.T1.2** Compose into the back buffer; drop the redundant copy + flush.
+- [x] **V4.T1.3** Kernel page-flip alternates resources every frame
+  (`SET_SCANOUT` the newly-composed resource + async flush; fails closed when
+  virgl absent).
+- [x] **V4.T1.4** Buffer-swap default-on for `-gl`
+  (`wlcomp_page_flip_present=1 wlcomp_virgl_fb_damage_flip=1`), explicit opt-out
+  preserved, plain non-GL path untouched. Fail-closed rechecked (dumb backend,
+  no `OPENGL_SUBMIT`, no page-flip logs).
+- **Gate:** met on the default `-gl` run — `displayed_fps` tracks `app_loop_fps`
+  (the ~2x gap closed), pixels validated, window stays 1280x800.
 
-State (validated at runtime 2026-06-03): the page-flip front/back swap is
-**implemented, works, and is default-on for `-gl`**: compose routes into the
-inactive target, present flips it, and the resource ids alternate every frame so
-`displayed_fps` tracks `app_loop_fps`.
+#### Tier 2 — compositor pipelining (overlap render and present). Steady 60 FPS.
 
-- [x] **V4.T1.1 Allocate two full-screen scanout BOs (front/back).** Done:
-  `alloc_virgl_framebuffer_target("back", &g_fb_virgl_back_target)` allocates a
-  second full-screen virgl resource when `wlcomp_page_flip_present` (or
-  `wlcomp_virgl_fb_buffers>=2`) is set (`wlcomp_fb.inc` ~line 952). Logs
-  `double-buffer prep ready front_res=.. back_res=..` and
-  `using virgl framebuffer back target res=.. handle=..` (both confirmed in
-  `/tmp/xv6-flip-validate.log`).
-- [x] **V4.T1.2 Compose into the back buffer; drop the redundant copy + separate
-  flush.** **DONE (validated 2026-06-03).** With the swap enabled the compose +
-  chrome upload route into the inactive (back) target, present flips it, and the
-  front/back roles swap. Runtime evidence: two imported GL targets
-  (`gl-compose target import ok handle=2 tex=3 res=4` and `handle=4 tex=5
-  res=5`), `cpu_rects/frame=0` on animating frames, pixels correct, QEMU window
-  stays 1280x800. The redundant second full-screen pass is gone.
-- [x] **V4.T1.3 Make the kernel page-flip actually alternate resources.**
-  **DONE (validated 2026-06-03).** `present_virgl_scanout_rects()` passes the
-  back BO handle on alternating frames; the trace shows the flip alternating
-  between the two resources every frame:
-  `virgl framebuffer flip render_res=5 render_handle=4 back_res=4` then
-  `render_res=4 render_handle=2 back_res=5`, monotonic `count=..`. The kernel
-  `SET_SCANOUT`s the newly-composed resource and async-flushes (no re-upload).
-  The ioctl still fails closed when virgl is absent (the swap path only arms
-  when the back virgl target allocated).
-- [x] **V4.T1.4 Make the validated buffer-swap default-on for `-gl`.**
-  **DONE (validated 2026-06-03).** `scripts/launch/run-qemu.sh` now defaults
-  `wlcomp_page_flip_present=1` and `wlcomp_virgl_fb_damage_flip=1` for
-  `*-gl` launches via `qemu_append_default_flag`, preserving explicit opt-outs
-  (`wlcomp_page_flip_present=0 wlcomp_virgl_fb_damage_flip=0`) and leaving the
-  plain non-GL `virtio-gpu` path untouched.
-  - Files: `ports/wayland/src/wlcomp_fb.inc`
-    (`wlcomp_page_flip_present_enabled`, the buffer-count / damage-flip default
-    selection), the `-gl` launch defaults in `scripts/launch/run-qemu.sh` /
-    `scripts/launch/launch-gui.sh`, and any `QEMU_APPEND` default wiring.
-  - Evidence: `scripts/gpu/virgl-desktop-validate.sh` with no page-flip env
-    flags passed in
-    `build-x86_64/virgl-desktop-validate/xv6-virgl-desktop-default-pageflip180.log`.
-    Warm samples: `app_loop_fps=48.6 displayed_fps=49.2` and
-    `app_loop_fps=54.2 displayed_fps=51.6`; present trace has
-    `cpu_rects/frame=0`, `gl_compose_avg_us=93`, `scanout_avg_us=7699`,
-    `scanout_rects/frame=1`, `scanout_submits=52`, `scanout_rebinds=52`.
-    QEMU trace matrix:
-    `page_flip_trace_matrix scanouts=185 unique=3,4,5 sample=5,4,5,4,... flushes=186 status=PASS`;
-    full-size scanouts alternate resources 5/4 with no sub-fullscreen resize.
-    Screenshot validation passed:
-    `screenshot_matrix ... width=480 height=360 nonblack=172800 unique_sample=3962 status=PASS`.
-  - Fail-closed evidence: plain `QEMU_GPU=virtio-gpu` run
-    `build-x86_64/virgl-desktop-validate/xv6-nogl-failclosed.log` reports
-    `GPU: virgl unavailable; exposing dumb-buffer DRM only`, `backend dumb`,
-    `backend_opengl_submit 0`, `backend_virgl_opengl 0`,
-    `linux-dmabuf disabled (no virgl)`, and no page-flip/double-buffer logs.
-- **Tier 1 gate:** met on the **default** `-gl` run: `displayed_fps` tracks
-  `app_loop_fps` (the ~2x gap is closed), pixels validated, and the window
-  remains 1280x800. Continue to Tier 2 for sustained >=60 FPS.
+Files: `ports/wayland/src/wlcomp_fb.inc`, `wlcomp_render_loop.inc`,
+`wlcomp_gl_compose.inc`, `wlcomp_buffer_shm.inc`, and the `-gl` defaults in
+`scripts/launch/run-qemu.sh`. Acceptance requires real demo pixels inside the
+window in a full 1280x800 screenshot — not counters or the FPS text alone.
 
-#### Tier 2 — compositor pipelining (overlap render and present). Target: steady 60 FPS.
+- [x] **V4.T2.1** Triple-buffer (three scanout resources). `-gl` defaults
+  `wlcomp_virgl_fb_buffers=3`; `render/back/extra` rotate so the next compose
+  target is never the just-presented resource; all three EGL images cached.
+- [x] **V4.T2.2** Reap/page-flip asynchronously; never block the event loop.
+  `-gl` defaults `wlcomp_gl_submit_fence=1` (cheap GL fence/flush, not
+  `glFinish()`); buffer release is queued and reaped only after both the present
+  fence and the compositor GL sync are ready (no fixed frame-number delay).
+  Compositor GL pixels are visible without `wlcomp_gl_flush=1`.
+- [x] **V4.T2.3** Keep early frame-callback dispatch (`wlcomp_pipeline_callbacks`
+  default 1); `app_loop_fps` and `displayed_fps` both ~60-73 within ~10%.
+- [x] **V4.T2.4** Stabilize the GL/dma-buf compose path — eliminate the
+  intermittent mid-session fallback to `path_cpu_only`. Fixed by the
+  `wlcomp_fb.inc` / `wlcomp_xdg.inc` / `wlcomp_compositor_subsurface.inc` edits;
+  ~593-596/600 demo frames stay on the GL path. The only `path_cpu_only` windows
+  are post-demo desktop-idle chrome repaints (the V4.D1 gap). The prior kernel
+  `virtio_gpu.c` change did NOT fix this; the compositor edits did.
+- [x] **V4.T2.5** Raise the stable GL path into the 66-73 band consistently.
+  Done for the single windowed GL client: with the visible-safe ordering
+  (`wlcomp_frame_ms=1 wlcomp_callback_poll_ms=1 wlcomp_gl_submit_fence=1`),
+  repeated no-frame-limit default runs sustain ≥60 FPS after warmup on the GL
+  path, full-frame pixels validated, window 1280x800.
+- **Gate:** met — default `-gl` keeps the client on the dma-buf/GL compose path
+  for the whole demo and sustains ≥60 FPS; remaining latency cleanup is Tier P.
 
-- [x] **V4.T2.1 Triple-buffer (three scanout resources).**
-  **DONE (validated 2026-06-03).** `*-gl` launches now default
-  `wlcomp_virgl_fb_buffers=3`; `wlcomp_fb.inc` allocates a third scanout target
-  (`back2`) and rotates `render/back/extra` so the next compose target is not
-  the just-presented resource. `wlcomp_gl_compose.inc` caches all three target
-  EGL images/textures to avoid per-frame re-import.
-  - Files: `wlcomp_fb.inc`, `wlcomp_render_loop.inc`.
-  - Evidence: default `-gl` validation
-    `build-x86_64/virgl-desktop-validate/xv6-virgl-desktop-default-triple180.log`
-    passed with screenshot validation. Logs show
-    `triple-buffer prep ready front_res=4 back_res=5 extra_res=6` and the
-    cycle `render_res=5 -> 6 -> 4`. QEMU trace matrix:
-    `page_flip_trace_matrix scanouts=184 unique=4,5,6 sample=5,6,4,5,6,4,... status=PASS`;
-    counts are balanced (`4=61`, `5=61`, `6=61`) with no sub-fullscreen
-    `SET_SCANOUT`. Before T2.2/T2.3, warm FPS still settled around
-    `app_loop_fps=51.9-53.9` / `displayed_fps=53.6-53.9`, so the submit-fence
-    and async release work below was required for sustained >=60 FPS.
-- **Strict-pixel correction (2026-06-03):** after strengthening
-  `scripts/gpu/virgl-desktop-validate.sh` to capture the full 1280x800 frame
-  and require real demo pixels inside the window, the pre-T2.2 default `-gl`
-  run failed screenshot validation even though its counters could reach
-  `app_loop_fps=64.3 displayed_fps=64.0`, `62.4/60.3`, and `63.0/62.7`.
-  Evidence:
-  `build-x86_64/virgl-desktop-validate/xv6-virgl-desktop.log` ends with
-  `screenshot_matrix ... width=1280 height=800 ... demo_bright=75 demo_cyan=0
-  demo_dark=49 status=FAIL reason=missing_demo_pixels`. The screenshot shows
-  desktop chrome and the window frame/title, but the app body is blank/blue.
-  Diagnostic `wlcomp_gl_flush=1` makes screenshot validation pass
-  (`demo_bright=10079 demo_cyan=15122 demo_dark=197422 status=PASS`) but drops
-  the run below the acceptance band and has stability issues. Therefore T2.2 is
-  not only a scanout rebind/FPS problem; it must also make compositor GL work
-  visible to scanout without blocking the loop.
-- [x] **V4.T2.2 Reap/page-flip asynchronously; never block the event loop.**
-  **DONE (validated 2026-06-03).** The default `-gl` launch now enables
-  `wlcomp_gl_submit_fence=1`, so the compositor issues a cheap GL fence/flush
-  after drawing instead of `wlcomp_gl_flush=1`/`glFinish()` on every present.
-  Buffer release is queued and reaped only after both the display present fence
-  and the compositor GL sync are ready; the release path does **not** use a
-  fixed frame-number delay.
-  - Files: `ports/wayland/src/wlcomp_gl_compose.inc`,
-    `ports/wayland/src/wlcomp_buffer_shm.inc`,
-    `ports/wayland/src/wlcomp_render_loop.inc`, and the `-gl` default in
-    `scripts/launch/run-qemu.sh`.
-  - Evidence: default strict validation
-    `build-x86_64/virgl-desktop-validate/xv6-virgl-desktop-default-final.log`
-    passed. Present trace steady-state samples show no CPU uploads on animating
-    frames (`cpu_rects/frame=0`), cheap compositor submission
-    (`gl_compose_avg_us` commonly ~130-320us), async page-flip scanout
-    (`scanout_avg_us` commonly ~3.1-5.3ms), and queued release rather than
-    same-frame immediate release:
-    `release_gpu_immediate=0 release_queued=70 release_flushed=70
-    release_pending=2`. Full-frame screenshot validation passed without
-    `wlcomp_gl_flush=1`:
-    `screenshot_matrix ... width=1280 height=800 ... demo_bright=10035
-    demo_cyan=15170 demo_dark=197354 demo_colorful=32252 demo_unique=108
-    status=PASS`.
-  - QEMU trace evidence: `page_flip_trace_matrix scanouts=8471 unique=4,5,6
-    sample=5,6,4,5,6,4,5,6,... flushes=8472 flush_unique=3,4,5,6
-    status=PASS`; the validator rejected any post-desktop non-1280x800
-    `SET_SCANOUT`, so no host-window resize path was taken.
-  - **Passing criteria:** no synchronous fence wait in steady-state present-
-    trace; compositor GL pixels are visible in full-frame screenshots without
-    `wlcomp_gl_flush=1`; cursor stays responsive while the demo runs; the loop
-    blocks only when all three buffers are in flight.
-- [x] **V4.T2.3 Keep early frame-callback dispatch (already on).**
-  **DONE (validated 2026-06-03).**
-  - File: `wlcomp_render_loop.inc` (`wlcomp_pipeline_callbacks`, default 1).
-  - Evidence: default strict validation
-    `build-x86_64/virgl-desktop-validate/xv6-virgl-desktop-default-final.log`
-    shows sustained post-warmup samples in the target band, for example
-    `app_loop_fps=69.6 displayed_fps=66.9`, `71.2/71.6`, `68.9/67.9`,
-    `70.9/69.8`, `68.9/68.9`, and `70.5/73.0`. The displayed/app gap is
-    within ~10% on the steady samples and both are >=60 FPS.
-  - **Passing criteria:** `app_loop_fps` and `displayed_fps` both ~60 and within
-    ~10% of each other.
-- **Tier 2 gate:** **STALL STABILITY MET 2026-06-04 — FPS tuning remains.** The
-  default `-gl` run now keeps the client on the dma-buf/GL compose path for the
-  WHOLE demo across three consecutive runs (~595/600 frames GL, no mid-demo
-  fallback), rotating the three framebuffer targets correctly. The big GL window
-  shows real zero-copy compose (`frame_avg_us=6468 cpu_upload_avg_us=234
-  gl_compose_avg_us=3274 path_gl_preflush=279`). The remaining open item is FPS:
-  the demo settles `fps=54.5`, below the 66-73 band — see V4.T2.5.
+#### Tier P — latency & pipelining (squeeze every frame out of the GPU)
 
-- [x] **V4.T2.4 Stabilize the GL/dma-buf compose path — eliminate the
-  intermittent mid-session fallback to `path_cpu_only`.** **DONE (validated
-  2026-06-04, 3 consecutive runs).** Fixed by the `wlcomp_fb.inc` /
-  `wlcomp_xdg.inc` / `wlcomp_compositor_subsurface.inc` edits (fs.img 19:50).
-  The demo's ~600 frames now stay on the GL/dma-buf path with no mid-demo stall
-  or latch-to-CPU. The previously observed ~109ms `gl_compose` stall window and
-  the ~88-window `path_cpu_only=1` collapse do not recur.
-  - Evidence: three default `-gl` runs, present windows
-    `211(208 GL)/279(279 GL)/113(108 GL)`, `250(248)/337(337)/17(11)`, and
-    `272(269)/326(324)` — all ≈593-596 of ~600 frames on `path_gl_preflush`.
-    Each completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
-    fps=54.5`. The only `path_cpu_only` windows are the post-demo
-    `frames=5 gl_bufs_total=0` desktop-idle chrome repaints after
-    `surface destroy ... title='Mesa 3D Demo'`.
-  - Note: the prior `kernel/kernel/virtio_gpu.c` change did NOT fix this; the
-    compositor edits did. The kernel scanout/present was not the bottleneck.
-  - **Passing criteria (met):** repeated DEFAULT `-gl` runs stay on the GL path
-    for the whole demo — no multi-window mid-demo CPU-fallback phase; dma-buf
-    import holds; fails closed when virgl/dma-buf is genuinely unavailable.
+**Profiled bottleneck (corrected attribution).** Present work is cheap
+(`frame_avg_us≈6-8ms`) and neither the present fence nor the loop is the
+bottleneck: real `client_wait_avg_us` and `present_wait_avg_us` are tens of µs,
+`loop_wait_avg_us≈1.4-2.4ms`. The big residual is `outside_frame_avg_us≈5.7-8.2
+ms/frame` — the client rendering its next frame, which is genuine client work,
+not a removable compositor stall. P2 (per-frame scanout rebind) is now closed;
+the remaining compositor-side lever is P3 (compose/scanout overlap). P4 is
+idle-desktop only.
 
-- [ ] **V4.T2.5 Raise the stable GL path from ~54 FPS to the 66-73 band.**
-  **LIVE GAP (2026-06-04).** With the stall fixed, the demo runs end-to-end on
-  the GL path but reports `fps=54.5` (run D `fps=53.9`; sparse app_loop samples
-  47-58, with a single 59.9 in run D), below the 66-73 Alpine simple-EGL band.
-  The big GL present window shows headroom (run A `frame_avg_us=6468`, run D
-  `frame_avg_us=6727` ≈ 150 FPS of pure present cost), so the cap is elsewhere
-  in the loop — likely pacing, callback dispatch, or a per-frame
-  serialization. NOTE the booted cmdline forces `wlcomp_frame_ms=1` and
-  `wlcomp_callback_poll_ms=1`; check whether these (or the `gl_submit_fence` /
-  `gl_flush_after_scanout` ordering) bound the rate. The 06-04 20:20/20:42/21:33
-  edits to `wlcomp_gl_compose.inc` / `wlcomp_render_loop.inc` / `run-qemu.sh`
-  produced run D's 59.9 peak but did not yet lift the steady demo `fps` above
-  the band floor.
-  - Files: `ports/wayland/src/wlcomp_render_loop.inc` (frame pacing,
-    callback dispatch, the `wlcomp_frame_ms` / `wlcomp_callback_poll_ms`
-    handling), `ports/wayland/src/wlcomp_gl_compose.inc` (per-frame fence/flush
-    ordering), and the `-gl` defaults in `scripts/launch/run-qemu.sh`.
-  - Investigate: (1) is the loop frame-paced to ~54 FPS by `wlcomp_frame_ms` /
-    callback poll cadence; (2) does `wlcomp_gl_submit_fence` /
-    `wlcomp_gl_flush_after_scanout` add a per-frame serialization that caps the
-    rate; (3) what the steady app_loop_fps actually is between the sparse
-    samples (raise `wlcomp_stats_ms` resolution or count present frames/sec).
-  - **Passing criteria:** DEFAULT `-gl` run sustains `displayed_fps` >= 60
-    (ideally in the 66-73 band) tracking `app_loop_fps` within ~10%, still
-    entirely on the GL path (no CPU-fallback phase), with full-frame demo pixels
-    validated and the window staying 1280x800.
+| # | Bottleneck | Where |
+|---|---|---|
+| P2 | **DONE.** Full-screen page-flip resources are registered once in the kernel scanout set; steady flips skip `SET_SCANOUT` and only flush the selected resource. | `wlcomp_fb.inc:1211`/`:709`, `kernel/kernel/virtio_gpu.c` page-flip handler |
+| P3 | Compose (~2.4-3.7ms) and scanout (~2.5-3ms) run back-to-back instead of `max(compose, scanout)`. | `wlcomp_render_loop.inc:1624-1660`, `wlcomp_gl_compose.inc:1377-1400` |
+| P4 | Fixed 16ms `epoll_wait` idle fallback (small — only when no callback pending). Revisit for idle-desktop responsiveness, not demo FPS. | `wlcomp.c:524-537` |
+
+- [x] **V4.P0** Attribute the per-frame idle. The present-trace now prints
+  `loop_wait_avg_us` + `client_wait_avg_us`, which sum with the present phases
+  to ≈ the real frame period. Files: `wlcomp_render_loop.inc`, `wlcomp.c`.
+- [x] **V4.P1** Client pipeline bottleneck — CONCLUDED, no removable stall. The
+  corrected trace shows the present/display fence is not a wait point (real
+  `client_wait`/`present_wait` ~tens of µs); the ~5-8ms residual is
+  `outside_frame` (client render), not a compositor stall. Latch-release and
+  commit-time-callback experiments either crashed Mesa or made the app outrun
+  the single present lane (`displayed_fps` collapsed). Default stays
+  `wlcomp_pipeline_gpu_release=0`; callbacks go at latch, buffer release stays
+  fence-ordered. Files: `wlcomp_render_loop.inc:315/:1230/:1696`,
+  `wlcomp_buffer_shm.inc:288-357`.
+
+- [x] **V4.P2 Kill the per-frame scanout rebind.** Pre-register the 2-3 virgl
+  scanout resources with the kernel once, then make `FB_GPU_PAGE_FLIP` select
+  the target by index/handle WITHOUT re-issuing `SET_SCANOUT` every frame —
+  the kernel should only `SET_SCANOUT` when the resource set actually changes,
+  and otherwise do a flip + `RESOURCE_FLUSH`. Confirm in the QEMU virtio-gpu
+  trace that `SET_SCANOUT` count drops from per-frame to ~once.
+  - Files: `kernel/kernel/virtio_gpu.c` (page-flip handler / scanout bind
+    cache), `ports/wayland/src/wlcomp_fb.inc:1203-1290` (flip submit).
+  - **Passing criteria:** `scanout_rebinds` per second drops from ≈ FPS to
+    ~0 after warmup; `scanout_avg_us` falls; QEMU trace shows `SET_SCANOUT`
+    issued ~once not per-frame; pixels still PASS; no host-window resize.
+  - **Note:** the current virtio page-flip UAPI maps to a resource-id
+    `SET_SCANOUT` whenever the front resource changes; there is no spec-level
+    flip-index command in the existing guest path. Do not satisfy P2 by merely
+    suppressing `SET_SCANOUT` (risks stale/transparent scanout); reducing the
+    resource set is also not acceptable (`wlcomp_virgl_fb_buffers=2` and
+    `virtio_gpu_async_depth=32` both failed no-frame-limit validation).
+  - **Validation 2026-06-05:** `build-x86_64/virgl-p2-validate-final`
+    PASS. Kernel page-flip logs register resources 5/6/4 once (`flags=0x3`),
+    then steady flips return cached-only (`flags=0x2`); present trace after
+    warmup shows `scanout_rebinds=0`, `scanout_submits=533`,
+    `frame_avg_us=2982`, `gl_compose_avg_us=622`, `scanout_avg_us=1584`,
+    and `displayed_fps=106.3` with `app_loop_fps=98.8`. Screenshot matrix
+    PASS at 1280x800. QEMU trace matrix: `scanouts=4`, `flushes=998`,
+    `flush_unique=3,4,5,6`, `p2_cached=1`, status PASS; raw trace counts
+    `virtio_gpu_cmd_set_scanout=6`, `virtio_gpu_cmd_res_flush=999`,
+    `virtio_gpu_cmd_ctx_submit=1990`, `virtio_gpu_fence_ctrl=1990`,
+    `virtio_gpu_fence_resp=1990`.
+
+- [x] **V4.P3 Overlap compose(N+1) with scanout(N).** Issue the scanout/flush
+  of the just-composed target and let the next frame's `gl_compose` begin
+  without CPU-blocking on the previous scanout, using the submit fence for
+  ordering. Goal: frame cost trends from `compose+scanout` (6.1 ms) toward
+  `max(compose, scanout)` (~3.7 ms).
+  - Files: `ports/wayland/src/wlcomp_render_loop.inc:1624-1660` (phase
+    ordering), `ports/wayland/src/wlcomp_gl_compose.inc:1377-1400` (fence).
+  - **Passing criteria:** `frame_avg_us` drops measurably below
+    `gl_compose_avg_us + scanout_avg_us`; FPS up; pixels PASS; no fence
+    deadlock or dropped frame.
+  - **Rejected probes 2026-06-05:** `wlcomp_gl_release_fence=0` regressed
+    the desktop run (`scanout_avg_us≈12-13ms`, displayed FPS ~50) and failed
+    screenshot capture, so it is not a P3 path. A kernel experiment that put
+    async `RESOURCE_FLUSH` command storage inside the async ring slot instead
+    of page-allocated command buffers caused immediate virtio-gpu timeouts
+    (`SET_SCANOUT`, `RESOURCE_FLUSH`, then virgl context commands); reverted.
+    The restored allocation-backed async flush path re-passed
+    `scripts/gpu/gpu-validate.sh`.
+  - **Opt-in probe 2026-06-05 (not accepted):** `wlcomp_async_scanout_submit=1`
+    adds a compositor worker that issues `FB_GPU_PAGE_FLIP` off the main loop
+    and avoids reusing an in-flight scanout target. A 60-second run
+    (`build-x86_64/virgl-p3-async-overlap-seconds-60`) passed pixels +
+    screenshot and kept `SET_SCANOUT=6`, with warm `scanout_avg_us≈150-195`
+    and `scanout_rebinds=0`. However the stall moved into compositor GL submit
+    on the shared virtio-gpu control path (`gl_compose_avg_us≈5.2-6.5ms`) and
+    displayed FPS stayed ~52-55, below the Tier P gate. The worker remains
+    opt-in for diagnosis; default stays off until this improves FPS rather than
+    just relocating the wait.
+  - **Follow-up probe 2026-06-05 (rejected):** the same opt-in worker with
+    `VIRGL_DESKTOP_VALIDATE_SECONDS=40`, `wlcomp_async_scanout_submit=1`, and
+    `virtio_gpu_async_depth=8` reached high warm telemetry
+    (`displayed_fps≈73-77+`, `scanout_rebinds=0`, QEMU `SET_SCANOUT=6`) but
+    failed the required screenshot/pixel gate: `fbstat ppm-current` showed the
+    Mesa window chrome with a blank blue client area
+    (`missing_demo_pixels`). A diagnostic kernel experiment that republished
+    the cached page-flip resource as `g->scanout_resource` made even the
+    non-async control read back the blank target, so it was reverted. Final
+    default control after revert (`build-x86_64/virgl-default-after-p3-revert-seconds-20`)
+    PASSed pixels/screenshot with `SET_SCANOUT=6`; keep the worker default-off.
+  - **Seconds-based probe 2026-06-06 (default visible PASS, timing still
+    open):** the
+    validation harness now takes duration in seconds, not frame count
+    (`VIRGL_DESKTOP_VALIDATE_SECONDS=N` -> guest `glsmoke_seconds=N` ->
+    `mesawlegl --seconds=N`). With the early opt-in bundle
+    `VIRGL_DESKTOP_VALIDATE_SECONDS=40`,
+    `VIRGL_DESKTOP_VALIDATE_BUFFERS=3`,
+    `VIRGL_DESKTOP_VALIDATE_DAMAGE_FLIP=1`,
+    `VIRGL_DESKTOP_VALIDATE_PAGE_FLIP_PRESENT=1`, and
+    `VIRGL_DESKTOP_VALIDATE_EXTRA_APPEND='virtio_gpu_scanout_perf=1 wlcomp_async_scanout_submit=1 virtio_gpu_async_depth=8 wlcomp_gl_target_warmup_read=1'`,
+    `build-x86_64/virgl-p3-async-warmup-read-seconds-40c` PASSed pixels,
+    screenshot, trace shape, and completion (`frames=2771 seconds=40
+    elapsed=40.012 status=0`; QEMU `SET_SCANOUT=6`;
+    `page_flip_trace_matrix ... p2_cached=1 status=PASS`; warm
+    `displayed_fps≈69.7-76.2`). The first draw into each imported scanout
+    target does a 1x1 diagnostic warmup read when async scanout submit is
+    enabled.
+  - **Default ordering fix 2026-06-06:** `wlcomp_async_scanout_submit` now
+    defaults on only through the existing virgl page-flip/triple-buffer path,
+    and compositor GL draws are explicitly `glFlush()`ed after queuing the GL
+    release fence when the async scanout worker is active. This removes the
+    prior "fast trace but blank client" race where the worker could flush a
+    target before Mesa had submitted the compositor draw. Default seconds runs
+    now PASS visible gates without extra P3 append flags:
+    `build-x86_64/virgl-p3-default-async-flush-seconds-40` (`frames=3092
+    seconds=40 elapsed=40.008 status=0`, screenshot PASS, QEMU
+    `SET_SCANOUT=6 RESOURCE_FLUSH=3101 CTX_SUBMIT=6187`) and
+    `build-x86_64/virgl-p3-default-async-accounted-seconds-60` (`frames=4499
+    seconds=60 elapsed=60.010 status=0`, screenshot PASS, page-flip trace
+    PASS, QEMU `SET_SCANOUT=6 RESOURCE_FLUSH=4506 CTX_SUBMIT=8999`).
+    The present trace now includes the async worker's completed page-flip time
+    in `scanout_avg_us` and reports `async_scanout_avg_us` /
+    `async_scanout_completions`, so the P3 timing comparison is honest.
+    This run did not close P3: in the 60s default run, warm mean `frame_avg_us` was
+    ~3465us while mean `gl_compose_avg_us + scanout_avg_us` was ~3143us
+    (4/11 warm trace windows were below the sum). Pixels, screenshot, trace
+    shape, readback fallback, and `scripts/gpu/gpu-validate.sh` all PASS, but
+    the strict timing predicate is not consistently met yet.
+  - **Rejected chrome-default probe 2026-06-06:** making
+    `wlcomp_gpu_chrome_compose` source-default on did reduce CPU upload
+    accounting, but it made every animated frame compose both the full chrome
+    source and the GL client (`gl_bufs/frame=2`), pushed
+    `gl_compose_avg_us≈11-12ms`, dropped FPS to ~24-27, and failed the
+    screenshot/pixel gate with a blank blue client (`missing_demo_pixels`).
+    Reverted; do not use chrome source-default as the P3 fix.
+  - **Content-damage + rejected mirror/chrome probes 2026-06-06:** promoted
+    GPU buffer swaps were narrowed to damage only the client content rectangle
+    for normal commits and deferred acquire-ready promotion; first-map,
+    resize, non-GPU, D3D12, and staged-promotion paths keep the existing full
+    damage behavior. This preserves pixels and keeps the default seconds run
+    visible (`build-x86_64/virgl-p3-content-damage-accepted-seconds-60`:
+    `frames=4349 seconds=60 elapsed=60.001 status=0`, screenshot PASS,
+    page-flip trace PASS, QEMU `SET_SCANOUT=6 RESOURCE_FLUSH=4355`), but the
+    strict P3 timing predicate still did not hold on the repeat
+    (`warm frame_avg_us≈3536` vs
+    `gl_compose_avg_us + scanout_avg_us≈3262`, 4/10 warm windows below the
+    sum). Two follow-up attempts were rejected and reverted: a damage-only
+    chrome-compose default (`build-x86_64/virgl-p3-chrome-damage-only-seconds-40`)
+    drove `gl_bufs/frame` to ~5, FPS to ~10, and failed screenshot pixels
+    (`missing_demo_pixels`); lazy inactive-target CPU damage mirroring
+    (`build-x86_64/virgl-p3-lazy-mirror-seconds-40`) replayed chrome damage
+    every frame, pushed CPU upload to ~13-16ms/frame, and also failed the
+    pixel gate. Keep validation duration as seconds
+    (`VIRGL_DESKTOP_VALIDATE_SECONDS`), not frame-count parameters.
+  - **Accepted P3 fix 2026-06-06:** the remaining warm-frame CPU upload was not
+    the tiny taskbar clock alone; present trace rectangle accounting showed
+    repeated `FULL_DAMAGE_ACQUIRE` full-screen repairs that were then filtered
+    into a large bottom band (`cpu_max_rect=0,622-1280,800`). The final fix
+    keeps the async page-flip overlap path default-on, narrows GPU buffer
+    promotions to client-content damage, makes chrome-only clock damage
+    piggyback on the visible GPU compose batch, and prevents virgl async
+    page-flip / regular virgl GPU acquire waits from scheduling broad
+    `FULL_DAMAGE_ACQUIRE` repairs. The accepted 60-second run
+    (`build-x86_64/virgl-p3-accepted-seconds-60`) passed pixels, screenshot,
+    completion, and QEMU trace shape: `frames=5157 seconds=60 elapsed=60.010
+    status=0`, screenshot PASS at 1280x800, `page_flip_trace_matrix ... p2_cached=1
+    status=PASS`, raw trace `SET_SCANOUT=6 RESOURCE_FLUSH=5164
+    CTX_SUBMIT=10317`, and no crash/timeout markers. Warm present trace
+    satisfied the strict P3 predicate in every window: mean
+    `frame_avg_us≈2388` vs `gl_compose_avg_us + scanout_avg_us≈3355`
+    (10/10 warm windows below the sum), `path_cpu_only=0`, `FULL_DAMAGE_ACQUIRE=0`,
+    and only the expected five 2912-pixel clock rects per trace window remained.
+    Rechecks on the accepted image: readback fallback
+    `build-x86_64/virgl-p3-accepted-readback-seconds-20` PASS; default
+    `scripts/gpu/gpu-validate.sh` PASS after accepting the seconds-aware
+    `mesawlegl` completion format; plain no-`-gl` `virtio-gpu` fail-closed
+    (`build-x86_64/virgl-p3-accepted-nogl-failclosed-debugcon.log`) reported
+    `no 3D capsets advertised`, dumb backend, `backend_opengl_submit 0`,
+    `backend_opengl_submit_gate closed`, `backend_virgl_opengl 0`, and captured
+    `fbstat ppm-current` with no panic/timeout markers.
+
+- [x] **V4.P4 Tighten the main-loop idle. — DONE (2026-06-06).** Replace the
+  fixed 16 ms `epoll_wait` fallback with a deadline derived from the next
+  expected frame callback so a late client buffer never costs a full 16 ms
+  slot; keep a sane idle cap when truly nothing is animating (don't busy-spin).
+  - Files: `ports/wayland/src/wlcomp.c` main loop and
+    `ports/wayland/src/wlcomp_surface_state.inc` frame-callback deadline
+    helpers.
+  - Implementation: deadline wait is default-on, but still fail-closed via
+    `wlcomp_callback_deadline_wait=0` / `XV6_WLCOMP_CALLBACK_DEADLINE_WAIT=0`.
+    Pending callbacks use the next callback deadline; recently active surfaces
+    keep a short deadline window after callback delivery; truly idle/no mapped
+    toplevel state falls back to the existing 16 ms cap. The default due path
+    uses a 1 ms floor instead of a zero-timeout poll.
+  - Evidence: baseline deadline-off 20-second run
+    `build-x86_64/virgl-p4-baseline-deadline-off-seconds-20`
+    (`wlcomp_callback_deadline_wait=0`) completed with `frames=1479`,
+    `seconds=20`, `elapsed=20.004`, `status=0`; final default run
+    `build-x86_64/virgl-p4-default-deadline-final-seconds-20` completed
+    with `frames=1437`, `seconds=20`, `elapsed=20.008`, `status=0`,
+    screenshot PASS at 1280x800,
+    `page_flip_trace_matrix ... p2_cached=1 status=PASS`, and final FPS
+    samples `app_loop_fps=73.3 displayed_fps=76.3` then
+    `app_loop_fps=76.9 displayed_fps=76.1`.
+  - P4 trace delta: deadline-off steady windows had
+    `loop_wait_avg_us=1476/1430/1524` with `request_avg_ms=4..6` and occasional
+    `last_request_ms=16`; final default windows had
+    `loop_wait_avg_us=1348/1196/1100` with `request_avg_ms=1`,
+    `last_request_ms=1`, no zero-ms busy-poll shape, and no crash/bad markers.
+    QEMU trace shape stayed P2-cached: `SET_SCANOUT=6`,
+    `RESOURCE_FLUSH=1444`, `CTX_SUBMIT=2877`, `fence_ctrl=2877`,
+    `fence_resp=2877`.
+  - Fail-closed unchanged: plain `QEMU_GPU=virtio-gpu` no-`-gl` negative
+    artifacts `build-x86_64/virgl-p4-failclosed-no-gl-seconds-20` and
+    `build-x86_64/virgl-p4-failclosed-no-gl-screendump` show
+    `GPU: virgl unavailable; exposing dumb-buffer DRM only`,
+    `wlcomp: linux-dmabuf disabled (no virgl)`, `backend dumb`,
+    `backend_opengl_submit 0`, `backend_virgl_opengl 0`, no panic/timeout, and
+    a 1280x800 screendump with `nonblack=1024000 bright=47760 status=PASS`.
+
+  **Tier P gate:** met for P3 and P4 on accepted default `-gl` seconds runs.
+  The accepted runs sustain `displayed_fps` above 60 with `app_loop_fps`
+  tracking, entirely on `path_cpu_only=0` after warmup, pixels + screenshot
+  PASS, window 1280x800, cached scanout set (`SET_SCANOUT=6`), and fail-closed
+  + readback lanes re-verified.
+
+#### Tier D — desktop-wide GPU acceleration (the universal-present goal)
+
+This tier extends the proven single-client GL/dma-buf path to the *entire*
+desktop and *every* capable client. Do these after V4.T2.5 (or in parallel
+where independent); each must keep the fail-closed behavior intact.
+
+- [x] **V4.D1 GPU-compose the desktop chrome (panel, background, decorations).**
+  Route the compositor's own chrome/background surfaces through the same
+  `gl_compose` / dma-buf scanout path so idle and animating chrome frames report
+  `path_cpu_only=0` with `gl_bufs/frame>=1`. Landed behind
+  `wlcomp_gpu_chrome_compose` (default-on for virgl GL compose). Validated: a
+  no-3D idle run plus an internal window drag stay entirely on the GL path
+  (`cpu_rects_total=0`, `path_cpu_only=0`), screenshot 1280x800 with intact
+  desktop/taskbar. Files: `ports/wayland/src/wlcomp_gl_compose.inc`,
+  `wlcomp_fb.inc`, `wlcomp_render_loop.inc`.
+
+- [x] **V4.D2 Make zero-copy dma-buf import generic for ANY Wayland client.**
+  The dma-buf import engages for every client that exports a buffer, not just
+  `mesawlegl`. Validated: two simultaneous Mesa Wayland EGL clients each import
+  from `client-fd` and compose together (`gl_bufs/frame=3 path_cpu_only=0`),
+  visible side-by-side. A mixed GL + wl_shm frame is handled by prepending a
+  full chrome/base source only when GL and CPU/shm damage coexist (fixes a
+  black-frame bug), keeping the frame on the GL path; the shm window still
+  composites. Files: `ports/wayland/src/wlcomp_buffer_shm.inc`,
+  `wlcomp_gl_compose.inc`, the `linux-dmabuf` protocol glue.
+
+- [x] **V4.D3 Bring WebKit/Skia GL onto the accelerated path (was B2).** The
+  `SkiaGPUWorker` GL-context crash is fixed: MiniBrowser with `webkit_accel=1`
+  imports WebKit client dma-bufs (`source=client-fd`, ARGB8888) and stays on
+  `path_cpu_only=0` with no SIGSEGV. The compositor geometry gate allows
+  GL-composed buffers whose xdg geometry is smaller than the buffer, and the
+  virgl WebKit launch no longer forces WebKit's compositing mode. Software
+  fallback (`webkit_accel=0`) and plain virtio-gpu fail-closed both rechecked.
+  Files: `ports/wayland/src/desktop.c`, the Mesa virgl EGL port, the B1 gate.
+  - **Update — video-load stall + per-context isolation fix:** a heavy WebKit case
+    (`webkit_url=file:///share/webkit/video-direct.html`) exposed a *separate*
+    failure: ~19s into playback a host-side `SUBMIT_3D` (0x207) stalls ≥5s
+    (host virglrenderer/d3d12 batch under heavy video-decode GL load; the poll
+    fallback reads the used-ring directly, so it is a genuine host stall, not a
+    missed IRQ). The kernel's timeout handler then marked **all** in-use virgl
+    contexts failed (`virtio_gpu_mark_all_contexts_failed_locked`), poisoning the
+    compositor as well as WebKit, which cascaded into `virgl framebuffer upload
+    failed errno=22` and a WebKit `cr2=0x0` NULL-deref (SIGSEGV) that tore down
+    the whole desktop. Fix: `kernel/kernel/virtio_gpu.c` now fails **only the
+    offending context** at all three timeout sites (async-abort + the two sync
+    submit paths) via `virtio_gpu_lookup_context_locked(ctx_id)` +
+    `virtio_gpu_mark_context_failed_locked`; the over-broad
+    `mark_all_contexts_failed_locked` helper was removed. Re-validated on the
+    same video case: the stall still occurs (`async command 0x207 timed out
+    (ctx=5)`) but now **0** EINVAL cascade, **0** WebKit fatal faults, the
+    compositor keeps presenting, and the video keeps playing through the stall
+    (timeupdate 20.6 → 27.1s).
+  - **Update — forced failed-context tolerance validated 2026-06-06:** WebKit's
+    helper processes are wrapped by a host-glibc launcher in
+    `ports/wayland/src/webkit_preload_wrapper.c`, installed by
+    `ports/wayland/src/install_webkit_preload_wrappers.sh` as both the helper
+    executable and `.real` path. The wrapper links `libxv6memshim.so`, forces
+    the Skia NULL-member SIGSEGV recovery hook, and keeps a watchdog reinstalling
+    the handler because WebKit resets signal state after the shim constructor.
+    `ports/wayland/src/xv6memshim.c` now exports
+    `xv6_webkit_skia_signal_recovery_force_install()`.
+    Validation artifact
+    `build-x86_64/webkit-video-forced-loss-seconds-fixedcapture-062641`:
+    `webkit_virgl_force_context_loss_after_seconds=2`, video timeupdates
+    progressed 4.784 → 29.862 seconds, forced context 4/5 losses were logged,
+    the shim recovered two NULL-member lookups, guest `fbstat ppm-current`
+    captured a 1280x800 screenshot mid-playback, `webkit_screenshot_matrix`
+    PASSed (`nonblack=1023894 bright=416977 colorful=567108
+    unique_sample=1023`), and the run saw the video `event:ended` with no
+    panic, fatal fault, `SkiaGPUWorker`, WebProcess crash, or nonzero client-exit
+    marker. QEMU trace shape remained bounded: `SET_SCANOUT=6`,
+    `RESOURCE_FLUSH=205`, `CTX_SUBMIT=23`, `fence_ctrl=23`, `fence_resp=23`.
+    This validated the failure-tolerance lane; the default accelerated
+    video-load stall mitigation is recorded below.
+  - **Update — host stall narrowed 2026-06-06:** current-image diagnostic run
+    `build-x86_64/webkit-video-timeout-diag-default-065116` reproduced the
+    default accelerated video stall once, but the per-context failure path kept
+    the desktop and WebKit alive: video timeupdates progressed 5.155, 10.195,
+    13.769, then after the timeout jumped to 25.266 and reached `event:ended`
+    at 30.031 seconds with `__WEBKIT_API_SMOKE_DONE_0__`. The new timeout
+    diagnostic in `kernel/kernel/virtio_gpu.c` reported:
+    `type=0x207 ctx=5 owner_tgid=58 owner_id=16 fence=1154 desc=8
+    cmd_len=32 data_len=536 ndwords=134 age_us=6876714
+    head=0001001c,00000004,00010803,0000039d`. Decoding `0x0001001c` as the
+    virgl command header gives `cmd=28 len=1`, matching
+    `VIRGL_CCMD_CREATE_SUB_CTX` in Mesa's `virgl_protocol.h`. That points away
+    from a large decoded-frame upload and toward a small WebKit/Mesa virgl
+    context or sub-context management batch wedging virglrenderer/d3d12 under
+    video load. QEMU trace shape for the accelerated run stayed bounded:
+    `SET_SCANOUT=6`, `RESOURCE_FLUSH=712`, `CTX_SUBMIT=2092`,
+    `fence_ctrl=2092`, `fence_resp=2092`.
+  - **Update — WebKit video-load stall mitigated by default 2026-06-06:** a
+    richer timeout decoder in `kernel/kernel/virtio_gpu.c` showed the wedged
+    accelerated WebKit batch is small, not a decoded-frame bulk upload:
+    `type=0x207 ctx=5 owner_tgid=56 owner_id=16 fence=2243 desc=8
+    cmd_len=32 data_len=428 ndwords=107 age_us=6554764`, followed by
+    virgl stream entries `CREATE_SUB_CTX`, `DESTROY_OBJECT` /
+    `CREATE_OBJECT` for object 8 (`VIRGL_OBJECT_SURFACE`),
+    `SET_VERTEX_BUFFERS`, `TEXTURE_BARRIER`, `DRAW_VBO`,
+    `SET_CONSTANT_BUFFER`, `CLEAR`, and `RESOURCE_INLINE_WRITE`. That points to
+    a WSL d3d12 virglrenderer stall on a small WebKit accelerated-compositing
+    draw/update batch under video playback. Mesa's xv6 virgl winsys now accepts
+    `XV6_VIRGL_SYNC_SUBMIT=1`; `ports/wayland/src/desktop.c` defaults that env
+    for accelerated MiniBrowser while preserving
+    `webkit_virgl_sync_submit=0` as an opt-out A/B diagnostic knob. This keeps
+    the compositor and other virgl clients on the async fast path.
+    Validation after rebuilding `build-x86_64/fs.img`:
+    `build-x86_64/webkit-video-default-sync-submit-seconds-80-071847`
+    launched the 30.031-second video **without** passing
+    `webkit_virgl_sync_submit=1`, logged
+    `virgl-xv6: context 5 using synchronous submit`, captured
+    `/webkit-video-default-sync-submit.ppm` at playback time 18.693 seconds
+    (`fb_ppm_current ... screen=1280x800 scanout=1280x800`), reached
+    `event:ended` and `__WEBKIT_API_SMOKE_DONE_0__`, and exited with
+    `EXPECT_RESULT captured=1 ended=1 failed=0 saw_sync=1`. QEMU trace shape
+    stayed bounded and P2-cached:
+    `SET_SCANOUT=6`, `RESOURCE_FLUSH=647`, `CTX_SUBMIT=2206`,
+    `fence_ctrl=2206`, `fence_resp=2206`; the serial log had no timeout,
+    panic, fatal fault, WebProcess crash, SIGABRT, or nonzero client-exit
+    marker. The mid-playback screenshot shows the desktop and MiniBrowser at
+    1280x800 with a white WebKit content area while the title telemetry proves
+    video progression; do not use the visual content area alone as video-frame
+    proof.
+  - **Software comparator (diagnostic, not a pass gate):**
+    `build-x86_64/webkit-video-timeout-diag-software-seconds-80-065716`
+    launched the same 30.031 second video with `webkit_accel=0`. It reached
+    `event:ended` with no virtio timeout, no fatal fault, and WebKit logs showed
+    `driCreateNewScreen3 fd=-1 type=2` with `softpipe`. The QEMU trace had only
+    compositor traffic plus one context submit (`SET_SCANOUT=6`,
+    `RESOURCE_FLUSH=719`, `CTX_SUBMIT=1`, `fence_ctrl=1`, `fence_resp=1`).
+    The capture exited before `fbstat ppm-current` completed, so use this only
+    as root-cause narrowing evidence, not as a full pixels/screenshot pass.
+  - **Update — real-network live YouTube diagnosis 2026-06-07 (network now
+    on by default):** `scripts/launch/run-qemu.sh` defaults `QEMU_NET=1`
+    (user-mode SLIRP, hostfwd-capable; `QEMU_NET_BACKEND=tap` is the
+    SLIRP-bypass alternative). A live run with
+    `webkit_url=https://www.youtube.com/watch?v=jNQXAC9IVRw` (and **no**
+    `QEMU_NET=0`) was used to settle whether YouTube slowness lives in the
+    network fetch, the video decode, or the compositor present path. Results,
+    all from `/tmp/xv6-debugcon.log` (guest serial) and
+    `/tmp/xv6-audit-run.log` (launcher stdout):
+    - **Network is healthy.** `DHCP discovery... / DHCP lease acquired`,
+      `DNS from DHCP: 10.0.2.3`, `bound=1`; the WebKit launch correctly blocked
+      on `waiting for network before WebKit URL` and then loaded the live URL.
+    - **The live YouTube SPA loads, renders, and runs JS against real data.**
+      The WebKit probe title progressed `[Private] YouTube` →
+      `[Private] Me at the zoo - YouTube` (the requested video `jNQXAC9IVRw`)
+      → autoplay-advanced to `[Private] The Creepiest "Kids" Movies - YouTube`.
+      Real titles + autoplay-advance prove the network fetch + Kevlar SPA boot +
+      DOM/layout pipeline all work against live youtube.com.
+    - **The compositor present path is healthy and accelerated during
+      playback.** After a brief page-load warmup (3 stat windows of
+      `path_cpu_only=9/7`, `frame_avg_us≈125000–212000`, `scanout_rebinds`
+      settling 3→0), steady state holds the GL fast path for the rest of the
+      run: `path_gl_preflush=84–142` per 2 s window (≈42–71 FPS present),
+      `path_cpu_only=0`, `scanout_rebinds=0` throughout, `gl_compose_avg_us≈
+      8300–8660` (WebKit composite is heavier than the GL demo's ≈1200 but
+      bounded), `frame_avg_us≈10000–17000`. A few windows dip to ≈13–21 FPS
+      (`frame_avg_us` 53099/74381) on JS/network bursts and recover. **Zero**
+      `0x207` SUBMIT_3D timeouts, **zero** panics, **zero** WebProcess
+      crashes/SIGSEGV this run.
+    - **The video itself never decoded a frame.** `/tmp/gst-debug.log` was
+      **empty** (0 bytes); the serial log had only `waiting` media events with
+      **no** `timeupdate`/`playing`/`canplay` and **no** MSE/codec chatter
+      (`isTypeSupported`, `MediaSource`, `decodebin`, `vp9`/`av01`/`opus`) at
+      `GST_DEBUG=1`. The `<video>` element produced no decoded output; the
+      `[Private]` title prefix plus the autoplay-advance indicate the player
+      engaged autoplay but could not sustain real frames.
+    - **Conclusion (data-backed):** the perceived YouTube slowness is **not**
+      the compositor present path (proven accelerated, 42–71 FPS, no stall, no
+      crash) and **not** a virgl host `SUBMIT_3D` stall (zero `0x207` this
+      run). The remaining gap is the **media-decode pipeline**: YouTube serves
+      adaptive media over MSE/DASH (VP9/AV1 video + Opus audio) into GStreamer,
+      and this build decoded none of it. The most likely sub-causes, in order:
+      (a) **codec coverage** — the WebKit/GStreamer build only has software
+      AVC up to 720P (`WEBKIT_GST_MAX_AVC1_RESOLUTION=720P`, no hardware
+      decode), so `MediaSource.isTypeSupported` for the VP9/AV1 streams YouTube
+      offers likely returns false and the player can never select a decodable
+      representation; (b) **DASH segment fetch throughput** over single-threaded
+      SLIRP (prior measured TCP ceiling ≈50 Mbit/s, `tcpip_thread` CPU-bound)
+      keeps the media buffer starved even when a codec is selectable. The page
+      chrome composites smoothly while the video surface stays empty/buffering.
+    - **Next step for video (out of GPU-plan scope, recorded for the media
+      lane):** instrument `MediaSource.isTypeSupported`/`canPlayType` for the
+      exact YouTube MIME+codec strings, raise `GST_DEBUG` on the
+      decode categories, and confirm which GStreamer demux/decode elements are
+      registered. This is a media/codec gap, not a virtio-gpu present gap; the
+      accelerated present path needs no further change for it.
 
 #### Tier 3 — windowed unredirection (optional; single full-window client).
 
@@ -557,67 +704,38 @@ inactive target, present flips it, and the resource ids alternate every frame so
 
 #### V4 global acceptance (the definition of done for this section)
 
-1. [ ] **FPS TUNING OPEN 2026-06-04 (stall fixed).** `displayed_fps` within
-   ~10% of `app_loop_fps`, sustained **>= 60 FPS** post-warmup, **on every
-   default run**. The GL-path STALL is now fixed (V4.T2.4): three consecutive
-   default `-gl` runs kept ~595/600 demo frames on the GL path with no
-   mid-demo CPU fallback. BUT the stable GL path now settles at the demo's
-   `fps=54.5` (app_loop samples 47-58), below the 60+ / 66-73 target. Closing
-   this item now depends on V4.T2.5 (raise the stable GL path into the band),
-   not on stall elimination.
-2. [x] QEMU window stays 1280x800 throughout; no host-window resize at any
-   point. Evidence: the same log's QEMU trace rejects non-desktop post-desktop
-   `SET_SCANOUT`, and its page-flip matrix reports full-size scanouts cycling
-   resources 4/5/6:
-   `page_flip_trace_matrix scanouts=9290 unique=4,5,6 ... status=PASS`.
-3. [x] No panel/desktop blinking; correct Y orientation; demo **and** chrome
-   both visible and updating. Evidence: full-frame screenshot matrix in
-   `t24-current-default.log` passes with real centered demo pixels, nonblank
-   desktop/chrome pixels, and correct one-time Y orientation:
-   `demo_bright=9017 demo_cyan=13526 demo_dark=199128 demo_colorful=30381
-   demo_top_warm=14233 demo_bottom_warm=0 demo_top_cool=4486
-   demo_bottom_cool=18233 status=PASS`.
-4. [x] Pixels validated with `fbstat ppm-current` / `fbstat sample` — never FPS
-   text or counters alone. Evidence:
-   `build-x86_64/virgl-bisect/t24-current-default.ppm`,
-   `build-x86_64/virgl-bisect/t24-readback-fallback.ppm`, and
-   `build-x86_64/virgl-bisect/t24-nogl-failclosed2.ppm` all pass pixel
-   matrices and were visually inspected.
-5. [x] Every new path is flag-gated and fails closed when virgl is absent: a
-   plain `virtio-gpu` (no `-gl`) image falls back to the dumb buffer, never sets
-   `OPENGL_SUBMIT`, and does not panic. Evidence:
-   `build-x86_64/virgl-bisect/t24-nogl-failclosed2.log` reports
-   `virtio_gpu: no 3D capsets advertised`, `GPU: virgl unavailable; exposing
-   dumb-buffer DRM only`, `dumb render node`, `linux-dmabuf disabled (no
-   virgl)`, no `OPENGL_SUBMIT`, no page-flip logs, no panic, and
-   `nogl_screenshot_matrix bright=590654 dark=694 unique_sample=136
-   total=1024000 status=PASS`.
-6. [x] The existing readback/CPU-present fallback lane still works (no
-   regression). Evidence:
-   `build-x86_64/virgl-bisect/t24-readback-fallback.log` forced the
-   fallback shape explicitly with
-   `wlcomp_gl_compose=0 wlcomp_virgl_fb=0 wlcomp_page_flip_present=0
-   wlcomp_virgl_fb_damage_flip=0 wlcomp_gl_submit_fence=0
-   wlcomp_gpu_virgl_copy=1`; it stayed on `path_cpu_only` with
-   `scanout_submits=0 scanout_rebinds=0`, tail-10 average
-   `app_loop_fps=51.9 displayed_fps=52.6`, and the full-frame screenshot matrix
-   passed with `demo_bright=8337 demo_cyan=13971 demo_dark=198927
-   demo_colorful=29593 status=PASS`.
+All seven met (validated by trace + full-frame pixels + screenshot, never
+counters alone):
 
-**Revalidated 2026-06-04 after the plan was reopened.** Strict default `-gl`
-validation passed in `build-x86_64/virgl-bisect/t24-current-default.log`:
-tail-20 averaged `app_loop_fps=64.8 displayed_fps=64.0`, full-frame pixels
-passed (`t24-current-default.ppm`, `demo_bright=9017 demo_cyan=13526
-status=PASS`), and QEMU trace page-flip validation cycled full-size resources
-`4,5,6` only. Plain no-`-gl` fail-closed validation passed in
-`t24-nogl-failclosed2.log` / `.ppm`: dumb backend, no virgl, no
-OpenGL-submit/page-flip markers, and visible 1280x800 desktop pixels. Forced
-readback/CPU-present fallback passed in `t24-readback-fallback.log` / `.ppm`,
-staying on `path_cpu_only` with `scanout_submits=0 scanout_rebinds=0` and
-tail-10 average `51.9/52.6`.
+1. [x] **FPS** — `displayed_fps` tracks `app_loop_fps`, sustained ≥60 FPS
+   post-warmup on repeated default `-gl` no-frame-limit runs, all on
+   `path_cpu_only=0`.
+2. [x] **Desktop-wide** — with no 3D client, desktop chrome presents on
+   `path_cpu_only=0` (D1); two simultaneous GL clients import via the generic
+   `client-fd` dma-buf path (D2); mixed GL + wl_shm frames stay on the GL path
+   with a chrome/base source; WebKit renders the smoke page accelerated (D3).
+3. [x] **No host-window resize** — window stays 1280x800; QEMU trace rejects
+   post-desktop non-1280x800 `SET_SCANOUT`; page-flip cycles resources 4/5/6.
+4. [x] **Correct output** — no panel/desktop blinking, Y-flip applied once, demo
+   and chrome both visible and updating (screenshot matrix PASS).
+5. [x] **Pixels validated** with `fbstat ppm-current` / `fbstat sample` and
+   visual inspection — never FPS text alone.
+6. [x] **Fail-closed** — plain `virtio-gpu` (no `-gl`) falls back to the dumb
+   buffer, never sets `OPENGL_SUBMIT`, never panics (`no 3D capsets advertised`,
+   `linux-dmabuf disabled (no virgl)`).
+7. [x] **Readback fallback** — the forced CPU/readback lane still works
+   (`path_cpu_only`, `scanout_submits=0`, low/mid-50 FPS), no regression.
 
 #### Honesty gates (carry through every step)
 
+- **Paths are workspace-relative.** The workspace root is the `xv6-os` folder
+  (this file is at its top level). Reference all source/build files relative to
+  that root, e.g. `ports/wayland/src/wlcomp.c`, `kernel/kernel/virtio_gpu.c`,
+  `build-x86_64/fs.img` — not absolute `/home/es/xv6-os/...` paths. The only
+  absolute paths that belong here are transient runtime artifacts outside the
+  repo (`/tmp/xv6-debugcon.log`) and the memory notes, which are read through
+  the memory tool at its scope paths `/memories/repo/...` and
+  `/memories/session/...` (a memory-tool scope, not files in the workspace).
 - Never claim success from counters or the on-screen FPS number alone — verify
   destination pixels.
 - Never resize the display mode for a sub-fullscreen client.
@@ -634,10 +752,11 @@ cmake --build build-x86_64/ports --target port-wayland -j"$(nproc)" \
   && scripts/image/make-rootfs.sh build-x86_64/sysroot build-x86_64/fs.img 2304
 ```
 
-Run with present trace (serial -> log; runs in background):
+Run with present trace (serial -> log; runs in background). Run all commands
+from the workspace root (the `xv6-os` folder):
 
 ```sh
-cd /home/es/xv6-os && rm -f /tmp/xv6-gui-pipe.log && \
+rm -f /tmp/xv6-gui-pipe.log && \
 DISPLAY_MODE=gtk QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=0 \
 QEMU_REQUIRE_KVM=0 QEMU_APPEND='root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 \
 glsmoke_demo=1 video=1280x800 wlcomp_gpu_compose=1 \
@@ -653,6 +772,23 @@ Read FPS + present breakdown:
 grep -aE 'app_loop_fps|present-trace' /tmp/xv6-debugcon.log | tail -12
 ```
 
+Duration-bounded automated desktop runs should use seconds, not a frame-count
+parameter:
+
+```sh
+VIRGL_DESKTOP_VALIDATE_SECONDS=60 bash scripts/gpu/virgl-desktop-validate.sh
+```
+
+This maps to guest `glsmoke_seconds=N` and launches the demo as
+`mesawlegl --seconds=N`; omitting it keeps the normal no-limit/default run.
+The accepted current-image recheck
+`build-x86_64/virgl-seconds-current-20s-capturefix` completed
+`mesawlegl --seconds=20` (`frames=1544 seconds=20 elapsed=20.007 status=0`),
+PASSed screenshot pixels at 1280x800, and kept the P2 trace shape
+(`SET_SCANOUT=6`, `RESOURCE_FLUSH=1549`, `CTX_SUBMIT=3090`,
+`page_flip_trace_matrix ... p2_cached=1 status=PASS`). Do not add or rely on
+frame-count input parameters for GPU validation clients.
+
 Validate pixels (in guest) and fail-closed (host):
 
 ```sh
@@ -661,121 +797,177 @@ fbstat ppm-current /current.ppm 0 0 1280 800
 # shows dumb-buffer fallback, no OPENGL_SUBMIT, no panic, and capture pixels.
 ```
 
-#### Handover prompt (paste verbatim to the next agent)
+### Section V4.HC. Hardware cursor — Alpine-style virtio-gpu cursor queue (DONE 2026-06-05)
 
-```
-You are continuing a single, well-defined task in the xv6-os repo at
-/home/es/xv6-os: make the WINDOWED virgl Wayland desktop hold sustained >= 60
-FPS (target band 66-73) on EVERY default `-gl` run by following Section V4 of
-GPU_REMAINING_GAPS.md. Tier 0, Tier 1, the Tier 2 swap/triple-buffer/fence work,
-AND V4.T2.4 (GL-path stall) are DONE. The LIVE GAP is V4.T2.5: the stable GL
-path settles at ~54 FPS, below the band. Start there. This is an FPS-tuning
-task, NOT a path/stall task.
+Goal (the two reported symptoms, verbatim): *"Cursor movement is not responsive
+enough and not smooth. Also, when running 3D demo, moving cursor disturbs the
+demo too much."* Both are now fixed by moving the pointer onto the **virtio-gpu
+hardware cursor plane** (the dedicated cursor virtqueue), exactly as Alpine /
+upstream Linux do — instead of drawing the arrow as a topmost CPU layer.
 
-Verified current status (2026-06-04, three consecutive default -gl runs):
-- The GL-path STALL IS FIXED. After the `wlcomp_fb.inc` / `wlcomp_xdg.inc` /
-  `wlcomp_compositor_subsurface.inc` edits (fs.img 19:50), the demo's ~600
-  frames stay on the GL/dma-buf path with NO mid-demo fallback. Present windows
-  per run: A=211(208 GL)/279(279 GL)/113(108 GL), B=250(248)/337(337)/17(11),
-  C=272(269)/326(324) — ~593-596 of ~600 frames on `path_gl_preflush`. The big
-  GL window is real zero-copy compose: `frame_avg_us=6468 cpu_upload_avg_us=234
-  gl_compose_avg_us=3274 path_gl_preflush=279`.
-- All three completed `mesawlegl complete frames=600 status=0 elapsed=11.000s
-  fps=54.5`. The ONLY `path_cpu_only` windows are post-demo `frames=5
-  gl_bufs_total=0` desktop-idle chrome repaints AFTER `surface destroy ...
-  title='Mesa 3D Demo'` — NOT a regression.
-- The page-flip swap + triple-buffer cycle stay armed and rotate resources
-  4,5,6; the swap is not the problem.
-- A `kernel/kernel/virtio_gpu.c` edit did NOT fix the old stall; the compositor
-  edits did. Do not chase the stall in the kernel.
+#### Root cause
 
-THE TASK (V4.T2.5): raise the STABLE GL path from ~54 FPS into the 66-73 band
-WITHOUT regressing the path (it must stay on GL/dma-buf the whole demo). The big
-GL present window shows headroom (`frame_avg_us=6468` ≈ 155 FPS of pure present
-cost), so the cap is elsewhere in the loop. Investigate: (1) is the loop
-frame-paced by the booted `wlcomp_frame_ms=1` / `wlcomp_callback_poll_ms=1`
-cadence; (2) does `wlcomp_gl_submit_fence` / `wlcomp_gl_flush_after_scanout` add
-a per-frame serialization that caps the rate; (3) measure the real steady
-app_loop_fps between the sparse stats samples (the demo's own fps=54.5 may
-undercount). Files: `ports/wayland/src/wlcomp_render_loop.inc` (pacing +
-callback dispatch + the frame_ms/poll handling), `ports/wayland/src/wlcomp_gl_compose.inc`
-(per-frame fence/flush ordering), and the `-gl` defaults in
-`scripts/launch/run-qemu.sh`.
+The software arrow was the top CPU compose layer. `wlcomp_render_loop.inc:1742`
+gates the GPU chrome-compose path on `!cursor_damage_frame`, so **every
+cursor-move frame skipped GPU compose** and fell back to a CPU
+`TRANSFER_TO_HOST_2D` on the single virtio-gpu *control* queue — the same queue
+the GL demo presents on. Result: laggy cursor (CPU-bound) and a demo that
+stutters whenever the pointer moves (queue contention).
 
-Reproduce/validate by running the default `-gl` trace launch SEVERAL times,
-confirming (a) NO multi-window mid-demo `path_cpu_only` phase (V4.T2.4 must stay
-fixed) and (b) the demo `fps` and steady app_loop_fps reach >= 60.
+#### Design (decoupled cursor queue)
 
-Next work after V4.T2.5 closes: deferred WebKit/Skia virgl work or optional
-Tier 3 unredirection. Keep the V4 validation commands and screenshot checks for
-regression testing.
+virtio-gpu exposes two virtqueues: `controlq` (index 0) and `cursorq`
+(index 1). Cursor commands `UPDATE_CURSOR` (0x0300) / `MOVE_CURSOR` (0x0301)
+ride the cursorq and are processed by the host independently of the scanout /
+GL-present traffic on the controlq. Pointer motion therefore never touches the
+control queue and never forces a CPU compose frame — the cursor is smooth and
+the demo is undisturbed.
 
-Ground truth you must accept:
-- The host is NOT the limit. Alpine hits 141 FPS glxgears / 66-73 FPS
-  simple-EGL on this same WSL-d3d12 / RTX 4060 / single virtio-gpu control
-  queue. The cap is the xv6 guest compositor present architecture.
-- The swap mechanism, triple-buffer resource cycle, submit-fence ordering, and
-  queued release path already work on the default path. Preserve this shape:
-  compose(N+1) overlaps present(N), releases are ordered by GL/display
-  readiness, and no fixed frame-number delay is used.
+Fail-closed contract preserved: a plain virtio-gpu device (`num_queues < 2`, no
+`-gl`) leaves `cursor_ready = 0`; the compositor's `g_hw_cursor` stays 0 and the
+old software-arrow path runs unchanged.
 
-Process you must follow for EVERY future step:
-1. Read the step and its passing criteria in V4 of GPU_REMAINING_GAPS.md.
-2. Read the listed files before editing. Make the smallest change that
-   satisfies the step. Keep opt-out/fail-closed behavior intact; the default
-   -gl path must fail closed when virgl/back-target allocation fails.
-3. Build with the Validation harness commands. Fix all build errors.
-4. Run the DEFAULT -gl trace launch (no extra wlcomp_* flags), read
-   app_loop_fps + displayed_fps + present-trace, and capture fbstat
-   ppm-current. Also capture and inspect a screenshot image. The step PASSES
-   only when the DEFAULT run shows sustained >=60 FPS post-warmup with
-   displayed_fps tracking app_loop_fps, verified by PIXELS + SCREENSHOT + TRACE
-   SHAPE + FPS telemetry, never by a counter or the on-screen FPS text alone.
-5. Record the new numbers vs the current baseline above. Tick the checkbox in
-   the doc. Move to the next step. Honor each Tier gate before advancing.
+#### What was implemented (all built + validated)
 
-Hard rules (violating any is a failure):
-- Never resize the display mode for a sub-fullscreen client (causes the
-  forbidden host-window 'too large' jump).
-- Apply the Y-flip exactly once.
-- Fail closed when virgl is absent: a plain virtio-gpu (no -gl) image must
-  fall back to the dumb buffer, never set OPENGL_SUBMIT, never panic. Re-verify
-  this after Tier 1 and Tier 2.
-- Do not regress the existing low/mid-50 FPS readback fallback lane.
-- Keep changes scoped; do not revert unrelated dirty GPU files.
-- Do NOT git commit or push anything (nested submodules) unless explicitly
-  told to.
+- **Kernel ABI** — [kernel/kernel/inc/dev/fb.h](kernel/kernel/inc/dev/fb.h):
+  `FB_GPU_SET_CURSOR` (0x4638) / `FB_GPU_MOVE_CURSOR` (0x4639) ioctls,
+  `struct fb_gpu_cursor_image` (≤64×64 BGRA + hotspot) and
+  `struct fb_gpu_cursor_move`. Prototypes in
+  [kernel/kernel/inc/defs.h](kernel/kernel/inc/defs.h).
+- **Kernel driver** — [kernel/kernel/virtio_gpu.c](kernel/kernel/virtio_gpu.c):
+  `virtio_gpu_cursor_queue_init` brings up queue 1; `virtio_gpu_cursor_post`
+  is a fire-and-forget poster under the cursorq lock only (no `op_lock`, so it
+  never serializes against control traffic); `virtio_gpu_user_set_cursor`
+  lazily creates a 64×64 BGRA cursor resource + uploads the image;
+  `virtio_gpu_user_move_cursor` posts `MOVE_CURSOR` (or `UPDATE_CURSOR` to
+  hide/show). Cursor init is optional in `virtio_gpu_init` — failure ⇒ SW
+  fallback.
+- **ioctl dispatch** (two-level allowlist) — added the two cmds to
+  [kernel/kernel/dev/fb/fb_drm_dispatch.c](kernel/kernel/dev/fb/fb_drm_dispatch.c),
+  [kernel/kernel/dev/fb/fb_device_ioctl.c](kernel/kernel/dev/fb/fb_device_ioctl.c)
+  (handlers validate dims/hotspot, copy-in pixels via `either_copyin`), and the
+  name table in [kernel/kernel/dev/fb/fb_scanout.c](kernel/kernel/dev/fb/fb_scanout.c).
+- **Compositor** — [ports/wayland/src/](ports/wayland/src): `init_hw_cursor()`
+  builds the arrow and calls `FB_GPU_SET_CURSOR`; on success sets `g_hw_cursor`
+  and routes `process_mouse()` cursor moves to `FB_GPU_MOVE_CURSOR` (no
+  `damage_cursor_at`, no SW arrow). `draw_default_cursor()` early-returns when
+  `g_hw_cursor` is set.
 
-Consult repo memory for build/run details:
-/memories/repo/xv6-os-build.md, xv6-os-runtime.md, xv6-os-hyperv-fb.md,
-xv6-os-dxg.md, and session note /memories/session/virgl-desktop-parity.md.
+#### Validation (2026-06-05)
 
-If a step is genuinely blocked, do NOT brute-force or fake it: diagnose with
-the present-trace + QEMU virtio-gpu trace, write down the exact failing
-criterion and the evidence, try the next viable approach for that step, and
-only escalate if no approach satisfies the passing criteria. Then continue
-with the remaining steps. You are done ONLY when the V4 global acceptance
-list is fully satisfied and re-verified end to end.
-```
+- **Motion-injected:** 1,129 absolute pointer moves at ~125 Hz during a live GL
+  demo (QMP `input-send-event`). Log shows `cursor queue init size=16`,
+  `wlcomp: hardware cursor enabled`, `cpu_rects/frame=0` on every GL window
+  during motion (`cpu_rects_total=0` for 23/27 samples — proof motion no longer
+  triggers CPU cursor uploads), FPS held 69–72, `path_cpu_only=0`, no cursor
+  errors. (Bring-up bug fixed: poster now accepts QEMU's 16-entry cursorq —
+  `qsize>=2`, caps to 64, wraps `% g->cursor_ring`.)
+- **Client cursor:** `wl_pointer.set_cursor` uploads committed Wayland cursor
+  surfaces via `FB_GPU_SET_CURSOR` (hotspot clamp, ARGB/XRGB ≤64×64). The
+  `cursorsmoke` client set a 32×32 hotspot-7,7 cursor; screenshot
+  `build-x86_64/hwcursor-cursorsmoke-live2.png` clean, `cpu_rects_total=0`.
+- **Fail-closed:** plain no-`-gl` falls back to the dumb framebuffer
+  (`virgl unavailable`, `linux-dmabuf disabled`, no `OPENGL_SUBMIT`, no panic);
+  `num_queues < 2` leaves `cursor_ready=0` and the SW arrow runs.
 
-### Section V5. WebKit / Skia GL via virgl (DEFERRED until V4 is fast)
+#### Remaining cursor polish (optional, not blocking)
 
-- [ ] **V5.1 Root-cause and fix the `SkiaGPUWorker` GL-context crash (blocker
-  B2).** Deferred: do not start until V4 reaches its global acceptance. Then
-  determine whether the NULL deref is the guest Mesa `virgl` EGL path, a missing
-  host GL capability, or B1 handing WebKit a half-ready backend. Files:
+- [x] Wire `wl_pointer.set_cursor` client requests through to `FB_GPU_SET_CURSOR`.
+- [ ] Cursor theming / richer per-app cursor shapes.
+- [ ] Hide/show on focus changes via `FB_GPU_MOVE_CURSOR` with
+  `FB_GPU_CURSOR_F_VISIBLE` cleared.
+
+### Section V4.IDLE. Idle desktop 2-3s update bug (FIXED 2026-06-07)
+
+Reported symptom (verbatim): *"when the 3D demo is not running, the whole
+desktop only updates every 2-3 seconds"* — the entire window, including the
+taskbar clock, visibly refreshes only every 2–3 s when the desktop is idle.
+
+#### Root cause
+
+The compositor main loop is **healthy** when idle: epoll blocks for exactly
+the 16 ms frame-callback deadline (~50 Hz; confirmed per-iteration with
+`wlcomp_frame_perf=1` — `frame loop wait samples=48-50 request_avg_ms=16
+elapsed_avg_ms=16`). The P4 deadline-wait was **not** at fault. The real cause:
+when the desktop is truly idle (no toplevel mapped), the only damage each second
+is the 1 Hz taskbar clock, which presents as a tiny **partial CPU-rect scanout
+flush**. The WSL d3d12 host **coalesces** those sparse partial flushes, so the
+on-screen window only visibly refreshes every 2–3 s. The 3D demo never shows the
+bug because it drives continuous **full** page-flips.
+
+#### Fix (compositor, default-on, fail-closed)
+
+- [ports/wayland/src/wlcomp_fb.inc](ports/wayland/src/wlcomp_fb.inc): added
+  `wlcomp_idle_full_present_enabled()` (next to `damage_repair_interval_ms()`),
+  gated by flag `wlcomp_idle_full_present` / env
+  `XV6_WLCOMP_IDLE_FULL_PRESENT`, default **on** (accepts `0/no/false/off` to
+  disable).
+- [ports/wayland/src/wlcomp_render_loop.inc](ports/wayland/src/wlcomp_render_loop.inc)
+  `composite_and_flip()`, immediately after the
+  `if (!damage_has_any()) { damage_all_frame_callbacks(now); return; }` block:
+  ```c
+  if (wlcomp_idle_full_present_enabled() &&
+      !any_frame_callbacks_pending() &&
+      surface_existing_mapped_toplevels() == 0)
+      damage_full_reason(FULL_DAMAGE_REPAIR);
+  ```
+  This promotes an idle present to a **full-surface** flush so the host cannot
+  coalesce it away.
+
+**Critical gate:** the `surface_existing_mapped_toplevels() == 0` condition is
+load-bearing. A first version gated **only** on `!any_frame_callbacks_pending()`
+misfired on WebKit — WebKit has no pending `wl` frame-callback at composite
+time, so the promotion forced a full-surface CPU upload **every** frame
+(`cpu_upload_avg_us≈57000`, `frame_avg_us≈68000–75000`, ~13 FPS). Restricting
+the promotion to the bare desktop (no client window mapped) means any mapped
+client — WebKit, a terminal, the GL demo — drives present from its own damage
+and the idle promotion never fires.
+
+#### Validation (2026-06-07, `fs.img` rebuilt via `port-wayland` + `make-rootfs`)
+
+- **Idle (`webkit=0 glsmoke=0`):** `cpu_clock_rects=0 cpu_full_rects=5
+  repair=5` — every idle present is now a full-surface flush. Bug gone.
+- **WebKit `video-direct.html` (regression check):** `repair=0
+  cpu_full_rects=0 cpu_clock_rects=5`, `cpu_upload_avg_us≈10947–12991` (was
+  57218–60156), `frame_avg_us≈15607–18695` (was 67778–75075), `event:ended`
+  ×9, 0 fatal faults — **unregressed**.
+- **GL demo (canonical trace):** `repair=0 path_gl_preflush=425–440
+  path_cpu_only=0 scanout_rebinds=0`, 73–93 FPS — **unregressed**.
+
+### Section V5. WebKit / Skia GL via virgl (promoted to V4.D3)
+
+- [x] **V5.1 Root-cause and fix the `SkiaGPUWorker` GL-context crash (blocker
+  B2).** This is now tracked as **V4.D3** in the desktop-wide tier — WebKit is
+  the headline "all user programs" consumer, no longer deferred behind the FPS
+  work. Determine whether the NULL deref is the guest Mesa `virgl` EGL path, a
+  missing host GL capability, or B1 handing WebKit a half-ready backend. Files:
   `ports/wayland/src/desktop.c` (WebKit GPU policy), the Mesa virgl EGL port,
   the backend flag from V1. Evidence: `webkit_accel=1` loads a page and renders
   a GPU-composited frame without `SkiaGPUWorker` SIGSEGV; the fail-closed
   software fallback still works when virgl is absent.
+  Done 2026-06-05 via V4.D3: accelerated MiniBrowser renders
+  `/share/webkit/gpu-smoke.html` on `path_cpu_only=0` with imported WebKit
+  dma-bufs and no WebKit/Skia crash.
 
 ### Section V6. Backend flag honesty (gated on V4)
 
-- [ ] **V6.1 Keep `OPENGL_SUBMIT` honest.** Advertise it as native-present
+- [x] **V6.1 Keep `OPENGL_SUBMIT` honest.** Advertise it as native-present
   credit only when the V4 page-flip present lineage is proven. Until then it is
   render-backend credit only (see the honesty gate at the top of this file).
   Evidence: `fbstat` / `scripts/check-gui-accel.sh` report virgl only when host
   GL is real; otherwise the dumb-buffer render node.
+  - **Validation 2026-06-05:** `scripts/gpu/gpu-validate.sh` PASS
+    (`build-x86_64/gpu-validate.log`) after updating the harness for the
+    now-default P2/T2 triple-scanout shape. Positive KVM/virgl evidence:
+    `backend virgl flags 0x27`, `backend_opengl_submit 1`,
+    `backend_opengl_submit_gate open`, `backend_virgl_opengl 1`, and
+    `opengl_submit_backend_separation_matrix ... native_present_credit=0
+    opengl_submit_credit=1 status=PASS`; no virtio failures or timeouts.
+    Negative plain `virtio-gpu` run with `gpu_validate=1`: `no 3D capsets
+    advertised`, `GPU: virgl unavailable; exposing dumb-buffer DRM only`,
+    `backend dumb flags 0x3`, `backend_opengl_submit 0`,
+    `backend_opengl_submit_gate closed`, `backend_virgl_opengl 0`, and
+    `opengl_submit_credit=0`; virgl probes skipped and the validator exited 0.
 
 ### virtio virgl dependency graph
 
@@ -784,9 +976,9 @@ V0 host GL + virtio-gpu-gl launch   [done]
   -> V1 fix virgl-ready boot race (B1)        [done]
        -> V2 kernel virgl ioctl self-test      [done]
             -> V3 Mesa virgl GL consumer        [done]
-                 -> V4 windowed present + FPS max  [ACTIVE: Tier0->1->2(->3)]
-                      -> V5 WebKit/Skia GL (B2)     [deferred]
-                           -> V6 honest backend flag [gated on V4]
+                 -> V4 desktop-wide GPU present    [done]
+                      T2.5 FPS -> D1 chrome -> D2 any-client -> D3 WebKit
+                      -> V6 honest backend flag      [gated on V4]
 ```
 
 ---
@@ -1062,8 +1254,23 @@ effort implementing Nouveau MMIO/VRAM/firmware/channel/submit paths.
 
 ## Next focus
 
-The single active engineering goal is **Section V4: windowed GPU present + FPS
-maximization** (Tier 0 -> Tier 1 -> Tier 2, optional Tier 3), to a sustained
-60+ FPS. WebKit/Skia GL (V5/B2) is deferred until V4 reaches global acceptance;
-the software browser route already works and is tracked in
-`YOUTUBE_KERNEL_GAP_REPORT.md`.
+Section V4 is complete for the required desktop-wide virgl acceptance gate:
+Tier 0/1/2 + Tier D (D1 chrome, D2 any-client, D3
+WebKit), Tier P P2/P3/P4, and the hardware cursor (V4.HC) are complete and
+validated. A fresh canonical glsmoke trace (2026-06-06) holds 80–96 FPS with
+the scanout set cached (`scanout_rebinds=0`). Remaining open work outside
+required V4 acceptance:
+
+- **Interactive vs trace parity** — `scripts/launch/launch-gui.sh` presents in
+  `mode=bo-present` (`displayed_fps=0.0` metric artifact, `path_cpu_only` high)
+  rather than the GL-scanout page-flip path the trace flags engage. Make the
+  interactive launcher default-enable the same present path (or document why it
+  differs) so what the user sees matches the validated architecture.
+- **V6** — keep `OPENGL_SUBMIT` honest (native-present credit only once the
+  page-flip present lineage is proven).
+- **Tier 3** (windowed unredirection) is optional.
+
+Diagnostic watch item: the underlying WSL d3d12 virglrenderer wedge is narrowed
+to a small WebKit accelerated-compositing draw/update batch. WebKit defaults to
+synchronous virgl submits to avoid it; `webkit_virgl_sync_submit=0` remains for
+A/B diagnosis. Do not chase this in the kernel for FPS.

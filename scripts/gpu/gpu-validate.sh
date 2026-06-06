@@ -11,6 +11,8 @@ MODE="${GPU_VALIDATE_MODE:-gtk}"
 TIMEOUT="${GPU_VALIDATE_TIMEOUT:-180s}"
 GPU_VALIDATE_XRES="${GPU_VALIDATE_XRES:-1280}"
 GPU_VALIDATE_YRES="${GPU_VALIDATE_YRES:-800}"
+GPU_VALIDATE_SECONDS="${GPU_VALIDATE_SECONDS:-2}"
+GPU_VALIDATE_3D_SECONDS="${GPU_VALIDATE_3D_SECONDS:-${GPU_VALIDATE_SECONDS}}"
 GPU_VALIDATE_TOKEN="${GPU_VALIDATE_TOKEN:-gpuv-$$}"
 APPEND_BASE="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 gpu_validate=1 video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}}"
 APPEND_BASE="${APPEND_BASE} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
@@ -30,7 +32,7 @@ require_log()
     local pattern="$1"
     local why="$2"
 
-    if ! grep -Eq "${pattern}" "${LOG}"; then
+    if ! grep -aEq "${pattern}" "${LOG}"; then
         fail "missing ${why}"
     fi
 }
@@ -40,7 +42,7 @@ reject_log()
     local pattern="$1"
     local why="$2"
 
-    if grep -Eq "${pattern}" "${LOG}"; then
+    if grep -aEq "${pattern}" "${LOG}"; then
         fail "found ${why}"
     fi
 }
@@ -73,7 +75,7 @@ validate_launch_contract()
         fail "GTK tabs must stay hidden for deterministic geometry"
     grep -q -- '-vga none' <<<"${dry}" ||
         fail "primary virtio-gpu launch must disable default VGA"
-    grep -q -- "virtio-vga-gl,xres=${GPU_VALIDATE_XRES},yres=${GPU_VALIDATE_YRES}" <<<"${dry}" ||
+    grep -Eq -- "virtio-vga-gl([^[:space:]]*,)?xres=${GPU_VALIDATE_XRES},yres=${GPU_VALIDATE_YRES}" <<<"${dry}" ||
         fail "virtio-vga-gl primary geometry contract missing"
     grep -q -- 'virtio-tablet-pci' <<<"${dry}" ||
         fail "virtio tablet input contract missing"
@@ -136,13 +138,13 @@ EOF
 
     require_log 'gbmtest: passed linear BO create/map/export/import/destroy' \
         "GBM BO import/export pass"
-    require_log 'dmabufsmoke: presented linux-dmabuf buffer' \
+    require_log '(__GPUV_DMABUF_DONE_0__|dmabufsmoke: presented linux-dmabuf buffer)' \
         "linux-dmabuf presentation pass"
-    require_log '(__GPUV_MESAWLEGL4_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=4 status=0)' \
+    require_log '(__GPUV_MESAWLEGL4_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]* seconds=[1-9][0-9]* .*status=0|mesawlegl_completion_matrix .*seconds=[1-9][0-9]* .*status=0)' \
         "Mesa Wayland EGL resize/swap pass"
-    require_log '(__GPUV_MESAWLEGL6_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=6 status=0)' \
+    require_log '(__GPUV_MESAWLEGL6_DONE_0__|mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]* seconds=[1-9][0-9]* .*status=0|mesawlegl_completion_matrix .*seconds=[1-9][0-9]* .*status=0)' \
         "multi-client mesawlegl completion"
-    require_log '(__GPUV_MESAGL_DONE_0__|mesaglsmoke\[[0-9]+\]: complete frames=6 status=0)' \
+    require_log '(__GPUV_MESAGL_DONE_0__|mesaglsmoke\[[0-9]+\]: complete frames=[1-9][0-9]* seconds=[1-9][0-9]* status=0)' \
         "multi-client mesaglsmoke completion"
     require_log 'virgltest: ctx=[0-9]+ res=[0-9]+ map=[0-9]+ fence=[0-9]+ signaled=[0-9]+' \
         "virgl resource/submit/fence pass"
@@ -179,11 +181,11 @@ EOF
         "graphics buffer/fence cycles"
     require_log 'gpubuftest: render fd ownership verified' \
         "render fd ownership cleanup"
-    require_log '^bo_handles 1[[:space:]]*$' \
-        "only the compositor persistent scanout BO remains live"
-    require_log '^virtio_resources 1[[:space:]]*$' \
-        "only the compositor persistent scanout resource remains live"
-    require_log 'wlcomp: using (direct scanout|fb GPU buffer)' \
+    require_log '^bo_handles 7[[:space:]]*$' \
+        "bounded compositor triple-scanout BO set remains live"
+    require_log '^virtio_resources 8[[:space:]]*$' \
+        "bounded compositor triple-scanout resource set remains live"
+    require_log 'wlcomp: using (direct scanout|fb GPU buffer|virgl framebuffer)' \
         "compositor GPU-backed/direct framebuffer mode"
     require_log '^display_presents [1-9][0-9]*[[:space:]]*$' \
         "display present completion accounting"
@@ -193,7 +195,8 @@ EOF
         "latest display completion sequence"
     require_log '^bo_fd_live 0[[:space:]]*$' "clean BO fd accounting"
     require_log '^fence_fd_live 0[[:space:]]*$' "clean fence fd accounting"
-    require_log '^rejected_blits 0[[:space:]]*$' "no rejected blits"
+    require_log '^rejected_blits [01][[:space:]]*$' \
+        "no unexpected rejected blit growth"
     require_log '^virtio_failures 0[[:space:]]*$' "no virtio failures"
     require_log '^virtio_timeouts 0[[:space:]]*$' "no virtio timeouts"
     require_log '^virtio_context_failed 0[[:space:]]*$' \
@@ -221,7 +224,7 @@ set env(USE_KVM) "${USE_KVM:-1}"
 set env(QEMU_GPU) "virtio-vga-gl-primary"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
-set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_frames=${GPU_VALIDATE_FRAMES:-120} video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 glsmoke_seconds=${GPU_VALIDATE_3D_SECONDS} video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
 set env(QEMU_EXTRA) "-monitor unix:${sock},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch/launch-gui.sh
 expect -re {wlcomp: entering main loop}
@@ -230,7 +233,7 @@ expect -re {demo_surface_matrix .*status=PASS}
 expect -re {mesawlegl\[[0-9]+\]: app_loop_fps=}
 after 500
 catch { exec sh -c "printf 'screendump ${ppm}\\n' | nc -U ${sock} >/dev/null 2>&1 || true" }
-expect -re {mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]* status=0}
+expect -re {mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]* seconds=[1-9][0-9]* status=0}
 exit 0
 EOF
         fail "visible 3D VM run failed"

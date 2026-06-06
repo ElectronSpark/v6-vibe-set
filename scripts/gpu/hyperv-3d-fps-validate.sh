@@ -12,7 +12,6 @@ SAMPLE_SEC=${SAMPLE_SEC:-8}
 MIN_WARMUP_SEC=${MIN_WARMUP_SEC:-5}
 MIN_SAMPLE_SEC=${MIN_SAMPLE_SEC:-8}
 MIN_FPS=${MIN_FPS:-60}
-DEMO_FRAME_RATE_BUDGET=${DEMO_FRAME_RATE_BUDGET:-240}
 DEMO_SIZE=${DEMO_SIZE:-640x480}
 WIDTH=${WIDTH:-1024}
 HEIGHT=${HEIGHT:-768}
@@ -32,7 +31,7 @@ MIN_ACTIVE_DISPLAY_INTERVALS=${MIN_ACTIVE_DISPLAY_INTERVALS:-}
 FPS_ANTI_INFLATION_SELFTEST=${FPS_ANTI_INFLATION_SELFTEST:-0}
 FPS_ANTI_INFLATION_PREFLIGHT=${FPS_ANTI_INFLATION_PREFLIGHT:-1}
 VISUAL_WINDOW_SEC=$(((VISUAL_SAMPLES * VISUAL_SAMPLE_MS + 999) / 1000))
-DEMO_FRAMES=${DEMO_FRAMES:-$(((WARMUP_SEC + SAMPLE_SEC + VISUAL_WINDOW_SEC + 4) * DEMO_FRAME_RATE_BUDGET))}
+DEMO_SECONDS=${DEMO_SECONDS:-$((WARMUP_SEC + SAMPLE_SEC + VISUAL_WINDOW_SEC + 4))}
 LOG=${LOG:-/tmp/xv6-hyperv-3d-fps-validate.log}
 CORE_CONTRACT_LOG=${GPU_CORE_VALIDATE_LOG:-${BUILD_DIR}/hyperv-gpu-core-validate.log}
 CORE_CONTRACT_MAX_AGE_SEC=${GPU_CORE_CONTRACT_MAX_AGE_SEC:-3600}
@@ -1027,9 +1026,9 @@ echo "hyperv-3d-fps-validate: checking native D3D12 present smoke" |
 serial_read "rm -f /tmp/wlcomp-d3d12-present; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} d3d12sharedsmoke --runtime --require-present; echo __SRC_WLCOMP_D3D12_PRESENT_BEGIN__; cat /tmp/wlcomp-d3d12-present; echo __SRC_WLCOMP_D3D12_PRESENT_END__; echo __SRC_WLCOMP_FPS_BEGIN__; cat /tmp/wlcomp-fps; echo __SRC_WLCOMP_FPS_END__; echo __SRC_FBSTAT_BEGIN__; fbstat; echo __SRC_FBSTAT_END__" 180000 |
     tee -a "${LOG}"
 
-echo "hyperv-3d-fps-validate: starting finite 480p demo frames=${DEMO_FRAMES}" |
+echo "hyperv-3d-fps-validate: starting finite 480p demo seconds=${DEMO_SECONDS}" |
     tee -a "${LOG}"
-serial_read "rm -f /tmp/mesawlegl-fps /tmp/wlcomp-d3d12-present /tmp/hyperv-3d-fps-demo.log /tmp/hyperv-3d-fps-demo.pid; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} mesademo --frames=${DEMO_FRAMES} --size=${DEMO_SIZE} --render-div=1 --resize-every=${DEMO_RESIZE_EVERY:-120} --present-interval=1 --pace-us=0 >/tmp/hyperv-3d-fps-demo.log 2>&1 & echo \$! >/tmp/hyperv-3d-fps-demo.pid" 30000 |
+serial_read "rm -f /tmp/mesawlegl-fps /tmp/wlcomp-d3d12-present /tmp/hyperv-3d-fps-demo.log /tmp/hyperv-3d-fps-demo.pid; XV6_GPU_VALIDATE_RUN_ID=${VALIDATION_RUN_ID} XV6_WLCOMP_D3D12_RUN_ID=${VALIDATION_RUN_ID} mesademo --seconds=${DEMO_SECONDS} --size=${DEMO_SIZE} --render-div=1 --resize-seconds=${DEMO_RESIZE_SECONDS:-2} --present-interval=1 --pace-us=0 >/tmp/hyperv-3d-fps-demo.log 2>&1 & echo \$! >/tmp/hyperv-3d-fps-demo.pid" 30000 |
     tee -a "${LOG}"
 
 echo "hyperv-3d-fps-validate: warming up ${WARMUP_SEC}s" | tee -a "${LOG}"
@@ -3828,8 +3827,8 @@ if demo_native_elapsed and any(v < 0.0 for v in demo_native_elapsed):
         f"{','.join(f'{v:.3f}' for v in demo_native_elapsed)}"
     )
 complete = re.search(
-    r"mesawlegl\[[0-9]+\]: complete frames=([0-9]+) status=0 "
-    r"rtc_elapsed=([0-9]+(?:\.[0-9]+)?)s rtc_fps=([0-9]+(?:\.[0-9]+)?)",
+    r"mesawlegl\[[0-9]+\]: complete frames=([0-9]+) seconds=[0-9]+ "
+    r"status=0 elapsed=([0-9]+(?:\.[0-9]+)?)s fps=([0-9]+(?:\.[0-9]+)?)",
     log,
 )
 if complete and int(complete.group(1)) <= 0:
