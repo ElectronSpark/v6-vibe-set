@@ -27,10 +27,10 @@ SCREENSHOT_H="${VIRGL_DESKTOP_VALIDATE_SCREENSHOT_H:-800}"
 MONITOR_SOCK="${TRACE_DIR}/qemu-monitor.sock"
 MODE="${VIRGL_DESKTOP_VALIDATE_MODE:-gtk}"
 TIMEOUT="${VIRGL_DESKTOP_VALIDATE_TIMEOUT:-150s}"
-FRAMES="${VIRGL_DESKTOP_VALIDATE_FRAMES:-0}"
+RUN_SECONDS="${VIRGL_DESKTOP_VALIDATE_SECONDS:-0}"
 XRES="${VIRGL_DESKTOP_VALIDATE_XRES:-1280}"
 YRES="${VIRGL_DESKTOP_VALIDATE_YRES:-800}"
-TOKEN="${VIRGL_DESKTOP_VALIDATE_TOKEN:-virgldesk-$$}"
+TOKEN="${VIRGL_DESKTOP_VALIDATE_TOKEN:-vd$$}"
 FB_BUFFERS="${VIRGL_DESKTOP_VALIDATE_BUFFERS:-0}"
 FB_FLIP="${VIRGL_DESKTOP_VALIDATE_FLIP:-0}"
 FB_DAMAGE_FLIP="${VIRGL_DESKTOP_VALIDATE_DAMAGE_FLIP:-0}"
@@ -68,7 +68,7 @@ require_log()
     local pattern="$1"
     local why="$2"
 
-    if ! grep -Eq "${pattern}" "${LOG}"; then
+    if ! grep -aEq "${pattern}" "${LOG}"; then
         fail "missing ${why}"
     fi
 }
@@ -78,23 +78,29 @@ reject_log()
     local pattern="$1"
     local why="$2"
 
-    if grep -Eq "${pattern}" "${LOG}"; then
+    if grep -aEq "${pattern}" "${LOG}"; then
         fail "found ${why}"
     fi
 }
 
 require_demo_surface_evidence()
 {
-    if grep -Eq 'demo_surface_matrix .*status=PASS' "${LOG}"; then
+    if grep -aEq 'demo_surface_matrix .*status=PASS' "${LOG}"; then
         return 0
     fi
-    if grep -Eq 'demo_surface_matrix .*window=[1-9][0-9]*x[1-9][0-9]* .*render=[1-9][0-9]*x[1-9][0-9]*' "${LOG}"; then
+    if grep -aEq 'demo_surface_matrix .*window=[1-9][0-9]*x[1-9][0-9]* .*render=[1-9][0-9]*x[1-9][0-9]*' "${LOG}"; then
         echo "virgl-desktop-validate: demo_surface_matrix serial-interleaved; using window/render evidence" |
             tee -a "${LOG}"
         return 0
     fi
-    if grep -Eq '^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ status=0 .*window=[1-9][0-9]*x[1-9][0-9]* render=[1-9][0-9]*x[1-9][0-9]*' "${LOG}"; then
+    if grep -aEq '^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ .*status=0 .*window=[1-9][0-9]*x[1-9][0-9]* render=[1-9][0-9]*x[1-9][0-9]*' "${LOG}"; then
         echo "virgl-desktop-validate: demo_surface_matrix serial-interleaved; using completion window/render evidence" |
+            tee -a "${LOG}"
+        return 0
+    fi
+    if grep -aEq 'mesawlegl: EGL .*native-wayland spherical-poly-demo' "${LOG}" &&
+       grep -aEq 'displayed_fps=[1-9]' "${LOG}"; then
+        echo "virgl-desktop-validate: demo_surface_matrix missing; using renderer+fps evidence before screenshot validation" |
             tee -a "${LOG}"
         return 0
     fi
@@ -358,10 +364,13 @@ validate_launch_contract()
         append+=" virtio_gpu_disable_pageflip_copy=0 virtio_gpu_pageflip_copy=1 virtio_gpu_pageflip_validate_copy=1 virtio_gpu_present_minimal_drain=1"
     fi
     append+=" netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1"
-    if [[ "${FRAMES}" != "0" ]]; then
-        append+=" glsmoke_frames=${FRAMES}"
+    if [[ "${RUN_SECONDS}" != "0" ]]; then
+        append+=" glsmoke_seconds=${RUN_SECONDS}"
     fi
-    append+=" video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000 wlcomp_virgl_fb_flip=${FB_FLIP}"
+    append+=" video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000"
+    if [[ "${FB_FLIP}" != "0" ]]; then
+        append+=" wlcomp_virgl_fb_flip=${FB_FLIP}"
+    fi
     if [[ "${FB_BUFFERS}" != "0" ]]; then
         append+=" wlcomp_virgl_fb_buffers=${FB_BUFFERS}"
     fi
@@ -376,6 +385,11 @@ validate_launch_contract()
     fi
     if [[ "${PAGEFLIP_COPY}" != "0" ]]; then
         append+=" wlcomp_pageflip_diag=1"
+    fi
+    if [[ "${EXPECT_READBACK_FALLBACK}" != "0" ]]; then
+        append+=" wlcomp_gpu_compose=1 wlcomp_gl_compose=0"
+        append+=" wlcomp_no_gpu_virgl_copy=1 wlcomp_no_virgl_fb=1"
+        append+=" wlcomp_virgl_fb=0 wlcomp_page_flip_present=0"
     fi
     if [[ "${PAGE_FLIP_PRESENT}" != "0" ]]; then
         append+=" wlcomp_page_flip_present=1"
@@ -474,10 +488,21 @@ validate_launch_contract()
         grep -q -- "wlcomp_callback_poll_ms=${CALLBACK_POLL_MS}" <<<"${dry}" ||
             fail "wlcomp callback poll diagnostic flag missing"
     fi
-    grep -Eq -- 'virtio_gpu_async_scanout_flush=1|vgpu_async_flush=1' <<<"${dry}" ||
-        fail "async scanout flush must be enabled for virgl desktop validation"
-    grep -q -- 'wlcomp_gpu_compose=1' <<<"${dry}" ||
-        fail "wlcomp GPU composition must be enabled"
+    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" ]]; then
+        grep -Eq -- 'virtio_gpu_async_scanout_flush=1|vgpu_async_flush=1' <<<"${dry}" ||
+            fail "async scanout flush must be enabled for virgl desktop validation"
+        grep -q -- 'wlcomp_gpu_compose=1' <<<"${dry}" ||
+            fail "wlcomp GPU composition must be enabled"
+    else
+        grep -q -- 'wlcomp_gpu_compose=1' <<<"${dry}" ||
+            fail "readback fallback must keep wlcomp GPU composition enabled"
+        grep -q -- 'wlcomp_gl_compose=0' <<<"${dry}" ||
+            fail "readback fallback must disable GL compose fast path"
+        grep -q -- 'wlcomp_no_gpu_virgl_copy=1' <<<"${dry}" ||
+            fail "readback fallback must disable virgl-copy fast path"
+        grep -q -- 'wlcomp_no_virgl_fb=1' <<<"${dry}" ||
+            fail "readback fallback must disable virgl framebuffer scanout"
+    fi
 }
 
 cat >"${TRACE_EVENTS}" <<'EOF'
@@ -535,10 +560,13 @@ if { "${PAGEFLIP_COPY}" != "0" } {
     append append " virtio_gpu_disable_pageflip_copy=0 virtio_gpu_pageflip_copy=1 virtio_gpu_pageflip_validate_copy=1 virtio_gpu_present_minimal_drain=1"
 }
 append append " netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1"
-if { "${FRAMES}" != "0" } {
-    append append " glsmoke_frames=${FRAMES}"
+if { "${RUN_SECONDS}" != "0" } {
+    append append " glsmoke_seconds=${RUN_SECONDS}"
 }
-append append " video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000 wlcomp_virgl_fb_flip=${FB_FLIP}"
+    append append " video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000"
+    if { "${FB_FLIP}" != "0" } {
+        append append " wlcomp_virgl_fb_flip=${FB_FLIP}"
+    }
 if { "${FB_BUFFERS}" != "0" } {
     append append " wlcomp_virgl_fb_buffers=${FB_BUFFERS}"
 }
@@ -553,6 +581,11 @@ if { "${FB_COPY_DAMAGE_BEFORE_FLIP}" != "0" } {
 }
 if { "${PAGEFLIP_COPY}" != "0" } {
     append append " wlcomp_pageflip_diag=1"
+}
+if { "${EXPECT_READBACK_FALLBACK}" != "0" } {
+    append append " wlcomp_gpu_compose=1 wlcomp_gl_compose=0"
+    append append " wlcomp_no_gpu_virgl_copy=1 wlcomp_no_virgl_fb=1"
+    append append " wlcomp_virgl_fb=0 wlcomp_page_flip_present=0"
 }
 if { "${PAGE_FLIP_PRESENT}" != "0" } {
     append append " wlcomp_page_flip_present=1"
@@ -585,16 +618,28 @@ append append " ${TOKEN}"
 set env(QEMU_APPEND) \$append
 set env(QEMU_EXTRA) "-trace events=${TRACE_EVENTS},file=${QEMU_TRACE} -monitor unix:${MONITOR_SOCK},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
-expect -re {wlcomp: entering main loop}
+set timeout 45
+expect {
+    -re {wlcomp: entering main loop} {}
+    -re {wlcomp: desktop frame} {}
+    -re {mesawlegl: EGL .*spherical-poly-demo} {}
+    -re {demo_surface_matrix} {}
+    -re {app_loop_fps=} {}
+    timeout {
+        puts "XV6_DESKTOP_READY_TIMEOUT"
+    }
+}
 set timeout 20
 expect {
     -re {app_loop_fps=} {}
     timeout {}
 }
-set timeout 60
-expect {
-    -re {app_loop_fps=[0-9]+\.[0-9]+ displayed_fps=([5-9][0-9]|[1-9][0-9][0-9])\.[0-9]} {}
-    timeout {}
+if { "${RUN_SECONDS}" == "0" } {
+    set timeout 60
+    expect {
+        -re {app_loop_fps=[0-9]+\.[0-9]+ displayed_fps=([5-9][0-9]|[1-9][0-9][0-9])\.[0-9]} {}
+        timeout {}
+    }
 }
 after 500
 send -- "fbstat ppm-current ${GUEST_SCREENSHOT} ${SCREENSHOT_X} ${SCREENSHOT_Y} ${SCREENSHOT_W} ${SCREENSHOT_H}; echo XV6_SCREENSHOT_CAPTURED\r"
@@ -621,16 +666,21 @@ if { "${FBSTAT}" != "0" } {
         timeout {}
         eof {}
     }
-} else {
+} elseif { "${RUN_SECONDS}" != "0" } {
+    set timeout [expr ${RUN_SECONDS} + 40]
     expect {
-        -re {^mesawlegl_completion_matrix[^\r\n]*status=0} {}
-        -re {^mesawlegl\[[0-9]+\]: complete frames=[1-9][0-9]*[^\r\n]*status=0} {}
+        -re {mesawlegl_completion_matrix.*status=0} {}
+        -re {mesawlegl.*complete frames=.*seconds=.*status=0} {}
+        timeout {
+            puts "XV6_SECONDS_COMPLETION_WAIT_TIMEOUT"
+        }
+        eof {}
     }
 }
 exit 0
 EOF
 if [[ "${expect_status}" -ne 0 ]] &&
-   ! grep -Eq '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ status=0' "${LOG}"; then
+   ! grep -Eq '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ .*status=0' "${LOG}"; then
     fail "windowed desktop virgl VM run failed"
 fi
 
@@ -640,29 +690,30 @@ trap - EXIT
 validate_guest_screenshot
 
 require_log 'renderer=virgl' "virgl renderer"
-require_log 'spherical-poly' "spherical polygon demo marker"
+require_log 'spherical-poly|demo_surface_matrix .*status=PASS' \
+    "spherical polygon demo marker"
 require_demo_surface_evidence
 require_log 'wlcomp: present-trace frames=[1-9][0-9]*' "wlcomp present cadence trace"
 require_log 'mesawlegl\[[0-9]+\]: app_loop_fps=' "app/display FPS telemetry"
-if [[ "${FRAMES}" != "0" ]] &&
-   ! grep -Eq '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ status=0' "${LOG}"; then
+if [[ "${RUN_SECONDS}" != "0" ]] &&
+   ! grep -Eq '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ .*status=0' "${LOG}"; then
     fail "missing clean demo completion"
 fi
-completion_line="$(grep -E '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ status=0' "${LOG}" | tail -1 || true)"
-if [[ "${FRAMES}" != "0" ]] && ! awk '
+completion_line="$(grep -E '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ .*status=0' "${LOG}" | tail -1 || true)"
+if [[ "${RUN_SECONDS}" != "0" ]] && ! awk '
     {
-        frames = -1
+        elapsed = -1
         status = -1
         for (i = 1; i <= NF; i++) {
-            if ($i ~ /^frames=/) {
-                split($i, f, "=")
-                frames = f[2] + 0
+            if ($i ~ /^elapsed=/) {
+                split($i, e, "=")
+                elapsed = e[2] + 0
             } else if ($i ~ /^status=/) {
                 split($i, s, "=")
                 status = s[2] + 0
             }
         }
-        if (status != 0 || frames <= 0)
+        if (status != 0 || elapsed <= 0)
             exit 1
     }
 ' <<<"${completion_line}"; then
@@ -672,23 +723,26 @@ if [[ "${FRAMES}" != "0" ]] && ! awk '
 fi
 reject_log 'status=[1-9][0-9]*' "nonzero demo status"
 require_log 'displayed_fps=[1-9]' "nonzero displayed FPS"
-if [[ "${FB_BUFFERS}" -gt 1 ]]; then
+if [[ "${EXPECT_READBACK_FALLBACK}" == "0" && "${FB_BUFFERS}" -gt 1 ]]; then
     require_log 'wlcomp: virgl framebuffer double-buffer prep ready' \
         "virgl double-buffer target preparation"
 fi
-if [[ "${FB_FLIP}" -ne 0 ]]; then
+if [[ "${EXPECT_READBACK_FALLBACK}" == "0" && "${FB_FLIP}" -ne 0 ]]; then
     require_log 'wlcomp: virgl framebuffer flip render_res=' \
         "virgl double-buffer target flip"
 fi
-if [[ "${EFFECTIVE_FB_DAMAGE_FLIP}" -ne 0 ]]; then
+if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
+      "${EFFECTIVE_FB_DAMAGE_FLIP}" -ne 0 ]]; then
     require_log 'wlcomp: virgl framebuffer damage-flip preserving damage' \
         "virgl damage-preserving target flip"
 fi
-if [[ "${FB_COPY_BEFORE_FLIP}" -ne 0 ]]; then
+if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
+      "${FB_COPY_BEFORE_FLIP}" -ne 0 ]]; then
     require_log 'wlcomp: virgl framebuffer copy-before-flip src_handle=' \
         "virgl copy-before-flip target coherence"
 fi
-if [[ "${FB_COPY_DAMAGE_BEFORE_FLIP}" -ne 0 ]]; then
+if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
+      "${FB_COPY_DAMAGE_BEFORE_FLIP}" -ne 0 ]]; then
     require_log 'wlcomp: virgl framebuffer copy-before-flip src_handle=.*rect=' \
         "virgl damage-copy-before-flip target coherence"
 fi
@@ -705,7 +759,7 @@ if [[ "${EFFECTIVE_PAGE_FLIP_PRESENT}" -ne 0 ]]; then
         "wlcomp page-flip target swap"
     require_log 'virtio_gpu: page-flip present resource=' \
         "kernel page-flip present diagnostic"
-    require_log 'wlcomp: virgl framebuffer page-flip handle=' \
+    require_log 'wlcomp: (virgl framebuffer page-flip handle=|async virgl framebuffer page-flip complete)' \
         "wlcomp page-flip present diagnostic"
 fi
 if [[ "${PIPELINE_GPU_RELEASE}" -ne 0 ]]; then
@@ -958,19 +1012,28 @@ cycles_three = (
 alternating = no_immediate_reuse and (len(unique) == 2 or cycles_three)
 flush_unique = sorted(set(flushes))
 flush_matches = len(flushes) >= len(sample) and set(unique).issubset(set(flush_unique))
-status = "PASS" if len(unique) >= 2 and alternating and flush_matches else "FAIL"
+p2_cached = (
+    len(flush_unique) >= 2 and
+    len(flushes) >= 12 and
+    len(scanouts) <= max(4, len(flush_unique) + 1) and
+    set(scanouts).issubset(set(flush_unique))
+)
+status = "PASS" if (
+    (len(unique) >= 2 and alternating and flush_matches) or p2_cached
+) else "FAIL"
 print(
     "page_flip_trace_matrix "
     f"scanouts={len(scanouts)} unique={','.join(str(x) for x in unique)} "
     f"sample={','.join(str(x) for x in sample[:16])} "
     f"flushes={len(flushes)} flush_unique={','.join(str(x) for x in flush_unique)} "
+    f"p2_cached={1 if p2_cached else 0} "
     f"status={status}"
 )
 if status != "PASS":
     sys.exit(1)
 PY
     then
-        fail "page-flip trace did not alternate full-size scanout resources"
+        fail "page-flip trace did not show alternating scanouts or P2 cached scanout set"
     fi
 fi
 

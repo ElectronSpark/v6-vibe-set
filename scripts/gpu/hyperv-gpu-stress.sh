@@ -10,12 +10,12 @@ DEPLOY_VHDX=${DEPLOY_VHDX:-/mnt/c/Temp/xv6-hyperv.vhdx}
 OUT_VHDX=${OUT_VHDX:-${BUILD_DIR}/xv6-hyperv-gpu-stress.vhdx}
 LOG=${LOG:-${BUILD_DIR}/hyperv-gpu-stress.log}
 SERIAL_SCRIPT=${SERIAL_SCRIPT:-C:\\Temp\\com-tcp-read.ps1}
-FRAMES=${FRAMES:-2400}
+SECONDS=${SECONDS:-40}
 WAIT_SEC=${WAIT_SEC:-25}
 REUSE_RUNNING_VM=${REUSE_RUNNING_VM:-0}
 KERNEL_BIN=${KERNEL_BIN:-${BUILD_DIR}/kernel/build/kernel/xv6.bin}
 ROOTFS_IMG=${ROOTFS_IMG:-${BUILD_DIR}/fs.img}
-HYPERV_CMDLINE=${HYPERV_CMDLINE:-BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=${FRAMES} wayland_dmabuf=1 video=1024x640 acpi_cpus=6}
+HYPERV_CMDLINE=${HYPERV_CMDLINE:-BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_seconds=${SECONDS} wayland_dmabuf=1 video=1024x640 acpi_cpus=6}
 
 fail() {
     echo "hyperv-gpu-stress: $*" >&2
@@ -73,8 +73,8 @@ OUT_RAW=/mnt/c/Temp/xv6-hyperv-gpu-stress.raw \
 serial_read 'gpubuftest 3; dmabufsmoke --nv12 --explicit-sync; drmgpuprobe; dxgprobe --owner-isolation; fbstat' 240000 |
     tee -a "${LOG}"
 
-require_log 'glsmoke_frames=([0-9]+|2400)' "long 3D demo command line"
-require_log 'mesawlegl --demo --frames=' "live 3D demo process"
+require_log 'glsmoke_seconds=([0-9]+|40)' "long 3D demo command line"
+require_log 'mesawlegl --demo --seconds=' "live 3D demo process"
 require_log 'hyperv-3d-visual-check: ok' "Hyper-V screenshot visual check"
 require_log 'gpubuftest: completed 3 buffer cycles' "multi-cycle BO/fence smoke"
 require_log 'dmabufsmoke: explicit-sync release=(fenced|immediate)' \

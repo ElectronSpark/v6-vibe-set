@@ -24,7 +24,7 @@ if [[ -z "${HYPERV_CMDLINE+x}" ]]; then
             HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=0 glsmoke_demo=0 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6'
             ;;
         *)
-            HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_frames=4 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6'
+            HYPERV_CMDLINE='BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_seconds=1 wayland_dmabuf=1 wlcomp_gpu_compose=1 video=1024x640 acpi_cpus=6'
             ;;
     esac
 fi

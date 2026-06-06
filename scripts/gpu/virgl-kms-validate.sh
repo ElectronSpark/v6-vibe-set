@@ -9,7 +9,7 @@ BUILD_DIR="${BUILD_DIR:-build-x86_64}"
 LOG="${VIRGL_KMS_VALIDATE_LOG:-${ROOT}/${BUILD_DIR}/virgl-kms-validate.log}"
 MODE="${VIRGL_KMS_VALIDATE_MODE:-gtk}"
 TIMEOUT="${VIRGL_KMS_VALIDATE_TIMEOUT:-120s}"
-FRAMES="${VIRGL_KMS_VALIDATE_FRAMES:-240}"
+DURATION_SECONDS="${VIRGL_KMS_VALIDATE_SECONDS:-4}"
 XRES="${VIRGL_KMS_VALIDATE_XRES:-1280}"
 YRES="${VIRGL_KMS_VALIDATE_YRES:-800}"
 TOKEN="${VIRGL_KMS_VALIDATE_TOKEN:-virglkms-$$}"
@@ -92,7 +92,7 @@ set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 vid
 set env(QEMU_EXTRA) "-monitor unix:${MONITOR_SOCK},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
 wait_prompt
-send "GALLIUM_DRIVER=virgl MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu XV6_GBM_DEBUG=1 mesakmsgl --frames=${FRAMES}\r"
+send "GALLIUM_DRIVER=virgl MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu XV6_GBM_DEBUG=1 mesakmsgl --seconds=${DURATION_SECONDS}\r"
 expect -re {mesakmsgl: kms connector=[0-9]+ crtc=[0-9]+ mode=${XRES}x${YRES}@60}
 expect -re {xv6-mesa: gbm_dri_bo_create image bo handle=[0-9]+ .* has_export=1}
 expect -re {mesakmsgl: GL vendor=.* renderer=virgl .* version=}
