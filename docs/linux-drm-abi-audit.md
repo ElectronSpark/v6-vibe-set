@@ -46,6 +46,10 @@ Build:
   `cmake --build build-x86_64 --target kernel user image -j2` completed and
   regenerated the exact `xv6.bin`/`fs.img` pair used by the rutabaga
   fail-closed HOST_VISIBLE probe below.
+- After kernel `9f6bb5a` and user `12bd04a`,
+  `cmake --build build-x86_64 --target kernel user image -j2` completed and
+  regenerated the exact `xv6.bin`/`fs.img` pair used by the create-blob
+  command-payload ABI probe below.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -77,6 +81,10 @@ Phase 6 cleanup commits validated in this refresh:
   `GETPARAM(HOST_VISIBLE)` advertisement. `HOST_VISIBLE` is now exposed only
   after a host-visible blob has actually mapped successfully, so rutabaga
   backends that negotiate a BAR but reject mappable blobs fail closed.
+- Kernel `9f6bb5a` matches the Linux `RESOURCE_CREATE_BLOB` host3d path more
+  closely by copying and submitting nonzero `cmd/cmd_size` payloads before
+  blob creation, while rejecting nonzero `blob_id` or `cmd_size` for guest-only
+  blobs.
 - User `8c5aa00` adds `drmabitest --virtgpu-only`, a focused probe for
   virtgpu GETPARAM, guest blob create, host-visible blob create/map, and
   framebuffer sampling. This avoids waiting on unrelated full-suite probes
@@ -85,6 +93,8 @@ Phase 6 cleanup commits validated in this refresh:
   `GETPARAM(HOST_VISIBLE)`: when the kernel correctly reports `0`, the probe
   records `skipped=1` instead of sending a deliberately unsupported mappable
   blob request.
+- User `12bd04a` makes the guest-blob probe use Linux-valid `blob_id=0`; a
+  nonzero blob id is only valid for host3d blob creation.
 - Parent submodule bumps through the parent commit that records kernel
   `d122470`, ports `832ba2f`, and the follow-up ports validation hardening.
 
@@ -119,6 +129,12 @@ Display/runtime evidence:
   `/tmp/xv6-drmabitest-virtgpu-only-host3d-fix.log` reached
   `__DRMABI_HOST3D_FIX_OK__` with `virtio_failures 0` and
   `virtio_timeouts 0`.
+- Focused create-blob ABI log
+  `/tmp/xv6-blob-cmdsize-failclosed.log` reached
+  `__BLOB_CMDSIZE_OK__`. Both `card0` and `renderD128` reported
+  `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, guest blob creates with
+  `blob_mem=1 blob_id=0`, host-visible probe `skipped=1`, a nonzero
+  `/dev/fb0` sample, `virtio_failures 0`, and `virtio_timeouts 0`.
 - Local QEMU 9.2 + rutabaga validation log
   `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
   `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,
