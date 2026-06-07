@@ -136,7 +136,9 @@ EOF
     cleanup_validation_qemu
     trap - RETURN
 
-    require_log 'gbmtest: passed linear BO create/map/export/import/destroy' \
+    require_log 'gpu-substrate-validate: run gbmtest' "GBM probe start"
+    require_log 'gbmtest: backend=xv6-gbm' "GBM xv6 backend"
+    require_log 'BO create/map/export/import/destroy' \
         "GBM BO import/export pass"
     require_log '(__GPUV_DMABUF_DONE_0__|dmabufsmoke: presented linux-dmabuf buffer)' \
         "linux-dmabuf presentation pass"
