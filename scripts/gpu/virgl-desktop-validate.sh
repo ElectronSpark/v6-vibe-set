@@ -654,6 +654,10 @@ expect {
 catch { exec sh -c "if command -v nc >/dev/null 2>&1; then printf 'screendump ${MONITOR_SCREENSHOT}\\n' | nc -U -w 3 -q 1 ${MONITOR_SOCK} > ${MONITOR_SCREENSHOT_LOG} 2>&1 || true; else echo 'nc missing' > ${MONITOR_SCREENSHOT_LOG}; fi" }
 set timeout -1
 if { "${FBSTAT}" != "0" } {
+    if { "${RUN_SECONDS}" == "0" } {
+        after 500
+        send -- "fbstat\r"
+    }
     set timeout 40
     expect {
         -re {virtio_async_make_room_max_wait_us[[:space:]]+[0-9]+} {}
@@ -807,11 +811,18 @@ if [[ "${FBSTAT}" -ne 0 ]]; then
         require_log '^virtio_async_make_room_flush_stalls [0-9]+[[:space:]]*$' \
             "fbstat page-flip async flush admission stalls"
     fi
-    require_log '^display_last_complete[[:space:]]+[1-9][0-9]*([^0-9]|$)' \
-        "fbstat display completion footer"
+    if ! grep -aEq '(^display_last_complete[[:space:]]+[1-9][0-9]*([^0-9]|$)|(^|[[:space:]])display_last_complete=[1-9][0-9]*([^0-9]|$)|generic_display_last_complete=[1-9][0-9]*([^0-9]|$))' "${LOG}"; then
+        fail "missing fbstat display completion footer"
+    fi
     display_complete_value="$(
-        grep -Eo '^display_last_complete[[:space:]]+[0-9]+' "${LOG}" |
-            awk '{print $2}' |
+        {
+            grep -aEo '^display_last_complete[[:space:]]+[0-9]+' "${LOG}" |
+                awk '{print $2}'
+            grep -aEo '(^|[[:space:]])display_last_complete=[0-9]+' "${LOG}" |
+                sed -E 's/.*=//'
+            grep -aEo 'generic_display_last_complete=[0-9]+' "${LOG}" |
+                sed -E 's/.*=//'
+        } |
             tail -1
     )"
     if ! awk -v got="${display_complete_value:-0}" \
