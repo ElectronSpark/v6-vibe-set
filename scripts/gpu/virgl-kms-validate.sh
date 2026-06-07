@@ -105,7 +105,7 @@ EOF
     fail "direct KMS virgl VM run failed"
 fi
 
-require_log 'mode=1280x800@60' "KMS mode"
+require_log "mode=${XRES}x${YRES}@60" "KMS mode"
 require_log 'has_export=1' "DRM PRIME export/import capability"
 require_log 'renderer=virgl' "virgl renderer"
 require_log 'D3D12 \(NVIDIA' "host D3D12/NVIDIA virgl renderer"
