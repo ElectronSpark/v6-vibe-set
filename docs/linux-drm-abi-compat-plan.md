@@ -260,7 +260,7 @@ the top):
 | **KMS objects** | Dynamic per-HW (N CRTCs/connectors/planes, hotplug) | Static singletons (1 each), no overlay/cursor plane | **Cursor plane wired to virtio cursor queue; connector mode list exposed** (Phase 3) |
 | **vblank** | HW IRQ timestamped, `drm_vblank` accounting | Synthetic 60 Hz from tick counter | **Driven from present completion; `WAIT_VBLANK`/`CRTC_*_SEQUENCE`** (Phase 3) |
 | **virtio-gpu UAPI** | `DRM_IOCTL_VIRTGPU_*` (Mesa winsys target) | Standard ioctls **wired** but incomplete | **`EXECBUFFER` honors BO list + in/out fences; `WAIT` per-resource fence** (Phase 4) |
-| **TTM / memory mgr** | TTM or GEM-SHMEM, real placement/migration, mmap fault | Metadata-only naming, plain anon pages | Unchanged (Phase 6 cleanup pending) |
+| **BO backing / memory mgr** | TTM or GEM-SHMEM, real placement/migration, mmap fault | Metadata-only naming, plain anon pages | **Unified shmem allocator; file split/TTM naming cleanup complete**. Real placement/migration remains out of scope for the single virtio scanout backend (Phase 6) |
 | **Blob resources** | `VIRTGPU_RESOURCE_CREATE_BLOB`, host-visible, zero-copy | Absent (explicit transfers only) | **Code complete** — `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB` + host-visible SHM-cap/BAR + `MAP_BLOB`/`UNMAP_BLOB` + PFNMAP mmap; init-time map probe shows the rutabaga host actively refuses mappable host3d blobs (`create=-5`), so host-visible zero-copy stays fail-closed pending a backend that accepts them (Phase 5) |
 
 ---
@@ -519,9 +519,10 @@ handoff plan:
 
 ## 7. Phased roadmap
 
-Ordered by dependency and compatibility payoff. **Phases 0–4 are landed and
-committed; Phase 5 is in progress; Phase 6 not started** (see status table at
-the top). Detail retained below for reference and for the remaining work.
+Ordered by dependency and compatibility payoff. **Phases 0–4 and Phase 6 are
+landed and committed; Phase 5 is code-complete except for the host-refused
+positive host-visible zero-copy proof** (see status table at the top). Detail
+is retained below for reference and for the remaining host-dependent work.
 
 ### Phase 0 — Audit & truthfulness — **DONE**
 - `GET_CAP` values reconciled with behavior (`gpu_drm_get_cap`).
@@ -620,14 +621,16 @@ headless boot of the current kernel already shows `dma_fence: selftest ok`, all
 DRM nodes registering, and a clean desktop start.
 
 1. **`drmabitest`** — exercise every ioctl with known-good and error inputs,
-   asserting Linux-matching errno and struct output; refresh
-   `docs/linux-drm-abi-audit.md` against the **current** kernel (the existing
-   file is the Phase-0 baseline and is now stale vs landed Phases 1–4).
+   asserting Linux-matching errno and struct output. The audit file has been
+   refreshed against the current kernel with full-suite and focused
+   virtgpu/blob probes.
 2. **libdrm conformance** — `modetest`, `kmscube`, `drm_info` against
    `/dev/dri/card0`.
 3. **Mesa bring-up** — build stock Mesa `gallium-drivers=virgl`; confirm
-   `eglinfo`/`es2gears` select `renderD128` without xv6 env shims (Phase 4
-   end-to-end check, still outstanding).
+   render-node virgl through the staged validators. This repo image does not
+   currently stage upstream `eglinfo`/`es2gears`, so the current proof uses
+   stock Mesa paths exercised by `gpu-validate`, `kmscube`, the direct KMS
+   GBM/EGL validator, `mesawlegl`, and `mesaglsmoke`.
 4. **Blob/zero-copy** — with `blob=true,hostmem=…` (udmabuf), verify
    `VIRTGPU_GETPARAM(RESOURCE_BLOB)==1`; on this host, verify the non-GL guest
    blob path and fail-closed `HOST_VISIBLE=0`. Full mappable virgl blob
