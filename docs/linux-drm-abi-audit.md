@@ -29,6 +29,9 @@ Build:
   `cmake --build build-x86_64/ports --target port-libdrm -j2`, and
   `cmake --build build-x86_64 --target image -j2` regenerated the validation
   image.
+- For upstream `drm_info`, `ports/json-c` and `ports/drm_info` were built and
+  staged, then `cmake --build build-x86_64 --target image -j2` regenerated the
+  validation image after the kernel object-property metadata fix.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -45,8 +48,13 @@ Phase 6 cleanup commits validated in this refresh:
   handle table. Before this, Mesa's Wayland linux-dmabuf path failed
   `__DRI_IMAGE_ATTRIB_FD` with `-ENOENT` while the KMS-handle fallback could
   still succeed.
+- Kernel `d122470` fixes KMS object-property metadata so `DRM_MODE_PROP_OBJECT`
+  properties report their target object type in `values[0]`, matching Linux
+  userspace expectations for properties such as `CRTC_ID` and `FB_ID`.
+- Ports `832ba2f` adds upstream `drm_info` plus its static `json-c`
+  dependency as xv6 validation ports.
 - Parent submodule bumps through the parent commit that records kernel
-  `4ad498f`.
+  `d122470` and ports `832ba2f`.
 
 Boot:
 
@@ -87,6 +95,13 @@ Display/runtime evidence:
   `modetest -D /dev/dri/card0 -p` prints `CRTCs:` and `Planes:` and exits `0`.
   The same run logged no `failed to open device` / `no device found` messages,
   no panic or fatal fault, and `virtio_failures 0`, `virtio_timeouts 0`.
+- Upstream `drm_info /dev/dri/card0` from ports `832ba2f` passes in a headless
+  `virtio-gpu` boot with blob auto-wiring enabled. Runtime log
+  `/tmp/xv6-drm-info-fixed-marker.log` shows `Node: /dev/dri/card0`,
+  `Connectors`, `CRTCs`, `Planes`, `"CRTC_ID" (atomic): object CRTC = ...`,
+  `"FB_ID" (atomic): object framebuffer = 0`, `virtio_failures 0`,
+  `virtio_timeouts 0`, and the `__DRMINFO_OK__` marker. `/tmp/xv6-debugcon.log`
+  contains no panic, fatal page fault, coredump, or virtio-gpu timeout marker.
 
 Virgl / Mesa validator evidence from
 `GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
