@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, damage-aware resource-bind scanout validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, direct KMS GBM/EGL virgl validator, damage-aware resource-bind scanout validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
 
 ## Implementation status (2026-06-07)
 
@@ -64,6 +64,16 @@ QEMU/virgl shape reports `backend virgl`, `backend_opengl_submit 1`,
 `virtio_failures 0`, and `virtio_timeouts 0`. The WSLg GTK serial stream
 interleaves shell echoes, Mesa logs, and `fbstat`, so the audit records exact
 log files and marker caveats instead of treating counters alone as proof.
+
+**Latest direct KMS GBM/EGL validation (2026-06-07):** after parent `29901cd`
+fixed the validator's geometry check, `VIRGL_KMS_VALIDATE_XRES=720
+VIRGL_KMS_VALIDATE_YRES=400 bash scripts/gpu/virgl-kms-validate.sh` passes.
+The in-guest `mesakmsgl` path opens `/dev/dri/card0`, selects
+`mode=720x400@60`, creates GBM BOs with `has_export=1`, initializes Mesa EGL
+1.5 / OpenGL ES 3.1 through renderer
+`virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`, and reports FPS samples
+up to 81.4. The monitor screenshot path is unavailable in this GTK/WSLg run;
+visual framebuffer proof is covered by the damage-aware guest PPM run above.
 
 **Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
 (custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
