@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (revised after full source-verified status audit)
+Last updated: 2026-06-07 (Phase 6 committed; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -16,8 +16,8 @@ the Wayland desktop with no panics).
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob** | committed `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB`; uncommitted host-visible: 64-bit SHM-cap discovery + BAR assign (`pci.c`), `RESOURCE_MAP_BLOB`/`UNMAP_BLOB` (`virtio_gpu.c`), bounds/ownership-checked user mmap + `VMA_FLAG_PFNMAP` fault path (`mm/vm.c`) |
-| 6 — structural cleanup | **Not started** | TTM naming still pervasive (~398 refs); `fb_drm_core_kms.c` ~3155 lines, no file splits |
+| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. |
+| 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
 **Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
 (custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
@@ -35,9 +35,18 @@ reasons proven by direct testing:
    supports virgl + blob. The default GUI uses `virtio-vga-gl` (virgl), so the
    launcher now auto-disables blob for virgl GPUs (override `QEMU_VIRGL_BLOB_OK=1`).
 
+Rechecked after Phase 6 on 2026-06-07:
+
+- `virtio-gpu-gl-pci,blob=true,...` and `virtio-vga-gl,blob=true,...` still
+  fail before boot with `blobs and virgl are not compatible (yet)`.
+- `-display egl-headless -device virtio-gpu-gl-pci,blob=true,...` still fails
+  with `egl: no drm render node available`.
+- `qemu-system-x86_64 -device help` lists `virtio-gpu-gl-pci`,
+  `virtio-vga-gl`, and `vhost-user-gpu`, but no rutabaga device.
+
 Net: the **kernel-side blob / host-visible code is complete and boots clean**;
-full virgl+blob zero-copy validation awaits a rutabaga-capable QEMU or a
-non-virgl blob path.
+full virgl+blob zero-copy validation awaits a rutabaga-capable QEMU, a working
+host EGL render node, or an explicit vhost-user/rutabaga GPU backend.
 
 ## Goal
 
@@ -60,8 +69,8 @@ ioctl contract they use on Linux.
 This document is a **comparison + implementation plan**. Sections §1–§6 record
 the original gap analysis (the pre-implementation baseline); §7 tracks the
 phased roadmap, now mostly **landed** (see the status table above). The Phase 5
-blob / host-visible code is now complete; remaining work is end-to-end
-virgl+blob validation (host-blocked, see above) plus Phase 6 cleanup.
+blob / host-visible code and Phase 6 cleanup are complete; remaining work is
+end-to-end virgl+blob zero-copy validation, currently host-blocked (see above).
 
 This plan is scoped to **x86_64** (consistent with the syscall ABI plans).
 RISC-V graphics is out of scope.
@@ -78,14 +87,14 @@ The kernel already ships a surprisingly complete DRM shim. Files (all under
 | DRM generic core (device/file/auth/magic/dispatch) | `dev/drm_core.c`, `inc/dev/drm_core.h` | ~245 | Solid, device-agnostic |
 | DRM UAPI numbers/structs | `inc/uabi/drm.h` | ~900 | Broad ioctl + struct coverage |
 | Node registration (`card0`, `renderD128`, `gpu0`, `fb0`) | `dev/fb/fb_init_panic.c` | ~450 | Both primary + render nodes |
-| KMS modesetting + properties + blobs | `dev/fb/fb_drm_core_kms.c` | ~2300 | Single-head, real queries |
+| KMS modesetting + properties + blobs | `dev/fb/fb_drm_core_kms.c`, `dev/fb/fb_drm_kms_*.c` | split fragments | Single-head, real queries |
 | KMS atomic + page-flip + FB lifecycle | `dev/fb/fb_kms_atomic.c` | ~600 | Simplified atomic shim |
 | Ioctl router | `dev/fb/fb_drm_dispatch.c` | ~600 | Dispatch table |
-| GEM/BO + TTM metadata + dma-buf wrapper | `dev/fb/fb_bo_ttm_dmabuf.c` | ~2500 | Global handle table |
+| GEM/BO + shmem placement metadata + dma-buf wrapper | `dev/fb/fb_bo_shmem_dmabuf.c` | ~1800 | Per-file GEM handles over shmem pages |
 | syncobj + PRIME + virtgpu user ioctls | `dev/fb/fb_syncobj_prime_virtgpu.c` | ~1600 | Counter fences |
 | Fence fd / dma-buf file ops | `dev/fb/fb_fd_sync.c` | ~400 | Real custom fds |
 | Scanout / BO→framebuffer present | `dev/fb/fb_scanout.c` | ~1000 | virgl + CPU paths |
-| virtio-gpu driver (2D + 3D virgl) | `virtio_gpu.c` | ~7400 | Full 2D + 3D, async ring |
+| virtio-gpu driver (2D + 3D virgl) | `virtio_gpu.c`, `virtio_gpu_*.c` | split fragments | Full 2D + 3D, async ring |
 | Device facade ioctls (`FB_GPU_*`) | `dev/fb/fb_device_ioctl.c` | ~2200 | xv6-private UAPI |
 | Hyper-V DXG present backend | `dev/fb/fb_dxg_present.c` | — | Out of DRM scope |
 | Nouveau scaffold | `dev/fb/fb_nouveau.c` | — | DDA path, separate |

@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 5 headless validation
+## Current refresh — 2026-06-07 Phase 6 headless validation
 
 Build:
 
@@ -8,6 +8,18 @@ Build:
   completed and regenerated `build-x86_64/kernel/build/kernel/xv6.bin` plus
   `build-x86_64/fs.img`; a follow-up `user rootfs image` rebuild staged the
   framebuffer sample probe in `drmabitest`.
+- After Phase 6 structural cleanup, `cmake --build build-x86_64 --target kernel
+  image -j"$(nproc)"` completed after each kernel commit and regenerated the
+  multiboot `xv6.bin` plus `build-x86_64/fs.img`.
+
+Phase 6 cleanup commits validated in this refresh:
+
+- Kernel `60ce6dd` shares GPU shmem page allocation.
+- Kernel `0c6fc08` splits KMS and virtgpu implementation fragments.
+- Kernel `1b3f1b8` renames the BO backing file to
+  `fb_bo_shmem_dmabuf.c` and documents retained `FB_GPU_TTM_*` labels as
+  compatibility metadata names.
+- Parent submodule bumps through `d86d76b`.
 
 Boot:
 
@@ -37,7 +49,8 @@ Display/runtime evidence:
 - `drmabitest` framebuffer sample from `/dev/fb0`:
   `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
 
-Outstanding host limitation for the required virgl/blob proof:
+Outstanding host limitation for the required virgl/blob proof, rechecked after
+Phase 6 on 2026-06-07:
 
 - QEMU 9.0.2 device list has `virtio-gpu-gl-pci` and `virtio-gpu-pci`, but no
   rutabaga device.
@@ -45,9 +58,13 @@ Outstanding host limitation for the required virgl/blob proof:
   `egl: no drm render node available`.
 - `-display gtk,gl=on -device virtio-gpu-gl-pci,blob=true,...` fails with
   `blobs and virgl are not compatible (yet)`.
+- `-display gtk,gl=on -device virtio-vga-gl,blob=true,...` fails with the same
+  `blobs and virgl are not compatible (yet)` rejection.
 - Therefore the current host can validate guest blobs and fail-closed
   HOST_VISIBLE behavior, but cannot complete the Step 5.2/5.3 virgl +
   mappable MAP_BLOB zero-copy proof.
+
+## Previous baseline — 2026-06-06
 
 Captured: 2026-06-06, x86_64 GUI boot, `/dev/dri/card0` and
 `/dev/dri/renderD128`.
