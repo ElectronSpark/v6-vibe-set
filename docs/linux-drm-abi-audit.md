@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe + HOST_VISIBLE fail-closed gate
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:
 
@@ -50,6 +50,10 @@ Build:
   `cmake --build build-x86_64 --target kernel user image -j2` completed and
   regenerated the exact `xv6.bin`/`fs.img` pair used by the create-blob
   command-payload ABI probe below.
+- After parent `fa3224e`, no kernel/rootfs rebuild was needed. The host-side
+  `virgl-desktop-validate.sh` parser was syntax-checked with `bash -n`, then
+  rerun against the current image to capture the damage-aware resource-bind
+  scanout proof below.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -167,6 +171,29 @@ Display/runtime evidence:
   `card0` and `renderD128`, host-visible userspace probes `skipped=1`, a
   nonzero `/dev/fb0` sample, `virtio_failures 0`, `virtio_timeouts 0`, and
   `__BLOB_HOSTVIS_PROBE_CONTROL_OK__`.
+- Damage-aware resource-bind scanout validation:
+  `VIRGL_DESKTOP_TRACE_DIR=/tmp/vd-fb20 VIRGL_DESKTOP_VALIDATE_TIMEOUT=280s
+  VIRGL_DESKTOP_VALIDATE_SECONDS=20 VIRGL_DESKTOP_VALIDATE_DAMAGE_FLIP=1
+  VIRGL_DESKTOP_VALIDATE_FBSTAT=1
+  VIRGL_DESKTOP_VALIDATE_SCREENSHOT_REQUIRED=1
+  bash scripts/gpu/virgl-desktop-validate.sh` passed. Evidence is archived in
+  `build-x86_64/virgl-desktop-validate/current-damage-fb20-pass-20260607/`.
+  The guest screenshot shows the live 640x480 Mesa window inside the 1280x800
+  desktop and records
+  `screenshot_matrix ... demo_bright=8548 demo_cyan=14685
+  demo_dark=198737 demo_colorful=29640 ... status=PASS reason=ok`.
+  The compositor reports `wlcomp: virgl framebuffer damage-flip preserving
+  damage` and steady-state `present-trace` lines with `path_gl_preflush > 0`,
+  `path_cpu_only=0`, `scanout_submits > 0`, `scanout_rebinds=0`, and
+  `scanout_rects/frame=1`. The demo completes cleanly
+  (`mesawlegl_completion_matrix ... frames=1430 seconds=20 elapsed=20.009
+  status=0`), fbstat reports `display_last_complete 1455`,
+  `virtio_failures 0`, `virtio_timeouts 0`, and positive async submit/flush
+  admission counters. The QEMU trace post-check records
+  `page_flip_trace_matrix ... p2_cached=1 status=PASS`; trace counts include
+  `virtio_gpu_cmd_res_flush 1458`, `virtio_gpu_cmd_ctx_submit 2865`, and
+  matching fence submits/responses, with only desktop-sized scanouts after the
+  initial 32x32 smoke scanout is unbound.
 - Local QEMU 9.2 + rutabaga validation log
   `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
   `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,

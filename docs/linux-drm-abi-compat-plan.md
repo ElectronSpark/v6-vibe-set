@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, damage-aware resource-bind scanout validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
 
 ## Implementation status (2026-06-07)
 
@@ -117,6 +117,22 @@ only available host-visible-capable backend (rutabaga) refuses mappable blob
 creation; full host-visible zero-copy validation still awaits a backend that
 both negotiates the BAR and successfully creates/maps mappable blob
 resources.
+
+**Damage-aware resource-bind scanout validation (2026-06-07):** after the
+host-side validator fix in parent `fa3224e`, the finite GTK/virgl damage-flip
+run
+`VIRGL_DESKTOP_TRACE_DIR=/tmp/vd-fb20 VIRGL_DESKTOP_VALIDATE_TIMEOUT=280s VIRGL_DESKTOP_VALIDATE_SECONDS=20 VIRGL_DESKTOP_VALIDATE_DAMAGE_FLIP=1 VIRGL_DESKTOP_VALIDATE_FBSTAT=1 VIRGL_DESKTOP_VALIDATE_SCREENSHOT_REQUIRED=1 bash scripts/gpu/virgl-desktop-validate.sh`
+passes. The captured guest framebuffer shows the live 640x480 Mesa demo window
+inside the 1280x800 desktop, and `screenshot_matrix ... status=PASS`.
+The compositor reports `wlcomp: virgl framebuffer damage-flip preserving
+damage`, steady-state `present-trace` lines with `path_gl_preflush > 0`,
+`path_cpu_only=0`, `scanout_submits > 0`, `scanout_rebinds=0`, and
+`scanout_rects/frame=1`; fbstat reports `display_last_complete 1455`,
+`virtio_failures 0`, and `virtio_timeouts 0`. The QEMU trace post-check passes
+`page_flip_trace_matrix ... p2_cached=1 status=PASS`, with desktop-sized
+scanouts only after the initial 32x32 smoke scanout is unbound. Archived
+artifacts:
+`build-x86_64/virgl-desktop-validate/current-damage-fb20-pass-20260607/`.
 
 ## Goal
 
