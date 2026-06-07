@@ -319,6 +319,11 @@ Virgl / Mesa validator evidence from the current run
 Outstanding host limitation for the required virgl/blob proof, rechecked after
 Phase 6 on 2026-06-07:
 
+- The current host namespace has `/dev/kvm` and `/dev/udmabuf`, but no
+  `/dev/dri` render node. Direct QEMU realize checks still show the split:
+  non-GL `virtio-gpu-pci,blob=true,hostmem=32M,max_hostmem=32M` can realize
+  with shared memfd guest RAM, while classic virgl with the same memfd wiring
+  exits immediately with `blobs and virgl are not compatible (yet)`.
 - QEMU 9.0.2 device list has `virtio-gpu-gl-pci` and `virtio-gpu-pci`, but no
   rutabaga device.
 - `-display egl-headless -device virtio-gpu-gl-pci,blob=true,...` fails with
@@ -330,18 +335,23 @@ Phase 6 on 2026-06-07:
   QEMU_GPU=virtio-vga-gl-primary` fails before boot in
   `/tmp/xv6-virgl-blob-forced-20260607.log` with
   `blobs and virgl are not compatible (yet)`.
-- A local QEMU 9.2.0 build from `/home/es/xv6/toolchain/qemu` with rutabaga
-  enabled can boot xv6 with `virtio-gpu-rutabaga-pci,blob=true,hostmem=32M`
-  only after validation-only host patches that expose `x-virgl2` and pass
-  surfaceless EGL through Rutabaga FFI. That path negotiates a virgl2 capset
-  and the host-visible SHM BAR, but rutabaga/virglrenderer rejects simple
-  mappable `HOST3D` and `HOST3D_GUEST` blobs with `-EINVAL`, so xv6 must
-  continue to report `GETPARAM(HOST_VISIBLE)=0` on this backend.
+- A previous local QEMU 9.2.0 build from `/home/es/xv6/toolchain/qemu` with
+  rutabaga enabled could boot xv6 with
+  `virtio-gpu-rutabaga-pci,blob=true,hostmem=32M` only after validation-only
+  host patches that expose `x-virgl2` and pass surfaceless EGL through
+  Rutabaga FFI. That path negotiates a virgl2 capset and the host-visible SHM
+  BAR, but rutabaga/virglrenderer rejects simple mappable `HOST3D` and
+  `HOST3D_GUEST` blobs with `-EINVAL`, so xv6 must continue to report
+  `GETPARAM(HOST_VISIBLE)=0` on this backend. The QEMU source tree is currently
+  vanilla v9.2.0 with no configured binary and no validation-only
+  `x-virgl2`/surfaceless patches in the working tree, so this older evidence is
+  not currently a rerunnable positive-host experiment.
 - `/usr/lib/qemu/vhost-user-gpu` is installed and reports `render-node` plus
   `virgl` in `--print-capabilities`. With `VIRTIO_F_VERSION_1` negotiated, the
-  non-virgl `vhost-user-gpu-pci` path boots to userspace, but exposes no SHM
-  window and no 3D capsets (`features0=0x30000002 features1=0x101
-  driver_features0=0x2 driver_features1=0x1 scanouts=1 capsets=0`).
+  non-virgl `vhost-user-gpu-pci` path boots to userspace, but the frontend has
+  no `blob`/`hostmem` properties and exposes no SHM window or 3D capsets
+  (`features0=0x30000002 features1=0x101 driver_features0=0x2
+  driver_features1=0x1 scanouts=1 capsets=0`).
 - The vhost-user virgl path remains host-blocked: `egl-headless,gl=on` fails
   before boot with `egl: no drm render node available`, while `gtk,gl=es`
   makes the helper log `Failed to initialize virgl`; xv6 then sees
