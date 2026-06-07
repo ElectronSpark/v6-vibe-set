@@ -331,3 +331,38 @@ calls are `0/0`; failures are returned as negative syscall values with
 | `DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST.invalid` | `-1/1` | `-1/1` | invalid transfer rejected |
 | `DRM_IOCTL_VIRTGPU_WAIT.invalid` | `0/0` | `0/0` | zero handle wait currently succeeds |
 | `DRM_IOCTL_WAIT_VBLANK.zero` | `0/0` | `-1/1` | card wait succeeds; render node denied |
+
+## Runtime validation addendum — upstream kmscube (2026-06-07)
+
+Built and staged upstream kmscube commit
+`f60e50e887d3c49e91ac9b06d8199b36152632fa` through the new `ports/kmscube`
+port, with libpng disabled by port patch so the xv6 sysroot does not need to
+link static libpng/zlib into the validator.
+
+Fresh image rebuild:
+
+```sh
+cmake --build build-x86_64/ports --target port-kmscube-clean -j2
+cmake --build build-x86_64/ports --target port-kmscube -j2
+cmake --build build-x86_64 --target image -j2
+```
+
+Runtime evidence under `DISPLAY_MODE=gtk USE_KVM=1
+QEMU_GPU=virtio-vga-gl-primary QEMU_NET=0`:
+
+- `/tmp/xv6-kmscube-realmarker.log`: `kmscube -D /dev/dri/renderD128 -O -v
+  256x256 -c 4 -N` reached EGL 1.5 / OpenGL ES 3.1 through stock Mesa virgl,
+  reported renderer `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`, and
+  rendered 3 frames.
+- `/tmp/xv6-kmscube-kms-fbstat.log`: `kmscube -D /dev/dri/card0 -c 3 -N`
+  reached the same renderer through the KMS primary node and rendered frames.
+- `/tmp/xv6-kmscube-kms-echo-fbstat.log`: a KMS-only follow-up completed
+  `fbstat` with `backend virgl`, `backend_opengl_submit 1`, `virtio_failures
+  0`, and `virtio_timeouts 0`.
+
+Harness caveats: xv6 `sh` does not provide an `export` builtin, `>/tmp/file`
+must be written with a space as `> /tmp/file`, and QEMU GTK/WSLg interleaves
+serial shell echoes, Mesa logs, and diagnostics. Validation markers must be
+printed in a way that the echoed input cannot satisfy (for example
+`echo __KMS_''OK__`), and renderer/frame evidence should be read from the
+captured transcript.
