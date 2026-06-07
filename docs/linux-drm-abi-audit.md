@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + direct KMS GBM/EGL validation + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:
 
@@ -54,6 +54,10 @@ Build:
   `virgl-desktop-validate.sh` parser was syntax-checked with `bash -n`, then
   rerun against the current image to capture the damage-aware resource-bind
   scanout proof below.
+- After parent `29901cd`, no kernel/rootfs rebuild was needed. The host-side
+  `virgl-kms-validate.sh` geometry post-check was syntax-checked with
+  `bash -n`, then rerun against the current image at the EDID-selected KMS
+  mode.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -194,6 +198,21 @@ Display/runtime evidence:
   `virtio_gpu_cmd_res_flush 1458`, `virtio_gpu_cmd_ctx_submit 2865`, and
   matching fence submits/responses, with only desktop-sized scanouts after the
   initial 32x32 smoke scanout is unbound.
+- Direct KMS GBM/EGL virgl validation:
+  `VIRGL_KMS_VALIDATE_LOG=/tmp/xv6-virgl-kms-720.log
+  VIRGL_KMS_VALIDATE_SCREENSHOT=/tmp/xv6-virgl-kms-720.ppm
+  VIRGL_KMS_VALIDATE_TIMEOUT=140s VIRGL_KMS_VALIDATE_SECONDS=4
+  VIRGL_KMS_VALIDATE_XRES=720 VIRGL_KMS_VALIDATE_YRES=400
+  VIRGL_KMS_VALIDATE_REQUIRE_SCREENSHOT=0
+  bash scripts/gpu/virgl-kms-validate.sh` passed. The in-guest `mesakmsgl`
+  path opens the primary node, reports `mesakmsgl: kms connector=3 crtc=1
+  mode=720x400@60`, creates GBM BOs with `has_export=1`, initializes
+  `mesakmsgl: EGL 1.5 vendor=Mesa Project`, selects
+  `renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`, and reports
+  FPS samples (`69.6`, `76.9`, `81.4`) before returning to the shell. The
+  monitor screenshot command did not produce a PPM in this GTK/WSLg run, so
+  this entry is recorded as log/renderer/KMS proof; the current visual
+  framebuffer proof remains the damage-aware guest PPM artifact above.
 - Local QEMU 9.2 + rutabaga validation log
   `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
   `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,
