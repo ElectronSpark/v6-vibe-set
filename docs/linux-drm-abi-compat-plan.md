@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST3D create path fixed; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -16,20 +16,20 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. The non-blob GTK `-gl` virgl path now passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
+| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`. The non-blob GTK `-gl` virgl path now passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
 **Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
 `FB_GPU_VIRGL_RESOURCE_EXPORT_FD` to use render-owner-local BO handles during
-resource export, and ports `23c60af` hardens `mesaglsmoke` so it renders into
-an explicit GLES framebuffer and fails nonzero on GL/readback errors. With the
-final image rebuilt,
+resource export, kernel `a78111b` fixes the HOST3D blob create path, and ports
+`23c60af` hardens `mesaglsmoke` so it renders into an explicit GLES framebuffer
+and fails nonzero on GL/readback errors. With the final image rebuilt,
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
 passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
-`mesawlegl_completion_matrix ... frames=12 ... status=0`,
-`mesaglsmoke[1]: complete frames=4 seconds=1 status=0`,
+`mesawlegl[1]: complete frames=17 seconds=1 status=0`,
+`mesaglsmoke[1]: complete frames=9 seconds=1 status=0`,
 all virgl resource/copy/async/invalid/import `__GPUV_*_DONE_0__` markers,
-`virgltest: dmabuf-resource-import ok ... imported_resource=73`,
+`virgltest: dmabuf-resource-import ok ... imported_resource=91`,
 `backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
 `virtio_timeouts 0`.
 
@@ -83,6 +83,9 @@ Rechecked after Phase 6 on 2026-06-07:
 
 - `virtio-gpu-gl-pci,blob=true,...` and `virtio-vga-gl,blob=true,...` still
   fail before boot with `blobs and virgl are not compatible (yet)`.
+- A forced launcher override with `QEMU_VIRGL_BLOB_OK=1`,
+  `QEMU_VIRTIO_GPU_BLOB=1`, and `QEMU_REQUIRE_UDMABUF=1` still fails before
+  boot in `/tmp/xv6-virgl-blob-forced-20260607.log` with the same rejection.
 - `-display egl-headless -device virtio-gpu-gl-pci,blob=true,...` still fails
   with `egl: no drm render node available`.
 - `qemu-system-x86_64 -device help` lists `virtio-gpu-gl-pci`,

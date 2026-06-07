@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe + HOST3D create fix
 
 Build:
 
@@ -36,6 +36,12 @@ Build:
   port-wayland -j2` rebuilt the Wayland validation clients, then
   `cmake --build build-x86_64 --target image -j2` regenerated the exact
   `fs.img` used by the passing GPU validator run.
+- After kernel `a78111b` and user `8c5aa00`,
+  `cmake --build build-x86_64 --target kernel user image -j2` completed and
+  regenerated the exact `xv6.bin`/`fs.img` pair used by the focused
+  `drmabitest --virtgpu-only` blob probe. A follow-up
+  `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1
+  bash scripts/gpu/gpu-validate.sh` pass revalidated the `-gl` virgl lane.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -59,6 +65,14 @@ Phase 6 cleanup commits validated in this refresh:
   dependency as xv6 validation ports.
 - Ports `23c60af` makes `mesaglsmoke` render into an explicit GLES framebuffer,
   fail nonzero on GL/readback errors, and require at least one presented frame.
+- Kernel `a78111b` fixes host-visible `HOST3D` blob creation by skipping the
+  guest-page mmap path for blobs that intentionally have no guest pages; those
+  blobs now rely on `VIRTGPU_MAP` / `RESOURCE_MAP_BLOB` when the host actually
+  advertises `HOST_VISIBLE`.
+- User `8c5aa00` adds `drmabitest --virtgpu-only`, a focused probe for
+  virtgpu GETPARAM, guest blob create, host-visible blob create/map, and
+  framebuffer sampling. This avoids waiting on unrelated full-suite probes
+  when validating the Phase 5 blob lane.
 - Parent submodule bumps through the parent commit that records kernel
   `d122470`, ports `832ba2f`, and the follow-up ports validation hardening.
 
@@ -83,17 +97,18 @@ Probe highlights from `/bin/drmabitest`:
 |---|---:|---:|---|
 | `DRM_IOCTL_VIRTGPU_GETPARAM[RESOURCE_BLOB=3]` | `0/0 value=1` | `0/0 value=1` | guest blob resources honestly advertised |
 | `DRM_IOCTL_VIRTGPU_GETPARAM[HOST_VISIBLE=4]` | `0/0 value=0` | `0/0 value=0` | fail-closed on this non-virgl transport |
-| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.valid` | `0/0 bo=5 res=4 size=4096 blob_mem=1` | `0/0 bo=5 res=5 size=4096 blob_mem=1` | real guest blob command reached virtio-gpu |
+| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.valid` | `0/0 bo=1 res=3 size=4096 blob_mem=1` | `0/0 bo=1 res=4 size=4096 blob_mem=1` | real guest blob command reached virtio-gpu |
 | `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.host_visible` | `create=-1 advertised=0 mmap_ok=0` | `create=-1 advertised=0 mmap_ok=0` | mappable HOST3D blob rejected while HOST_VISIBLE is not advertised |
 | `DRM_IOCTL_MODE_ATOMIC.fences` | `atomic=0 out_fence=6 poll=0 dirty=0` | KMS denied | valid out-fence returned; clipped `DIRTYFB` positive path exercised on card0 |
 
 Display/runtime evidence:
 
-- `fbstat`: `virtio_failures 0`, `display_presents 243`,
-  `display_completions 243`, `partial_blits 230`, `virgl_bo_presents 0`,
-  `virtio_capsets 0`, `virtio_virgl 0`.
-- `drmabitest` framebuffer sample from `/dev/fb0`:
-  `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
+- Focused `drmabitest --virtgpu-only` log
+  `/tmp/xv6-drmabitest-virtgpu-only-host3d-fix.log` reached
+  `__DRMABI_HOST3D_FIX_OK__` with `virtio_failures 0` and
+  `virtio_timeouts 0`.
+- `drmabitest --virtgpu-only` framebuffer sample from `/dev/fb0`:
+  `ff000030 ff000031 ff000032 ff000033 ff000034 ff000035 ff000036 ff000037 ff010038 ff010039 ff01003a ff01003b ff01003c ff01003d ff01003e ff01003f`.
 - Current post-`drm_info` regression log
   `/tmp/xv6-drmabitest-post-drm-info-grep-pass.log` reached
   `drmabitest: end` with `expect_rc=0`; it shows
@@ -120,7 +135,8 @@ Virgl / Mesa validator evidence from the current run
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
 
 - `gpu-validate: PASS`.
-- Re-run after the launcher fix still passed. The virgl path logged:
+- Re-run after the HOST3D create fix and validator serial-marker hardening still
+  passed. The virgl path logged:
   `run-qemu: disabling virtio-gpu blob: this QEMU's virgl path is incompatible
   with blob resources`, proving blob is only disabled on the host-incompatible
   `-gl` lane.
@@ -131,18 +147,17 @@ Virgl / Mesa validator evidence from the current run
 - `wlcomp: linux-dmabuf enabled (virgl)` and multiple
   `wlcomp: dmabuf create_params ...` rows.
 - Stock Mesa virgl Wayland EGL completed:
-  `mesawlegl_completion_matrix loop=1 frames=12 seconds=1 ... status=0` and
-  `mesawlegl[1]: complete frames=12 seconds=1 status=0 ...`.
+  `mesawlegl[1]: complete frames=17 seconds=1 status=0 ...`.
 - The legacy xv6 GPU-buffer Mesa smoke path also completed after the explicit
   framebuffer fix:
   `mesaglsmoke: EGL 1.5 GL OpenGL ES 3.1 ... renderer=virgl ... buffer=xv6-gpu-bo`
-  and `mesaglsmoke[1]: complete frames=4 seconds=1 status=0`.
+  and `mesaglsmoke[1]: complete frames=9 seconds=1 status=0`.
 - Virgl resource, copy, scanout-copy, clear-source, render-bind,
   async-submit, invalid-submit, bad-submit, and dma-buf import probes all
   emitted their `__GPUV_*_DONE_0__` markers in
   `build-x86_64/gpu-validate.log`.
 - Virgl resource PRIME identity stayed intact:
-  `virgltest: dmabuf-resource-import ok ... imported_resource=73`.
+  `virgltest: dmabuf-resource-import ok ... imported_resource=91`.
 - Backend separation remained honest:
   `backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl` and
   `opengl_submit_backend_separation_matrix ... status=PASS`.
@@ -158,8 +173,11 @@ Phase 6 on 2026-06-07:
   `egl: no drm render node available`.
 - `-display gtk,gl=on -device virtio-gpu-gl-pci,blob=true,...` fails with
   `blobs and virgl are not compatible (yet)`.
-- `-display gtk,gl=on -device virtio-vga-gl,blob=true,...` fails with the same
-  `blobs and virgl are not compatible (yet)` rejection.
+- Forced launcher override
+  `QEMU_VIRGL_BLOB_OK=1 QEMU_VIRTIO_GPU_BLOB=1 QEMU_REQUIRE_UDMABUF=1
+  QEMU_GPU=virtio-vga-gl-primary` fails before boot in
+  `/tmp/xv6-virgl-blob-forced-20260607.log` with
+  `blobs and virgl are not compatible (yet)`.
 - `/usr/lib/qemu/vhost-user-gpu` is installed and reports `render-node` plus
   `virgl` in `--print-capabilities`. With `VIRTIO_F_VERSION_1` negotiated, the
   non-virgl `vhost-user-gpu-pci` path boots to userspace, but exposes no SHM
