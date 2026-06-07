@@ -1,13 +1,13 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
 This plan is no longer purely forward-looking: most of the roadmap has been
-built. Status verified by source reads + a headless QEMU boot of the freshly
+built. Status verified by source reads, headless QEMU boot of the freshly
 built kernel (`dma_fence: selftest ok`, all DRM nodes register, boots clean to
-the Wayland desktop with no panics).
+the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 
 | Phase | State | Evidence |
 |---|---|---|
@@ -16,8 +16,18 @@ the Wayland desktop with no panics).
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. |
+| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. The non-blob GTK `-gl` virgl path now passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
+
+**Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
+`FB_GPU_VIRGL_RESOURCE_EXPORT_FD` to use render-owner-local BO handles during
+resource export. With the final image rebuilt,
+`GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
+passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
+`mesawlegl_completion_matrix ... frames=10 ... status=0`,
+`virgltest: dmabuf-resource-import ok ... imported_resource=65`,
+`backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
+`virtio_timeouts 0`.
 
 **Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
 (custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
