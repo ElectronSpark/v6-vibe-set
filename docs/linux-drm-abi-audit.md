@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + direct KMS GBM/EGL validation + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
+## Current refresh — 2026-06-07 Phase 6 + full `drmabitest` refresh + virgl validator + direct KMS GBM/EGL validation + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:
 
@@ -58,6 +58,11 @@ Build:
   `virgl-kms-validate.sh` geometry post-check was syntax-checked with
   `bash -n`, then rerun against the current image at the EDID-selected KMS
   mode.
+- After the parent documentation/harness commits, no kernel/rootfs rebuild was
+  needed for the final full-suite `drmabitest` refresh. A copied rootfs image
+  was patched with `/etc/startup` containing
+  `/bin/sh /etc/drmabi-full-current.sh`, then booted headlessly with
+  `DISPLAY_MODE=nographic USE_KVM=1 QEMU_GPU=virtio-gpu QEMU_NET=0`.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -139,6 +144,30 @@ Probe highlights from `/bin/drmabitest`:
 
 Display/runtime evidence:
 
+- Fresh full-suite audit log `/tmp/xv6-drmabi-full-current.log` reached
+  `__DRMABI_FULL_CURRENT_BEGIN__`, `drmabitest: end`, and
+  `__DRMABI_FULL_CURRENT_END__`; the kernel reaped the `drmabitest` process
+  with `xstate=0 wait_status=0`. The same log reports `virtio_failures 0` and
+  `virtio_timeouts 0`.
+- Full-suite `card0` coverage in that run includes connector mode enumeration
+  (`1280x800`, `1280x720`, `1024x768`, `800x600`, `640x480`), writable
+  property blob round-trip (`match=1` and rejected after destroy), syncobj
+  eventfd blocking wake, cross-owner PRIME import with matching pixels and
+  different handles, `GEM_FLINK`/`GEM_OPEN`, legacy `ADDFB`, `ADDFB2`,
+  `GETFB2`, real atomic out-fence creation, cursor set/move/setplane/atomic
+  hide, `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, real guest blob creation
+  (`blob_mem=1`), and a skipped host-visible userspace probe because the cap is
+  honestly unadvertised.
+- Full-suite `renderD128` coverage in that run mirrors syncobj, PRIME,
+  `GEM_FLINK`/`GEM_OPEN`, and guest-blob creation while KMS ioctls remain
+  denied on the render node. The non-GL blob lane also rejects virgl-only
+  execution/resource PRIME tests as expected (`create=-1 errno=1`) because no
+  3D capsets are available in that boot; virgl render-node proof is supplied by
+  the `-gl` Mesa validators below.
+- Full-suite framebuffer evidence from `/dev/fb0`:
+  `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055
+  ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055
+  ff2d0055`.
 - Focused `drmabitest --virtgpu-only` log
   `/tmp/xv6-drmabitest-virtgpu-only-host3d-fix.log` reached
   `__DRMABI_HOST3D_FIX_OK__` with `virtio_failures 0` and
