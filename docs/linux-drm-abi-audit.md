@@ -81,6 +81,12 @@ Phase 6 cleanup commits validated in this refresh:
   `GETPARAM(HOST_VISIBLE)` advertisement. `HOST_VISIBLE` is now exposed only
   after a host-visible blob has actually mapped successfully, so rutabaga
   backends that negotiate a BAR but reject mappable blobs fail closed.
+- Kernel `87b25d8` adds an init-time probe
+  (`virtio_gpu_smoke_host_visible_map`) that actively drives one mappable
+  `HOST3D` `RESOURCE_CREATE_BLOB` against any host that negotiates the aperture,
+  followed by `RESOURCE_MAP_BLOB` if the create succeeds, so this gate is no
+  longer circular: the capability reflects a real host round-trip instead of an
+  unexercised path.
 - Kernel `9f6bb5a` matches the Linux `RESOURCE_CREATE_BLOB` host3d path more
   closely by copying and submitting nonzero `cmd/cmd_size` payloads before
   blob creation, while rejecting nonzero `blob_id` or `cmd_size` for guest-only
@@ -142,6 +148,25 @@ Display/runtime evidence:
   `virtio_capsets 1`, `virtio_virgl 2`, `virtio_failures 0`, and
   `virtio_timeouts 0`. This is still a fail-closed proof, not the required
   positive mappable HOST_VISIBLE proof.
+- Active host-visible map probe log `/tmp/xv6-rutabaga-hostvis-probe.log`
+  (init-time `virtio_gpu_smoke_host_visible_map`) closes the previously
+  circular gate. Against the same rutabaga backend it shows
+  `host visible shm id=1 bar=4 ... len=0x2000000`, `3D context smoke ok`,
+  then a mappable host3d create
+  `resource blob create ... blob_mem=2 flags=0x1 blob_id=1 size=4096` that the
+  host **refuses** with a virtio error response
+  (`resource blob create host rejected ... response=0x1200`), logged as
+  `host-visible map probe: create=-5 (host declined mappable host3d blob)`.
+  No `RESOURCE_MAP_BLOB` follows, `GETPARAM(HOST_VISIBLE)` stays `0`, and the
+  boot has zero panics. This upgrades the host-visible blocker from "untested"
+  to a **verified host-side refusal** of mappable host3d blobs.
+- Current non-GL blob control log
+  `/tmp/xv6-blob-hostvis-probe-control.log` used a temporary startup script
+  in a copied rootfs to avoid the flaky interactive serial path. Runtime shows
+  `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, real guest-blob creates on both
+  `card0` and `renderD128`, host-visible userspace probes `skipped=1`, a
+  nonzero `/dev/fb0` sample, `virtio_failures 0`, `virtio_timeouts 0`, and
+  `__BLOB_HOSTVIS_PROBE_CONTROL_OK__`.
 - Local QEMU 9.2 + rutabaga validation log
   `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
   `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,
@@ -175,7 +200,14 @@ Display/runtime evidence:
 Virgl / Mesa validator evidence from the current run
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
 
-- `gpu-validate: PASS`.
+- Current run: `gpu-validate: PASS`
+  (`/home/es/xv6-os/build-x86_64/gpu-validate.log`).
+- Current run evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
+  `mesawlegl[1]: complete frames=16 seconds=1 status=0`,
+  `mesaglsmoke[1]: complete frames=5 seconds=1 status=0`,
+  `virgltest: dmabuf-resource-import ok ... imported_resource=84`,
+  `backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
+  `virtio_timeouts 0`.
 - Re-run after kernel `9f6bb5a`, user `12bd04a`, and parent `b3fe48b` still
   passed. The packaged QEMU virgl lane again disabled blob because classic
   virgl rejects blob resources, then completed the same Mesa/virgl checks with

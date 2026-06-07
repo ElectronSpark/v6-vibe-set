@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
 
 ## Implementation status (2026-06-07)
 
@@ -16,7 +16,7 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Partially complete; host-visible positive proof still blocked** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on the non-GL blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`; kernel `5efbbc4` keeps `GETPARAM(HOST_VISIBLE)` false unless a mappable host-visible blob has actually mapped successfully. The non-blob GTK `-gl` virgl path passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
+| 5 — blob / host-visible / zero-copy | **Partially complete; host-visible positive mapping refused by the host (now verified, not just untested)** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on the non-GL blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`; kernel `5efbbc4` keeps `GETPARAM(HOST_VISIBLE)` false unless a mappable host-visible blob has actually mapped successfully; kernel `87b25d8` actively probes one mappable host-visible blob at init. The probe (`virtio_gpu_smoke_host_visible_map`) sends one mappable `HOST3D` `RESOURCE_CREATE_BLOB` to the host whenever a host-visible aperture is negotiated, so the gate is no longer circular: under the rutabaga `virtio-gpu-rutabaga-pci,blob=true,x-virgl2=on` backend (which negotiates a 32 MiB host-visible BAR + virgl2 capset + working 3D) the host **rejects** the mappable host3d create (`create=-5`, virtio error response), so `HOST_VISIBLE` correctly stays `0`. This is a confirmed host-side refusal, not merely an unexercised path. The non-blob GTK `-gl` virgl path passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
 **Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
@@ -27,11 +27,11 @@ blob creation while keeping guest blobs strict, and ports `23c60af` hardens
 `mesaglsmoke` so it renders into an explicit GLES framebuffer and fails
 nonzero on GL/readback errors. With the final image rebuilt,
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
-passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
-`mesawlegl[1]: complete frames=17 seconds=1 status=0`,
-`mesaglsmoke[1]: complete frames=9 seconds=1 status=0`,
+passes. Current rerun evidence includes `wlcomp: linux-dmabuf enabled
+(virgl)`, `mesawlegl[1]: complete frames=16 seconds=1 status=0`,
+`mesaglsmoke[1]: complete frames=5 seconds=1 status=0`,
 all virgl resource/copy/async/invalid/import `__GPUV_*_DONE_0__` markers,
-`virgltest: dmabuf-resource-import ok ... imported_resource=91`,
+`virgltest: dmabuf-resource-import ok ... imported_resource=84`,
 `backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
 `virtio_timeouts 0`.
 
@@ -94,9 +94,17 @@ Rechecked after Phase 6 on 2026-06-07:
   `virtio-vga-gl`, and `vhost-user-gpu`, but no rutabaga device.
 - A local QEMU 9.2.0 rutabaga build with validation-only host patches
   (`x-virgl2` property plus surfaceless Rutabaga FFI) boots xv6 and negotiates
-  `RESOURCE_BLOB`, the host-visible SHM BAR, and virgl2 capset id 2. However,
-  that backend rejects simple mappable `HOST3D` and `HOST3D_GUEST` blobs with
-  `-EINVAL`; current xv6 correctly reports `GETPARAM(HOST_VISIBLE)=0` there.
+  `RESOURCE_BLOB`, the host-visible SHM BAR, and virgl2 capset id 2. Kernel
+  `87b25d8` now runs an init-time probe
+  (`virtio_gpu_smoke_host_visible_map`) that
+  actively sends one mappable `HOST3D` `RESOURCE_CREATE_BLOB` to this backend.
+  The host **rejects the create** with a virtio error response
+  (`resource blob create host rejected ... response=0x1200` →
+  `host-visible map probe: create=-5`), so no `RESOURCE_MAP_BLOB` is ever
+  attempted and current xv6
+  correctly reports `GETPARAM(HOST_VISIBLE)=0`. This refusal is now
+  **verified by an actual host round-trip**, not inferred from an unexercised
+  path. Evidence: `/tmp/xv6-rutabaga-hostvis-probe.log`.
 - `vhost-user-gpu-pci` now works far enough to boot the non-virgl backend after
   kernel `7b1af61` negotiates `VIRTIO_F_VERSION_1`, but that path exposes no
   SHM window and no 3D capsets. The virgl helper remains blocked by host GL:
@@ -104,8 +112,10 @@ Rechecked after Phase 6 on 2026-06-07:
   `/usr/lib/qemu/vhost-user-gpu -v` fail `Failed to initialize virgl`.
 
 Net: the **kernel-side guest blob code and fail-closed host-visible plumbing
-boot clean**; full host-visible zero-copy validation still awaits a backend
-that both negotiates the BAR and successfully creates/maps mappable blob
+boot clean**, and the init-time map probe now **actively confirms** that the
+only available host-visible-capable backend (rutabaga) refuses mappable blob
+creation; full host-visible zero-copy validation still awaits a backend that
+both negotiates the BAR and successfully creates/maps mappable blob
 resources.
 
 ## Goal
@@ -225,7 +235,7 @@ the top):
 | **vblank** | HW IRQ timestamped, `drm_vblank` accounting | Synthetic 60 Hz from tick counter | **Driven from present completion; `WAIT_VBLANK`/`CRTC_*_SEQUENCE`** (Phase 3) |
 | **virtio-gpu UAPI** | `DRM_IOCTL_VIRTGPU_*` (Mesa winsys target) | Standard ioctls **wired** but incomplete | **`EXECBUFFER` honors BO list + in/out fences; `WAIT` per-resource fence** (Phase 4) |
 | **TTM / memory mgr** | TTM or GEM-SHMEM, real placement/migration, mmap fault | Metadata-only naming, plain anon pages | Unchanged (Phase 6 cleanup pending) |
-| **Blob resources** | `VIRTGPU_RESOURCE_CREATE_BLOB`, host-visible, zero-copy | Absent (explicit transfers only) | **Code complete** — `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB` + host-visible SHM-cap/BAR + `MAP_BLOB`/`UNMAP_BLOB` + PFNMAP mmap; host-blocked for virgl+blob end-to-end (Phase 5) |
+| **Blob resources** | `VIRTGPU_RESOURCE_CREATE_BLOB`, host-visible, zero-copy | Absent (explicit transfers only) | **Code complete** — `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB` + host-visible SHM-cap/BAR + `MAP_BLOB`/`UNMAP_BLOB` + PFNMAP mmap; init-time map probe shows the rutabaga host actively refuses mappable host3d blobs (`create=-5`), so host-visible zero-copy stays fail-closed pending a backend that accepts them (Phase 5) |
 
 ---
 
@@ -536,11 +546,24 @@ the top). Detail retained below for reference and for the remaining work.
   script path proves `RESOURCE_BLOB=1`, real guest blob create commands, and
   fail-closed `HOST_VISIBLE=0` when the current transport lacks a usable
   host-visible virgl lane.
+- **Host-visible map probe (closes the circular gate):**
+  `virtio_gpu_smoke_host_visible_map()` runs once at init whenever the host has
+  negotiated a host-visible blob aperture. It creates one mappable `HOST3D`
+  blob and, if creation succeeds, issues a real `RESOURCE_MAP_BLOB`, so
+  `GETPARAM(HOST_VISIBLE)` no longer depends on a map that nothing ever
+  attempts. Against the rutabaga
+  backend (which negotiates a 32 MiB host-visible BAR + virgl2 capset + working
+  3D smoke) the host **rejects the mappable create** (`create=-5`, virtio error
+  response), so the cap stays `0` and zero panics occur. This converts the
+  former "untested" host-visible blocker into a **verified host refusal**
+  (`/tmp/xv6-rutabaga-hostvis-probe.log`).
 - **Remaining (host-blocked, not a kernel gap):** end-to-end virgl+blob
   zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl path rejects
   blob ("blobs and virgl are not compatible"), and udmabuf needs a shared
-  memfd RAM backend. Needs a rutabaga/gfxstream-capable QEMU or a working
-  vhost-user/rutabaga virgl backend.
+  memfd RAM backend. The rutabaga backend negotiates the host-visible BAR but
+  refuses mappable blob creation (proven by the probe above). Needs a
+  rutabaga/gfxstream-capable QEMU that accepts mappable host3d blobs, or a
+  working vhost-user/rutabaga virgl backend.
 
 ### Phase 6 — Structural cleanup — **DONE**
 - Unified shmem BO allocator, KMS/virtgpu file splits, and TTM-naming retirement
