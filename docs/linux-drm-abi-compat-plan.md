@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator and upstream kmscube pass; launcher blob path verified; libdrm modetest/drmdevice validation passes; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -35,6 +35,17 @@ test tools, and xv6-specific libdrm device discovery maps both
 plain `modetest -c` discovers `/dev/dri/card0`, `drmdevice` reports both
 primary and render nodes, and `modetest -D /dev/dri/card0 -p` prints CRTC and
 plane state; all exit `0` with `virtio_failures 0` and `virtio_timeouts 0`.
+
+**Latest upstream drm_info validation (2026-06-07):** `ports/drm_info` stages
+upstream drm_info commit `462458e0f292145b2a9d5a8b65c392eaeef7362d` with a
+static `json-c` dependency. A headless `virtio-gpu` boot of the freshly rebuilt
+image runs `drm_info /dev/dri/card0` successfully and prints connector, CRTC,
+plane, and property state. Kernel `d122470` fixed the Linux object-property ABI
+metadata that this tool exposed: `CRTC_ID` and `FB_ID` now report their target
+object type in the `DRM_IOCTL_MODE_GETPROPERTY` values array, so `drm_info`
+prints `"CRTC_ID" (atomic): object CRTC = ...` and `"FB_ID" (atomic): object
+framebuffer = 0` instead of faulting while walking properties. The same run
+ends with `virtio_failures 0`, `virtio_timeouts 0`, and no panic/fatal fault.
 
 **Latest upstream kmscube validation (2026-06-07):** `ports/kmscube` stages
 upstream kmscube commit `f60e50e887d3c49e91ac9b06d8199b36152632fa` with only a
