@@ -609,10 +609,10 @@ case "${ARCH}" in
                         bochs)
                                 ;;
                         virtio-gpu)
-                                GPU_ARGS=(-device "virtio-gpu-pci,id=xv6gpu0,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                GPU_ARGS=(-device "virtio-gpu-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-primary)
-                                GPU_ARGS=(-vga none -device "virtio-gpu-pci,id=xv6gpu0,xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}")
+                                GPU_ARGS=(-vga none -device "virtio-gpu-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl)
                                 GPU_ARGS=(-device "virtio-gpu-gl-pci,id=xv6gpu0,${gpu_gl_opts}")

@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; launcher blob path verified; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -474,7 +474,7 @@ the top). Detail retained below for reference and for the remaining work.
 
 ### Phase 5 — Blob resources + zero-copy + damage present — **CODE COMPLETE (host-blocked)**
 
-- **Landed (committed `e1a2754` + uncommitted host-visible work):**
+- **Landed (committed):**
   `VIRTIO_GPU_F_RESOURCE_BLOB` negotiation + `VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB`
   + `virtio_gpu_resource_create_blob()`; 64-bit shared-memory PCI cap discovery
   with on-the-fly BAR assignment (`pci.c`, `virtio_pci_cap64`); host-visible
@@ -482,16 +482,24 @@ the top). Detail retained below for reference and for the remaining work.
   `VIRTGPU_MAP` returns the real blob offset; `VIRTGPU_GETPARAM` advertises
   `HOST_VISIBLE`/`RESOURCE_BLOB` **only** when negotiated (caps = behavior);
   bounds/ownership-checked user mmap (`virtio_gpu_user_host_visible_mmap`/
-  `_page`) + `VMA_FLAG_PFNMAP` fault semantics in `mm/vm.c`.
+  `_page`) + `VMA_FLAG_PFNMAP` fault semantics in `mm/vm.c`; resource-bind
+  scanout preference and dirty-rect flushes.
+- **Launcher validation path:** `QEMU_VIRTIO_GPU_BLOB=auto` now wires
+  `blob=true,hostmem=...,max_hostmem=...` into non-GL `virtio-gpu` devices and
+  attaches the required shared memfd RAM backend. A headless boot through that
+  script path proves `RESOURCE_BLOB=1`, real guest blob create commands, and
+  fail-closed `HOST_VISIBLE=0` when the current transport lacks a usable
+  host-visible virgl lane.
 - **Remaining (host-blocked, not a kernel gap):** end-to-end virgl+blob
   zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl path rejects
   blob ("blobs and virgl are not compatible"), and udmabuf needs a shared
-  memfd RAM backend. Needs a rutabaga/gfxstream-capable QEMU (or a non-virgl
-  blob path). Still open regardless of host: damage-aware `RESOURCE_FLUSH`;
-  resource-bind scanout default (no readback).
+  memfd RAM backend. Needs a rutabaga/gfxstream-capable QEMU or a working
+  vhost-user/rutabaga virgl backend.
 
-### Phase 6 — Structural cleanup — **NOT STARTED**
-- Unified shmem BO allocator (§5.3), file splits (§5.6), TTM-naming retirement.
+### Phase 6 — Structural cleanup — **DONE**
+- Unified shmem BO allocator, KMS/virtgpu file splits, and TTM-naming retirement
+  are committed and validated by the post-cleanup `drmabitest`/`gpu-validate`
+  runs.
 
 ---
 
@@ -500,13 +508,14 @@ the top). Detail retained below for reference and for the remaining work.
 Follow the existing ABI-audit discipline (do not declare a path dead from
 source alone — runtime-trace it; see `xv6-os-runtime.md`).
 
-**Host readiness (2026-06-06):** KVM (`/dev/kvm`), `tun`, and `memfd` are
+**Host readiness (2026-06-07):** KVM (`/dev/kvm`), `tun`, and `memfd` are
 present; `/dev/udmabuf` is **now available** (custom WSL2+ kernel) and QEMU
 9.0.2 exposes `blob`/`hostmem`/`max_hostmem`. `scripts/launch/run-qemu.sh`
-auto-enables `blob=true,hostmem=…` when `/dev/udmabuf` is readable
-(`QEMU_VIRTIO_GPU_BLOB=auto`). So Phase 5 host-visible/zero-copy can be
-validated here — use a `-gl` GPU (`virtio-vga-gl`/`virtio-gpu-gl`) so virgl is
-actually negotiated.
+auto-enables `blob=true,hostmem=…` for non-GL `virtio-gpu` devices when
+`/dev/udmabuf` is readable (`QEMU_VIRTIO_GPU_BLOB=auto`) and adds the required
+shared memfd guest RAM backend. The same script intentionally disables blob on
+this host's `-gl` virgl devices because QEMU 9.0.2 rejects classic virgl + blob
+before boot.
 
 **Boot caveat:** the GTK `gl=es` GUI path can stall at GtkGLArea in this WSLg
 environment and produces no debugcon output. Use a **headless** boot
@@ -525,8 +534,9 @@ DRM nodes registering, and a clean desktop start.
    `eglinfo`/`es2gears` select `renderD128` without xv6 env shims (Phase 4
    end-to-end check, still outstanding).
 4. **Blob/zero-copy** — with `blob=true,hostmem=…` (udmabuf), verify
-   `VIRTGPU_GETPARAM(RESOURCE_BLOB)==1`, a mappable blob is host-visible
-   without an explicit transfer, and present traces show bind (not readback).
+   `VIRTGPU_GETPARAM(RESOURCE_BLOB)==1`; on this host, verify the non-GL guest
+   blob path and fail-closed `HOST_VISIBLE=0`. Full mappable virgl blob
+   zero-copy remains blocked until a host backend can expose virgl + blob.
 5. **Compositor end-to-end** — the Wayland compositor + WebKit/GL apps remain
    the integration test; compare trace shape + on-screen output + guest
    framebuffer samples, never counters alone.
@@ -563,15 +573,11 @@ broad fail-closed DRM shim:
 
 **What remains:**
 
-- **Phase 5 (in progress):** finish blob / host-visible resources. The guest
-  blob path is WIP in `virtio_gpu.c`; the host-visible/mappable zero-copy tier
-  is **now testable** because `/dev/udmabuf` is available and the launcher
-  wires `blob=true,hostmem=…`. Advertise `RESOURCE_BLOB`/`HOST_VISIBLE` only
-  when the host hostmem window is actually negotiated.
-- **Phase 6 (not started):** unified shmem BO allocator, file splits, retire
-  TTM naming.
-- **Validation gap:** Phases 4–5 still need end-to-end virgl proof — boot the
-  `-gl` GPU path, run `drmabitest` + `modetest`/`kmscube` + stock Mesa virgl,
-  and refresh `docs/linux-drm-abi-audit.md` against the current kernel (the
-  baseline there predates Phases 1–4). Validate with trace shape + on-screen
-  output + framebuffer samples, never counters alone.
+- **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
+  a host backend that can expose both virgl and blob resources. The current QEMU
+  9.0.2 classic virgl path rejects that combination before xv6 boots, and the
+  available vhost-user helper cannot initialize virgl without a host DRM render
+  node.
+- **External-tool sweep:** keep refreshing `drm_info`, `modetest`, `kmscube`,
+  and stock Mesa virgl evidence as the host path improves. Validate with trace
+  shape + on-screen output + framebuffer samples, never counters alone.

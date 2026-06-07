@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + vhost-user probe
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe
 
 Build:
 
@@ -18,6 +18,11 @@ Build:
   -j2` completed, `port-mesa` was rebuilt after removing temporary local
   diagnostics, and `cmake --build build-x86_64 --target image -j2`
   regenerated the exact validation `fs.img`.
+- After launcher commit work, no kernel/rootfs rebuild was needed. The corrected
+  script path was validated with `QEMU_DRY_RUN=1` and a headless boot using
+  `DISPLAY_MODE=nographic USE_KVM=1 QEMU_GPU=virtio-gpu
+  QEMU_VIRTIO_GPU_BLOB=auto QEMU_VIRTIO_GPU_HOSTMEM=32M
+  QEMU_VIRTIO_GPU_MAX_HOSTMEM=32M`.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -47,6 +52,10 @@ Boot:
   `features0=0x3000000a features1=0x101 driver_features0=0xa
   driver_features1=0x1 scanouts=1 capsets=0`,
   `GPU: virgl unavailable; exposing dumb-buffer DRM only`.
+- The launcher dry-run now includes the full non-GL blob contract:
+  `-machine pc,vmport=off,memory-backend=xv6mem0`,
+  `-object memory-backend-memfd,id=xv6mem0,size=4G,share=on`, and
+  `-device virtio-gpu-pci,...,blob=true,hostmem=32M,max_hostmem=32M`.
 
 Probe highlights from `/bin/drmabitest`:
 
@@ -70,6 +79,10 @@ Virgl / Mesa validator evidence from
 `GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
 
 - `gpu-validate: PASS`.
+- Re-run after the launcher fix still passed. The virgl path logged:
+  `run-qemu: disabling virtio-gpu blob: this QEMU's virgl path is incompatible
+  with blob resources`, proving blob is only disabled on the host-incompatible
+  `-gl` lane.
 - `virtio_gpu: initialized ... features0=0x30000003 features1=0x101
   driver_features0=0x3 driver_features1=0x1 scanouts=1 capsets=2`.
 - `virtio_gpu: virgl capset ready id=1 version=1 size=308` and
