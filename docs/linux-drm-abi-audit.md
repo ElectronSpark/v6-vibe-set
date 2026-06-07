@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 headless validation
+## Current refresh — 2026-06-07 Phase 6 + vhost-user probe
 
 Build:
 
@@ -11,6 +11,9 @@ Build:
 - After Phase 6 structural cleanup, `cmake --build build-x86_64 --target kernel
   image -j"$(nproc)"` completed after each kernel commit and regenerated the
   multiboot `xv6.bin` plus `build-x86_64/fs.img`.
+- After kernel `7b1af61`, `cmake --build build-x86_64 --target kernel image
+  -j"$(nproc)"` completed and regenerated the multiboot `xv6.bin` plus
+  `build-x86_64/fs.img`.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -19,7 +22,11 @@ Phase 6 cleanup commits validated in this refresh:
 - Kernel `1b3f1b8` renames the BO backing file to
   `fb_bo_shmem_dmabuf.c` and documents retained `FB_GPU_TTM_*` labels as
   compatibility metadata names.
-- Parent submodule bumps through `d86d76b`.
+- Kernel `7b1af61` negotiates virtio feature word 1 so
+  `VIRTIO_F_VERSION_1` is accepted when QEMU/vhost-user offers a modern
+  virtio-gpu device.
+- Parent submodule bumps through the parent commit that records kernel
+  `7b1af61`.
 
 Boot:
 
@@ -28,7 +35,8 @@ Boot:
 - Runtime log showed `/dev/gpu0`, `/dev/dri/card0`, and
   `/dev/dri/renderD128` registered, no panic/trap, and:
   `virtio_gpu: host visible shm id=1 ... len=0x2000000`,
-  `features0=0x3000000a driver_features0=0xa scanouts=1 capsets=0`,
+  `features0=0x3000000a features1=0x101 driver_features0=0xa
+  driver_features1=0x1 scanouts=1 capsets=0`,
   `GPU: virgl unavailable; exposing dumb-buffer DRM only`.
 
 Probe highlights from `/bin/drmabitest`:
@@ -60,6 +68,15 @@ Phase 6 on 2026-06-07:
   `blobs and virgl are not compatible (yet)`.
 - `-display gtk,gl=on -device virtio-vga-gl,blob=true,...` fails with the same
   `blobs and virgl are not compatible (yet)` rejection.
+- `/usr/lib/qemu/vhost-user-gpu` is installed and reports `render-node` plus
+  `virgl` in `--print-capabilities`. With `VIRTIO_F_VERSION_1` negotiated, the
+  non-virgl `vhost-user-gpu-pci` path boots to userspace, but exposes no SHM
+  window and no 3D capsets (`features0=0x30000002 features1=0x101
+  driver_features0=0x2 driver_features1=0x1 scanouts=1 capsets=0`).
+- The vhost-user virgl path remains host-blocked: `egl-headless,gl=on` fails
+  before boot with `egl: no drm render node available`, while `gtk,gl=es`
+  makes the helper log `Failed to initialize virgl`; xv6 then sees
+  `scanouts=0 capsets=0` and virtio-gpu command timeouts.
 - Therefore the current host can validate guest blobs and fail-closed
   HOST_VISIBLE behavior, but cannot complete the Step 5.2/5.3 virgl +
   mappable MAP_BLOB zero-copy proof.
