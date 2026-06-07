@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; launcher blob path verified; libdrm modetest/drmdevice validation passes; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator and upstream kmscube pass; launcher blob path verified; libdrm modetest/drmdevice validation passes; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -35,6 +35,18 @@ test tools, and xv6-specific libdrm device discovery maps both
 plain `modetest -c` discovers `/dev/dri/card0`, `drmdevice` reports both
 primary and render nodes, and `modetest -D /dev/dri/card0 -p` prints CRTC and
 plane state; all exit `0` with `virtio_failures 0` and `virtio_timeouts 0`.
+
+**Latest upstream kmscube validation (2026-06-07):** `ports/kmscube` stages
+upstream kmscube commit `f60e50e887d3c49e91ac9b06d8199b36152632fa` with only a
+build-system patch to make libpng optional. In the freshly rebuilt image,
+GTK/virgl runs of `kmscube -D /dev/dri/renderD128 -O -v 256x256 -c 4 -N` and
+`kmscube -D /dev/dri/card0 -c 2 -N` both reach Mesa EGL 1.5 and OpenGL ES 3.1
+with renderer `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`. The KMS
+run renders frames on `/dev/dri/card0`; a follow-up `fbstat` in the same
+QEMU/virgl shape reports `backend virgl`, `backend_opengl_submit 1`,
+`virtio_failures 0`, and `virtio_timeouts 0`. The WSLg GTK serial stream
+interleaves shell echoes, Mesa logs, and `fbstat`, so the audit records exact
+log files and marker caveats instead of treating counters alone as proof.
 
 **Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
 (custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
