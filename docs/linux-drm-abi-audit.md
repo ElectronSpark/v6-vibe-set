@@ -32,6 +32,10 @@ Build:
 - For upstream `drm_info`, `ports/json-c` and `ports/drm_info` were built and
   staged, then `cmake --build build-x86_64 --target image -j2` regenerated the
   validation image after the kernel object-property metadata fix.
+- After hardening `mesaglsmoke`, `cmake --build build-x86_64/ports --target
+  port-wayland -j2` rebuilt the Wayland validation clients, then
+  `cmake --build build-x86_64 --target image -j2` regenerated the exact
+  `fs.img` used by the passing GPU validator run.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -53,8 +57,10 @@ Phase 6 cleanup commits validated in this refresh:
   userspace expectations for properties such as `CRTC_ID` and `FB_ID`.
 - Ports `832ba2f` adds upstream `drm_info` plus its static `json-c`
   dependency as xv6 validation ports.
+- Ports `23c60af` makes `mesaglsmoke` render into an explicit GLES framebuffer,
+  fail nonzero on GL/readback errors, and require at least one presented frame.
 - Parent submodule bumps through the parent commit that records kernel
-  `d122470` and ports `832ba2f`.
+  `d122470`, ports `832ba2f`, and the follow-up ports validation hardening.
 
 Boot:
 
@@ -79,7 +85,7 @@ Probe highlights from `/bin/drmabitest`:
 | `DRM_IOCTL_VIRTGPU_GETPARAM[HOST_VISIBLE=4]` | `0/0 value=0` | `0/0 value=0` | fail-closed on this non-virgl transport |
 | `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.valid` | `0/0 bo=5 res=4 size=4096 blob_mem=1` | `0/0 bo=5 res=5 size=4096 blob_mem=1` | real guest blob command reached virtio-gpu |
 | `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.host_visible` | `create=-1 advertised=0 mmap_ok=0` | `create=-1 advertised=0 mmap_ok=0` | mappable HOST3D blob rejected while HOST_VISIBLE is not advertised |
-| `DRM_IOCTL_MODE_ATOMIC.fences` | `atomic=0 out_fence=6 poll=1 dirty=0` | KMS denied | clipped `DIRTYFB` positive path exercised on card0 |
+| `DRM_IOCTL_MODE_ATOMIC.fences` | `atomic=0 out_fence=6 poll=0 dirty=0` | KMS denied | valid out-fence returned; clipped `DIRTYFB` positive path exercised on card0 |
 
 Display/runtime evidence:
 
@@ -88,6 +94,13 @@ Display/runtime evidence:
   `virtio_capsets 0`, `virtio_virgl 0`.
 - `drmabitest` framebuffer sample from `/dev/fb0`:
   `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
+- Current post-`drm_info` regression log
+  `/tmp/xv6-drmabitest-post-drm-info-grep-pass.log` reached
+  `drmabitest: end` with `expect_rc=0`; it shows
+  `RESOURCE_BLOB=1` on both nodes, `HOST_VISIBLE=0` on both nodes, real
+  guest-blob creates, HOST_VISIBLE blob create rejected while unadvertised, a
+  card0 atomic commit with a nonzero out-fence, the `/dev/fb0` pixel sample,
+  `virtio_failures 0`, and `virtio_timeouts 0`.
 - External libdrm tools from the rebuilt port pass against the same image:
   headless `modetest -c` discovers and opens `/dev/dri/card0`, prints
   `Connectors:`, and exits `0`; `drmdevice` lists `nodes[0] /dev/dri/card0`
@@ -103,8 +116,8 @@ Display/runtime evidence:
   `virtio_timeouts 0`, and the `__DRMINFO_OK__` marker. `/tmp/xv6-debugcon.log`
   contains no panic, fatal page fault, coredump, or virtio-gpu timeout marker.
 
-Virgl / Mesa validator evidence from
-`GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
+Virgl / Mesa validator evidence from the current run
+`GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
 
 - `gpu-validate: PASS`.
 - Re-run after the launcher fix still passed. The virgl path logged:
@@ -118,10 +131,18 @@ Virgl / Mesa validator evidence from
 - `wlcomp: linux-dmabuf enabled (virgl)` and multiple
   `wlcomp: dmabuf create_params ...` rows.
 - Stock Mesa virgl Wayland EGL completed:
-  `mesawlegl_completion_matrix loop=1 frames=10 seconds=1 ... status=0` and
-  `mesawlegl[1]: complete frames=10 seconds=1 status=0 ...`.
+  `mesawlegl_completion_matrix loop=1 frames=12 seconds=1 ... status=0` and
+  `mesawlegl[1]: complete frames=12 seconds=1 status=0 ...`.
+- The legacy xv6 GPU-buffer Mesa smoke path also completed after the explicit
+  framebuffer fix:
+  `mesaglsmoke: EGL 1.5 GL OpenGL ES 3.1 ... renderer=virgl ... buffer=xv6-gpu-bo`
+  and `mesaglsmoke[1]: complete frames=4 seconds=1 status=0`.
+- Virgl resource, copy, scanout-copy, clear-source, render-bind,
+  async-submit, invalid-submit, bad-submit, and dma-buf import probes all
+  emitted their `__GPUV_*_DONE_0__` markers in
+  `build-x86_64/gpu-validate.log`.
 - Virgl resource PRIME identity stayed intact:
-  `virgltest: dmabuf-resource-import ok ... imported_resource=65`.
+  `virgltest: dmabuf-resource-import ok ... imported_resource=73`.
 - Backend separation remained honest:
   `backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl` and
   `opengl_submit_backend_separation_matrix ... status=PASS`.

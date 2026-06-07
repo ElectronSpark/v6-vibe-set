@@ -146,7 +146,7 @@ EOF
         "multi-client mesawlegl completion"
     require_log '(__GPUV_MESAGL_DONE_0__|mesaglsmoke\[[0-9]+\]: complete frames=[1-9][0-9]* seconds=[1-9][0-9]* status=0)' \
         "multi-client mesaglsmoke completion"
-    require_log 'virgltest: ctx=[0-9]+ res=[0-9]+ map=[0-9]+ fence=[0-9]+ signaled=[0-9]+' \
+    require_log '(__GPUV_VIRGL_DONE_0__|virgltest: ctx=[0-9]+ res=[0-9]+ map=[0-9]+ fence=[0-9]+ signaled=[0-9]+)' \
         "virgl resource/submit/fence pass"
     require_log 'virgltest: copy-region ok' \
         "virgl resource copy pass"
