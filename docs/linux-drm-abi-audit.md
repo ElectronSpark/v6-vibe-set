@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe + HOST3D create fix
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:
 
@@ -42,6 +42,10 @@ Build:
   `drmabitest --virtgpu-only` blob probe. A follow-up
   `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1
   bash scripts/gpu/gpu-validate.sh` pass revalidated the `-gl` virgl lane.
+- After kernel `5efbbc4` and user `ac11b28`,
+  `cmake --build build-x86_64 --target kernel user image -j2` completed and
+  regenerated the exact `xv6.bin`/`fs.img` pair used by the rutabaga
+  fail-closed HOST_VISIBLE probe below.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -69,10 +73,18 @@ Phase 6 cleanup commits validated in this refresh:
   guest-page mmap path for blobs that intentionally have no guest pages; those
   blobs now rely on `VIRTGPU_MAP` / `RESOURCE_MAP_BLOB` when the host actually
   advertises `HOST_VISIBLE`.
+- Kernel `5efbbc4` splits "host-visible BAR negotiated" from
+  `GETPARAM(HOST_VISIBLE)` advertisement. `HOST_VISIBLE` is now exposed only
+  after a host-visible blob has actually mapped successfully, so rutabaga
+  backends that negotiate a BAR but reject mappable blobs fail closed.
 - User `8c5aa00` adds `drmabitest --virtgpu-only`, a focused probe for
   virtgpu GETPARAM, guest blob create, host-visible blob create/map, and
   framebuffer sampling. This avoids waiting on unrelated full-suite probes
   when validating the Phase 5 blob lane.
+- User `ac11b28` makes the host-visible probe respect
+  `GETPARAM(HOST_VISIBLE)`: when the kernel correctly reports `0`, the probe
+  records `skipped=1` instead of sending a deliberately unsupported mappable
+  blob request.
 - Parent submodule bumps through the parent commit that records kernel
   `d122470`, ports `832ba2f`, and the follow-up ports validation hardening.
 
@@ -98,7 +110,7 @@ Probe highlights from `/bin/drmabitest`:
 | `DRM_IOCTL_VIRTGPU_GETPARAM[RESOURCE_BLOB=3]` | `0/0 value=1` | `0/0 value=1` | guest blob resources honestly advertised |
 | `DRM_IOCTL_VIRTGPU_GETPARAM[HOST_VISIBLE=4]` | `0/0 value=0` | `0/0 value=0` | fail-closed on this non-virgl transport |
 | `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.valid` | `0/0 bo=1 res=3 size=4096 blob_mem=1` | `0/0 bo=1 res=4 size=4096 blob_mem=1` | real guest blob command reached virtio-gpu |
-| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.host_visible` | `create=-1 advertised=0 mmap_ok=0` | `create=-1 advertised=0 mmap_ok=0` | mappable HOST3D blob rejected while HOST_VISIBLE is not advertised |
+| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.host_visible` | `advertised=0 skipped=1` | `advertised=0 skipped=1` | mappable blob probe skipped while HOST_VISIBLE is not advertised |
 | `DRM_IOCTL_MODE_ATOMIC.fences` | `atomic=0 out_fence=6 poll=0 dirty=0` | KMS denied | valid out-fence returned; clipped `DIRTYFB` positive path exercised on card0 |
 
 Display/runtime evidence:
@@ -107,6 +119,12 @@ Display/runtime evidence:
   `/tmp/xv6-drmabitest-virtgpu-only-host3d-fix.log` reached
   `__DRMABI_HOST3D_FIX_OK__` with `virtio_failures 0` and
   `virtio_timeouts 0`.
+- Local QEMU 9.2 + rutabaga validation log
+  `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
+  `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,
+  `features0=0x3000001b`, `capset[0] id=2`, `3D context smoke ok`,
+  `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, host-visible probe `skipped=1`,
+  nonzero `/dev/fb0` sample, `virtio_failures 0`, and `virtio_timeouts 0`.
 - `drmabitest --virtgpu-only` framebuffer sample from `/dev/fb0`:
   `ff000030 ff000031 ff000032 ff000033 ff000034 ff000035 ff000036 ff000037 ff010038 ff010039 ff01003a ff01003b ff01003c ff01003d ff01003e ff01003f`.
 - Current post-`drm_info` regression log
@@ -178,6 +196,13 @@ Phase 6 on 2026-06-07:
   QEMU_GPU=virtio-vga-gl-primary` fails before boot in
   `/tmp/xv6-virgl-blob-forced-20260607.log` with
   `blobs and virgl are not compatible (yet)`.
+- A local QEMU 9.2.0 build from `/home/es/xv6/toolchain/qemu` with rutabaga
+  enabled can boot xv6 with `virtio-gpu-rutabaga-pci,blob=true,hostmem=32M`
+  only after validation-only host patches that expose `x-virgl2` and pass
+  surfaceless EGL through Rutabaga FFI. That path negotiates a virgl2 capset
+  and the host-visible SHM BAR, but rutabaga/virglrenderer rejects simple
+  mappable `HOST3D` and `HOST3D_GUEST` blobs with `-EINVAL`, so xv6 must
+  continue to report `GETPARAM(HOST_VISIBLE)=0` on this backend.
 - `/usr/lib/qemu/vhost-user-gpu` is installed and reports `render-node` plus
   `virgl` in `--print-capabilities`. With `VIRTIO_F_VERSION_1` negotiated, the
   non-virgl `vhost-user-gpu-pci` path boots to userspace, but exposes no SHM

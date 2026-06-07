@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST3D create path fixed; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -16,7 +16,7 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob proof** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on this non-virgl blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`. The non-blob GTK `-gl` virgl path now passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
+| 5 — blob / host-visible / zero-copy | **Partially complete; host-visible positive proof still blocked** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on the non-GL blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`; kernel `5efbbc4` keeps `GETPARAM(HOST_VISIBLE)` false unless a mappable host-visible blob has actually mapped successfully. The non-blob GTK `-gl` virgl path passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
 **Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
@@ -90,15 +90,21 @@ Rechecked after Phase 6 on 2026-06-07:
   with `egl: no drm render node available`.
 - `qemu-system-x86_64 -device help` lists `virtio-gpu-gl-pci`,
   `virtio-vga-gl`, and `vhost-user-gpu`, but no rutabaga device.
+- A local QEMU 9.2.0 rutabaga build with validation-only host patches
+  (`x-virgl2` property plus surfaceless Rutabaga FFI) boots xv6 and negotiates
+  `RESOURCE_BLOB`, the host-visible SHM BAR, and virgl2 capset id 2. However,
+  that backend rejects simple mappable `HOST3D` and `HOST3D_GUEST` blobs with
+  `-EINVAL`; current xv6 correctly reports `GETPARAM(HOST_VISIBLE)=0` there.
 - `vhost-user-gpu-pci` now works far enough to boot the non-virgl backend after
   kernel `7b1af61` negotiates `VIRTIO_F_VERSION_1`, but that path exposes no
   SHM window and no 3D capsets. The virgl helper remains blocked by host GL:
   `egl-headless,gl=on` has no DRM render node, and `gtk,gl=es` makes
   `/usr/lib/qemu/vhost-user-gpu -v` fail `Failed to initialize virgl`.
 
-Net: the **kernel-side blob / host-visible code is complete and boots clean**;
-full virgl+blob zero-copy validation awaits a rutabaga-capable QEMU, a working
-host EGL render node, or an explicit vhost-user/rutabaga GPU backend.
+Net: the **kernel-side guest blob code and fail-closed host-visible plumbing
+boot clean**; full host-visible zero-copy validation still awaits a backend
+that both negotiates the BAR and successfully creates/maps mappable blob
+resources.
 
 ## Goal
 
@@ -120,9 +126,10 @@ ioctl contract they use on Linux.
 
 This document is a **comparison + implementation plan**. Sections §1–§6 record
 the original gap analysis (the pre-implementation baseline); §7 tracks the
-phased roadmap, now mostly **landed** (see the status table above). The Phase 5
-blob / host-visible code and Phase 6 cleanup are complete; remaining work is
-end-to-end virgl+blob zero-copy validation, currently host-blocked (see above).
+phased roadmap, now mostly **landed** (see the status table above). Phase 6
+cleanup is complete. Phase 5 guest blob and fail-closed host-visible plumbing
+are landed, but positive host-visible zero-copy remains open until a backend
+can create and map mappable blob resources.
 
 This plan is scoped to **x86_64** (consistent with the syscall ABI plans).
 RISC-V graphics is out of scope.
