@@ -21,11 +21,15 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 
 **Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
 `FB_GPU_VIRGL_RESOURCE_EXPORT_FD` to use render-owner-local BO handles during
-resource export. With the final image rebuilt,
-`GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
+resource export, and ports `23c60af` hardens `mesaglsmoke` so it renders into
+an explicit GLES framebuffer and fails nonzero on GL/readback errors. With the
+final image rebuilt,
+`GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
 passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
-`mesawlegl_completion_matrix ... frames=10 ... status=0`,
-`virgltest: dmabuf-resource-import ok ... imported_resource=65`,
+`mesawlegl_completion_matrix ... frames=12 ... status=0`,
+`mesaglsmoke[1]: complete frames=4 seconds=1 status=0`,
+all virgl resource/copy/async/invalid/import `__GPUV_*_DONE_0__` markers,
+`virgltest: dmabuf-resource-import ok ... imported_resource=73`,
 `backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
 `virtio_timeouts 0`.
 
