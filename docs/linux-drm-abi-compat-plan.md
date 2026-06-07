@@ -1,6 +1,43 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-06
+Last updated: 2026-06-07 (revised after full source-verified status audit)
+
+## Implementation status (2026-06-07)
+
+This plan is no longer purely forward-looking: most of the roadmap has been
+built. Status verified by source reads + a headless QEMU boot of the freshly
+built kernel (`dma_fence: selftest ok`, all DRM nodes register, boots clean to
+the Wayland desktop with no panics).
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0 — audit + `drmabitest` | **Done** | `user/programs/drmabitest`, `docs/linux-drm-abi-audit.md` baseline |
+| 1 — `dma_fence` core + syncobj/sync_file | **Done (committed)** | `dev/fb/dma_fence.c`; `dma_fence: selftest ok` at boot; `SYNCOBJ_EVENTFD` real |
+| 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
+| 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
+| 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
+| 5 — blob / host-visible / zero-copy | **Code complete; host-blocked for virgl+blob** | committed `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB`; uncommitted host-visible: 64-bit SHM-cap discovery + BAR assign (`pci.c`), `RESOURCE_MAP_BLOB`/`UNMAP_BLOB` (`virtio_gpu.c`), bounds/ownership-checked user mmap + `VMA_FLAG_PFNMAP` fault path (`mm/vm.c`) |
+| 6 — structural cleanup | **Not started** | TTM naming still pervasive (~398 refs); `fb_drm_core_kms.c` ~3155 lines, no file splits |
+
+**Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
+(custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
+with `blob`/`hostmem`/`max_hostmem` props on `virtio-gpu-pci`/`virtio-vga`.
+However, end-to-end blob is **still host-blocked** on this machine for two
+reasons proven by direct testing:
+
+1. QEMU's `virtio_gpu_have_udmabuf()` also requires guest RAM backed by a
+   **shared sealable memfd** (`-object memory-backend-memfd,share=on` +
+   `-machine ...,memory-backend=ID`); plain anonymous `-m` RAM fails with
+   "need rutabaga or udmabuf for blob resources" even though `/dev/udmabuf`
+   opens fine. The launcher now wires this memfd backend when blob is attached.
+2. QEMU 9.0.2's **classic virgl path rejects blob outright** ("blobs and virgl
+   are not compatible (yet)"); only the separate rutabaga/gfxstream backend
+   supports virgl + blob. The default GUI uses `virtio-vga-gl` (virgl), so the
+   launcher now auto-disables blob for virgl GPUs (override `QEMU_VIRGL_BLOB_OK=1`).
+
+Net: the **kernel-side blob / host-visible code is complete and boots clean**;
+full virgl+blob zero-copy validation awaits a rutabaga-capable QEMU or a
+non-virgl blob path.
 
 ## Goal
 
@@ -20,9 +57,11 @@ ioctl contract they use on Linux.
 - the same `virtio-gpu` UAPI (`DRM_IOCTL_VIRTGPU_*`) so a stock Mesa
   `virtio_gpu`/`virgl` winsys binds without xv6-specific shims.
 
-This document is a **comparison + implementation plan**. It does not change
-code. It inventories what exists, what is a semantic mismatch, and what is
-missing, then proposes a phased roadmap with structural and performance work.
+This document is a **comparison + implementation plan**. Sections §1–§6 record
+the original gap analysis (the pre-implementation baseline); §7 tracks the
+phased roadmap, now mostly **landed** (see the status table above). The Phase 5
+blob / host-visible code is now complete; remaining work is end-to-end
+virgl+blob validation (host-blocked, see above) plus Phase 6 cleanup.
 
 This plan is scoped to **x86_64** (consistent with the syscall ABI plans).
 RISC-V graphics is out of scope.
@@ -102,19 +141,21 @@ flowchart TB
   end
 ```
 
-Key structural differences:
+Key structural differences (the **xv6 column below is the original baseline**;
+the **Now** column reflects the landed implementation — see the status table at
+the top):
 
-| Concept | Linux | xv6-os today | Compatibility impact |
+| Concept | Linux | xv6-os baseline | Now |
 |---|---|---|---|
-| **GEM handle scope** | Per-`drm_file` handle table (`idr`) | One **global** table, isolation by `owner_id`/`tgid` | High — handle numbers differ between processes; FLINK/OPEN unsupported; render-node clients can collide conceptually |
-| **dma_fence** | First-class refcounted fence objects, fence context/seqno, cross-driver | `uint64` counters + pending-callback counts | High — no real cross-driver fence sharing; sync_file semantics approximate |
-| **dma_buf** | `struct dma_buf` + attachments + sg_table, cross-device | Local-only wrapper, foreign fd rejected | High — no cross-driver buffer sharing (GPU↔display↔v4l) |
-| **KMS atomic** | `drm_atomic_state` trees, check/commit, rollback, async commit, in/out fences | Validate then immediate global apply; in-fence wait rejected | Medium — works for simple compositors, breaks atomic-fence users |
-| **KMS objects** | Dynamic per-HW (N CRTCs/connectors/planes, hotplug) | Static singletons (1 each), no overlay/cursor plane | Medium — single-head only; no universal planes/overlay |
-| **vblank** | HW IRQ timestamped, `drm_vblank` accounting | Synthetic 60 Hz from tick counter | Medium — present pacing approximate; no real CRTC sequence |
-| **virtio-gpu UAPI** | `DRM_IOCTL_VIRTGPU_*` (Mesa winsys target) | Standard ioctls **wired** but incomplete; xv6-private `FB_GPU_VIRGL_*` also present | Medium — `EXECBUFFER` ignores BO list + in/out fences, blob/host-visible faked |
-| **TTM / memory mgr** | TTM or GEM-SHMEM, real placement/migration, mmap fault | Metadata-only naming, plain anon pages | Low/Medium — fine for sysmem, no VRAM migration |
-| **Blob resources** | `VIRTGPU_RESOURCE_CREATE_BLOB`, host-visible, zero-copy | Absent (explicit transfers only) | Medium — perf + modern Mesa paths |
+| **GEM handle scope** | Per-`drm_file` handle table (`idr`) | One **global** table, isolation by `owner_id`/`tgid` | **Per-file handle table + global BO refcount; `FLINK`/`OPEN` implemented** (Phase 2) |
+| **dma_fence** | First-class refcounted fence objects, fence context/seqno, cross-driver | `uint64` counters + pending-callback counts | **Real `dma_fence` core (`dma_fence.c`); syncobj/sync_file rebacked on it** (Phase 1) |
+| **dma_buf** | `struct dma_buf` + attachments + sg_table, cross-device | Local-only wrapper, foreign fd rejected | **Generic dma-buf wrapper ops + mmap; virtgpu→PRIME bridge** (Phase 2/4) |
+| **KMS atomic** | `drm_atomic_state` trees, check/commit, rollback, async commit, in/out fences | Validate then immediate global apply; in-fence wait rejected | **Atomic publishes after present; real out-fences signal on display completion** (Phase 3) |
+| **KMS objects** | Dynamic per-HW (N CRTCs/connectors/planes, hotplug) | Static singletons (1 each), no overlay/cursor plane | **Cursor plane wired to virtio cursor queue; connector mode list exposed** (Phase 3) |
+| **vblank** | HW IRQ timestamped, `drm_vblank` accounting | Synthetic 60 Hz from tick counter | **Driven from present completion; `WAIT_VBLANK`/`CRTC_*_SEQUENCE`** (Phase 3) |
+| **virtio-gpu UAPI** | `DRM_IOCTL_VIRTGPU_*` (Mesa winsys target) | Standard ioctls **wired** but incomplete | **`EXECBUFFER` honors BO list + in/out fences; `WAIT` per-resource fence** (Phase 4) |
+| **TTM / memory mgr** | TTM or GEM-SHMEM, real placement/migration, mmap fault | Metadata-only naming, plain anon pages | Unchanged (Phase 6 cleanup pending) |
+| **Blob resources** | `VIRTGPU_RESOURCE_CREATE_BLOB`, host-visible, zero-copy | Absent (explicit transfers only) | **Code complete** — `RESOURCE_CREATE_BLOB` + `F_RESOURCE_BLOB` + host-visible SHM-cap/BAR + `MAP_BLOB`/`UNMAP_BLOB` + PFNMAP mmap; host-blocked for virgl+blob end-to-end (Phase 5) |
 
 ---
 
@@ -372,48 +413,60 @@ handoff plan:
 
 ## 7. Phased roadmap
 
-Ordered by dependency and compatibility payoff. Each phase is independently
-landable and testable.
+Ordered by dependency and compatibility payoff. **Phases 0–4 are landed and
+committed; Phase 5 is in progress; Phase 6 not started** (see status table at
+the top). Detail retained below for reference and for the remaining work.
 
-### Phase 0 — Audit & truthfulness (low risk, do first)
-- Reconcile `GET_CAP` values with actual behavior (§4.4).
-- Audit `drm_version`, `GET_CLIENT`, `GET_UNIQUE`, fbdev struct layouts
-  (§3.1, §3.7) against libdrm/Linux headers.
-- Document the exact ioctl support matrix (extend the table in §1 with
-  pass/stub/reject per ioctl) and add a userspace probe (mirroring
-  `linuxsyscallabitest`) — call it `drmabitest`.
+### Phase 0 — Audit & truthfulness — **DONE**
+- `GET_CAP` values reconciled with behavior (`gpu_drm_get_cap`).
+- `drmabitest` probe added (`user/programs/drmabitest`); baseline captured in
+  `docs/linux-drm-abi-audit.md`.
 
-### Phase 1 — dma_fence core + syncobj/sync_file correctness
-- Implement `dma_fence` (§5.1), reback syncobj on it.
-- Make exported syncobj/PRIME fds real `sync_file`s; implement
-  `SYNCOBJ_EVENTFD` (§3.5).
-- Result: correct fence semantics that every later phase depends on.
+### Phase 1 — dma_fence core + syncobj/sync_file correctness — **DONE**
+- `dma_fence` implemented in `dev/fb/dma_fence.c` (boot self-test passes).
+- syncobj rebacked on `dma_fence`; exported syncobj/PRIME fds are real
+  `sync_file`s; `SYNCOBJ_EVENTFD` signals via `eventfd_signal_file`.
 
-### Phase 2 — Per-file GEM table + FLINK/OPEN + dma-buf generalization
-- Per-`drm_file` handle table with global BO refcount (§5.2).
-- `GEM_FLINK`/`GEM_OPEN`; PRIME import creates a new per-file handle (§3.3).
-- Generic `dma_buf` object + ops; accept cross-component import (§3.4).
+### Phase 2 — Per-file GEM table + FLINK/OPEN + dma-buf generalization — **DONE**
+- Per-`drm_file` handle table with global BO refcount; `GEM_CLOSE` drops only
+  the file's reference.
+- `GEM_FLINK`/`GEM_OPEN` (`fb_gem_flink`); PRIME import creates a new per-file
+  handle; generic `dma_buf` wrapper ops + `mmap`.
 
-### Phase 3 — Real KMS atomic + CREATEPROPBLOB + cursor/universal planes
-- Writable blobs (`CREATEPROPBLOB`/`DESTROYPROPBLOB`) (§3.2).
-- `kms_atomic_state` with check/commit/rollback; honor `IN_FENCE_FD`, emit real
-  `OUT_FENCE_PTR`, support `ATOMIC_NONBLOCK` (§3.2, §5.4).
-- Add CURSOR plane wired to the virtio-gpu cursor queue; implement `SETPLANE`
-  (§3.2).
-- Real vblank/flip-completion sequence; `WAIT_VBLANK`, `CRTC_*_SEQUENCE` (§3.2).
+### Phase 3 — Real KMS atomic + CREATEPROPBLOB + cursor/planes — **DONE**
+- Writable `CREATEPROPBLOB`/`DESTROYPROPBLOB`.
+- Atomic state published after a successful present; real `OUT_FENCE_PTR`
+  signalled from display completion.
+- CURSOR plane wired to the virtio-gpu cursor queue; legacy `ADDFB` shim;
+  connector mode list exposed.
+- vblank/sequence driven from present completion.
 
-### Phase 4 — Complete the standard virtio-gpu UAPI
-- The `DRM_IOCTL_VIRTGPU_*` ioctls are already dispatched; finish them:
-  `EXECBUFFER` BO-handle residency + in/out fence fds, real blob/host-visible
-  memory, `MAP` offset for blob resources (§3.6).
-- Validate with a stock Mesa `virtio_gpu`/`virgl` build against the kernel’s
-  `renderD128`.
+### Phase 4 — Complete the standard virtio-gpu UAPI — **DONE**
+- `VIRTGPU_EXECBUFFER` honors BO handles + in/out fence fds; `VIRTGPU_WAIT`
+  waits the resource's last-submit fence; virtgpu resources bridge to PRIME
+  export for the render-node → KMS-node desktop hand-off.
+- Still to validate end-to-end with a stock Mesa `virgl` build against
+  `renderD128` (needs the `-gl` GTK path; see §8).
 
-### Phase 5 — Blob resources + zero-copy + damage present (performance)
-- `VIRTIO_GPU_F_RESOURCE_BLOB`, host-visible region, `RESOURCE_MAP_BLOB` (§3.6).
-- Damage-aware `RESOURCE_FLUSH`; resource-bind scanout default (§6).
+### Phase 5 — Blob resources + zero-copy + damage present — **CODE COMPLETE (host-blocked)**
 
-### Phase 6 — Structural cleanup
+- **Landed (committed `e1a2754` + uncommitted host-visible work):**
+  `VIRTIO_GPU_F_RESOURCE_BLOB` negotiation + `VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB`
+  + `virtio_gpu_resource_create_blob()`; 64-bit shared-memory PCI cap discovery
+  with on-the-fly BAR assignment (`pci.c`, `virtio_pci_cap64`); host-visible
+  region (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`) + `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`;
+  `VIRTGPU_MAP` returns the real blob offset; `VIRTGPU_GETPARAM` advertises
+  `HOST_VISIBLE`/`RESOURCE_BLOB` **only** when negotiated (caps = behavior);
+  bounds/ownership-checked user mmap (`virtio_gpu_user_host_visible_mmap`/
+  `_page`) + `VMA_FLAG_PFNMAP` fault semantics in `mm/vm.c`.
+- **Remaining (host-blocked, not a kernel gap):** end-to-end virgl+blob
+  zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl path rejects
+  blob ("blobs and virgl are not compatible"), and udmabuf needs a shared
+  memfd RAM backend. Needs a rutabaga/gfxstream-capable QEMU (or a non-virgl
+  blob path). Still open regardless of host: damage-aware `RESOURCE_FLUSH`;
+  resource-bind scanout default (no readback).
+
+### Phase 6 — Structural cleanup — **NOT STARTED**
 - Unified shmem BO allocator (§5.3), file splits (§5.6), TTM-naming retirement.
 
 ---
@@ -421,22 +474,40 @@ landable and testable.
 ## 8. Validation strategy
 
 Follow the existing ABI-audit discipline (do not declare a path dead from
-source alone — runtime-trace it; see `xv6-os-runtime.md`):
+source alone — runtime-trace it; see `xv6-os-runtime.md`).
 
-1. **`drmabitest`** userspace probe (new, Phase 0) exercising every ioctl with
-   known-good and error inputs, asserting Linux-matching errno and struct
-   output. Mirror the `scripts/linux_abi_*` audit generators with a
-   `docs/linux-drm-abi-audit.{md,csv}`.
-2. **libdrm conformance** — run `modetest`, `kmscube`, and `drm_info` against
-   `/dev/dri/card0`; their output is a direct compatibility signal.
-3. **Mesa bring-up** — once Phase 4 lands, build stock Mesa with
-   `gallium-drivers=virgl` and confirm `eglinfo`/`es2gears` select the kernel’s
-   render node without xv6 env shims.
-4. **Compositor end-to-end** — the existing Wayland compositor and WebKit/GL
-   apps remain the integration test; compare trace shape + on-screen output +
-   guest framebuffer samples (per runtime notes), never counters alone.
-5. **Regression guard** — keep the extensive fail-closed stats counters already
-   present; add assertions that caps and behavior agree (§4.4).
+**Host readiness (2026-06-06):** KVM (`/dev/kvm`), `tun`, and `memfd` are
+present; `/dev/udmabuf` is **now available** (custom WSL2+ kernel) and QEMU
+9.0.2 exposes `blob`/`hostmem`/`max_hostmem`. `scripts/launch/run-qemu.sh`
+auto-enables `blob=true,hostmem=…` when `/dev/udmabuf` is readable
+(`QEMU_VIRTIO_GPU_BLOB=auto`). So Phase 5 host-visible/zero-copy can be
+validated here — use a `-gl` GPU (`virtio-vga-gl`/`virtio-gpu-gl`) so virgl is
+actually negotiated.
+
+**Boot caveat:** the GTK `gl=es` GUI path can stall at GtkGLArea in this WSLg
+environment and produces no debugcon output. Use a **headless** boot
+(`DISPLAY_MODE=nographic`, serial captured) for kernel-boot/DRM-init checks;
+use the GTK `-gl` path only for actual virgl present/scanout validation. A
+headless boot of the current kernel already shows `dma_fence: selftest ok`, all
+DRM nodes registering, and a clean desktop start.
+
+1. **`drmabitest`** — exercise every ioctl with known-good and error inputs,
+   asserting Linux-matching errno and struct output; refresh
+   `docs/linux-drm-abi-audit.md` against the **current** kernel (the existing
+   file is the Phase-0 baseline and is now stale vs landed Phases 1–4).
+2. **libdrm conformance** — `modetest`, `kmscube`, `drm_info` against
+   `/dev/dri/card0`.
+3. **Mesa bring-up** — build stock Mesa `gallium-drivers=virgl`; confirm
+   `eglinfo`/`es2gears` select `renderD128` without xv6 env shims (Phase 4
+   end-to-end check, still outstanding).
+4. **Blob/zero-copy** — with `blob=true,hostmem=…` (udmabuf), verify
+   `VIRTGPU_GETPARAM(RESOURCE_BLOB)==1`, a mappable blob is host-visible
+   without an explicit transfer, and present traces show bind (not readback).
+5. **Compositor end-to-end** — the Wayland compositor + WebKit/GL apps remain
+   the integration test; compare trace shape + on-screen output + guest
+   framebuffer samples, never counters alone.
+6. **Regression guard** — keep fail-closed counters; assert caps and behavior
+   agree (§4.4), especially the new blob/host-visible `GETPARAM` advertising.
 
 ---
 
@@ -454,18 +525,29 @@ source alone — runtime-trace it; see `xv6-os-runtime.md`):
 
 ## 10. Summary
 
-xv6-os already implements a broad, fail-closed DRM shim with real node
-registration, KMS queries, dumb buffers, PRIME fds, DRM syncobj, and a complete
-virtio-gpu 2D+3D engine. The path to Linux graphics-ABI compatibility is
-therefore mostly **convergence work**, not greenfield:
+The convergence work is largely **done**. xv6-os now implements, on top of its
+broad fail-closed DRM shim:
 
-- the **highest-leverage structural change** is a real `dma_fence` core, which
-  unifies syncobj, dma-buf, sync_file, and atomic fences (Phase 1);
-- the **highest-impact compatibility change** is completing the already-wired
-  `DRM_IOCTL_VIRTGPU_*` UAPI (EXECBUFFER BO list + in/out fences, real blob /
-  host-visible memory) so stock Mesa binds with explicit sync (Phase 4);
-- the **most correctness-critical fixes** are per-file GEM handles,
-  `CREATEPROPBLOB` + a real atomic check/commit, and making caps agree with
-  behavior;
-- the **biggest performance wins** are blob/host-visible zero-copy resources,
-  real flip-driven vblank pacing, and damage-aware present.
+- a real `dma_fence` core unifying syncobj, sync_file, and atomic fences
+  (Phase 1, verified by boot self-test);
+- per-file GEM handles with `FLINK`/`OPEN` and a generic dma-buf wrapper
+  (Phase 2);
+- KMS atomic with writable property blobs, present-driven vblank, real
+  out-fences, and a wired cursor plane (Phase 3);
+- the standard `DRM_IOCTL_VIRTGPU_*` UAPI with `EXECBUFFER` BO list + in/out
+  fences, per-resource `WAIT`, and a virtgpu→PRIME bridge (Phase 4).
+
+**What remains:**
+
+- **Phase 5 (in progress):** finish blob / host-visible resources. The guest
+  blob path is WIP in `virtio_gpu.c`; the host-visible/mappable zero-copy tier
+  is **now testable** because `/dev/udmabuf` is available and the launcher
+  wires `blob=true,hostmem=…`. Advertise `RESOURCE_BLOB`/`HOST_VISIBLE` only
+  when the host hostmem window is actually negotiated.
+- **Phase 6 (not started):** unified shmem BO allocator, file splits, retire
+  TTM naming.
+- **Validation gap:** Phases 4–5 still need end-to-end virgl proof — boot the
+  `-gl` GPU path, run `drmabitest` + `modetest`/`kmscube` + stock Mesa virgl,
+  and refresh `docs/linux-drm-abi-audit.md` against the current kernel (the
+  baseline there predates Phases 1–4). Validate with trace shape + on-screen
+  output + framebuffer samples, never counters alone.

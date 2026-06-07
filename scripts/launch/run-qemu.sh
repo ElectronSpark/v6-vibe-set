@@ -565,12 +565,33 @@ case "${ARCH}" in
                 fi
                 GPU_ARGS=()
                 gpu_gl_opts="xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}"
+                # virgl ('-gl') GPU types enable 3D via virglrenderer.  QEMU's
+                # classic virgl path rejects blob resources at device realize
+                # ("blobs and virgl are not compatible (yet)"); only the
+                # separate rutabaga/gfxstream backend supports virgl + blob.
+                gpu_is_virgl=0
+                if [[ "${QEMU_GPU}" == *gl* ]]; then
+                        gpu_is_virgl=1
+                fi
                 if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "auto" ]]; then
                         if [[ -r /dev/udmabuf && -w /dev/udmabuf ]]; then
                                 QEMU_VIRTIO_GPU_BLOB=1
                         else
                                 QEMU_VIRTIO_GPU_BLOB=0
                         fi
+                fi
+                # Blob is incompatible with the virgl device on this QEMU; auto
+                # disable it for virgl GPUs (override with QEMU_VIRGL_BLOB_OK=1
+                # on a QEMU/virglrenderer that supports the combination).
+                if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" && "${gpu_is_virgl}" == "1" \
+                      && "${QEMU_VIRGL_BLOB_OK:-0}" != "1" ]]; then
+                        if [[ "${QEMU_REQUIRE_UDMABUF}" == "1" ]]; then
+                                echo "run-qemu: QEMU rejects virgl + blob (\"blobs and virgl are not compatible\"); cannot honor QEMU_REQUIRE_UDMABUF=1 with a virgl ('${QEMU_GPU}') GPU." >&2
+                                echo "run-qemu: use a non-virgl QEMU_GPU for blob, a rutabaga-capable QEMU, or set QEMU_VIRGL_BLOB_OK=1 to override." >&2
+                                exit 2
+                        fi
+                        echo "run-qemu: disabling virtio-gpu blob: this QEMU's virgl path is incompatible with blob resources (set QEMU_VIRGL_BLOB_OK=1 to override)." >&2
+                        QEMU_VIRTIO_GPU_BLOB=0
                 fi
                 if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" ]]; then
                         if [[ ! -r /dev/udmabuf || ! -w /dev/udmabuf ]]; then
@@ -623,6 +644,15 @@ case "${ARCH}" in
                                 exit 2
                                 ;;
                 esac
+                # QEMU's virtio_gpu_have_udmabuf() needs guest RAM backed by a
+                # shared, sealable memfd (memory-backend-memfd) in addition to
+                # /dev/udmabuf; plain anonymous -m RAM makes blob realize fail
+                # with "need rutabaga or udmabuf for blob resources".  Flag the
+                # memfd backend only when blob is actually attached to the GPU.
+                QEMU_GPU_NEEDS_MEMFD=0
+                if [[ " ${GPU_ARGS[*]} " == *"blob=true"* ]]; then
+                        QEMU_GPU_NEEDS_MEMFD=1
+                fi
                 INPUT_ARGS=()
                 if [[ "${QEMU_INPUT}" == "auto" ]]; then
                         if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
@@ -664,8 +694,21 @@ case "${ARCH}" in
                 # features are useful for WebKit/codec-heavy workloads.  TCG
                 # keeps the conservative qemu64 fallback via QEMU_CPU=auto.
                 CPU_ARGS=(-cpu "${QEMU_CPU}")
+                # When virtio-gpu blob resources are enabled, back guest RAM
+                # with a shared memfd so udmabuf can export guest pages to the
+                # host GL.  The backend size must match -m.
+                MEM_BACKEND_ARGS=()
+                if [[ "${QEMU_GPU_NEEDS_MEMFD}" == "1" ]]; then
+                        QEMU_MEM_BACKEND_ID="${QEMU_MEM_BACKEND_ID:-xv6mem0}"
+                        MEM_BACKEND_ARGS=(-object \
+                                "memory-backend-memfd,id=${QEMU_MEM_BACKEND_ID},size=${QEMU_MEMORY},share=on")
+                        if [[ "${QEMU_MACHINE}" != *memory-backend=* ]]; then
+                                QEMU_MACHINE="${QEMU_MACHINE},memory-backend=${QEMU_MEM_BACKEND_ID}"
+                        fi
+                fi
                 QEMU_CMD=(qemu-system-x86_64
                         -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}"
+                        "${MEM_BACKEND_ARGS[@]}"
                         "${KVM_ARGS[@]}" "${CPU_ARGS[@]}"
                         "${DISPLAY_ARGS[@]}"
                         -debugcon file:/tmp/xv6-debugcon.log

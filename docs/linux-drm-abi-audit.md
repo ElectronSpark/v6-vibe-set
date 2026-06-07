@@ -1,5 +1,54 @@
 # Linux DRM ABI Baseline Audit
 
+## Current refresh — 2026-06-07 Phase 5 headless validation
+
+Build:
+
+- `cmake --build build-x86_64 --target kernel user rootfs image -j"$(nproc)"`
+  completed and regenerated `build-x86_64/kernel/build/kernel/xv6.bin` plus
+  `build-x86_64/fs.img`; a follow-up `user rootfs image` rebuild staged the
+  framebuffer sample probe in `drmabitest`.
+
+Boot:
+
+- Manual non-GL blob path with KVM + udmabuf:
+  `qemu-system-x86_64 -enable-kvm ... -machine pc,vmport=off,memory-backend=xv6ram ... -device virtio-gpu-pci,xres=1280,yres=800,blob=true,hostmem=32M,max_hostmem=32M ... -object memory-backend-memfd,id=xv6ram,size=4G,share=on`.
+- Runtime log showed `/dev/gpu0`, `/dev/dri/card0`, and
+  `/dev/dri/renderD128` registered, no panic/trap, and:
+  `virtio_gpu: host visible shm id=1 ... len=0x2000000`,
+  `features0=0x3000000a driver_features0=0xa scanouts=1 capsets=0`,
+  `GPU: virgl unavailable; exposing dumb-buffer DRM only`.
+
+Probe highlights from `/bin/drmabitest`:
+
+| Probe | card0 | renderD128 | Current result |
+|---|---:|---:|---|
+| `DRM_IOCTL_VIRTGPU_GETPARAM[RESOURCE_BLOB=3]` | `0/0 value=1` | `0/0 value=1` | guest blob resources honestly advertised |
+| `DRM_IOCTL_VIRTGPU_GETPARAM[HOST_VISIBLE=4]` | `0/0 value=0` | `0/0 value=0` | fail-closed on this non-virgl transport |
+| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.valid` | `0/0 bo=5 res=4 size=4096 blob_mem=1` | `0/0 bo=5 res=5 size=4096 blob_mem=1` | real guest blob command reached virtio-gpu |
+| `DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB.host_visible` | `create=-1 advertised=0 mmap_ok=0` | `create=-1 advertised=0 mmap_ok=0` | mappable HOST3D blob rejected while HOST_VISIBLE is not advertised |
+| `DRM_IOCTL_MODE_ATOMIC.fences` | `atomic=0 out_fence=6 poll=1 dirty=0` | KMS denied | clipped `DIRTYFB` positive path exercised on card0 |
+
+Display/runtime evidence:
+
+- `fbstat`: `virtio_failures 0`, `display_presents 243`,
+  `display_completions 243`, `partial_blits 230`, `virgl_bo_presents 0`,
+  `virtio_capsets 0`, `virtio_virgl 0`.
+- `drmabitest` framebuffer sample from `/dev/fb0`:
+  `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
+
+Outstanding host limitation for the required virgl/blob proof:
+
+- QEMU 9.0.2 device list has `virtio-gpu-gl-pci` and `virtio-gpu-pci`, but no
+  rutabaga device.
+- `-display egl-headless -device virtio-gpu-gl-pci,blob=true,...` fails with
+  `egl: no drm render node available`.
+- `-display gtk,gl=on -device virtio-gpu-gl-pci,blob=true,...` fails with
+  `blobs and virgl are not compatible (yet)`.
+- Therefore the current host can validate guest blobs and fail-closed
+  HOST_VISIBLE behavior, but cannot complete the Step 5.2/5.3 virgl +
+  mappable MAP_BLOB zero-copy proof.
+
 Captured: 2026-06-06, x86_64 GUI boot, `/dev/dri/card0` and
 `/dev/dri/renderD128`.
 
