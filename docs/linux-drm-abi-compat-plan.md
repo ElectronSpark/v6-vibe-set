@@ -43,6 +43,11 @@ Rechecked after Phase 6 on 2026-06-07:
   with `egl: no drm render node available`.
 - `qemu-system-x86_64 -device help` lists `virtio-gpu-gl-pci`,
   `virtio-vga-gl`, and `vhost-user-gpu`, but no rutabaga device.
+- `vhost-user-gpu-pci` now works far enough to boot the non-virgl backend after
+  kernel `7b1af61` negotiates `VIRTIO_F_VERSION_1`, but that path exposes no
+  SHM window and no 3D capsets. The virgl helper remains blocked by host GL:
+  `egl-headless,gl=on` has no DRM render node, and `gtk,gl=es` makes
+  `/usr/lib/qemu/vhost-user-gpu -v` fail `Failed to initialize virgl`.
 
 Net: the **kernel-side blob / host-visible code is complete and boots clean**;
 full virgl+blob zero-copy validation awaits a rutabaga-capable QEMU, a working
