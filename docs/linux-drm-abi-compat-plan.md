@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; launcher blob path verified; host virgl+blob blocker rechecked)
+Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator passes; launcher blob path verified; libdrm modetest/drmdevice validation passes; host virgl+blob blocker rechecked)
 
 ## Implementation status (2026-06-07)
 
@@ -28,6 +28,13 @@ passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
 `virgltest: dmabuf-resource-import ok ... imported_resource=65`,
 `backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
 `virtio_timeouts 0`.
+
+**Latest libdrm validation (2026-06-07):** the libdrm port now installs its
+test tools, and xv6-specific libdrm device discovery maps both
+`/dev/dri/card0` and `/dev/dri/renderD128`. In the freshly rebuilt image,
+plain `modetest -c` discovers `/dev/dri/card0`, `drmdevice` reports both
+primary and render nodes, and `modetest -D /dev/dri/card0 -p` prints CRTC and
+plane state; all exit `0` with `virtio_failures 0` and `virtio_timeouts 0`.
 
 **Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
 (custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
