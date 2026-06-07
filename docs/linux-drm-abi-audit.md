@@ -23,6 +23,12 @@ Build:
   `DISPLAY_MODE=nographic USE_KVM=1 QEMU_GPU=virtio-gpu
   QEMU_VIRTIO_GPU_BLOB=auto QEMU_VIRTIO_GPU_HOSTMEM=32M
   QEMU_VIRTIO_GPU_MAX_HOSTMEM=32M`.
+- For the external libdrm tool sweep, `ports/libdrm` was rebuilt with
+  `install-test-programs=true` and `tests=true`, then
+  `cmake --build build-x86_64/ports --target port-libdrm-clean -j2`,
+  `cmake --build build-x86_64/ports --target port-libdrm -j2`, and
+  `cmake --build build-x86_64 --target image -j2` regenerated the validation
+  image.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -74,6 +80,13 @@ Display/runtime evidence:
   `virtio_capsets 0`, `virtio_virgl 0`.
 - `drmabitest` framebuffer sample from `/dev/fb0`:
   `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
+- External libdrm tools from the rebuilt port pass against the same image:
+  headless `modetest -c` discovers and opens `/dev/dri/card0`, prints
+  `Connectors:`, and exits `0`; `drmdevice` lists `nodes[0] /dev/dri/card0`
+  plus `nodes[2] /dev/dri/renderD128` and exits `0`; explicit
+  `modetest -D /dev/dri/card0 -p` prints `CRTCs:` and `Planes:` and exits `0`.
+  The same run logged no `failed to open device` / `no device found` messages,
+  no panic or fatal fault, and `virtio_failures 0`, `virtio_timeouts 0`.
 
 Virgl / Mesa validator evidence from
 `GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
