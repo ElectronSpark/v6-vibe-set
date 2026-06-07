@@ -1,6 +1,6 @@
 # Linux DRM ABI Baseline Audit
 
-## Current refresh — 2026-06-07 Phase 6 + vhost-user probe
+## Current refresh — 2026-06-07 Phase 6 + virgl validator + vhost-user probe
 
 Build:
 
@@ -14,6 +14,10 @@ Build:
 - After kernel `7b1af61`, `cmake --build build-x86_64 --target kernel image
   -j"$(nproc)"` completed and regenerated the multiboot `xv6.bin` plus
   `build-x86_64/fs.img`.
+- After kernel `4ad498f`, `cmake --build build-x86_64 --target kernel image
+  -j2` completed, `port-mesa` was rebuilt after removing temporary local
+  diagnostics, and `cmake --build build-x86_64 --target image -j2`
+  regenerated the exact validation `fs.img`.
 
 Phase 6 cleanup commits validated in this refresh:
 
@@ -25,8 +29,13 @@ Phase 6 cleanup commits validated in this refresh:
 - Kernel `7b1af61` negotiates virtio feature word 1 so
   `VIRTIO_F_VERSION_1` is accepted when QEMU/vhost-user offers a modern
   virtio-gpu device.
+- Kernel `4ad498f` fixes `FB_GPU_VIRGL_RESOURCE_EXPORT_FD` for DRM render
+  owners by looking up and dropping the transient BO through the owner-local
+  handle table. Before this, Mesa's Wayland linux-dmabuf path failed
+  `__DRI_IMAGE_ATTRIB_FD` with `-ENOENT` while the KMS-handle fallback could
+  still succeed.
 - Parent submodule bumps through the parent commit that records kernel
-  `7b1af61`.
+  `4ad498f`.
 
 Boot:
 
@@ -56,6 +65,27 @@ Display/runtime evidence:
   `virtio_capsets 0`, `virtio_virgl 0`.
 - `drmabitest` framebuffer sample from `/dev/fb0`:
   `ff000055 ff030055 ff060055 ff090055 ff0c0055 ff0f0055 ff120055 ff150055 ff180055 ff1b0055 ff1e0055 ff210055 ff240055 ff270055 ff2a0055 ff2d0055`.
+
+Virgl / Mesa validator evidence from
+`GPU_VALIDATE_TIMEOUT=180s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
+
+- `gpu-validate: PASS`.
+- `virtio_gpu: initialized ... features0=0x30000003 features1=0x101
+  driver_features0=0x3 driver_features1=0x1 scanouts=1 capsets=2`.
+- `virtio_gpu: virgl capset ready id=1 version=1 size=308` and
+  `virtio_gpu: virgl capset ready id=2 version=2 size=1384`.
+- `wlcomp: linux-dmabuf enabled (virgl)` and multiple
+  `wlcomp: dmabuf create_params ...` rows.
+- Stock Mesa virgl Wayland EGL completed:
+  `mesawlegl_completion_matrix loop=1 frames=10 seconds=1 ... status=0` and
+  `mesawlegl[1]: complete frames=10 seconds=1 status=0 ...`.
+- Virgl resource PRIME identity stayed intact:
+  `virgltest: dmabuf-resource-import ok ... imported_resource=65`.
+- Backend separation remained honest:
+  `backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl` and
+  `opengl_submit_backend_separation_matrix ... status=PASS`.
+- Leak/failure checks: `bo_handles 7`, `bo_fd_live 0`,
+  `virtio_failures 0`, `virtio_timeouts 0`.
 
 Outstanding host limitation for the required virgl/blob proof, rechecked after
 Phase 6 on 2026-06-07:
