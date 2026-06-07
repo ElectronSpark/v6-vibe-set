@@ -21,9 +21,11 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 
 **Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
 `FB_GPU_VIRGL_RESOURCE_EXPORT_FD` to use render-owner-local BO handles during
-resource export, kernel `a78111b` fixes the HOST3D blob create path, and ports
-`23c60af` hardens `mesaglsmoke` so it renders into an explicit GLES framebuffer
-and fails nonzero on GL/readback errors. With the final image rebuilt,
+resource export, kernel `a78111b` fixes the HOST3D blob create path, kernel
+`9f6bb5a` submits Linux `RESOURCE_CREATE_BLOB` command payloads before host3d
+blob creation while keeping guest blobs strict, and ports `23c60af` hardens
+`mesaglsmoke` so it renders into an explicit GLES framebuffer and fails
+nonzero on GL/readback errors. With the final image rebuilt,
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
 passes. Evidence includes `wlcomp: linux-dmabuf enabled (virgl)`,
 `mesawlegl[1]: complete frames=17 seconds=1 status=0`,
