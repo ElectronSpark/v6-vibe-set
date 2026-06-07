@@ -135,6 +135,13 @@ Display/runtime evidence:
   `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, guest blob creates with
   `blob_mem=1 blob_id=0`, host-visible probe `skipped=1`, a nonzero
   `/dev/fb0` sample, `virtio_failures 0`, and `virtio_timeouts 0`.
+- Post-`9f6bb5a` rutabaga recheck log `/tmp/xv6-rutabaga-current.log`
+  reached `__RUTABAGA_CURRENT_OK__`. Runtime again showed host-visible SHM
+  BAR discovery, virgl2 capset id 2, `3D context smoke ok`, `RESOURCE_BLOB=1`,
+  `HOST_VISIBLE=0`, guest blob creates, host-visible probe `skipped=1`,
+  `virtio_capsets 1`, `virtio_virgl 2`, `virtio_failures 0`, and
+  `virtio_timeouts 0`. This is still a fail-closed proof, not the required
+  positive mappable HOST_VISIBLE proof.
 - Local QEMU 9.2 + rutabaga validation log
   `/tmp/xv6-rutabaga-failclosed-hostvisible.log` reached
   `__RUTABAGA_FAILCLOSED_OK__`. Runtime showed host-visible SHM BAR discovery,
@@ -169,6 +176,10 @@ Virgl / Mesa validator evidence from the current run
 `GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`:
 
 - `gpu-validate: PASS`.
+- Re-run after kernel `9f6bb5a`, user `12bd04a`, and parent `b3fe48b` still
+  passed. The packaged QEMU virgl lane again disabled blob because classic
+  virgl rejects blob resources, then completed the same Mesa/virgl checks with
+  `virtio_failures 0` and `virtio_timeouts 0`.
 - Re-run after the HOST3D create fix and validator serial-marker hardening still
   passed. The virgl path logged:
   `run-qemu: disabling virtio-gpu blob: this QEMU's virgl path is incompatible
