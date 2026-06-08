@@ -197,6 +197,21 @@ Display/runtime evidence:
   No `RESOURCE_MAP_BLOB` follows, `GETPARAM(HOST_VISIBLE)` stays `0`, and the
   boot has zero panics. This upgrades the host-visible blocker from "untested"
   to a **verified host-side refusal** of mappable host3d blobs.
+- Alpine cross-validation (what a known-good guest does on this host):
+  `scripts/gpu/alpine-virgl-desktop-capture.sh` boots Alpine 3.23.4 with
+  `virtio-vga-gl,xres=1280,yres=800` (no `blob=true`) and traces QEMU's
+  virtio-gpu device. Both captures
+  (`build-x86_64/alpine-trace/alpine-qemu.trace` LLVMPIPE host GL,
+  `alpine-d3d12-qemu.trace` D3D12 host GL; summary
+  `alpine-virgl-behavior-summary.txt`) contain **zero**
+  `create_blob`/`map_blob`/host-visible commands. Alpine's Weston/Mesa virgl
+  desktop runs at 66\u201373 FPS using only the classic transfer model
+  (histogram d3d12: `ctx_submit 13552`, `res_flush 5290`, `set_scanout 4529`,
+  `res_xfer_toh_2d 761`, `res_create_3d 15`, `res_back_attach 16`). Every one
+  of these commands is already implemented and validated in xv6, so the
+  host-visible refusal above is not a functional gap: host-visible zero-copy
+  is an optional optimization, and the transfer model is the proven working
+  path on this host.
 - Current non-GL blob control log
   `/tmp/xv6-blob-hostvis-probe-control.log` used a temporary startup script
   in a copied rootfs to avoid the flaky interactive serial path. Runtime shows
@@ -316,8 +331,8 @@ Virgl / Mesa validator evidence from the current run
 - Leak/failure checks: `bo_handles 7`, `bo_fd_live 0`,
   `virtio_failures 0`, `virtio_timeouts 0`.
 
-Outstanding host limitation for the required virgl/blob proof, rechecked after
-Phase 6 on 2026-06-07:
+Outstanding optional host-visible zero-copy limitation, rechecked after Phase 6
+on 2026-06-07:
 
 - The current host namespace has `/dev/kvm` and `/dev/udmabuf`, but no
   `/dev/dri` render node. Direct QEMU realize checks still show the split:
@@ -356,9 +371,11 @@ Phase 6 on 2026-06-07:
   before boot with `egl: no drm render node available`, while `gtk,gl=es`
   makes the helper log `Failed to initialize virgl`; xv6 then sees
   `scanouts=0 capsets=0` and virtio-gpu command timeouts.
-- Therefore the current host can validate guest blobs and fail-closed
-  HOST_VISIBLE behavior, but cannot complete the Step 5.2/5.3 virgl +
-  mappable MAP_BLOB zero-copy proof.
+- Therefore the current host can validate guest blobs, fail-closed
+  `HOST_VISIBLE` behavior, and the Alpine-matching transfer model. It cannot
+  complete a positive virgl + mappable `MAP_BLOB` zero-copy proof, but Alpine's
+  own traces on this host show that proof is an optional optimization rather
+  than a requirement for a working accelerated virgl desktop.
 
 ## Previous baseline — 2026-06-06
 

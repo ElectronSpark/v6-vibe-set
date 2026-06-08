@@ -144,6 +144,15 @@ qemu_append_default_flag() {
         fi
 }
 
+qemu_prepend_default_flag() {
+        local key="$1"
+        local value="$2"
+
+        if ! qemu_append_has_key "${key}"; then
+                QEMU_APPEND="${key}=${value} ${QEMU_APPEND}"
+        fi
+}
+
 print_kvm_hint() {
         echo "run-qemu: smooth WebKit video needs KVM; the current launch would fall back to slow TCG." >&2
         echo "run-qemu: make /dev/kvm readable/writable by this user, then restart the shell/WSL session." >&2
@@ -447,44 +456,43 @@ case "${ARCH}" in
                         echo "run-qemu: guest boot log is mirrored to /tmp/xv6-debugcon.log" >&2
                 fi
                 if [[ "${QEMU_GPU}" == *"-gl"* ]]; then
-                        qemu_append_default_flag virtio_gpu_3d_scanout 1
+                        qemu_prepend_default_flag virtio_gpu_3d_scanout 1
                         # Keep the VM desktop at the configured guest mode.
                         # The full-screen pageflip-copy path is useful for
                         # KMS experiments, but it can make the host window
                         # appear to jump between a client-sized surface and
                         # the desktop.  Prefer compositor-owned GPU composition
                         # into the desktop framebuffer by default.
-                        qemu_append_default_flag virtio_gpu_disable_pageflip_copy 1
-                        qemu_append_default_flag virtio_gpu_present_no_drain 1
-                        qemu_append_default_flag wlcomp_gpu_compose 1
-                        qemu_append_default_flag wlcomp_virgl_fb 1
-                        qemu_append_default_flag wlcomp_virgl_fb_buffers 3
-                        qemu_append_default_flag wlcomp_page_flip_present 1
-                        qemu_append_default_flag wlcomp_virgl_fb_damage_flip 1
-                        qemu_append_default_flag wlcomp_gpu_virgl_copy 1
+                        qemu_prepend_default_flag virtio_gpu_disable_pageflip_copy 1
+                        qemu_prepend_default_flag virtio_gpu_present_no_drain 1
+                        qemu_prepend_default_flag wlcomp_gpu_compose 1
+                        qemu_prepend_default_flag wlcomp_virgl_fb 1
+                        qemu_prepend_default_flag wlcomp_virgl_fb_buffers 3
+                        qemu_prepend_default_flag wlcomp_page_flip_present 1
+                        qemu_prepend_default_flag wlcomp_virgl_fb_damage_flip 1
+                        qemu_prepend_default_flag wlcomp_gpu_virgl_copy 1
                         # Keep Mesa's Wayland frame-callback throttle paced
                         # just above immediate mode.  A 1ms compositor cadence
                         # avoids the old ~20ms callback stalls without letting
                         # the client outrun displayed presents.
-                        qemu_append_default_flag wlcomp_frame_ms 1
-                        qemu_append_default_flag wlcomp_callback_poll_ms 1
+                        qemu_prepend_default_flag wlcomp_frame_ms 1
+                        qemu_prepend_default_flag wlcomp_callback_poll_ms 1
                         # Submit compositor GL work before scanout so the host
                         # sees real client pixels, then release client buffers
                         # from the present-ready queue instead of inline.
-                        qemu_append_default_flag wlcomp_gl_submit_fence 1
+                        qemu_prepend_default_flag wlcomp_gl_submit_fence 1
                         # Pipeline the steady-state scanout RESOURCE_FLUSH
                         # instead of blocking the compositor present loop on
                         # the host flush-ack (~15ms on the WSL D3D12 virgl
                         # host).  This keeps the displayed FPS in step with the
                         # application's render rate, matching the Alpine/Weston
                         # pipelined-present behaviour.
-                        qemu_append_default_flag vgpu_async_flush 1
-                        qemu_append_default_flag vgpu_async_pf 1
-                        # Virgl/D3D12 can spend more than the historical
-                        # five-second controlq deadline compiling/validating
-                        # early GL work.  Do not abort the guest GL contexts
-                        # during that one-time warmup.
-                        qemu_append_default_flag virtio_gpu_irq_wait_ms 30000
+                        qemu_prepend_default_flag vgpu_async_flush 1
+                        qemu_prepend_default_flag vgpu_async_pf 1
+                        # Virgl/D3D12 can spend close to a minute compiling and
+                        # validating early WebKit GL work.  Do not abort the
+                        # guest GL contexts during that one-time warmup.
+                        qemu_prepend_default_flag virtio_gpu_irq_wait_ms 60000
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
                 # passes Ctrl-C through to the guest instead of killing qemu).

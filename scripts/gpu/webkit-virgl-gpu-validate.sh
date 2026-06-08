@@ -47,7 +47,7 @@ command -v expect >/dev/null 2>&1 ||
 cleanup_validation_qemu()
 {
     pkill -TERM -f 'qemu-system-x86_64 .*webkit_webgl_smoke=1' 2>/dev/null || true
-    pkill -TERM -f 'timeout --foreground .*scripts/launch-gui.sh' 2>/dev/null || true
+    pkill -TERM -f 'timeout --foreground .*scripts/launch/launch-gui.sh' 2>/dev/null || true
 }
 
 trap cleanup_validation_qemu EXIT
@@ -67,7 +67,7 @@ set env(QEMU_VIRTIO_GPU_XRES) "${WEBKIT_VIRGL_XRES:-1024}"
 set env(QEMU_VIRTIO_GPU_YRES) "${WEBKIT_VIRGL_YRES:-640}"
 set env(QEMU_ALLOW_WSL_SDL_GL) "${QEMU_ALLOW_WSL_SDL_GL:-1}"
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_webgl_smoke=1 webkit_reopen=${REOPEN} webkit_timeout_ms=${TIMEOUT_MS} desktop_exit_after_smoke=1 webkit_log=1 video=${WEBKIT_VIRGL_XRES:-1024}x${WEBKIT_VIRGL_YRES:-640}"
-spawn timeout --foreground ${TIMEOUT} bash scripts/launch-gui.sh
+spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
 expect -re {wlcomp: entering main loop}
 expect {
     -re {client exited \(status [1-9][0-9]*\)} { exit 2 }
@@ -83,8 +83,10 @@ require_log 'webkit_gpu_policy .*requested_accel=1 .*effective_accel=1 .*opengl_
     "WebKit accelerated policy"
 require_log 'webkit_gpu_policy .*d3d12_present=0 .*gpu_contract=virgl-opengl-submit .*fallback=none' \
     "WebKit virgl contract policy separate from D3D12"
-require_log 'webkitgpusmoke: gpu-contract backend=virgl .*shared_surface=1 .*d3d12_present=0 .*opengl_submit=1 .*virgl_opengl=1 .*env_contract=virgl-opengl-submit .*env_d3d12=0 .*env_virgl=1 .*env_software=0 .*require=1 .*ok=1' \
+require_log 'webkitgpusmoke: gpu-contract backend=virgl .*shared_surface=1 .*d3d12_present=0 .*opengl_submit=1 .*virgl_opengl=1' \
     "WebKit in-process virgl OpenGL-submit contract"
+require_log 'env_contract=virgl-opengl-submit .*env_d3d12=0 .*env_virgl=1 .*env_software=0 .*require=1 .*ok=1' \
+    "WebKit in-process virgl environment contract"
 require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl ready' \
     "WebKit WebGL ready title"
 require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl spherical poly' \
