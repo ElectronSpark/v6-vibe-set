@@ -1,6 +1,12 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-07 (Phase 6 committed; Mesa virgl validator, direct KMS GBM/EGL virgl validator, damage-aware resource-bind scanout validator, upstream kmscube, upstream drm_info, and libdrm modetest/drmdevice validation pass; launcher blob path verified; HOST_VISIBLE fail-closed gate added; host virgl+blob blocker rechecked; init-time host-visible map probe now proves the host actively rejects mappable host3d blobs)
+Last updated: 2026-06-07. Phases 0–6 landed and committed. Validators pass
+(Mesa virgl, direct KMS GBM/EGL, damage-aware scanout, upstream kmscube,
+upstream drm_info, libdrm modetest/drmdevice). Host-visible zero-copy blob is
+reclassified as an optional, host-refused optimization: the init-time probe
+proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
+this host runs a full virgl desktop using only the classic transfer model.
+Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
 
 ## Implementation status (2026-06-07)
 
@@ -16,144 +22,47 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 | 2 — per-file GEM + FLINK/OPEN + dma-buf | **Done (committed)** | per-file handle table, `fb_gem_flink`, generic dma-buf ops + mmap |
 | 3 — KMS atomic + blobs + cursor + vblank | **Done (committed)** | writable propblobs, atomic out-fences, cursor plane, present-driven vblank |
 | 4 — standard virtio-gpu UAPI | **Done (committed)** | `EXECBUFFER` honors fences, resource wait-by-fence, virtgpu→PRIME bridge |
-| 5 — blob / host-visible / zero-copy | **Partially complete; host-visible positive mapping refused by the host (now verified, not just untested)** | `RESOURCE_CREATE_BLOB`, `F_RESOURCE_BLOB`, host-visible SHM-cap discovery, BAR assignment, `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`, bounds/ownership-checked mmap, scanout bind preference, and dirty-rect flushes are committed. Runtime proves guest blobs and fail-closed `HOST_VISIBLE=0` on the non-GL blob lane. Kernel `a78111b` fixes the HOST3D create path so host-visible blobs no longer require guest pages before `VIRTGPU_MAP`; kernel `5efbbc4` keeps `GETPARAM(HOST_VISIBLE)` false unless a mappable host-visible blob has actually mapped successfully; kernel `87b25d8` actively probes one mappable host-visible blob at init. The probe (`virtio_gpu_smoke_host_visible_map`) sends one mappable `HOST3D` `RESOURCE_CREATE_BLOB` to the host whenever a host-visible aperture is negotiated, so the gate is no longer circular: under the rutabaga `virtio-gpu-rutabaga-pci,blob=true,x-virgl2=on` backend (which negotiates a 32 MiB host-visible BAR + virgl2 capset + working 3D) the host **rejects** the mappable host3d create (`create=-5`, virtio error response), so `HOST_VISIBLE` correctly stays `0`. This is a confirmed host-side refusal, not merely an unexercised path. The non-blob GTK `-gl` virgl path passes `gpu-validate`, including Mesa Wayland EGL linux-dmabuf presentation and virgl PRIME import identity. |
+| 5 — blob / host-visible / zero-copy | **Complete for this host via the transfer model; host-visible zero-copy is an optional, host-refused optimization** | Guest blobs, `F_RESOURCE_BLOB`, host-visible cap/BAR discovery, `MAP_BLOB`/`UNMAP_BLOB`, checked mmap, scanout bind, and dirty-rect flushes committed; fail-closed `HOST_VISIBLE=0` proven. See the "Host-blocked status" summary below for the probe + Alpine evidence. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
-**Latest virgl validation (2026-06-07):** kernel `4ad498f` fixes
-`FB_GPU_VIRGL_RESOURCE_EXPORT_FD` to use render-owner-local BO handles during
-resource export, kernel `a78111b` fixes the HOST3D blob create path, kernel
-`9f6bb5a` submits Linux `RESOURCE_CREATE_BLOB` command payloads before host3d
-blob creation while keeping guest blobs strict, and ports `23c60af` hardens
-`mesaglsmoke` so it renders into an explicit GLES framebuffer and fails
-nonzero on GL/readback errors. With the final image rebuilt,
-`GPU_VALIDATE_TIMEOUT=240s GPU_VALIDATE_SECONDS=1 GPU_VALIDATE_3D_SECONDS=1 bash scripts/gpu/gpu-validate.sh`
-passes. Current rerun evidence includes `wlcomp: linux-dmabuf enabled
-(virgl)`, `mesawlegl[1]: complete frames=16 seconds=1 status=0`,
-`mesaglsmoke[1]: complete frames=5 seconds=1 status=0`,
-all virgl resource/copy/async/invalid/import `__GPUV_*_DONE_0__` markers,
-`virgltest: dmabuf-resource-import ok ... imported_resource=84`,
-`backend virgl flags 0x27`, `bo_fd_live 0`, `virtio_failures 0`, and
-`virtio_timeouts 0`.
+**Validation evidence (2026-06-07).** All validators pass on the freshly
+rebuilt image; full logs, commit hashes, and marker caveats are recorded in
+`docs/linux-drm-abi-audit.md`. Summary:
 
-**Latest libdrm validation (2026-06-07):** the libdrm port now installs its
-test tools, and xv6-specific libdrm device discovery maps both
-`/dev/dri/card0` and `/dev/dri/renderD128`. In the freshly rebuilt image,
-plain `modetest -c` discovers `/dev/dri/card0`, `drmdevice` reports both
-primary and render nodes, and `modetest -D /dev/dri/card0 -p` prints CRTC and
-plane state; all exit `0` with `virtio_failures 0` and `virtio_timeouts 0`.
+- **Mesa virgl `gpu-validate`** — PASS. `wlcomp: linux-dmabuf enabled (virgl)`,
+  `mesawlegl`/`mesaglsmoke` complete, dmabuf resource import OK,
+  `virtio_failures 0`, `virtio_timeouts 0`.
+- **libdrm** — `modetest -c`, `drmdevice`, and `modetest -D /dev/dri/card0 -p`
+  discover both `/dev/dri/card0` and `renderD128` and print CRTC/plane state.
+- **upstream drm_info** — prints connector/CRTC/plane/property state;
+  object-property ABI fix (`CRTC_ID`/`FB_ID` target object type) verified.
+- **upstream kmscube** — render-node and KMS runs reach Mesa EGL 1.5 /
+  GLES 3.1 (`virgl (D3D12 ...)`) and render frames.
+- **direct KMS GBM/EGL (`mesakmsgl`)** — opens `/dev/dri/card0`, creates
+  exportable GBM BOs, renders up to ~81 FPS.
+- **damage-aware resource-bind scanout** — PASS with on-screen framebuffer
+  proof; steady present-trace with `scanout_rebinds=0`, `virtio_failures 0`.
 
-**Latest upstream drm_info validation (2026-06-07):** `ports/drm_info` stages
-upstream drm_info commit `462458e0f292145b2a9d5a8b65c392eaeef7362d` with a
-static `json-c` dependency. A headless `virtio-gpu` boot of the freshly rebuilt
-image runs `drm_info /dev/dri/card0` successfully and prints connector, CRTC,
-plane, and property state. Kernel `d122470` fixed the Linux object-property ABI
-metadata that this tool exposed: `CRTC_ID` and `FB_ID` now report their target
-object type in the `DRM_IOCTL_MODE_GETPROPERTY` values array, so `drm_info`
-prints `"CRTC_ID" (atomic): object CRTC = ...` and `"FB_ID" (atomic): object
-framebuffer = 0` instead of faulting while walking properties. The same run
-ends with `virtio_failures 0`, `virtio_timeouts 0`, and no panic/fatal fault.
+**Host-blocked status — host-visible zero-copy blob (summary).** The kernel
+guest-blob path and fail-closed `HOST_VISIBLE` plumbing boot clean; the gap is
+purely host-side and is now an optional optimization, not a Phase 5 blocker:
 
-**Latest upstream kmscube validation (2026-06-07):** `ports/kmscube` stages
-upstream kmscube commit `f60e50e887d3c49e91ac9b06d8199b36152632fa` with only a
-build-system patch to make libpng optional. In the freshly rebuilt image,
-GTK/virgl runs of `kmscube -D /dev/dri/renderD128 -O -v 256x256 -c 4 -N` and
-`kmscube -D /dev/dri/card0 -c 2 -N` both reach Mesa EGL 1.5 and OpenGL ES 3.1
-with renderer `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`. The KMS
-run renders frames on `/dev/dri/card0`; a follow-up `fbstat` in the same
-QEMU/virgl shape reports `backend virgl`, `backend_opengl_submit 1`,
-`virtio_failures 0`, and `virtio_timeouts 0`. The WSLg GTK serial stream
-interleaves shell echoes, Mesa logs, and `fbstat`, so the audit records exact
-log files and marker caveats instead of treating counters alone as proof.
-
-**Latest direct KMS GBM/EGL validation (2026-06-07):** after parent `29901cd`
-fixed the validator's geometry check, `VIRGL_KMS_VALIDATE_XRES=720
-VIRGL_KMS_VALIDATE_YRES=400 bash scripts/gpu/virgl-kms-validate.sh` passes.
-The in-guest `mesakmsgl` path opens `/dev/dri/card0`, selects
-`mode=720x400@60`, creates GBM BOs with `has_export=1`, initializes Mesa EGL
-1.5 / OpenGL ES 3.1 through renderer
-`virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`, and reports FPS samples
-up to 81.4. The monitor screenshot path is unavailable in this GTK/WSLg run;
-visual framebuffer proof is covered by the damage-aware guest PPM run above.
-
-**Host capability status (corrected 2026-06-07):** `/dev/udmabuf` is present
-(custom WSL2 kernel `6.18.26.1-microsoft-standard-WSL2+`) and QEMU is **9.0.2**
-with `blob`/`hostmem`/`max_hostmem` props on `virtio-gpu-pci`/`virtio-vga`.
-However, end-to-end blob is **still host-blocked** on this machine for two
-reasons proven by direct testing:
-
-1. QEMU's `virtio_gpu_have_udmabuf()` also requires guest RAM backed by a
-   **shared sealable memfd** (`-object memory-backend-memfd,share=on` +
-   `-machine ...,memory-backend=ID`); plain anonymous `-m` RAM fails with
-   "need rutabaga or udmabuf for blob resources" even though `/dev/udmabuf`
-   opens fine. The launcher now wires this memfd backend when blob is attached.
-2. QEMU 9.0.2's **classic virgl path rejects blob outright** ("blobs and virgl
-   are not compatible (yet)"); only the separate rutabaga/gfxstream backend
-   supports virgl + blob. The default GUI uses `virtio-vga-gl` (virgl), so the
-   launcher now auto-disables blob for virgl GPUs (override `QEMU_VIRGL_BLOB_OK=1`).
-
-Rechecked after Phase 6 on 2026-06-07:
-
-- Direct host recheck on the current machine still has no `/dev/dri` render
-  node. Non-GL `virtio-gpu-pci,blob=true,hostmem=...,max_hostmem=...` realizes
-  successfully only with shared memfd guest RAM. Classic virgl with the same
-  memfd wiring still exits at device realize with `blobs and virgl are not
-  compatible (yet)`.
-- `virtio-gpu-gl-pci,blob=true,...` and `virtio-vga-gl,blob=true,...` still
-  fail before boot with `blobs and virgl are not compatible (yet)`.
-- A forced launcher override with `QEMU_VIRGL_BLOB_OK=1`,
-  `QEMU_VIRTIO_GPU_BLOB=1`, and `QEMU_REQUIRE_UDMABUF=1` still fails before
-  boot in `/tmp/xv6-virgl-blob-forced-20260607.log` with the same rejection.
-- `-display egl-headless -device virtio-gpu-gl-pci,blob=true,...` still fails
-  with `egl: no drm render node available`.
-- `qemu-system-x86_64 -device help` lists `virtio-gpu-gl-pci`,
-  `virtio-vga-gl`, and `vhost-user-gpu`, but no rutabaga device.
-- A previous local QEMU 9.2.0 rutabaga build with validation-only host patches
-  (`x-virgl2` property plus surfaceless Rutabaga FFI) boots xv6 and negotiates
-  `RESOURCE_BLOB`, the host-visible SHM BAR, and virgl2 capset id 2. Kernel
-  `87b25d8` now runs an init-time probe
-  (`virtio_gpu_smoke_host_visible_map`) that
-  actively sends one mappable `HOST3D` `RESOURCE_CREATE_BLOB` to this backend.
-  The host **rejects the create** with a virtio error response
-  (`resource blob create host rejected ... response=0x1200` →
-  `host-visible map probe: create=-5`), so no `RESOURCE_MAP_BLOB` is ever
-  attempted and current xv6
-  correctly reports `GETPARAM(HOST_VISIBLE)=0`. This refusal is now
-  **verified by an actual host round-trip**, not inferred from an unexercised
-  path. Evidence: `/tmp/xv6-rutabaga-hostvis-probe.log`.
-  The source tree under `/home/es/xv6/toolchain/qemu` is currently vanilla
-  v9.2.0 with no configured `qemu-system-x86_64` binary and no validation-only
-  `x-virgl2`/surfaceless patches in the working tree, so this path is not
-  presently a rerunnable positive-host experiment without rebuilding/repatching
-  the host tool.
-- `vhost-user-gpu-pci` now works far enough to boot the non-virgl backend after
-  kernel `7b1af61` negotiates `VIRTIO_F_VERSION_1`, but that frontend exposes
-  no `blob`/`hostmem` properties, no SHM window, and no 3D capsets. The virgl
-  helper remains blocked by host GL: `egl-headless,gl=on` has no DRM render
-  node, and `gtk,gl=es` makes `/usr/lib/qemu/vhost-user-gpu -v` fail
-  `Failed to initialize virgl`.
-
-Net: the **kernel-side guest blob code and fail-closed host-visible plumbing
-boot clean**, and the init-time map probe now **actively confirms** that the
-only available host-visible-capable backend (rutabaga) refuses mappable blob
-creation; full host-visible zero-copy validation still awaits a backend that
-both negotiates the BAR and successfully creates/maps mappable blob
-resources.
-
-**Damage-aware resource-bind scanout validation (2026-06-07):** after the
-host-side validator fix in parent `fa3224e`, the finite GTK/virgl damage-flip
-run
-`VIRGL_DESKTOP_TRACE_DIR=/tmp/vd-fb20 VIRGL_DESKTOP_VALIDATE_TIMEOUT=280s VIRGL_DESKTOP_VALIDATE_SECONDS=20 VIRGL_DESKTOP_VALIDATE_DAMAGE_FLIP=1 VIRGL_DESKTOP_VALIDATE_FBSTAT=1 VIRGL_DESKTOP_VALIDATE_SCREENSHOT_REQUIRED=1 bash scripts/gpu/virgl-desktop-validate.sh`
-passes. The captured guest framebuffer shows the live 640x480 Mesa demo window
-inside the 1280x800 desktop, and `screenshot_matrix ... status=PASS`.
-The compositor reports `wlcomp: virgl framebuffer damage-flip preserving
-damage`, steady-state `present-trace` lines with `path_gl_preflush > 0`,
-`path_cpu_only=0`, `scanout_submits > 0`, `scanout_rebinds=0`, and
-`scanout_rects/frame=1`; fbstat reports `display_last_complete 1455`,
-`virtio_failures 0`, and `virtio_timeouts 0`. The QEMU trace post-check passes
-`page_flip_trace_matrix ... p2_cached=1 status=PASS`, with desktop-sized
-scanouts only after the initial 32x32 smoke scanout is unbound. Archived
-artifacts:
-`build-x86_64/virgl-desktop-validate/current-damage-fb20-pass-20260607/`.
+- QEMU 9.0.2's classic virgl path rejects blob outright ("blobs and virgl are
+  not compatible (yet)"); the launcher auto-disables blob for virgl GPUs
+  (override `QEMU_VIRGL_BLOB_OK=1`). Non-GL `virtio-gpu` blob needs shared
+  memfd guest RAM, which the launcher now wires.
+- The only host-visible-capable backend here (a local QEMU 9.2.0 rutabaga
+  build, `x-virgl2` + surfaceless FFI) negotiates the 32 MiB host-visible BAR
+  and virgl2 capset, but the init-time probe (`virtio_gpu_smoke_host_visible_map`)
+  proves it **refuses** the mappable `HOST3D` create (`create=-5`), so
+  `GETPARAM(HOST_VISIBLE)` correctly stays `0`. Verified by host round-trip,
+  not inferred. Evidence: `/tmp/xv6-rutabaga-hostvis-probe.log`.
+- Alpine 3.23.4 (Weston/Mesa virgl) on this host drives a 66–73 FPS desktop
+  using only the classic transfer model (zero blob/host-visible commands),
+  which xv6 already implements — confirming host-visible zero-copy is optional.
+- Positive host-visible zero-copy awaits a backend that both negotiates the BAR
+  and successfully creates/maps mappable blobs (rutabaga/gfxstream-capable
+  QEMU, or a working vhost-user/rutabaga virgl backend).
 
 ## Goal
 
@@ -177,8 +86,9 @@ This document is a **comparison + implementation plan**. Sections §1–§6 reco
 the original gap analysis (the pre-implementation baseline); §7 tracks the
 phased roadmap, now mostly **landed** (see the status table above). Phase 6
 cleanup is complete. Phase 5 guest blob and fail-closed host-visible plumbing
-are landed, but positive host-visible zero-copy remains open until a backend
-can create and map mappable blob resources.
+are landed; the Alpine-validated transfer path is the complete working model
+for this host, while positive host-visible zero-copy remains an optional
+backend-dependent optimization.
 
 This plan is scoped to **x86_64** (consistent with the syscall ABI plans).
 RISC-V graphics is out of scope.
@@ -531,8 +441,9 @@ handoff plan:
 ## 7. Phased roadmap
 
 Ordered by dependency and compatibility payoff. **Phases 0–4 and Phase 6 are
-landed and committed; Phase 5 is code-complete except for the host-refused
-positive host-visible zero-copy proof** (see status table at the top). Detail
+landed and committed; Phase 5 is complete for this host via the
+Alpine-validated transfer model, with host-visible zero-copy demoted to an
+optional optimization the host refuses** (see status table at the top). Detail
 is retained below for reference and for the remaining host-dependent work.
 
 ### Phase 0 — Audit & truthfulness — **DONE**
@@ -566,7 +477,7 @@ is retained below for reference and for the remaining host-dependent work.
 - Still to validate end-to-end with a stock Mesa `virgl` build against
   `renderD128` (needs the `-gl` GTK path; see §8).
 
-### Phase 5 — Blob resources + zero-copy + damage present — **CODE COMPLETE (host-blocked)**
+### Phase 5 — Blob resources + zero-copy + damage present — **COMPLETE (transfer model); host-visible zero-copy optional/host-refused**
 
 - **Landed (committed):**
   `VIRTIO_GPU_F_RESOURCE_BLOB` negotiation + `VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB`
@@ -595,11 +506,33 @@ is retained below for reference and for the remaining host-dependent work.
   response), so the cap stays `0` and zero panics occur. This converts the
   former "untested" host-visible blocker into a **verified host refusal**
   (`/tmp/xv6-rutabaga-hostvis-probe.log`).
-- **Remaining (host-blocked, not a kernel gap):** end-to-end virgl+blob
-  zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl path rejects
-  blob ("blobs and virgl are not compatible"), and udmabuf needs a shared
-  memfd RAM backend. The rutabaga backend negotiates the host-visible BAR but
-  refuses mappable blob creation (proven by the probe above). Needs a
+- **Alpine-validated alternative (the working solution on this host):**
+  Alpine 3.23.4 running Weston/Mesa virgl on this same machine was traced
+  (`scripts/gpu/alpine-virgl-desktop-capture.sh`, device
+  `virtio-vga-gl,xres=1280,yres=800` with **no** `blob=true`). Both captures
+  (`build-x86_64/alpine-trace/alpine-qemu.trace` LLVMPIPE host GL,
+  `alpine-d3d12-qemu.trace` D3D12 host GL; summary in
+  `alpine-virgl-behavior-summary.txt`) show **zero** blob, map-blob, or
+  host-visible commands. Alpine's stock Mesa virgl winsys renders into
+  guest-page-backed 3D resources and presents purely through the classic
+  transfer model — histogram (d3d12): `ctx_submit 13552`, `res_flush 5290`,
+  `set_scanout 4529`, `res_xfer_toh_2d 761`, `res_create_3d 15`,
+  `res_back_attach 16` — at 66–73 FPS. **xv6 already implements every one of
+  these commands** (`TRANSFER_TO_HOST_2D/3D`, `RESOURCE_CREATE_3D`,
+  `RESOURCE_ATTACH_BACKING`, `RESOURCE_FLUSH`, `SET_SCANOUT`, `CTX_SUBMIT`)
+  and the rutabaga boot log already prints `using Alpine-style virgl 3D
+  scanout resource`. The transfer-based virgl path is therefore the complete,
+  proven solution for this host, and the existing fail-closed
+  `GETPARAM(HOST_VISIBLE)=0` correctly makes guest Mesa fall back to that path
+  exactly as Alpine's Mesa does when blob is not offered. No guest or kernel
+  changes are needed to match Alpine.
+- **Remaining (host-blocked, optional optimization only):** end-to-end
+  virgl+blob zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl
+  path rejects blob ("blobs and virgl are not compatible"), and udmabuf needs a
+  shared memfd RAM backend. The rutabaga backend negotiates the host-visible
+  BAR but refuses mappable blob creation (proven by the probe above). This is
+  no longer on the critical path: it would only avoid the `TRANSFER_TO_HOST`
+  copies that Alpine performs happily at full frame rate. Realizing it needs a
   rutabaga/gfxstream-capable QEMU that accepts mappable host3d blobs, or a
   working vhost-user/rutabaga virgl backend.
 
@@ -644,17 +577,265 @@ DRM nodes registering, and a clean desktop start.
    GBM/EGL validator, `mesawlegl`, and `mesaglsmoke`.
 4. **Blob/zero-copy** — with `blob=true,hostmem=…` (udmabuf), verify
    `VIRTGPU_GETPARAM(RESOURCE_BLOB)==1`; on this host, verify the non-GL guest
-   blob path and fail-closed `HOST_VISIBLE=0`. Full mappable virgl blob
-   zero-copy remains blocked until a host backend can expose virgl + blob.
+   blob path and fail-closed `HOST_VISIBLE=0`. Treat full mappable virgl blob
+   zero-copy as an optional backend optimization: Alpine's working virgl path on
+   this host uses the classic transfer model with zero blob/map-blob commands.
 5. **Compositor end-to-end** — the Wayland compositor + WebKit/GL apps remain
    the integration test; compare trace shape + on-screen output + guest
    framebuffer samples, never counters alone.
 6. **Regression guard** — keep fail-closed counters; assert caps and behavior
    agree (§4.4), especially the new blob/host-visible `GETPARAM` advertising.
+7. **YouTube fullscreen video playback (MANDATORY)** — a YouTube video **must**
+   play **smoothly in fullscreen mode at the default resolution** before any
+   GPU/DRM milestone is declared validated. This is a hard release gate, not an
+   optional check. Launch the in-guest browser (NetSurf/WebKit GL path), open a
+   YouTube video, enter the player's fullscreen mode, and leave the desktop at
+   its **default boot resolution** (e.g. `video=1280x800` — do not switch modes
+   to make playback pass). The run passes only when **all** of the following
+   hold for a sustained capture window:
+   - Continuous, tear-free presentation at the desktop's default resolution
+     with the player reporting/holding fullscreen (no letterboxed fallback to a
+     smaller surface, no mode change).
+   - Smooth playback with no stutter, frame freezes, or audio/video stalls:
+     steady scanout flips for the whole window, decoded/presented frame counters
+     advancing monotonically.
+   - Zero `virtio_failures`, zero `virtio_timeouts`, zero panics/coredumps, and
+     no compositor or virgl error markers across the capture.
+   - Evidence is a guest framebuffer screenshot **and** the trace/fbstat capture
+     showing advancing present counts at the default resolution (never counters
+     alone; capture on-screen output as well). Treat any stutter, resolution
+     downgrade, non-fullscreen fallback, or fault as a **FAIL** for the whole
+     milestone.
 
 ---
 
-## 9. Out of scope / explicitly separate
+## 9. Existing-compositor adoption (Weston) — verified gaps + bring-up plan
+
+This section evaluates **replacing the custom `wlcomp` compositor with an
+existing upstream Wayland compositor** and records the gaps that were verified
+by source/tree inspection on 2026-06-07 (not assumed). The graphics substrate a
+compositor needs — DRM/KMS atomic, GBM, EGL/GLES via Mesa virgl, dma-buf,
+syncobj — is already validated here (upstream `kmscube`/`drm_info` run), so the
+adoption cost is concentrated in the **input + seat/session boundary**, not
+graphics.
+
+### 9.1 Verified gaps to run an existing compositor (Weston / Sway)
+
+Each row was checked against the repo; “absent” means no target port exists
+(host-build-only or upstream-source-only matches do not count).
+
+| Gap | Status | Evidence |
+|---|---|---|
+| The compositor itself | **Absent** | No weston/sway/wlroots dir under `ports/`; current one is custom `ports/wayland/src/wlcomp.c` |
+| `libinput` | **Absent (target)** | Only `libevdev2` in the build-host `Dockerfile` and libxkbcommon docs; input today is custom `/dev/mouse` + `/dev/kbd`, not evdev |
+| `udev`/`libudev`/`eudev` | **Absent (target)** | `dep_libudev` only as `required:false` in upstream Mesa `meson.build`; `eudev` only in the Alpine capture script |
+| `seatd`/`logind` (seat acquisition) | **Absent** | No `seatd`/`sd_login`; GTK’s `GdkSeat*` is the toolkit’s internal abstraction, not a system seat manager |
+| sysfs device enumeration | **Partial/stub** | `kernel/kernel/vfs/sysfs/inode.c` hardcodes one PCI symlink; `/sys/class/drm` is still listed as TODO in `docs/linux-userland-abi-kernel-gap-plan.md` |
+
+**Already in our favor (verified present):** glibc userland + dynamic loader
+(`build-x86_64/sysroot`), working `dlopen`/`LD_PRELOAD`
+(`ports/wayland/src/xv6memshim.c`), the Wayland core + `wayland-protocols` +
+`libxkbcommon`, the full GTK3/Pango/Cairo/Pixman stack, Mesa virgl + libdrm +
+libepoxy, and native `epoll`/`eventfd`/`timerfd`/`signalfd`/`memfd`.
+
+### 9.2 Additional gaps before a *full* desktop environment (GNOME/Plasma)
+
+These are **not** required to bring up a bare compositor, but a full DE assumes
+them. All verified absent on the target:
+
+- **D-Bus message bus** — no `libdbus`/`dbus-daemon` port (GLib ships `GDBus`
+  source but still needs a running session + system bus).
+- **PAM / login auth** — no `libpam`/`pam_start`.
+- **polkit** — not ported (only referenced in glib NEWS).
+- **NetworkManager** — not ported (only glib translation strings).
+- **Audio (PipeWire/PulseAudio/ALSA)** — none; no `/dev/snd` device at all.
+- **Service/session manager (systemd/elogind/OpenRC)** — boot is a single
+  `/init` → startup script (`scripts/image/make-initrd.sh`), not a managed
+  session.
+- **Display manager / greeter (GDM/SDDM/greetd)** — GUI is launched directly.
+- **XWayland / X11 server** — not ported; X11-only apps will not run.
+- **Settings/portal stack** (xdg-desktop-portal, accountsservice, upower) —
+  absent, and blocked behind D-Bus anyway.
+
+**Conclusion:** a full DE is a platform-services project (the D-Bus/logind/
+audio/portal set above), not a compositor swap. Swapping in a single compositor
+is bounded by §9.1 only.
+
+### 9.3 Weston bring-up plan (recommended path)
+
+Weston is the recommended first target: its `drm-backend` maps directly onto
+the already-validated DRM/KMS/GBM/dma-buf path, and it has the smallest
+input/seat surface of the upstream compositors. Sway/wlroots is the natural
+follow-up once `libinput` is real.
+
+1. **Stage Weston into the sysroot build.** Add a `ports/weston` recipe built
+   against the existing sysroot (glibc, `libwayland-server`,
+   `wayland-protocols`, `libdrm`, Mesa GBM/EGL, `libxkbcommon`, `pixman`,
+   `cairo`). Configure with the heavy/optional backends and integrations off:
+   no `xwayland`, no `remoting`, no `pipewire`, no `systemd`/`logind`,
+   no `lcms`, no `webp`; enable only the `drm-backend` and the desktop shell.
+2. **Seat/session shim (replaces `seatd`/`logind`).** Weston’s launcher chooses
+   between logind, `weston-launch`, and a “direct” path. Use the **direct/root
+   launcher** so no `org.freedesktop.login1` is needed: open the DRM master and
+   input fds directly. Single-user dev only — no VT switching, no multi-seat.
+   (Porting `seatd`, ~3k LOC, is the cleaner later option; logind is not.)
+3. **Input backend shim (replaces `libinput`).** This is the main work item.
+   Two options, in order of preference:
+   - **(a) Thin `libinput`-shaped shim** that reads xv6’s `/dev/mouse` and
+     `/dev/kbd` and synthesizes `libinput_event_pointer` / `_keyboard` events,
+     exposing just the symbols Weston’s `drm-backend` input init calls. Keeps
+     Weston unpatched.
+   - **(b) Patch Weston’s input init** to read `/dev/mouse` + `/dev/kbd`
+     directly (the same devices `wlcomp` already consumes), bypassing
+     `libinput` entirely. Fewer moving parts, but a Weston fork to maintain.
+4. **Device discovery without `udev`.** Hardcode `/dev/dri/card0`
+   (KMS) and `/dev/dri/renderD128` (render), skipping `udev` enumeration and
+   hot-plug. Add a `/sys/class/drm` shim only if a code path insists on it.
+5. **Keymap.** `libxkbcommon` is already ported; feed it the default keymap
+   so `/dev/kbd` scancodes map to keysyms.
+6. **Launcher integration.** Add a launch mode that starts Weston instead of
+   `wlcomp`, reusing the existing GUI startup script
+   (`/etc/startup` → Weston + shell) so the desktop path is selectable.
+7. **Validation (must reuse §8).** Re-prove the full §8 suite against Weston,
+   including the **mandatory** smooth-fullscreen-YouTube-at-default-resolution
+   gate (§8, step 7). The compositor swap is not “done” until that gate passes
+   on Weston with zero `virtio_failures`/`virtio_timeouts` and on-screen +
+   framebuffer evidence.
+
+### 9.4 Honest status / risks
+
+- This is an **assessment + plan, not a runtime proof.** No upstream compositor
+  is ported yet, so the input/seat shim effort in §9.3 is estimated. Confidence
+  comes from the heavyweight dependencies (glibc, libwayland, Mesa virgl, GTK,
+  dlopen) already running on this exact target.
+- The custom `wlcomp` exists precisely because it sidesteps `libinput`/`udev`/
+  `seatd`. Adopting Weston means re-solving that boundary against stricter
+  upstream assumptions.
+- `wlcomp` is tuned to xv6’s GPU sync/scanout path; Weston goes through the
+  generic DRM backend, which is validated but not specialized — so the §8
+  YouTube gate must be re-proven, not assumed, after the swap.
+
+---
+
+## 10. Upstream convergence for the ported graphics libraries
+
+**Goal:** run each graphics library as close to its upstream source as
+possible, where the *only* xv6-specific divergence is a **signature** — an
+upstream-supported build option or a single platform identifier — and **never**
+a fork, a source patch, or a bespoke replacement library.
+
+### 10.1 Principle: signature, not fork
+
+Classify every current divergence into one of two buckets and drive everything
+toward the first:
+
+- **Acceptable signature (keep).** Configuration that upstream already exposes
+  and that merely *selects* behavior for this target. Examples: meson/CMake
+  feature switches (`-Dplatforms=wayland`, `-Dglx=disabled`,
+  `-Dgallium-drivers=…`, `-Dvulkan-drivers=`, `-Dprint_backends=none`,
+  `-Denable-x11=false`), and one canonical platform define (`DETECT_OS_XV6` /
+  `__xv6__`) that resolves to **standard** code paths. These are not forks; they
+  are how upstream is meant to be configured for a Wayland-only, software/virgl
+  target.
+- **Divergence to eliminate (retire).** Custom replacement libraries, source
+  `.patch` files, runtime monkey-patching, and any private ioctl surface. Each
+  of these is a maintenance liability and is removed by closing the underlying
+  gap so stock upstream code runs unmodified.
+
+The deciding question for each item below: *can upstream code, configured only
+through its own options, run unchanged?* If yes, the gap is closed and only a
+signature remains.
+
+### 10.2 Gap → convergence map
+
+| Gap (from the port audit) | Current divergence | Upstream-convergent action | Residual xv6 signature |
+|---|---|---|---|
+| Custom FB-GPU submit ioctls | `virgl_xv6_winsys.c` + `FB_GPU_VIRGL_*` (0x4619–0x4626) replacing Mesa's DRM winsys | Point Mesa at its **stock** `virgl_drm_winsys` over the standard `DRM_IOCTL_VIRTGPU_*` UAPI already shipped in Phase 4 (§3.6); delete the custom winsys | Just opening `/dev/dri/renderD128`; `DETECT_OS_XV6` selects the Wayland/virgl config, not a private path |
+| Custom GBM library | `xv6-gbm` over `FB_GPU_BO_*` (0x4616/0x4623…) | Use Mesa's upstream `gbm_dri` (or minigbm) against standard DRM GEM dumb + PRIME from Phase 2 (§3.3–3.4) | Build-option selection only |
+| Incomplete GL/EGL symbols | libepoxy patches `0001`/`0002` add a stub resolver returning 0 | Close the EGL/GLES symbol coverage in Mesa so every symbol epoxy resolves is real; drop both patches | None (upstream libepoxy + `-Degl=yes -Dglx=no -Dx11=false`) |
+| No upstream compositor | custom `wlcomp.c` (sidesteps libinput/udev/seatd/logind) | Execute the §9 Weston bring-up: add the libinput/seat glue, run upstream Weston | Weston config + xv6 seat/udev shim, not a compositor fork |
+| WebKit/Skia fault | `xv6memshim.c` SIGSEGV/`RIP`-patcher (`xv6_webkit_skia_recovery_installed`) | Root-cause the faulting access and fix it in the WebKit/Skia port (or libc); remove the runtime patcher entirely | None |
+| GTK init + printing | gtk3 patch `0001` (display-manager once-init), patch `0002` (allow no print backends) | Submit `0001` upstream (or confirm upstream is already thread-safe) and drop it; replace `0002` with the upstream `-Dprint_backends=none` option if accepted upstream | `-Dprint_backends=none` signature only |
+| No udev / driver discovery | libdrm `-Dudev=false`, Mesa loader hand-wired | Provide a libudev-ABI-compatible shim (or eudev) so `-Dudev=true` works the upstream way; let Mesa discover drivers normally | A small libudev shim package |
+| Fail-closed Nouveau only | libdrm `-Dnouveau=enabled` alone, skeleton UAPI | Out of scope here (tracked separately in §11); does not block convergence of the Wayland/virgl stack | n/a |
+| libdrm version floor | drm_info patch relaxing the ≥2.4.134 check to accept 2.4.133 | Bump the xv6 libdrm port to ≥2.4.134 and drop the drm_info patch | None |
+| No xkb data at runtime | libxkbcommon stages xkeyboard-config from host | Package xkeyboard-config in the rootfs as a normal data dependency (upstream-compatible) | `-Denable-x11=false` signature only |
+| No LLVM / `kcmp` | mesa `-Dllvm=disabled`, `-Dallow-kcmp=disabled` | `-Dllvm=disabled` is a legitimate upstream signature (software/virgl target) — keep. For `kcmp`, optionally add the syscall so `-Dallow-kcmp` can return to its upstream default | Build options; optional new syscall |
+
+### 10.3 Convergence todo list (each step ties to an existing validator)
+
+Work top to bottom; steps 1–2 are lowest-risk (their kernel UAPI is already
+validated), steps 6–7 highest-risk. **Every step must pass its named existing
+validator(s) and must not regress the §8 step-7 YouTube fullscreen gate before
+the divergence is deleted.** Validators below are real scripts/programs in this
+repo — never declare a step done on counters alone (§8: trace shape + on-screen
+output + framebuffer sample).
+
+- [ ] **1. Mesa winsys swap (retire `virgl_xv6_winsys.c`).** Build stock Mesa
+      `gallium-drivers=virgl` with its DRM `virgl_drm_winsys` against
+      `renderD128`; only then delete the custom winsys.
+  - Validate: `scripts/gpu/gpu-validate.sh` (virgl bring-up + 3D `glsmoke`),
+    `scripts/gpu/virgl-desktop-validate.sh` (`mesawlegl` desktop, `app_loop_fps`
+    telemetry, `status=0` completion), upstream **kmscube** + **drm_info** +
+    `modetest` on `/dev/dri/card0`/`renderD128`, and `user/programs/drmabitest`
+    for the underlying ioctls.
+  - Gate: §8 step 7 YouTube fullscreen.
+- [ ] **2. GBM swap (retire `xv6-gbm`).** Move to upstream `gbm_dri`/minigbm on
+      the standard DRM GEM-dumb + PRIME path from Phases 2–4.
+  - Validate: `scripts/gpu/virgl-kms-validate.sh` (direct KMS GBM/EGL,
+    exportable BOs), upstream **kmscube** (KMS + render-node), and
+    `user/programs/drmabitest` GEM/PRIME cases.
+  - Gate: §8 step 7 YouTube fullscreen.
+- [ ] **3. EGL/GLES symbol completion (delete libepoxy `0001`/`0002`).** Fill
+      the missing GL/EGL symbols in Mesa so epoxy resolves them for real, then
+      remove both patches and `EPOXY_XV6_ALLOW_MISSING`.
+  - Validate: `scripts/gpu/gpu-validate.sh` and
+    `scripts/gpu/virgl-desktop-validate.sh` must pass with the stub resolver
+    compiled out (no `epoxy_xv6_missing_gl_stub` reachable).
+  - Gate: §8 step 7 YouTube fullscreen.
+- [ ] **4. udev parity (un-hardwire the Mesa loader).** Provide a
+      libudev-ABI-compatible shim (or eudev) so libdrm/Mesa build with
+      `-Dudev=true` and discover nodes the upstream way.
+  - Validate: **drm_info** + `modetest` still enumerate `card0`/`renderD128`;
+    re-run `scripts/gpu/gpu-validate.sh` to confirm no discovery regression.
+  - Gate: §8 step 7 YouTube fullscreen.
+- [ ] **5. Retire toolkit/version patches.** Upstream or option-ize gtk3
+      `0001` (display-manager once-init) and `0002` (replace with stock
+      `-Dprint_backends=none`); bump the libdrm port to ≥2.4.134 and drop the
+      drm_info version patch; package xkeyboard-config as a normal rootfs data
+      dependency so libxkbcommon needs no host staging.
+  - Validate: GTK `-gl` path in `scripts/gpu/virgl-desktop-validate.sh` (GTK
+    init), unpatched **drm_info** runs against the bumped libdrm, and a desktop
+    boot resolves keymaps from the packaged xkeyboard-config.
+  - Gate: §8 step 7 YouTube fullscreen.
+- [ ] **6. WebKit/Skia root-cause (remove `xv6memshim.c`).** Diagnose the fault
+      the SIGSEGV/`RIP`-patcher currently masks and fix it in the WebKit/Skia
+      port or libc; remove the runtime patcher and
+      `xv6_webkit_skia_recovery_installed`.
+  - Validate: `scripts/gpu/webkit-virgl-gpu-validate.sh` and
+    `scripts/gpu/validate-webkit-runtime.sh` must pass with the shim disabled
+    (`EPOXY`/`xv6memshim` recovery not installed) and no SIGSEGV recovery in the
+    trace.
+  - Gate: §8 step 7 YouTube fullscreen (this is the gate's natural home —
+    WebKit GL video is the YouTube path).
+- [ ] **7. Compositor adoption (retire `wlcomp.c`).** Execute the §9 Weston
+      bring-up (libinput/seat/udev glue), then run upstream Weston instead of
+      the custom compositor.
+  - Validate: re-prove the full §8 suite through Weston —
+    `scripts/gpu/virgl-desktop-validate.sh`, `scripts/gpu/gpu-validate.sh`, and
+    the WebKit validators — since `wlcomp`'s specialized scanout path is gone.
+  - Gate: §8 step 7 YouTube fullscreen (must be re-proven, not assumed, after
+    the swap).
+
+**Signatures that remain after the list is complete** (acceptable, not forks):
+the Wayland-only/virgl/no-X11/no-LLVM build options on Mesa/GTK/libepoxy/
+libxkbcommon, and a single `DETECT_OS_XV6` platform define that selects those
+**standard** code paths. No replacement libraries, no source patches, no
+runtime monkey-patching, no private ioctl winsys should survive.
+
+---
+
+## 11. Out of scope / explicitly separate
 
 - **Hyper-V DXG / GPU-PV** (`fb_dxg_present.c`, `d3dkmthk.h`) — a Microsoft
   paravirtual path tracked in `GPU_REMAINING_GAPS.md`; it is not the Linux DRM
@@ -666,7 +847,7 @@ DRM nodes registering, and a clean desktop start.
 
 ---
 
-## 10. Summary
+## 12. Summary
 
 The convergence work is largely **done**. xv6-os now implements, on top of its
 broad fail-closed DRM shim:
@@ -690,3 +871,7 @@ broad fail-closed DRM shim:
 - **External-tool sweep:** keep refreshing `drm_info`, `modetest`, `kmscube`,
   and stock Mesa virgl evidence as the host path improves. Validate with trace
   shape + on-screen output + framebuffer samples, never counters alone.
+- **Mandatory release gate:** smooth fullscreen YouTube video playback at the
+  default resolution (§8, step 7) must pass before any GPU/DRM milestone is
+  declared validated. Any stutter, resolution downgrade, non-fullscreen
+  fallback, or fault fails the milestone.

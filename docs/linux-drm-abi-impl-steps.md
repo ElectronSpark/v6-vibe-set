@@ -59,8 +59,10 @@ Key paths:
 
 Status legend: **OK** = Linux-compatible for the xv6-supported backend;
 **FAIL-CLOSED** = intentionally unsupported/out-of-scope and returns a Linux
-errno instead of fake success; **HOST-BLOCKED** = kernel code is present and
-honestly gated, but the current host backend refuses the positive runtime path.
+errno instead of fake success; **OPTIONAL-HOST** = kernel code is present and
+honestly gated, but the current host backend refuses an optional zero-copy
+optimization while the Alpine-validated transfer model remains the working
+path.
 The table below reflects the 2026-06-07 audit in
 [`docs/linux-drm-abi-audit.md`](./linux-drm-abi-audit.md); the numbered steps
 remain below as implementation history and reproducible validation guidance.
@@ -135,15 +137,15 @@ remain below as implementation history and reproducible validation guidance.
 
 | Ioctl | Status | Action | Where |
 |---|---|---|---|
-| `VIRTGPU_GETPARAM` | OK / HOST-BLOCKED | `RESOURCE_BLOB=1`; `HOST_VISIBLE=0` unless a host-visible blob maps successfully | dispatch.c |
+| `VIRTGPU_GETPARAM` | OK / OPTIONAL-HOST | `RESOURCE_BLOB=1`; `HOST_VISIBLE=0` unless a host-visible blob maps successfully | dispatch.c |
 | `VIRTGPU_GET_CAPS` | OK | none | dispatch.c |
 | `VIRTGPU_CONTEXT_INIT` | OK | none | dispatch.c:368 |
 | `VIRTGPU_RESOURCE_CREATE` | OK | none | `gpu_drm_virtgpu_resource_create` |
 | `VIRTGPU_RESOURCE_INFO` | OK | reports resource/blob metadata | dispatch.c |
-| `VIRTGPU_RESOURCE_CREATE_BLOB` | OK / HOST-BLOCKED | guest blobs real; host-visible blobs gated by host map probe | virtgpu resource path |
+| `VIRTGPU_RESOURCE_CREATE_BLOB` | OK / OPTIONAL-HOST | guest blobs real; host-visible blobs gated by host map probe | virtgpu resource path |
 | `VIRTGPU_TRANSFER_TO/FROM_HOST` | OK | none | `gpu_drm_virtgpu_transfer` |
 | `VIRTGPU_WAIT` | OK | waits per-resource fence | dispatch.c |
-| `VIRTGPU_MAP` | OK / HOST-BLOCKED | dumb/guest offsets work; host-visible offset returns only after successful `RESOURCE_MAP_BLOB` | dispatch.c |
+| `VIRTGPU_MAP` | OK / OPTIONAL-HOST | dumb/guest offsets work; host-visible offset returns only after successful `RESOURCE_MAP_BLOB` | dispatch.c |
 | `VIRTGPU_EXECBUFFER` | OK | BO list + in/out fence fds landed; virgl lane validated under `-gl` | dispatch.c |
 
 ### 1.6 virtio-gpu transport (`virtio_gpu.c`) — feature flags
@@ -152,7 +154,7 @@ remain below as implementation history and reproducible validation guidance.
 |---|---|---|
 | `VIRTIO_GPU_F_VIRGL` / `EDID` / `CONTEXT_INIT` | OK | none |
 | `VIRTIO_GPU_F_RESOURCE_BLOB` | OK | negotiated when host offers it; guest blob create validated |
-| Host-visible shmem region (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`) | HOST-BLOCKED | SHM/BAR + map/unmap code present; current host refuses mappable blobs, so `HOST_VISIBLE=0` |
+| Host-visible shmem region (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`) | OPTIONAL-HOST | SHM/BAR + map/unmap code present; current host refuses mappable blobs, so `HOST_VISIBLE=0` |
 
 ### 1.7 fbdev (`fb.h`, `fb_device_ioctl.c`)
 
