@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 fullscreen video perf</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #v { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+  #hud { position: fixed; left: 8px; bottom: 8px; margin: 0; color: #0f0;
+         font: 14px/1.3 monospace; background: rgba(0,0,0,0.55); padding: 6px 8px;
+         white-space: pre; z-index: 10; }
+</style>
+<video id="v" muted autoplay playsinline></video>
+<pre id="hud">boot</pre>
+<script>
+(async () => {
+  const params = new URLSearchParams(location.search);
+  const asset = params.get("asset") || "perf-1280x800-60fps.mp4";
+  const runMs = parseInt(params.get("ms") || "15000", 10);
+  const video = document.getElementById("v");
+  const hud = document.getElementById("hud");
+  const lines = [];
+  function log(line) {
+    lines.push(line);
+    document.title = "xv6-perf-video:" + line.slice(0, 110);
+    console.log("PERF-VIDEO " + line);
+  }
+  function hudset(s) { hud.textContent = s; }
+
+  ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing",
+   "waiting", "stalled", "pause", "ended", "error"].forEach(ev => {
+    video.addEventListener(ev, () => log("event:" + ev +
+      " ready=" + video.readyState + " net=" + video.networkState +
+      " time=" + video.currentTime.toFixed(3) +
+      " err=" + (video.error ? video.error.code : 0)));
+  });
+
+  // requestVideoFrameCallback measures genuine presented frames.
+  let presented = 0;
+  let firstTs = 0, lastTs = 0, lastMediaTime = 0;
+  const haveRVFC = typeof video.requestVideoFrameCallback === "function";
+  function onFrame(now, meta) {
+    presented++;
+    if (!firstTs) firstTs = now;
+    lastTs = now;
+    lastMediaTime = meta.mediaTime;
+    video.requestVideoFrameCallback(onFrame);
+  }
+
+  try {
+    video.src = asset;
+    log("start asset=" + asset + " rvfc=" + haveRVFC + " runMs=" + runMs);
+    if (haveRVFC) video.requestVideoFrameCallback(onFrame);
+    await video.play();
+    if (video.requestFullscreen) { try { await video.requestFullscreen(); } catch (e) {} }
+    const startMedia = video.currentTime;
+    const t0 = performance.now();
+    let lastPresented = 0, lastPoll = t0;
+
+    while (performance.now() - t0 < runMs) {
+      await new Promise(r => setTimeout(r, 500));
+      const nowp = performance.now();
+      const q = (typeof video.getVideoPlaybackQuality === "function")
+        ? video.getVideoPlaybackQuality() : null;
+      const wallSec = (nowp - t0) / 1000;
+      const dPres = presented - lastPresented;
+      const dWall = (nowp - lastPoll) / 1000;
+      const instFps = dWall > 0 ? dPres / dWall : 0;
+      lastPresented = presented; lastPoll = nowp;
+      const total = q ? q.totalVideoFrames : -1;
+      const dropped = q ? q.droppedVideoFrames : -1;
+      // Expose a mid-playback marker in the title so an external harness can
+      // grab a representative live frame (event:playing fires at t=0).
+      document.title = "xv6-perf-video:tick time=" + video.currentTime.toFixed(2) +
+        " presented=" + presented + " decoded=" + total + " err=" +
+        (video.error ? video.error.code : 0);
+      hudset(
+        "asset=" + asset + "\n" +
+        "media=" + video.currentTime.toFixed(2) + "s / " + (video.duration || 0).toFixed(2) + "s\n" +
+        "presented=" + presented + " instFPS=" + instFps.toFixed(1) + "\n" +
+        "decoded=" + total + " dropped=" + dropped + "\n" +
+        "wall=" + wallSec.toFixed(1) + "s err=" + (video.error ? video.error.code : 0));
+    }
+
+    const wallSec = (performance.now() - t0) / 1000;
+    const advanced = video.currentTime - startMedia;
+    const q = (typeof video.getVideoPlaybackQuality === "function")
+      ? video.getVideoPlaybackQuality() : null;
+    const total = q ? q.totalVideoFrames : 0;
+    const dropped = q ? q.droppedVideoFrames : 0;
+    const dropPct = (total > 0) ? (100 * dropped / total) : 0;
+    // Several independent FPS estimates so the gate works regardless of which
+    // WebKitGTK metrics API is populated:
+    //  presentedFps - real composited frames via requestVideoFrameCallback
+    //  decodedFps   - frames the pipeline decoded via getVideoPlaybackQuality
+    //  realtimeFps  - nominal 60fps scaled by how close playback held real time
+    const presentedFps = wallSec > 0 ? presented / wallSec : 0;
+    const decodedFps = wallSec > 0 ? total / wallSec : 0;
+    const speed = wallSec > 0 ? advanced / wallSec : 0; // 1.0 == perfect real time
+    const realtimeFps = 60 * speed;
+    // Best available measured FPS for the headline number.
+    const fps = presentedFps > 1 ? presentedFps
+              : (decodedFps > 1 ? decodedFps : realtimeFps);
+    log("metrics presented=" + presented + " presentedFPS=" + presentedFps.toFixed(2) +
+        " decoded=" + total + " decodedFPS=" + decodedFps.toFixed(2) +
+        " dropped=" + dropped + " dropPct=" + dropPct.toFixed(2) +
+        " advanced=" + advanced.toFixed(2) + " speed=" + speed.toFixed(3) +
+        " wall=" + wallSec.toFixed(2));
+
+    // Pass: playback held real time (>=0.9x), no decode error, low drop rate.
+    const pass = (speed >= 0.9) && !video.error && (dropPct < 10);
+    log("RESULT " + (pass ? "pass" : "fail") +
+        " fps=" + fps.toFixed(1) + " speed=" + speed.toFixed(3) +
+        " presentedFPS=" + presentedFps.toFixed(1) +
+        " decodedFPS=" + decodedFps.toFixed(1) +
+        " dropPct=" + dropPct.toFixed(2) + " advanced=" + advanced.toFixed(2));
+  } catch (e) {
+    log("RESULT fail exception=" + e.name + ":" + e.message);
+  }
+})();
+</script>

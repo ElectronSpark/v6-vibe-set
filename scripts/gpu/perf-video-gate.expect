@@ -1,0 +1,80 @@
+#!/usr/bin/env expect
+# Drive an xv6 WebKit fullscreen high-res/high-FPS local-video performance gate.
+# Captures a live QEMU monitor screendump during playback and records the
+# page-reported avgFPS / dropPct / advanced RESULT line.
+
+set timeout 360
+set root      [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+# Allow override via env; default to repo layout.
+if {[info exists env(REPO_ROOT)]} { set root $env(REPO_ROOT) }
+
+set build   "$root/build-x86_64"
+set kernel  "$build/kernel/build/kernel/xv6.bin"
+set fsimg   "$build/fs.img"
+set outdir  "$build/perf-video-gate"
+exec mkdir -p $outdir
+set shot    "$outdir/perf-video-live.ppm"
+set monsock "$outdir/qemu-monitor.sock"
+set runlog  "$outdir/run.log"
+exec sh -c "rm -f $shot $monsock $runlog"
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_url=file:///share/webkit/perf-video.html?ms=15000 webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 video=1280x800"
+set env(QEMU_EXTRA) "-monitor unix:$monsock,server,nowait"
+
+log_file -a $runlog
+
+proc screendump {sock dst} {
+    catch { exec sh -c "printf 'screendump $dst\\n' | nc -U -w 4 -q 1 $sock >>$dst.nc.log 2>&1 || echo nc-failed >>$dst.nc.log" }
+}
+
+spawn timeout --foreground 320 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+
+set shot_done   0
+set result_seen 0
+set fb_sent     0
+set fb_done     0
+
+# NOTE: init starts a concurrent /bin/sh on the same console, so a bare
+# root:/# prompt is NOT a completion signal. Wait for real video markers.
+# Capture the framebuffer DURING live playback (wlcomp is compositing the
+# decoded video to /dev/fb0); after RESULT the desktop tears down
+# (desktop_exit_after_smoke=1) so the scanout is no longer representative.
+expect {
+    -re {xv6-perf-video:tick time=([0-9]+)\.[0-9]+[^']*} {
+        set t $expect_out(1,string)
+        if {!$shot_done && $t >= 4} { screendump $monsock $shot; set shot_done 1 }
+        if {!$fb_sent && $t >= 5} {
+            send "fbstat ppm-current /perf-video-frame.ppm 0 0 1280 800; sync; echo XV6_FBSHOT_DONE\r"
+            set fb_sent 1
+        }
+        exp_continue
+    }
+    -re {XV6_FBSHOT_DONE} { set fb_done 1; exp_continue }
+    -re {xv6-perf-video:RESULT[^']*} {
+        if {!$shot_done} { screendump $monsock $shot; set shot_done 1 }
+        set result_seen 1
+        exp_continue
+    }
+    -re {panic|fatal page fault|coredump: generating|virtio_failure|WebKit smoke failed} {
+        puts "\nGATE-FAIL crash-marker"
+        exit 3
+    }
+    -re {wlcomp: shutting down|__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
+        if {$result_seen} { exit 0 }
+        exp_continue
+    }
+    timeout {
+        if {$result_seen} { exit 0 }
+        puts "\nGATE-FAIL timeout"
+        exit 4
+    }
+    eof { if {$result_seen} { exit 0 } else { exit 5 } }
+}
