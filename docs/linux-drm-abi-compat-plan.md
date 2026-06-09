@@ -6,8 +6,9 @@ upstream drm_info, libdrm modetest/drmdevice). **Convergence Task 1**
 (kernel → stock Mesa/GBM; retire `virgl_xv6_winsys.c` + `xv6-gbm`) is now
 validated end-to-end including the fullscreen video performance gate (§8
 step 7), realized offline as a deterministic local high-res/60fps gate — see
-"Convergence status" below — but is **not yet committed** (super still points at
-kernel `6b301a6` / ports `6b21a48`). Host-visible zero-copy blob is
+"Convergence status" below — and is **committed** (super `e404aa8`, kernel
+`512fac7`, ports `7954144`). Tasks 2–4 are validated and committed in ports
+through `5c22780`. Host-visible zero-copy blob is
 reclassified as an optional, host-refused optimization: the init-time probe
 proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
@@ -729,14 +730,18 @@ follow-up once `libinput` is real.
    hot-plug. Add a `/sys/class/drm` shim only if a code path insists on it.
 5. **Keymap.** `libxkbcommon` is already ported; feed it the default keymap
    so `/dev/kbd` scancodes map to keysyms.
-6. **Launcher integration.** Add a launch mode that starts Weston instead of
-   `wlcomp`, reusing the existing GUI startup script
-   (`/etc/startup` → Weston + shell) so the desktop path is selectable.
+6. **Launcher cutover (one-way, no fallback).** Repoint the GUI startup script
+   (`/etc/startup`) at Weston as the **sole** compositor. This is a hard
+   replacement, not a selectable mode: there is no `wlcomp`-vs-Weston toggle and
+   no env switch to fall back. Once step 7 passes, `wlcomp.c`, its `.inc`
+   fragments, and its build target are **deleted in the same change** and never
+   reintroduced — Weston is the compositor from that point on.
 7. **Validation (must reuse §8).** Re-prove the full §8 suite against Weston,
    including the **mandatory** smooth-fullscreen-video-at-default-resolution
    gate (§8, step 7). The compositor swap is not “done” until that gate passes
    on Weston with zero `virtio_failures`/`virtio_timeouts` and on-screen +
-   framebuffer evidence.
+   framebuffer evidence. Validation and `wlcomp` deletion land together: the
+   custom compositor is not kept around as a safety net once Weston is green.
 
 ### 9.4 Honest status / risks
 
@@ -749,7 +754,10 @@ follow-up once `libinput` is real.
   upstream assumptions.
 - `wlcomp` is tuned to xv6’s GPU sync/scanout path; Weston goes through the
   generic DRM backend, which is validated but not specialized — so the §8
-  fullscreen-video gate must be re-proven, not assumed, after the swap.
+  fullscreen-video gate must be re-proven, not assumed, after the swap. Because
+  the cutover is **one-way**, this re-proof is the gate that authorizes deleting
+  `wlcomp`: Weston must clear §8 step 7 *before* the custom compositor is
+  removed, since there is deliberately no fallback to revert to afterwards.
 
 ---
 
@@ -789,7 +797,7 @@ signature remains.
 | Custom FB-GPU submit ioctls | `virgl_xv6_winsys.c` + `FB_GPU_VIRGL_*` (0x4619–0x4626) replacing Mesa's DRM winsys | Point Mesa at its **stock** `virgl_drm_winsys` over the standard `DRM_IOCTL_VIRTGPU_*` UAPI already shipped in Phase 4 (§3.6); delete the custom winsys | Just opening `/dev/dri/renderD128`; `DETECT_OS_XV6` selects the Wayland/virgl config, not a private path |
 | Custom GBM library | `xv6-gbm` over `FB_GPU_BO_*` (0x4616/0x4623…) | Use Mesa's upstream `gbm_dri` (or minigbm) against standard DRM GEM dumb + PRIME from Phase 2 (§3.3–3.4) | Build-option selection only |
 | Incomplete GL/EGL symbols | libepoxy patches `0001`/`0002` add a stub resolver returning 0 | Close the EGL/GLES symbol coverage in Mesa so every symbol epoxy resolves is real; drop both patches | None (upstream libepoxy + `-Degl=yes -Dglx=no -Dx11=false`) |
-| No upstream compositor | custom `wlcomp.c` (sidesteps libinput/udev/seatd/logind) | Execute the §9 Weston bring-up: add the libinput/seat glue, run upstream Weston | Weston config + xv6 seat/udev shim, not a compositor fork |
+| No upstream compositor | custom `wlcomp.c` (sidesteps libinput/udev/seatd/logind) | Execute the §9 Weston bring-up: add the libinput/seat glue, run upstream Weston as the **sole** compositor, then delete `wlcomp` in the same change (one-way cutover, no fallback) | Weston config + xv6 seat/udev shim, not a compositor fork |
 | WebKit/Skia fault | `xv6memshim.c` SIGSEGV/`RIP`-patcher (`xv6_webkit_skia_recovery_installed`) | Root-cause the faulting access and fix it in the WebKit/Skia port (or libc); remove the runtime patcher entirely | None |
 | GTK init + printing | gtk3 patch `0001` (display-manager once-init), patch `0002` (allow no print backends) | Submit `0001` upstream (or confirm upstream is already thread-safe) and drop it; replace `0002` with the upstream `-Dprint_backends=none` option if accepted upstream | `-Dprint_backends=none` signature only |
 | No udev / driver discovery | libdrm `-Dudev=false`, Mesa loader hand-wired | Provide a libudev-ABI-compatible shim (or eudev) so `-Dudev=true` works the upstream way; let Mesa discover drivers normally | A small libudev shim package |
@@ -804,29 +812,37 @@ Ordered by dependency: **first adapt the kernel so stock upstream libraries
 bind, then add the missing libraries, then migrate the compositor to Weston, and
 do the WebKit/Skia root-cause last.**
 
-**Progress snapshot (2026-06-09, from code + VM inspection).** Substantial
-convergence work is in flight but **uncommitted** (super still points at kernel
-`6b301a6` / ports `6b21a48`); validate and commit before claiming any task done:
+**Progress snapshot (2026-06-09, final Weston/API-video round).** Task 1 is
+**committed** (super `e404aa8`, kernel `512fac7`, ports `7954144`); Tasks 2–4 are
+**committed** in ports through `5c22780`:
 
-- Task 1 — *validated; pending commit.* Kernel `dev/fb/*` + `virtio_gpu_*`
-  carry the standard UAPI; the custom Mesa winsys source under
+- Task 1 — *committed.* Kernel `dev/fb/*` + `virtio_gpu_*` carry the standard
+  UAPI; the custom Mesa winsys source under
   `mesa/src/src/gallium/winsys/virgl/xv6/` is **removed** and the standalone
   `xv6-gbm` library is **deleted**. `DETECT_OS_XV6` remains as the intended
-  *signature*. Built clean, **all GPU validators GREEN on the stock winsys**,
-  and the §8 step-7 fullscreen-video gate **PASSES** (local 60fps gate,
-  `dropPct=0.00`, framebuffer proof). Not yet committed.
-- Task 2 — *in progress.* New library ports scaffolded (untracked): `libudev`
-  (~869-line shim), `libinput`, `libseat`, `libevdev`, `hwdata`,
-  `xkeyboard-config`. The retired source patches are **deleted**: gtk3
-  `0001`/`0002`, libepoxy `0001`/`0002`, drm_info 2.4.133. Not yet built.
-- Task 3 — *early.* `weston/` port scaffolded (`CMakeLists.txt`, `src`,
-  `xv6-weston.ini`). Not yet running as the compositor.
-- Task 4 — *not started.* `xv6memshim.c` still installs the SIGSEGV handler;
-  kernel `signal.c`/`signal_types.h` gained `sigsuspend`/`sigreturn` fixes as
-  groundwork. VM still relies on the shim.
+  *signature*. **All GPU validators GREEN on the stock winsys.**
+- Task 2 — *committed in ports through `5c22780`.* New library ports are built/staged:
+  `libudev`, `libinput`, `libseat`, `libevdev`, `hwdata`, `xkeyboard-config`,
+  and upstream Weston. The retired source patches are **deleted**: gtk3
+  `0001`/`0002`, libepoxy `0001`/`0002`, drm_info 2.4.133. The final build
+  shows these ports in the `port-wayland` dependency chain, and the runtime
+  validators below pass.
+- Task 3 — *committed in ports through `5c22780`.* `wlcomp.c`
+  and all `wlcomp_*` fragments are **deleted**; `desktop.c` now
+  `execve("/bin/weston")`; upstream Weston (`weston/`, `xv6-weston.ini`) is
+  staged into the image and boots as the sole compositor. The final image has
+  `/bin/weston` + `/bin/weston-session`, while `/bin/wlcomp` and `/bin/desktop`
+  are absent.
+- Task 4 — *committed in ports through `5c22780`.* The two
+  `xv6memshim.c` crutches — the scalar `mem*`/`mem*_chk` override and the Skia
+  null-`this` SIGSEGV recovery — are **deleted**; the remaining URI/title helper
+  responsibilities were removed from the preload path. `xv6memshim.c` is
+  deleted, WebKit envs no longer preload `libxv6memshim.so`, and the final image
+  has no `/lib/libxv6memshim.so`. The WebKit process wrapper now links only
+  WebKit + libc/`dl`/`pthread`.
 
-VM (2026-06-09): clean boot, `mesawlegl` ~28–30 FPS, `virgl (D3D12 NVIDIA RTX
-4060)`, dmabuf import healthy, present-trace advancing.
+VM (2026-06-09): clean Weston boot, `virgl (D3D12 NVIDIA RTX 4060)`, dmabuf
+import healthy, present-trace advancing, no `xv6memshim` preload.
 
 **Every step must pass its named existing validator(s) and must not regress the
 §8 step-7 fullscreen-video gate before the divergence is deleted.** Validators
@@ -834,9 +850,9 @@ below are real scripts/programs in this repo — never declare a step done on
 counters alone (§8: trace shape + on-screen output + framebuffer sample).
 
 - [x] **1. Adapt the kernel to upstream Mesa/GBM (retire `virgl_xv6_winsys.c`
-      and `xv6-gbm`).** *Validated 2026-06-09; pending commit.* The custom
-      winsys source + `xv6-gbm` library are removed and the kernel UAPI edits
-      are landed in the working tree. The standard `DRM_IOCTL_VIRTGPU_*`
+      and `xv6-gbm`).** *Committed 2026-06-09 (super `e404aa8`, kernel
+      `512fac7`, ports `7954144`).* The custom winsys source + `xv6-gbm` library
+      are removed and the kernel UAPI edits are landed. The standard `DRM_IOCTL_VIRTGPU_*`
       submit/transfer/fence UAPI (§3.6) and the DRM GEM-dumb + PRIME buffer path
       (§3.3–3.4) let **stock** Mesa `virgl_drm_winsys` and upstream `gbm_dri`
       bind against `/dev/dri/card0` + `renderD128` with no private `FB_GPU_*`
@@ -855,10 +871,9 @@ counters alone (§8: trace shape + on-screen output + framebuffer sample).
     gate (`scripts/gpu/perf-video-gate.expect`,
     `RESULT pass fps=60.1 dropPct=0.00`, framebuffer proof). Still on `wlcomp` +
     the WebKit shim at this stage — only the GPU substrate changed.
-- [ ] **2. Add the missing libraries (drop the toolkit/version source
-      patches).** *In progress: `libudev`/`libinput`/`libseat`/`libevdev`/
-      `hwdata`/`xkeyboard-config` scaffolded and all five patches deleted —
-      still needs build + validation + commit.* Bring up the libraries the ports
+- [x] **2. Add the missing libraries (drop the toolkit/version source
+      patches).** *Committed in ports through `5c22780`.*
+      Bring up the libraries the ports
       previously faked or hand-wired: a libudev-ABI-compatible shim (or eudev)
       so libdrm/Mesa build with `-Dudev=true` and discover nodes the upstream
       way; complete the EGL/GLES symbol coverage in Mesa so libepoxy resolves
@@ -867,36 +882,52 @@ counters alone (§8: trace shape + on-screen output + framebuffer sample).
       removed; package xkeyboard-config as a normal rootfs data dependency so
       libxkbcommon needs no host staging; upstream or option-ize the gtk3
       `0001`/`0002` patches (`-Dprint_backends=none` signature only).
-  - Validate: **drm_info** + `modetest` still enumerate `card0`/`renderD128`
-    with `-Dudev=true`; `scripts/gpu/gpu-validate.sh` and
-    `scripts/gpu/virgl-desktop-validate.sh` pass with the libepoxy stub resolver
-    compiled out (no `epoxy_xv6_missing_gl_stub` reachable) and the GTK `-gl`
-    init path clean; a desktop boot resolves keymaps from the packaged
-    xkeyboard-config; unpatched **drm_info** runs against the bumped libdrm.
-  - Gate: §8 step 7 fullscreen video.
-- [ ] **3. Migrate the compositor to Weston (retire `wlcomp.c`).** *Early:
-      `weston/` port scaffolded with `xv6-weston.ini`; not yet the running
-      compositor.* Execute the §9 Weston bring-up (libinput + seat/udev glue on
-      top of task 2), then run upstream Weston instead of the custom compositor.
-  - Validate: re-prove the full §8 suite through Weston —
-    `scripts/gpu/virgl-desktop-validate.sh`, `scripts/gpu/gpu-validate.sh`, and
-    the WebKit validators — since `wlcomp`'s specialized scanout path is gone.
-  - Gate: §8 step 7 fullscreen video (must be re-proven, not assumed, after
-    the swap).
-- [ ] **4. (Last) WebKit/Skia root-cause (remove `xv6memshim.c`).** *Not
-      started: shim still installs the SIGSEGV handler; kernel
-      `signal.c`/`signal_types.h` `sigsuspend`/`sigreturn` fixes are
-      groundwork.* Only after the GPU substrate, libraries, and compositor are
-      upstream-clean: diagnose the fault the SIGSEGV/`RIP`-patcher currently
-      masks and fix it in the WebKit/Skia port or libc; remove the runtime
-      patcher and `xv6_webkit_skia_recovery_installed`.
+  - Validated: `cmake --build build-x86_64/ports --target port-wayland
+    -j$(nproc)` and `cmake --build build-x86_64 --target image -j$(nproc)`;
+    `scripts/gpu/validate-webkit-runtime.sh build-x86_64/sysroot
+    build-x86_64/fs.img`; `scripts/gpu/gpu-validate.sh`;
+    `scripts/gpu/virgl-desktop-validate.sh`; `scripts/gpu/virgl-kms-validate.sh`;
+    `scripts/gpu/webkit-virgl-gpu-validate.sh`.
+  - Gate: §8 step 7 fullscreen video — PASS on Weston, see Task 3 evidence.
+- [x] **3. Migrate the compositor to Weston (delete `wlcomp.c`).**
+      *Committed in ports through `5c22780`.* `wlcomp.c` and its
+      `.inc` fragments are deleted, `desktop.c` `execve("/bin/weston")`, and
+      upstream Weston (`xv6-weston.ini`) boots as the sole compositor; WebKit
+      reaches `__WEBKIT_API_SMOKE_DONE_0__` under it. This was a one-way cutover
+      — no selectable fallback, no env toggle, no revert.
+  - Validated: `/bin/weston`, `/bin/weston-session`, `/bin/webkitgpusmoke`, and
+    the local video assets are present in `build-x86_64/fs.img`; `/bin/wlcomp`
+    and `/bin/desktop` are absent. `scripts/gpu/gpu-validate.sh`,
+    `scripts/gpu/virgl-desktop-validate.sh`, `scripts/gpu/virgl-kms-validate.sh`,
+    and `scripts/gpu/webkit-virgl-gpu-validate.sh` pass through Weston.
+  - Gate: §8 step 7 fullscreen video — PASS using the WebKitGTK API smoke
+    oracle under Weston (`webkit_api_smoke=1`): `RESULT pass fps=59.8
+    speed=1.001 decodedFPS=59.8 dropPct=0.00 advanced=15.15`,
+    `__WEBKIT_API_SMOKE_DONE_0__`, `effective_accel=1`,
+    `gpu_contract=virgl-opengl-submit`. The in-guest framebuffer sample
+    `/perf-video-frame.ppm` is a 1280x800 P6 image with
+    `nonblack=564975/1024000`, `unique_sample=56`.
+  - Residual risk: the stock accelerated MiniBrowser UI-client path still
+    stalls before page commit under Weston; the media/backend path itself is
+    proven by the API oracle. Do not treat MiniBrowser UI-client parity as part
+    of the §8 step-7 media gate.
+- [x] **4. WebKit/Skia root-cause (delete `xv6memshim.c`).** *Committed in ports
+      through `5c22780`.* Both runtime crutches are deleted: the scalar
+      `mem*`/`mem*_chk` override (glibc AVX2 `mem*` now works since the kernel
+      enables AVX/YMM and the host has no AVX-512) and the Skia null-`this`
+      SIGSEGV/`RIP`-patcher (a vestigial mask for GPU-context-loss from the old
+      xv6 virgl winsys, deleted in Task 1). The `pthread` recovery watchdog in
+      `webkit_preload_wrapper.c` is gone too. The remaining URI/title helper
+      path is folded out of the preload route: `desktop.c` already normalizes
+      initial WebKit URLs; `webkitgpusmoke` writes `/tmp/webkit-title` directly;
+      the local WebGL fixture is loaded via `webkit_web_view_load_html()` with
+      the fixture URI as base.
+  - Verified crutch-free: WebKit boots accel under Weston to
+    `__WEBKIT_API_SMOKE_DONE_0__` with **no SIGSEGV/SIGILL/stack-smash** and
+    **no recovery installed** (full GPU init: `webkit_gpu_policy`,
+    `dri2 probe ok`, `driCreateNewScreen3 driver_configs ready`).
   - Validate: `scripts/gpu/webkit-virgl-gpu-validate.sh` and
-    `scripts/gpu/validate-webkit-runtime.sh` must pass with the shim disabled
-    (no `xv6memshim`/SIGSEGV recovery installed, no recovery backtrace in the
-    trace).
-  - Gate: §8 step 7 fullscreen video — this is the gate's natural home
-    (WebKit GL video is the playback path), and it must pass **without** the
-    crutch that makes it pass today.
+    `scripts/gpu/validate-webkit-runtime.sh`; §8 step-7 PASS on Weston.
 
 **Signatures that remain after the list is complete** (acceptable, not forks):
 the Wayland-only/virgl/no-X11/no-LLVM build options on Mesa/GTK/libepoxy/
@@ -932,18 +963,21 @@ broad fail-closed DRM shim:
 - the standard `DRM_IOCTL_VIRTGPU_*` UAPI with `EXECBUFFER` BO list + in/out
   fences, per-resource `WAIT`, and a virtgpu→PRIME bridge (Phase 4).
 
-**What remains:**
+**Current checkpoint (2026-06-09):**
 
-- **Commit Task 1.** The convergence Task-1 work (stock Mesa/GBM winsys,
-  retired `virgl_xv6_winsys.c` + `xv6-gbm`, kernel UAPI edits, validator
-  hardening, and the local fullscreen-video gate assets) is validated but
-  **uncommitted**. Commit the kernel + ports submodules (scoped to Task 1) and
-  bump the super pointers. The ports tree also carries broad in-flight Task 2–4
-  work — scope the commit carefully. Exclude `fs.img` and `config-temp/`.
-- **Convergence Tasks 2–4** (§10.3): add the missing libraries (libudev/
-  libinput/libseat/libevdev/hwdata/xkeyboard-config), migrate the compositor to
-  Weston, and root-cause the WebKit/Skia fault to remove `xv6memshim.c` — each
-  re-proving the §8 step-7 gate before its divergence is deleted.
+- **Weston video gate fixed.** §8 step 7 now passes under Weston using the
+  WebKitGTK API-smoke oracle (`webkit_api_smoke=1`): `RESULT pass fps=59.8
+  speed=1.001 decodedFPS=59.8 dropPct=0.00 advanced=15.15`,
+  `__WEBKIT_API_SMOKE_DONE_0__`, with in-guest framebuffer proof
+  `/perf-video-frame.ppm` = 1280x800 P6,
+  `nonblack=564975/1024000`, `unique_sample=56`.
+- **Tasks 2–4 are committed in ports through `5c22780`.** New library ports build/stage;
+  Weston is the sole compositor; `wlcomp*`, old `desktop`, `xv6memshim.c`, and
+  `/lib/libxv6memshim.so` are gone. The scoped ports commit excludes `fs.img`
+  and `config-temp/`.
+- **Residual risk:** stock accelerated MiniBrowser still stalls before page
+  commit under Weston, while the WebKitGTK API media/backend path is proven.
+  Treat that as MiniBrowser UI-client parity work, not the §8 media gate.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the

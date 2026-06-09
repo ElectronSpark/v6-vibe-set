@@ -10,7 +10,7 @@ LOG="${WEBKIT_VIRGL_VALIDATE_LOG:-${BUILD_DIR}/webkit-virgl-gpu-validate.log}"
 TIMEOUT="${WEBKIT_VIRGL_VALIDATE_TIMEOUT:-180s}"
 REOPEN="${WEBKIT_VIRGL_VALIDATE_REOPEN:-2}"
 TIMEOUT_MS="${WEBKIT_VIRGL_VALIDATE_TIMEOUT_MS:-45000}"
-COMPOSITOR="${WEBKIT_VIRGL_VALIDATE_COMPOSITOR:-wlcomp}"
+COMPOSITOR="weston"
 
 mkdir -p "$(dirname "${LOG}")"
 : >"${LOG}"
@@ -72,17 +72,12 @@ if { "${COMPOSITOR}" == "weston" } {
     set env(QEMU_APPEND) "\$env(QEMU_APPEND) weston=1"
 }
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
-if { "${COMPOSITOR}" == "weston" } {
-    expect -re {\[desktop\] weston pid=[0-9]+}
-} else {
-    expect -re {wlcomp: entering main loop}
-}
+expect -re {\[desktop\] weston pid=[0-9]+}
 expect {
     -re {client exited \(status [1-9][0-9]*\)} { exit 2 }
     -re {panic|fatal page fault|SIGABRT|coredump: generating|WebKit smoke failed} { exit 3 }
-    -re {wlcomp exited} { if { "${COMPOSITOR}" == "weston" } { exp_continue } else { exit 3 } }
+    -re {compositor exited} { exit 3 }
     -re {__WEBKIT_API_SMOKE_DONE_0__} { exit 0 }
-    -re {wlcomp: shutting down} { exit 0 }
     timeout { exit 4 }
     eof { exit 5 }
 }
@@ -104,21 +99,11 @@ require_log 'webkitgpusmoke: title=xv6 WebKit WebGL Spherical Poly: webgl spheri
     "WebKit WebGL completion"
 require_log 'relaunched webkitgpusmoke|WebKit API reopen smoke complete' \
     "WebKit reopen cycle"
-if [[ "${COMPOSITOR}" == "weston" ]]; then
-    require_log '^\[desktop\] weston pid=[0-9]+' "Weston compositor launch"
-    require_log '__WEBKIT_API_SMOKE_DONE_0__' \
-        "WebKit completion sentinel"
-else
-    require_log '__WEBKIT_API_SMOKE_DONE_0__|wlcomp: shutting down' \
-    "WebKit completion sentinel or compositor shutdown"
-fi
-if [[ "${COMPOSITOR}" == "weston" ]]; then
-    reject_log 'client exited \(status [1-9][0-9]*\)|signal: tgkill signum=6|Could not create GBM EGL display|panic|fatal page fault|coredump: generating|WebKit smoke failed' \
-        "WebKit crash/failure marker"
-else
-    reject_log 'client exited \(status [1-9][0-9]*\)|signal: tgkill signum=6|Could not create GBM EGL display|panic|fatal page fault|coredump: generating|wlcomp exited|WebKit smoke failed' \
+require_log '^\[desktop\] weston pid=[0-9]+' "Weston compositor launch"
+require_log '__WEBKIT_API_SMOKE_DONE_0__' \
+    "WebKit completion sentinel"
+reject_log 'client exited \(status [1-9][0-9]*\)|signal: tgkill signum=6|Could not create GBM EGL display|panic|fatal page fault|coredump: generating|WebKit smoke failed' \
     "WebKit crash/failure marker"
-fi
 reject_log 'backend=hyperv-dxg|gpu_contract=d3d12-shared-surface|env_contract=d3d12-shared-surface|env_d3d12=1|d3d12_present=1' \
     "Hyper-V/D3D12 contract in virgl validation"
 

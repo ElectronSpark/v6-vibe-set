@@ -4,4 +4,4 @@
 # Tokens are split on whitespace; no quoting or shell expansion.
 # Each entry is fork()+exec()'d as an independent process.
 
-/bin/desktop
+/bin/weston-session

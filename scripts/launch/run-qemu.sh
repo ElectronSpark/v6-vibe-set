@@ -465,24 +465,8 @@ case "${ARCH}" in
                         # into the desktop framebuffer by default.
                         qemu_prepend_default_flag virtio_gpu_disable_pageflip_copy 1
                         qemu_prepend_default_flag virtio_gpu_present_no_drain 1
-                        qemu_prepend_default_flag wlcomp_gpu_compose 1
-                        qemu_prepend_default_flag wlcomp_virgl_fb 1
-                        qemu_prepend_default_flag wlcomp_virgl_fb_buffers 3
-                        qemu_prepend_default_flag wlcomp_page_flip_present 1
-                        qemu_prepend_default_flag wlcomp_virgl_fb_damage_flip 1
-                        qemu_prepend_default_flag wlcomp_gpu_virgl_copy 1
-                        # Keep Mesa's Wayland frame-callback throttle paced
-                        # just above immediate mode.  A 1ms compositor cadence
-                        # avoids the old ~20ms callback stalls without letting
-                        # the client outrun displayed presents.
-                        qemu_prepend_default_flag wlcomp_frame_ms 1
-                        qemu_prepend_default_flag wlcomp_callback_poll_ms 1
-                        # Submit compositor GL work before scanout so the host
-                        # sees real client pixels, then release client buffers
-                        # from the present-ready queue instead of inline.
-                        qemu_prepend_default_flag wlcomp_gl_submit_fence 1
                         # Pipeline the steady-state scanout RESOURCE_FLUSH
-                        # instead of blocking the compositor present loop on
+                        # instead of blocking the guest present loop on
                         # the host flush-ack (~15ms on the WSL D3D12 virgl
                         # host).  This keeps the displayed FPS in step with the
                         # application's render rate, matching the Alpine/Weston
@@ -507,9 +491,9 @@ case "${ARCH}" in
                 #                         as the host cursor enters the canvas;
                 #                         without this, GTK may keep motion
                 #                         events on the host side.
-                #   - show-cursor=off     Hide the host pointer so wlcomp's
-                #                         single guest cursor is the only cursor
-                #                         visible in the VM.
+                #   - show-cursor=off     Hide the host pointer so the guest
+                #                         cursor is the only cursor visible in
+                #                         the VM.
                 # Press Ctrl-Alt-G to release the grab.
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)

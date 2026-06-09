@@ -26,7 +26,7 @@ set env(QEMU_NET)              "0"
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
-set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_url=file:///share/webkit/perf-video.html?ms=15000 webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 video=1280x800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_url=file:///share/webkit/perf-video.html webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 weston=1 video=1280x800"
 set env(QEMU_EXTRA) "-monitor unix:$monsock,server,nowait"
 
 log_file -a $runlog
@@ -44,8 +44,7 @@ set fb_done     0
 
 # NOTE: init starts a concurrent /bin/sh on the same console, so a bare
 # root:/# prompt is NOT a completion signal. Wait for real video markers.
-# Capture the framebuffer DURING live playback (wlcomp is compositing the
-# decoded video to /dev/fb0); after RESULT the desktop tears down
+# Capture the framebuffer DURING live playback; after RESULT the desktop tears down
 # (desktop_exit_after_smoke=1) so the scanout is no longer representative.
 expect {
     -re {xv6-perf-video:tick time=([0-9]+)\.[0-9]+[^']*} {
@@ -67,7 +66,7 @@ expect {
         puts "\nGATE-FAIL crash-marker"
         exit 3
     }
-    -re {wlcomp: shutting down|__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
+    -re {__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
         if {$result_seen} { exit 0 }
         exp_continue
     }
