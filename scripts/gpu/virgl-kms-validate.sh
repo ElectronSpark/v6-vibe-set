@@ -14,6 +14,7 @@ XRES="${VIRGL_KMS_VALIDATE_XRES:-1280}"
 YRES="${VIRGL_KMS_VALIDATE_YRES:-800}"
 TOKEN="${VIRGL_KMS_VALIDATE_TOKEN:-virglkms-$$}"
 SCREENSHOT="${VIRGL_KMS_VALIDATE_SCREENSHOT:-${ROOT}/${BUILD_DIR}/virgl-kms-validate.ppm}"
+GUEST_SCREENSHOT="${VIRGL_KMS_VALIDATE_GUEST_SCREENSHOT:-/xv6-virgl-kms-current.ppm}"
 MONITOR_SOCK="$(mktemp -u /tmp/xv6-virgl-kms-monitor.XXXXXX)"
 
 mkdir -p "$(dirname "${LOG}")"
@@ -50,6 +51,88 @@ cleanup_qemu()
 {
     pkill -TERM -f "qemu-system-x86_64 .*${TOKEN}" 2>/dev/null || true
     rm -f "${MONITOR_SOCK}"
+}
+
+extract_guest_screenshot()
+{
+    grep -q '__VIRGL_KMS_FB_CAPTURED__' "${LOG}" || return 1
+    command -v debugfs >/dev/null 2>&1 ||
+        fail "debugfs is required to extract the guest framebuffer sample"
+    debugfs -R "dump ${GUEST_SCREENSHOT} ${SCREENSHOT}" \
+        "${BUILD_DIR}/fs.img" >>"${LOG}" 2>&1
+}
+
+validate_screenshot()
+{
+    python3 - "${SCREENSHOT}" "${XRES}" "${YRES}" >>"${LOG}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+want_w = int(sys.argv[2])
+want_h = int(sys.argv[3])
+data = path.read_bytes()
+
+def token(offset):
+    while offset < len(data) and data[offset] in b" \t\r\n":
+        offset += 1
+    if offset < len(data) and data[offset:offset + 1] == b"#":
+        while offset < len(data) and data[offset] not in b"\r\n":
+            offset += 1
+        return token(offset)
+    start = offset
+    while offset < len(data) and data[offset] not in b" \t\r\n":
+        offset += 1
+    return data[start:offset], offset
+
+magic, off = token(0)
+width, off = token(off)
+height, off = token(off)
+maxval, off = token(off)
+if off < len(data) and data[off] in b" \t\r\n":
+    off += 1
+w = int(width)
+h = int(height)
+pixels = data[off:]
+expected = w * h * 3
+if magic != b"P6" or int(maxval) != 255 or len(pixels) != expected:
+    print(f"virgl_kms_screenshot_matrix path={path} status=FAIL reason=header width={w} height={h} bytes={len(pixels)} expected={expected}")
+    sys.exit(1)
+
+total = w * h
+stride = max(1, total // 4096)
+nonblack = 0
+bright = 0
+sampled = set()
+for idx in range(total):
+    base = idx * 3
+    rgb = pixels[base:base + 3]
+    if rgb != b"\x00\x00\x00":
+        nonblack += 1
+    if max(rgb) >= 128:
+        bright += 1
+    if idx % stride == 0:
+        sampled.add(rgb)
+
+status = "PASS"
+reason = "ok"
+if w != want_w or h != want_h:
+    status = "FAIL"
+    reason = "dimensions"
+elif nonblack < max(1000, total // 50):
+    status = "FAIL"
+    reason = "blank"
+elif bright < max(100, total // 200):
+    status = "FAIL"
+    reason = "dark"
+elif len(sampled) < 8:
+    status = "FAIL"
+    reason = "low_variance"
+
+print(f"virgl_kms_screenshot_matrix path={path} width={w} height={h} nonblack={nonblack} bright={bright} unique_sample={len(sampled)} status={status} reason={reason}")
+if status != "PASS":
+    sys.exit(1)
+PY
 }
 
 if [[ "${VIRGL_KMS_VALIDATE_BUILD:-0}" == "1" ]]; then
@@ -100,10 +183,16 @@ after 1500
 catch { exec sh -c "printf 'screendump ${SCREENSHOT}\\r\\n' | nc -U -w 2 -N ${MONITOR_SOCK} >/dev/null 2>&1 || true" }
 expect -re {mesakmsgl: [0-9.]+ FPS frames=[1-9][0-9]*}
 expect -re {root:/# ?}
+send "fbstat ppm-current ${GUEST_SCREENSHOT} 0 0 ${XRES} ${YRES}; echo __VIRGL_KMS_FB_CAPTURED__\r"
+expect -re {__VIRGL_KMS_FB_CAPTURED__}
+expect -re {root:/# ?}
 exit 0
 EOF
     fail "direct KMS virgl VM run failed"
 fi
+
+cleanup_qemu
+trap - EXIT
 
 require_log "mode=${XRES}x${YRES}@60" "KMS mode"
 require_log 'has_export=1' "DRM PRIME export/import capability"
@@ -114,11 +203,15 @@ reject_log 'panic|fatal page fault|SIGABRT|coredump: generating' \
     "kernel/userspace crash marker"
 reject_log 'virtio_gpu: command .* timed out' "virtio-gpu timeout"
 
-if [[ ! -s "${SCREENSHOT}" ]]; then
+if [[ ! -s "${SCREENSHOT}" ]] && ! extract_guest_screenshot; then
     if [[ "${VIRGL_KMS_VALIDATE_REQUIRE_SCREENSHOT:-0}" == "1" ]]; then
         fail "screenshot was not captured"
     fi
-    echo "virgl-kms-validate: monitor screenshot unavailable (${SCREENSHOT})" | tee -a "${LOG}"
+    echo "virgl-kms-validate: framebuffer screenshot unavailable (${SCREENSHOT})" | tee -a "${LOG}"
+fi
+
+if [[ -s "${SCREENSHOT}" ]]; then
+    validate_screenshot || fail "framebuffer screenshot validation failed"
 fi
 
 echo "virgl-kms-validate: PASS (${LOG})"
