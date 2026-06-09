@@ -356,14 +356,9 @@ if command -v nm >/dev/null 2>&1 &&
        grep -q 'Shared library: \[libpng16\.so\.16\]'; then
         webkit_needs_png=1
     fi
-    if [[ -f "${sysroot}/bin/desktop" ]] &&
+    if [[ -f "${sysroot}/bin/weston-session" ]] &&
        grep -q 'LD_PRELOAD=.*/libpng16\.so\.16' \
-           "${sysroot}/bin/desktop"; then
-        minibrowser_preloads_png=1
-    fi
-    if [[ -f "${sysroot}/bin/wlcomp" ]] &&
-       grep -q 'LD_PRELOAD=.*/libpng16\.so\.16' \
-           "${sysroot}/bin/wlcomp"; then
+           "${sysroot}/bin/weston-session"; then
         minibrowser_preloads_png=1
     fi
     if ((webkit_needs_png)); then

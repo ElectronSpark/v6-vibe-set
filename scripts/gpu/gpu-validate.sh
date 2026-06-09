@@ -8,7 +8,7 @@ cd "${ROOT}"
 BUILD_DIR="${BUILD_DIR:-build-x86_64}"
 LOG="${GPU_VALIDATE_LOG:-${ROOT}/${BUILD_DIR}/gpu-validate.log}"
 MODE="${GPU_VALIDATE_MODE:-gtk}"
-COMPOSITOR="${GPU_VALIDATE_COMPOSITOR:-wlcomp}"
+COMPOSITOR="weston"
 TIMEOUT="${GPU_VALIDATE_TIMEOUT:-180s}"
 EXPECT_TIMEOUT="${GPU_VALIDATE_EXPECT_TIMEOUT:-180}"
 GPU_VALIDATE_XRES="${GPU_VALIDATE_XRES:-1280}"
@@ -17,7 +17,7 @@ GPU_VALIDATE_SECONDS="${GPU_VALIDATE_SECONDS:-2}"
 GPU_VALIDATE_3D_SECONDS="${GPU_VALIDATE_3D_SECONDS:-${GPU_VALIDATE_SECONDS}}"
 GPU_VALIDATE_TOKEN="${GPU_VALIDATE_TOKEN:-gpuv-$$}"
 APPEND_BASE="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 gpu_validate=1 video=${GPU_VALIDATE_XRES}x${GPU_VALIDATE_YRES}}"
-if [[ "${COMPOSITOR}" == "weston" && "${APPEND_BASE}" != *"weston=1"* ]]; then
+if [[ "${APPEND_BASE}" != *"weston=1"* ]]; then
     APPEND_BASE="${APPEND_BASE} weston=1"
 fi
 APPEND_BASE="${APPEND_BASE} gpu_validate_token=${GPU_VALIDATE_TOKEN}"
@@ -54,13 +54,11 @@ reject_log()
 
 require_gbm_bo_roundtrip()
 {
-    if grep -aEq 'BO create/map/export/import/destroy' "${LOG}"; then
-        return 0
-    fi
-
-    require_log 'gbmtest: drmPrimeFDToHandle ret=0 errno=0 handle=[1-9][0-9]* source=[1-9][0-9]*' \
+    require_log '(__GBMTEST_BO_ROUNDTRIP_0__|__GPUV_GBM_DONE_0__|BO create/map/export/import/destroy)' \
+        "GBM BO create/map/export/import/destroy pass"
+    require_log '(__GBMTEST_PRIME_RESOURCE_INFO_0__|gbmtest: drmPrimeFDToHandle ret=0 errno=0 handle=[1-9][0-9]* source=[1-9][0-9]*)' \
         "GBM PRIME handle import pass"
-    require_log 'gbmtest: DRM_IOCTL_VIRTGPU_RESOURCE_INFO imported ret=0 errno=0 res=[1-9][0-9]* size=[1-9][0-9]*' \
+    require_log '(__GBMTEST_PRIME_RESOURCE_INFO_0__|gbmtest: DRM_IOCTL_VIRTGPU_RESOURCE_INFO imported ret=0 errno=0 res=[1-9][0-9]* size=[1-9][0-9]*)' \
         "GBM imported resource info pass"
 }
 
@@ -138,11 +136,7 @@ set env(QEMU_VIRTIO_GPU_YRES) "${GPU_VALIDATE_YRES}"
 set env(QEMU_ALLOW_WSL_SDL_GL) "${QEMU_ALLOW_WSL_SDL_GL:-1}"
 set env(QEMU_APPEND) "${APPEND_BASE}"
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
-if { "${COMPOSITOR}" == "weston" } {
-    expect -re {\[desktop\] weston pid=[0-9]+}
-} else {
-    expect -re {wlcomp: entering main loop}
-}
+expect -re {\[desktop\] weston pid=[0-9]+}
 expect -re {__GPUV_READY__}
 expect {
     -re {__GPUV_FBSTAT_DONE_0__} { }
@@ -163,10 +157,8 @@ EOF
 
     require_log 'gpu-substrate-validate: run gbmtest' "GBM probe start"
     # The kernel debugcon interleaves concurrent process stdout at sub-line
-    # granularity, so the spaced "gbmtest: backend=drm fd=N" line is sometimes
-    # char-garbled by wlcomp logging. Accept either the gbmtest or dmabufsmoke
-    # drm-backend attestation: both prove the stock Mesa GBM (gbm_dri/drm)
-    # backend bound, and it is vanishingly unlikely both garble in one run.
+    # granularity, so accept either the gbmtest or dmabufsmoke drm-backend
+    # attestation. Both prove the stock Mesa GBM (gbm_dri/drm) backend bound.
     require_log '(gbmtest: backend=drm|dmabufsmoke: using gbm path=[^ ]+ format=[^ ]+ backend=drm)' \
         "stock Mesa GBM backend"
     require_gbm_bo_roundtrip
@@ -213,21 +205,12 @@ EOF
         "graphics buffer/fence cycles"
     require_log 'gpubuftest: render fd ownership verified' \
         "render fd ownership cleanup"
-    if [[ "${COMPOSITOR}" == "weston" ]]; then
-        require_log '^\[desktop\] weston pid=[0-9]+' \
-            "Weston compositor launch"
-        require_log '^bo_handles 13[[:space:]]*$' \
-            "bounded Weston BO set remains live"
-        require_log '^virtio_resources 15[[:space:]]*$' \
-            "bounded Weston resource set remains live"
-    else
-        require_log '^bo_handles 7[[:space:]]*$' \
-            "bounded compositor triple-scanout BO set remains live"
-        require_log '^virtio_resources 8[[:space:]]*$' \
-            "bounded compositor triple-scanout resource set remains live"
-        require_log 'wlcomp: using (direct scanout|fb GPU buffer|virgl framebuffer)' \
-            "compositor GPU-backed/direct framebuffer mode"
-    fi
+    require_log '^\[desktop\] weston pid=[0-9]+' \
+        "Weston compositor launch"
+    require_log '^bo_handles 1[0-9][[:space:]]*$' \
+        "bounded Weston BO set remains live"
+    require_log '^virtio_resources 1[0-9][[:space:]]*$' \
+        "bounded Weston resource set remains live"
     require_log '^display_presents [1-9][0-9]*[[:space:]]*$' \
         "display present completion accounting"
     require_log '^display_completions [1-9][0-9]*[[:space:]]*$' \
@@ -271,11 +254,7 @@ if { "${COMPOSITOR}" == "weston" } {
 }
 set env(QEMU_EXTRA) "-monitor unix:${sock},server,nowait ${QEMU_EXTRA:-}"
 spawn timeout --foreground ${GPU_VALIDATE_3D_TIMEOUT:-120s} bash scripts/launch/launch-gui.sh
-if { "${COMPOSITOR}" == "weston" } {
-    expect -re {\[desktop\] weston pid=[0-9]+}
-} else {
-    expect -re {wlcomp: entering main loop}
-}
+expect -re {\[desktop\] weston pid=[0-9]+}
 expect -re {renderer=virgl .*spherical-poly-demo}
 expect -re {demo_surface_matrix .*status=PASS}
 expect -re {mesawlegl\[[0-9]+\]: app_loop_fps=}

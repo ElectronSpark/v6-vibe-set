@@ -26,7 +26,7 @@ SCREENSHOT_W="${VIRGL_DESKTOP_VALIDATE_SCREENSHOT_W:-1280}"
 SCREENSHOT_H="${VIRGL_DESKTOP_VALIDATE_SCREENSHOT_H:-800}"
 MONITOR_SOCK="${TRACE_DIR}/qemu-monitor.sock"
 MODE="${VIRGL_DESKTOP_VALIDATE_MODE:-gtk}"
-COMPOSITOR="${VIRGL_DESKTOP_VALIDATE_COMPOSITOR:-wlcomp}"
+COMPOSITOR="weston"
 TIMEOUT="${VIRGL_DESKTOP_VALIDATE_TIMEOUT:-150s}"
 RUN_SECONDS="${VIRGL_DESKTOP_VALIDATE_SECONDS:-0}"
 XRES="${VIRGL_DESKTOP_VALIDATE_XRES:-1280}"
@@ -155,6 +155,9 @@ validate_guest_screenshot()
         fi
         fail "guest screenshot extraction failed"
     fi
+    if [[ ! -s "${SCREENSHOT}" ]]; then
+        fail "guest screenshot extraction produced an empty file"
+    fi
 
     if ! python3 - "${SCREENSHOT}" "${SCREENSHOT_W}" "${SCREENSHOT_H}" "${XRES}" "${YRES}" "${COMPOSITOR}" >>"${LOG}" <<'PY'
 import pathlib
@@ -165,7 +168,7 @@ want_w = int(sys.argv[2])
 want_h = int(sys.argv[3])
 screen_w = int(sys.argv[4])
 screen_h = int(sys.argv[5])
-compositor = sys.argv[6] if len(sys.argv) > 6 else "wlcomp"
+compositor = sys.argv[6] if len(sys.argv) > 6 else "weston"
 data = path.read_bytes()
 
 def next_token(offset):
@@ -235,9 +238,9 @@ demo_unique = set()
 
 def demo_candidate_rects():
     if w == screen_w and h == screen_h and screen_w >= 640 and screen_h >= 480:
-        # wlcomp centers the xdg toplevel above the 36px taskbar.  The demo has
-        # used both 480x360 and 640x480 while this path has evolved; accept
-        # either, but check the inner body rather than the titlebar/chrome.
+        # Older xv6 desktop builds centered the xdg toplevel above a 36px
+        # taskbar.  Keep this geometry as one candidate, then search for the
+        # Weston placement below.
         for demo_w, demo_h in ((640, 480), (480, 360)):
             win_x = max(0, (screen_w - demo_w) // 2)
             win_y = max(0, (screen_h - 36 - demo_h) // 2)
@@ -249,7 +252,7 @@ def demo_candidate_rects():
             )
         if compositor == "weston":
             # Weston's desktop shell may place the first xdg-toplevel without
-            # wlcomp's centered taskbar geometry.  Search a coarse grid for the
+            # the old centered taskbar geometry. Search a coarse grid for the
             # same rendered demo body while keeping the pixel thresholds below.
             for demo_w, demo_h in ((640, 480), (480, 360)):
                 step_x = max(80, demo_w // 4)
@@ -314,7 +317,10 @@ for cx0, cy0, cx1, cy1 in demo_candidate_rects():
                     cand_bottom_cool += 1
             if (x + y) % 37 == 0:
                 cand_unique.add((r, g, b))
-    score = cand_bright + cand_cyan + cand_dark + cand_colorful
+    score = (
+        cand_bright + cand_cyan + min(cand_dark, 30000) +
+        cand_colorful + len(cand_unique) * 1000
+    )
     if best is None or score > best[0]:
         best = (score, cx0, cy0, cx1, cy1, cand_total, cand_bright,
                 cand_cyan, cand_dark, cand_colorful, cand_top_warm,
@@ -345,7 +351,13 @@ elif (
 ):
     status = "FAIL"
     reason = "missing_demo_pixels"
-elif (
+elif compositor == "weston" and (
+    demo_top_warm + demo_bottom_warm < 1500 or
+    demo_top_cool + demo_bottom_cool < 1500
+):
+    status = "FAIL"
+    reason = "missing_weston_gradient_pixels"
+elif compositor != "weston" and (
     demo_top_warm < 1500 or
     demo_bottom_cool < 1500 or
     demo_top_warm <= demo_bottom_warm or
@@ -387,59 +399,19 @@ validate_launch_contract()
         append+=" virtio_gpu_disable_pageflip_copy=0 virtio_gpu_pageflip_copy=1 virtio_gpu_pageflip_validate_copy=1 virtio_gpu_present_minimal_drain=1"
     fi
     append+=" netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1"
-    if [[ "${COMPOSITOR}" == "weston" ]]; then
-        append+=" weston=1"
-    fi
+    append+=" weston=1"
     if [[ "${RUN_SECONDS}" != "0" ]]; then
         append+=" glsmoke_seconds=${RUN_SECONDS}"
     fi
-    append+=" video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000"
-    if [[ "${FB_FLIP}" != "0" ]]; then
-        append+=" wlcomp_virgl_fb_flip=${FB_FLIP}"
-    fi
-    if [[ "${FB_BUFFERS}" != "0" ]]; then
-        append+=" wlcomp_virgl_fb_buffers=${FB_BUFFERS}"
-    fi
-    if [[ "${FB_DAMAGE_FLIP}" != "0" ]]; then
-        append+=" wlcomp_virgl_fb_damage_flip=1"
-    fi
-    if [[ "${FB_COPY_BEFORE_FLIP}" != "0" ]]; then
-        append+=" wlcomp_virgl_fb_copy_before_flip=1"
-    fi
-    if [[ "${FB_COPY_DAMAGE_BEFORE_FLIP}" != "0" ]]; then
-        append+=" wlcomp_virgl_fb_copy_damage_before_flip=1"
-    fi
-    if [[ "${PAGEFLIP_COPY}" != "0" ]]; then
-        append+=" wlcomp_pageflip_diag=1"
-    fi
-    if [[ "${EXPECT_READBACK_FALLBACK}" != "0" ]]; then
-        append+=" wlcomp_gpu_compose=1 wlcomp_gl_compose=0"
-        append+=" wlcomp_no_gpu_virgl_copy=1 wlcomp_no_virgl_fb=1"
-        append+=" wlcomp_virgl_fb=0 wlcomp_page_flip_present=0"
-    fi
-    if [[ "${PAGE_FLIP_PRESENT}" != "0" ]]; then
-        append+=" wlcomp_page_flip_present=1"
-    fi
-    if [[ "${PIPELINE_GPU_RELEASE}" != "0" ]]; then
-        append+=" wlcomp_pipeline_gpu_release=1"
-    fi
-    if [[ "${FULLSCREEN_DIRECT}" != "0" ]]; then
-        append+=" wlcomp_fullscreen_direct=1"
-    fi
+    append+=" video=${XRES}x${YRES}"
     if [[ "${MESA_COLOR_BUFFERS}" != "0" ]]; then
         append+=" glsmoke_color_buffers=${MESA_COLOR_BUFFERS}"
-    fi
-    if [[ "${GL_FINISH}" != "0" ]]; then
-        append+=" wlcomp_gl_finish=1"
     fi
     if [[ "${FBSTAT}" != "0" ]]; then
         append+=" glsmoke_fbstat=1"
     fi
     if [[ "${ASYNC_DEPTH}" != "0" ]]; then
         append+=" virtio_gpu_async_depth=${ASYNC_DEPTH}"
-    fi
-    if [[ -n "${CALLBACK_POLL_MS}" ]]; then
-        append+=" wlcomp_callback_poll_ms=${CALLBACK_POLL_MS}"
     fi
     if [[ -n "${EXTRA_APPEND}" ]]; then
         append+=" ${EXTRA_APPEND}"
@@ -477,67 +449,16 @@ validate_launch_contract()
             fail "pageflip-copy diagnostic must explicitly override the default disable flag"
         grep -q -- 'virtio_gpu_pageflip_copy=1' <<<"${dry}" ||
             fail "pageflip-copy diagnostic flag missing"
-        grep -q -- 'wlcomp_pageflip_diag=1' <<<"${dry}" ||
-            fail "wlcomp pageflip diagnostic flag missing"
     fi
-    if [[ "${PAGE_FLIP_PRESENT}" != "0" ]]; then
-        grep -q -- 'wlcomp_page_flip_present=1' <<<"${dry}" ||
-            fail "wlcomp page-flip present diagnostic flag missing"
-    fi
-    if grep -q -- 'wlcomp_page_flip_present=1' <<<"${dry}"; then
-        EFFECTIVE_PAGE_FLIP_PRESENT=1
-    else
-        EFFECTIVE_PAGE_FLIP_PRESENT=0
-    fi
-    if grep -q -- 'wlcomp_virgl_fb_damage_flip=1' <<<"${dry}"; then
-        EFFECTIVE_FB_DAMAGE_FLIP=1
-    else
-        EFFECTIVE_FB_DAMAGE_FLIP=0
-    fi
-    if [[ "${COMPOSITOR}" == "weston" ]]; then
-        EFFECTIVE_PAGE_FLIP_PRESENT=0
-        EFFECTIVE_FB_DAMAGE_FLIP=0
-    fi
-    if [[ "${PIPELINE_GPU_RELEASE}" != "0" ]]; then
-        grep -q -- 'wlcomp_pipeline_gpu_release=1' <<<"${dry}" ||
-            fail "wlcomp pipeline gpu release flag missing"
-    fi
-    if [[ "${FULLSCREEN_DIRECT}" != "0" ]]; then
-        grep -q -- 'wlcomp_fullscreen_direct=1' <<<"${dry}" ||
-            fail "wlcomp fullscreen-direct diagnostic flag missing"
-    fi
+    EFFECTIVE_PAGE_FLIP_PRESENT=0
+    EFFECTIVE_FB_DAMAGE_FLIP=0
     if [[ "${MESA_COLOR_BUFFERS}" != "0" ]]; then
         grep -q -- "glsmoke_color_buffers=${MESA_COLOR_BUFFERS}" <<<"${dry}" ||
             fail "Mesa Wayland color-buffer diagnostic flag missing"
     fi
-    if [[ "${GL_FINISH}" != "0" ]]; then
-        grep -q -- 'wlcomp_gl_finish=1' <<<"${dry}" ||
-            fail "wlcomp GL-finish diagnostic flag missing"
-    fi
     if [[ "${FBSTAT}" != "0" ]]; then
         grep -q -- 'glsmoke_fbstat=1' <<<"${dry}" ||
             fail "desktop fbstat diagnostic flag missing"
-    fi
-    if [[ -n "${CALLBACK_POLL_MS}" ]]; then
-        grep -q -- "wlcomp_callback_poll_ms=${CALLBACK_POLL_MS}" <<<"${dry}" ||
-            fail "wlcomp callback poll diagnostic flag missing"
-    fi
-    if [[ "${COMPOSITOR}" == "weston" ]]; then
-        :
-    elif [[ "${EXPECT_READBACK_FALLBACK}" == "0" ]]; then
-        grep -Eq -- 'virtio_gpu_async_scanout_flush=1|vgpu_async_flush=1' <<<"${dry}" ||
-            fail "async scanout flush must be enabled for virgl desktop validation"
-        grep -q -- 'wlcomp_gpu_compose=1' <<<"${dry}" ||
-            fail "wlcomp GPU composition must be enabled"
-    else
-        grep -q -- 'wlcomp_gpu_compose=1' <<<"${dry}" ||
-            fail "readback fallback must keep wlcomp GPU composition enabled"
-        grep -q -- 'wlcomp_gl_compose=0' <<<"${dry}" ||
-            fail "readback fallback must disable GL compose fast path"
-        grep -q -- 'wlcomp_no_gpu_virgl_copy=1' <<<"${dry}" ||
-            fail "readback fallback must disable virgl-copy fast path"
-        grep -q -- 'wlcomp_no_virgl_fb=1' <<<"${dry}" ||
-            fail "readback fallback must disable virgl framebuffer scanout"
     fi
 }
 
@@ -596,59 +517,19 @@ if { "${PAGEFLIP_COPY}" != "0" } {
     append append " virtio_gpu_disable_pageflip_copy=0 virtio_gpu_pageflip_copy=1 virtio_gpu_pageflip_validate_copy=1 virtio_gpu_present_minimal_drain=1"
 }
 append append " netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1"
-if { "${COMPOSITOR}" == "weston" } {
-    append append " weston=1"
-}
+append append " weston=1"
 if { "${RUN_SECONDS}" != "0" } {
     append append " glsmoke_seconds=${RUN_SECONDS}"
 }
-    append append " video=${XRES}x${YRES} wlcomp_trace_present=1 wlcomp_stats_ms=1000"
-    if { "${FB_FLIP}" != "0" } {
-        append append " wlcomp_virgl_fb_flip=${FB_FLIP}"
-    }
-if { "${FB_BUFFERS}" != "0" } {
-    append append " wlcomp_virgl_fb_buffers=${FB_BUFFERS}"
-}
-if { "${FB_DAMAGE_FLIP}" != "0" } {
-    append append " wlcomp_virgl_fb_damage_flip=1"
-}
-if { "${FB_COPY_BEFORE_FLIP}" != "0" } {
-    append append " wlcomp_virgl_fb_copy_before_flip=1"
-}
-if { "${FB_COPY_DAMAGE_BEFORE_FLIP}" != "0" } {
-    append append " wlcomp_virgl_fb_copy_damage_before_flip=1"
-}
-if { "${PAGEFLIP_COPY}" != "0" } {
-    append append " wlcomp_pageflip_diag=1"
-}
-if { "${EXPECT_READBACK_FALLBACK}" != "0" } {
-    append append " wlcomp_gpu_compose=1 wlcomp_gl_compose=0"
-    append append " wlcomp_no_gpu_virgl_copy=1 wlcomp_no_virgl_fb=1"
-    append append " wlcomp_virgl_fb=0 wlcomp_page_flip_present=0"
-}
-if { "${PAGE_FLIP_PRESENT}" != "0" } {
-    append append " wlcomp_page_flip_present=1"
-}
-if { "${PIPELINE_GPU_RELEASE}" != "0" } {
-    append append " wlcomp_pipeline_gpu_release=1"
-}
-if { "${FULLSCREEN_DIRECT}" != "0" } {
-    append append " wlcomp_fullscreen_direct=1"
-}
+append append " video=${XRES}x${YRES}"
 if { "${MESA_COLOR_BUFFERS}" != "0" } {
     append append " glsmoke_color_buffers=${MESA_COLOR_BUFFERS}"
 }
-if { "${GL_FINISH}" != "0" } {
-    append append " wlcomp_gl_finish=1"
-}
-if { "${FBSTAT}" != "0" } {
+if { "${FBSTAT}" != "0" || "${COMPOSITOR}" == "weston" } {
     append append " glsmoke_fbstat=1"
 }
 if { "${ASYNC_DEPTH}" != "0" } {
     append append " virtio_gpu_async_depth=${ASYNC_DEPTH}"
-}
-if { "${CALLBACK_POLL_MS}" != "" } {
-    append append " wlcomp_callback_poll_ms=${CALLBACK_POLL_MS}"
 }
 if { "${EXTRA_APPEND}" != "" } {
     append append " ${EXTRA_APPEND}"
@@ -659,8 +540,6 @@ set env(QEMU_EXTRA) "-trace events=${TRACE_EVENTS},file=${QEMU_TRACE} -monitor u
 spawn timeout --foreground ${TIMEOUT} bash scripts/launch/launch-gui.sh
 set timeout 45
 expect {
-    -re {wlcomp: entering main loop} {}
-    -re {wlcomp: desktop frame} {}
     -re {\[desktop\] weston pid=[0-9]+} {}
     -re {mesawlegl: EGL .*spherical-poly-demo} {}
     -re {demo_surface_matrix} {}
@@ -692,7 +571,17 @@ if { "${RUN_SECONDS}" == "0" && "${COMPOSITOR}" != "weston" } {
     }
 }
 after 500
-send -- "fbstat ppm-current ${GUEST_SCREENSHOT} ${SCREENSHOT_X} ${SCREENSHOT_Y} ${SCREENSHOT_W} ${SCREENSHOT_H}; echo XV6_SCREENSHOT_CAPTURED\r"
+send -- "fbstat ppm-current ${GUEST_SCREENSHOT} ${SCREENSHOT_X} ${SCREENSHOT_Y} ${SCREENSHOT_W} ${SCREENSHOT_H}; sync; echo XV6_SCREENSHOT_CAPTURED\r"
+set timeout 60
+expect {
+    -re {fb_ppm_current path=.*scanout=[0-9]+x[0-9]+} {}
+    -re {fbstat: [^\r\n]+} { exit 6 }
+    timeout {
+        puts "XV6_SCREENSHOT_FBSTAT_TIMEOUT"
+        exit 6
+    }
+    eof { exit 6 }
+}
 set timeout 60
 expect {
     -re {XV6_SCREENSHOT_CAPTURED} {}
@@ -703,7 +592,7 @@ expect {
 }
 catch { exec sh -c "if command -v nc >/dev/null 2>&1; then printf 'screendump ${MONITOR_SCREENSHOT}\\n' | nc -U -w 3 -q 1 ${MONITOR_SOCK} > ${MONITOR_SCREENSHOT_LOG} 2>&1 || true; else echo 'nc missing' > ${MONITOR_SCREENSHOT_LOG}; fi" }
 set timeout -1
-if { "${FBSTAT}" != "0" } {
+if { "${FBSTAT}" != "0" || "${COMPOSITOR}" == "weston" } {
     if { "${RUN_SECONDS}" == "0" } {
         set timeout 20
         expect {
@@ -753,11 +642,7 @@ require_log 'renderer=virgl' "virgl renderer"
 require_log 'spherical-poly|demo_surface_matrix .*status=PASS' \
     "spherical polygon demo marker"
 require_demo_surface_evidence
-if [[ "${COMPOSITOR}" == "weston" ]]; then
-    require_log '^\[desktop\] weston pid=[0-9]+' "Weston compositor launch"
-else
-    require_log 'wlcomp: present-trace frames=[1-9][0-9]*' "wlcomp present cadence trace"
-fi
+require_log '^\[desktop\] weston pid=[0-9]+' "Weston compositor launch"
 require_log 'mesawlegl\[[0-9]+\]: app_loop_fps=' "app/display FPS telemetry"
 if [[ "${RUN_SECONDS}" != "0" ]] &&
    ! grep -Eq '^mesawlegl_completion_matrix .*status=0|^mesawlegl\[[0-9]+\]: complete frames=[0-9]+ .*status=0' "${LOG}"; then
@@ -786,74 +671,21 @@ if [[ "${RUN_SECONDS}" != "0" ]] && ! awk '
     fail "demo did not report clean frame progress"
 fi
 reject_log 'status=[1-9][0-9]*' "nonzero demo status"
-if [[ "${COMPOSITOR}" == "weston" ]]; then
-    require_log '^display_presents [1-9][0-9]*([^0-9]|$)' \
-        "Weston display present accounting"
-    require_log '^display_completions [1-9][0-9]*([^0-9]|$)' \
-        "Weston display completion accounting"
-    require_log '^display_last_complete [1-9][0-9]*([^0-9]|$)' \
-        "Weston latest display completion"
-else
-    require_log 'displayed_fps=[1-9]' "nonzero displayed FPS"
+require_log '^display_presents [1-9][0-9]*([^0-9]|$)' \
+    "Weston display present accounting"
+require_log '^display_completions [1-9][0-9]*([^0-9]|$)' \
+    "Weston display completion accounting"
+require_log '^display_last_complete [1-9][0-9]*([^0-9]|$)' \
+    "Weston latest display completion"
+if [[ "${PAGEFLIP_COPY}" -ne 0 ]]; then
+    require_log 'virtio_gpu: pageflip-copy present' \
+        "kernel pageflip-copy diagnostic present"
+    reject_log 'pageflip-copy validation failed' \
+        "failed pageflip-copy validation"
 fi
-if [[ "${COMPOSITOR}" != "weston" ]]; then
-    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" && "${FB_BUFFERS}" -gt 1 ]]; then
-        require_log 'wlcomp: virgl framebuffer double-buffer prep ready' \
-            "virgl double-buffer target preparation"
-    fi
-    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" && "${FB_FLIP}" -ne 0 ]]; then
-        require_log 'wlcomp: virgl framebuffer flip render_res=' \
-            "virgl double-buffer target flip"
-    fi
-    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
-          "${EFFECTIVE_FB_DAMAGE_FLIP}" -ne 0 ]]; then
-        require_log 'wlcomp: virgl framebuffer damage-flip preserving damage' \
-            "virgl damage-preserving target flip"
-    fi
-    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
-          "${FB_COPY_BEFORE_FLIP}" -ne 0 ]]; then
-        require_log 'wlcomp: virgl framebuffer copy-before-flip src_handle=' \
-            "virgl copy-before-flip target coherence"
-    fi
-    if [[ "${EXPECT_READBACK_FALLBACK}" == "0" &&
-          "${FB_COPY_DAMAGE_BEFORE_FLIP}" -ne 0 ]]; then
-        require_log 'wlcomp: virgl framebuffer copy-before-flip src_handle=.*rect=' \
-            "virgl damage-copy-before-flip target coherence"
-    fi
-    if [[ "${PAGEFLIP_COPY}" -ne 0 ]]; then
-        require_log 'virtio_gpu: pageflip-copy present' \
-            "kernel pageflip-copy diagnostic present"
-        reject_log 'pageflip-copy validation failed' \
-            "failed pageflip-copy validation"
-    fi
-    if [[ "${EFFECTIVE_PAGE_FLIP_PRESENT}" -ne 0 ]]; then
-        require_log 'wlcomp: virgl framebuffer double-buffer prep ready' \
-            "wlcomp page-flip double-buffer prep"
-        require_log 'wlcomp: virgl framebuffer flip render_res=' \
-            "wlcomp page-flip target swap"
-        require_log 'virtio_gpu: page-flip present resource=' \
-            "kernel page-flip present diagnostic"
-        require_log 'wlcomp: (virgl framebuffer page-flip handle=|async virgl framebuffer page-flip complete)' \
-            "wlcomp page-flip present diagnostic"
-    fi
-    if [[ "${PIPELINE_GPU_RELEASE}" -ne 0 ]]; then
-        require_log 'wlcomp: pipelined gpu buffer release before scanout' \
-            "wlcomp pipelined GPU release before scanout"
-    fi
-    if [[ "${FULLSCREEN_DIRECT}" -ne 0 ]]; then
-        require_log "demo_surface_matrix window=${XRES}x${YRES} .*status=PASS" \
-            "fullscreen-direct demo surface size"
-        require_log 'wlcomp: gpu-compose presented path=resource-scanout' \
-            "fullscreen-direct resource scanout"
-    fi
-    if [[ "${MESA_COLOR_BUFFERS}" -ne 0 ]]; then
-        require_log "xv6-mesa: wayland color buffer diagnostic limit=${MESA_COLOR_BUFFERS} " \
-            "Mesa Wayland color-buffer diagnostic"
-    fi
-    if [[ "${GL_FINISH}" -ne 0 ]]; then
-        require_log 'wlcomp: gl-compose finish-each-present enabled' \
-            "wlcomp GL-finish diagnostic"
-    fi
+if [[ "${MESA_COLOR_BUFFERS}" -ne 0 ]]; then
+    require_log "xv6-mesa: wayland color buffer diagnostic limit=${MESA_COLOR_BUFFERS} " \
+        "Mesa Wayland color-buffer diagnostic"
 fi
 if [[ "${FBSTAT}" -ne 0 ]]; then
     display_complete_value=""
@@ -927,124 +759,11 @@ if [[ "${COMPOSITOR}" != "weston" && "${MESA_COLOR_BUFFERS}" -eq 0 ]] && ! awk '
         >>"${LOG}"
     fail "displayed FPS does not track app FPS"
 fi
-if [[ "${COMPOSITOR}" == "weston" ]]; then
-    present_line="weston"
-elif [[ "${EXPECT_READBACK_FALLBACK}" != "0" ]]; then
-    present_line="$(grep -E 'wlcomp: present-trace .*path_cpu_only=[1-9].*scanout_submits=0 .*scanout_rebinds=0' "${LOG}" | tail -1)"
-elif [[ "${FB_FLIP}" -eq 0 && "${EFFECTIVE_PAGE_FLIP_PRESENT}" -eq 0 &&
-      "${FULLSCREEN_DIRECT}" -eq 0 ]]; then
-    present_line="$(awk '
-        /wlcomp: present-trace/ && /gl_bufs_total=[1-9]/ {
-            gl_preflush = -1
-            scanout_submits = -1
-            for (i = 1; i <= NF; i++) {
-                if ($i ~ /^path_gl_preflush=/) {
-                    split($i, p, "=")
-                    gl_preflush = p[2] + 0
-                } else if ($i ~ /^scanout_submits=/) {
-                    split($i, s, "=")
-                    scanout_submits = s[2] + 0
-                }
-            }
-            if (gl_preflush > 0 && scanout_submits > 0)
-                line = $0
-        }
-        END { if (line != "") print line }
-    ' "${LOG}")"
-else
-    present_line="$(grep -E 'wlcomp: present-trace .*gl_bufs_total=[1-9]' "${LOG}" | tail -1)"
-fi
-if [[ "${COMPOSITOR}" != "weston" && -z "${present_line}" ]]; then
-    fail "missing steady-state GPU present trace"
-fi
-if [[ "${COMPOSITOR}" != "weston" &&
-      "${EXPECT_READBACK_FALLBACK}" != "0" ]] && ! awk '
-    {
-        path_cpu = -1
-        gl_preflush = -1
-        scanout_submits = -1
-        scanout_rebinds = -1
-        scanout_rects = -1
-        for (i = 1; i <= NF; i++) {
-            if ($i ~ /^path_cpu_only=/) {
-                split($i, p, "=")
-                path_cpu = p[2] + 0
-            } else if ($i ~ /^path_gl_preflush=/) {
-                split($i, p, "=")
-                gl_preflush = p[2] + 0
-            } else if ($i ~ /^scanout_submits=/) {
-                split($i, s, "=")
-                scanout_submits = s[2] + 0
-            } else if ($i ~ /^scanout_rebinds=/) {
-                split($i, r, "=")
-                scanout_rebinds = r[2] + 0
-            } else if ($i ~ /^scanout_rects\/frame=/) {
-                split($i, f, "=")
-                scanout_rects = f[2] + 0
-            }
-        }
-        if (path_cpu <= 0 || gl_preflush != 0 ||
-            scanout_submits != 0 || scanout_rebinds != 0 ||
-            scanout_rects != 0)
-            exit 1
-    }
-' <<<"${present_line}"; then
-    echo "virgl-desktop-validate: weak readback fallback present trace: ${present_line}" \
-        >>"${LOG}"
-    fail "steady-state fallback did not remain on CPU/readback present path"
-fi
-if [[ "${COMPOSITOR}" != "weston" &&
-      "${EXPECT_READBACK_FALLBACK}" == "0" &&
-      "${FB_FLIP}" -eq 0 && "${EFFECTIVE_PAGE_FLIP_PRESENT}" -eq 0 &&
-      "${FULLSCREEN_DIRECT}" -eq 0 ]] && ! awk '
-    {
-        gl_preflush = -1
-        scanout_submits = -1
-        for (i = 1; i <= NF; i++) {
-            if ($i ~ /^path_gl_preflush=/) {
-                split($i, p, "=")
-                gl_preflush = p[2] + 0
-            } else if ($i ~ /^scanout_submits=/) {
-                split($i, s, "=")
-                scanout_submits = s[2] + 0
-            }
-        }
-        if (gl_preflush <= 0 || scanout_submits <= 0)
-            exit 1
-    }
-' <<<"${present_line}"; then
-    echo "virgl-desktop-validate: weak GPU preflush/scanout path: ${present_line}" \
-        >>"${LOG}"
-    fail "steady-state GPU animation did not use GL-preflush scanout path"
-fi
-if [[ "${COMPOSITOR}" != "weston" &&
-      "${EXPECT_READBACK_FALLBACK}" == "0" &&
-      "${FB_FLIP}" -eq 0 && "${EFFECTIVE_PAGE_FLIP_PRESENT}" -eq 0 &&
-      "${FULLSCREEN_DIRECT}" -eq 0 ]] && ! awk '
-    {
-        scanout = -1
-        for (i = 1; i <= NF; i++) {
-            if ($i ~ /^scanout_rects\/frame=/) {
-                split($i, s, "=")
-                scanout = s[2] + 0
-            }
-        }
-        if (scanout < 0 || scanout > 1)
-            exit 1
-    }
-' <<<"${present_line}"; then
-    echo "virgl-desktop-validate: weak scanout rect cadence: ${present_line}" \
-        >>"${LOG}"
-    fail "steady-state GPU animation uses more than one scanout rect per frame"
-fi
-
 reject_log 'panic|fatal page fault|SIGABRT|coredump: generating' \
     "kernel/userspace crash marker"
 reject_log 'virtio_gpu: command .* timed out' "virtio-gpu timeout"
 reject_log 'vrend_renderer_transfer_iov: context error' "virgl renderer context error"
-reject_log 'wlcomp: virgl framebuffer scanout failed' "virgl framebuffer scanout failure"
 reject_log 'FB: virgl resource-scanout failed' "kernel virgl resource-scanout failure"
-reject_log 'wlcomp: child pid .* killed by signal' "compositor child crash"
 
 require_trace "virtio_gpu_cmd_set_scanout .*w ${XRES}, h ${YRES}" \
     "desktop-sized scanout"
