@@ -985,18 +985,34 @@ against the source the same day. These are the **open** items this plan now
 tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
-1. **No window titlebar on non-toytoolkit clients** (observed on 3D Demo and
-   Files; affects every client not based on Weston's toytoolkit).
+1. **Partially fixed 2026-06-10 — Files/filemgr now has a client-drawn
+   titlebar; remaining non-toytoolkit clients still need the sweep.**
+   Original defect: no window titlebar on non-toytoolkit clients (observed on
+   3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
    `mesademo`) create bare `xdg_toplevel` surfaces with no client-side
    decorations and no `zxdg_toplevel_decoration_v1` request, and Weston's
    desktop-shell draws **no** server-side decorations for Wayland clients.
    `weston-terminal` windows have titlebars only because the toytoolkit
-   (`clients/window.c`) draws CSD frames. Fix options (pick one):
-   (a) port `libdecor` and adopt it in the xv6-native clients; (b) rebase
-   filemgr/the GL demos onto the toytoolkit; (c) add `xdg-decoration`
-   server-side support to the shell. Clients to sweep after the fix:
-   filemgr, mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, peanutgb,
+   (`clients/window.c`) draws CSD frames. Filemgr took the narrow client-side
+   path first: it reserves a 30-pixel titlebar above the existing toolbar,
+   draws `Files - <cwd>` plus minimize/maximize/close controls, forwards the
+   controls to xdg-toplevel requests, and shifts toolbar/sidebar/list hit
+   testing down accordingly. Runtime proof on a fresh rebuilt image:
+   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/filemgr /root &`
+   followed by `fbstat ppm-current /filemgr-titlebar4.ppm 0 0 1280 800`
+   captured a visible `Files - /root` titlebar with controls. Guest-side
+   `mouseinject` control validation captured `/filemgr-control3-min.ppm`
+   showing minimize leaves the window visible, `/filemgr-control3-max.ppm`
+   showing maximize expands the window without disappearing, and
+   `/filemgr-close-after.ppm` showing close returns to the desktop. The
+   focused rebuilds passed:
+   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+   `cmake --build build-x86_64 --target image -j$(nproc)`. Remaining fix
+   options for the broader sweep: (a) port `libdecor` and adopt it in the
+   xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
+   `xdg-decoration` server-side support to the shell. Remaining clients to
+   sweep: mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, peanutgb,
    netsurf.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
@@ -1142,14 +1158,40 @@ broad fail-closed DRM shim:
   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800`, final
   `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
   advanced=15.14`, and `__WEBKIT_API_SMOKE_DONE_0__`.
+- **Files/filemgr titlebar slice fixed (2026-06-10):** filemgr now draws its
+  own titlebar above the toolbar, labels it `Files - <cwd>`, draws
+  minimize/maximize/close controls, sends the corresponding xdg-toplevel
+  requests, and adjusts toolbar/sidebar/list hit testing for the titlebar
+  offset. Fresh image proof captured `/filemgr-titlebar4.ppm` with a visible
+  `Files - /root` titlebar. Guest-side `mouseinject` control proof captured
+  `/filemgr-control3-min.ppm` (minimize ignored by Weston, window remains
+  visible), `/filemgr-control3-max.ppm` (maximized file manager remains
+  visible and fills the desktop surface), and `/filemgr-close-after.ppm`
+  (close exits the window and returns to the desktop). Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run emitted
+  `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
+  advanced=15.14` plus `__WEBKIT_API_SMOKE_DONE_0__`, but the wrapper did not
+  exit after desktop shutdown and returned 5 after a manual QEMU monitor
+  `quit`; it also missed its framebuffer capture. A supplemental run with the
+  same Weston/WebKit/perf-video boot and a non-greedy live-tick trigger
+  captured the in-guest framebuffer at playback time 10.10:
+  `fb_ppm_current path=/perf-video-frame-filemgr-fbproof.ppm screen=1280x800
+  scanout=1280x800 rect=0,0 1280x800`, then exited cleanly with
+  `RESULT pass fps=60.1 speed=1.000 decodedFPS=60.1 dropPct=0.00
+  advanced=15.11` and `__WEBKIT_API_SMOKE_DONE_0__`.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
-  active work queue:** missing titlebars on non-toytoolkit clients (filemgr,
-  GL demos, netsurf), MiniBrowser cannot load live sites and its window goes
-  black (UI-client commit stall + unvalidated guest DNS/TLS), and the panel has
-  no task list for open windows. The WebKitGTK API media/backend path remains
-  proven; MiniBrowser UI-client parity is part of §10.4 item 3, not the §8
-  media gate. Placeholder launcher labels were resolved by §10.4 item 2, and
-  the cursor image/alpha defect was resolved by §10.4 item 4.
+  active work queue:** missing titlebars remain for the other non-toytoolkit
+  clients (GL demos, netsurf, etc.; filemgr is now covered), MiniBrowser cannot
+  load live sites and its window goes black (UI-client commit stall +
+  unvalidated guest DNS/TLS), and the panel has no task list for open windows.
+  The WebKitGTK API media/backend path remains proven; MiniBrowser UI-client
+  parity is part of §10.4 item 3, not the §8 media gate. Placeholder launcher
+  labels were resolved by §10.4 item 2, and the cursor image/alpha defect was
+  resolved by §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the
