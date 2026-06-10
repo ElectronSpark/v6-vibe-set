@@ -1006,14 +1006,26 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    showing minimize leaves the window visible, `/filemgr-control3-max.ppm`
    showing maximize expands the window without disappearing, and
    `/filemgr-close-after.ppm` showing close returns to the desktop. The
-   focused rebuilds passed:
+   Peanut-GB shm-present frontend now follows the same narrow client-side
+   decoration path: it reserves a 30-pixel titlebar above the Game Boy framebuffer,
+   draws `Peanut-GB - <ROM title>` plus minimize/maximize/close controls, keeps
+   the LCD content centered below the titlebar, forwards titlebar drag/controls
+   through xdg-toplevel, and tracks maximized configure state. Runtime proof used
+   the embedded Peanut-GB `dmg-acid2` test cartridge copied only into the
+   generated image, then launched
+   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/peanutgb
+   /root/dmg-acid2.gb &`. `fbstat ppm-current /peanutgb-titlebar2.ppm
+   0 0 1280 800` captured a visible `Peanut-GB - DMG-ACID2` titlebar and
+   control set. Guest-side `mouseinject` proof captured `/pgbmin.ppm`
+   showing minimize leaves the window visible, `/pgbmax.ppm` showing maximize
+   expands the window without disappearing, and `/pgbclose2.ppm` showing close
+   exits the window and returns to the desktop. The focused rebuilds passed:
    `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
    `cmake --build build-x86_64 --target image -j$(nproc)`. Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
    `xdg-decoration` server-side support to the shell. Remaining clients to
-   sweep: mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, peanutgb,
-   netsurf.
+   sweep: mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, netsurf.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1179,6 +1191,26 @@ broad fail-closed DRM shim:
   (close exits the window and returns to the desktop). Rebuilds passed:
   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
   `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Peanut-GB titlebar slice fixed (2026-06-10):** peanutgb now draws a
+  client-side `Peanut-GB - <ROM title>` titlebar above the LCD framebuffer,
+  wires minimize/maximize/close through xdg-toplevel, tracks maximized state,
+  and keeps the scaled Game Boy image centered below the titlebar. Fresh image
+  proof used the embedded Peanut-GB `dmg-acid2` test cartridge copied into the
+  generated image only; `/peanutgb-titlebar2.ppm` showed the visible
+  `Peanut-GB - DMG-ACID2` titlebar. Guest-side `mouseinject` control proof
+  captured `/pgbmin.ppm` (minimize ignored by Weston, window remains visible),
+  `/pgbmax.ppm` (maximized Peanut-GB remains visible and fills the desktop
+  width), and `/pgbclose2.ppm` (close exits the window and returns to the
+  desktop). Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-Peanut-GB-titlebar media gate (2026-06-10):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run exited 0, captured live framebuffer
+  evidence with `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800
+  scanout=1280x800 rect=0,0 1280x800`, and emitted
+  `RESULT pass fps=59.9 speed=1.001 presentedFPS=0.0 decodedFPS=59.9
+  dropPct=0.00 advanced=15.16` plus `__WEBKIT_API_SMOKE_DONE_0__`.
 - **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
   scripts/gpu/perf-video-gate.expect` run emitted
