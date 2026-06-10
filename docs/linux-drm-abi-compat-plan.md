@@ -8,7 +8,10 @@ validated end-to-end including the fullscreen video performance gate (§8
 step 7), realized offline as a deterministic local high-res/60fps gate — see
 "Convergence status" below — and is **committed** (super `e404aa8`, kernel
 `512fac7`, ports `7954144`). Tasks 2–4 are validated and committed in ports
-through `5c22780`. Host-visible zero-copy blob is
+through `5c22780` (super checkpoint `b091811`); the Weston desktop-session
+round (libinput absolute pointer/keyboard input, shell-owned desktop icons,
+cursor theming) is committed in ports through `0027fa3` and user through
+`d96d83c`. Host-visible zero-copy blob is
 reclassified as an optional, host-refused optimization: the init-time probe
 proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
@@ -844,6 +847,84 @@ do the WebKit/Skia root-cause last.**
 VM (2026-06-09): clean Weston boot, `virgl (D3D12 NVIDIA RTX 4060)`, dmabuf
 import healthy, present-trace advancing, no `xv6memshim` preload.
 
+**Desktop-session commit after the checkpoint (2026-06-09 evening).** The super
+checkpoint is `b091811` (ports pointer at `5c22780`); on top of it ports commit
+`0027fa3` and user commit `d96d83c` carry a Weston desktop-session round:
+
+- **libinput absolute-pointer support** (`libinput/src/libinput.c`, ~+233
+  lines): a `/dev/mouse` reader thread feeding real
+  `LIBINPUT_EVENT_POINTER_MOTION_ABSOLUTE`/`MOTION` events plus button and
+  discrete-axis plumbing (`XV6_MOUSE_EVENT_F_ABSOLUTE`, `BTN_LEFT/RIGHT/MIDDLE`).
+- **Weston shell-owned desktop icons:** the standalone `desktop-icons` client
+  was superseded as the default desktop path. `/root/desktop` enumeration,
+  icon drawing, selection, and double-click launch now live in
+  `weston-desktop-shell` itself, so the panel/taskbar and desktop background
+  are one shell-owned surface stack; `desktop.c` no longer launches a default
+  client.
+- **libinput keyboard support** (`libinput/src/libinput.c`): `/dev/kbd` events
+  now synthesize `LIBINPUT_EVENT_KEYBOARD_KEY` with nonzero seat key count,
+  covering the normal WebKit/GTK text path.
+- **Cursor theming:** `XCURSOR_PATH=/share/icons`, `XCURSOR_THEME=Adwaita`,
+  `XCURSOR_SIZE=24` exported to Weston by `launch_weston()`.
+- **`xv6_present_buffer_init_shm_format()`** helper (explicit wl_shm format).
+- **Super housekeeping:** duplicate `weston-session` launch removed from
+  `rootfs-overlay/etc/daemons` (`/etc/startup` already launches it).
+- **Gate re-run (18:51):** `RESULT pass fps=60.1 speed=1.001 decodedFPS=60.1
+  dropPct=0.00 advanced=15.13` + `__WEBKIT_API_SMOKE_DONE_0__` + in-guest
+  framebuffer capture (`fb_ppm_current 1280x800`) — the Weston gate holds with
+  the in-flight tree. (`presentedFPS` reads 0.0 under Weston: the present
+  counter is not observable through the API-smoke probe; playback proof is
+  decode-clock advancement + the framebuffer sample.)
+- **Desktop/input re-proof (late evening):** framebuffer capture shows
+  Weston’s top panel and all 16 `/root/desktop` icons drawn by
+  `weston-desktop-shell` (no private `weston_desktop_shell` bind denial, no
+  fake fullscreen desktop client). WebKit input smoke reaches
+  `/tmp/webkit-title = typed:a` after QEMU `sendkey a`, proving the Weston →
+  libinput → GTK/WebKit keyboard path.
+
+**Interactive desktop inspection (2026-06-09 night, live VM + GDB).** The
+desktop-session tree was exercised end-to-end in the running VM (guest `mouseinject`
+into `/dev/mouse`, kernel counters read over the QEMU gdbstub, framebuffer
+proof via `fbstat ppm-current` + `debugfs` extraction):
+
+- **Pointer pipeline proven end-to-end.** virtio-tablet → kernel
+  `virtio_input` (`events_seen`/`events_pushed` advance under injection) →
+  mouse ring → libinput shim 5 ms reader thread → Weston → desktop-shell.
+  Single-click **selection highlight renders** on the clicked icon (Terminal,
+  GL Sphere — verified in framebuffer crops).
+- **Double-click launch works for `Exec=` entries.** GL Sphere
+  (`Exec=/bin/mesaglsmoke --demo`) forked, opened render+primary DRM nodes,
+  and renders a visible spinning-sphere window (~31 fps on-screen counter) on
+  the Weston desktop.
+- **Hardware cursor is fully functional** as a virtio-gpu cursor-plane:
+  image resource bound (`gpu.cursor_resource_id=20`), `UPDATE_CURSOR`/
+  `MOVE_CURSOR` go down the dedicated cursor virtqueue (3391 commands
+  submitted, all consumed by QEMU), and `gpu.cursor_x/y` tracks injected
+  motion at every spot tested — center, (97,699), top-left (17,12), and
+  bottom-right clamped (1277,799). The cursor is **invisible in
+  `fbstat`/scanout captures by design** — QEMU composites the cursor plane
+  host-side; a human at the GTK window sees it. Do not treat
+  cursor-not-in-framebuffer as a regression.
+- **BUG — `X-XV6-Builtin=` icons cannot launch (8 of 16):** Terminal, Info,
+  Calc, Network, Settings, Monitor, 3D Demo, Editor. The desktop-shell icon
+  parser handles only `Exec=`/`Arg=`; builtin entries get no `exec_path`, so
+  `xv6_desktop_launch_icon()` falls back to `execl()` on the `.desktop` file
+  itself → `_exit(127)` (observed: render-node open then silent death, no
+  window). Entries are generated by `scripts/image/make-rootfs.sh` (~line
+  137+) for the old wlcomp builtins. Fix by mapping builtins to real binaries
+  in desktop-shell **or** replacing the entries with `Exec=` lines.
+- **BUG — panel launcher icon:** `ERROR loading icon from file
+  '/share/weston/terminal.png', error: 'out of memory'` → broken X-box glyph
+  at the panel top-left.
+- **BUG — cursor theme gaps:** `could not load cursor
+  'dnd-move'/'dnd-copy'/'dnd-none'` (Adwaita staging lacks DND cursors).
+- **Tooling caveats for future sessions:** QEMU HMP `mouse_move` is silently
+  dropped for the virtio-tablet (buttons deliver, motion does not — proven by
+  static kernel counters); drive the pointer with guest-side `mouseinject`.
+  Guest `mousetest` reads 0 events because the libinput shim drains the ring
+  continuously. xv6 `sh` has no `>>`/`2>&1`, and long serial lines truncate —
+  build multi-command sequences with short `echo`-into-file + `sh file` steps.
+
 **Every step must pass its named existing validator(s) and must not regress the
 §8 step-7 fullscreen-video gate before the divergence is deleted.** Validators
 below are real scripts/programs in this repo — never declare a step done on
@@ -971,10 +1052,34 @@ broad fail-closed DRM shim:
   `__WEBKIT_API_SMOKE_DONE_0__`, with in-guest framebuffer proof
   `/perf-video-frame.ppm` = 1280x800 P6,
   `nonblack=564975/1024000`, `unique_sample=56`.
-- **Tasks 2–4 are committed in ports through `5c22780`.** New library ports build/stage;
+- **Tasks 2–4 are committed in ports through `5c22780`** (super checkpoint
+  `b091811`). New library ports build/stage;
   Weston is the sole compositor; `wlcomp*`, old `desktop`, `xv6memshim.c`, and
   `/lib/libxv6memshim.so` are gone. The scoped ports commit excludes `fs.img`
   and `config-temp/`.
+- **Weston desktop-session round committed in ports through `0027fa3` and user
+  through `d96d83c`:** libinput
+  absolute-pointer and keyboard events from `/dev/mouse` + `/dev/kbd`,
+  shell-owned `/root/desktop` icons in `weston-desktop-shell`, Adwaita Xcursor
+  theming, the shm-format present-buffer helper, and the duplicate
+  `weston-session` daemons-entry removal. The §8 step-7 gate re-passed on this
+  tree (`fps=60.1`, `dropPct=0.00`, framebuffer capture). Live-VM inspection
+  (§10.3 “Interactive desktop inspection”) proved: icon selection highlight,
+  `Exec=` double-click launch (GL Sphere window renders), the full
+  virtio-tablet → libinput → Weston pointer pipeline, and a fully functional
+  virtio-gpu hardware cursor (position tracked via gdbstub at all screen
+  spots; invisible in scanout captures by design). The WebKit input smoke
+  reaches `typed:a`.
+- **Known follow-up defects for the desktop-session round:**
+  1. `X-XV6-Builtin=` desktop entries (8 of 16: Terminal, Info, Calc, Network,
+     Settings, Monitor, 3D Demo, Editor) cannot launch — the new
+     desktop-shell parser only handles `Exec=`/`Arg=`; the launch falls back
+     to exec-ing the `.desktop` file (`_exit(127)`). Map builtins to real
+     binaries or regenerate the entries with `Exec=` lines in
+     `scripts/image/make-rootfs.sh`.
+  2. Panel launcher icon fails to load (`/share/weston/terminal.png` →
+     `out of memory`, X-box glyph at panel top-left).
+  3. Adwaita cursor staging lacks `dnd-move`/`dnd-copy`/`dnd-none`.
 - **Residual risk:** stock accelerated MiniBrowser still stalls before page
   commit under Weston, while the WebKitGTK API media/backend path is proven.
   Treat that as MiniBrowser UI-client parity work, not the §8 media gate.

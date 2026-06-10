@@ -1,4 +1,3 @@
 # Services launched by init at boot.
 
 /bin/sshd -D -e
-/bin/weston-session
