@@ -138,7 +138,7 @@ cat > "${STAGE}/root/desktop/terminal.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Terminal
-X-XV6-Builtin=terminal
+Exec=/bin/weston-terminal
 IconChar=>
 IconColor=0xFF3D6E9E
 EOF
@@ -156,7 +156,7 @@ cat > "${STAGE}/root/desktop/info.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Info
-X-XV6-Builtin=sysinfo
+Exec=/bin/filemgr /proc
 IconChar=i
 IconColor=0xFF3DA67C
 EOF
@@ -165,7 +165,7 @@ cat > "${STAGE}/root/desktop/calc.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Calc
-X-XV6-Builtin=calc
+Exec=/bin/weston-terminal --shell=/bin/python3.12
 IconChar=C
 IconColor=0xFF7C3DA6
 EOF
@@ -174,7 +174,7 @@ cat > "${STAGE}/root/desktop/network.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Network
-X-XV6-Builtin=network
+Exec=/bin/weston-terminal --shell=/bin/sh
 IconChar=N
 IconColor=0xFF3DA6A6
 EOF
@@ -183,7 +183,7 @@ cat > "${STAGE}/root/desktop/settings.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Settings
-X-XV6-Builtin=settings
+Exec=/bin/filemgr /etc
 IconChar=S
 IconColor=0xFF7B7B7B
 EOF
@@ -192,7 +192,7 @@ cat > "${STAGE}/root/desktop/monitor.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Monitor
-X-XV6-Builtin=monitor
+Exec=/bin/weston-terminal
 IconChar=M
 IconColor=0xFFA63D7C
 EOF
@@ -201,7 +201,7 @@ cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=3D Demo
-X-XV6-Builtin=3ddemo
+Exec=/bin/mesademo
 IconChar=3
 IconColor=0xFF6EA63D
 EOF
@@ -267,7 +267,7 @@ cat > "${STAGE}/root/desktop/editor.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Editor
-X-XV6-Builtin=editor
+Exec=/bin/weston-terminal --shell=/bin/vim
 IconChar=V
 IconColor=0xFFA65C3D
 EOF
