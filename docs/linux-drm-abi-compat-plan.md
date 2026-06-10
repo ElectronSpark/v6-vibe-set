@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-09. Phases 0–6 landed and committed. Validators pass
+Last updated: 2026-06-10. Phases 0–6 landed and committed. Validators pass
 (Mesa virgl, direct KMS GBM/EGL, damage-aware scanout, upstream kmscube,
 upstream drm_info, libdrm modetest/drmdevice). **Convergence Task 1**
 (kernel → stock Mesa/GBM; retire `virgl_xv6_winsys.c` + `xv6-gbm`) is now
@@ -9,9 +9,10 @@ step 7), realized offline as a deterministic local high-res/60fps gate — see
 "Convergence status" below — and is **committed** (super `e404aa8`, kernel
 `512fac7`, ports `7954144`). Tasks 2–4 are validated and committed in ports
 through `5c22780` (super checkpoint `b091811`); the Weston desktop-session
-round (libinput absolute pointer/keyboard input, shell-owned desktop icons,
-cursor theming) is committed in ports through `0027fa3` and user through
-`d96d83c`. Host-visible zero-copy blob is
+round is committed through super `7afc7f2`, ports `fc3cf3c`, Weston source
+`5543c81`, and user `d96d83c` (libinput absolute pointer/keyboard input,
+shell-owned desktop icons, cursor theming, real ELF icon launches, chrome icon
+fallbacks, and staged Adwaita DND cursors). Host-visible zero-copy blob is
 reclassified as an optional, host-refused optimization: the init-time probe
 proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
@@ -1063,8 +1064,8 @@ broad fail-closed DRM shim:
   Weston is the sole compositor; `wlcomp*`, old `desktop`, `xv6memshim.c`, and
   `/lib/libxv6memshim.so` are gone. The scoped ports commit excludes `fs.img`
   and `config-temp/`.
-- **Weston desktop-session round committed in ports through `0027fa3` and user
-  through `d96d83c`:** libinput
+- **Weston desktop-session base round committed in ports through `0027fa3` and
+  user through `d96d83c`:** libinput
   absolute-pointer and keyboard events from `/dev/mouse` + `/dev/kbd`,
   shell-owned `/root/desktop` icons in `weston-desktop-shell`, Adwaita Xcursor
   theming, the shm-format present-buffer helper, and the duplicate
