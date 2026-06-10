@@ -1,5 +1,50 @@
 # Linux DRM ABI Baseline Audit
 
+## Desktop-session follow-up — 2026-06-10 Weston launch/chrome/cursor fixes
+
+Committed follow-up state:
+
+- Superproject `7afc7f2` (`weston: fix desktop session launch defects`)
+  records ports `fc3cf3c` and Weston source `5543c81`.
+- Ports `fc3cf3c` stages `/bin/weston-terminal`, removes the stale
+  `/bin/desktop-icons` staging/clean references, and stages Adwaita
+  `dnd-move`, `dnd-copy`, and `dnd-none` cursor aliases.
+- Weston source `5543c81` makes the panel launcher and frame buttons fall back
+  to generated Cairo glyphs when PNG decode is unavailable, avoiding the
+  `/share/weston/terminal.png` X-box path and missing titlebar controls.
+- `scripts/image/make-rootfs.sh` now generates real `Exec=` desktop entries
+  for the eight former `X-XV6-Builtin=` shortcuts: Terminal, Info, Calc,
+  Network, Settings, Monitor, 3D Demo, and Editor.
+
+Build and staging checks:
+
+- `cmake --build build-x86_64/ports --target port-weston-clean -j"$(nproc)"`
+  followed by `port-weston`, `port-wayland`, and then
+  `cmake --build build-x86_64 --target image -j"$(nproc)"` completed.
+- A final image-only rebuild after the Monitor shortcut adjustment completed.
+- `debugfs` verified `/bin/weston-terminal`,
+  `/share/icons/Adwaita/cursors/dnd-move`, `dnd-copy`, and `dnd-none` in
+  `build-x86_64/fs.img`; `/bin/desktop-icons` is absent.
+- `debugfs` verified the generated `/root/desktop/*.desktop` files contain
+  the intended real `Exec=` lines and no `X-XV6-Builtin=` entries.
+
+Runtime evidence:
+
+- Each former builtin icon was validated in a fresh Weston boot using
+  guest-side `mouseinject` double-clicks and a framebuffer proof captured by
+  `fbstat ppm-current` plus host `debugfs` extraction. The proof set covers
+  Terminal, Info, Calc, Network, Settings, Monitor, 3D Demo, and Editor.
+- The captures show visible Weston windows/surfaces for every fixed icon:
+  terminal-based entries through `/bin/weston-terminal`, Info/Settings through
+  `/bin/filemgr`, and 3D Demo through `/bin/mesademo`.
+- Reject-pattern scans for the validation boots found no fatal page fault,
+  SIGSEGV, SIGILL, stack-smash, icon-load error, DND cursor-load error,
+  exec failure, `exit(127)`, or `child 127` markers.
+- The §8 fullscreen-video gate re-passed under Weston:
+  `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00
+  advanced=15.19`, `__WEBKIT_API_SMOKE_DONE_0__`, and a 1280x800 in-guest
+  framebuffer sample of the WebKit GPU API smoke window.
+
 ## Current refresh — 2026-06-07 Phase 6 + full `drmabitest` refresh + virgl validator + direct KMS GBM/EGL validation + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:
