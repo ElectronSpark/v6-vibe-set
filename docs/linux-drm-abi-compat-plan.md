@@ -985,8 +985,9 @@ against the source the same day. These are the **open** items this plan now
 tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
-1. **Partially fixed 2026-06-10 — Files/filemgr now has a client-drawn
-   titlebar; remaining non-toytoolkit clients still need the sweep.**
+1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, and GL Smoke now
+   have client-drawn titlebars; remaining non-toytoolkit clients still need the
+   sweep.**
    Original defect: no window titlebar on non-toytoolkit clients (observed on
    3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
@@ -1021,11 +1022,37 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    expands the window without disappearing, and `/pgbclose2.ppm` showing close
    exits the window and returns to the desktop. The focused rebuilds passed:
    `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. Remaining fix
+   `cmake --build build-x86_64 --target image -j$(nproc)`. GL Smoke now follows
+   the same narrow client-side path for the GLES smoke client: it reserves a
+   30-pixel titlebar labeled `xv6 GL Smoke`, draws `-`, `+`/`[]`, and `X`
+   controls, wires titlebar drag plus minimize/maximize/close through
+   xdg-toplevel, and tracks maximized configure state. Fresh image proof
+   launched
+   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/glsmoke --seconds=180
+   &`; `fbstat ppm-current /glsmoke-titlebar3.ppm 0 0 1280 800` captured a
+   visible titlebar and controls. Guest-side `mouseinject` proof captured
+   `/glsmoke-min.ppm` showing minimize remains visible under the current Weston
+   mitigation, `/glsmoke-max.ppm` showing maximize expands the GL window
+   without losing content, and `/glsmoke-close.ppm` showing close returns to
+   the desktop; the log reported `glsmoke[0]: complete frames=419 status=0`.
+   Post-change rebuilds passed:
+   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+   `cmake --build build-x86_64 --target image -j$(nproc)`. The required stock
+   §8 media gate then passed:
+   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+   scripts/gpu/perf-video-gate.expect` exited 0, captured
+   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+   rect=0,0 1280x800`, emitted
+   `RESULT pass fps=60.1 speed=1.002 presentedFPS=0.0 decodedFPS=60.1
+   dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+   Host-side dump/inspection of `/perf-video-frame.ppm` showed the WebKit
+   window with the colorful live video frame and HUD (`media=7.59s`,
+   `decoded=455`, `dropped=0`), with P6 1280x800
+   `nonblack=984525/1024000` and `unique_sample=81`. Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
    `xdg-decoration` server-side support to the shell. Remaining clients to
-   sweep: mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, netsurf.
+   sweep: mesawlegl/mesademo, glmaze, mesaglsmoke, netsurf.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1211,6 +1238,27 @@ broad fail-closed DRM shim:
   scanout=1280x800 rect=0,0 1280x800`, and emitted
   `RESULT pass fps=59.9 speed=1.001 presentedFPS=0.0 decodedFPS=59.9
   dropPct=0.00 advanced=15.16` plus `__WEBKIT_API_SMOKE_DONE_0__`.
+- **GL Smoke titlebar slice fixed (2026-06-10):** glsmoke now has a
+  client-drawn `xv6 GL Smoke` titlebar with visible minimize/maximize/close
+  controls and xdg-toplevel control wiring. Fresh image proof captured
+  `/glsmoke-titlebar3.ppm` with the titlebar and controls, `/glsmoke-min.ppm`
+  with minimize ignored and the window still visible, `/glsmoke-max.ppm` with
+  the maximized GL surface still rendering, and `/glsmoke-close.ppm` after
+  close returned to the desktop; the control log reported
+  `glsmoke[0]: complete frames=419 status=0`. Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-GL-Smoke-titlebar media gate (2026-06-10):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run exited 0, captured
+  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+  rect=0,0 1280x800`, emitted
+  `RESULT pass fps=60.1 speed=1.002 presentedFPS=0.0 decodedFPS=60.1
+  dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+  The dumped framebuffer is P6 1280x800 with
+  `nonblack=984525/1024000`, `unique_sample=81`, and visible WebKit playback:
+  a colorful `xv6 perf` video frame plus HUD at `media=7.59s`,
+  `decoded=455`, `dropped=0`.
 - **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
   scripts/gpu/perf-video-gate.expect` run emitted
