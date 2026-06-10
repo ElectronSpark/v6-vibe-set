@@ -985,9 +985,9 @@ against the source the same day. These are the **open** items this plan now
 tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
-1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, GL Smoke, and
-   Mesa GL Smoke now have client-drawn titlebars; remaining non-toytoolkit
-   clients still need the sweep.**
+1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, GL Smoke,
+   Mesa GL Smoke, and Mesa EGL Demo now have client-drawn titlebars; remaining
+   non-toytoolkit clients still need the sweep.**
    Original defect: no window titlebar on non-toytoolkit clients (observed on
    3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
@@ -1073,11 +1073,39 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
    Host-side dump/inspection of that stock capture showed the WebKit GPU API
    smoke window alive with the black `boot` video frame, P6 1280x800
-   `nonblack=564592/1024000` and `unique_sample=87`. Remaining fix
+   `nonblack=564592/1024000` and `unique_sample=87`. Mesa EGL Demo now has the
+   same decoration path in `mesawlegl` (the binary exec'd by `mesademo`): it
+   grows the surface by a 30-pixel titlebar, keeps the demo render viewport at
+   480x360 below the titlebar, labels the sphere path `Mesa 3D Demo`, draws
+   `-`, `+`/`[]`, and `X` controls with the shared bitmap font, and wires
+   titlebar drag plus minimize/maximize/close through xdg-toplevel. Fresh image
+   proof autolaunched it with `glsmoke=1 glsmoke_demo=1 glsmoke_accel=1
+   glsmoke_seconds=180`; `fbstat ppm-current /mesawlegl-titlebar.ppm
+   0 0 1280 800` captured a visible `Mesa 3D Demo` titlebar and controls above
+   the rendered sphere. Guest-side `mouseinject` close proof captured
+   `/mesawlegl-diag-base.ppm`, clicked the `X` control
+   (`mesawlegl: titlebar click x=463 y=15 control=3`), logged
+   `mesawlegl_completion_matrix ... status=0`, then captured
+   `/mesawlegl-diag-close.ppm` showing the desktop after the window exited.
+   Minimize/maximize request wiring is implemented in the same handler, but the
+   separate min/max automation attempts were not clean enough to claim
+   screenshot proof in this slice. Post-change rebuilds passed:
+   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+   `cmake --build build-x86_64 --target image -j$(nproc)`. The requested stock
+   §8 media gate then passed:
+   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+   scripts/gpu/perf-video-gate.expect` exited 0, captured
+   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+   rect=0,0 1280x800`, emitted
+   `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
+   dropPct=0.00 advanced=15.16`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+   Host-side dump/inspection of that stock capture showed the WebKit GPU API
+   smoke window alive with the black `boot` video frame, PNG 1280x800
+   `nonblack=564592/1024000` and `unique=2068`. Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
    `xdg-decoration` server-side support to the shell. Remaining clients to
-   sweep: mesawlegl/mesademo, glmaze, netsurf.
+   sweep: glmaze, netsurf.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1304,6 +1332,30 @@ broad fail-closed DRM shim:
   The dumped stock framebuffer is P6 1280x800 with
   `nonblack=564592/1024000`, `unique_sample=87`, and showed the WebKit GPU API
   smoke window alive with the black `boot` video frame.
+- **Mesa EGL Demo titlebar slice fixed (2026-06-10):** `mesawlegl`
+  (`mesademo`) now draws a client-side `Mesa 3D Demo`/`Mesa Native Wayland EGL`
+  titlebar above its GL content, preserves the 480x360 demo render viewport
+  below the 30-pixel titlebar, and wires titlebar drag plus
+  minimize/maximize/close through xdg-toplevel. Fresh framebuffer proof
+  captured `/mesawlegl-titlebar.ppm` with the visible titlebar and controls.
+  Guest-side `mouseinject` close proof captured `/mesawlegl-diag-base.ppm`,
+  logged `mesawlegl: titlebar click x=463 y=15 control=3` and
+  `mesawlegl_completion_matrix ... status=0`, then captured
+  `/mesawlegl-diag-close.ppm` showing the desktop after close. Minimize and
+  maximize request wiring is present, but the separate min/max automation
+  attempts were not clean enough to claim screenshot proof. Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-Mesa-EGL-Demo-titlebar media gate (2026-06-10):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run exited 0, captured
+  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+  rect=0,0 1280x800`, emitted
+  `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
+  dropPct=0.00 advanced=15.16`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+  The dumped framebuffer is PNG 1280x800 with `nonblack=564592/1024000`,
+  `unique=2068`, and showed the WebKit GPU API smoke window alive with the
+  black `boot` video frame.
 - **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
   scripts/gpu/perf-video-gate.expect` run emitted
@@ -1330,8 +1382,8 @@ broad fail-closed DRM shim:
   not a clean-shutdown validator.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** missing titlebars remain for the other non-toytoolkit
-  clients (`mesawlegl`/`mesademo`, `glmaze`, `netsurf`; filemgr, Peanut-GB,
-  GL Smoke, and Mesa GL Smoke are now covered), MiniBrowser cannot load live
+  clients (`glmaze`, `netsurf`; filemgr, Peanut-GB, GL Smoke, Mesa GL Smoke,
+  and Mesa EGL Demo are now covered), MiniBrowser cannot load live
   sites and its window goes black (UI-client commit stall/black surface remains;
   guest DNS/TLS is now proven), and the panel has no task list for open windows.
   The WebKitGTK API media/backend path remains proven; MiniBrowser UI-client
