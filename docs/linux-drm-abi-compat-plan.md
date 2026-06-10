@@ -12,7 +12,11 @@ through `5c22780` (super checkpoint `b091811`); the Weston desktop-session
 round is committed through super `7afc7f2`, ports `fc3cf3c`, Weston source
 `5543c81`, and user `d96d83c` (libinput absolute pointer/keyboard input,
 shell-owned desktop icons, cursor theming, real ELF icon launches, chrome icon
-fallbacks, and staged Adwaita DND cursors). Host-visible zero-copy blob is
+fallbacks, and staged Adwaita DND cursors). The follow-up cursor/minimize
+round is validated and recorded through kernel `f9d20fd`, user `dd0becb`,
+ports `290f68f` (Wayland source `3c5ad4f`, Weston source `f046fa6`):
+cursor uploads now contain nonzero image/alpha pixels and minimize requests
+stay visible until a real task list exists. Host-visible zero-copy blob is
 reclassified as an optional, host-refused optimization: the init-time probe
 proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
@@ -20,11 +24,10 @@ Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
 
 **Active work queue:** a 2026-06-10 hands-on desktop session surfaced open
 usability defects — missing window titlebars, MiniBrowser navigation failure +
-black window, the visible cursor rendering as a black box, and no panel task
-list. They are triaged with root causes in **§10.4**; everything else in this
-plan is landed/validated background. The placeholder launcher labels from the
-same session were fixed on 2026-06-10 by renaming/removing them so labels match
-their targets.
+black window, and no panel task list. They are triaged with root causes in
+**§10.4**; everything else in this plan is landed/validated background. The
+placeholder launcher labels and the cursor-image/black-box path from the same
+session were fixed on 2026-06-10.
 
 ## Implementation status (2026-06-07)
 
@@ -843,10 +846,16 @@ proof via `fbstat ppm-current` + `debugfs` extraction):
   bottom-right clamped (1277,799). The cursor is **invisible in
   `fbstat`/scanout captures by design** — QEMU composites the cursor plane
   host-side; a human at the GTK window sees it. Do not treat
-  cursor-not-in-framebuffer as a regression. **Correction 2026-06-10:** a
-  human-visible check shows the cursor drawn as a solid **black box** — only
-  position tracking was proven here; the cursor *image/alpha* upload path was
-  never visually inspected and is an open defect (§10.4 item 4).
+  cursor-not-in-framebuffer as a regression. **Correction 2026-06-10:** the
+  first human-visible check found a solid black box because the cursor upload
+  contained no usable image/alpha pixels. **Fixed 2026-06-10:** the Wayland
+  cursor pool resize path now preserves old shm contents across remap, and KMS
+  cursor upload diagnostics show a non-empty 64x64 cursor image
+  (`alpha_nonzero=254`, `rgb_nonzero=103`, no upload failures) after a fresh
+  Weston boot + `mouseinject`. A focused `webkitabitest wayland-shm` case also
+  proves the xv6 tmpfs/MAP_SHARED resize contract preserves content from both
+  client and server mappings, so this is tracked as a Wayland cursor-pool
+  lifecycle fix rather than an OS mmap crutch.
 - **Fixed 2026-06-10 — former `X-XV6-Builtin=` icons launch real ELFs.**
   The generated desktop entries for Terminal, Info, Calc, Network, Settings,
   Monitor, 3D Demo, and Editor now use `Exec=` lines in
@@ -1020,28 +1029,32 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    (guest DNS/TCP/TLS smoke), then root-cause the MiniBrowser commit stall,
    then re-test typed navigation.
 
-4. **Visible cursor renders as a solid black box.** Prior evidence proved
-   *position* only (cursor-queue commands + gdbstub coordinates), never the
-   image. Pixel path: Weston cursor surface → cursor BO →
-   `gpu_kms_copy_bo_cursor_pixels()` → `virtio_gpu_user_set_cursor()`
-   B8G8R8A8 64×64 resource (`kernel/kernel/dev/fb/fb_drm_kms_properties.c`,
-   `kernel/kernel/virtio_gpu_scanout.c`). A black square means the displayed
-   resource holds opaque-black contents — suspects: the cursor BO's guest-side
-   backing pages not containing the drawn image (e.g. GPU-side/`gbm_bo_write`
-   contents not landing in the pages the kernel copies), an alpha/premultiply
-   or ARGB/BGRA mismatch, or Weston failing to decode the staged Adwaita
-   Xcursor images and uploading an empty surface. Debug by dumping the 64×64
-   backing after upload (gdbstub) and comparing against the staged Adwaita
-   cursor image.
+4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
+   image.** The failing path was Weston/Wayland cursor shm pool growth:
+   resizing the anonymous shm pool remapped it without preserving the cursor
+   image bytes already written into the old mapping. The fix copies the used
+   bytes through `shm_pool_resize()` before remapping. Runtime proof on a fresh
+   image: Weston loads the desktop, guest `mouseinject` moves the pointer,
+   `fbstat ppm-current /cursor-visible-final.ppm 0 0 1280 800` captures the
+   desktop, and `fbstat` reports `kms_cursor_uploads=1`,
+   `kms_cursor_upload_failures=0`, and
+   `kms_cursor_last_pixels checksum=17995698925160261859 alpha_nonzero=254`
+   instead of the previous all-zero upload. The cursor remains absent from
+   framebuffer dumps by design because QEMU composites the hardware cursor
+   plane host-side. A focused `webkitabitest wayland-shm` validation passed on
+   the same rebuilt image, proving the kernel tmpfs/MAP_SHARED content-preserve
+   contract independently of Weston.
 
 5. **No taskbar tabs for open windows.** Stock Weston desktop-shell's panel
    hosts only launchers + a clock (`ports/weston/src/clients/desktop-shell.c`,
    `panel_launcher_*`); there is no window list, so running apps have no panel
-   presence and minimized windows are unreachable. Fix: extend the shell-owned
-   panel with a task-list widget — requires plumbing a toplevel list to the
-   shell client (extend the private `weston-desktop-shell` protocol or adopt a
-   foreign-toplevel-management-style protocol) with activate/minimize on
-   click.
+   presence. **Mitigation 2026-06-10:** the shell now ignores minimize requests
+   instead of moving surfaces to `minimized_layer`, so a titlebar minimize click
+   cannot make a window unreachable while the panel lacks task tabs. Full fix:
+   extend the shell-owned panel with a task-list widget — requires plumbing a
+   toplevel list to the shell client (extend the private
+   `weston-desktop-shell` protocol or adopt a foreign-toplevel-management-style
+   protocol) with activate/minimize on click.
 
 ---
 
@@ -1114,15 +1127,29 @@ broad fail-closed DRM shim:
      fixes: `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00
      advanced=15.19`, `__WEBKIT_API_SMOKE_DONE_0__`, and a 1280x800 in-guest
      framebuffer sample showing the WebKit GPU API smoke window and live HUD.
+  5. The cursor black-box defect is fixed. The Wayland cursor shm pool resize
+     path now preserves previously written bytes across remap; `fbstat` cursor
+     diagnostics prove the KMS cursor upload contains nonzero alpha/RGB pixels
+     (`alpha_nonzero=254`) instead of the former all-zero image, and
+     `webkitabitest wayland-shm` proves the underlying xv6 tmpfs/MAP_SHARED
+     resize contract separately.
+  6. Minimize requests are ignored until the panel has a real task list, so
+     windows can no longer disappear into an unreachable minimized layer.
+- **Latest Weston video gate (2026-06-10, after cursor/minimize round):**
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` passed under Weston with
+  `effective_accel=1`, `gpu_contract=virgl-opengl-submit`,
+  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800`, final
+  `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
+  advanced=15.14`, and `__WEBKIT_API_SMOKE_DONE_0__`.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** missing titlebars on non-toytoolkit clients (filemgr,
   GL demos, netsurf), MiniBrowser cannot load live sites and its window goes
-  black (UI-client commit stall + unvalidated guest DNS/TLS), the visible
-  cursor renders as a black box (image/alpha path unproven), and the panel has
+  black (UI-client commit stall + unvalidated guest DNS/TLS), and the panel has
   no task list for open windows. The WebKitGTK API media/backend path remains
   proven; MiniBrowser UI-client parity is part of §10.4 item 3, not the §8
-  media gate. Placeholder launcher labels from the same manual session were
-  resolved by §10.4 item 2.
+  media gate. Placeholder launcher labels were resolved by §10.4 item 2, and
+  the cursor image/alpha defect was resolved by §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the
