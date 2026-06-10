@@ -45,6 +45,30 @@ Runtime evidence:
   advanced=15.19`, `__WEBKIT_API_SMOKE_DONE_0__`, and a 1280x800 in-guest
   framebuffer sample of the WebKit GPU API smoke window.
 
+## Desktop launcher label cleanup — 2026-06-10
+
+Follow-up to the manual desktop-session inspection in §10.4:
+
+- `scripts/image/make-rootfs.sh` no longer generates the misleading
+  `Info`/`Calc`/`Network`/`Settings`/`Monitor` placeholders. The useful
+  targets now have honest labels: `Proc Files` launches `/bin/filemgr /proc`,
+  `Config Files` launches `/bin/filemgr /etc`, and `Python` launches
+  `/bin/weston-terminal --shell=/bin/python3.12`. The duplicate shell/terminal
+  `Network` and `Monitor` launchers were removed.
+- `cmake --build build-x86_64 --target image -j"$(nproc)"` completed and
+  regenerated `build-x86_64/fs.img`.
+- `debugfs` verified `/root/desktop/proc.desktop`,
+  `/root/desktop/config.desktop`, and `/root/desktop/python.desktop` contain
+  the matching `Name=`/`Exec=` pairs, while the old
+  `/root/desktop/info.desktop`, `calc.desktop`, `network.desktop`,
+  `settings.desktop`, and `monitor.desktop` paths are absent.
+- The validation boot logged `weston-desktop-shell: loaded 14 desktop entries
+  from /root/desktop`. The §8 video gate re-passed:
+  `RESULT pass fps=60.0 speed=1.003 decodedFPS=60.0 dropPct=0.00
+  advanced=15.17`, `__WEBKIT_API_SMOKE_DONE_0__`; the in-guest framebuffer was
+  dumped to `/tmp/perf-video-frame-launcher-cleanup.ppm` and is a 1280x800 P6
+  image.
+
 ## Current refresh — 2026-06-07 Phase 6 + full `drmabitest` refresh + virgl validator + direct KMS GBM/EGL validation + damage-flip resource-bind validation + launcher blob probe + HOST_VISIBLE fail-closed gate
 
 Build:

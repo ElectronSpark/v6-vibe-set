@@ -18,6 +18,14 @@ proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
 Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
 
+**Active work queue:** a 2026-06-10 hands-on desktop session surfaced open
+usability defects — missing window titlebars, MiniBrowser navigation failure +
+black window, the visible cursor rendering as a black box, and no panel task
+list. They are triaged with root causes in **§10.4**; everything else in this
+plan is landed/validated background. The placeholder launcher labels from the
+same session were fixed on 2026-06-10 by renaming/removing them so labels match
+their targets.
+
 ## Implementation status (2026-06-07)
 
 This plan is no longer purely forward-looking: most of the roadmap has been
@@ -650,34 +658,17 @@ DRM nodes registering, and a clean desktop start.
 
 ---
 
-## 9. Existing-compositor adoption (Weston) — verified gaps + bring-up plan
+## 9. Existing-compositor adoption (Weston) — DONE (historical)
 
-This section evaluates **replacing the custom `wlcomp` compositor with an
-existing upstream Wayland compositor** and records the gaps that were verified
-by source/tree inspection on 2026-06-07 (not assumed). The graphics substrate a
-compositor needs — DRM/KMS atomic, GBM, EGL/GLES via Mesa virgl, dma-buf,
-syncobj — is already validated here (upstream `kmscube`/`drm_info` run), so the
-adoption cost is concentrated in the **input + seat/session boundary**, not
-graphics.
-
-### 9.1 Verified gaps to run an existing compositor (Weston / Sway)
-
-Each row was checked against the repo; “absent” means no target port exists
-(host-build-only or upstream-source-only matches do not count).
-
-| Gap | Status | Evidence |
-|---|---|---|
-| The compositor itself | **Absent** | No weston/sway/wlroots dir under `ports/`; current one is custom `ports/wayland/src/wlcomp.c` |
-| `libinput` | **Absent (target)** | Only `libevdev2` in the build-host `Dockerfile` and libxkbcommon docs; input today is custom `/dev/mouse` + `/dev/kbd`, not evdev |
-| `udev`/`libudev`/`eudev` | **Absent (target)** | `dep_libudev` only as `required:false` in upstream Mesa `meson.build`; `eudev` only in the Alpine capture script |
-| `seatd`/`logind` (seat acquisition) | **Absent** | No `seatd`/`sd_login`; GTK’s `GdkSeat*` is the toolkit’s internal abstraction, not a system seat manager |
-| sysfs device enumeration | **Partial/stub** | `kernel/kernel/vfs/sysfs/inode.c` hardcodes one PCI symlink; `/sys/class/drm` is still listed as TODO in `docs/linux-userland-abi-kernel-gap-plan.md` |
-
-**Already in our favor (verified present):** glibc userland + dynamic loader
-(`build-x86_64/sysroot`), working `dlopen`/`LD_PRELOAD`
-(`ports/wayland/src/xv6memshim.c`), the Wayland core + `wayland-protocols` +
-`libxkbcommon`, the full GTK3/Pango/Cairo/Pixman stack, Mesa virgl + libdrm +
-libepoxy, and native `epoll`/`eventfd`/`timerfd`/`signalfd`/`memfd`.
+This section originally held the verified gap analysis and bring-up plan for
+replacing the custom `wlcomp` compositor with upstream Weston. The adoption is
+**complete** (see §10.3 Tasks 2–3): upstream Weston is the sole compositor,
+the libinput/libudev/libseat/libevdev/hwdata/xkeyboard-config ports landed,
+the libinput shim feeds `/dev/mouse` + `/dev/kbd`, DRM device discovery is
+direct (no udev), and `wlcomp.c` was deleted in the same change (one-way
+cutover; §8 step-7 gate green). The pre-adoption gap tables and bring-up steps
+were removed on 2026-06-10 as no-longer-actionable; they are preserved in git
+history.
 
 ### 9.2 Additional gaps before a *full* desktop environment (GNOME/Plasma)
 
@@ -702,66 +693,13 @@ them. All verified absent on the target:
 audio/portal set above), not a compositor swap. Swapping in a single compositor
 is bounded by §9.1 only.
 
-### 9.3 Weston bring-up plan (recommended path)
+### 9.3 Bring-up plan — executed and removed
 
-Weston is the recommended first target: its `drm-backend` maps directly onto
-the already-validated DRM/KMS/GBM/dma-buf path, and it has the smallest
-input/seat surface of the upstream compositors. Sway/wlroots is the natural
-follow-up once `libinput` is real.
-
-1. **Stage Weston into the sysroot build.** Add a `ports/weston` recipe built
-   against the existing sysroot (glibc, `libwayland-server`,
-   `wayland-protocols`, `libdrm`, Mesa GBM/EGL, `libxkbcommon`, `pixman`,
-   `cairo`). Configure with the heavy/optional backends and integrations off:
-   no `xwayland`, no `remoting`, no `pipewire`, no `systemd`/`logind`,
-   no `lcms`, no `webp`; enable only the `drm-backend` and the desktop shell.
-2. **Seat/session shim (replaces `seatd`/`logind`).** Weston’s launcher chooses
-   between logind, `weston-launch`, and a “direct” path. Use the **direct/root
-   launcher** so no `org.freedesktop.login1` is needed: open the DRM master and
-   input fds directly. Single-user dev only — no VT switching, no multi-seat.
-   (Porting `seatd`, ~3k LOC, is the cleaner later option; logind is not.)
-3. **Input backend shim (replaces `libinput`).** This is the main work item.
-   Two options, in order of preference:
-   - **(a) Thin `libinput`-shaped shim** that reads xv6’s `/dev/mouse` and
-     `/dev/kbd` and synthesizes `libinput_event_pointer` / `_keyboard` events,
-     exposing just the symbols Weston’s `drm-backend` input init calls. Keeps
-     Weston unpatched.
-   - **(b) Patch Weston’s input init** to read `/dev/mouse` + `/dev/kbd`
-     directly (the same devices `wlcomp` already consumes), bypassing
-     `libinput` entirely. Fewer moving parts, but a Weston fork to maintain.
-4. **Device discovery without `udev`.** Hardcode `/dev/dri/card0`
-   (KMS) and `/dev/dri/renderD128` (render), skipping `udev` enumeration and
-   hot-plug. Add a `/sys/class/drm` shim only if a code path insists on it.
-5. **Keymap.** `libxkbcommon` is already ported; feed it the default keymap
-   so `/dev/kbd` scancodes map to keysyms.
-6. **Launcher cutover (one-way, no fallback).** Repoint the GUI startup script
-   (`/etc/startup`) at Weston as the **sole** compositor. This is a hard
-   replacement, not a selectable mode: there is no `wlcomp`-vs-Weston toggle and
-   no env switch to fall back. Once step 7 passes, `wlcomp.c`, its `.inc`
-   fragments, and its build target are **deleted in the same change** and never
-   reintroduced — Weston is the compositor from that point on.
-7. **Validation (must reuse §8).** Re-prove the full §8 suite against Weston,
-   including the **mandatory** smooth-fullscreen-video-at-default-resolution
-   gate (§8, step 7). The compositor swap is not “done” until that gate passes
-   on Weston with zero `virtio_failures`/`virtio_timeouts` and on-screen +
-   framebuffer evidence. Validation and `wlcomp` deletion land together: the
-   custom compositor is not kept around as a safety net once Weston is green.
-
-### 9.4 Honest status / risks
-
-- This is an **assessment + plan, not a runtime proof.** No upstream compositor
-  is ported yet, so the input/seat shim effort in §9.3 is estimated. Confidence
-  comes from the heavyweight dependencies (glibc, libwayland, Mesa virgl, GTK,
-  dlopen) already running on this exact target.
-- The custom `wlcomp` exists precisely because it sidesteps `libinput`/`udev`/
-  `seatd`. Adopting Weston means re-solving that boundary against stricter
-  upstream assumptions.
-- `wlcomp` is tuned to xv6’s GPU sync/scanout path; Weston goes through the
-  generic DRM backend, which is validated but not specialized — so the §8
-  fullscreen-video gate must be re-proven, not assumed, after the swap. Because
-  the cutover is **one-way**, this re-proof is the gate that authorizes deleting
-  `wlcomp`: Weston must clear §8 step 7 *before* the custom compositor is
-  removed, since there is deliberately no fallback to revert to afterwards.
+The seven-step bring-up plan (Weston port, direct-launcher seat path,
+`/dev/mouse` + `/dev/kbd` libinput shim, hardcoded DRM node discovery, xkb
+keymap, one-way launcher cutover, §8 re-validation) was executed as written;
+the §8 step-7 gate passed under Weston and `wlcomp.c` is deleted. Details are
+in §10.3 Tasks 2–3 and git history.
 
 ---
 
@@ -897,7 +835,7 @@ proof via `fbstat ppm-current` + `debugfs` extraction):
   (`Exec=/bin/mesaglsmoke --demo`) forked, opened render+primary DRM nodes,
   and renders a visible spinning-sphere window (~31 fps on-screen counter) on
   the Weston desktop.
-- **Hardware cursor is fully functional** as a virtio-gpu cursor-plane:
+- **Hardware cursor positioning is functional** as a virtio-gpu cursor-plane:
   image resource bound (`gpu.cursor_resource_id=20`), `UPDATE_CURSOR`/
   `MOVE_CURSOR` go down the dedicated cursor virtqueue (3391 commands
   submitted, all consumed by QEMU), and `gpu.cursor_x/y` tracks injected
@@ -905,7 +843,10 @@ proof via `fbstat ppm-current` + `debugfs` extraction):
   bottom-right clamped (1277,799). The cursor is **invisible in
   `fbstat`/scanout captures by design** — QEMU composites the cursor plane
   host-side; a human at the GTK window sees it. Do not treat
-  cursor-not-in-framebuffer as a regression.
+  cursor-not-in-framebuffer as a regression. **Correction 2026-06-10:** a
+  human-visible check shows the cursor drawn as a solid **black box** — only
+  position tracking was proven here; the cursor *image/alpha* upload path was
+  never visually inspected and is an open defect (§10.4 item 4).
 - **Fixed 2026-06-10 — former `X-XV6-Builtin=` icons launch real ELFs.**
   The generated desktop entries for Terminal, Info, Calc, Network, Settings,
   Monitor, 3D Demo, and Editor now use `Exec=` lines in
@@ -915,6 +856,11 @@ proof via `fbstat ppm-current` + `debugfs` extraction):
   formerly-builtin icons opened visible Weston windows/surfaces: Terminal,
   Calc, Network, Monitor, and Editor through `/bin/weston-terminal`; Info and
   Settings through `/bin/filemgr`; 3D Demo through `/bin/mesademo`.
+  **Scope correction 2026-06-10:** only the launch *mechanism* is fixed; five
+  of the targets are placeholders whose labels misrepresent them — Info →
+  `filemgr /proc`, Settings → `filemgr /etc`, Calc → a Python 3.12 REPL in a
+  terminal, Network → `sh` in a terminal, Monitor → a bare terminal. Open
+  defect (§10.4 item 2).
 - **Fixed 2026-06-10 — panel/window chrome icons do not depend on fragile PNG
   decode.** The default panel launcher uses a Cairo-drawn terminal fallback
   instead of `/share/weston/terminal.png`, and Weston frame buttons fall back to
@@ -1023,6 +969,80 @@ libxkbcommon, and a single `DETECT_OS_XV6` platform define that selects those
 **standard** code paths. No replacement libraries, no source patches, no
 runtime monkey-patching, no private ioctl winsys should survive.
 
+### 10.4 Desktop-session open defects (2026-06-10 manual session) — active work queue
+
+A hands-on desktop session surfaced the defects below; each was triaged
+against the source the same day. These are the **open** items this plan now
+tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
+interaction, framebuffer capture, and the §8 step-7 gate must stay green.
+
+1. **No window titlebar on non-toytoolkit clients** (observed on 3D Demo and
+   Files; affects every client not based on Weston's toytoolkit).
+   Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
+   `mesademo`) create bare `xdg_toplevel` surfaces with no client-side
+   decorations and no `zxdg_toplevel_decoration_v1` request, and Weston's
+   desktop-shell draws **no** server-side decorations for Wayland clients.
+   `weston-terminal` windows have titlebars only because the toytoolkit
+   (`clients/window.c`) draws CSD frames. Fix options (pick one):
+   (a) port `libdecor` and adopt it in the xv6-native clients; (b) rebase
+   filemgr/the GL demos onto the toytoolkit; (c) add `xdg-decoration`
+   server-side support to the shell. Clients to sweep after the fix:
+   filemgr, mesawlegl/mesademo, glmaze, glsmoke, mesaglsmoke, peanutgb,
+   netsurf.
+
+2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
+   The misleading placeholder entries were removed or renamed in
+   `scripts/image/make-rootfs.sh`: `Info` became `Proc Files`
+   (`/bin/filemgr /proc`), `Settings` became `Config Files`
+   (`/bin/filemgr /etc`), `Calc` became `Python`
+   (`/bin/weston-terminal --shell=/bin/python3.12`), and the duplicate
+   `Network`/`Monitor` shell-terminal placeholders were removed. Image rebuild
+   plus `debugfs` verification showed the old
+   `info.desktop`/`calc.desktop`/`network.desktop`/`settings.desktop`/
+   `monitor.desktop` files absent from `/root/desktop`, with
+   `proc.desktop`, `config.desktop`, and `python.desktop` containing the
+   matching `Name=`/`Exec=` pairs. The same validation boot logged
+   `weston-desktop-shell: loaded 14 desktop entries from /root/desktop`, and
+   the §8 step-7 gate stayed green:
+   `RESULT pass fps=60.0 speed=1.003 decodedFPS=60.0 dropPct=0.00
+   advanced=15.17` with `__WEBKIT_API_SMOKE_DONE_0__` and a 1280x800
+   framebuffer capture.
+
+3. **WebKit MiniBrowser cannot load google.com; the window later goes black.**
+   Two stacked problems: (a) the known residual risk that the stock
+   accelerated MiniBrowser UI client stalls before page commit under Weston
+   (§10.3 Task 3); (b) live-site loading additionally requires guest
+   networking — DNS + TLS through QEMU slirp (`-netdev user` + e1000 in
+   `scripts/launch/run-qemu.sh`) — which has **no validator today**, and
+   Enter-key URL submission in the MiniBrowser entry is unproven. The black
+   window is consistent with the UI client losing/abandoning its accelerated
+   surface after the stall. Order of attack: prove the network path first
+   (guest DNS/TCP/TLS smoke), then root-cause the MiniBrowser commit stall,
+   then re-test typed navigation.
+
+4. **Visible cursor renders as a solid black box.** Prior evidence proved
+   *position* only (cursor-queue commands + gdbstub coordinates), never the
+   image. Pixel path: Weston cursor surface → cursor BO →
+   `gpu_kms_copy_bo_cursor_pixels()` → `virtio_gpu_user_set_cursor()`
+   B8G8R8A8 64×64 resource (`kernel/kernel/dev/fb/fb_drm_kms_properties.c`,
+   `kernel/kernel/virtio_gpu_scanout.c`). A black square means the displayed
+   resource holds opaque-black contents — suspects: the cursor BO's guest-side
+   backing pages not containing the drawn image (e.g. GPU-side/`gbm_bo_write`
+   contents not landing in the pages the kernel copies), an alpha/premultiply
+   or ARGB/BGRA mismatch, or Weston failing to decode the staged Adwaita
+   Xcursor images and uploading an empty surface. Debug by dumping the 64×64
+   backing after upload (gdbstub) and comparing against the staged Adwaita
+   cursor image.
+
+5. **No taskbar tabs for open windows.** Stock Weston desktop-shell's panel
+   hosts only launchers + a clock (`ports/weston/src/clients/desktop-shell.c`,
+   `panel_launcher_*`); there is no window list, so running apps have no panel
+   presence and minimized windows are unreachable. Fix: extend the shell-owned
+   panel with a task-list widget — requires plumbing a toplevel list to the
+   shell client (extend the private `weston-desktop-shell` protocol or adopt a
+   foreign-toplevel-management-style protocol) with activate/minimize on
+   click.
+
 ---
 
 ## 11. Out of scope / explicitly separate
@@ -1073,16 +1093,18 @@ broad fail-closed DRM shim:
   tree (`fps=60.1`, `dropPct=0.00`, framebuffer capture). Live-VM inspection
   (§10.3 “Interactive desktop inspection”) proved: icon selection highlight,
   `Exec=` double-click launch (GL Sphere window renders), the full
-  virtio-tablet → libinput → Weston pointer pipeline, and a fully functional
-  virtio-gpu hardware cursor (position tracked via gdbstub at all screen
-  spots; invisible in scanout captures by design). The WebKit input smoke
+  virtio-tablet → libinput → Weston pointer pipeline, and virtio-gpu
+  hardware-cursor *positioning* (tracked via gdbstub at all screen spots;
+  invisible in scanout captures by design — the cursor *image* was later found
+  to render as a black box, §10.4 item 4). The WebKit input smoke
   reaches `typed:a`.
 - **Desktop-session follow-up defects resolved (2026-06-10):**
   1. The eight former `X-XV6-Builtin=` desktop entries were regenerated with
      real `Exec=` commands and proved by guest `mouseinject` double-clicks plus
      framebuffer captures. The proof set covers Terminal, Info, Calc, Network,
      Settings, Monitor, 3D Demo, and Editor and rejects SIGSEGV/SIGILL/icon
-     load errors/cursor-load errors/exit-127 markers.
+     load errors/cursor-load errors/exit-127 markers. (Launch mechanism only —
+     five of these targets remain placeholder apps, §10.4 item 2.)
   2. The panel launcher and Weston frame-button paths now use generated Cairo
      fallback glyphs when PNG decode is unavailable, so the top-left panel icon
      and window titlebars render without the X-box placeholder.
@@ -1092,9 +1114,15 @@ broad fail-closed DRM shim:
      fixes: `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00
      advanced=15.19`, `__WEBKIT_API_SMOKE_DONE_0__`, and a 1280x800 in-guest
      framebuffer sample showing the WebKit GPU API smoke window and live HUD.
-- **Residual risk:** stock accelerated MiniBrowser still stalls before page
-  commit under Weston, while the WebKitGTK API media/backend path is proven.
-  Treat that as MiniBrowser UI-client parity work, not the §8 media gate.
+- **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
+  active work queue:** missing titlebars on non-toytoolkit clients (filemgr,
+  GL demos, netsurf), MiniBrowser cannot load live sites and its window goes
+  black (UI-client commit stall + unvalidated guest DNS/TLS), the visible
+  cursor renders as a black box (image/alpha path unproven), and the panel has
+  no task list for open windows. The WebKitGTK API media/backend path remains
+  proven; MiniBrowser UI-client parity is part of §10.4 item 3, not the §8
+  media gate. Placeholder launcher labels from the same manual session were
+  resolved by §10.4 item 2.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the

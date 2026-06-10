@@ -152,49 +152,31 @@ IconChar=F
 IconColor=0xFFA67C52
 EOF
 
-cat > "${STAGE}/root/desktop/info.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/proc.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Info
+Name=Proc Files
 Exec=/bin/filemgr /proc
-IconChar=i
+IconChar=P
 IconColor=0xFF3DA67C
 EOF
 
-cat > "${STAGE}/root/desktop/calc.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/python.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Calc
+Name=Python
 Exec=/bin/weston-terminal --shell=/bin/python3.12
-IconChar=C
+IconChar=Y
 IconColor=0xFF7C3DA6
 EOF
 
-cat > "${STAGE}/root/desktop/network.desktop" <<'EOF'
+cat > "${STAGE}/root/desktop/config.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Network
-Exec=/bin/weston-terminal --shell=/bin/sh
-IconChar=N
-IconColor=0xFF3DA6A6
-EOF
-
-cat > "${STAGE}/root/desktop/settings.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Settings
+Name=Config Files
 Exec=/bin/filemgr /etc
-IconChar=S
+IconChar=C
 IconColor=0xFF7B7B7B
-EOF
-
-cat > "${STAGE}/root/desktop/monitor.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Monitor
-Exec=/bin/weston-terminal
-IconChar=M
-IconColor=0xFFA63D7C
 EOF
 
 cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
