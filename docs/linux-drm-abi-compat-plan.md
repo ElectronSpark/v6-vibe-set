@@ -1033,17 +1033,26 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    advanced=15.17` with `__WEBKIT_API_SMOKE_DONE_0__` and a 1280x800
    framebuffer capture.
 
-3. **WebKit MiniBrowser cannot load google.com; the window later goes black.**
-   Two stacked problems: (a) the known residual risk that the stock
-   accelerated MiniBrowser UI client stalls before page commit under Weston
-   (§10.3 Task 3); (b) live-site loading additionally requires guest
-   networking — DNS + TLS through QEMU slirp (`-netdev user` + e1000 in
-   `scripts/launch/run-qemu.sh`) — which has **no validator today**, and
-   Enter-key URL submission in the MiniBrowser entry is unproven. The black
-   window is consistent with the UI client losing/abandoning its accelerated
-   surface after the stall. Order of attack: prove the network path first
-   (guest DNS/TCP/TLS smoke), then root-cause the MiniBrowser commit stall,
-   then re-test typed navigation.
+3. **Partially triaged 2026-06-10 — WebKit MiniBrowser cannot load
+   google.com; the window later goes black.** Two stacked problems were
+   suspected: (a) the known residual risk that the stock accelerated
+   MiniBrowser UI client stalls before page commit under Weston (§10.3 Task
+   3); (b) live-site loading additionally requires guest networking — DNS +
+   TLS through QEMU slirp (`-netdev user` + e1000 in
+   `scripts/launch/run-qemu.sh`). The network prerequisite is now proven on a
+   fresh image boot with static SLIRP addressing:
+   `lwip: netif up — IP 10.0.2.15`, `/etc/resolv.conf` contains
+   `nameserver 10.0.2.3`, `/bin/dnsstress google.com 10.0.2.3 1 1` reports
+   `dnsstress: RESULT pass failed_children=0` with `NETPREREQ-DNS-RC=0`, and
+   `/bin/openssl s_client -connect google.com:443 -servername google.com
+   -brief < /dev/null` negotiates `Protocol version: TLSv1.3`,
+   `Ciphersuite: TLS_AES_256_GCM_SHA384`, `Verification: OK`, and
+   `NETPREREQ-TLS-RC=0` (`/tmp/xv6-network-prereq3.log`). The QEMU wrapper hit
+   its timeout after the success markers because the scripted shutdown did not
+   exit the VM, so treat the log evidence as the network proof and not as a
+   clean shutdown proof. Remaining work: root-cause the MiniBrowser page-commit
+   stall/black surface and then re-test typed navigation/Enter-key URL
+   submission.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1183,11 +1192,23 @@ broad fail-closed DRM shim:
   scanout=1280x800 rect=0,0 1280x800`, then exited cleanly with
   `RESULT pass fps=60.1 speed=1.000 decodedFPS=60.1 dropPct=0.00
   advanced=15.11` and `__WEBKIT_API_SMOKE_DONE_0__`.
+- **MiniBrowser live-site network prerequisite proved (2026-06-10):** a
+  serial-only QEMU slirp/e1000 boot with static guest addressing brought lwIP
+  up at `10.0.2.15`, kept `/etc/resolv.conf` at `nameserver 10.0.2.3`,
+  resolved `google.com` through `/bin/dnsstress google.com 10.0.2.3 1 1`
+  (`dnsstress: RESULT pass failed_children=0`, `NETPREREQ-DNS-RC=0`), and
+  completed external TLS with `/bin/openssl s_client -connect google.com:443
+  -servername google.com -brief < /dev/null` (`Protocol version: TLSv1.3`,
+  `Ciphersuite: TLS_AES_256_GCM_SHA384`, `Verification: OK`,
+  `NETPREREQ-TLS-RC=0`). The wrapper timed out after the success markers
+  because the scripted shutdown did not terminate QEMU; it is network proof,
+  not a clean-shutdown validator.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** missing titlebars remain for the other non-toytoolkit
   clients (GL demos, netsurf, etc.; filemgr is now covered), MiniBrowser cannot
-  load live sites and its window goes black (UI-client commit stall +
-  unvalidated guest DNS/TLS), and the panel has no task list for open windows.
+  load live sites and its window goes black (UI-client commit stall/black
+  surface remains; guest DNS/TLS is now proven), and the panel has no task list
+  for open windows.
   The WebKitGTK API media/backend path remains proven; MiniBrowser UI-client
   parity is part of §10.4 item 3, not the §8 media gate. Placeholder launcher
   labels were resolved by §10.4 item 2, and the cursor image/alpha defect was
