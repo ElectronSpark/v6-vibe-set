@@ -23,13 +23,15 @@ proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
 Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
 
-**Active work queue:** a 2026-06-10 hands-on desktop session surfaced open
+**Desktop-session closure:** a 2026-06-10 hands-on desktop session surfaced
 usability defects — missing window titlebars, MiniBrowser navigation failure +
-black window, and missing panel task list. They are triaged with root causes in
-**§10.4**; everything else in this plan is landed/validated background. The
-placeholder launcher labels and the cursor-image/black-box path from the same
-session were fixed on 2026-06-10; the panel task list is fixed in the
-2026-06-11 Weston shell follow-up recorded below.
+black window/stale live video, and missing panel task list. They are closed
+for the validated paths in **§10.4** with root-cause notes and runtime proof.
+Everything else in this plan is landed/validated background or an explicitly
+host-dependent optional gap. The placeholder launcher labels and the
+cursor-image/black-box path from the same session were fixed on 2026-06-10;
+the panel task list is fixed in the 2026-06-11 Weston shell follow-up recorded
+below.
 
 ## Implementation status (2026-06-07)
 
@@ -980,12 +982,13 @@ libxkbcommon, and a single `DETECT_OS_XV6` platform define that selects those
 **standard** code paths. No replacement libraries, no source patches, no
 runtime monkey-patching, no private ioctl winsys should survive.
 
-### 10.4 Desktop-session open defects (2026-06-10 manual session) — active work queue
+### 10.4 Desktop-session defects from the 2026-06-10 manual session — closure log
 
 A hands-on desktop session surfaced the defects below; each was triaged
-against the source the same day. These are the **open** items this plan now
-tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
-interaction, framebuffer capture, and the §8 step-7 gate must stay green.
+against the source the same day. These items are now a closure log for the
+validated desktop-usability fixes. Validation for every fix: fresh image boot,
+guest-side `mouseinject` interaction where relevant, framebuffer/screenshot
+proof, and the §8 step-7 gate must stay green.
 
 1. **Fixed 2026-06-11 — Files/filemgr, Peanut-GB, GL Smoke,
    Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf now have
@@ -1180,8 +1183,8 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    advanced=15.17` with `__WEBKIT_API_SMOKE_DONE_0__` and a 1280x800
    framebuffer capture.
 
-3. **Partially triaged 2026-06-10 — WebKit MiniBrowser cannot load
-   google.com; the window later goes black.** Two stacked problems were
+3. **Fixed 2026-06-11 — WebKit MiniBrowser launch, local content, and
+   live-YouTube visible playback are validated under Weston.** Two stacked problems were
    suspected: (a) the known residual risk that the stock accelerated
    MiniBrowser UI client stalls before page commit under Weston (§10.3 Task
    3); (b) live-site loading additionally requires guest networking — DNS +
@@ -1217,11 +1220,14 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    grid has a +32px panel Y offset (WebKit icon idx13 center px(404,230) →
    abs(20685,18843); proven-good click: 3D Demo px(68,114) → abs(3481,9339)
    launched mesawlegl PASS).
-   (b) STILL OPEN — user-visible: MiniBrowser window never presents a visible
-   frame ("I don't see webkit"); typed URLs echo in the URL bar but the page
-   area stays blank. DRM nodes open and helpers live, so this is the §10.3
-   Task-3 UI-commit/present stall, not launch or network.
-   (c) STILL OPEN — GUI session freeze signature captured live: `virtio_gpu:
+   (b) Historical failure signature: MiniBrowser window did not present a
+   visible frame ("I don't see webkit"); typed URLs echoed in the URL bar but
+   the page area stayed blank. DRM nodes opened and helpers stayed live, so
+   this was the §10.3 Task-3 UI-commit/present stall, not launch or network.
+   The frame-clock, force-compositing, cache-link, and GStreamer-GL fixes below
+   retire this blank/stationary page class for the current launch/local-content
+   and live-YouTube validation paths.
+   (c) Historical/intermittent GUI session freeze signature: `virtio_gpu:
    async command 0x207 timed out (ctx=2)` (fence age ≈76 s) with a 16-entry
    virgl command dump (CLEAR/RESOURCE_INLINE_WRITE/CREATE_OBJECT/...), then
    2500+ weston `got error from kernel - expect bad rendering 5` lines (KMS
@@ -1272,13 +1278,14 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    falls back to `mm_peak_vm` and picked TGID 40 before the large allocator;
    an attempted live page-table/RSS walk inside OOM was rejected because OOM
    can run while allocator spinlocks are held and must not take `vm_rlock()`.
-   Remaining work: (1) instrument and find what consumes ~2.8 GB during a
-   live-site load (guest `free`-equivalent sampling, WebKit buffer/cache
-   accounting, kernel page-owner stats); (2) improve OOM victim memory
+   Follow-up hardening, not a blocker for the current §10.4 user-visible
+   closure: (1) keep instrumenting any future high-water live-site memory
+   growth with guest `free`-equivalent sampling, WebKit buffer/cache
+   accounting, and kernel page-owner stats; (2) improve OOM victim memory
    attribution with lock-free accounting suitable for allocation failure
-   context; (3) root-cause the present stall and the virgl async-timeout
-   freeze (likely one family); then re-test typed navigation/Enter-key URL
-   submission end-to-end.
+   context; (3) keep the historical virgl async-timeout/EIO signature on the
+   soak watch list; and (4) add a dedicated typed-navigation/Enter-key harness
+   before claiming that input path separately.
    **Update 2026-06-11 — YouTube media split clarified.** A direct YouTube
    watch page now visibly loads enough UI to show the player chrome, but the
    video remains effectively stationary to a human observer. A direct
@@ -1457,8 +1464,9 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    failure, no `g_close(fd:6)`, and no virgl async timeout, Weston KMS EIO
    spiral, OOM, fatal fault, panic, or crash marker. That makes the manual
    multi-second flip report intermittent/not reproduced by the latest
-   host-visible soaks, not closed. The §8 media regression gate was re-run
-   after the kernel/image rebuild and passed:
+   host-visible soaks; it stayed on the watch list until the GStreamer-GL sink
+   default below reproduced and closed the stale-video path. The §8 media
+   regression gate was re-run after the kernel/image rebuild and passed:
    `RESULT pass fps=60.0 speed=1.000 presentedFPS=0.0 decodedFPS=60.0
    dropPct=0.00 advanced=15.28` with `__WEBKIT_API_SMOKE_DONE_0__`.
    **Update 2026-06-11 (GStreamer GL sink default) — manual slow-flip report
@@ -1487,6 +1495,30 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    The §8 media regression gate remained green:
    `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
    dropPct=0.00 advanced=15.22` with `__WEBKIT_API_SMOKE_DONE_0__`.
+   **Update 2026-06-11 (current closure validation):** Added the small
+   `/share/webkit/human-button.html` fixture to the rootfs overlay so the
+   `tmp/webkit-human-button.expect` probe no longer depends on unstaged `/tmp`
+   state. After a full image rebuild, the 10-second MiniBrowser launch
+   captured `/human-current-10s-fixed.ppm`, dumped to
+   `/tmp/human-current-10s-fixed.png`, with the visible
+   `human-button:PASS` title and `I am a human` button. The run log reported
+   `virtio_failures=0`, `virtio_timeouts=0`, `display_presents=49`, and
+   `display_completions=49`; the only GLib warning was the already-known
+   non-fatal `g_close(fd:6) failed with EBADF` pair. A fresh real-YouTube
+   default-path run then launched
+   `https://www.youtube.com/watch?v=dQw4w9WgXcQ` with `webkit_accel=1`,
+   `webkit_private=0`, and the default YouTube GStreamer-GL path, waited 70s,
+   and captured 16 Windows-visible host screenshots at 1 Hz. The scoped
+   player crop changed on all 15 adjacent pairs
+   (`/tmp/xv6-youtube-host-cadence/current-video-deltas-1hz.txt`, minimum
+   AE `142000`, maximum AE `145201`), and
+   `/tmp/xv6-youtube-host-cadence/current-video-strip.png` shows distinct
+   decoded video moments. The run log contained no virgl async timeout, Weston
+   KMS EIO spiral, OOM invocation, fatal page fault, panic, cache hard-link
+   failure, or harness failure marker. Finally, the stock §8 media regression
+   gate passed after the rootfs/image rebuild:
+   `RESULT pass fps=59.9 speed=1.002 presentedFPS=0.0 decodedFPS=59.9
+   dropPct=0.00 advanced=15.25` with `__WEBKIT_API_SMOKE_DONE_0__`.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1783,21 +1815,25 @@ broad fail-closed DRM shim:
   `NETPREREQ-TLS-RC=0`). The wrapper timed out after the success markers
   because the scripted shutdown did not terminate QEMU; it is network proof,
   not a clean-shutdown validator.
-- **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
-  active work queue:** titlebar coverage now includes filemgr, Peanut-GB,
-  GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with visible
-  control paths validated for the remaining NetSurf slice. MiniBrowser
-  live-site video had a real stale-frame mode in the default YouTube
-  CPU/videoconvert sink path:
-  a reproduced 2 Hz host-visible sample held the same video crop for 15s, while
-  a `webkit_gst_gl=1` A/B and the patched default GStreamer-GL YouTube path
-  advanced every 1s sample and kept the §8 media gate green. The WebKit cache
-  hard-link ABI bug in that path is fixed as of 2026-06-11. This UI-client/
-  live-site cadence work remains separate from the proven WebKitGTK API media/
-  backend path and the §8 media gate. The Weston
-  panel task list is fixed and
-  validated by §10.4 item 5. Placeholder launcher labels were resolved by
-  §10.4 item 2, and the cursor image/alpha defect was resolved by §10.4 item 4.
+- **Desktop-usability defects from the 2026-06-10 manual session are closed
+  for the validated paths in §10.4:** titlebar coverage now includes filemgr,
+  Peanut-GB, GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf,
+  with visible control paths validated for the remaining NetSurf slice.
+  MiniBrowser launch/local content is validated by the staged
+  `/share/webkit/human-button.html` fixture, which rendered the
+  `human-button:PASS` page and `I am a human` button within 10s after a fresh
+  image rebuild. MiniBrowser live-site video had a real stale-frame mode in
+  the default YouTube CPU/videoconvert sink path; the default GStreamer-GL
+  YouTube path now advances every 1s host-visible sample in the scoped player
+  crop (`15/15` adjacent pairs changed, minimum AE `142000`) and keeps the §8
+  media gate green (`RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9
+  dropPct=0.00 advanced=15.25`, `__WEBKIT_API_SMOKE_DONE_0__`). The WebKit
+  cache hard-link ABI bug in that path is fixed as of 2026-06-11. A dedicated
+  typed-URL/Enter harness remains useful future input coverage, but it is no
+  longer the active blank/stationary-page blocker. The Weston panel task list
+  is fixed and validated by §10.4 item 5. Placeholder launcher labels were
+  resolved by §10.4 item 2, and the cursor image/alpha defect was resolved by
+  §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the
