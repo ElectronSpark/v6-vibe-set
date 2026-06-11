@@ -1463,6 +1463,32 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    after the kernel/image rebuild and passed:
    `RESULT pass fps=60.0 speed=1.000 presentedFPS=0.0 decodedFPS=60.0
    dropPct=0.00 advanced=15.28` with `__WEBKIT_API_SMOKE_DONE_0__`.
+   **Update 2026-06-11 (GStreamer GL sink default) — manual slow-flip report
+   reproduced and narrowed.** A short default real-YouTube host-cadence run
+   reproduced the user's observation: after a 70s warmup, 31 Windows-visible
+   screenshots at 2 Hz held the same visible video crop for all 30 adjacent
+   pairs (`0` changed pixels in
+   `/tmp/xv6-youtube-host-cadence/video-deltas-2hz-current.txt`), while the
+   full host screenshot changed only 26,540 pixels. Crop inspection confirmed
+   the sampled region covered the displayed Rick Astley video/subtitle area,
+   so this was real stale video presentation, not a whole-desktop freeze. An
+   autolaunch diagnostic showed WebKit helpers alive and GStreamer decoding
+   H.264 with QoS frame drops, while MiniBrowser's `/tmp/webkit-media-probe`
+   file stayed absent for this live page. The decisive A/B was
+   `webkit_gst_gl=1`: with the same URL and warmup, all 15 adjacent 1 Hz video
+   crop pairs changed (~6.6k-7.0k pixels in
+   `/tmp/xv6-youtube-host-cadence/gl-video-deltas-1hz.txt`) and the visible
+   frame advanced. `ports/wayland/src/desktop.c` now enables the GStreamer GL
+   sink by default for YouTube-compat MiniBrowser launches, preserving
+   `webkit_gst_gl=0` as an opt-out. Rebuilt `port-wayland` and the full image,
+   then reran the default path with no explicit `webkit_gst_gl=1`; all 15
+   adjacent 1 Hz crop pairs changed (~44.6k-45.0k pixels in
+   `/tmp/xv6-youtube-host-cadence/default-video-deltas-1hz-after-gstgl-default.txt`;
+   tighter crop ~37k in
+   `/tmp/xv6-youtube-host-cadence/default-video-tight-deltas-1hz-after-gstgl-default.txt`).
+   The §8 media regression gate remained green:
+   `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
+   dropPct=0.00 advanced=15.22` with `__WEBKIT_API_SMOKE_DONE_0__`.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1743,13 +1769,14 @@ broad fail-closed DRM shim:
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** titlebar coverage now includes filemgr, Peanut-GB,
   GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with NetSurf
-  maximize-control routing still residual. MiniBrowser live-site video remains
-  a soak item because a human observer saw bursty multi-second flips, even
-  though guest/host samples can keep advancing; the WebKit cache hard-link
-  ABI bug in that path is fixed as of 2026-06-11, and later corrected host
-  video-crop soaks at 5 Hz and 2 Hz did not reproduce a multi-second present
-  stall. This UI-client/live-site cadence work remains separate from the
-  proven WebKitGTK API media/backend path and the §8 media gate. The Weston
+  maximize-control routing still residual. MiniBrowser live-site video had a
+  real stale-frame mode in the default YouTube CPU/videoconvert sink path:
+  a reproduced 2 Hz host-visible sample held the same video crop for 15s, while
+  a `webkit_gst_gl=1` A/B and the patched default GStreamer-GL YouTube path
+  advanced every 1s sample and kept the §8 media gate green. The WebKit cache
+  hard-link ABI bug in that path is fixed as of 2026-06-11. This UI-client/
+  live-site cadence work remains separate from the proven WebKitGTK API media/
+  backend path and the §8 media gate. The Weston
   panel task list is fixed and
   validated by §10.4 item 5. Placeholder launcher labels were resolved by
   §10.4 item 2, and the cursor image/alpha defect was resolved by §10.4 item 4.
