@@ -987,9 +987,9 @@ against the source the same day. These are the **open** items this plan now
 tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
-1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, GL Smoke,
+1. **Fixed 2026-06-11 — Files/filemgr, Peanut-GB, GL Smoke,
    Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf now have
-   client-drawn titlebars; NetSurf maximize-control proof remains residual.**
+   client-drawn titlebars; the NetSurf residual control path is validated.**
    Original defect: no window titlebar on non-toytoolkit clients (observed on
    3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
@@ -1130,39 +1130,37 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    rect=0,0 1280x800`, emitted
    `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
    dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   NetSurf now installs a narrow GTK client-side titlebar on its browser
-   window in `frontends/gtk/scaffolding.c`: a custom titlebar widget labeled
-   `NetSurf` with `-`, `[]`, and `x` controls, close wired to destroy the
-   browser window, minimize wired through GTK iconify, and maximize implemented
-   as a conservative resize toggle instead of native maximize. The native
-   maximize/hit path remained ambiguous under the current Weston/XDG routing,
-   so this slice does not claim complete maximize-control validation. Runtime
-   proof launched NetSurf from the desktop Browser icon after rebuilding
-   `port-netsurf`, `port-wayland`, and the full image; framebuffer proof
-   `/tmp/xv6-netsurf-titlebar/netsurf-titlebar-box.png` shows the NetSurf
-   window mapped with a visible titlebar and controls. Guest-side
-   `mouseinject` proof captured
-   `/tmp/xv6-netsurf-titlebar/netsurf-close-before.png` and
-   `/tmp/xv6-netsurf-titlebar/netsurf-close-after.png`, with the app log
-   reporting `child 51 exited`, proving the close control returns to the
-   desktop. Minimize/no-disappear proof captured
-   `/tmp/xv6-netsurf-titlebar/netsurf-max-alt-after.png`, where the window
-   remained visible after the control click under Weston's current minimize
-   mitigation. Clicking the visual maximize square center still produced an
-   app exit in the automation, so keep that as a NetSurf control-routing polish
-   item rather than marking the control set complete. The NetSurf content area
-   still reports `about:welcome`/`BadEncoding`; that is separate from this
-   decoration proof. The requested stock §8 media gate stayed green after the
-   final NetSurf source change:
+   NetSurf now installs a narrow GTK client-side control row inside the browser
+   content box in `frontends/gtk/scaffolding.c`: a custom `NetSurf` row with
+   `-`, `[]`, and `x` controls. The first GTK CSD attempt was ambiguous under
+   the current Weston/server-decoration stack because the apparent frame target
+   still routed through the surrounding decoration and could close the app when
+   the automation intended maximize. The final path inserts the row at the top
+   of NetSurf's `box1` content container, wires close to destroy the browser
+   window, makes minimize a no-hide `gtk_window_present()` action until there
+   is a true task-list restore flow, and implements maximize as a conservative
+   per-window resize toggle. Runtime proof launched NetSurf from the desktop
+   Browser icon after a forced `port-netsurf-clean`, `port-netsurf`,
+   `port-wayland`, and full-image rebuild. Guest-side `mouseinject` proof
+   clicked the visible client-row controls at `NETSURF_Y=9175`: maximize at
+   `NETSURF_X=57800` captured `/tmp/netsurf-max-ok-before.png` and
+   `/tmp/netsurf-max-ok-after.png` with `compare` AE `121534` and the window
+   still visible/resized; minimize at `NETSURF_X=54800` captured
+   `/tmp/netsurf-min-final-before.png` and `/tmp/netsurf-min-final-after.png`
+   with AE `2066` and the window still visible; close at `NETSURF_X=60722`
+   logged the NetSurf child exit after the click, proving the close path exits
+   the window. The NetSurf content area still reports
+   `about:welcome`/`BadEncoding`; that is separate from this decoration proof.
+   The requested stock §8 media gate stayed green after the final NetSurf
+   source change:
    `REPO_ROOT=/home/es/xv6-os timeout 320 expect
    scripts/gpu/perf-video-gate.expect` emitted
-   `RESULT pass fps=59.9 speed=1.001 presentedFPS=0.0 decodedFPS=59.9
-   dropPct=0.00 advanced=15.28` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+   `RESULT pass fps=60.1 speed=1.003 presentedFPS=0.0 decodedFPS=60.1
+   dropPct=0.00 advanced=15.23` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
    Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
-   `xdg-decoration` server-side support to the shell. Remaining titlebar
-   polish: NetSurf maximize-control hit/route validation.
+   `xdg-decoration` server-side support to the shell.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1742,6 +1740,25 @@ broad fail-closed DRM shim:
   rect=0,0 1280x800`, emitted
   `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
   dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+- **NetSurf titlebar slice fixed (2026-06-11):** NetSurf now inserts a
+  client-side `NetSurf` control row into the browser content box, with
+  minimize/maximize/close controls that avoid the ambiguous server-decoration
+  hit path. Guest-side `mouseinject` proof captured
+  `/tmp/netsurf-max-ok-before.png` and `/tmp/netsurf-max-ok-after.png` after
+  maximize (`compare` AE `121534`, window still visible/resized),
+  `/tmp/netsurf-min-final-before.png` and
+  `/tmp/netsurf-min-final-after.png` after minimize (`compare` AE `2066`,
+  window still visible), and a close-control run where the NetSurf child exited
+  after the click. Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-netsurf-clean -j$(nproc)`,
+  `cmake --build build-x86_64/ports --target port-netsurf -j$(nproc)`,
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)`, and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-NetSurf-titlebar media gate (2026-06-11):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run exited 0 and emitted
+  `RESULT pass fps=60.1 speed=1.003 presentedFPS=0.0 decodedFPS=60.1
+  dropPct=0.00 advanced=15.23` plus `__WEBKIT_API_SMOKE_DONE_0__`.
 - **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
   scripts/gpu/perf-video-gate.expect` run emitted
@@ -1768,9 +1785,10 @@ broad fail-closed DRM shim:
   not a clean-shutdown validator.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** titlebar coverage now includes filemgr, Peanut-GB,
-  GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with NetSurf
-  maximize-control routing still residual. MiniBrowser live-site video had a
-  real stale-frame mode in the default YouTube CPU/videoconvert sink path:
+  GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with visible
+  control paths validated for the remaining NetSurf slice. MiniBrowser
+  live-site video had a real stale-frame mode in the default YouTube
+  CPU/videoconvert sink path:
   a reproduced 2 Hz host-visible sample held the same video crop for 15s, while
   a `webkit_gst_gl=1` A/B and the patched default GStreamer-GL YouTube path
   advanced every 1s sample and kept the §8 media gate green. The WebKit cache
