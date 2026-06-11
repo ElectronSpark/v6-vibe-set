@@ -15,8 +15,9 @@ shell-owned desktop icons, cursor theming, real ELF icon launches, chrome icon
 fallbacks, and staged Adwaita DND cursors). The follow-up cursor/minimize
 round is validated and recorded through kernel `f9d20fd`, user `dd0becb`,
 ports `290f68f` (Wayland source `3c5ad4f`, Weston source `f046fa6`):
-cursor uploads now contain nonzero image/alpha pixels and minimize requests
-stay visible until a real task list exists. Host-visible zero-copy blob is
+cursor uploads now contain nonzero image/alpha pixels. A later Weston shell
+round adds the missing panel task list and makes minimize reachable through
+task tabs. Host-visible zero-copy blob is
 reclassified as an optional, host-refused optimization: the init-time probe
 proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
 this host runs a full virgl desktop using only the classic transfer model.
@@ -24,10 +25,11 @@ Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
 
 **Active work queue:** a 2026-06-10 hands-on desktop session surfaced open
 usability defects — missing window titlebars, MiniBrowser navigation failure +
-black window, and no panel task list. They are triaged with root causes in
+black window, and missing panel task list. They are triaged with root causes in
 **§10.4**; everything else in this plan is landed/validated background. The
 placeholder launcher labels and the cursor-image/black-box path from the same
-session were fixed on 2026-06-10.
+session were fixed on 2026-06-10; the panel task list is fixed in the
+2026-06-11 Weston shell follow-up recorded below.
 
 ## Implementation status (2026-06-07)
 
@@ -1421,16 +1423,39 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    the same rebuilt image, proving the kernel tmpfs/MAP_SHARED content-preserve
    contract independently of Weston.
 
-5. **No taskbar tabs for open windows.** Stock Weston desktop-shell's panel
-   hosts only launchers + a clock (`ports/weston/src/clients/desktop-shell.c`,
-   `panel_launcher_*`); there is no window list, so running apps have no panel
-   presence. **Mitigation 2026-06-10:** the shell now ignores minimize requests
-   instead of moving surfaces to `minimized_layer`, so a titlebar minimize click
-   cannot make a window unreachable while the panel lacks task tabs. Full fix:
-   extend the shell-owned panel with a task-list widget — requires plumbing a
-   toplevel list to the shell client (extend the private
-   `weston-desktop-shell` protocol or adopt a foreign-toplevel-management-style
-   protocol) with activate/minimize on click.
+5. **Fixed 2026-06-11 — Weston panel now exposes task tabs for open windows.**
+   Original defect: stock Weston desktop-shell's panel hosted only launchers +
+   a clock (`ports/weston/src/clients/desktop-shell.c`, `panel_launcher_*`);
+   running apps had no panel presence, and a true minimize path would make
+   windows unreachable. The fix extends Weston's private
+   `weston_desktop_shell` protocol with task add/remove/active events plus an
+   `activate_task` request. The shell assigns stable task IDs to mapped
+   top-level desktop surfaces, advertises title/app-id text to the shell
+   client, replays existing tasks when the shell client binds, sends active
+   state on focus changes, and removes task entries when surfaces unmap or are
+   destroyed. `weston-desktop-shell` now draws clipped task tabs between the
+   launchers and the clock, highlights the active tab, activates/raises an
+   inactive task on click, and minimizes the active task on click. With a real
+   task list present, titlebar minimize requests now call the shell minimize
+   path instead of being ignored.
+
+   Validation used a fresh Weston rebuild with protocol generation and relink:
+   `cmake --build build-x86_64/ports --target port-weston-clean`,
+   `cmake --build build-x86_64/ports --target port-weston -j$(nproc)`,
+   followed by the required `port-wayland` and full-image rebuilds. The
+   temporary guest-side harness `tmp/weston-tasklist-validate.expect` opened
+   `weston-terminal`, launched NetSurf from the Browser desktop icon, and used
+   `mouseinject` clicks against the panel task region. Framebuffer proof:
+   `/tmp/tasklist-before3.png` shows both `Wayland Terminal` and NetSurf task
+   tabs with NetSurf active; `/tmp/tasklist-after3.png` shows clicking the
+   terminal tab raises and activates the terminal; and
+   `/tmp/tasklist-minimized3.png` shows clicking the active terminal tab
+   minimizes it while both task tabs remain visible and NetSurf is visible
+   again. The required §8 gate stayed green after the final shell change:
+   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+   scripts/gpu/perf-video-gate.expect` emitted
+   `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
+   dropPct=0.00 advanced=15.29` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
 
 ---
 
@@ -1665,9 +1690,9 @@ broad fail-closed DRM shim:
   visibly bursty to a human observer even though guest framebuffer samples can
   keep advancing and the desktop stays responsive; this UI-client/live-site
   cadence work remains separate from the proven WebKitGTK API media/backend
-  path and the §8 media gate. The panel still has no task list for open
-  windows. Placeholder launcher labels were resolved by §10.4 item 2, and the
-  cursor image/alpha defect was resolved by §10.4 item 4.
+  path and the §8 media gate. The Weston panel task list is fixed and
+  validated by §10.4 item 5. Placeholder launcher labels were resolved by
+  §10.4 item 2, and the cursor image/alpha defect was resolved by §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the
