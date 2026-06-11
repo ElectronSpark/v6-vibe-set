@@ -1238,7 +1238,7 @@ pushes still require an explicit operator decision.
    `.desktop` dry-run, and temporary-overlay file-generation checks pass; a
    `/bin/true` temp-overlay import writes five hashed manifest entries, and an
    `eglgears_wayland` dry-run reports 13 copied support libs with 4
-   guest-runtime skips. Runtime GUI proof is still required.
+   guest-runtime skips. Runtime GUI proof is deferred.
    *Build scope:* importer script + `image`; ABI fixes as they surface →
    `kernel`/`user` + `image`.
    *Deferred done when:* one imported host GUI app meets the §10.5 validation rule
