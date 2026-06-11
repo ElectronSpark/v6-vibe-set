@@ -1431,6 +1431,27 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    KMS EIO spiral, OOM, or fatal page fault markers. Therefore the manual
    multi-second flip symptom remains intermittent/not reproduced by this
    sample, rather than a deterministic current host-window present stall.
+   **Update 2026-06-11 (hard-link path fix) — WebKit cache churn had a real
+   xv6 ABI bug.** The repeated live-site `Failed to create hard link from
+   .../WebKitCache/Version 17/Blobs/... to .../Records/.../Resource/...-blob`
+   diagnostics were traced to xv6, not WebKit: the source path is about 107
+   bytes, but the destination path is about 166 bytes, while `sys_vfs_linkat()`
+   still copied both user paths into `MAXPATH` (128-byte) stack buffers.
+   `link()` and `linkat()` now use the existing VFS 4096-byte user-path helper
+   and dynamic destination leaf buffer, matching the newer `openat()` and
+   `renameat()` shape. Rebuilt the kernel and full image, then re-ran a real
+   YouTube watch-page sample with the Windows-visible host-cadence harness
+   (`WEBKIT_YOUTUBE_WARMUP=70`, 24 one-second captures). The patched run had
+   zero `Failed to create hard link`, zero `g_close(fd:6)`, and no virgl async
+   timeout, Weston KMS EIO spiral, OOM, fatal fault, panic, or crash marker.
+   Every adjacent player crop changed (`23/23`, minimum 81,969 changed pixels,
+   average about 85k), so this sample shows visible playback progress after the
+   hard-link fix. Keep the user's manual "flips every few to ten seconds"
+   observation open for longer/trigger-specific soak, but the WebKit disk-cache
+   hard-link failure itself is fixed. The §8 media regression gate was re-run
+   after the kernel/image rebuild and passed:
+   `RESULT pass fps=60.0 speed=1.000 presentedFPS=0.0 decodedFPS=60.0
+   dropPct=0.00 advanced=15.28` with `__WEBKIT_API_SMOKE_DONE_0__`.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1712,8 +1733,9 @@ broad fail-closed DRM shim:
   active work queue:** titlebar coverage now includes filemgr, Peanut-GB,
   GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with NetSurf
   maximize-control routing still residual. MiniBrowser live-site video remains
-  visibly bursty to a human observer even though guest framebuffer samples can
-  keep advancing and the desktop stays responsive; this UI-client/live-site
+  a soak item because a human observer saw bursty multi-second flips, even
+  though guest/host samples can keep advancing; the WebKit cache hard-link
+  ABI bug in that path is fixed as of 2026-06-11. This UI-client/live-site
   cadence work remains separate from the proven WebKitGTK API media/backend
   path and the §8 media gate. The Weston panel task list is fixed and
   validated by §10.4 item 5. Placeholder launcher labels were resolved by
