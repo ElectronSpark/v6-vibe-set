@@ -1541,6 +1541,38 @@ proof, and the §8 step-7 gate must stay green.
    spiral, OOM, fatal fault, or panic markers. Treat the remaining
    post-launch serial-input/readback stalls as a harness/TTY limitation unless
    accompanied by framebuffer, GDB, or kernel error evidence.
+   **Update 2026-06-11 (residual YouTube jitter triage):** The remaining
+   YouTube symptom is no longer the old blank/stationary MiniBrowser present
+   failure. A persistent GStreamer diagnostic run against the real watch page
+   captured `/webkit-gst-debug.log` and showed real decoder-side pressure:
+   `avdec_h264-0` emitted 39 `Dropping frame due to QoS` warnings over about
+   65 seconds of media time, with lateness bursts in the tens to roughly 200ms
+   range, while the visible host window continued to advance. That explains
+   the user's "improved significantly, but still jitter" report as occasional
+   H.264 decode/sink scheduling pressure, not a wedged virtio ring, Weston KMS
+   EIO spiral, OOM, or blank WebKit present path. The launcher now makes the
+   YouTube-compat path's prior validation cap the default:
+   `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` is selected for YouTube unless
+   `webkit_gst_max_avc1_480p=0` is explicitly supplied, and the MiniBrowser
+   launch log records `gst_gl` plus `max_avc1_480p` for future proof. It also
+   can persist `/webkit-runtime-probe.log` and `/webkit-gst-debug.log` when
+   `webkit_gst_debug_persist=1` is present, avoiding reliance on volatile
+   `/tmp` logs after shutdown. After rebuilding `port-wayland` and the full
+   image, a real YouTube run whose cmdline intentionally omitted
+   `webkit_gst_max_avc1_480p=1` still advanced in every Windows-visible host
+   screenshot pair after warmup: 32 captures at the requested 2 Hz, wider
+   player crop `760x430+545+418`, all 31 adjacent pairs changed
+   (`/tmp/xv6-youtube-host-cadence/defaultcap-player-deltas-2hz.txt`,
+   minimum AE `82598`, average about `87400`), and
+   `/tmp/xv6-youtube-host-cadence/defaultcap-player-strip.png` shows distinct
+   decoded moments. The run log had no virgl async timeout, Weston KMS EIO
+   spiral, OOM, fatal page fault, panic, cache hard-link failure, or harness
+   failure marker. The §8 media regression gate stayed green after the final
+   image rebuild: `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0
+   decodedFPS=60.0 dropPct=0.00 advanced=15.28` with
+   `__WEBKIT_API_SMOKE_DONE_0__`. Keep live-YouTube smoothness on the watch
+   list as a decode/scheduling QoS issue; do not reopen the fixed blank-page
+   or stale-present bugs without matching framebuffer/log evidence.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
