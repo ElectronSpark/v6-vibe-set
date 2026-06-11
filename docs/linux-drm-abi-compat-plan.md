@@ -1519,6 +1519,28 @@ proof, and the §8 step-7 gate must stay green.
    gate passed after the rootfs/image rebuild:
    `RESULT pass fps=59.9 speed=1.002 presentedFPS=0.0 decodedFPS=59.9
    dropPct=0.00 advanced=15.25` with `__WEBKIT_API_SMOKE_DONE_0__`.
+   **Update 2026-06-11 (desktop-icon end-to-end retest):** The WebKit desktop
+   icon path was retested as one user-visible flow rather than as a separate
+   direct-launch control. The old `mouseinject dblclick` burst remained
+   timing-sensitive for Weston desktop-shell activation, so the temporary
+   `tmp/icon-webkit-validate.expect` now drives two explicit guest-side
+   press/release clicks with shell round-trips and pre-arms a delayed
+   framebuffer capture before launching WebKit, avoiding post-launch serial
+   readback as a proof channel. Runtime evidence:
+   `cat /tmp/weston-desktop-shell-app.log` reported
+   `webkit_gpu_policy name=MiniBrowser ... gpu_contract=virgl-opengl-submit
+   fallback=none` and `[desktop] launch-webkit MiniBrowser pid=60
+   url=https://www.google.com/search?q=xv6&gbv=1`; the delayed in-guest
+   capture logged `fb_ppm_current path=/icon-webkit-explicit.ppm
+   screen=1280x800 scanout=1280x800`; `debugfs` dumped a 1280x800 PPM from
+   `build-x86_64/fs.img`, converted to `/tmp/icon-webkit-explicit.png`, and
+   visual inspection shows the MiniBrowser window with Google search results
+   for `xv6` (not blank). A live GDB sample during the previous post-launch
+   quiet period showed all CPUs idle, MiniBrowser/WebKitNetwork/WebKitWebProcess
+   alive, the mouse ring drained, and no virgl async timeout, Weston KMS EIO
+   spiral, OOM, fatal fault, or panic markers. Treat the remaining
+   post-launch serial-input/readback stalls as a harness/TTY limitation unless
+   accompanied by framebuffer, GDB, or kernel error evidence.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
