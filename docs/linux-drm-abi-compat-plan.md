@@ -1260,13 +1260,27 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    `tmp/webkit-autoprobe.expect` + `/tmp/probe-fs.img` (debugfs-injected
    `/etc/startup` autorun probe, immune to serial-input death; note: in-guest
    `sh` scripts must avoid `2>&1`-style redirects it does not support).
+   **Update 2026-06-11 (OOM lifetime hardening):** the OOM kill-path
+   `thread_group` lifetime bug is fixed in the kernel by taking a real
+   `thread_group` reference while selecting, scoring, and signaling a victim
+   instead of reusing an unpinned `get_thread_group()` result across OOM
+   scan/kill windows. Focused runtime proof used a 768 MB nographic KVM boot
+   (`desktop=0`, `webkit=0`, `QEMU_GPU=none`) and a Python loop allocating
+   16 MB chunks until exhaustion: OOM invoked and completed repeatedly, no
+   `slab_free`, `thread_group` free-slab, panic, or `IPI_REASON_CRASH` marker
+   appeared, Python faulted/coredumped under pressure, and `init` restarted a
+   shell (`OOMTEST-DONE oom=1 done=1 survived=1`). This is only the lifetime
+   crash fix. Victim selection remains weak because current OOM badness still
+   falls back to `mm_peak_vm` and picked TGID 40 before the large allocator;
+   an attempted live page-table/RSS walk inside OOM was rejected because OOM
+   can run while allocator spinlocks are held and must not take `vm_rlock()`.
    Remaining work: (1) instrument and find what consumes ~2.8 GB during a
    live-site load (guest `free`-equivalent sampling, WebKit buffer/cache
-   accounting, kernel page-owner stats); (2) fix the kernel OOM-kill slab
-   corruption (`thread_group` double-free) so OOM kills a process instead of
-   crashing the machine; (3) root-cause the present stall and the virgl
-   async-timeout freeze (likely one family); then re-test typed
-   navigation/Enter-key URL submission end-to-end.
+   accounting, kernel page-owner stats); (2) improve OOM victim memory
+   attribution with lock-free accounting suitable for allocation failure
+   context; (3) root-cause the present stall and the virgl async-timeout
+   freeze (likely one family); then re-test typed navigation/Enter-key URL
+   submission end-to-end.
    **Update 2026-06-11 — YouTube media split clarified.** A direct YouTube
    watch page now visibly loads enough UI to show the player chrome, but the
    video remains effectively stationary to a human observer. A direct
