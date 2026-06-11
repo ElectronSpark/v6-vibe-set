@@ -1448,7 +1448,18 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    average about 85k), so this sample shows visible playback progress after the
    hard-link fix. Keep the user's manual "flips every few to ten seconds"
    observation open for longer/trigger-specific soak, but the WebKit disk-cache
-   hard-link failure itself is fixed. The §8 media regression gate was re-run
+   hard-link failure itself is fixed. A later corrected-crop host sampler
+   narrowed the Windows-visible crop to the actual video rectangle
+   (`480x240+762+620`) instead of the whole QEMU window. At 5 Hz for 60
+   captures, all 59 adjacent video-crop pairs changed (minimum 41,276 changed
+   pixels, average about 104k). A longer 2 Hz soak was cut short by the outer
+   timeout after 119 captures, but all 118 adjacent video-crop pairs still
+   changed, with no low-change run below 10k pixels (minimum 35,831, average
+   about 86k). The logs for those runs again had no WebKit cache hard-link
+   failure, no `g_close(fd:6)`, and no virgl async timeout, Weston KMS EIO
+   spiral, OOM, fatal fault, panic, or crash marker. That makes the manual
+   multi-second flip report intermittent/not reproduced by the latest
+   host-visible soaks, not closed. The §8 media regression gate was re-run
    after the kernel/image rebuild and passed:
    `RESULT pass fps=60.0 speed=1.000 presentedFPS=0.0 decodedFPS=60.0
    dropPct=0.00 advanced=15.28` with `__WEBKIT_API_SMOKE_DONE_0__`.
@@ -1735,9 +1746,11 @@ broad fail-closed DRM shim:
   maximize-control routing still residual. MiniBrowser live-site video remains
   a soak item because a human observer saw bursty multi-second flips, even
   though guest/host samples can keep advancing; the WebKit cache hard-link
-  ABI bug in that path is fixed as of 2026-06-11. This UI-client/live-site
-  cadence work remains separate from the proven WebKitGTK API media/backend
-  path and the §8 media gate. The Weston panel task list is fixed and
+  ABI bug in that path is fixed as of 2026-06-11, and later corrected host
+  video-crop soaks at 5 Hz and 2 Hz did not reproduce a multi-second present
+  stall. This UI-client/live-site cadence work remains separate from the
+  proven WebKitGTK API media/backend path and the §8 media gate. The Weston
+  panel task list is fixed and
   validated by §10.4 item 5. Placeholder launcher labels were resolved by
   §10.4 item 2, and the cursor image/alpha defect was resolved by §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
