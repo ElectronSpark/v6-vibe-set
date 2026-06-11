@@ -1626,6 +1626,40 @@ proof, and the §8 step-7 gate must stay green.
 
 ---
 
+### 10.5 Host GUI programs as native guest processes — planned follow-up
+
+The goal is simple: an x86_64 Linux GUI binary from the host should be able to
+run **inside xv6** as a normal guest process. xv6 should provide the Linux ABI
+that the program expects; the answer is not host-side forwarding, a remote
+desktop trick, or per-application rewrites.
+
+First implementation slice:
+
+- Provide an offline importer for a host executable or `.desktop` file. It
+  copies the program, ELF interpreter, shared-library closure, and required app
+  data into the x86_64 guest image, then creates a guest desktop entry.
+- Preserve xv6's own graphics/runtime stack while importing. Do not overwrite
+  the staged Wayland, Mesa, DRM, or Weston libraries with host copies unless a
+  future compatibility test proves that is safe.
+- Launch imported apps through the existing Weston session with the same
+  guest-side environment discipline used for the validated WebKit path:
+  `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, toolkit backend hints, and a per-app
+  log under `/tmp`.
+- When an imported program fails, fix the missing Linux ABI surface in xv6
+  rather than adding app-specific shortcuts. Expected work includes syscall
+  semantics, `mmap`/thread/futex behavior, procfs/sysfs expectations,
+  device/ioctl coverage, dynamic-loader assumptions, and Wayland/X11 runtime
+  support.
+
+Validation rule:
+
+- A host GUI program counts as supported only when it launches from the guest
+  desktop, maps a visible window under Weston, accepts input, exits cleanly,
+  and has log plus framebuffer/screenshot proof. Existing Weston/WebKit and
+  §8 fullscreen-video gates must stay green after the compatibility work.
+
+---
+
 ## 11. Out of scope / explicitly separate
 
 - **Hyper-V DXG / GPU-PV** (`fb_dxg_present.c`, `d3dkmthk.h`) — a Microsoft
