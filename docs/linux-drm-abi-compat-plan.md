@@ -1405,7 +1405,18 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    `GLib-CRITICAL g_close(fd:6) failed with EBADF`, host QEMU/WSLg GL
    presentation cadence, and live-site workload churn on the short list, but do
    not regress the already-proven local §8 perf-video gate while tuning the live
-   YouTube path.
+   YouTube path. A follow-up host-visible sampler used the Windows desktop
+   screenshot API from WSL after `import -window root` and `xwd -root` both
+   failed against the WSLg/Xwayland root. The temporary
+   `tmp/webkit-youtube-host-cadence.expect` harness launched the same real
+   watch URL, waited 65 seconds, then captured 16 Windows-visible screenshots
+   at 1 Hz (`/tmp/xv6-youtube-host-cadence/host-00.png` ...
+   `host-15.png`). The first and last host images show different visible
+   YouTube video moments, and every adjacent 640x360 player crop changed by
+   roughly 169k-174k pixels. The run log had no virgl async timeout, Weston
+   KMS EIO spiral, OOM, or fatal page fault markers. Therefore the manual
+   multi-second flip symptom remains intermittent/not reproduced by this
+   sample, rather than a deterministic current host-window present stall.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
