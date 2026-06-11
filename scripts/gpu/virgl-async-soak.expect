@@ -1,0 +1,151 @@
+#!/usr/bin/env expect
+# Long desktop/virgl soak for the historical async-timeout -> KMS EIO spiral.
+#
+# Defaults to the §13 closure duration (30 minutes). For harness smoke:
+#   VIRGL_SOAK_SECONDS=60 expect scripts/gpu/virgl-async-soak.expect
+
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+if {[info exists env(REPO_ROOT)]} { set root $env(REPO_ROOT) }
+
+set build "$root/build-x86_64"
+if {[info exists env(BUILD_DIR)]} { set build "$root/$env(BUILD_DIR)" }
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+
+set seconds 1800
+if {[info exists env(VIRGL_SOAK_SECONDS)] && $env(VIRGL_SOAK_SECONDS) ne ""} {
+    set seconds $env(VIRGL_SOAK_SECONDS)
+}
+set timeout_guard [expr {$seconds + 240}]
+
+set outdir "$build/virgl-async-soak"
+if {[info exists env(VIRGL_SOAK_OUTDIR)] && $env(VIRGL_SOAK_OUTDIR) ne ""} {
+    set outdir $env(VIRGL_SOAK_OUTDIR)
+}
+exec mkdir -p $outdir
+set stamp [clock format [clock seconds] -format "%Y%m%d-%H%M%S"]
+set runlog "$outdir/soak-$stamp.log"
+set shot "$outdir/soak-$stamp.ppm"
+set monsock "$outdir/soak-$stamp.monitor.sock"
+exec rm -f $monsock $shot
+
+set xres 1280
+set yres 800
+if {[info exists env(VIRGL_SOAK_XRES)] && $env(VIRGL_SOAK_XRES) ne ""} {
+    set xres $env(VIRGL_SOAK_XRES)
+}
+if {[info exists env(VIRGL_SOAK_YRES)] && $env(VIRGL_SOAK_YRES) ne ""} {
+    set yres $env(VIRGL_SOAK_YRES)
+}
+
+set token "virgl_soak=$stamp"
+set append "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=1 glsmoke_demo=1 glsmoke_accel=1 weston=1 glsmoke_seconds=[expr {$seconds + 30}] glsmoke_fbstat=1 video=${xres}x${yres} $token"
+if {[info exists env(VIRGL_SOAK_APPEND_EXTRA)] && $env(VIRGL_SOAK_APPEND_EXTRA) ne ""} {
+    set append "$append $env(VIRGL_SOAK_APPEND_EXTRA)"
+}
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  $xres
+set env(QEMU_VIRTIO_GPU_YRES)  $yres
+set env(QEMU_APPEND)           $append
+set env(QEMU_EXTRA)            "-monitor unix:$monsock,server,nowait"
+
+log_file -a $runlog
+puts "VIRGL-SOAK-BEGIN seconds=$seconds log=$runlog"
+spawn timeout --foreground $timeout_guard bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+
+set bad 0
+set ready 0
+set old_timeout $timeout
+set timeout 90
+expect {
+    -re {\[desktop\] weston pid=[0-9]+} { set ready 1 }
+    -re {renderer=virgl .*spherical-poly-demo} { set ready 1 }
+    -re {demo_surface_matrix .*status=PASS} { set ready 1 }
+    -re {panic|fatal page fault|coredump: generating|SIGABRT} {
+        puts "\nVIRGL-SOAK-FAIL crash-marker"
+        set bad 1
+    }
+    -re {virtio_gpu: async command .* timed out|virtio_gpu: command .* timed out|expect bad rendering|got error from kernel} {
+        puts "\nVIRGL-SOAK-FAIL async-eio-marker"
+        set bad 1
+    }
+    timeout {
+        puts "\nVIRGL-SOAK-FAIL no-desktop"
+        set bad 1
+    }
+    eof {
+        puts "\nVIRGL-SOAK-FAIL early-eof"
+        set bad 1
+    }
+}
+set timeout $old_timeout
+if {$bad} {
+    catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+    exit 2
+}
+
+set deadline [expr {[clock seconds] + $seconds}]
+while {[clock seconds] < $deadline} {
+    set remain [expr {$deadline - [clock seconds]}]
+    if {$remain > 15} {
+        set timeout 15
+    } else {
+        set timeout $remain
+    }
+    expect {
+        -re {mesawlegl\[[0-9]+\]: app_loop_fps=[^\r\n]*} { }
+        -re {panic|fatal page fault|coredump: generating|SIGABRT} {
+            puts "\nVIRGL-SOAK-FAIL crash-marker"
+            set bad 1
+            break
+        }
+        -re {virtio_gpu: async command .* timed out|virtio_gpu: command .* timed out|expect bad rendering|got error from kernel} {
+            puts "\nVIRGL-SOAK-FAIL async-eio-marker"
+            set bad 1
+            break
+        }
+        eof {
+            puts "\nVIRGL-SOAK-FAIL unexpected-eof"
+            set bad 1
+            break
+        }
+        timeout { }
+    }
+}
+
+if {!$bad} {
+    send "fbstat; cat /proc/uptime; echo VIRGL_SOAK_DIAG_DONE\r"
+    set timeout 45
+    expect {
+        -re {VIRGL_SOAK_DIAG_DONE} {}
+        timeout { puts "\nVIRGL-SOAK-WARN diag-timeout" }
+        eof { puts "\nVIRGL-SOAK-WARN diag-eof" }
+    }
+    catch { exec sh -c "if command -v nc >/dev/null 2>&1; then printf 'screendump $shot\\n' | nc -U -w 4 -q 1 $monsock >/dev/null 2>&1 || true; fi" }
+}
+
+catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+
+set async_count [exec sh -c {grep -aEc 'virtio_gpu: async command .* timed out|virtio_gpu: command .* timed out' "$1" || true} sh $runlog]
+set eio_count [exec sh -c {grep -aEc 'expect bad rendering|got error from kernel' "$1" || true} sh $runlog]
+set crash_count [exec sh -c {grep -aEc 'panic|fatal page fault|coredump: generating|SIGABRT' "$1" || true} sh $runlog]
+set app_loop_count [exec sh -c {grep -aEc 'mesawlegl\[[0-9]+\]: app_loop_fps=' "$1" || true} sh $runlog]
+set display_last [exec sh -c {grep -aE '(^display_last_complete[[:space:]]+[0-9]+|display_last_complete=[0-9]+|generic_display_last_complete=[0-9]+)' "$1" | tail -1 || true} sh $runlog]
+set screenshot_status "missing"
+if {[file exists $shot]} {
+    set screenshot_status $shot
+}
+
+if {$bad || $async_count != "0" || $eio_count != "0" || $crash_count != "0" || $app_loop_count == "0"} {
+    puts "VIRGL-SOAK-FAIL seconds=$seconds app_loop_samples=$app_loop_count async_timeouts=$async_count eio_lines=$eio_count crash_lines=$crash_count log=$runlog"
+    exit 3
+}
+
+puts "VIRGL-SOAK-PASS seconds=$seconds app_loop_samples=$app_loop_count async_timeouts=0 eio_lines=0 crash_lines=0 display_last_complete={$display_last} log=$runlog screenshot=$screenshot_status"
+exit 0
