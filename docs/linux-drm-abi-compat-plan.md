@@ -732,9 +732,13 @@ are in git history. Residual follow-ups extracted from this log live in §13.
    - **Decode-QoS jitter (residual, §13 item 1):** remaining live-YouTube
      jitter is `avdec_h264` "Dropping frame due to QoS" pressure (39 drops
      over ~65 s, lateness up to ~200 ms), not a present stall.
-     `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` is the YouTube default
-     (`webkit_gst_max_avc1_480p=0` opt-out), and `webkit_gst_debug_persist=1`
-     persists GStreamer/runtime probe logs across shutdown.
+    `WEBKIT_GST_MAX_AVC1_RESOLUTION=360P` is the YouTube default
+    (`webkit_gst_max_avc1=VALUE` override; legacy
+    `webkit_gst_max_avc1_480p=1` still selects 480P), and
+    `webkit_gst_debug_persist=1` persists GStreamer/runtime probe logs across
+    shutdown. The MiniBrowser `webkit_web_view_load_uri` interposer also
+    canonicalizes typed hostnames such as `www.youtube.com` to HTTPS and applies
+    the YouTube media env for typed navigation, not just launch-time URLs.
    Final validation: desktop-icon double-click → visible Google search
    results (framebuffer proof, `/tmp/icon-webkit-explicit.png`); the staged
    `/share/webkit/human-button.html` fixture renders in 10 s; real
@@ -1062,8 +1066,9 @@ pushes still require an explicit operator decision.
 1. **Live-YouTube smoothness (decode QoS) — DEFERRED BACKLOG.** Residual jitter is `avdec_h264`
    "Dropping frame due to QoS" pressure (39 drops over ~65 s of media time,
    lateness up to ~200 ms), not a present stall. Defaults already applied:
-   GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` for
-   YouTube-compat launches. Next: decoder/queue A/Bs with
+   GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=360P` for
+   YouTube-compat launches and typed YouTube navigation; `webkit_gst_max_avc1`
+   remains the explicit resolution override. Next: decoder/queue A/Bs with
    `webkit_gst_debug_persist=1` evidence capture.
    Progress: `scripts/gpu/webkit-qos-report.py` now turns the persisted
    GStreamer log into the closure metric (`drops`, `duration`,
