@@ -986,8 +986,8 @@ tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
 1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, GL Smoke,
-   Mesa GL Smoke, Mesa EGL Demo, and GL Maze now have client-drawn titlebars;
-   remaining non-toytoolkit clients still need the sweep.**
+   Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf now have
+   client-drawn titlebars; NetSurf maximize-control proof remains residual.**
    Original defect: no window titlebar on non-toytoolkit clients (observed on
    3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
@@ -1128,11 +1128,39 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    rect=0,0 1280x800`, emitted
    `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
    dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+   NetSurf now installs a narrow GTK client-side titlebar on its browser
+   window in `frontends/gtk/scaffolding.c`: a custom titlebar widget labeled
+   `NetSurf` with `-`, `[]`, and `x` controls, close wired to destroy the
+   browser window, minimize wired through GTK iconify, and maximize implemented
+   as a conservative resize toggle instead of native maximize. The native
+   maximize/hit path remained ambiguous under the current Weston/XDG routing,
+   so this slice does not claim complete maximize-control validation. Runtime
+   proof launched NetSurf from the desktop Browser icon after rebuilding
+   `port-netsurf`, `port-wayland`, and the full image; framebuffer proof
+   `/tmp/xv6-netsurf-titlebar/netsurf-titlebar-box.png` shows the NetSurf
+   window mapped with a visible titlebar and controls. Guest-side
+   `mouseinject` proof captured
+   `/tmp/xv6-netsurf-titlebar/netsurf-close-before.png` and
+   `/tmp/xv6-netsurf-titlebar/netsurf-close-after.png`, with the app log
+   reporting `child 51 exited`, proving the close control returns to the
+   desktop. Minimize/no-disappear proof captured
+   `/tmp/xv6-netsurf-titlebar/netsurf-max-alt-after.png`, where the window
+   remained visible after the control click under Weston's current minimize
+   mitigation. Clicking the visual maximize square center still produced an
+   app exit in the automation, so keep that as a NetSurf control-routing polish
+   item rather than marking the control set complete. The NetSurf content area
+   still reports `about:welcome`/`BadEncoding`; that is separate from this
+   decoration proof. The requested stock §8 media gate stayed green after the
+   final NetSurf source change:
+   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+   scripts/gpu/perf-video-gate.expect` emitted
+   `RESULT pass fps=59.9 speed=1.001 presentedFPS=0.0 decodedFPS=59.9
+   dropPct=0.00 advanced=15.28` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
    Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
-   `xdg-decoration` server-side support to the shell. Remaining clients to
-   sweep: netsurf.
+   `xdg-decoration` server-side support to the shell. Remaining titlebar
+   polish: NetSurf maximize-control hit/route validation.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1368,10 +1396,14 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    symptom is no longer supported as a guest framebuffer or KMS page-flip
    stall in these samples; the remaining suspect is either host QEMU/WSLg GL
    presentation cadence or live-site/WebKit workload churn that is visible to
-   a human but not as a guest scanout wedge. Keep the WebKit cache hard-link
-   failures and repeated `GLib-CRITICAL g_close(fd:6) failed with EBADF` on the
-   short list, but do not regress the already-proven local §8 perf-video gate
-   while tuning the live YouTube path.
+   a human but not as a guest scanout wedge. A later manual YouTube observation
+   sharpened that split: content eventually becomes visible and the desktop
+   remains responsive, but the video only appears to flip every few seconds to
+   roughly ten seconds. Keep the WebKit cache hard-link failures, repeated
+   `GLib-CRITICAL g_close(fd:6) failed with EBADF`, host QEMU/WSLg GL
+   presentation cadence, and live-site workload churn on the short list, but do
+   not regress the already-proven local §8 perf-video gate while tuning the live
+   YouTube path.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1627,15 +1659,15 @@ broad fail-closed DRM shim:
   because the scripted shutdown did not terminate QEMU; it is network proof,
   not a clean-shutdown validator.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
-  active work queue:** missing titlebars remain for the other non-toytoolkit
-  clients (`netsurf`; filemgr, Peanut-GB, GL Smoke, Mesa GL Smoke,
-  Mesa EGL Demo, and GL Maze are now covered), MiniBrowser cannot load live
-  sites and its window goes black (UI-client commit stall/black surface remains;
-  guest DNS/TLS is now proven), and the panel has no task list for open windows.
-  The WebKitGTK API media/backend path remains proven; MiniBrowser UI-client
-  parity is part of §10.4 item 3, not the §8 media gate. Placeholder launcher
-  labels were resolved by §10.4 item 2, and the cursor image/alpha defect was
-  resolved by §10.4 item 4.
+  active work queue:** titlebar coverage now includes filemgr, Peanut-GB,
+  GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf, with NetSurf
+  maximize-control routing still residual. MiniBrowser live-site video remains
+  visibly bursty to a human observer even though guest framebuffer samples can
+  keep advancing and the desktop stays responsive; this UI-client/live-site
+  cadence work remains separate from the proven WebKitGTK API media/backend
+  path and the §8 media gate. The panel still has no task list for open
+  windows. Placeholder launcher labels were resolved by §10.4 item 2, and the
+  cursor image/alpha defect was resolved by §10.4 item 4.
 - **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
   a host backend that can expose both virgl and blob resources. The current QEMU
   9.0.2 classic virgl path rejects that combination before xv6 boots, and the
