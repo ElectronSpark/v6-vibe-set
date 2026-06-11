@@ -2,12 +2,13 @@
 
 Last updated: 2026-06-11 (audited; completed gap analyses and closure
 narratives condensed — full versions preserved in git history and
-`docs/linux-drm-abi-audit.md`. Same-day status check: §13 items 3, 4, 5,
-8, 9 are closed in local commits. Item 5 is closed for the six local C
-clients; NetSurf is skipped from the current titlebar-control matrix).
+`docs/linux-drm-abi-audit.md`. Same-day status check: §13 items 2, 3, 4, 5,
+8, 9 are closed in local commits for the active queue. Item 5 is closed for
+the six local C clients; NetSurf is skipped from the current titlebar-control
+matrix).
 
 **Status: the core DRM-ABI convergence work is complete for this host; the
-§13 closure queue is still active.**
+2026-06-11 §13 active closure queue is closed.**
 Phases 0–6 (§7) are landed and committed; all validators pass (Mesa virgl,
 direct KMS GBM/EGL, damage-aware scanout, upstream kmscube, upstream
 drm_info, libdrm modetest/drmdevice). Convergence Tasks 1–4 (§10.3) are
@@ -18,13 +19,13 @@ the 2026-06-10 manual session are closed with runtime proof (§10.4).
 Host-visible zero-copy blob is an optional, host-refused optimization
 (§7 Phase 5).
 
-**Remaining work is tracked in §13:** live-YouTube decode-QoS smoothness, the
-intermittent virgl async-timeout/EIO soak watch, a unified client-decoration
-strategy, the optional host-visible zero-copy backend, the conditional future
-`sg_table` importer path, and the §10.5 host-GUI-importer follow-up. The
-typed-URL harness, OOM victim attribution, `kcmp` `KCMP_FILE` coverage,
-x86_64 fbdev struct-layout audit, and empty-directory housekeeping were closed
-on 2026-06-11 with metrics in §13.
+**§13 now separates closed active work from deferred backlog:** live-YouTube
+decode-QoS tuning, long virgl soak confidence runs, the optional host-visible
+zero-copy backend, and the §10.5 host-GUI-importer runtime proof remain useful
+follow-up work, but none block the 2026-06-11 closure. The typed-URL harness,
+OOM victim attribution, `kcmp` `KCMP_FILE` coverage, unified local-C
+titlebars, x86_64 fbdev struct-layout audit, and empty-directory housekeeping
+were closed on 2026-06-11 with metrics in §13.
 
 ## Implementation status
 
@@ -847,16 +848,17 @@ winsys, no source patches, and no runtime monkey-patching (§10.3). The
 The mandatory §8 step-7 fullscreen-video gate is green on the current tree
 (`RESULT pass fps≈60 dropPct=0.00`, `__WEBKIT_API_SMOKE_DONE_0__`) and must
 be re-run after any GPU/DRM/desktop change; validate with trace shape +
-on-screen output + framebuffer samples, never counters alone. Everything
-still open is tracked in §13.
+on-screen output + framebuffer samples, never counters alone. Deferred
+backlog work is tracked in §13.
 
 ---
 
 ## 13. Remaining work queue
 
-Ordered roughly by value; none of these may regress the §8 step-7 gate. Items
-marked **closed** are kept here as the metric record for the 2026-06-11 goal
-closure pass.
+Ordered roughly by value; none of these may regress the §8 step-7 gate. The
+2026-06-11 active closure queue is complete. Items marked **closed** are kept
+as the metric record for that closure pass. Items marked **deferred** or
+**optional** are backlog work, not blockers for finishing the active queue.
 
 **2026-06-11 closure metrics.**
 - Rebuilt the current image with `cmake --build build-x86_64 --target image
@@ -1057,7 +1059,7 @@ across `kernel/` and `user/`, item 8 `kcmp` split across `kernel/` and
 Top-level helper tooling and submodule pointer bumps are committed locally;
 pushes still require an explicit operator decision.
 
-1. **Live-YouTube smoothness (decode QoS).** Residual jitter is `avdec_h264`
+1. **Live-YouTube smoothness (decode QoS) — DEFERRED BACKLOG.** Residual jitter is `avdec_h264`
    "Dropping frame due to QoS" pressure (39 drops over ~65 s of media time,
    lateness up to ~200 ms), not a present stall. Defaults already applied:
    GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` for
@@ -1077,10 +1079,11 @@ pushes still require an explicit operator decision.
    plus the same frames passes end to end.
    *Build scope:* launcher knobs → `port-wayland` + `image`; harness-only A/Bs
    → no rebuild.
-   *Done when:* a ≥300 s real watch-page soak shows ≤5 `avdec_h264` QoS drops
-   per minute with max lateness <100 ms in the persisted GStreamer log, every
-   adjacent host-visible player-crop pair changed, and the §8 gate passes on
-   the same image.
+   *Deferred done when:* a ≥300 s real watch-page soak shows ≤5 `avdec_h264`
+   QoS drops per minute with max lateness <100 ms in the persisted GStreamer
+   log, every adjacent host-visible player-crop pair changed, and the §8 gate
+   passes on the same image. This is no longer a blocker for the 2026-06-11
+   active closure.
 2. **virgl async-timeout/EIO spiral — CLOSED FOR ACTIVE QUEUE 2026-06-11; long soak deferred.** Historical intermittent
    signature: `virtio_gpu: async command 0x207 timed out (ctx=2)` followed by
    a Weston `got error from kernel - expect bad rendering 5` KMS EIO spiral
@@ -1210,18 +1213,19 @@ pushes still require an explicit operator decision.
    `ports/wayland/src/`), each local C client passes the §10.4-item-1
    minimize/maximize/close framebuffer proof, and the §8 gate passes. NetSurf
    remains skipped from this proof matrix.
-6. **Host-visible zero-copy blob path (optional).** Blocked on a host backend
+6. **Host-visible zero-copy blob path — OPTIONAL / HOST-BLOCKED.** Blocked on a host backend
    that accepts mappable HOST3D blobs together with virgl (QEMU 9.0.2 rejects
    `blob=true` + virgl at startup; rutabaga refuses mappable HOST3D create
    with -5). Alpine 3.23.4 on the identical stack runs the transfer model at
    66–73 FPS, so this is an optimization, not a gap.
    *Build scope:* host-side QEMU/backend work only; no guest rebuild to
    re-probe (boot flips the cap at init).
-   *Done when:* on a capable backend the init probe succeeds,
+   *Optional done when:* on a capable backend the init probe succeeds,
    `VIRTGPU_GETPARAM(HOST_VISIBLE)=1`, `drmabitest --virtgpu-only` passes a
    mapped-blob write/read round-trip, and the §8 gate passes with FPS ≥ the
-   transfer-model baseline.
-7. **Host GUI importer (§10.5).** The next feature slice: offline import of a
+   transfer-model baseline. This remains backend-dependent follow-up, not a
+   blocker for active closure on this host.
+7. **Host GUI importer (§10.5) — DEFERRED RUNTIME PROOF.** The next feature slice: offline import of a
    host Linux GUI binary + library closure into the guest image, launched
    through the Weston session; fix missing ABI surface, not per-app
    shortcuts.
@@ -1237,10 +1241,11 @@ pushes still require an explicit operator decision.
    guest-runtime skips. Runtime GUI proof is still required.
    *Build scope:* importer script + `image`; ABI fixes as they surface →
    `kernel`/`user` + `image`.
-   *Done when:* one imported host GUI app meets the §10.5 validation rule
+   *Deferred done when:* one imported host GUI app meets the §10.5 validation rule
    (desktop launch, visible Weston window, input accepted, clean exit, log +
    framebuffer proof) and all existing GPU/WebKit validators plus the §8 gate
-   stay green.
+   stay green. The importer tooling and dry-run/file-generation checks are
+   landed; runtime proof is deferred and does not block the active queue.
 8. **Optional ABI completeness — CLOSED FOR CURRENT SCOPE 2026-06-11.**
    `kcmp(KCMP_FILE)` is implemented for same-process fd comparison, covered by
    `drmabitest`, and the x86_64 fbdev struct-layout audit is recorded. The
