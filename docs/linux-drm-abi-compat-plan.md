@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-10. Phases 0–6 landed and committed. Validators pass
+Last updated: 2026-06-11. Phases 0–6 landed and committed. Validators pass
 (Mesa virgl, direct KMS GBM/EGL, damage-aware scanout, upstream kmscube,
 upstream drm_info, libdrm modetest/drmdevice). **Convergence Task 1**
 (kernel → stock Mesa/GBM; retire `virgl_xv6_winsys.c` + `xv6-gbm`) is now
@@ -1142,9 +1142,179 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    `NETPREREQ-TLS-RC=0` (`/tmp/xv6-network-prereq3.log`). The QEMU wrapper hit
    its timeout after the success markers because the scripted shutdown did not
    exit the VM, so treat the log evidence as the network proof and not as a
-   clean shutdown proof. Remaining work: root-cause the MiniBrowser page-commit
-   stall/black surface and then re-test typed navigation/Enter-key URL
-   submission.
+   clean shutdown proof.
+   **Update 2026-06-10 (later session): desktop-icon launch path fixed; the
+   remaining defect is a present/commit + GPU-stall problem, not networking.**
+   (a) Root cause of "typed URL in MiniBrowser did nothing" when started from
+   the desktop icon: `weston-desktop-shell`'s `xv6_desktop_launch_icon()` does
+   a bare `execl` with no env, so MiniBrowser ran without the validated
+   TLS/GIO/WebKit environment and with no URL. Fix (landed + rebuilt):
+   `ports/wayland/src/desktop.c` gained `--launch-webkit [url]`
+   (`run_webkit_launch_mode`) which reuses the validated `launch_client`
+   path (env, GPU policy file, resolv.conf sync), and
+   `scripts/image/make-rootfs.sh` points `webkit.desktop` at
+   `Exec=/bin/weston-session --launch-webkit`. In-guest proof
+   (`tmp/launchmode-webkit-validate.expect`): `[desktop] launch-webkit
+   MiniBrowser pid=52 url=https://www.google.com/...`, full
+   `webkit_gpu_policy name=MiniBrowser ... gpu_contract=virgl-opengl-submit
+   fallback=none`, MiniBrowser + helpers open legacy/render/primary DRM nodes
+   and stay alive. `mouseinject` gained a `dblclick x y gap_us` mode; the icon
+   grid has a +32px panel Y offset (WebKit icon idx13 center px(404,230) →
+   abs(20685,18843); proven-good click: 3D Demo px(68,114) → abs(3481,9339)
+   launched mesawlegl PASS).
+   (b) STILL OPEN — user-visible: MiniBrowser window never presents a visible
+   frame ("I don't see webkit"); typed URLs echo in the URL bar but the page
+   area stays blank. DRM nodes open and helpers live, so this is the §10.3
+   Task-3 UI-commit/present stall, not launch or network.
+   (c) STILL OPEN — GUI session freeze signature captured live: `virtio_gpu:
+   async command 0x207 timed out (ctx=2)` (fence age ≈76 s) with a 16-entry
+   virgl command dump (CLEAR/RESOURCE_INLINE_WRITE/CREATE_OBJECT/...), then
+   2500+ weston `got error from kernel - expect bad rendering 5` lines (KMS
+   commit EIO spiral; weston never recovers). A second, possibly related
+   stall: an icon double-click registered at t≈40 s but the launched app's
+   DRM opens only appeared at t≈257 s (≈200 s input/dispatch stall, no virtio
+   errors logged). Both nondeterministic, observed under cmdline
+   `virtio_gpu_irq_wait_ms=60000 vgpu_async_pf=1 vgpu_async_flush=1
+   virtio_gpu_present_no_drain=1 virtio_gpu_disable_pageflip_copy=1
+   virtio_gpu_3d_scanout=1`.
+   (d) **NEW 2026-06-10 — guest OOM during page load captured (probable root
+   cause of the blank page).** A `--launch-webkit` run against
+   `https://www.google.com/search?q=xv6&gbv=1` with `webkit_log=1` ended at
+   t≈674 s with: `pid 85 VBlankMonitor: fatal page fault cr2=0x7fff101bb000
+   err=0x6 rip=0x7ffff83bd3bb` (write fault, no SIGSEGV handler) interleaved
+   with `=== OOM KILLER INVOKED ===`, watermark dump `Total pages: 715538
+   (2795MB) / Free pages: 0 (0MB) / Pressure: critical / OOM kills: 1`,
+   followed by kernel slab corruption during the kill path —
+   `slab_free(): slab is NULL for obj=...` (x4),
+   `slab_free: ERROR - object from free slab` on cache `thread_group` — and
+   `Received IPI_REASON_CRASH, halting` (full evidence:
+   `/tmp/launchmode-run.out`,
+   `build-x86_64/icon-webkit-validate/run-launchmode.log`). TWO bugs: (1)
+   WebKit page load consumes all ~2.8 GB guest RAM — suspected leak (likely
+   unreleased buffers, consistent with the present-stall family) since a
+   Google search page cannot legitimately need that much; (2) the kernel OOM
+   kill path corrupts slab state (`thread_group` cache double-free) and
+   crash-halts the whole machine instead of surviving the kill — this also
+   plausibly explains the earlier "entire window went black" and freeze
+   reports.
+   Validation harnesses for the next session: `tmp/icon-webkit-validate.expect`
+   (icon double-click → launch evidence), `tmp/launchmode-webkit-validate.expect`
+   (direct `--launch-webkit` + `/tmp/webkit_log.txt` dump under `webkit_log=1`),
+   `tmp/webkit-autoprobe.expect` + `/tmp/probe-fs.img` (debugfs-injected
+   `/etc/startup` autorun probe, immune to serial-input death; note: in-guest
+   `sh` scripts must avoid `2>&1`-style redirects it does not support).
+   Remaining work: (1) instrument and find what consumes ~2.8 GB during a
+   live-site load (guest `free`-equivalent sampling, WebKit buffer/cache
+   accounting, kernel page-owner stats); (2) fix the kernel OOM-kill slab
+   corruption (`thread_group` double-free) so OOM kills a process instead of
+   crashing the machine; (3) root-cause the present stall and the virgl
+   async-timeout freeze (likely one family); then re-test typed
+   navigation/Enter-key URL submission end-to-end.
+   **Update 2026-06-11 — YouTube media split clarified.** A direct YouTube
+   watch page now visibly loads enough UI to show the player chrome, but the
+   video remains effectively stationary to a human observer. A direct
+   YouTube-hosted MP4 redirect (`http://10.0.2.2:18081/yt.mp4`) produced a
+   visible Rick Astley frame in MiniBrowser, but two framebuffer captures
+   taken five seconds apart (`/tmp/youtube-direct-frameA.png`,
+   `/tmp/youtube-direct-frameB.png`) were byte-identical with
+   `virtio_failures=0`, `virtio_timeouts=0`, and clean display
+   presents/completions. Local-file MiniBrowser probes were not reliable
+   playback evidence: navigating directly to
+   `file:///share/webkit/youtube-itag18.mp4` opened WebKit's download view,
+   while local HTML/perf pages referencing that asset stayed blank in the
+   MiniBrowser UI-client path. The important counterexample is the
+   compositor-owned WebKit API-smoke path using the same staged asset:
+   `webkit_url=file:///share/webkit/perf-video.html?asset=youtube-itag18.mp4`
+   reported `RESULT pass fps=25.0 speed=0.999 presentedFPS=0.0
+   decodedFPS=25.0 dropPct=0.00 advanced=15.09` and
+   `__WEBKIT_API_SMOKE_DONE_0__` without virtio failures. Therefore the
+   current YouTube defect is not basic network fetch, MP4 demux, or H.264
+   decode throughput; it is the visible MiniBrowser UI-client
+   commit/compositing/present path (plus the already-captured intermittent
+   virgl timeout/EIO spiral).
+   **Update 2026-06-11 (later) — visible MiniBrowser cadence A/B.** Added a
+   temporary launch knob `webkit_sync_paint=0`, which passes
+   `WEBKIT_XV6_SYNC_PAINT=0` while preserving the default behavior. Rebuilt
+   `port-wayland` and the full image, then used a short host redirect
+   (`http://10.0.2.2:18082/yt`) to avoid the xv6 shell splitting/truncating the
+   long signed `googlevideo` URL. With `webkit_accel=1 webkit_private=0
+   webkit_sync_paint=0`, the redirect produced honest MiniBrowser DRM evidence
+   (`requested_accel=1 effective_accel=1`, render + primary node opens) and no
+   virgl/KMS failure (`virtio_failures=0`, `virtio_timeouts=0`,
+   `display_presents=54`, `display_completions=54`). The first 90s/95s
+   captures (`/tmp/youtube-redir-nosync-frameA.png`,
+   `/tmp/youtube-redir-nosync-frameB.png`) differed across the content region
+   (about 686k changed pixels), but this was only the page transitioning from
+   white load view to the dark media view. A later 110s/120s capture pair
+   (`/tmp/youtube-redir-nosync-lateA.png`,
+   `/tmp/youtube-redir-nosync-lateB.png`) showed a real decoded video frame and
+   then remained byte-identical over ten seconds, again with no virtio timeout
+   or KMS EIO spiral (`display_presents=68`, `display_completions=68`). Thus
+   `WEBKIT_XV6_SYNC_PAINT=0` improves the initial visible transition but does
+   not fix continuous video-frame damage/presentation; the active defect is now
+   specifically MiniBrowser's ongoing media-frame repaint/commit path. A local
+   Range-capable host MP4 server also proved GStreamer issues HTTP range reads,
+   but `http://10.0.2.2:18082/youtube-itag18.mp4` stayed on MiniBrowser's load
+   view, so local direct-media-document behavior is not a substitute for the
+   YouTube redirect repro.
+   **Update 2026-06-11 (frame-clock fix) — visible MiniBrowser video now
+   advances under Weston with default env.** The slow/blank MiniBrowser media
+   path was narrowed to WebKit's frame-clock/vblank source, not network,
+   demux, decode, or a wedged virtio ring. First, a regression in the debug
+   env was found: adding `WEBKIT_FORCE_VBLANK_TIMER` pushed the accelerated
+   MiniBrowser env array to 64 entries, equal to xv6 `MAXENV`, leaving no
+   copied NULL terminator for `execve`; the child opened DRM nodes for the GPU
+   policy probe and then logged `/libexec/webkit2gtk-4.1/MiniBrowser: execve
+   failed errno=1`. Removed the stale staged-WebKit no-op
+   `WEBKIT_XV6_SYNC_PAINT` plumbing, restoring the accelerated path to 63 env
+   entries. Then made `WEBKIT_FORCE_VBLANK_TIMER=1` the WebKit default in
+   `ports/wayland/src/desktop.c` and `desktop_clients.inc`, with
+   `webkit_force_vblank_timer=0` retained as the opt-out. Runtime proof after
+   rebuilding `port-wayland` and the full image: default launch of
+   `file:///share/webkit/perf-video.html?ms=90000` with no vblank cmdline
+   override produced live MiniBrowser + WebKit helper processes, zero
+   `virtio_failures`/`virtio_timeouts`, `display_presents=444`,
+   `display_completions=444`, and framebuffer captures at 10s/12s that differ
+   by ~653k pixels:
+   `/tmp/localperf-defaultvblank-10sA.png` shows media time 7.20s / decoded
+   429, while `/tmp/localperf-defaultvblank-10sB.png` shows media time 10.31s
+   / decoded 613 with visibly advanced content. The page's
+   `requestVideoFrameCallback` counter still reports `presented=0`, so keep
+   that as a WebKit metric quirk or remaining API-path gap; the user-visible
+   Weston/MiniBrowser framebuffer path is no longer a multi-second/stationary
+   flip path on this local perf media.
+   **Update 2026-06-11 (real YouTube follow-up) — YouTube compat no longer
+   disables force compositing.** The real YouTube launch path still had a
+   stale compatibility override that changed
+   `WEBKIT_FORCE_COMPOSITING_MODE=1` back to `0` whenever
+   `webkit_youtube_compat=1`, so the live-site path was not using the same
+   compositor/frame-clock shape as the fixed local perf-media path. Removed
+   that downgrade while keeping the explicit
+   `webkit_disable_compositing=1` opt-out for future A/B work. Runtime proof
+   after rebuilding `port-wayland` and the full image: a real watch-page run
+   for `https://www.youtube.com/watch?v=dQw4w9WgXcQ` logged
+   `youtube_compat=1`, `private=0`, and
+   `gpu_contract=virgl-opengl-submit`, kept clean GPU/display counters
+   (`virtio_failures=0`, `virtio_timeouts=0`,
+   `virtio_context_failed=0`, `virtio_async_pending=0`,
+   `display_presents=1659` in the 65s/66s sample), and produced visible
+   video-frame progress in framebuffer captures:
+   `/tmp/youtube-current-forcecomp-65sA.png` and
+   `/tmp/youtube-current-forcecomp-66sB.png` differ by 174,125 pixels with
+   bbox `(283,198)-(767,557)`, entirely in the player region. A wider
+   75s/85s pair similarly differed by 174,175 player pixels and showed
+   different decoded YouTube frames. Do not yet claim smooth 25/60fps
+   live-site cadence from this; the remaining evidence to watch is WebKit's
+   cache hard-link churn and the GLib `g_close(fd:6) failed with EBADF`
+   warning, plus any recurrence of the earlier virgl timeout/EIO spiral. The
+   §8 step-7 regression gate was re-run after this change. The first run hit a
+   transient early `webkitgpusmoke` fatal page fault before the video result,
+   but a clean immediate repeat passed:
+   `RESULT pass fps=55.2 speed=1.001 presentedFPS=0.0 decodedFPS=55.2
+   dropPct=0.24 advanced=15.22` with `__WEBKIT_API_SMOKE_DONE_0__`.
+   Guest-side framebuffer proof `/perf-video-frame.ppm` was dumped to
+   `/tmp/perf-video-frame-forcecomp.png`; the host check saw a 1280x800 image
+   with `984304/1024000` nonblack pixels and `53419` unique colors.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:

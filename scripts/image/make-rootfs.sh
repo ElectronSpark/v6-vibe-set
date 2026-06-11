@@ -275,7 +275,7 @@ cat > "${STAGE}/root/desktop/webkit.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=WebKit
-Exec=/libexec/webkit2gtk-4.1/MiniBrowser
+Exec=/bin/weston-session --launch-webkit
 IconChar=K
 IconColor=0xFF9B59B6
 EOF
