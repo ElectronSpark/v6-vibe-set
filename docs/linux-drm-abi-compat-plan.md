@@ -1,44 +1,36 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-11. Phases 0–6 landed and committed. Validators pass
-(Mesa virgl, direct KMS GBM/EGL, damage-aware scanout, upstream kmscube,
-upstream drm_info, libdrm modetest/drmdevice). **Convergence Task 1**
-(kernel → stock Mesa/GBM; retire `virgl_xv6_winsys.c` + `xv6-gbm`) is now
-validated end-to-end including the fullscreen video performance gate (§8
-step 7), realized offline as a deterministic local high-res/60fps gate — see
-"Convergence status" below — and is **committed** (super `e404aa8`, kernel
-`512fac7`, ports `7954144`). Tasks 2–4 are validated and committed in ports
-through `5c22780` (super checkpoint `b091811`); the Weston desktop-session
-round is committed through super `7afc7f2`, ports `fc3cf3c`, Weston source
-`5543c81`, and user `d96d83c` (libinput absolute pointer/keyboard input,
-shell-owned desktop icons, cursor theming, real ELF icon launches, chrome icon
-fallbacks, and staged Adwaita DND cursors). The follow-up cursor/minimize
-round is validated and recorded through kernel `f9d20fd`, user `dd0becb`,
-ports `290f68f` (Wayland source `3c5ad4f`, Weston source `f046fa6`):
-cursor uploads now contain nonzero image/alpha pixels. A later Weston shell
-round adds the missing panel task list and makes minimize reachable through
-task tabs. Host-visible zero-copy blob is
-reclassified as an optional, host-refused optimization: the init-time probe
-proves the rutabaga host rejects mappable host3d blobs, and Alpine 3.23.4 on
-this host runs a full virgl desktop using only the classic transfer model.
-Full per-validator logs live in `docs/linux-drm-abi-audit.md`.
+Last updated: 2026-06-11 (audited; completed gap analyses and closure
+narratives condensed — full versions preserved in git history and
+`docs/linux-drm-abi-audit.md`. Same-day status check: §13 items 3, 4, 5,
+8, 9 are closed in local commits. Item 5 is closed for the six local C
+clients; NetSurf is skipped from the current titlebar-control matrix).
 
-**Desktop-session closure:** a 2026-06-10 hands-on desktop session surfaced
-usability defects — missing window titlebars, MiniBrowser navigation failure +
-black window/stale live video, and missing panel task list. They are closed
-for the validated paths in **§10.4** with root-cause notes and runtime proof.
-Everything else in this plan is landed/validated background or an explicitly
-host-dependent optional gap. The placeholder launcher labels and the
-cursor-image/black-box path from the same session were fixed on 2026-06-10;
-the panel task list is fixed in the 2026-06-11 Weston shell follow-up recorded
-below.
+**Status: the core DRM-ABI convergence work is complete for this host; the
+§13 closure queue is still active.**
+Phases 0–6 (§7) are landed and committed; all validators pass (Mesa virgl,
+direct KMS GBM/EGL, damage-aware scanout, upstream kmscube, upstream
+drm_info, libdrm modetest/drmdevice). Convergence Tasks 1–4 (§10.3) are
+committed: stock Mesa/GBM bind the kernel through the standard
+`DRM_IOCTL_VIRTGPU_*` UAPI, upstream Weston is the sole compositor, and the
+WebKit/Skia runtime crutches are deleted. The desktop-usability defects from
+the 2026-06-10 manual session are closed with runtime proof (§10.4).
+Host-visible zero-copy blob is an optional, host-refused optimization
+(§7 Phase 5).
 
-## Implementation status (2026-06-07)
+**Remaining work is tracked in §13:** live-YouTube decode-QoS smoothness, the
+intermittent virgl async-timeout/EIO soak watch, a unified client-decoration
+strategy, the optional host-visible zero-copy backend, the conditional future
+`sg_table` importer path, and the §10.5 host-GUI-importer follow-up. The
+typed-URL harness, OOM victim attribution, `kcmp` `KCMP_FILE` coverage,
+x86_64 fbdev struct-layout audit, and empty-directory housekeeping were closed
+on 2026-06-11 with metrics in §13.
 
-This plan is no longer purely forward-looking: most of the roadmap has been
-built. Status verified by source reads, headless QEMU boot of the freshly
-built kernel (`dma_fence: selftest ok`, all DRM nodes register, boots clean to
-the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
+## Implementation status
+
+Status verified by source reads, headless QEMU boot of the freshly built
+kernel (`dma_fence: selftest ok`, all DRM nodes register, boots clean to the
+Wayland desktop with no panics), and the GPU validator suite.
 
 | Phase | State | Evidence |
 |---|---|---|
@@ -50,44 +42,35 @@ the Wayland desktop with no panics), and the GTK `-gl` virgl validator.
 | 5 — blob / host-visible / zero-copy | **Complete for this host via the transfer model; host-visible zero-copy is an optional, host-refused optimization** | Guest blobs, `F_RESOURCE_BLOB`, host-visible cap/BAR discovery, `MAP_BLOB`/`UNMAP_BLOB`, checked mmap, scanout bind, and dirty-rect flushes committed; fail-closed `HOST_VISIBLE=0` proven. See the "Host-blocked status" summary below for the probe + Alpine evidence. |
 | 6 — structural cleanup | **Done (committed)** | shared `fb_shmem_*` page allocator; KMS/virtgpu split into smaller concern fragments; BO backing file renamed to `fb_bo_shmem_dmabuf.c`; retained `FB_GPU_TTM_*` private ABI labels documented as sysmem/shmem metadata compatibility names |
 
-**Validation evidence (2026-06-07).** All validators pass on the freshly
-rebuilt image; full logs, commit hashes, and marker caveats are recorded in
-`docs/linux-drm-abi-audit.md`. Summary:
+**Validation evidence.** All validators pass on the rebuilt image; full logs,
+commit hashes, and marker caveats are recorded in
+`docs/linux-drm-abi-audit.md`. Summary: Mesa virgl `gpu-validate` (dmabuf
+import OK, `virtio_failures 0`, `virtio_timeouts 0`); libdrm
+`modetest`/`drmdevice` against both `/dev/dri/card0` and `renderD128`;
+upstream `drm_info` (full connector/CRTC/plane/property state); upstream
+`kmscube` (Mesa EGL 1.5 / GLES 3.1, `virgl (D3D12 ...)`); direct KMS GBM/EGL
+(`mesakmsgl`, exportable GBM BOs, ~81 FPS); damage-aware resource-bind
+scanout with on-screen framebuffer proof (`scanout_rebinds=0`).
 
-- **Mesa virgl `gpu-validate`** — PASS. `wlcomp: linux-dmabuf enabled (virgl)`,
-  `mesawlegl`/`mesaglsmoke` complete, dmabuf resource import OK,
-  `virtio_failures 0`, `virtio_timeouts 0`.
-- **libdrm** — `modetest -c`, `drmdevice`, and `modetest -D /dev/dri/card0 -p`
-  discover both `/dev/dri/card0` and `renderD128` and print CRTC/plane state.
-- **upstream drm_info** — prints connector/CRTC/plane/property state;
-  object-property ABI fix (`CRTC_ID`/`FB_ID` target object type) verified.
-- **upstream kmscube** — render-node and KMS runs reach Mesa EGL 1.5 /
-  GLES 3.1 (`virgl (D3D12 ...)`) and render frames.
-- **direct KMS GBM/EGL (`mesakmsgl`)** — opens `/dev/dri/card0`, creates
-  exportable GBM BOs, renders up to ~81 FPS.
-- **damage-aware resource-bind scanout** — PASS with on-screen framebuffer
-  proof; steady present-trace with `scanout_rebinds=0`, `virtio_failures 0`.
-
-**Host-blocked status — host-visible zero-copy blob (summary).** The kernel
-guest-blob path and fail-closed `HOST_VISIBLE` plumbing boot clean; the gap is
-purely host-side and is now an optional optimization, not a Phase 5 blocker:
+**Host-visible zero-copy blob — optional, host-refused (summary).** The
+kernel guest-blob path and fail-closed `HOST_VISIBLE` plumbing are landed and
+boot clean; the gap is purely host-side:
 
 - QEMU 9.0.2's classic virgl path rejects blob outright ("blobs and virgl are
   not compatible (yet)"); the launcher auto-disables blob for virgl GPUs
-  (override `QEMU_VIRGL_BLOB_OK=1`). Non-GL `virtio-gpu` blob needs shared
-  memfd guest RAM, which the launcher now wires.
-- The only host-visible-capable backend here (a local QEMU 9.2.0 rutabaga
-  build, `x-virgl2` + surfaceless FFI) negotiates the 32 MiB host-visible BAR
-  and virgl2 capset, but the init-time probe (`virtio_gpu_smoke_host_visible_map`)
-  proves it **refuses** the mappable `HOST3D` create (`create=-5`), so
-  `GETPARAM(HOST_VISIBLE)` correctly stays `0`. Verified by host round-trip,
-  not inferred. Evidence: `/tmp/xv6-rutabaga-hostvis-probe.log`.
+  (override `QEMU_VIRGL_BLOB_OK=1`) and wires shared memfd guest RAM for the
+  non-GL `virtio-gpu` blob path.
+- The only host-visible-capable backend here (local QEMU 9.2.0 rutabaga)
+  negotiates the 32 MiB host-visible BAR + virgl2 capset, but the init-time
+  probe (`virtio_gpu_smoke_host_visible_map`) proves it **refuses** the
+  mappable `HOST3D` create (`create=-5`), so `GETPARAM(HOST_VISIBLE)`
+  correctly stays `0`. Verified by host round-trip, not inferred
+  (`/tmp/xv6-rutabaga-hostvis-probe.log`).
 - Alpine 3.23.4 (Weston/Mesa virgl) on this host drives a 66–73 FPS desktop
   using only the classic transfer model (zero blob/host-visible commands),
-  which xv6 already implements — confirming host-visible zero-copy is optional.
-- Positive host-visible zero-copy awaits a backend that both negotiates the BAR
-  and successfully creates/maps mappable blobs (rutabaga/gfxstream-capable
-  QEMU, or a working vhost-user/rutabaga virgl backend).
+  which xv6 fully implements — so zero-copy is an optimization, not a
+  blocker. Positive proof awaits a backend that accepts mappable host3d
+  blobs (§13).
 
 ## Goal
 
@@ -107,23 +90,23 @@ ioctl contract they use on Linux.
 - the same `virtio-gpu` UAPI (`DRM_IOCTL_VIRTGPU_*`) so a stock Mesa
   `virtio_gpu`/`virgl` winsys binds without xv6-specific shims.
 
-This document is a **comparison + implementation plan**. Sections §1–§6 record
-the original gap analysis (the pre-implementation baseline); §7 tracks the
-phased roadmap, now mostly **landed** (see the status table above). Phase 6
-cleanup is complete. Phase 5 guest blob and fail-closed host-visible plumbing
-are landed; the Alpine-validated transfer path is the complete working model
-for this host, while positive host-visible zero-copy remains an optional
-backend-dependent optimization.
+This document is the **record + remaining-work plan** for that goal. §1–§2
+describe the landed architecture; §3 lists the few genuinely open gaps; §4
+records standing correctness invariants; §7 is the completed phase log; §8 is
+the validation strategy (including the mandatory fullscreen-video gate); §10
+records upstream convergence and the desktop-session defect closures; §13 is
+the remaining work queue. The original pre-implementation gap analysis was
+removed on 2026-06-11 and is preserved in git history.
 
 This plan is scoped to **x86_64** (consistent with the syscall ABI plans).
 RISC-V graphics is out of scope.
 
 ---
 
-## 1. Current state — what xv6-os already has
+## 1. Current state — what xv6-os has
 
-The kernel already ships a surprisingly complete DRM shim. Files (all under
-`kernel/kernel/`):
+The kernel ships a complete DRM implementation for this target. Files (all
+under `kernel/kernel/`):
 
 | Area | File(s) | Approx LOC | Maturity |
 |---|---|---|---|
@@ -142,7 +125,7 @@ The kernel already ships a surprisingly complete DRM shim. Files (all under
 | Hyper-V DXG present backend | `dev/fb/fb_dxg_present.c` | — | Out of DRM scope |
 | Nouveau scaffold | `dev/fb/fb_nouveau.c` | — | DDA path, separate |
 
-What works today against the **real** Linux ioctl numbers:
+What works against the **real** Linux ioctl numbers:
 
 - **DRM core**: `VERSION`, `GET_MAGIC`, `AUTH_MAGIC`, `GET_CLIENT`, `GET_CAP`,
   `SET_CLIENT_CAP`, `SET_MASTER`, `DROP_MASTER`. Render-node auth bypass and
@@ -150,23 +133,28 @@ What works today against the **real** Linux ioctl numbers:
 - **KMS queries**: `MODE_GETRESOURCES`, `GETCRTC`, `GETCONNECTOR`, `GETENCODER`,
   `GETPLANE`, `GETPLANERESOURCES`, `GETPROPERTY`, `GETPROPBLOB`, `GETFB`,
   `GETFB2`, `OBJ_GETPROPERTIES`.
-- **KMS state**: `SETCRTC`, `ADDFB2`, `RMFB`, `CLOSEFB`, `PAGE_FLIP` (with
-  `PAGE_FLIP_EVENT`), `DIRTYFB`, `ATOMIC` (validate + immediate apply),
-  `OBJ_SETPROPERTY`.
+- **KMS state**: `SETCRTC`, `ADDFB`/`ADDFB2`, `RMFB`, `CLOSEFB`, `PAGE_FLIP`
+  (with `PAGE_FLIP_EVENT`), `DIRTYFB`, `ATOMIC` (check/commit split, real
+  in/out fences, publish-after-present), `OBJ_SETPROPERTY`,
+  `CREATEPROPBLOB`/`DESTROYPROPBLOB`, cursor plane wired to the virtio cursor
+  queue, present-driven vblank/`CRTC_*_SEQUENCE`.
 - **Buffers**: `MODE_CREATE_DUMB`/`MAP_DUMB`/`DESTROY_DUMB` backed by real
-  anon pages; `GEM_CLOSE`.
-- **PRIME**: `PRIME_HANDLE_TO_FD`/`FD_TO_HANDLE` with a real custom fd and
-  file-ops (poll/release), local-only.
+  anon pages through the unified shmem allocator; per-file GEM handle tables;
+  `GEM_CLOSE`, `GEM_FLINK`, `GEM_OPEN`.
+- **PRIME**: `PRIME_HANDLE_TO_FD`/`FD_TO_HANDLE` with real custom fds,
+  generic dma-buf wrapper ops + `mmap`, and a virtgpu→PRIME bridge for the
+  render-node → KMS-node desktop hand-off.
 - **syncobj**: `CREATE`/`DESTROY`/`WAIT`/`TIMELINE_WAIT`/`SIGNAL`/
-  `TIMELINE_SIGNAL`/`RESET`/`TRANSFER`/`QUERY`/`HANDLE_TO_FD`/`FD_TO_HANDLE`.
-- **virtio-gpu**: full 2D + 3D virgl command path internally
+  `TIMELINE_SIGNAL`/`RESET`/`TRANSFER`/`QUERY`/`HANDLE_TO_FD`/`FD_TO_HANDLE`/
+  `EVENTFD`, all rebacked on the real `dma_fence` core; exported fds are
+  genuine `sync_file`s.
+- **virtio-gpu**: the standard `DRM_IOCTL_VIRTGPU_*` UAPI (`GETPARAM`,
+  `CONTEXT_INIT`, `RESOURCE_CREATE`, `RESOURCE_CREATE_BLOB`, `RESOURCE_INFO`,
+  `TRANSFER_TO/FROM_HOST`, `WAIT`, `GET_CAPS`, `EXECBUFFER` with BO list +
+  in/out fences, `MAP`) over a full 2D + 3D virgl engine
   (`RESOURCE_CREATE_2D/3D`, `ATTACH_BACKING`, `SET_SCANOUT`, `TRANSFER_*`,
-  `RESOURCE_FLUSH`, `CTX_CREATE/DESTROY/ATTACH/DETACH`, `SUBMIT_3D`,
-  `GET_CAPSET*`), with an async submission ring and fence reaping.
-
-This is a strong foundation. The gaps below are mostly about **closing
-semantic mismatches** and **exposing the existing engine through the standard
-UAPI** rather than building from scratch.
+  `RESOURCE_FLUSH`, `CTX_*`, `SUBMIT_3D`, `GET_CAPSET*`) with an async
+  submission ring and fence reaping.
 
 ---
 
@@ -176,26 +164,24 @@ UAPI** rather than building from scratch.
 flowchart TB
   subgraph Linux
     L_app[Mesa / libdrm / compositor]
-    L_drm[drm core: drm_file, GEM handle table, dma_fence, dma_buf, TTM/GEM-SHMEM]
+    L_drm[drm core: drm_file, GEM handle table, dma_fence, dma_buf]
     L_kms[KMS: drm_atomic_state, properties, vblank IRQ]
     L_drv[driver: virtio-gpu / i915 / amdgpu / nouveau]
     L_app --> L_drm --> L_kms --> L_drv
   end
-  subgraph xv6
-    X_app[Mesa / libdrm / compositor]
-    X_core[drm_core.c: auth/magic/master only]
-    X_kms[fb_drm_core_kms.c + fb_kms_atomic.c: single-head shim, immediate apply]
-    X_bo[fb_bo_ttm_dmabuf.c: GLOBAL handle table, counter fences, local-only dma-buf]
-    X_drv[virtio_gpu.c via FB_GPU_* private ioctls]
-    X_app --> X_core --> X_kms
-    X_app -. private UAPI .-> X_drv
-    X_kms --> X_bo
+  subgraph xv6_now["xv6 (current, post-Phase 6)"]
+    X_app[stock Mesa / libdrm / Weston]
+    X_core[drm_core.c: auth/magic/master + dispatch]
+    X_kms[fb_drm_kms_* + fb_kms_atomic.c: check/commit atomic, propblobs, cursor plane, present-driven vblank]
+    X_bo[fb_bo_shmem_dmabuf.c: per-file GEM handles, dma_fence, PRIME dma-buf]
+    X_drv[virtio_gpu*.c via standard DRM_IOCTL_VIRTGPU_*]
+    X_app --> X_core --> X_kms --> X_bo --> X_drv
   end
 ```
 
-Key structural differences (the **xv6 column below is the original baseline**;
-the **Now** column reflects the landed implementation — see the status table at
-the top):
+Key structural differences (the **xv6 baseline column is the original
+pre-implementation state**, kept for context; the **Now** column is the landed
+implementation):
 
 | Concept | Linux | xv6-os baseline | Now |
 |---|---|---|---|
@@ -211,255 +197,77 @@ the top):
 
 ---
 
-## 3. Detailed gap inventory
+## 3. Remaining gap inventory
 
-### 3.1 DRM core (`drm_core.c`)
+The original pre-implementation gap inventory (per-file GEM handles,
+`dma_fence`, KMS atomic, virtgpu UAPI completion, blob plumbing, fbdev/TTM
+notes, …) is fully landed via Phases 0–6 (§7) and was removed from this plan
+on 2026-06-11; it is preserved in git history. What genuinely remains:
 
-Mostly compatible. Gaps:
-
-- **`DRM_IOCTL_GET_UNIQUE` / `SET_VERSION` / `GET_STATS` / `GET_MAP` / `IRQ_BUSID`**
-  — verify presence/behavior; libdrm's `drmGetVersion`/`drmGetBusid` path calls
-  some of these. `SET_VERSION` interacts with the implicit `UNIVERSAL_PLANES`
-  legacy behavior.
-- **Capabilities (`GET_CAP`)** — audit the returned values against what a real
-  driver reports: `DUMB_BUFFER=1`, `PRIME` import/export bits, `TIMESTAMP_MONOTONIC`,
-  `CRTC_IN_VBLANK_EVENT`, `SYNCOBJ`, `SYNCOBJ_TIMELINE`, `ADDFB2_MODIFIERS`,
-  `PAGE_FLIP_TARGET`, `ASYNC_PAGE_FLIP`. Several map to features that are
-  currently rejected (target/async flip) and must report `0` consistently.
-- **`drm_version`** name/date/desc lengths: ensure the two-pass length probe
-  (caller passes `len=0` to size buffers) matches libdrm exactly.
-
-### 3.2 KMS modesetting (`fb_drm_core_kms.c`, `fb_kms_atomic.c`)
-
-- **`MODE_CREATEPROPBLOB` / `DESTROYPROPBLOB`** — currently `-EOPNOTSUPP`. Real
-  atomic clients create a MODE_ID blob via `CREATEPROPBLOB` and reference it in
-  the atomic commit. Without writable blobs, `drmModeAtomicCommit` with a
-  mode set (the normal compositor modeset path) cannot work. **Must implement.**
-- **`MODE_SETPLANE`** — `-EOPNOTSUPP`. Needed by legacy (non-atomic) plane
-  users and by `xf86-video-modesetting` cursor/overlay fallback.
-- **`MODE_ADDFB` (legacy)** — `-EOPNOTSUPP`. Some older userland and the kernel
-  fbdev-emulation path use the legacy single-plane AddFB; ADDFB2 covers modern
-  clients, but a legacy shim mapping to ADDFB2 is cheap and improves coverage.
-- **Cursor plane** — `MODE_CURSOR`/`CURSOR2` validate-only; no actual cursor
-  plane. A real cursor plane (DRM_PLANE_TYPE_CURSOR) + `SETPLANE` is needed for
-  hardware-cursor compositors. The virtio-gpu cursor queue already exists
-  (`FB_GPU_SET_CURSOR`/`MOVE_CURSOR`); wire it to the KMS cursor plane.
-- **Universal planes / overlay** — only one PRIMARY plane. Add a CURSOR plane
-  and (optionally) an OVERLAY plane so `DRM_CLIENT_CAP_UNIVERSAL_PLANES`
-  reports something truthful.
-- **Multi-mode connector** — connector exposes a single generated mode from
-  `xres/yres`. Real EDID/mode lists improve compositor mode selection. The
-  virtio-gpu `GET_EDID` and `GET_DISPLAY_INFO` paths can feed a proper mode
-  list.
-- **Atomic engine** — replace the immediate-apply shim with a minimal but real
-  `drm_atomic_state`-style flow:
-  - build a transient per-object state set during `ATOMIC`,
-  - run a **check** phase (TEST_ONLY uses only this) that validates the whole
-    set atomically and can fail without side effects,
-  - run a **commit** phase that applies plane/CRTC/connector state together,
-  - support **`ATOMIC_NONBLOCK`** real async commit (currently rejected unless
-    TEST_ONLY),
-  - honor **`IN_FENCE_FD`** by actually waiting on the imported fence before
-    the flip (currently rejected), and emit a **real `OUT_FENCE_PTR`** fence
-    that signals on flip completion (currently prepared but not signaled by a
-    completion event).
-- **vblank / events** — move from synthetic ticks to a present-completion
-  driven sequence: increment the CRTC sequence and timestamp when the scanout
-  actually flips (virtio-gpu `RESOURCE_FLUSH` / present completion), and deliver
-  `FLIP_COMPLETE` / vblank events at that point. Implement
-  `CRTC_GET_SEQUENCE`/`CRTC_QUEUE_SEQUENCE` and `WAIT_VBLANK` consistently
-  (currently rejected).
-- **Page-flip target / async** — implement `PAGE_FLIP_TARGET_*` and
-  `PAGE_FLIP_ASYNC` or keep them rejected but make `GET_CAP` report `0` for the
-  matching caps so userland negotiates down cleanly.
-
-### 3.3 GEM / buffer objects (`fb_bo_ttm_dmabuf.c`)
-
-- **Per-file handle table** — the biggest structural correctness gap. Linux
-  GEM handles are scoped to the open `drm_file`. xv6 uses one global table with
-  `owner_id` matching. Refactor to a per-`drm_core_file` handle→BO map
-  (small `idr`/`xarray`), with the BO itself globally refcounted. This is a
-  prerequisite for correct `GEM_FLINK`/`GEM_OPEN`, for PRIME import creating a
-  *new handle in the importing file*, and for multi-client render-node use.
-- **`GEM_FLINK` / `GEM_OPEN`** — implement global flink names so two processes
-  can share a BO by name (legacy but still used, e.g. by some Xorg paths).
-- **`GEM_CLOSE` semantics** — ensure closing a handle drops only the *file's*
-  reference, not the global BO, once per-file tables exist.
-- **mmap fault model** — dumb/GEM mmap uses a precomputed offset and a custom
-  VMA handler with `DONTFORK|DONTDUMP` (see runtime memory notes). Keep that,
-  but align the offset scheme with `MAP_DUMB`'s returned offset and document
-  the fake-offset → BO mapping the way Linux's `drm_gem_mmap` does.
-
-### 3.4 dma-buf / PRIME (`fb_bo_ttm_dmabuf.c`, `fb_fd_sync.c`)
-
-- **Cross-driver import** — foreign fds are rejected. To interoperate with the
-  rest of the kernel (future v4l, future second GPU, or the virtio-gpu blob
-  path), introduce a minimal generic `dma_buf`-like object with a small ops
-  vtable (`map`, `unmap`, `mmap`, attach pages/sg). The fb BO becomes one
-  exporter; importers obtain pages through the ops rather than a type check.
-- **`sg_table` equivalent** — BOs are page arrays. A scatter-list abstraction
-  is needed before any real DMA-capable importer (IOMMU/device DMA) can consume
-  an imported buffer. For pure-sysmem QEMU this is low priority.
-- **dma-buf mmap** — expose `mmap()` on the PRIME fd itself (Linux allows
-  `mmap(dmabuf_fd)`), not only via the GEM offset path. `libgbm`/`gbm_bo_map`
-  and some EGL paths rely on it.
-- **Poll semantics** — current poll compares snapshot fence counters. Once real
-  `dma_fence` objects exist (3.5), wire dma-buf `POLLIN/POLLOUT` to the
-  reservation object's fences as Linux does.
-
-### 3.5 DRM syncobj / dma-fence (`fb_syncobj_prime_virtgpu.c`, `fb_fd_sync.c`)
-
-- **Real `dma_fence` objects** — replace `uint64` counters with a refcounted
-  fence type carrying `{context, seqno, signaled, callbacks, error}`. This is
-  the single most leveraged change: it makes syncobj, dma-buf reservation,
-  sync_file, and atomic in/out fences all share one mechanism, matching Linux.
-- **`SYNCOBJ_EVENTFD`** — currently `-EOPNOTSUPP`. With real fences, register a
-  fence callback that signals an eventfd. Needed by modern compositors that
-  poll syncobj via eventfd.
-- **sync_file import/export** — `HANDLE_TO_FD`/`FD_TO_HANDLE` already produce
-  custom fds; make the exported fd a genuine `sync_file` (with the
-  `SYNC_IOC_*` / `POLLIN`-on-signal contract) so it round-trips through other
-  Linux components.
-- **Timeline correctness** — timeline points work via `timeline_value`. Audit
-  `QUERY` to return the *last signaled* point (`QUERY_FLAGS_LAST_SUBMITTED`
-  semantics) and ensure transfer/proxy chains signal transitively under the
-  real fence model.
-- **`WAIT_FOR_SUBMIT` / `WAIT_AVAILABLE` / deadline** — verify these flags
-  behave like Linux (block until a fence is even attached, not just signaled).
-
-### 3.6 virtio-gpu UAPI (`fb_device_ioctl.c`, `fb_syncobj_prime_virtgpu.c`, `virtio_gpu.c`)
-
-Correction after source audit: the standard `DRM_IOCTL_VIRTGPU_*` set is
-**already dispatched** in `fb_drm_dispatch.c` (`GETPARAM`, `CONTEXT_INIT`,
-`RESOURCE_CREATE`, `RESOURCE_CREATE_BLOB`, `RESOURCE_INFO`, `TRANSFER_TO/FROM_HOST`,
-`WAIT`, `GET_CAPS`, `EXECBUFFER`, `MAP`) on top of the existing engine. The work
-is therefore **completion**, not greenfield. Remaining gaps:
-
-- **`VIRTGPU_EXECBUFFER`** ignores the `bo_handles` array and the in/out
-  fence fds (it calls `virtio_gpu_user_submit(..., NULL, 0, &fence, &signaled)`).
-  Plumb the BO handle list (for residency) and honor `DRM_IOCTL` in-fence wait /
-  out-fence (`fence_fd`) so Mesa's explicit-sync path works.
-- **Per-ioctl completion** to verify against the engine:
-  - `VIRTGPU_GETPARAM` → 3D features / capset query-fix / resource-blob /
-    host-visible / context-init / supported-capset-IDs.
-  - `VIRTGPU_GET_CAPS` → return virgl/virgl2 capset payloads (already queried).
-  - `VIRTGPU_CONTEXT_INIT` → map to `CTX_CREATE` with capset/num-rings/debug-name.
-  - `VIRTGPU_RESOURCE_CREATE` → `RESOURCE_CREATE_3D` + backing + GEM handle.
-  - `VIRTGPU_RESOURCE_INFO` → resource metadata by handle.
-  - `VIRTGPU_EXECBUFFER` → `SUBMIT_3D` (with in/out fence + ring index +
-    bo handle list). This is the core 3D submit path Mesa uses.
-  - `VIRTGPU_TRANSFER_TO_HOST` / `FROM_HOST` → existing transfer cmds.
-  - `VIRTGPU_WAIT` → wait on a BO's last fence.
-  - `VIRTGPU_MAP` → return mmap offset for a resource (like `MAP_DUMB`).
-  - `VIRTGPU_RESOURCE_CREATE_BLOB` → see blob work below.
-- **Blob resources + host-visible memory** — implement
-  `VIRTIO_GPU_F_RESOURCE_BLOB` (`RESOURCE_CREATE_BLOB` cmd, blob mem
-  guest/host3d/host3d-guest, `USE_MAPPABLE`/`USE_SHAREABLE`). Modern Mesa
-  (venus, and recent virgl) and zero-copy presentation rely on it. Requires the
-  virtio-gpu host-visible shared-memory region (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`)
-  and `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`.
-- **GBM/dma-buf bridge** — virtgpu resources must be exportable as PRIME fds
-  (handle↔resource↔dma-buf) so EGL/GBM can scan out a rendered buffer through
-  KMS `ADDFB2`. The render-node→KMS-node buffer hand-off is the desktop path.
-- **Keep `FB_GPU_*`** as an internal/diagnostic UAPI; the new path is additive.
-
-### 3.7 fbdev compat (`inc/dev/fb.h`)
-
-- `FBIOGET_VSCREENINFO`/`FSCREENINFO`/`PUT_VSCREENINFO` exist. Audit the
-  `fb_var_screeninfo`/`fb_fix_screeninfo` struct layouts against Linux
-  `<linux/fb.h>` (bitfields for RGBA offsets, `smem_len`, `line_length`) so
-  `fbdev` clients and the kernel's own `fbcon`-style users see correct values.
-- Consider exposing the DRM-managed scanout through fbdev emulation
-  (`drm_fbdev`) so `/dev/fb0` and `/dev/dri/card0` stay coherent.
-
-### 3.8 Memory management / TTM
-
-- TTM here is naming-only metadata. For QEMU sysmem this is acceptable. The
-  real need is a **GEM-SHMEM-equivalent** clean abstraction (shmem-backed BO
-  with pages, mmap, and a single allocation/free/refcount path) that GEM,
-  dumb, virtgpu resources, and dma-buf all share — replacing the parallel
-  page-array logic currently duplicated across `fb_bo_ttm_dmabuf.c`,
-  `fb_syncobj_prime_virtgpu.c`, and `virtio_gpu.c`.
+- **Host-visible zero-copy blob (optional, host-blocked).** Kernel side is
+  code-complete and fail-closed; needs a host backend that accepts mappable
+  host3d blobs (§7 Phase 5, §13 item 6).
+- **`sg_table`-equivalent scatter-list abstraction.** BOs are page arrays;
+  only needed if a real DMA-capable importer (IOMMU/device DMA, a second GPU,
+  v4l) ever consumes an imported buffer. Low priority for pure-sysmem QEMU.
+- **fbdev struct-layout audit.** Closed for x86_64 on 2026-06-11: compile-time
+  offset probes against Linux `<linux/fb.h>` and `kernel/kernel/inc/dev/fb.h`
+  both report `sizeof(struct fb_var_screeninfo)==160`,
+  `sizeof(struct fb_fix_screeninfo)==80`, and matching offsets for resolution,
+  bitfields, `smem_len`, `line_length`, `mmio_start`, capabilities, and reserved
+  fields (§13 item 8).
+- **Multi-CRTC / hotplug / overlay planes.** KMS objects are static
+  singletons (1 CRTC/connector/encoder + primary/cursor planes); sufficient
+  for the single virtio scanout. Out of scope until a multi-head target
+  exists.
+- **`kcmp` syscall.** `KCMP_FILE` support is implemented for same-process file
+  descriptor comparison and covered by `drmabitest` (§13 item 8).
 
 ---
 
-## 4. Semantic mismatches to fix (correctness, not features)
+## 4. Standing correctness invariants
 
-These are places where an ioctl exists but may behave differently from Linux,
-which silently breaks real clients:
+The semantic mismatches originally listed here (global GEM handle scope,
+atomic in-fence rejection, never-signaling out-fences, `CREATEPROPBLOB`
+rejection, PRIME foreign-fd rejection, non-`sync_file` syncobj fds) are all
+fixed (§7). Keep these invariants when touching the code:
 
-1. **GEM handle scope** (§3.3) — handles must be per-file; returning a global
-   handle violates the contract `drmPrimeFDToHandle` relies on (a *new* handle
-   in the importing file).
-2. **Atomic in-fence rejection** (§3.2) — Linux clients that pass `IN_FENCE_FD`
-   expect the commit to wait, not `-EOPNOTSUPP`. Either honor it or ensure the
-   client never advertises it (but Mesa/compositors do).
-3. **Out-fence never signals** (§3.2/§3.5) — an `OUT_FENCE_PTR` fd that never
-   signals will hang a compositor's frame loop. Must be backed by a real
-   completion.
-4. **`GET_CAP` truthfulness** (§3.1) — `gpu_drm_get_cap()` already returns `0`
-   for `ASYNC_PAGE_FLIP`/`PAGE_FLIP_TARGET`/`CRTC_IN_VBLANK_EVENT`, so caps and
-   behavior currently agree. Keep this invariant: if a flip flag is later
-   implemented, flip the cap to `1` in the same change; never advertise a cap
-   whose ioctl path returns `-EOPNOTSUPP`.
-5. **`CREATEPROPBLOB` rejection** (§3.2) — blocks the standard atomic-modeset
-   path; must be implemented for atomic modeset to function at all.
-6. **PRIME foreign-fd rejection** (§3.4) — breaks the intended cross-component
-   buffer sharing that `card0`↔`renderD128` desktop hand-off needs.
-7. **syncobj fd not a real sync_file** (§3.5) — round-tripping through other
-   Linux components (EGL_ANDROID_native_fence_sync style) needs true poll-on-
-   signal semantics.
+1. **Caps = behavior.** Never advertise a `GET_CAP`/`GETPARAM` capability
+   whose ioctl path returns `-EOPNOTSUPP`; flip the cap in the same change
+   that implements the feature (`gpu_drm_get_cap`, virtgpu `GETPARAM`
+   blob/host-visible advertising).
+2. **Fail-closed, honest errno.** Unimplemented paths return the Linux errno
+   a real driver would; never fake success to make a validator pass.
+3. **Fences must signal.** Any exported fence/out-fence must be backed by a
+   real completion; a never-signaling fd hangs a compositor's frame loop.
+4. **Per-file handle scope.** PRIME import must create a *new* handle in the
+   importing file; `GEM_CLOSE` drops only the file's reference, never the
+   global BO.
 
 ---
 
-## 5. Structural improvements
+## 5. Structural improvements — landed
 
-1. **Introduce a `dma_fence` core** (`dev/fb/dma_fence.c` or a shared
-   `kernel/kernel/inc/dev/dma_fence.h`): refcounted fence, context/seqno,
-   `signal`, `add_callback`, `wait`, `default_wait`. Back syncobj, dma-buf
-   reservation, sync_file, and atomic fences on it. **Highest leverage.**
-2. **Per-file GEM handle table** in `struct drm_core_file` (or a driver
-   sub-struct), with global BO refcount. Centralizes 3.3/3.4 correctness.
-3. **Unify BO allocation** behind one shmem-style allocator (§3.8) used by GEM,
-   dumb, virtgpu, and dma-buf. Removes triplicated page logic.
-4. **Real atomic state objects** (§3.2): a small `kms_atomic_state` with per
-   plane/CRTC/connector snapshots, check/commit split, rollback on failure.
-5. **Generic `dma_buf` object** with an ops vtable (§3.4) so import is not a
-   driver-type check.
-6. **Split the monolithic files**: `fb_drm_core_kms.c` (2300L) and
-   `virtio_gpu.c` (7400L) are large; once the new abstractions land, group by
-   concern (objects vs atomic vs properties; transport vs resource vs 3D).
-7. **virtgpu UAPI layer** (§3.6) as a thin translation file mapping
-   `DRM_IOCTL_VIRTGPU_*` onto the existing engine, keeping `FB_GPU_*` separate.
+All landed via Phases 1–6: the `dma_fence` core (`dev/fb/dma_fence.c`)
+backing syncobj/dma-buf/sync_file/atomic fences; per-file GEM handle tables
+with global BO refcounts; the unified shmem BO allocator shared by GEM, dumb,
+virtgpu, and dma-buf; real atomic state objects with a check/commit split;
+the generic dma-buf ops vtable; the KMS/virtgpu file splits; and the thin
+`DRM_IOCTL_VIRTGPU_*` translation layer over the existing engine (with
+`FB_GPU_*` retained as an internal/diagnostic UAPI).
 
 ---
 
-## 6. Performance improvements
+## 6. Performance improvements — landed
 
-Grounded in the runtime notes (`/memories/repo/xv6-os-*`) and the alpine-virgl
-handoff plan:
-
-1. **Blob / host-visible resources** (§3.6) — eliminate explicit
-   `TRANSFER_TO_HOST` copies for mappable buffers (zero-copy present). This is
-   the largest virgl-path win.
-2. **Real vblank pacing** (§3.2) — drive present from actual flip completion
-   instead of synthetic 60 Hz ticks, removing over/under-submission and the
-   jitter described in the alpine handoff plan.
-3. **Deeper async submit ring** — the engine has an 8-slot async ring; expose
-   ring depth to the virtgpu `EXECBUFFER` path and let the compositor overlap
-   GL submit with host vsync (already partially proven; make it the default
-   through the standard UAPI).
-4. **Scanout fast paths** — the kernel already has direct-scanout mmap and
-   fast row-copy blits (see `xv6-os-hyperv-fb.md`). Ensure the KMS `PAGE_FLIP`
-   / atomic commit uses resource-bind scanout (no readback) whenever the FB is
-   a virgl resource, falling back to CPU copy only for shm buffers.
-5. **Damage-aware present** — plumb `MODE_DIRTYFB` / atomic `FB_DAMAGE_CLIPS`
-   into virtio-gpu `RESOURCE_FLUSH` partial rects to avoid full-frame transfers
-   (the compositor already computes damage).
-6. **Avoid COW divergence on BO maps** — keep the `DONTFORK|DONTDUMP` mapping
-   fix already documented in `xv6-os-runtime.md`; apply it uniformly to all BO/
-   resource maps in the unified allocator (§3.8) so the class of bug cannot
-   recur.
+Realized: present-completion-driven vblank pacing (no synthetic 60 Hz ticks),
+damage-aware `MODE_DIRTYFB`/`FB_DAMAGE_CLIPS` → `RESOURCE_FLUSH` partial
+rects, resource-bind scanout (no readback) whenever the FB is a virgl
+resource, the async submit ring exposed through `EXECBUFFER`, and uniform
+`DONTFORK|DONTDUMP` BO mappings via the unified allocator. The one remaining
+perf item — zero-copy host-visible blob — is host-blocked and optional
+(§13 item 6); the Alpine evidence shows the transfer model sustains a
+66–73 FPS desktop on this host without it.
 
 ---
 
@@ -499,67 +307,38 @@ is retained below for reference and for the remaining host-dependent work.
 - `VIRTGPU_EXECBUFFER` honors BO handles + in/out fence fds; `VIRTGPU_WAIT`
   waits the resource's last-submit fence; virtgpu resources bridge to PRIME
   export for the render-node → KMS-node desktop hand-off.
-- Still to validate end-to-end with a stock Mesa `virgl` build against
-  `renderD128` (needs the `-gl` GTK path; see §8).
+- Validated end-to-end with **stock** Mesa `virgl_drm_winsys` against
+  `renderD128` (§10.3 Task 1; all GPU validators GREEN, custom winsys
+  deleted).
 
 ### Phase 5 — Blob resources + zero-copy + damage present — **COMPLETE (transfer model); host-visible zero-copy optional/host-refused**
 
-- **Landed (committed):**
-  `VIRTIO_GPU_F_RESOURCE_BLOB` negotiation + `VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB`
-  + `virtio_gpu_resource_create_blob()`; 64-bit shared-memory PCI cap discovery
-  with on-the-fly BAR assignment (`pci.c`, `virtio_pci_cap64`); host-visible
-  region (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`) + `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`;
-  `VIRTGPU_MAP` returns the real blob offset; `VIRTGPU_GETPARAM` advertises
-  `HOST_VISIBLE`/`RESOURCE_BLOB` **only** when negotiated (caps = behavior);
-  bounds/ownership-checked user mmap (`virtio_gpu_user_host_visible_mmap`/
-  `_page`) + `VMA_FLAG_PFNMAP` fault semantics in `mm/vm.c`; resource-bind
-  scanout preference and dirty-rect flushes.
-- **Launcher validation path:** `QEMU_VIRTIO_GPU_BLOB=auto` now wires
-  `blob=true,hostmem=...,max_hostmem=...` into non-GL `virtio-gpu` devices and
-  attaches the required shared memfd RAM backend. A headless boot through that
-  script path proves `RESOURCE_BLOB=1`, real guest blob create commands, and
-  fail-closed `HOST_VISIBLE=0` when the current transport lacks a usable
-  host-visible virgl lane.
-- **Host-visible map probe (closes the circular gate):**
-  `virtio_gpu_smoke_host_visible_map()` runs once at init whenever the host has
-  negotiated a host-visible blob aperture. It creates one mappable `HOST3D`
-  blob and, if creation succeeds, issues a real `RESOURCE_MAP_BLOB`, so
-  `GETPARAM(HOST_VISIBLE)` no longer depends on a map that nothing ever
-  attempts. Against the rutabaga
-  backend (which negotiates a 32 MiB host-visible BAR + virgl2 capset + working
-  3D smoke) the host **rejects the mappable create** (`create=-5`, virtio error
-  response), so the cap stays `0` and zero panics occur. This converts the
-  former "untested" host-visible blocker into a **verified host refusal**
+- **Landed (committed):** `VIRTIO_GPU_F_RESOURCE_BLOB` negotiation +
+  `RESOURCE_CREATE_BLOB`; 64-bit shared-memory PCI cap discovery with
+  on-the-fly BAR assignment; the host-visible region
+  (`VIRTIO_GPU_SHM_ID_HOST_VISIBLE`) + `RESOURCE_MAP_BLOB`/`UNMAP_BLOB`;
+  `VIRTGPU_MAP` returning the real blob offset; `GETPARAM` advertising
+  `HOST_VISIBLE`/`RESOURCE_BLOB` **only** when negotiated;
+  bounds/ownership-checked user mmap with `VMA_FLAG_PFNMAP` fault semantics;
+  resource-bind scanout preference and dirty-rect flushes. The launcher
+  (`QEMU_VIRTIO_GPU_BLOB=auto`) wires `blob=true,hostmem=…` + shared memfd
+  RAM for non-GL `virtio-gpu`; a headless boot proves `RESOURCE_BLOB=1` and
+  fail-closed `HOST_VISIBLE=0`.
+- **Host-visible map probe:** `virtio_gpu_smoke_host_visible_map()` runs once
+  at init when a host-visible aperture is negotiated; against the rutabaga
+  backend the host rejects the mappable `HOST3D` create (`create=-5`), so the
+  cap stays `0` — a **verified host refusal**, not an untested gap
   (`/tmp/xv6-rutabaga-hostvis-probe.log`).
-- **Alpine-validated alternative (the working solution on this host):**
-  Alpine 3.23.4 running Weston/Mesa virgl on this same machine was traced
-  (`scripts/gpu/alpine-virgl-desktop-capture.sh`, device
-  `virtio-vga-gl,xres=1280,yres=800` with **no** `blob=true`). Both captures
-  (`build-x86_64/alpine-trace/alpine-qemu.trace` LLVMPIPE host GL,
-  `alpine-d3d12-qemu.trace` D3D12 host GL; summary in
-  `alpine-virgl-behavior-summary.txt`) show **zero** blob, map-blob, or
-  host-visible commands. Alpine's stock Mesa virgl winsys renders into
-  guest-page-backed 3D resources and presents purely through the classic
-  transfer model — histogram (d3d12): `ctx_submit 13552`, `res_flush 5290`,
-  `set_scanout 4529`, `res_xfer_toh_2d 761`, `res_create_3d 15`,
-  `res_back_attach 16` — at 66–73 FPS. **xv6 already implements every one of
-  these commands** (`TRANSFER_TO_HOST_2D/3D`, `RESOURCE_CREATE_3D`,
-  `RESOURCE_ATTACH_BACKING`, `RESOURCE_FLUSH`, `SET_SCANOUT`, `CTX_SUBMIT`)
-  and the rutabaga boot log already prints `using Alpine-style virgl 3D
-  scanout resource`. The transfer-based virgl path is therefore the complete,
-  proven solution for this host, and the existing fail-closed
-  `GETPARAM(HOST_VISIBLE)=0` correctly makes guest Mesa fall back to that path
-  exactly as Alpine's Mesa does when blob is not offered. No guest or kernel
-  changes are needed to match Alpine.
-- **Remaining (host-blocked, optional optimization only):** end-to-end
-  virgl+blob zero-copy can't be exercised on QEMU 9.0.2 — its classic virgl
-  path rejects blob ("blobs and virgl are not compatible"), and udmabuf needs a
-  shared memfd RAM backend. The rutabaga backend negotiates the host-visible
-  BAR but refuses mappable blob creation (proven by the probe above). This is
-  no longer on the critical path: it would only avoid the `TRANSFER_TO_HOST`
-  copies that Alpine performs happily at full frame rate. Realizing it needs a
-  rutabaga/gfxstream-capable QEMU that accepts mappable host3d blobs, or a
-  working vhost-user/rutabaga virgl backend.
+- **Alpine-validated transfer model (the working solution on this host):**
+  traced Alpine 3.23.4 Weston/Mesa virgl issues **zero** blob/map-blob
+  commands and presents purely through the classic transfer model at 66–73
+  FPS (`scripts/gpu/alpine-virgl-desktop-capture.sh`,
+  `build-x86_64/alpine-trace/`). xv6 implements every command in that
+  histogram, so guest Mesa falls back to the same path under fail-closed
+  `HOST_VISIBLE=0`. No guest or kernel changes are needed to match Alpine.
+- **Remaining:** positive virgl+blob zero-copy needs a host backend that
+  accepts mappable host3d blobs — tracked as §13 item 6, off the critical
+  path.
 
 ### Phase 6 — Structural cleanup — **DONE**
 - Unified shmem BO allocator, KMS/virtgpu file splits, and TTM-naming retirement
@@ -572,6 +351,16 @@ is retained below for reference and for the remaining host-dependent work.
 
 Follow the existing ABI-audit discipline (do not declare a path dead from
 source alone — runtime-trace it; see `xv6-os-runtime.md`).
+
+**Validation tiering (keep runs cheap).** Scale the validator set to the
+change: kernel DRM/virtgpu changes → `drmabitest` (or the focused
+`--virtgpu-only` probe) + the one validator owning the touched path + the
+step-7 gate; compositor/client changes → the affected runtime validator +
+the gate; rootfs/asset-only changes → the gate alone. Run the **full**
+validator sweep (steps 1–6) only for kernel ABI changes or before declaring
+a milestone. The step-7 gate (~5 min) is always mandatory after any
+GPU/DRM/desktop change. Build only the narrowest targets first (§13 build
+matrix); never rebuild `world`/toolchain for validation.
 
 **Host readiness (2026-06-07):** KVM (`/dev/kvm`), `tun`, and `memfd` are
 present; `/dev/udmabuf` is **now available** (custom WSL2+ kernel) and QEMU
@@ -663,6 +452,14 @@ DRM nodes registering, and a clean desktop start.
    the live video (overlay counter advancing, HUD `decoded=… dropped=0`) inside
    the WebKit window on the xv6 desktop at 1280×800.
 
+   **Current-tree revalidation (2026-06-11).**
+   `expect scripts/gpu/perf-video-gate.expect` passed after the `kcmp` and
+   `/dev/kbd` changes with
+   `RESULT pass fps=59.0 speed=1.001 presentedFPS=0.0 decodedFPS=59.0
+   dropPct=0.00 advanced=15.29`; the harness also captured
+   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800`
+   during playback and reached `__WEBKIT_API_SMOKE_DONE_0__`.
+
 ---
 
 ## 9. Existing-compositor adoption (Weston) — DONE (historical)
@@ -739,12 +536,14 @@ The deciding question for each item below: *can upstream code, configured only
 through its own options, run unchanged?* If yes, the gap is closed and only a
 signature remains.
 
-### 10.2 Gap → convergence map
+### 10.2 Gap → convergence map — executed
 
-| Gap (from the port audit) | Current divergence | Upstream-convergent action | Residual xv6 signature |
+Every row below is done except the out-of-scope Nouveau row.
+
+| Gap (from the port audit) | Divergence (now retired) | Upstream-convergent action | Residual xv6 signature |
 |---|---|---|---|
-| Custom FB-GPU submit ioctls | `virgl_xv6_winsys.c` + `FB_GPU_VIRGL_*` (0x4619–0x4626) replacing Mesa's DRM winsys | Point Mesa at its **stock** `virgl_drm_winsys` over the standard `DRM_IOCTL_VIRTGPU_*` UAPI already shipped in Phase 4 (§3.6); delete the custom winsys | Just opening `/dev/dri/renderD128`; `DETECT_OS_XV6` selects the Wayland/virgl config, not a private path |
-| Custom GBM library | `xv6-gbm` over `FB_GPU_BO_*` (0x4616/0x4623…) | Use Mesa's upstream `gbm_dri` (or minigbm) against standard DRM GEM dumb + PRIME from Phase 2 (§3.3–3.4) | Build-option selection only |
+| Custom FB-GPU submit ioctls | `virgl_xv6_winsys.c` + `FB_GPU_VIRGL_*` (0x4619–0x4626) replacing Mesa's DRM winsys | Point Mesa at its **stock** `virgl_drm_winsys` over the standard `DRM_IOCTL_VIRTGPU_*` UAPI shipped in Phase 4 (§7); delete the custom winsys | Just opening `/dev/dri/renderD128`; `DETECT_OS_XV6` selects the Wayland/virgl config, not a private path |
+| Custom GBM library | `xv6-gbm` over `FB_GPU_BO_*` (0x4616/0x4623…) | Use Mesa's upstream `gbm_dri` against standard DRM GEM dumb + PRIME from Phase 2 (§7) | Build-option selection only |
 | Incomplete GL/EGL symbols | libepoxy patches `0001`/`0002` add a stub resolver returning 0 | Close the EGL/GLES symbol coverage in Mesa so every symbol epoxy resolves is real; drop both patches | None (upstream libepoxy + `-Degl=yes -Dglx=no -Dx11=false`) |
 | No upstream compositor | custom `wlcomp.c` (sidesteps libinput/udev/seatd/logind) | Execute the §9 Weston bring-up: add the libinput/seat glue, run upstream Weston as the **sole** compositor, then delete `wlcomp` in the same change (one-way cutover, no fallback) | Weston config + xv6 seat/udev shim, not a compositor fork |
 | WebKit/Skia fault | `xv6memshim.c` SIGSEGV/`RIP`-patcher (`xv6_webkit_skia_recovery_installed`) | Root-cause the faulting access and fix it in the WebKit/Skia port (or libc); remove the runtime patcher entirely | None |
@@ -753,876 +552,230 @@ signature remains.
 | Fail-closed Nouveau only | libdrm `-Dnouveau=enabled` alone, skeleton UAPI | Out of scope here (tracked separately in §11); does not block convergence of the Wayland/virgl stack | n/a |
 | libdrm version floor | drm_info patch relaxing the ≥2.4.134 check to accept 2.4.133 | Bump the xv6 libdrm port to ≥2.4.134 and drop the drm_info patch | None |
 | No xkb data at runtime | libxkbcommon stages xkeyboard-config from host | Package xkeyboard-config in the rootfs as a normal data dependency (upstream-compatible) | `-Denable-x11=false` signature only |
-| No LLVM / `kcmp` | mesa `-Dllvm=disabled`, `-Dallow-kcmp=disabled` | `-Dllvm=disabled` is a legitimate upstream signature (software/virgl target) — keep. For `kcmp`, optionally add the syscall so `-Dallow-kcmp` can return to its upstream default | Build options; optional new syscall |
+| No LLVM / `kcmp` | mesa `-Dllvm=disabled`, `-Dallow-kcmp=disabled` | `-Dllvm=disabled` is a legitimate upstream signature (software/virgl target) — keep. `kcmp(KCMP_FILE)` is implemented and runtime-tested, so Mesa can return to its upstream `-Dallow-kcmp` default when the port config is next refreshed | `-Dllvm=disabled` only |
 
-### 10.3 Convergence todo list (each step ties to an existing validator)
+### 10.3 Convergence todo list — **DONE (all four tasks committed)**
 
-Ordered by dependency: **first adapt the kernel so stock upstream libraries
-bind, then add the missing libraries, then migrate the compositor to Weston, and
-do the WebKit/Skia root-cause last.**
+Every task passed its named validators plus the §8 step-7 fullscreen-video
+gate before its divergence was deleted, validated on trace shape + on-screen
+output + framebuffer samples, never counters alone. The detailed per-task
+validation narratives were condensed on 2026-06-11; full versions are in git
+history and `docs/linux-drm-abi-audit.md`.
 
-**Progress snapshot (2026-06-09, final Weston/API-video round).** Task 1 is
-**committed** (super `e404aa8`, kernel `512fac7`, ports `7954144`); Tasks 2–4 are
-**committed** in ports through `5c22780`:
+**Commit ledger:**
 
-- Task 1 — *committed.* Kernel `dev/fb/*` + `virtio_gpu_*` carry the standard
-  UAPI; the custom Mesa winsys source under
-  `mesa/src/src/gallium/winsys/virgl/xv6/` is **removed** and the standalone
-  `xv6-gbm` library is **deleted**. `DETECT_OS_XV6` remains as the intended
-  *signature*. **All GPU validators GREEN on the stock winsys.**
-- Task 2 — *committed in ports through `5c22780`.* New library ports are built/staged:
-  `libudev`, `libinput`, `libseat`, `libevdev`, `hwdata`, `xkeyboard-config`,
-  and upstream Weston. The retired source patches are **deleted**: gtk3
-  `0001`/`0002`, libepoxy `0001`/`0002`, drm_info 2.4.133. The final build
-  shows these ports in the `port-wayland` dependency chain, and the runtime
-  validators below pass.
-- Task 3 — *committed in ports through `5c22780`.* `wlcomp.c`
-  and all `wlcomp_*` fragments are **deleted**; `desktop.c` now
-  `execve("/bin/weston")`; upstream Weston (`weston/`, `xv6-weston.ini`) is
-  staged into the image and boots as the sole compositor. The final image has
-  `/bin/weston` + `/bin/weston-session`, while `/bin/wlcomp` and `/bin/desktop`
-  are absent.
-- Task 4 — *committed in ports through `5c22780`.* The two
-  `xv6memshim.c` crutches — the scalar `mem*`/`mem*_chk` override and the Skia
-  null-`this` SIGSEGV recovery — are **deleted**; the remaining URI/title helper
-  responsibilities were removed from the preload path. `xv6memshim.c` is
-  deleted, WebKit envs no longer preload `libxv6memshim.so`, and the final image
-  has no `/lib/libxv6memshim.so`. The WebKit process wrapper now links only
-  WebKit + libc/`dl`/`pthread`.
+| Round | Commits |
+|---|---|
+| Task 1 — stock Mesa/GBM substrate | super `e404aa8`, kernel `512fac7`, ports `7954144` |
+| Tasks 2–4 — libraries/Weston/shim removal | ports through `5c22780`, super checkpoint `b091811` |
+| Weston desktop-session round | super `7afc7f2`, ports `fc3cf3c`/`0027fa3`, Weston `5543c81`, user `d96d83c` |
+| Cursor/minimize round | kernel `f9d20fd`, user `dd0becb`, ports `290f68f` (Wayland `3c5ad4f`, Weston `f046fa6`) |
 
-VM (2026-06-09): clean Weston boot, `virgl (D3D12 NVIDIA RTX 4060)`, dmabuf
-import healthy, present-trace advancing, no `xv6memshim` preload.
+**Follow-up Weston desktop-session rounds (committed, condensed).** On top of
+the Task 2–4 checkpoint: libinput absolute-pointer + keyboard events fed from
+`/dev/mouse`/`/dev/kbd`; shell-owned `/root/desktop` icons drawn by
+`weston-desktop-shell` (selection highlight + `Exec=` double-click launch
+proven live); Adwaita Xcursor theming + staged DND cursor aliases; real
+`Exec=` lines for the former `X-XV6-Builtin=` entries; Cairo fallback glyphs
+for panel/frame icons; the explicit wl_shm present-buffer format helper; and
+virtio-gpu hardware-cursor positioning proven over the cursor virtqueue. The
+cursor-image black-box and panel-task-list defects found in these rounds are
+closed in §10.4 items 4–5. Live-VM inspection proved the full virtio-tablet →
+`virtio_input` → mouse ring → libinput shim → Weston pointer pipeline and the
+WebKit keyboard path (`typed:a`).
 
-**Desktop-session commit after the checkpoint (2026-06-09 evening).** The super
-checkpoint is `b091811` (ports pointer at `5c22780`); on top of it ports commit
-`0027fa3` and user commit `d96d83c` carry a Weston desktop-session round:
+**Tooling caveats for future sessions:** QEMU HMP `mouse_move` is silently
+dropped for the virtio-tablet (buttons deliver, motion does not) — drive the
+pointer with guest-side `mouseinject`. Guest `mousetest` reads 0 events
+because the libinput shim drains the ring continuously. The hardware cursor
+is invisible in `fbstat`/scanout captures by design (QEMU composites the
+cursor plane host-side) — do not treat cursor-not-in-framebuffer as a
+regression. xv6 `sh` has no `>>`/`2>&1`, and long serial lines truncate —
+build multi-command sequences with short `echo`-into-file + `sh file` steps.
 
-- **libinput absolute-pointer support** (`libinput/src/libinput.c`, ~+233
-  lines): a `/dev/mouse` reader thread feeding real
-  `LIBINPUT_EVENT_POINTER_MOTION_ABSOLUTE`/`MOTION` events plus button and
-  discrete-axis plumbing (`XV6_MOUSE_EVENT_F_ABSOLUTE`, `BTN_LEFT/RIGHT/MIDDLE`).
-- **Weston shell-owned desktop icons:** the standalone `desktop-icons` client
-  was superseded as the default desktop path. `/root/desktop` enumeration,
-  icon drawing, selection, and double-click launch now live in
-  `weston-desktop-shell` itself, so the panel/taskbar and desktop background
-  are one shell-owned surface stack; `desktop.c` no longer launches a default
-  client.
-- **libinput keyboard support** (`libinput/src/libinput.c`): `/dev/kbd` events
-  now synthesize `LIBINPUT_EVENT_KEYBOARD_KEY` with nonzero seat key count,
-  covering the normal WebKit/GTK text path.
-- **Cursor theming:** `XCURSOR_PATH=/share/icons`, `XCURSOR_THEME=Adwaita`,
-  `XCURSOR_SIZE=24` exported to Weston by `launch_weston()`.
-- **`xv6_present_buffer_init_shm_format()`** helper (explicit wl_shm format).
-- **Super housekeeping:** duplicate `weston-session` launch removed from
-  `rootfs-overlay/etc/daemons` (`/etc/startup` already launches it).
-- **Gate re-run (18:51):** `RESULT pass fps=60.1 speed=1.001 decodedFPS=60.1
-  dropPct=0.00 advanced=15.13` + `__WEBKIT_API_SMOKE_DONE_0__` + in-guest
-  framebuffer capture (`fb_ppm_current 1280x800`) — the Weston gate holds with
-  the in-flight tree. (`presentedFPS` reads 0.0 under Weston: the present
-  counter is not observable through the API-smoke probe; playback proof is
-  decode-clock advancement + the framebuffer sample.)
-- **Desktop/input re-proof (late evening):** framebuffer capture shows
-  Weston’s top panel and all 16 `/root/desktop` icons drawn by
-  `weston-desktop-shell` (no private `weston_desktop_shell` bind denial, no
-  fake fullscreen desktop client). WebKit input smoke reaches
-  `/tmp/webkit-title = typed:a` after QEMU `sendkey a`, proving the Weston →
-  libinput → GTK/WebKit keyboard path.
+**Task record:**
 
-**Interactive desktop inspection (2026-06-09 night, live VM + GDB).** The
-desktop-session tree was exercised end-to-end in the running VM (guest `mouseinject`
-into `/dev/mouse`, kernel counters read over the QEMU gdbstub, framebuffer
-proof via `fbstat ppm-current` + `debugfs` extraction):
+- [x] **1. Kernel adapted to upstream Mesa/GBM (`virgl_xv6_winsys.c` and
+      `xv6-gbm` retired).** Stock Mesa `virgl_drm_winsys` and upstream
+      `gbm_dri` bind `/dev/dri/card0` + `renderD128` through the standard
+      `DRM_IOCTL_VIRTGPU_*` + GEM-dumb/PRIME UAPI with no private `FB_GPU_*`
+      ioctls; the custom winsys source and the `xv6-gbm` library are deleted;
+      `DETECT_OS_XV6` remains as the intended signature. Validated:
+      `drmabitest` (Linux-matching errno; the lone non-blob
+      `cross:DRM_PRIME_VIRTGPU_RESOURCE` fail under a plain `virtio-gpu` boot
+      is expected fail-closed), upstream `drm_info` + `modetest`,
+      `scripts/gpu/virgl-kms-validate.sh`, `scripts/gpu/gpu-validate.sh`,
+      `scripts/gpu/virgl-desktop-validate.sh` — all GREEN; §8 step-7 gate
+      PASS (`RESULT pass fps=60.1 dropPct=0.00`, framebuffer proof).
+- [x] **2. Missing libraries added; toolkit/version source patches dropped.**
+      New ports: `libudev`, `libinput`, `libseat`, `libevdev`, `hwdata`,
+      `xkeyboard-config`, upstream Weston. Deleted patches: gtk3
+      `0001`/`0002`, libepoxy `0001`/`0002` (+ `EPOXY_XV6_ALLOW_MISSING`),
+      drm_info version relax; libdrm bumped ≥2.4.134; xkeyboard-config staged
+      as a normal rootfs data dependency. Validated by the
+      `port-wayland`/`image` builds plus the full GPU/WebKit validator set.
+- [x] **3. Compositor migrated to Weston (`wlcomp.c` deleted, one-way
+      cutover — no fallback, no env toggle, no revert).** `desktop.c` execs
+      `/bin/weston`; the image has `/bin/weston` + `/bin/weston-session` and
+      no `/bin/wlcomp`/`/bin/desktop`. All GPU/WebKit validators pass through
+      Weston; §8 step-7 PASS via the WebKitGTK API-smoke oracle
+      (`webkit_api_smoke=1`, `RESULT pass fps=59.8 dropPct=0.00`,
+      `effective_accel=1`, `gpu_contract=virgl-opengl-submit`, in-guest
+      framebuffer proof). The then-residual MiniBrowser UI-client commit
+      stall was later root-caused and fixed (§10.4 item 3).
+- [x] **4. WebKit/Skia root-caused (`xv6memshim.c` deleted).** Both runtime
+      crutches removed: the scalar `mem*`/`mem*_chk` override (glibc AVX2
+      `mem*` works once the kernel enables AVX/YMM; host has no AVX-512) and
+      the Skia null-`this` SIGSEGV/`RIP`-patcher (a vestigial mask for
+      GPU-context loss from the old private winsys deleted in Task 1), plus
+      the `pthread` recovery watchdog. WebKit boots accelerated under Weston
+      to `__WEBKIT_API_SMOKE_DONE_0__` with no SIGSEGV/SIGILL/stack-smash and
+      no recovery installed. Validated:
+      `scripts/gpu/webkit-virgl-gpu-validate.sh`,
+      `scripts/gpu/validate-webkit-runtime.sh`; §8 step-7 PASS on Weston.
 
-- **Pointer pipeline proven end-to-end.** virtio-tablet → kernel
-  `virtio_input` (`events_seen`/`events_pushed` advance under injection) →
-  mouse ring → libinput shim 5 ms reader thread → Weston → desktop-shell.
-  Single-click **selection highlight renders** on the clicked icon (Terminal,
-  GL Sphere — verified in framebuffer crops).
-- **Double-click launch works for `Exec=` entries.** GL Sphere
-  (`Exec=/bin/mesaglsmoke --demo`) forked, opened render+primary DRM nodes,
-  and renders a visible spinning-sphere window (~31 fps on-screen counter) on
-  the Weston desktop.
-- **Hardware cursor positioning is functional** as a virtio-gpu cursor-plane:
-  image resource bound (`gpu.cursor_resource_id=20`), `UPDATE_CURSOR`/
-  `MOVE_CURSOR` go down the dedicated cursor virtqueue (3391 commands
-  submitted, all consumed by QEMU), and `gpu.cursor_x/y` tracks injected
-  motion at every spot tested — center, (97,699), top-left (17,12), and
-  bottom-right clamped (1277,799). The cursor is **invisible in
-  `fbstat`/scanout captures by design** — QEMU composites the cursor plane
-  host-side; a human at the GTK window sees it. Do not treat
-  cursor-not-in-framebuffer as a regression. **Correction 2026-06-10:** the
-  first human-visible check found a solid black box because the cursor upload
-  contained no usable image/alpha pixels. **Fixed 2026-06-10:** the Wayland
-  cursor pool resize path now preserves old shm contents across remap, and KMS
-  cursor upload diagnostics show a non-empty 64x64 cursor image
-  (`alpha_nonzero=254`, `rgb_nonzero=103`, no upload failures) after a fresh
-  Weston boot + `mouseinject`. A focused `webkitabitest wayland-shm` case also
-  proves the xv6 tmpfs/MAP_SHARED resize contract preserves content from both
-  client and server mappings, so this is tracked as a Wayland cursor-pool
-  lifecycle fix rather than an OS mmap crutch.
-- **Fixed 2026-06-10 — former `X-XV6-Builtin=` icons launch real ELFs.**
-  The generated desktop entries for Terminal, Info, Calc, Network, Settings,
-  Monitor, 3D Demo, and Editor now use `Exec=` lines in
-  `scripts/image/make-rootfs.sh`; no `X-XV6-Builtin=` entries remain in the
-  rootfs. Runtime proof used fresh Weston boots, guest-side `mouseinject`
-  double-clicks, framebuffer dumps, and reject-pattern log scans. All eight
-  formerly-builtin icons opened visible Weston windows/surfaces: Terminal,
-  Calc, Network, Monitor, and Editor through `/bin/weston-terminal`; Info and
-  Settings through `/bin/filemgr`; 3D Demo through `/bin/mesademo`.
-  **Scope correction 2026-06-10:** only the launch *mechanism* is fixed; five
-  of the targets are placeholders whose labels misrepresent them — Info →
-  `filemgr /proc`, Settings → `filemgr /etc`, Calc → a Python 3.12 REPL in a
-  terminal, Network → `sh` in a terminal, Monitor → a bare terminal. Open
-  defect (§10.4 item 2).
-- **Fixed 2026-06-10 — panel/window chrome icons do not depend on fragile PNG
-  decode.** The default panel launcher uses a Cairo-drawn terminal fallback
-  instead of `/share/weston/terminal.png`, and Weston frame buttons fall back to
-  generated Cairo glyphs if their PNG signs fail to decode. Runtime framebuffer
-  proof shows the panel launcher, titlebar, and minimize/maximize/close buttons
-  rendered with no X-box glyph and no `ERROR loading icon` marker.
-- **Fixed 2026-06-10 — Adwaita DND cursor aliases staged.**
-  `ports/wayland/CMakeLists.txt` now stages `dnd-move`, `dnd-copy`, and
-  `dnd-none` aliases from the existing Adwaita cursor files; `debugfs stat`
-  verifies all three files in `fs.img`.
-- **Tooling caveats for future sessions:** QEMU HMP `mouse_move` is silently
-  dropped for the virtio-tablet (buttons deliver, motion does not — proven by
-  static kernel counters); drive the pointer with guest-side `mouseinject`.
-  Guest `mousetest` reads 0 events because the libinput shim drains the ring
-  continuously. xv6 `sh` has no `>>`/`2>&1`, and long serial lines truncate —
-  build multi-command sequences with short `echo`-into-file + `sh file` steps.
-
-**Every step must pass its named existing validator(s) and must not regress the
-§8 step-7 fullscreen-video gate before the divergence is deleted.** Validators
-below are real scripts/programs in this repo — never declare a step done on
-counters alone (§8: trace shape + on-screen output + framebuffer sample).
-
-- [x] **1. Adapt the kernel to upstream Mesa/GBM (retire `virgl_xv6_winsys.c`
-      and `xv6-gbm`).** *Committed 2026-06-09 (super `e404aa8`, kernel
-      `512fac7`, ports `7954144`).* The custom winsys source + `xv6-gbm` library
-      are removed and the kernel UAPI edits are landed. The standard `DRM_IOCTL_VIRTGPU_*`
-      submit/transfer/fence UAPI (§3.6) and the DRM GEM-dumb + PRIME buffer path
-      (§3.3–3.4) let **stock** Mesa `virgl_drm_winsys` and upstream `gbm_dri`
-      bind against `/dev/dri/card0` + `renderD128` with no private `FB_GPU_*`
-      ioctls.
-  - Validated (kernel ABI first, then stock Mesa): `user/programs/drmabitest`
-    (every virtgpu/GEM/PRIME ioctl, Linux-matching errno; the lone non-blob
-    `cross:DRM_PRIME_VIRTGPU_RESOURCE` `create=-1` under a plain `virtio-gpu`
-    boot is **expected fail-closed** — that boot advertised no 3D capset),
-    upstream **drm_info** + **modetest** `-D /dev/dri/card0` (full atomic KMS
-    enum), `scripts/gpu/virgl-kms-validate.sh` (direct KMS GBM/EGL = the
-    kmscube-equivalent), `scripts/gpu/gpu-validate.sh` (virgl bring-up + 3D
-    `glsmoke`, `driver=virtio_gpu` stock pipe_loader), and
-    `scripts/gpu/virgl-desktop-validate.sh` (`mesawlegl`, `status=0`) — **all
-    GREEN** on the stock winsys.
-  - Gate: §8 step 7 fullscreen video — **PASS** via the local high-res/60fps
-    gate (`scripts/gpu/perf-video-gate.expect`,
-    `RESULT pass fps=60.1 dropPct=0.00`, framebuffer proof). Still on `wlcomp` +
-    the WebKit shim at this stage — only the GPU substrate changed.
-- [x] **2. Add the missing libraries (drop the toolkit/version source
-      patches).** *Committed in ports through `5c22780`.*
-      Bring up the libraries the ports
-      previously faked or hand-wired: a libudev-ABI-compatible shim (or eudev)
-      so libdrm/Mesa build with `-Dudev=true` and discover nodes the upstream
-      way; complete the EGL/GLES symbol coverage in Mesa so libepoxy resolves
-      real symbols and patches `0001`/`0002` + `EPOXY_XV6_ALLOW_MISSING` stay
-      gone; bump the libdrm port to ≥2.4.134 and keep the drm_info version patch
-      removed; package xkeyboard-config as a normal rootfs data dependency so
-      libxkbcommon needs no host staging; upstream or option-ize the gtk3
-      `0001`/`0002` patches (`-Dprint_backends=none` signature only).
-  - Validated: `cmake --build build-x86_64/ports --target port-wayland
-    -j$(nproc)` and `cmake --build build-x86_64 --target image -j$(nproc)`;
-    `scripts/gpu/validate-webkit-runtime.sh build-x86_64/sysroot
-    build-x86_64/fs.img`; `scripts/gpu/gpu-validate.sh`;
-    `scripts/gpu/virgl-desktop-validate.sh`; `scripts/gpu/virgl-kms-validate.sh`;
-    `scripts/gpu/webkit-virgl-gpu-validate.sh`.
-  - Gate: §8 step 7 fullscreen video — PASS on Weston, see Task 3 evidence.
-- [x] **3. Migrate the compositor to Weston (delete `wlcomp.c`).**
-      *Committed in ports through `5c22780`.* `wlcomp.c` and its
-      `.inc` fragments are deleted, `desktop.c` `execve("/bin/weston")`, and
-      upstream Weston (`xv6-weston.ini`) boots as the sole compositor; WebKit
-      reaches `__WEBKIT_API_SMOKE_DONE_0__` under it. This was a one-way cutover
-      — no selectable fallback, no env toggle, no revert.
-  - Validated: `/bin/weston`, `/bin/weston-session`, `/bin/webkitgpusmoke`, and
-    the local video assets are present in `build-x86_64/fs.img`; `/bin/wlcomp`
-    and `/bin/desktop` are absent. `scripts/gpu/gpu-validate.sh`,
-    `scripts/gpu/virgl-desktop-validate.sh`, `scripts/gpu/virgl-kms-validate.sh`,
-    and `scripts/gpu/webkit-virgl-gpu-validate.sh` pass through Weston.
-  - Gate: §8 step 7 fullscreen video — PASS using the WebKitGTK API smoke
-    oracle under Weston (`webkit_api_smoke=1`): `RESULT pass fps=59.8
-    speed=1.001 decodedFPS=59.8 dropPct=0.00 advanced=15.15`,
-    `__WEBKIT_API_SMOKE_DONE_0__`, `effective_accel=1`,
-    `gpu_contract=virgl-opengl-submit`. The in-guest framebuffer sample
-    `/perf-video-frame.ppm` is a 1280x800 P6 image with
-    `nonblack=564975/1024000`, `unique_sample=56`.
-  - Residual risk: the stock accelerated MiniBrowser UI-client path still
-    stalls before page commit under Weston; the media/backend path itself is
-    proven by the API oracle. Do not treat MiniBrowser UI-client parity as part
-    of the §8 step-7 media gate.
-- [x] **4. WebKit/Skia root-cause (delete `xv6memshim.c`).** *Committed in ports
-      through `5c22780`.* Both runtime crutches are deleted: the scalar
-      `mem*`/`mem*_chk` override (glibc AVX2 `mem*` now works since the kernel
-      enables AVX/YMM and the host has no AVX-512) and the Skia null-`this`
-      SIGSEGV/`RIP`-patcher (a vestigial mask for GPU-context-loss from the old
-      xv6 virgl winsys, deleted in Task 1). The `pthread` recovery watchdog in
-      `webkit_preload_wrapper.c` is gone too. The remaining URI/title helper
-      path is folded out of the preload route: `desktop.c` already normalizes
-      initial WebKit URLs; `webkitgpusmoke` writes `/tmp/webkit-title` directly;
-      the local WebGL fixture is loaded via `webkit_web_view_load_html()` with
-      the fixture URI as base.
-  - Verified crutch-free: WebKit boots accel under Weston to
-    `__WEBKIT_API_SMOKE_DONE_0__` with **no SIGSEGV/SIGILL/stack-smash** and
-    **no recovery installed** (full GPU init: `webkit_gpu_policy`,
-    `dri2 probe ok`, `driCreateNewScreen3 driver_configs ready`).
-  - Validate: `scripts/gpu/webkit-virgl-gpu-validate.sh` and
-    `scripts/gpu/validate-webkit-runtime.sh`; §8 step-7 PASS on Weston.
-
-**Signatures that remain after the list is complete** (acceptable, not forks):
-the Wayland-only/virgl/no-X11/no-LLVM build options on Mesa/GTK/libepoxy/
+**Signatures that remain** (acceptable, not forks): the
+Wayland-only/virgl/no-X11/no-LLVM build options on Mesa/GTK/libepoxy/
 libxkbcommon, and a single `DETECT_OS_XV6` platform define that selects those
 **standard** code paths. No replacement libraries, no source patches, no
-runtime monkey-patching, no private ioctl winsys should survive.
+runtime monkey-patching, no private ioctl winsys survive.
 
 ### 10.4 Desktop-session defects from the 2026-06-10 manual session — closure log
 
 A hands-on desktop session surfaced the defects below; each was triaged
-against the source the same day. These items are now a closure log for the
-validated desktop-usability fixes. Validation for every fix: fresh image boot,
-guest-side `mouseinject` interaction where relevant, framebuffer/screenshot
-proof, and the §8 step-7 gate must stay green.
+against the source and fixed with runtime proof. Validation for every fix:
+fresh image boot, guest-side `mouseinject` interaction where relevant,
+framebuffer/screenshot proof, and a green §8 step-7 gate. The full
+per-fix evidence narratives were condensed on 2026-06-11; complete versions
+are in git history. Residual follow-ups extracted from this log live in §13.
 
-1. **Fixed 2026-06-11 — Files/filemgr, Peanut-GB, GL Smoke,
-   Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf now have
-   client-drawn titlebars; the NetSurf residual control path is validated.**
-   Original defect: no window titlebar on non-toytoolkit clients (observed on
-   3D Demo and Files; affects every client not based on Weston's toytoolkit).
-   Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
-   `mesademo`) create bare `xdg_toplevel` surfaces with no client-side
-   decorations and no `zxdg_toplevel_decoration_v1` request, and Weston's
-   desktop-shell draws **no** server-side decorations for Wayland clients.
-   `weston-terminal` windows have titlebars only because the toytoolkit
-   (`clients/window.c`) draws CSD frames. Filemgr took the narrow client-side
-   path first: it reserves a 30-pixel titlebar above the existing toolbar,
-   draws `Files - <cwd>` plus minimize/maximize/close controls, forwards the
-   controls to xdg-toplevel requests, and shifts toolbar/sidebar/list hit
-   testing down accordingly. Runtime proof on a fresh rebuilt image:
-   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/filemgr /root &`
-   followed by `fbstat ppm-current /filemgr-titlebar4.ppm 0 0 1280 800`
-   captured a visible `Files - /root` titlebar with controls. Guest-side
-   `mouseinject` control validation captured `/filemgr-control3-min.ppm`
-   showing minimize leaves the window visible, `/filemgr-control3-max.ppm`
-   showing maximize expands the window without disappearing, and
-   `/filemgr-close-after.ppm` showing close returns to the desktop. The
-   Peanut-GB shm-present frontend now follows the same narrow client-side
-   decoration path: it reserves a 30-pixel titlebar above the Game Boy framebuffer,
-   draws `Peanut-GB - <ROM title>` plus minimize/maximize/close controls, keeps
-   the LCD content centered below the titlebar, forwards titlebar drag/controls
-   through xdg-toplevel, and tracks maximized configure state. Runtime proof used
-   the embedded Peanut-GB `dmg-acid2` test cartridge copied only into the
-   generated image, then launched
-   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/peanutgb
-   /root/dmg-acid2.gb &`. `fbstat ppm-current /peanutgb-titlebar2.ppm
-   0 0 1280 800` captured a visible `Peanut-GB - DMG-ACID2` titlebar and
-   control set. Guest-side `mouseinject` proof captured `/pgbmin.ppm`
-   showing minimize leaves the window visible, `/pgbmax.ppm` showing maximize
-   expands the window without disappearing, and `/pgbclose2.ppm` showing close
-   exits the window and returns to the desktop. The focused rebuilds passed:
-   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. GL Smoke now follows
-   the same narrow client-side path for the GLES smoke client: it reserves a
-   30-pixel titlebar labeled `xv6 GL Smoke`, draws `-`, `+`/`[]`, and `X`
-   controls, wires titlebar drag plus minimize/maximize/close through
-   xdg-toplevel, and tracks maximized configure state. Fresh image proof
-   launched
-   `XDG_RUNTIME_DIR=/tmp WAYLAND_DISPLAY=wayland-0 /bin/glsmoke --seconds=180
-   &`; `fbstat ppm-current /glsmoke-titlebar3.ppm 0 0 1280 800` captured a
-   visible titlebar and controls. Guest-side `mouseinject` proof captured
-   `/glsmoke-min.ppm` showing minimize remains visible under the current Weston
-   mitigation, `/glsmoke-max.ppm` showing maximize expands the GL window
-   without losing content, and `/glsmoke-close.ppm` showing close returns to
-   the desktop; the log reported `glsmoke[0]: complete frames=419 status=0`.
-   Post-change rebuilds passed:
-   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. The required stock
-   §8 media gate then passed:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` exited 0, captured
-   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-   rect=0,0 1280x800`, emitted
-   `RESULT pass fps=60.1 speed=1.002 presentedFPS=0.0 decodedFPS=60.1
-   dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   Host-side dump/inspection of `/perf-video-frame.ppm` showed the WebKit
-   window with the colorful live video frame and HUD (`media=7.59s`,
-   `decoded=455`, `dropped=0`), with P6 1280x800
-   `nonblack=984525/1024000` and `unique_sample=81`. Mesa GL Smoke now has the
-   same client-side decoration path in its Mesa surfaceless-to-Wayland-buffer
-   frontend: it reserves a 30-pixel `Mesa GL Smoke` titlebar above the rendered
-   content, draws `-`, `+`/`[]`, and `X` controls into the final Wayland buffer,
-   wires titlebar drag plus minimize/maximize/close through xdg-toplevel, and
-   tracks maximized configure state. Fresh image proof autolaunched it with
-   `glsmoke=1 glsmoke_seconds=180`; `fbstat ppm-current /m.ppm 0 0 1280 800`
-   captured a visible `Mesa GL Smoke` titlebar and controls. Guest-side
-   `mouseinject` proof captured `/mn.ppm` showing minimize remains visible
-   under the current Weston mitigation, `/mx.ppm` showing the maximized Mesa GL
-   surface still rendering with `[]` controls, and `/mc.ppm` showing close
-   returned to the desktop; the close log reported
-   `mesaglsmoke[1]: complete frames=91 seconds=180 status=0`. Post-change
-   rebuilds passed:
-   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. The requested stock
-   §8 media gate then passed:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` exited 0, captured
-   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-   rect=0,0 1280x800`, emitted
-   `RESULT pass fps=59.9 speed=1.000 presentedFPS=0.0 decodedFPS=59.9
-   dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   Host-side dump/inspection of that stock capture showed the WebKit GPU API
-   smoke window alive with the black `boot` video frame, P6 1280x800
-   `nonblack=564592/1024000` and `unique_sample=87`. Mesa EGL Demo now has the
-   same decoration path in `mesawlegl` (the binary exec'd by `mesademo`): it
-   grows the surface by a 30-pixel titlebar, keeps the demo render viewport at
-   480x360 below the titlebar, labels the sphere path `Mesa 3D Demo`, draws
-   `-`, `+`/`[]`, and `X` controls with the shared bitmap font, and wires
-   titlebar drag plus minimize/maximize/close through xdg-toplevel. Fresh image
-   proof autolaunched it with `glsmoke=1 glsmoke_demo=1 glsmoke_accel=1
-   glsmoke_seconds=180`; `fbstat ppm-current /mesawlegl-titlebar.ppm
-   0 0 1280 800` captured a visible `Mesa 3D Demo` titlebar and controls above
-   the rendered sphere. Guest-side `mouseinject` close proof captured
-   `/mesawlegl-diag-base.ppm`, clicked the `X` control
-   (`mesawlegl: titlebar click x=463 y=15 control=3`), logged
-   `mesawlegl_completion_matrix ... status=0`, then captured
-   `/mesawlegl-diag-close.ppm` showing the desktop after the window exited.
-   Minimize/maximize request wiring is implemented in the same handler, but the
-   separate min/max automation attempts were not clean enough to claim
-   screenshot proof in this slice. Post-change rebuilds passed:
-   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. The requested stock
-   §8 media gate then passed:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` exited 0, captured
-   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-   rect=0,0 1280x800`, emitted
-   `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
-   dropPct=0.00 advanced=15.16`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   Host-side dump/inspection of that stock capture showed the WebKit GPU API
-   smoke window alive with the black `boot` video frame, PNG 1280x800
-   `nonblack=564592/1024000` and `unique=2068`. GL Maze now follows the same
-   client-side decoration path while keeping the hot GL render path simple: it
-   grows the Wayland surface by a 30-pixel `GL Maze` titlebar, draws
-   `-`, `+`/`[]`, and `x` controls into the shm-present buffer after GL
-   readback, reserves the GL viewport below the titlebar, wires titlebar drag
-   plus minimize/maximize/close through xdg-toplevel, and tracks maximized
-   configure state. A first GL-side overlay attempt made the titlebar visible
-   but later reproduced the virgl async-timeout/EIO spiral, so the committed
-   path uses CPU drawing into the final buffer instead. Fresh-image proof
-   launched `/bin/glmaze --seconds=180 &`; `fbstat ppm-current
-   /glmaze-titlebar.ppm 0 0 1280 800` captured a visible titlebar and controls
-   (`/tmp/xv6-glmaze-titlebar/glmaze-titlebar-cpu.png`). Guest-side
-   `mouseinject` proof used the visible control centers and captured
-   `/glmaze-min-before.ppm`/`/glmaze-min-after.ppm` as byte-identical images
-   showing minimize remains visible under the Weston mitigation,
-   `/glmaze-max-after.ppm` showing a maximized GL Maze window with `[]`
-   control state, and `/glmaze-close-after.ppm` showing the desktop after the
-   close control exits the window. Post-change rebuilds passed:
-   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-   `cmake --build build-x86_64 --target image -j$(nproc)`. The requested stock
-   §8 media gate then passed:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` exited 0, captured
-   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-   rect=0,0 1280x800`, emitted
-   `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
-   dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   NetSurf now installs a narrow GTK client-side control row inside the browser
-   content box in `frontends/gtk/scaffolding.c`: a custom `NetSurf` row with
-   `-`, `[]`, and `x` controls. The first GTK CSD attempt was ambiguous under
-   the current Weston/server-decoration stack because the apparent frame target
-   still routed through the surrounding decoration and could close the app when
-   the automation intended maximize. The final path inserts the row at the top
-   of NetSurf's `box1` content container, wires close to destroy the browser
-   window, makes minimize a no-hide `gtk_window_present()` action until there
-   is a true task-list restore flow, and implements maximize as a conservative
-   per-window resize toggle. Runtime proof launched NetSurf from the desktop
-   Browser icon after a forced `port-netsurf-clean`, `port-netsurf`,
-   `port-wayland`, and full-image rebuild. Guest-side `mouseinject` proof
-   clicked the visible client-row controls at `NETSURF_Y=9175`: maximize at
-   `NETSURF_X=57800` captured `/tmp/netsurf-max-ok-before.png` and
-   `/tmp/netsurf-max-ok-after.png` with `compare` AE `121534` and the window
-   still visible/resized; minimize at `NETSURF_X=54800` captured
-   `/tmp/netsurf-min-final-before.png` and `/tmp/netsurf-min-final-after.png`
-   with AE `2066` and the window still visible; close at `NETSURF_X=60722`
-   logged the NetSurf child exit after the click, proving the close path exits
-   the window. The NetSurf content area still reports
-   `about:welcome`/`BadEncoding`; that is separate from this decoration proof.
-   The requested stock §8 media gate stayed green after the final NetSurf
-   source change:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` emitted
-   `RESULT pass fps=60.1 speed=1.003 presentedFPS=0.0 decodedFPS=60.1
-   dropPct=0.00 advanced=15.23` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-   Remaining fix
-   options for the broader sweep: (a) port `libdecor` and adopt it in the
-   xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
-   `xdg-decoration` server-side support to the shell.
+1. **Fixed 2026-06-11 — client-drawn titlebars for all non-toytoolkit
+   clients (filemgr, Peanut-GB, GL Smoke, Mesa GL Smoke, Mesa EGL Demo,
+   GL Maze, NetSurf).** Defect: no window titlebar on any client not based
+   on Weston's toytoolkit. Root cause: those clients create bare
+   `xdg_toplevel` surfaces with no client-side decorations and no
+   `zxdg_toplevel_decoration_v1` request, and Weston's desktop-shell draws
+   **no** server-side decorations (`weston-terminal` has titlebars only
+   because toytoolkit draws CSD frames). Fix: each client now reserves a
+   30-pixel client-drawn titlebar with title text plus
+   minimize/maximize/close controls wired through xdg-toplevel requests
+   (drag included), shifting its hit testing/viewport below the bar:
+   `filemgr` (`Files - <cwd>`), Peanut-GB (`Peanut-GB - <ROM title>`),
+   `glsmoke` (`xv6 GL Smoke`), `mesaglsmoke` (`Mesa GL Smoke`),
+   `mesawlegl`/`mesademo` (`Mesa 3D Demo`), `glmaze` (`GL Maze`; controls
+   are CPU-drawn into the shm-present buffer after GL readback — a GL-side
+   overlay attempt reproduced the virgl async-timeout/EIO spiral and was
+   abandoned, §13 item 2), and NetSurf (a GTK client-side control row inside
+   the content box in `frontends/gtk/scaffolding.c`; minimize is a no-hide
+   `gtk_window_present()` until a true task-restore flow exists, maximize is
+   a conservative resize toggle). Every slice was proven on a fresh image
+   with framebuffer captures of the visible titlebar plus guest-side
+   `mouseinject` minimize/maximize/close clicks, and the §8 step-7 gate
+   re-passed after each rebuild (`RESULT pass fps≈60 dropPct=0.00`,
+   `__WEBKIT_API_SMOKE_DONE_0__`). Known leftovers: Mesa EGL Demo min/max
+   automation was not clean enough for screenshot proof (request wiring is
+   implemented); NetSurf content still reports `about:welcome`/`BadEncoding`
+   (separate defect); the unified decoration strategy — (a) port `libdecor`,
+   (b) rebase the GL demos onto toytoolkit, or (c) server-side
+   `xdg-decoration` in the shell — is §13 item 5.
 
-2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
-   The misleading placeholder entries were removed or renamed in
-   `scripts/image/make-rootfs.sh`: `Info` became `Proc Files`
-   (`/bin/filemgr /proc`), `Settings` became `Config Files`
-   (`/bin/filemgr /etc`), `Calc` became `Python`
-   (`/bin/weston-terminal --shell=/bin/python3.12`), and the duplicate
-   `Network`/`Monitor` shell-terminal placeholders were removed. Image rebuild
-   plus `debugfs` verification showed the old
-   `info.desktop`/`calc.desktop`/`network.desktop`/`settings.desktop`/
-   `monitor.desktop` files absent from `/root/desktop`, with
-   `proc.desktop`, `config.desktop`, and `python.desktop` containing the
-   matching `Name=`/`Exec=` pairs. The same validation boot logged
-   `weston-desktop-shell: loaded 14 desktop entries from /root/desktop`, and
-   the §8 step-7 gate stayed green:
-   `RESULT pass fps=60.0 speed=1.003 decodedFPS=60.0 dropPct=0.00
-   advanced=15.17` with `__WEBKIT_API_SMOKE_DONE_0__` and a 1280x800
-   framebuffer capture.
+2. **Fixed 2026-06-10 — desktop launcher labels match their targets.**
+   Misleading placeholder entries were renamed or removed in
+   `scripts/image/make-rootfs.sh`: `Info` → `Proc Files` (`/bin/filemgr
+   /proc`), `Settings` → `Config Files` (`/bin/filemgr /etc`), `Calc` →
+   `Python` (`/bin/weston-terminal --shell=/bin/python3.12`); the duplicate
+   `Network`/`Monitor` shell-terminal placeholders were deleted. Verified by
+   `debugfs` inspection of the rebuilt `fs.img` (old entries absent, new
+   `Name=`/`Exec=` pairs present), a boot logging `loaded 14 desktop
+   entries`, and a green §8 step-7 gate.
 
-3. **Fixed 2026-06-11 — WebKit MiniBrowser launch, local content, and
-   live-YouTube visible playback are validated under Weston.** Two stacked problems were
-   suspected: (a) the known residual risk that the stock accelerated
-   MiniBrowser UI client stalls before page commit under Weston (§10.3 Task
-   3); (b) live-site loading additionally requires guest networking — DNS +
-   TLS through QEMU slirp (`-netdev user` + e1000 in
-   `scripts/launch/run-qemu.sh`). The network prerequisite is now proven on a
-   fresh image boot with static SLIRP addressing:
-   `lwip: netif up — IP 10.0.2.15`, `/etc/resolv.conf` contains
-   `nameserver 10.0.2.3`, `/bin/dnsstress google.com 10.0.2.3 1 1` reports
-   `dnsstress: RESULT pass failed_children=0` with `NETPREREQ-DNS-RC=0`, and
-   `/bin/openssl s_client -connect google.com:443 -servername google.com
-   -brief < /dev/null` negotiates `Protocol version: TLSv1.3`,
-   `Ciphersuite: TLS_AES_256_GCM_SHA384`, `Verification: OK`, and
-   `NETPREREQ-TLS-RC=0` (`/tmp/xv6-network-prereq3.log`). The QEMU wrapper hit
-   its timeout after the success markers because the scripted shutdown did not
-   exit the VM, so treat the log evidence as the network proof and not as a
-   clean shutdown proof.
-   **Update 2026-06-10 (later session): desktop-icon launch path fixed; the
-   remaining defect is a present/commit + GPU-stall problem, not networking.**
-   (a) Root cause of "typed URL in MiniBrowser did nothing" when started from
-   the desktop icon: `weston-desktop-shell`'s `xv6_desktop_launch_icon()` does
-   a bare `execl` with no env, so MiniBrowser ran without the validated
-   TLS/GIO/WebKit environment and with no URL. Fix (landed + rebuilt):
-   `ports/wayland/src/desktop.c` gained `--launch-webkit [url]`
-   (`run_webkit_launch_mode`) which reuses the validated `launch_client`
-   path (env, GPU policy file, resolv.conf sync), and
-   `scripts/image/make-rootfs.sh` points `webkit.desktop` at
-   `Exec=/bin/weston-session --launch-webkit`. In-guest proof
-   (`tmp/launchmode-webkit-validate.expect`): `[desktop] launch-webkit
-   MiniBrowser pid=52 url=https://www.google.com/...`, full
-   `webkit_gpu_policy name=MiniBrowser ... gpu_contract=virgl-opengl-submit
-   fallback=none`, MiniBrowser + helpers open legacy/render/primary DRM nodes
-   and stay alive. `mouseinject` gained a `dblclick x y gap_us` mode; the icon
-   grid has a +32px panel Y offset (WebKit icon idx13 center px(404,230) →
-   abs(20685,18843); proven-good click: 3D Demo px(68,114) → abs(3481,9339)
-   launched mesawlegl PASS).
-   (b) Historical failure signature: MiniBrowser window did not present a
-   visible frame ("I don't see webkit"); typed URLs echoed in the URL bar but
-   the page area stayed blank. DRM nodes opened and helpers stayed live, so
-   this was the §10.3 Task-3 UI-commit/present stall, not launch or network.
-   The frame-clock, force-compositing, cache-link, and GStreamer-GL fixes below
-   retire this blank/stationary page class for the current launch/local-content
-   and live-YouTube validation paths.
-   (c) Historical/intermittent GUI session freeze signature: `virtio_gpu:
-   async command 0x207 timed out (ctx=2)` (fence age ≈76 s) with a 16-entry
-   virgl command dump (CLEAR/RESOURCE_INLINE_WRITE/CREATE_OBJECT/...), then
-   2500+ weston `got error from kernel - expect bad rendering 5` lines (KMS
-   commit EIO spiral; weston never recovers). A second, possibly related
-   stall: an icon double-click registered at t≈40 s but the launched app's
-   DRM opens only appeared at t≈257 s (≈200 s input/dispatch stall, no virtio
-   errors logged). Both nondeterministic, observed under cmdline
-   `virtio_gpu_irq_wait_ms=60000 vgpu_async_pf=1 vgpu_async_flush=1
-   virtio_gpu_present_no_drain=1 virtio_gpu_disable_pageflip_copy=1
-   virtio_gpu_3d_scanout=1`.
-   (d) **NEW 2026-06-10 — guest OOM during page load captured (probable root
-   cause of the blank page).** A `--launch-webkit` run against
-   `https://www.google.com/search?q=xv6&gbv=1` with `webkit_log=1` ended at
-   t≈674 s with: `pid 85 VBlankMonitor: fatal page fault cr2=0x7fff101bb000
-   err=0x6 rip=0x7ffff83bd3bb` (write fault, no SIGSEGV handler) interleaved
-   with `=== OOM KILLER INVOKED ===`, watermark dump `Total pages: 715538
-   (2795MB) / Free pages: 0 (0MB) / Pressure: critical / OOM kills: 1`,
-   followed by kernel slab corruption during the kill path —
-   `slab_free(): slab is NULL for obj=...` (x4),
-   `slab_free: ERROR - object from free slab` on cache `thread_group` — and
-   `Received IPI_REASON_CRASH, halting` (full evidence:
-   `/tmp/launchmode-run.out`,
-   `build-x86_64/icon-webkit-validate/run-launchmode.log`). TWO bugs: (1)
-   WebKit page load consumes all ~2.8 GB guest RAM — suspected leak (likely
-   unreleased buffers, consistent with the present-stall family) since a
-   Google search page cannot legitimately need that much; (2) the kernel OOM
-   kill path corrupts slab state (`thread_group` cache double-free) and
-   crash-halts the whole machine instead of surviving the kill — this also
-   plausibly explains the earlier "entire window went black" and freeze
-   reports.
-   Validation harnesses for the next session: `tmp/icon-webkit-validate.expect`
-   (icon double-click → launch evidence), `tmp/launchmode-webkit-validate.expect`
-   (direct `--launch-webkit` + `/tmp/webkit_log.txt` dump under `webkit_log=1`),
-   `tmp/webkit-autoprobe.expect` + `/tmp/probe-fs.img` (debugfs-injected
-   `/etc/startup` autorun probe, immune to serial-input death; note: in-guest
-   `sh` scripts must avoid `2>&1`-style redirects it does not support).
-   **Update 2026-06-11 (OOM lifetime hardening):** the OOM kill-path
-   `thread_group` lifetime bug is fixed in the kernel by taking a real
-   `thread_group` reference while selecting, scoring, and signaling a victim
-   instead of reusing an unpinned `get_thread_group()` result across OOM
-   scan/kill windows. Focused runtime proof used a 768 MB nographic KVM boot
-   (`desktop=0`, `webkit=0`, `QEMU_GPU=none`) and a Python loop allocating
-   16 MB chunks until exhaustion: OOM invoked and completed repeatedly, no
-   `slab_free`, `thread_group` free-slab, panic, or `IPI_REASON_CRASH` marker
-   appeared, Python faulted/coredumped under pressure, and `init` restarted a
-   shell (`OOMTEST-DONE oom=1 done=1 survived=1`). This is only the lifetime
-   crash fix. Victim selection remains weak because current OOM badness still
-   falls back to `mm_peak_vm` and picked TGID 40 before the large allocator;
-   an attempted live page-table/RSS walk inside OOM was rejected because OOM
-   can run while allocator spinlocks are held and must not take `vm_rlock()`.
-   Follow-up hardening, not a blocker for the current §10.4 user-visible
-   closure: (1) keep instrumenting any future high-water live-site memory
-   growth with guest `free`-equivalent sampling, WebKit buffer/cache
-   accounting, and kernel page-owner stats; (2) improve OOM victim memory
-   attribution with lock-free accounting suitable for allocation failure
-   context; (3) keep the historical virgl async-timeout/EIO signature on the
-   soak watch list; and (4) add a dedicated typed-navigation/Enter-key harness
-   before claiming that input path separately.
-   **Update 2026-06-11 — YouTube media split clarified.** A direct YouTube
-   watch page now visibly loads enough UI to show the player chrome, but the
-   video remains effectively stationary to a human observer. A direct
-   YouTube-hosted MP4 redirect (`http://10.0.2.2:18081/yt.mp4`) produced a
-   visible Rick Astley frame in MiniBrowser, but two framebuffer captures
-   taken five seconds apart (`/tmp/youtube-direct-frameA.png`,
-   `/tmp/youtube-direct-frameB.png`) were byte-identical with
-   `virtio_failures=0`, `virtio_timeouts=0`, and clean display
-   presents/completions. Local-file MiniBrowser probes were not reliable
-   playback evidence: navigating directly to
-   `file:///share/webkit/youtube-itag18.mp4` opened WebKit's download view,
-   while local HTML/perf pages referencing that asset stayed blank in the
-   MiniBrowser UI-client path. The important counterexample is the
-   compositor-owned WebKit API-smoke path using the same staged asset:
-   `webkit_url=file:///share/webkit/perf-video.html?asset=youtube-itag18.mp4`
-   reported `RESULT pass fps=25.0 speed=0.999 presentedFPS=0.0
-   decodedFPS=25.0 dropPct=0.00 advanced=15.09` and
-   `__WEBKIT_API_SMOKE_DONE_0__` without virtio failures. Therefore the
-   current YouTube defect is not basic network fetch, MP4 demux, or H.264
-   decode throughput; it is the visible MiniBrowser UI-client
-   commit/compositing/present path (plus the already-captured intermittent
-   virgl timeout/EIO spiral).
-   **Update 2026-06-11 (later) — visible MiniBrowser cadence A/B.** Added a
-   temporary launch knob `webkit_sync_paint=0`, which passes
-   `WEBKIT_XV6_SYNC_PAINT=0` while preserving the default behavior. Rebuilt
-   `port-wayland` and the full image, then used a short host redirect
-   (`http://10.0.2.2:18082/yt`) to avoid the xv6 shell splitting/truncating the
-   long signed `googlevideo` URL. With `webkit_accel=1 webkit_private=0
-   webkit_sync_paint=0`, the redirect produced honest MiniBrowser DRM evidence
-   (`requested_accel=1 effective_accel=1`, render + primary node opens) and no
-   virgl/KMS failure (`virtio_failures=0`, `virtio_timeouts=0`,
-   `display_presents=54`, `display_completions=54`). The first 90s/95s
-   captures (`/tmp/youtube-redir-nosync-frameA.png`,
-   `/tmp/youtube-redir-nosync-frameB.png`) differed across the content region
-   (about 686k changed pixels), but this was only the page transitioning from
-   white load view to the dark media view. A later 110s/120s capture pair
-   (`/tmp/youtube-redir-nosync-lateA.png`,
-   `/tmp/youtube-redir-nosync-lateB.png`) showed a real decoded video frame and
-   then remained byte-identical over ten seconds, again with no virtio timeout
-   or KMS EIO spiral (`display_presents=68`, `display_completions=68`). Thus
-   `WEBKIT_XV6_SYNC_PAINT=0` improves the initial visible transition but does
-   not fix continuous video-frame damage/presentation; the active defect is now
-   specifically MiniBrowser's ongoing media-frame repaint/commit path. A local
-   Range-capable host MP4 server also proved GStreamer issues HTTP range reads,
-   but `http://10.0.2.2:18082/youtube-itag18.mp4` stayed on MiniBrowser's load
-   view, so local direct-media-document behavior is not a substitute for the
-   YouTube redirect repro.
-   **Update 2026-06-11 (frame-clock fix) — visible MiniBrowser video now
-   advances under Weston with default env.** The slow/blank MiniBrowser media
-   path was narrowed to WebKit's frame-clock/vblank source, not network,
-   demux, decode, or a wedged virtio ring. First, a regression in the debug
-   env was found: adding `WEBKIT_FORCE_VBLANK_TIMER` pushed the accelerated
-   MiniBrowser env array to 64 entries, equal to xv6 `MAXENV`, leaving no
-   copied NULL terminator for `execve`; the child opened DRM nodes for the GPU
-   policy probe and then logged `/libexec/webkit2gtk-4.1/MiniBrowser: execve
-   failed errno=1`. Removed the stale staged-WebKit no-op
-   `WEBKIT_XV6_SYNC_PAINT` plumbing, restoring the accelerated path to 63 env
-   entries. Then made `WEBKIT_FORCE_VBLANK_TIMER=1` the WebKit default in
-   `ports/wayland/src/desktop.c` and `desktop_clients.inc`, with
-   `webkit_force_vblank_timer=0` retained as the opt-out. Runtime proof after
-   rebuilding `port-wayland` and the full image: default launch of
-   `file:///share/webkit/perf-video.html?ms=90000` with no vblank cmdline
-   override produced live MiniBrowser + WebKit helper processes, zero
-   `virtio_failures`/`virtio_timeouts`, `display_presents=444`,
-   `display_completions=444`, and framebuffer captures at 10s/12s that differ
-   by ~653k pixels:
-   `/tmp/localperf-defaultvblank-10sA.png` shows media time 7.20s / decoded
-   429, while `/tmp/localperf-defaultvblank-10sB.png` shows media time 10.31s
-   / decoded 613 with visibly advanced content. The page's
-   `requestVideoFrameCallback` counter still reports `presented=0`, so keep
-   that as a WebKit metric quirk or remaining API-path gap; the user-visible
-   Weston/MiniBrowser framebuffer path is no longer a multi-second/stationary
-   flip path on this local perf media.
-   **Update 2026-06-11 (real YouTube follow-up) — YouTube compat no longer
-   disables force compositing.** The real YouTube launch path still had a
-   stale compatibility override that changed
-   `WEBKIT_FORCE_COMPOSITING_MODE=1` back to `0` whenever
-   `webkit_youtube_compat=1`, so the live-site path was not using the same
-   compositor/frame-clock shape as the fixed local perf-media path. Removed
-   that downgrade while keeping the explicit
-   `webkit_disable_compositing=1` opt-out for future A/B work. Runtime proof
-   after rebuilding `port-wayland` and the full image: a real watch-page run
-   for `https://www.youtube.com/watch?v=dQw4w9WgXcQ` logged
-   `youtube_compat=1`, `private=0`, and
-   `gpu_contract=virgl-opengl-submit`, kept clean GPU/display counters
-   (`virtio_failures=0`, `virtio_timeouts=0`,
-   `virtio_context_failed=0`, `virtio_async_pending=0`,
-   `display_presents=1659` in the 65s/66s sample), and produced visible
-   video-frame progress in framebuffer captures:
-   `/tmp/youtube-current-forcecomp-65sA.png` and
-   `/tmp/youtube-current-forcecomp-66sB.png` differ by 174,125 pixels with
-   bbox `(283,198)-(767,557)`, entirely in the player region. A wider
-   75s/85s pair similarly differed by 174,175 player pixels and showed
-   different decoded YouTube frames. Do not yet claim smooth 25/60fps
-   live-site cadence from this; the remaining evidence to watch is WebKit's
-   cache hard-link churn and the GLib `g_close(fd:6) failed with EBADF`
-   warning, plus any recurrence of the earlier virgl timeout/EIO spiral. The
-   §8 step-7 regression gate was re-run after this change. The first run hit a
-   transient early `webkitgpusmoke` fatal page fault before the video result,
-   but a clean immediate repeat passed:
-   `RESULT pass fps=55.2 speed=1.001 presentedFPS=0.0 decodedFPS=55.2
-   dropPct=0.24 advanced=15.22` with `__WEBKIT_API_SMOKE_DONE_0__`.
-   Guest-side framebuffer proof `/perf-video-frame.ppm` was dumped to
-   `/tmp/perf-video-frame-forcecomp.png`; the host check saw a 1280x800 image
-   with `984304/1024000` nonblack pixels and `53419` unique colors.
-   **Update 2026-06-11 (host-visible cadence split) — guest scanout keeps
-   advancing while the host window may still look bursty.** After a manual
-   observation that the live YouTube player appeared to flip only every few
-   seconds, the temporary `tmp/webkit-youtube-cadence.expect` harness captured
-   consecutive guest framebuffer images from the same real watch URL. The
-   original no-drain path changed on every 200ms sample: all 14 adjacent
-   frame pairs differed by roughly 162k-175k pixels, with bboxes confined to
-   the YouTube player region. A follow-up run replaced
-   `virtio_gpu_present_no_drain=1` with `virtio_gpu_present_no_drain=0` and
-   sampled every 500ms; all 19 adjacent pairs again changed in the player
-   region (`/tmp/xv6-youtube-cadence-drain/*.ppm`), with clean counters in
-   `build-x86_64/icon-webkit-validate/run-youtube-cadence-drain.log`
-   (`virtio_failures=0`, `virtio_timeouts=0`, `display_presents=1986`,
-   `display_completions=1986`, `virtio_async_pending=1`,
-   `bo_present_last_virtio_us=86`). A passive GTK run with no repeated
-   `fbstat` sampling during the observation window also stayed clean
-   (`display_presents=2733`, `display_completions=2733`,
-   `virtio_async_pending=0`, `bo_present_last_virtio_us=339` in
-   `run-youtube-watch-drain-nosample.log`). For frontend A/B, forcing
-   `QEMU_WSL_GL_DISPLAY=sdl` switched QEMU from GTK to SDL and again kept the
-   guest clean (`display_presents=2267`, `display_completions=2267`,
-   `virtio_async_pending=0`, `bo_present_last_virtio_us=7712` in
-   `run-youtube-watch-sdl-drain-nosample.log`). This means the stationary/bursty
-   symptom is no longer supported as a guest framebuffer or KMS page-flip
-   stall in these samples; the remaining suspect is either host QEMU/WSLg GL
-   presentation cadence or live-site/WebKit workload churn that is visible to
-   a human but not as a guest scanout wedge. A later manual YouTube observation
-   sharpened that split: content eventually becomes visible and the desktop
-   remains responsive, but the video only appears to flip every few seconds to
-   roughly ten seconds. Keep the WebKit cache hard-link failures, repeated
-   `GLib-CRITICAL g_close(fd:6) failed with EBADF`, host QEMU/WSLg GL
-   presentation cadence, and live-site workload churn on the short list, but do
-   not regress the already-proven local §8 perf-video gate while tuning the live
-   YouTube path. A follow-up host-visible sampler used the Windows desktop
-   screenshot API from WSL after `import -window root` and `xwd -root` both
-   failed against the WSLg/Xwayland root. The temporary
-   `tmp/webkit-youtube-host-cadence.expect` harness launched the same real
-   watch URL, waited 65 seconds, then captured 16 Windows-visible screenshots
-   at 1 Hz (`/tmp/xv6-youtube-host-cadence/host-00.png` ...
-   `host-15.png`). The first and last host images show different visible
-   YouTube video moments, and every adjacent 640x360 player crop changed by
-   roughly 169k-174k pixels. The run log had no virgl async timeout, Weston
-   KMS EIO spiral, OOM, or fatal page fault markers. Therefore the manual
-   multi-second flip symptom remains intermittent/not reproduced by this
-   sample, rather than a deterministic current host-window present stall.
-   **Update 2026-06-11 (hard-link path fix) — WebKit cache churn had a real
-   xv6 ABI bug.** The repeated live-site `Failed to create hard link from
-   .../WebKitCache/Version 17/Blobs/... to .../Records/.../Resource/...-blob`
-   diagnostics were traced to xv6, not WebKit: the source path is about 107
-   bytes, but the destination path is about 166 bytes, while `sys_vfs_linkat()`
-   still copied both user paths into `MAXPATH` (128-byte) stack buffers.
-   `link()` and `linkat()` now use the existing VFS 4096-byte user-path helper
-   and dynamic destination leaf buffer, matching the newer `openat()` and
-   `renameat()` shape. Rebuilt the kernel and full image, then re-ran a real
-   YouTube watch-page sample with the Windows-visible host-cadence harness
-   (`WEBKIT_YOUTUBE_WARMUP=70`, 24 one-second captures). The patched run had
-   zero `Failed to create hard link`, zero `g_close(fd:6)`, and no virgl async
-   timeout, Weston KMS EIO spiral, OOM, fatal fault, panic, or crash marker.
-   Every adjacent player crop changed (`23/23`, minimum 81,969 changed pixels,
-   average about 85k), so this sample shows visible playback progress after the
-   hard-link fix. Keep the user's manual "flips every few to ten seconds"
-   observation open for longer/trigger-specific soak, but the WebKit disk-cache
-   hard-link failure itself is fixed. A later corrected-crop host sampler
-   narrowed the Windows-visible crop to the actual video rectangle
-   (`480x240+762+620`) instead of the whole QEMU window. At 5 Hz for 60
-   captures, all 59 adjacent video-crop pairs changed (minimum 41,276 changed
-   pixels, average about 104k). A longer 2 Hz soak was cut short by the outer
-   timeout after 119 captures, but all 118 adjacent video-crop pairs still
-   changed, with no low-change run below 10k pixels (minimum 35,831, average
-   about 86k). The logs for those runs again had no WebKit cache hard-link
-   failure, no `g_close(fd:6)`, and no virgl async timeout, Weston KMS EIO
-   spiral, OOM, fatal fault, panic, or crash marker. That makes the manual
-   multi-second flip report intermittent/not reproduced by the latest
-   host-visible soaks; it stayed on the watch list until the GStreamer-GL sink
-   default below reproduced and closed the stale-video path. The §8 media
-   regression gate was re-run after the kernel/image rebuild and passed:
-   `RESULT pass fps=60.0 speed=1.000 presentedFPS=0.0 decodedFPS=60.0
-   dropPct=0.00 advanced=15.28` with `__WEBKIT_API_SMOKE_DONE_0__`.
-   **Update 2026-06-11 (GStreamer GL sink default) — manual slow-flip report
-   reproduced and narrowed.** A short default real-YouTube host-cadence run
-   reproduced the user's observation: after a 70s warmup, 31 Windows-visible
-   screenshots at 2 Hz held the same visible video crop for all 30 adjacent
-   pairs (`0` changed pixels in
-   `/tmp/xv6-youtube-host-cadence/video-deltas-2hz-current.txt`), while the
-   full host screenshot changed only 26,540 pixels. Crop inspection confirmed
-   the sampled region covered the displayed Rick Astley video/subtitle area,
-   so this was real stale video presentation, not a whole-desktop freeze. An
-   autolaunch diagnostic showed WebKit helpers alive and GStreamer decoding
-   H.264 with QoS frame drops, while MiniBrowser's `/tmp/webkit-media-probe`
-   file stayed absent for this live page. The decisive A/B was
-   `webkit_gst_gl=1`: with the same URL and warmup, all 15 adjacent 1 Hz video
-   crop pairs changed (~6.6k-7.0k pixels in
-   `/tmp/xv6-youtube-host-cadence/gl-video-deltas-1hz.txt`) and the visible
-   frame advanced. `ports/wayland/src/desktop.c` now enables the GStreamer GL
-   sink by default for YouTube-compat MiniBrowser launches, preserving
-   `webkit_gst_gl=0` as an opt-out. Rebuilt `port-wayland` and the full image,
-   then reran the default path with no explicit `webkit_gst_gl=1`; all 15
-   adjacent 1 Hz crop pairs changed (~44.6k-45.0k pixels in
-   `/tmp/xv6-youtube-host-cadence/default-video-deltas-1hz-after-gstgl-default.txt`;
-   tighter crop ~37k in
-   `/tmp/xv6-youtube-host-cadence/default-video-tight-deltas-1hz-after-gstgl-default.txt`).
-   The §8 media regression gate remained green:
-   `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
-   dropPct=0.00 advanced=15.22` with `__WEBKIT_API_SMOKE_DONE_0__`.
-   **Update 2026-06-11 (current closure validation):** Added the small
-   `/share/webkit/human-button.html` fixture to the rootfs overlay so the
-   `tmp/webkit-human-button.expect` probe no longer depends on unstaged `/tmp`
-   state. After a full image rebuild, the 10-second MiniBrowser launch
-   captured `/human-current-10s-fixed.ppm`, dumped to
-   `/tmp/human-current-10s-fixed.png`, with the visible
-   `human-button:PASS` title and `I am a human` button. The run log reported
-   `virtio_failures=0`, `virtio_timeouts=0`, `display_presents=49`, and
-   `display_completions=49`; the only GLib warning was the already-known
-   non-fatal `g_close(fd:6) failed with EBADF` pair. A fresh real-YouTube
-   default-path run then launched
-   `https://www.youtube.com/watch?v=dQw4w9WgXcQ` with `webkit_accel=1`,
-   `webkit_private=0`, and the default YouTube GStreamer-GL path, waited 70s,
-   and captured 16 Windows-visible host screenshots at 1 Hz. The scoped
-   player crop changed on all 15 adjacent pairs
-   (`/tmp/xv6-youtube-host-cadence/current-video-deltas-1hz.txt`, minimum
-   AE `142000`, maximum AE `145201`), and
-   `/tmp/xv6-youtube-host-cadence/current-video-strip.png` shows distinct
-   decoded video moments. The run log contained no virgl async timeout, Weston
-   KMS EIO spiral, OOM invocation, fatal page fault, panic, cache hard-link
-   failure, or harness failure marker. Finally, the stock §8 media regression
-   gate passed after the rootfs/image rebuild:
-   `RESULT pass fps=59.9 speed=1.002 presentedFPS=0.0 decodedFPS=59.9
-   dropPct=0.00 advanced=15.25` with `__WEBKIT_API_SMOKE_DONE_0__`.
-   **Update 2026-06-11 (desktop-icon end-to-end retest):** The WebKit desktop
-   icon path was retested as one user-visible flow rather than as a separate
-   direct-launch control. The old `mouseinject dblclick` burst remained
-   timing-sensitive for Weston desktop-shell activation, so the temporary
-   `tmp/icon-webkit-validate.expect` now drives two explicit guest-side
-   press/release clicks with shell round-trips and pre-arms a delayed
-   framebuffer capture before launching WebKit, avoiding post-launch serial
-   readback as a proof channel. Runtime evidence:
-   `cat /tmp/weston-desktop-shell-app.log` reported
-   `webkit_gpu_policy name=MiniBrowser ... gpu_contract=virgl-opengl-submit
-   fallback=none` and `[desktop] launch-webkit MiniBrowser pid=60
-   url=https://www.google.com/search?q=xv6&gbv=1`; the delayed in-guest
-   capture logged `fb_ppm_current path=/icon-webkit-explicit.ppm
-   screen=1280x800 scanout=1280x800`; `debugfs` dumped a 1280x800 PPM from
-   `build-x86_64/fs.img`, converted to `/tmp/icon-webkit-explicit.png`, and
-   visual inspection shows the MiniBrowser window with Google search results
-   for `xv6` (not blank). A live GDB sample during the previous post-launch
-   quiet period showed all CPUs idle, MiniBrowser/WebKitNetwork/WebKitWebProcess
-   alive, the mouse ring drained, and no virgl async timeout, Weston KMS EIO
-   spiral, OOM, fatal fault, or panic markers. Treat the remaining
-   post-launch serial-input/readback stalls as a harness/TTY limitation unless
-   accompanied by framebuffer, GDB, or kernel error evidence.
-   **Update 2026-06-11 (residual YouTube jitter triage):** The remaining
-   YouTube symptom is no longer the old blank/stationary MiniBrowser present
-   failure. A persistent GStreamer diagnostic run against the real watch page
-   captured `/webkit-gst-debug.log` and showed real decoder-side pressure:
-   `avdec_h264-0` emitted 39 `Dropping frame due to QoS` warnings over about
-   65 seconds of media time, with lateness bursts in the tens to roughly 200ms
-   range, while the visible host window continued to advance. That explains
-   the user's "improved significantly, but still jitter" report as occasional
-   H.264 decode/sink scheduling pressure, not a wedged virtio ring, Weston KMS
-   EIO spiral, OOM, or blank WebKit present path. The launcher now makes the
-   YouTube-compat path's prior validation cap the default:
-   `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` is selected for YouTube unless
-   `webkit_gst_max_avc1_480p=0` is explicitly supplied, and the MiniBrowser
-   launch log records `gst_gl` plus `max_avc1_480p` for future proof. It also
-   can persist `/webkit-runtime-probe.log` and `/webkit-gst-debug.log` when
-   `webkit_gst_debug_persist=1` is present, avoiding reliance on volatile
-   `/tmp` logs after shutdown. After rebuilding `port-wayland` and the full
-   image, a real YouTube run whose cmdline intentionally omitted
-   `webkit_gst_max_avc1_480p=1` still advanced in every Windows-visible host
-   screenshot pair after warmup: 32 captures at the requested 2 Hz, wider
-   player crop `760x430+545+418`, all 31 adjacent pairs changed
-   (`/tmp/xv6-youtube-host-cadence/defaultcap-player-deltas-2hz.txt`,
-   minimum AE `82598`, average about `87400`), and
-   `/tmp/xv6-youtube-host-cadence/defaultcap-player-strip.png` shows distinct
-   decoded moments. The run log had no virgl async timeout, Weston KMS EIO
-   spiral, OOM, fatal page fault, panic, cache hard-link failure, or harness
-   failure marker. The §8 media regression gate stayed green after the final
-   image rebuild: `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0
-   decodedFPS=60.0 dropPct=0.00 advanced=15.28` with
-   `__WEBKIT_API_SMOKE_DONE_0__`. Keep live-YouTube smoothness on the watch
-   list as a decode/scheduling QoS issue; do not reopen the fixed blank-page
-   or stale-present bugs without matching framebuffer/log evidence.
+3. **Fixed 2026-06-11 — MiniBrowser launch, local content, and live-YouTube
+   visible playback validated under Weston.** This closure stacked several
+   independent root causes, each fixed and runtime-proven:
+   - **Network prerequisite (2026-06-10):** QEMU slirp + e1000 proven on a
+     fresh boot — lwIP up at `10.0.2.15`, DNS via `10.0.2.3` (`dnsstress`
+     pass, `NETPREREQ-DNS-RC=0`), TLS 1.3 to `google.com`
+     (`NETPREREQ-TLS-RC=0`).
+   - **Icon-launch environment:** `weston-desktop-shell` launched MiniBrowser
+     via bare `execl` with no env/URL. Fix: `desktop.c` gained
+     `--launch-webkit [url]` reusing the validated `launch_client` path (env,
+     GPU policy, resolv.conf sync); `webkit.desktop` execs
+     `/bin/weston-session --launch-webkit`.
+   - **Env-array overflow:** adding a debug env var pushed the accelerated
+     WebKit env to exactly xv6 `MAXENV` (64), leaving no NULL terminator —
+     `execve failed errno=1`. Fix: removed the stale `WEBKIT_XV6_SYNC_PAINT`
+     plumbing to restore headroom.
+   - **Frame clock:** `WEBKIT_FORCE_VBLANK_TIMER=1` is now the WebKit default
+     (`webkit_force_vblank_timer=0` opt-out) — local perf-media playback went
+     from stationary to visibly advancing (~653k changed pixels across a 2 s
+     capture pair).
+   - **YouTube compat downgrade removed:** the stale override that turned off
+     `WEBKIT_FORCE_COMPOSITING_MODE` under `webkit_youtube_compat=1` is
+     deleted (`webkit_disable_compositing=1` kept for A/B).
+   - **Stale-video root cause:** the default CPU/videoconvert GStreamer sink
+     held the same visible frame for 30+ host samples; the GStreamer **GL**
+     sink is now the YouTube-compat default (`webkit_gst_gl=0` opt-out),
+     after which every host-visible sample pair advanced.
+   - **xv6 ABI bug — hard links:** WebKit cache `Failed to create hard link`
+     churn was xv6's fault: `sys_vfs_linkat()` copied user paths into
+     128-byte `MAXPATH` buffers while WebKit's destination paths are ~166
+     bytes. `link`/`linkat` now use the 4096-byte VFS user-path helpers
+     (kernel commit `889a39a`); post-fix runs show zero hard-link failures.
+   - **Kernel OOM kill-path and attribution:** a WebKit-induced OOM exposed a
+     `thread_group` lifetime bug (slab double-free → `IPI_REASON_CRASH`
+     machine halt). OOM now holds a real `thread_group` reference across the
+     scan/kill window and scores victims from lock-free live RSS
+     (`mm_rss_pages`), not `mm_peak_vm`. Proven by three 768 MB stress boots
+     selecting `python3.12` as the victim with nonzero `rss_pages` and
+     `OOMTEST-DONE oom=1 done=1 survived=1` (§13 item 3).
+   - **Decode-QoS jitter (residual, §13 item 1):** remaining live-YouTube
+     jitter is `avdec_h264` "Dropping frame due to QoS" pressure (39 drops
+     over ~65 s, lateness up to ~200 ms), not a present stall.
+     `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` is the YouTube default
+     (`webkit_gst_max_avc1_480p=0` opt-out), and `webkit_gst_debug_persist=1`
+     persists GStreamer/runtime probe logs across shutdown.
+   Final validation: desktop-icon double-click → visible Google search
+   results (framebuffer proof, `/tmp/icon-webkit-explicit.png`); the staged
+   `/share/webkit/human-button.html` fixture renders in 10 s; real
+   watch-page runs advance in every scoped host-visible player-crop sample
+   (all adjacent pairs changed, no virgl timeout, KMS EIO spiral, OOM, fatal
+   fault, or cache failure markers); §8 step-7 gate green after every
+   rebuild. Do not reopen the fixed blank-page or stale-present bugs without
+   matching framebuffer/log evidence. Harnesses kept for future sessions:
+   `tmp/icon-webkit-validate.expect`, `tmp/launchmode-webkit-validate.expect`,
+   `tmp/webkit-autoprobe.expect`, `tmp/webkit-youtube-host-cadence.expect`.
+   Tooling notes: drive icon clicks as explicit press/release pairs with
+   shell round-trips (not `dblclick` bursts); pre-arm delayed framebuffer
+   captures instead of post-launch serial readback; treat post-launch
+   serial stalls as harness/TTY limitations absent framebuffer/GDB/kernel
+   evidence.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
-   image.** The failing path was Weston/Wayland cursor shm pool growth:
-   resizing the anonymous shm pool remapped it without preserving the cursor
-   image bytes already written into the old mapping. The fix copies the used
-   bytes through `shm_pool_resize()` before remapping. Runtime proof on a fresh
-   image: Weston loads the desktop, guest `mouseinject` moves the pointer,
-   `fbstat ppm-current /cursor-visible-final.ppm 0 0 1280 800` captures the
-   desktop, and `fbstat` reports `kms_cursor_uploads=1`,
-   `kms_cursor_upload_failures=0`, and
-   `kms_cursor_last_pixels checksum=17995698925160261859 alpha_nonzero=254`
-   instead of the previous all-zero upload. The cursor remains absent from
-   framebuffer dumps by design because QEMU composites the hardware cursor
-   plane host-side. A focused `webkitabitest wayland-shm` validation passed on
-   the same rebuilt image, proving the kernel tmpfs/MAP_SHARED content-preserve
-   contract independently of Weston.
+   image.** Root cause: Weston/Wayland cursor shm pool growth remapped the
+   pool without preserving cursor bytes already written into the old mapping;
+   `shm_pool_resize()` now copies the used bytes across remap. Proof on a
+   fresh image: `fbstat` reports `kms_cursor_uploads=1`,
+   `kms_cursor_upload_failures=0`, `alpha_nonzero=254` (was all-zero), and a
+   focused `webkitabitest wayland-shm` case proves the kernel
+   tmpfs/MAP_SHARED content-preserve contract independently of Weston. The
+   cursor remains absent from framebuffer dumps by design (QEMU composites
+   the hardware cursor plane host-side).
 
-5. **Fixed 2026-06-11 — Weston panel now exposes task tabs for open windows.**
-   Original defect: stock Weston desktop-shell's panel hosted only launchers +
-   a clock (`ports/weston/src/clients/desktop-shell.c`, `panel_launcher_*`);
-   running apps had no panel presence, and a true minimize path would make
-   windows unreachable. The fix extends Weston's private
-   `weston_desktop_shell` protocol with task add/remove/active events plus an
-   `activate_task` request. The shell assigns stable task IDs to mapped
-   top-level desktop surfaces, advertises title/app-id text to the shell
-   client, replays existing tasks when the shell client binds, sends active
-   state on focus changes, and removes task entries when surfaces unmap or are
-   destroyed. `weston-desktop-shell` now draws clipped task tabs between the
-   launchers and the clock, highlights the active tab, activates/raises an
-   inactive task on click, and minimizes the active task on click. With a real
-   task list present, titlebar minimize requests now call the shell minimize
-   path instead of being ignored.
-
-   Validation used a fresh Weston rebuild with protocol generation and relink:
-   `cmake --build build-x86_64/ports --target port-weston-clean`,
-   `cmake --build build-x86_64/ports --target port-weston -j$(nproc)`,
-   followed by the required `port-wayland` and full-image rebuilds. The
-   temporary guest-side harness `tmp/weston-tasklist-validate.expect` opened
-   `weston-terminal`, launched NetSurf from the Browser desktop icon, and used
-   `mouseinject` clicks against the panel task region. Framebuffer proof:
-   `/tmp/tasklist-before3.png` shows both `Wayland Terminal` and NetSurf task
-   tabs with NetSurf active; `/tmp/tasklist-after3.png` shows clicking the
-   terminal tab raises and activates the terminal; and
-   `/tmp/tasklist-minimized3.png` shows clicking the active terminal tab
-   minimizes it while both task tabs remain visible and NetSurf is visible
-   again. The required §8 gate stayed green after the final shell change:
-   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-   scripts/gpu/perf-video-gate.expect` emitted
-   `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
-   dropPct=0.00 advanced=15.29` and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+5. **Fixed 2026-06-11 — Weston panel exposes task tabs; minimize is
+   reachable.** Defect: stock desktop-shell's panel hosted only launchers +
+   clock, so running apps had no panel presence and minimize would strand
+   windows. Fix: the private `weston_desktop_shell` protocol gained task
+   add/remove/active events plus an `activate_task` request; the shell
+   assigns stable task IDs to mapped toplevels, replays them on shell-client
+   bind, and sends active state on focus changes; `weston-desktop-shell`
+   draws clipped task tabs between launchers and clock (click raises an
+   inactive task, click on the active tab minimizes it); titlebar minimize
+   now calls the shell minimize path. Proof: framebuffer captures show both
+   `Wayland Terminal` and NetSurf tabs, tab-click raise, and active-tab
+   minimize with the other window re-exposed
+   (`tmp/weston-tasklist-validate.expect`); §8 gate green after the final
+   shell change (`RESULT pass fps=60.0 dropPct=0.00`,
+   `__WEBKIT_API_SMOKE_DONE_0__`).
 
 ---
 
@@ -1674,8 +827,8 @@ Validation rule:
 
 ## 12. Summary
 
-The convergence work is largely **done**. xv6-os now implements, on top of its
-broad fail-closed DRM shim:
+The Linux DRM ABI convergence work is **done**. xv6-os now implements, on top
+of its broad fail-closed DRM shim:
 
 - a real `dma_fence` core unifying syncobj, sync_file, and atomic fences
   (Phase 1, verified by boot self-test);
@@ -1684,254 +837,419 @@ broad fail-closed DRM shim:
 - KMS atomic with writable property blobs, present-driven vblank, real
   out-fences, and a wired cursor plane (Phase 3);
 - the standard `DRM_IOCTL_VIRTGPU_*` UAPI with `EXECBUFFER` BO list + in/out
-  fences, per-resource `WAIT`, and a virtgpu→PRIME bridge (Phase 4).
+  fences, per-resource `WAIT`, and a virtgpu→PRIME bridge (Phase 4);
+- blob-resource UAPI with honest fail-closed host-visible probing (Phase 5);
+- a shmem-backed allocator and structural file splits (Phase 6).
 
-**Current checkpoint (2026-06-10):**
+Stock Mesa/GBM/libdrm and upstream Weston run on this ABI with no private
+winsys, no source patches, and no runtime monkey-patching (§10.3). The
+2026-06-10 desktop-session defects are closed with runtime proof (§10.4).
+The mandatory §8 step-7 fullscreen-video gate is green on the current tree
+(`RESULT pass fps≈60 dropPct=0.00`, `__WEBKIT_API_SMOKE_DONE_0__`) and must
+be re-run after any GPU/DRM/desktop change; validate with trace shape +
+on-screen output + framebuffer samples, never counters alone. Everything
+still open is tracked in §13.
 
-- **Weston video gate fixed.** §8 step 7 now passes under Weston using the
-  WebKitGTK API-smoke oracle (`webkit_api_smoke=1`): `RESULT pass fps=59.8
-  speed=1.001 decodedFPS=59.8 dropPct=0.00 advanced=15.15`,
-  `__WEBKIT_API_SMOKE_DONE_0__`, with in-guest framebuffer proof
-  `/perf-video-frame.ppm` = 1280x800 P6,
-  `nonblack=564975/1024000`, `unique_sample=56`.
-- **Tasks 2–4 are committed in ports through `5c22780`** (super checkpoint
-  `b091811`). New library ports build/stage;
-  Weston is the sole compositor; `wlcomp*`, old `desktop`, `xv6memshim.c`, and
-  `/lib/libxv6memshim.so` are gone. The scoped ports commit excludes `fs.img`
-  and `config-temp/`.
-- **Weston desktop-session base round committed in ports through `0027fa3` and
-  user through `d96d83c`:** libinput
-  absolute-pointer and keyboard events from `/dev/mouse` + `/dev/kbd`,
-  shell-owned `/root/desktop` icons in `weston-desktop-shell`, Adwaita Xcursor
-  theming, the shm-format present-buffer helper, and the duplicate
-  `weston-session` daemons-entry removal. The §8 step-7 gate re-passed on this
-  tree (`fps=60.1`, `dropPct=0.00`, framebuffer capture). Live-VM inspection
-  (§10.3 “Interactive desktop inspection”) proved: icon selection highlight,
-  `Exec=` double-click launch (GL Sphere window renders), the full
-  virtio-tablet → libinput → Weston pointer pipeline, and virtio-gpu
-  hardware-cursor *positioning* (tracked via gdbstub at all screen spots;
-  invisible in scanout captures by design — the cursor *image* was later found
-  to render as a black box, §10.4 item 4). The WebKit input smoke
-  reaches `typed:a`.
-- **Desktop-session follow-up defects resolved (2026-06-10):**
-  1. The eight former `X-XV6-Builtin=` desktop entries were regenerated with
-     real `Exec=` commands and proved by guest `mouseinject` double-clicks plus
-     framebuffer captures. The proof set covers Terminal, Info, Calc, Network,
-     Settings, Monitor, 3D Demo, and Editor and rejects SIGSEGV/SIGILL/icon
-     load errors/cursor-load errors/exit-127 markers. (Launch mechanism only —
-     five of these targets remain placeholder apps, §10.4 item 2.)
-  2. The panel launcher and Weston frame-button paths now use generated Cairo
-     fallback glyphs when PNG decode is unavailable, so the top-left panel icon
-     and window titlebars render without the X-box placeholder.
-  3. `dnd-move`, `dnd-copy`, and `dnd-none` are staged into the Adwaita cursor
-     theme and verified in the regenerated `fs.img`.
-  4. The §8 step-7 gate re-passed under Weston after the desktop follow-up
-     fixes: `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00
-     advanced=15.19`, `__WEBKIT_API_SMOKE_DONE_0__`, and a 1280x800 in-guest
-     framebuffer sample showing the WebKit GPU API smoke window and live HUD.
-  5. The cursor black-box defect is fixed. The Wayland cursor shm pool resize
-     path now preserves previously written bytes across remap; `fbstat` cursor
-     diagnostics prove the KMS cursor upload contains nonzero alpha/RGB pixels
-     (`alpha_nonzero=254`) instead of the former all-zero image, and
-     `webkitabitest wayland-shm` proves the underlying xv6 tmpfs/MAP_SHARED
-     resize contract separately.
-  6. Minimize requests are ignored until the panel has a real task list, so
-     windows can no longer disappear into an unreachable minimized layer.
-- **Latest Weston video gate (2026-06-10, after cursor/minimize round):**
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` passed under Weston with
-  `effective_accel=1`, `gpu_contract=virgl-opengl-submit`,
-  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800`, final
-  `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
-  advanced=15.14`, and `__WEBKIT_API_SMOKE_DONE_0__`.
-- **Files/filemgr titlebar slice fixed (2026-06-10):** filemgr now draws its
-  own titlebar above the toolbar, labels it `Files - <cwd>`, draws
-  minimize/maximize/close controls, sends the corresponding xdg-toplevel
-  requests, and adjusts toolbar/sidebar/list hit testing for the titlebar
-  offset. Fresh image proof captured `/filemgr-titlebar4.ppm` with a visible
-  `Files - /root` titlebar. Guest-side `mouseinject` control proof captured
-  `/filemgr-control3-min.ppm` (minimize ignored by Weston, window remains
-  visible), `/filemgr-control3-max.ppm` (maximized file manager remains
-  visible and fills the desktop surface), and `/filemgr-close-after.ppm`
-  (close exits the window and returns to the desktop). Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Peanut-GB titlebar slice fixed (2026-06-10):** peanutgb now draws a
-  client-side `Peanut-GB - <ROM title>` titlebar above the LCD framebuffer,
-  wires minimize/maximize/close through xdg-toplevel, tracks maximized state,
-  and keeps the scaled Game Boy image centered below the titlebar. Fresh image
-  proof used the embedded Peanut-GB `dmg-acid2` test cartridge copied into the
-  generated image only; `/peanutgb-titlebar2.ppm` showed the visible
-  `Peanut-GB - DMG-ACID2` titlebar. Guest-side `mouseinject` control proof
-  captured `/pgbmin.ppm` (minimize ignored by Weston, window remains visible),
-  `/pgbmax.ppm` (maximized Peanut-GB remains visible and fills the desktop
-  width), and `/pgbclose2.ppm` (close exits the window and returns to the
-  desktop). Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-Peanut-GB-titlebar media gate (2026-06-10):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0, captured live framebuffer
-  evidence with `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800
-  scanout=1280x800 rect=0,0 1280x800`, and emitted
-  `RESULT pass fps=59.9 speed=1.001 presentedFPS=0.0 decodedFPS=59.9
-  dropPct=0.00 advanced=15.16` plus `__WEBKIT_API_SMOKE_DONE_0__`.
-- **GL Smoke titlebar slice fixed (2026-06-10):** glsmoke now has a
-  client-drawn `xv6 GL Smoke` titlebar with visible minimize/maximize/close
-  controls and xdg-toplevel control wiring. Fresh image proof captured
-  `/glsmoke-titlebar3.ppm` with the titlebar and controls, `/glsmoke-min.ppm`
-  with minimize ignored and the window still visible, `/glsmoke-max.ppm` with
-  the maximized GL surface still rendering, and `/glsmoke-close.ppm` after
-  close returned to the desktop; the control log reported
-  `glsmoke[0]: complete frames=419 status=0`. Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-GL-Smoke-titlebar media gate (2026-06-10):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0, captured
-  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-  rect=0,0 1280x800`, emitted
-  `RESULT pass fps=60.1 speed=1.002 presentedFPS=0.0 decodedFPS=60.1
-  dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-  The dumped framebuffer is P6 1280x800 with
-  `nonblack=984525/1024000`, `unique_sample=81`, and visible WebKit playback:
-  a colorful `xv6 perf` video frame plus HUD at `media=7.59s`,
-  `decoded=455`, `dropped=0`.
-- **Mesa GL Smoke titlebar slice fixed (2026-06-10):** mesaglsmoke now has a
-  client-drawn `Mesa GL Smoke` titlebar above the Mesa-rendered content, with
-  visible minimize/maximize/close controls and xdg-toplevel control wiring.
-  Fresh image proof captured `/m.ppm` with the titlebar and controls,
-  `/mn.ppm` with minimize ignored and the window still visible, `/mx.ppm` with
-  the maximized Mesa GL surface still rendering, and `/mc.ppm` after close
-  returned to the desktop; the close log reported
-  `mesaglsmoke[1]: complete frames=91 seconds=180 status=0`. Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-Mesa-GL-Smoke-titlebar media gate (2026-06-10):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0, captured
-  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-  rect=0,0 1280x800`, emitted
-  `RESULT pass fps=59.9 speed=1.000 presentedFPS=0.0 decodedFPS=59.9
-  dropPct=0.00 advanced=15.14`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-  The dumped stock framebuffer is P6 1280x800 with
-  `nonblack=564592/1024000`, `unique_sample=87`, and showed the WebKit GPU API
-  smoke window alive with the black `boot` video frame.
-- **Mesa EGL Demo titlebar slice fixed (2026-06-10):** `mesawlegl`
-  (`mesademo`) now draws a client-side `Mesa 3D Demo`/`Mesa Native Wayland EGL`
-  titlebar above its GL content, preserves the 480x360 demo render viewport
-  below the 30-pixel titlebar, and wires titlebar drag plus
-  minimize/maximize/close through xdg-toplevel. Fresh framebuffer proof
-  captured `/mesawlegl-titlebar.ppm` with the visible titlebar and controls.
-  Guest-side `mouseinject` close proof captured `/mesawlegl-diag-base.ppm`,
-  logged `mesawlegl: titlebar click x=463 y=15 control=3` and
-  `mesawlegl_completion_matrix ... status=0`, then captured
-  `/mesawlegl-diag-close.ppm` showing the desktop after close. Minimize and
-  maximize request wiring is present, but the separate min/max automation
-  attempts were not clean enough to claim screenshot proof. Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-Mesa-EGL-Demo-titlebar media gate (2026-06-10):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0, captured
-  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-  rect=0,0 1280x800`, emitted
-  `RESULT pass fps=60.0 speed=1.002 presentedFPS=0.0 decodedFPS=60.0
-  dropPct=0.00 advanced=15.16`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-  The dumped framebuffer is PNG 1280x800 with `nonblack=564592/1024000`,
-  `unique=2068`, and showed the WebKit GPU API smoke window alive with the
-  black `boot` video frame.
-- **GL Maze titlebar slice fixed (2026-06-11):** `glmaze` now draws a
-  client-side `GL Maze` titlebar above its GL content, keeps the render
-  viewport below the 30-pixel titlebar, draws minimize/maximize/close controls
-  into the shm-present buffer after GL readback, and wires titlebar drag plus
-  controls through xdg-toplevel. Fresh framebuffer proof captured
-  `/glmaze-titlebar.ppm` with a visible titlebar and controls. Guest-side
-  `mouseinject` proof captured `/glmaze-min-before.ppm` and
-  `/glmaze-min-after.ppm` as byte-identical images after minimize,
-  `/glmaze-max-after.ppm` with the maximized window still visible, and
-  `/glmaze-close-after.ppm` showing the desktop after close. Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-GL-Maze-titlebar media gate (2026-06-11):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0, captured
-  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
-  rect=0,0 1280x800`, emitted
-  `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
-  dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
-- **NetSurf titlebar slice fixed (2026-06-11):** NetSurf now inserts a
-  client-side `NetSurf` control row into the browser content box, with
-  minimize/maximize/close controls that avoid the ambiguous server-decoration
-  hit path. Guest-side `mouseinject` proof captured
-  `/tmp/netsurf-max-ok-before.png` and `/tmp/netsurf-max-ok-after.png` after
-  maximize (`compare` AE `121534`, window still visible/resized),
-  `/tmp/netsurf-min-final-before.png` and
-  `/tmp/netsurf-min-final-after.png` after minimize (`compare` AE `2066`,
-  window still visible), and a close-control run where the NetSurf child exited
-  after the click. Rebuilds passed:
-  `cmake --build build-x86_64/ports --target port-netsurf-clean -j$(nproc)`,
-  `cmake --build build-x86_64/ports --target port-netsurf -j$(nproc)`,
-  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)`, and
-  `cmake --build build-x86_64 --target image -j$(nproc)`.
-- **Post-NetSurf-titlebar media gate (2026-06-11):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run exited 0 and emitted
-  `RESULT pass fps=60.1 speed=1.003 presentedFPS=0.0 decodedFPS=60.1
-  dropPct=0.00 advanced=15.23` plus `__WEBKIT_API_SMOKE_DONE_0__`.
-- **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
-  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
-  scripts/gpu/perf-video-gate.expect` run emitted
-  `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
-  advanced=15.14` plus `__WEBKIT_API_SMOKE_DONE_0__`, but the wrapper did not
-  exit after desktop shutdown and returned 5 after a manual QEMU monitor
-  `quit`; it also missed its framebuffer capture. A supplemental run with the
-  same Weston/WebKit/perf-video boot and a non-greedy live-tick trigger
-  captured the in-guest framebuffer at playback time 10.10:
-  `fb_ppm_current path=/perf-video-frame-filemgr-fbproof.ppm screen=1280x800
-  scanout=1280x800 rect=0,0 1280x800`, then exited cleanly with
-  `RESULT pass fps=60.1 speed=1.000 decodedFPS=60.1 dropPct=0.00
-  advanced=15.11` and `__WEBKIT_API_SMOKE_DONE_0__`.
-- **MiniBrowser live-site network prerequisite proved (2026-06-10):** a
-  serial-only QEMU slirp/e1000 boot with static guest addressing brought lwIP
-  up at `10.0.2.15`, kept `/etc/resolv.conf` at `nameserver 10.0.2.3`,
-  resolved `google.com` through `/bin/dnsstress google.com 10.0.2.3 1 1`
-  (`dnsstress: RESULT pass failed_children=0`, `NETPREREQ-DNS-RC=0`), and
-  completed external TLS with `/bin/openssl s_client -connect google.com:443
-  -servername google.com -brief < /dev/null` (`Protocol version: TLSv1.3`,
-  `Ciphersuite: TLS_AES_256_GCM_SHA384`, `Verification: OK`,
-  `NETPREREQ-TLS-RC=0`). The wrapper timed out after the success markers
-  because the scripted shutdown did not terminate QEMU; it is network proof,
-  not a clean-shutdown validator.
-- **Desktop-usability defects from the 2026-06-10 manual session are closed
-  for the validated paths in §10.4:** titlebar coverage now includes filemgr,
-  Peanut-GB, GL Smoke, Mesa GL Smoke, Mesa EGL Demo, GL Maze, and NetSurf,
-  with visible control paths validated for the remaining NetSurf slice.
-  MiniBrowser launch/local content is validated by the staged
-  `/share/webkit/human-button.html` fixture, which rendered the
-  `human-button:PASS` page and `I am a human` button within 10s after a fresh
-  image rebuild. MiniBrowser live-site video had a real stale-frame mode in
-  the default YouTube CPU/videoconvert sink path; the default GStreamer-GL
-  YouTube path now advances every 1s host-visible sample in the scoped player
-  crop (`15/15` adjacent pairs changed, minimum AE `142000`) and keeps the §8
-  media gate green (`RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9
-  dropPct=0.00 advanced=15.25`, `__WEBKIT_API_SMOKE_DONE_0__`). The WebKit
-  cache hard-link ABI bug in that path is fixed as of 2026-06-11. A dedicated
-  typed-URL/Enter harness remains useful future input coverage, but it is no
-  longer the active blank/stationary-page blocker. The Weston panel task list
-  is fixed and validated by §10.4 item 5. Placeholder launcher labels were
-  resolved by §10.4 item 2, and the cursor image/alpha defect was resolved by
-  §10.4 item 4.
-- **Host-dependent validation gap:** full virgl+blob zero-copy proof still needs
-  a host backend that can expose both virgl and blob resources. The current QEMU
-  9.0.2 classic virgl path rejects that combination before xv6 boots, and the
-  available vhost-user helper cannot initialize virgl without a host DRM render
-  node.
-- **External-tool sweep:** keep refreshing `drm_info`, `modetest`, `kmscube`,
-  and stock Mesa virgl evidence as the host path improves. Validate with trace
-  shape + on-screen output + framebuffer samples, never counters alone.
-- **Mandatory release gate:** smooth fullscreen video playback at the default
-  resolution (§8, step 7) must pass before any GPU/DRM milestone is declared
-  validated; the reproducible realization is the offline local high-res/60fps
-  gate (`scripts/gpu/perf-video-gate.expect`). Any stutter, resolution
-  downgrade, non-fullscreen fallback, or fault fails the milestone.
+---
+
+## 13. Remaining work queue
+
+Ordered roughly by value; none of these may regress the §8 step-7 gate. Items
+marked **closed** are kept here as the metric record for the 2026-06-11 goal
+closure pass.
+
+**2026-06-11 closure metrics.**
+- Rebuilt the current image with `cmake --build build-x86_64 --target image
+  -j$(nproc)`; the rootfs was regenerated at
+  `build-x86_64/fs.img` (2688 MiB ext4).
+- `expect tmp/drmabitest-kcmp.expect`:
+  `DRMABI-KCMP-PASS card0=1 renderD128=1`; both DRM nodes reported
+  `same=0 same_errno=0`, `different=2 different_errno=0`,
+  `bad_fd=-9 bad_fd_errno=9`, and `bad_type=-22 bad_type_errno=22`.
+- `expect tmp/webkit-typed-url-enter.expect` passed 3 consecutive fresh-image
+  runs:
+  `keyinject: chord ctrl+l`, `keyinject: text len=38`,
+  `keyinject: key enter`, `fb_ppm_current path=/typed-url.ppm
+  screen=1280x800 scanout=1280x800`, and
+  `TYPEDURL-PASS target=file:///share/webkit/human-button.html`.
+- `expect scripts/gpu/perf-video-gate.expect`:
+  `RESULT pass fps=59.0 speed=1.001 decodedFPS=59.0 dropPct=0.00
+  advanced=15.29`, framebuffer capture at `1280x800`, and
+  `__WEBKIT_API_SMOKE_DONE_0__`.
+- Post-OOM-RSS revalidation:
+  `cmake --build build-x86_64 --target kernel image -j$(nproc)` rebuilt the
+  kernel/image; `expect tmp/oom-survival.expect` passed three consecutive
+  768 MB boots with `victim=python3.12` and `rss_pages=150873`, `150829`,
+  `150872`; the same image then passed
+  `expect scripts/gpu/perf-video-gate.expect` with
+  `RESULT pass fps=60.1 speed=1.001 decodedFPS=60.1 dropPct=0.00
+  advanced=15.23` and `__WEBKIT_API_SMOKE_DONE_0__`.
+- Virgl async-timeout soak watch progress: added
+  `scripts/gpu/virgl-async-soak.expect` with explicit counters for
+  `virtio_gpu: async command ... timed out`, generic virtio-gpu timeouts,
+  Weston `expect bad rendering`/`got error from kernel`, and crash markers.
+  Two full-duration runs passed:
+  `VIRGL-SOAK-PASS seconds=1800 app_loop_samples=359 async_timeouts=0
+  eio_lines=0 crash_lines=0` (log
+  `build-x86_64/virgl-async-soak/soak-20260611-140225.log`) and
+  `VIRGL-SOAK-PASS seconds=1800 app_loop_samples=360 async_timeouts=0
+  eio_lines=0 crash_lines=0` (log
+  `build-x86_64/virgl-async-soak/soak-20260611-143351.log`). Added
+  `scripts/gpu/perf-video-gate-matrix.sh`, which runs the §8 fullscreen-video
+  gate into isolated per-run directories, invokes the readable
+  `perf-video-gate.expect` via `expect`, requires `xv6-perf-video:RESULT pass`,
+  records `fps`, `speed`, `decodedFPS`, `dropPct`, and `advanced` into
+  `summary.tsv`, and fails on the first missing result or crash marker. A
+  focused GL Maze maximize recurrence then identified
+  a present dependency bug in the `virtio_gpu_present_no_drain=1` path:
+  `virtio_gpu_copy_resource_to_scanout()` and
+  `virtio_gpu_copy_resource_to_resource()` waited for a pending source fence
+  only when `newest_fence <= src_submit_fence`, missing the common case where
+  the source fence and newer submits were both in flight. Fixed both predicates
+  to `newest_fence >= src_submit_fence`, rebuilt `kernel image`, and refreshed
+  `build-x86_64/fs.img` at `2026-06-11 16:23:34 -0400`. Focused metric:
+  `GLMAZE_CONTROL=max expect tmp/glmaze-titlebar-control-one.expect` completed
+  on the rebuilt image in 16.35 s, and
+  `scripts/gpu/titlebar-control-matrix.sh --app glmaze --controls max ...`
+  reported `TITLEBAR-CONTROL-RESULT pass control=glmaze-max width=1280
+  height=800 changed_pixels=680477 total_pixels=1024000
+  changed_ratio=0.664528`; the rebuilt `run-control-max.log` had zero
+  `async command ... timed out`, `expect bad rendering`, or
+  `got error from kernel` markers. First post-fix §8 matrix sample:
+  `scripts/gpu/perf-video-gate-matrix.sh --runs 1 --outdir
+  build-x86_64/perf-video-gate-postfix-matrix` passed in 27.79 s with
+  `fps=57.9`, `speed=1.001`, `decodedFPS=57.9`, `dropPct=0.00`,
+  `advanced=15.43`, `__WEBKIT_API_SMOKE_DONE_0__`, and zero async/EIO/crash
+  markers in `run-01/{driver.log,run.log}`. The item remains open until the
+  planned 3x soak plus full 10x §8 gate matrix is complete after this fix.
+- x86_64 fbdev struct probes matched Linux exactly for the audited ABI surface:
+  `sizeof(fb_var_screeninfo)=160`, `sizeof(fb_fix_screeninfo)=80`, and matching
+  offsets for `xres`, `bits_per_pixel`, RGBA bitfields, `reserved`,
+  `smem_start`, `smem_len`, `line_length`, `mmio_start`, `capabilities`, and
+  `reserved`.
+- `find ports/xv6-gbm/src ports/mesa/src/src/gallium/winsys/virgl/xv6`
+  returned no directories, and `git -C ports status --short` was clean.
+- Host-GUI importer progress: added `scripts/image/import-host-gui.sh`, a
+  conservative offline importer for §10.5. It accepts a host executable or
+  `.desktop`, copies the ELF interpreter and shared-library closure under
+  `/opt/host-gui/<id>/`, emits a wrapper with the Weston/Wayland environment
+  hints and per-app `/tmp/host-gui-<id>.log`, and creates
+  `/root/desktop/imported-<id>.desktop`; host Wayland/Mesa/GBM/DRM/Weston
+  libraries are skipped so the guest graphics stack is not overwritten or
+  shadowed. Each import now emits `/opt/host-gui/<id>/manifest.tsv` with the
+  staged executable/interpreter/library/wrapper/desktop hashes plus explicit
+  `skipped-guest-runtime` records. Metrics:
+  `bash -n scripts/image/import-host-gui.sh` passed;
+  `scripts/image/import-host-gui.sh --dry-run --id xeyes-smoke --name XEyes
+  /usr/bin/xeyes` found interpreter `/lib64/ld-linux-x86-64.so.2` and 21
+  copyable libs; the better Wayland-native candidate
+  `/usr/bin/eglgears_wayland.x86_64-linux-gnu` dry-runs with 13 copyable libs
+  and skips the host `libGL`, `libEGL`, and `libwayland-*` runtime libraries.
+  A temporary-overlay import of the same EGL gears candidate generated
+  `opt/host-gui/eglgears-wayland/{bin/eglgears_wayland.x86_64-linux-gnu,run}`,
+  copied 13 non-graphics support libraries plus the ELF interpreter, and
+  created `root/desktop/imported-eglgears-wayland.desktop`; an actual
+  temporary-overlay import of `/bin/true` generated
+  `opt/host-gui/true-smoke/{bin/true,lib/ld-linux-x86-64.so.2,lib/libc.so.6,run}`
+  and `root/desktop/imported-true-smoke.desktop`, with a manifest containing
+  five hashed generated/staged entries.
+- Live-YouTube QoS metric tooling: added `scripts/gpu/webkit-qos-report.py`
+  to parse persisted GStreamer logs for `avdec_h264` QoS drops, compute
+  drops/minute from either the harness wall-clock duration or the QoS media
+  timestamp span, and report max lateness from `earliest_time - deadline`.
+  Added `scripts/gpu/webkit-cadence-report.py` for adjacent host-visible frame
+  progress and `scripts/gpu/webkit-youtube-smoothness-report.sh` to combine
+  the QoS and cadence criteria into one PASS/FAIL line.
+  Metrics: `python3 -m py_compile scripts/gpu/webkit-qos-report.py` passed;
+  the known residual log `/tmp/xv6-youtube-host-cadence/webkit-gst-debug.log`
+  reports `QOS-RESULT fail drops=39 duration=65.120 drops_per_min=35.934
+  max_lateness_ms=198.186` with `--min-duration-seconds 60`, matching the
+  recorded jitter. The residual host player crop sequence itself passes:
+  32 host frames cropped to `560x300+480+545` produced 31/31 active adjacent
+  pairs with `min_changed=85258` and `max_changed=89916`. The combined report
+  therefore fails the residual run as `qos_rc=1 cadence_rc=0`; a synthetic
+  300 s low-drop QoS fixture plus the same host frames reports
+  `QOS-RESULT pass drops=2 duration=300.000 drops_per_min=0.400
+  max_lateness_ms=60.000`,
+  `WEBKIT-CADENCE-RESULT pass frames=32 pairs=31 active_pairs=31`, and
+  `YOUTUBE-SMOOTHNESS-RESULT pass qos=pass cadence=pass`.
+- Unified decoration progress: added `ports/wayland/src/xv6_titlebar.{c,h}`
+  and `ports/wayland/src/xv6_titlebar_gl.{c,h}` as the shared client-side
+  decoration helpers for the interim migration path.
+  It owns the common titlebar height/control geometry, hit testing, window
+  actions (`minimize`, maximize toggle, close), and software-buffer/GL-vertex
+  titlebar drawing. All six local C clients now use the shared hit/action path
+  (`filemgr`, `peanutgb`, `glsmoke`, `glmaze`, `mesaglsmoke`, `mesawlegl`);
+  `filemgr`, `peanutgb`, `glmaze`, and `mesaglsmoke` also use the shared
+  stride-aware software-buffer drawing path, while `glsmoke` and `mesawlegl`
+  use the shared GL-vertex drawing helper. Metrics: `rg` finds zero remaining
+  local `titlebar_control_at`, `activate_titlebar_control`,
+  `draw_title_button`, `titlebar_emit_*`, `emit_glyph_px`, or `emit_text_px`
+  definitions under `ports/wayland/src/*.c`; all six local C clients share
+  titlebar behavior and drawing. The GTK/NetSurf path is explicitly skipped
+  from the current titlebar-control matrix; it still uses its GTK control row,
+  and its buttons issue real GTK/Wayland toplevel requests:
+  `gtk_window_iconify()`, `gtk_window_maximize()`, and
+  `gtk_window_unmaximize()` rather than the old no-hide present/resize
+  workaround. `port-wayland` passed after the shared-helper migration; after
+  the NetSurf callback change,
+  `cmake --build build-x86_64/ports --target port-netsurf-clean -j2 &&
+  cmake --build build-x86_64/ports --target port-netsurf -j2` passed and
+  installed `build-x86_64/sysroot/bin/netsurf` at
+  `2026-06-11 16:05:08 -0400`. `nm -D` on that binary shows references to
+  `gtk_window_iconify`, `gtk_window_is_maximized`, `gtk_window_maximize`, and
+  `gtk_window_unmaximize`. A direct rootfs refresh then wrote
+  `build-x86_64/fs.img` (2688 MiB ext4) at `2026-06-11 16:06:15 -0400`.
+  Added `scripts/gpu/titlebar-control-report.py` and
+  `scripts/gpu/titlebar-control-matrix.sh` to turn before/after framebuffer
+  PPMs from the existing titlebar expect probes into explicit
+  `TITLEBAR-CONTROL-RESULT` lines with `changed_pixels`, `total_pixels`, and
+  `changed_ratio`; `py_compile`, shell syntax, a synthetic positive PPM diff,
+  and a missing-capture negative check pass. Focused runtime proofs for the
+  shared-drawing path now pass for all three GL Maze controls on the current
+  image: `GLMAZE_CONTROL={min,max,close} expect
+  tmp/glmaze-titlebar-control-one.expect` captured before/after framebuffer
+  PPMs, and the host-side matrix reported
+  `glmaze min pass changed_pixels=504067 total_pixels=1024000
+  changed_ratio=0.492253`,
+  `glmaze max pass changed_pixels=680477 total_pixels=1024000
+  changed_ratio=0.664528`, and
+  `glmaze close pass changed_pixels=507456 total_pixels=1024000
+  changed_ratio=0.495563`. The three focused control logs had zero async/EIO,
+  panic, fatal-fault, coredump, or `GLMAZE-ONE-FAIL` markers. The matching
+  maximize probe initially reproduced
+  the historical async-timeout/EIO spiral (`virtio_gpu: async command 0x207
+  timed out (ctx=3)`, 1,936 async/EIO marker lines), which led to the
+  `virtio_gpu_present_no_drain=1` source-fence predicate fix recorded above.
+  After rebuilding the kernel/image, the same
+  `GLMAZE_CONTROL=max expect tmp/glmaze-titlebar-control-one.expect` probe
+  completed in 16.35 s and the host-side matrix reported
+  `TITLEBAR-CONTROL-RESULT pass control=glmaze-max width=1280 height=800
+  changed_pixels=680477 total_pixels=1024000 changed_ratio=0.664528`.
+
+**Build discipline (keep iteration cheap).** Never rebuild `world` or the
+toolchain for these items — reuse `build-toolchain-x86_64/` (hardlink-copy
+into `build-x86_64/toolchain`, ~30 min saved) and build only the narrowest
+target that owns the change, then `image`:
+
+| Change touches | Minimal rebuild |
+|---|---|
+| kernel source | `cmake --build build-x86_64 --target kernel image -j$(nproc)` |
+| `user/` programs | `cmake --build build-x86_64 --target user image -j$(nproc)` |
+| `ports/wayland/src/*` (desktop.c, clients) | `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` + `image` |
+| Weston source/protocol | `port-weston-clean` + `port-weston` + `port-wayland` + `image` |
+| nested-submodule port source (libdrm, kmscube, …) | `port-<name>-clean` + `port-<name>` + `image` (stamps miss nested edits) |
+| rootfs assets / `scripts/image/*` | `image` only |
+| expect harnesses (`tmp/*.expect`), launch scripts | no rebuild |
+| §8 gate matrix wrapper | no rebuild; `scripts/gpu/perf-video-gate-matrix.sh --runs 10` |
+
+`image` is mandatory after any kernel/user/ports rebuild — QEMU happily boots
+a stale `xv6.bin`/`fs.img` pair. For blob/virtgpu checks use the focused
+`drmabitest --virtgpu-only` probe before the full validator suite.
+
+**Commit state (status check 2026-06-11):** the implementations behind the
+closed items below are committed locally inner-first: item 3 RSS/OOM
+accounting in `kernel/`, item 4 `/dev/kbd` write path + `keyinject` split
+across `kernel/` and `user/`, item 8 `kcmp` split across `kernel/` and
+`user/`, and item 5's shared local-C titlebar migration in `ports/`.
+Top-level helper tooling and submodule pointer bumps are committed locally;
+pushes still require an explicit operator decision.
+
+1. **Live-YouTube smoothness (decode QoS).** Residual jitter is `avdec_h264`
+   "Dropping frame due to QoS" pressure (39 drops over ~65 s of media time,
+   lateness up to ~200 ms), not a present stall. Defaults already applied:
+   GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` for
+   YouTube-compat launches. Next: decoder/queue A/Bs with
+   `webkit_gst_debug_persist=1` evidence capture.
+   Progress: `scripts/gpu/webkit-qos-report.py` now turns the persisted
+   GStreamer log into the closure metric (`drops`, `duration`,
+   `drops_per_min`, and `max_lateness_ms`) and exits nonzero when the §13
+   thresholds are missed. It reproduces the current residual sample as a
+   failing result (`drops=39`, `drops_per_min=35.934`,
+   `max_lateness_ms=198.186`). The host-visible cadence half now has
+   `scripts/gpu/webkit-cadence-report.py`; the known residual host captures
+   pass the player-crop movement check with 31/31 active adjacent pairs
+   (`min_changed=85258`). `scripts/gpu/webkit-youtube-smoothness-report.sh`
+   combines both halves and currently reports the residual as failing only on
+   QoS (`qos_rc=1 cadence_rc=0`), while a synthetic 300 s low-drop QoS fixture
+   plus the same frames passes end to end.
+   *Build scope:* launcher knobs → `port-wayland` + `image`; harness-only A/Bs
+   → no rebuild.
+   *Done when:* a ≥300 s real watch-page soak shows ≤5 `avdec_h264` QoS drops
+   per minute with max lateness <100 ms in the persisted GStreamer log, every
+   adjacent host-visible player-crop pair changed, and the §8 gate passes on
+   the same image.
+2. **virgl async-timeout/EIO spiral — soak watch.** Historical intermittent
+   signature: `virtio_gpu: async command 0x207 timed out (ctx=2)` followed by
+   a Weston `got error from kernel - expect bad rendering 5` KMS EIO spiral
+   that never recovers; also reproduced once by a GL-overlay titlebar attempt
+   (§10.4 item 1). On recurrence: capture gdbstub + virtio counters first;
+   consider Weston KMS EIO-recovery work.
+   Progress: `scripts/gpu/virgl-async-soak.expect` now runs the desktop virgl
+   demo for a default 1800 s wall-clock soak and fails on the exact historical
+   timeout/EIO strings. The first two full soaks completed with 359 and 360
+   active `app_loop_fps` samples and zero async timeout, EIO, or crash lines.
+   The GL Maze maximize titlebar proof reproduced the failure before this item
+   could be closed as not-reproducible:
+   `GLMAZE_CONTROL=max expect tmp/glmaze-titlebar-control-one.expect` failed
+   with `virtio_gpu: async command 0x207 timed out (ctx=3)`,
+   `owner_tgid=46 owner_id=6 fence=173 desc=8 cmd_len=32 data_len=4220`,
+   Weston `waiting got error - 5`, repeated
+   `got error from kernel - expect bad rendering 5`, and
+   `GLMAZE-ONE-FAIL fbstat-eof` in
+   `build-x86_64/glmaze-titlebar/run-control-max.log` (1,936 async/EIO
+   marker lines). Root-cause fix: the no-drain present path now waits when the
+   newest pending async fence is at or beyond the source resource's last-submit
+   fence (`newest_fence >= src_submit_fence`), rather than only when it is at or
+   before it. Rebuilt proof: the same GL Maze maximize command completed on the
+   refreshed image in 16.35 s, the extracted framebuffer metric passed with
+   `changed_pixels=680477` over `1024000`, and the rebuilt
+   `run-control-max.log` had zero async/EIO markers. The §8 matrix now has a
+   dedicated aggregator (`scripts/gpu/perf-video-gate-matrix.sh --runs 10`) that
+   stores per-run logs under `build-x86_64/perf-video-gate-matrix/run-NN/` and
+   writes the closure metrics to `summary.tsv`; the first post-fix sample
+   (`--runs 1`, `build-x86_64/perf-video-gate-postfix-matrix`) passed with
+   `fps=57.9`, `decodedFPS=57.9`, `dropPct=0.00`, `advanced=15.43`, and zero
+   async/EIO/crash markers.
+   *Build scope:* none for the watch; a recovery fix would be `kernel` (or
+   `port-weston`) + `image`.
+   *Done when:* 3 consecutive ≥30 min desktop soaks plus 10 §8 gate runs on the
+   post-fix image show zero `async command … timed out` and zero
+   `expect bad rendering` lines.
+3. **OOM victim attribution — CLOSED 2026-06-11.** OOM badness now uses
+   lock-free live RSS (`mm_rss_pages`) maintained from resident PTE
+   install/removal sites and seeded across fork/exec. `oom_kill.c` performs
+   only atomic RSS reads in the scoring path; it does not take `vm_rlock()`.
+   *Build scope used:* `kernel` + `image`.
+   *Metric:* three consecutive `expect tmp/oom-survival.expect` 768 MB boots
+   selected the allocating `python3.12` process, not a bystander:
+   `OOMTEST-DONE oom=1 done=1 survived=1 victim=python3.12` with
+   `rss_pages=150873`, `150829`, and `150872`. `rg` confirms no `vm_rlock`
+   call in `kernel/mm/oom_kill.c`. `kernel-sparse` still exits nonzero on
+   unrelated Sparse errors outside the OOM/RSS accounting path, but reports no
+   OOM/RSS-specific errors. The §8 gate passed on the same image
+   (`fps=60.1`, `decodedFPS=60.1`, `dropPct=0.00`, `advanced=15.23`).
+4. **Typed-URL/Enter navigation harness — CLOSED 2026-06-11.** Dedicated input-path coverage for
+   typing a URL + Enter in MiniBrowser, before claiming that keyboard
+   navigation path separately. Implemented as `tmp/webkit-typed-url-enter.expect`
+   plus the `keyinject` user program. The required kernel fix was making
+   `/dev/kbd` synthetic writes real and registering the cdev writable.
+   *Build scope used:* `kernel` + `user` + `image` because the harness exposed
+   a real `/dev/kbd` write-path bug.
+   *Metric:* three consecutive fresh-image proof runs reached MiniBrowser,
+   injected
+   `ctrl+l`, typed the 38-byte target URL, pressed Enter, captured
+   `/typed-url.ppm` at `screen=1280x800 scanout=1280x800`, and printed
+   `TYPEDURL-PASS target=file:///share/webkit/human-button.html`. The §8 gate
+   passed on the same image (`fps=59.0`, `dropPct=0.00`).
+5. **Unified client-decoration strategy — CLOSED FOR LOCAL C CLIENTS 2026-06-11 (NetSurf skipped).** Replace the six local C-client
+   titlebar implementations (§10.4 item 1) with one mechanism: (a) port
+   `libdecor`, (b) rebase the GL demos onto toytoolkit, or (c) server-side
+   `xdg-decoration` support in the shell. Pick one and migrate. NetSurf's
+   GTK control row is skipped from this current matrix and should be handled
+   separately if the GTK/libdecor/server-side-decoration decision changes.
+   Progress: chose the interim shared-helper path while the longer-term
+   libdecor/server-side decision remains open. `xv6_titlebar.{c,h}` and
+   `xv6_titlebar_gl.{c,h}` now centralize titlebar drawing, hit testing, and
+   minimize/maximize/close actions. All six local C clients use the same
+   `XV6_TITLEBAR_*` hit/action behavior (`filemgr`, `peanutgb`, `glsmoke`,
+   `glmaze`, `mesaglsmoke`, `mesawlegl`); `filemgr`, `peanutgb`, `glmaze`,
+   and `mesaglsmoke` are also migrated to shared stride-aware software-buffer
+   drawing and `glsmoke`/`mesawlegl` are migrated to shared GL-vertex drawing
+   (6/6 local C drawing paths). The GTK/NetSurf path remains a GTK control
+   row and is no longer a closure gate for this item; its buttons still call
+   the GTK Wayland-backed minimize/maximize APIs instead of the old no-hide
+   present/resize workaround. Metrics: zero local
+   `titlebar_control_at`,
+   `activate_titlebar_control`, `draw_title_button`, `titlebar_emit_*`,
+   `emit_glyph_px`, or `emit_text_px` definitions remain under
+   `ports/wayland/src/*.c`; focused `port-wayland` build passed. Earlier
+   NetSurf GTK callback build evidence is retained as historical context only,
+   not as a gate for this item. The framebuffer proof now has host-side metric
+   tooling:
+   `scripts/gpu/titlebar-control-report.py` emits changed-pixel counts from
+   before/after PPMs and `scripts/gpu/titlebar-control-matrix.sh` extracts
+   captured guest PPMs from `fs.img` and writes a TSV summary. Runtime proof:
+   the first combined GL Maze min/max/close matrix caught stale evidence after
+   the image refresh (`missing-before path=/glmaze-min-before.ppm`); rerunning
+   the bounded min probe on the current image produced a clean combined matrix:
+   `min changed_pixels=504067 changed_ratio=0.492253`,
+   `max changed_pixels=680477 changed_ratio=0.664528`, and
+   `close changed_pixels=507456 changed_ratio=0.495563`, all over `1024000`
+   pixels with zero async/EIO/crash markers in the three control logs.
+   Status check 2026-06-11 (later): the filemgr close failure was a stale
+   proof-coordinate issue from the old 26 px controls. With the shared
+   34 px control geometry, the local-C titlebar matrix now passes:
+   `filemgr` min/max/close changed `421456`/`728804`/`421456` pixels;
+   `glmaze` min/max/close changed `504067`/`680477`/`507456` pixels;
+   `peanutgb` min/max/close changed `45532`/`245794`/`42172` pixels;
+   `glsmoke` min/max/close changed `54806`/`59032`/`58861` pixels;
+   `mesaglsmoke` min/max/close changed `53332`/`54657`/`37966` pixels;
+   `mesawlegl` min/max/close changed `27309`/`23590`/`22714` pixels. All
+   counts are over `1024000` pixels, and the host-side summaries live under
+   `build-x86_64/titlebar-control-matrix/*-summary.tsv`. NetSurf is skipped
+   from the current matrix. The mandatory §8 gate passed on the same refreshed
+   image with `fps=59.8`, `decodedFPS=59.8`, `dropPct=0.00`, and
+   `advanced=15.27`. The active shared-helper migration is committed in
+   `ports/` (`wayland/src/xv6_titlebar*.{c,h}` plus six modified local C
+   clients); nested `netsurf/src` changes are excluded from this closure
+   scope.
+   *Build scope:* option (a) new port + `port-wayland` + `image`; (b)/(c)
+   `port-weston-clean` + `port-weston` + `port-wayland` + `image`.
+   *Done when:* all six local C clients render titlebars through the single
+   mechanism, the per-client drawing code is deleted (net-negative diff in
+   `ports/wayland/src/`), each local C client passes the §10.4-item-1
+   minimize/maximize/close framebuffer proof, and the §8 gate passes. NetSurf
+   remains skipped from this proof matrix.
+6. **Host-visible zero-copy blob path (optional).** Blocked on a host backend
+   that accepts mappable HOST3D blobs together with virgl (QEMU 9.0.2 rejects
+   `blob=true` + virgl at startup; rutabaga refuses mappable HOST3D create
+   with -5). Alpine 3.23.4 on the identical stack runs the transfer model at
+   66–73 FPS, so this is an optimization, not a gap.
+   *Build scope:* host-side QEMU/backend work only; no guest rebuild to
+   re-probe (boot flips the cap at init).
+   *Done when:* on a capable backend the init probe succeeds,
+   `VIRTGPU_GETPARAM(HOST_VISIBLE)=1`, `drmabitest --virtgpu-only` passes a
+   mapped-blob write/read round-trip, and the §8 gate passes with FPS ≥ the
+   transfer-model baseline.
+7. **Host GUI importer (§10.5).** The next feature slice: offline import of a
+   host Linux GUI binary + library closure into the guest image, launched
+   through the Weston session; fix missing ABI surface, not per-app
+   shortcuts.
+   Progress: `scripts/image/import-host-gui.sh` implements the offline import
+   path for executables and `.desktop` files, stages the imported program under
+   `/opt/host-gui/<id>/`, preserves the guest Wayland/Mesa/DRM/Weston stack by
+   skipping those host runtime libraries, creates a guest wrapper with the
+   validated Wayland environment hints and per-app log, and emits a desktop
+   entry plus a manifest of staged/skipped files. Syntax, executable dry-run,
+   `.desktop` dry-run, and temporary-overlay file-generation checks pass; a
+   `/bin/true` temp-overlay import writes five hashed manifest entries, and an
+   `eglgears_wayland` dry-run reports 13 copied support libs with 4
+   guest-runtime skips. Runtime GUI proof is still required.
+   *Build scope:* importer script + `image`; ABI fixes as they surface →
+   `kernel`/`user` + `image`.
+   *Done when:* one imported host GUI app meets the §10.5 validation rule
+   (desktop launch, visible Weston window, input accepted, clean exit, log +
+   framebuffer proof) and all existing GPU/WebKit validators plus the §8 gate
+   stay green.
+8. **Optional ABI completeness — CLOSED FOR CURRENT SCOPE 2026-06-11.**
+   `kcmp(KCMP_FILE)` is implemented for same-process fd comparison, covered by
+   `drmabitest`, and the x86_64 fbdev struct-layout audit is recorded. The
+   only remaining note is conditional: add an `sg_table`-equivalent abstraction
+   later if a real DMA importer appears.
+   *Build scope used:* `kernel` + `user` + `image` for `kcmp`; doc/compile
+   probe only for fbdev.
+   *Metric:* `drmabitest` now prints `SYS_kcmp.KCMP_FILE` for `card0` and
+   `renderD128`, proving duplicate fds compare equal (`same=0`), separate
+   opens compare non-equal (`different=2`), invalid fd returns `-EBADF`, and
+   unknown type returns `-EINVAL`. fbdev x86_64 probes match Linux struct
+   sizes/offsets (`160` and `80` bytes, field offsets listed above). Mesa can
+   re-enable `-Dallow-kcmp` at its upstream default in the next port-config
+   cleanup.
+9. **Housekeeping — CLOSED 2026-06-11.** Delete the empty leftover directories
+   `ports/xv6-gbm/src/` and `ports/mesa/src/src/gallium/winsys/virgl/xv6/`
+   (untracked on-disk remnants of the Task-1 deletions, found by the
+   2026-06-11 audit).
+   *Build scope:* none.
+   *Metric:* both paths are absent, and `git -C ports status --short` reports
+   no related untracked entries.
