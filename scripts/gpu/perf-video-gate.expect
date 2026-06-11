@@ -12,6 +12,9 @@ set build   "$root/build-x86_64"
 set kernel  "$build/kernel/build/kernel/xv6.bin"
 set fsimg   "$build/fs.img"
 set outdir  "$build/perf-video-gate"
+if {[info exists env(PERF_VIDEO_GATE_OUTDIR)] && $env(PERF_VIDEO_GATE_OUTDIR) ne ""} {
+    set outdir $env(PERF_VIDEO_GATE_OUTDIR)
+}
 exec mkdir -p $outdir
 set shot    "$outdir/perf-video-live.ppm"
 set monsock "$outdir/qemu-monitor.sock"
