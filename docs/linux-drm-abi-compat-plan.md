@@ -986,8 +986,8 @@ tracks. Validation for every fix: fresh image boot, guest-side `mouseinject`
 interaction, framebuffer capture, and the §8 step-7 gate must stay green.
 
 1. **Partially fixed 2026-06-10 — Files/filemgr, Peanut-GB, GL Smoke,
-   Mesa GL Smoke, and Mesa EGL Demo now have client-drawn titlebars; remaining
-   non-toytoolkit clients still need the sweep.**
+   Mesa GL Smoke, Mesa EGL Demo, and GL Maze now have client-drawn titlebars;
+   remaining non-toytoolkit clients still need the sweep.**
    Original defect: no window titlebar on non-toytoolkit clients (observed on
    3D Demo and Files; affects every client not based on Weston's toytoolkit).
    Root cause: `ports/wayland/src/filemgr.c` and `mesawlegl` (exec'd by
@@ -1101,11 +1101,38 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    dropPct=0.00 advanced=15.16`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
    Host-side dump/inspection of that stock capture showed the WebKit GPU API
    smoke window alive with the black `boot` video frame, PNG 1280x800
-   `nonblack=564592/1024000` and `unique=2068`. Remaining fix
+   `nonblack=564592/1024000` and `unique=2068`. GL Maze now follows the same
+   client-side decoration path while keeping the hot GL render path simple: it
+   grows the Wayland surface by a 30-pixel `GL Maze` titlebar, draws
+   `-`, `+`/`[]`, and `x` controls into the shm-present buffer after GL
+   readback, reserves the GL viewport below the titlebar, wires titlebar drag
+   plus minimize/maximize/close through xdg-toplevel, and tracks maximized
+   configure state. A first GL-side overlay attempt made the titlebar visible
+   but later reproduced the virgl async-timeout/EIO spiral, so the committed
+   path uses CPU drawing into the final buffer instead. Fresh-image proof
+   launched `/bin/glmaze --seconds=180 &`; `fbstat ppm-current
+   /glmaze-titlebar.ppm 0 0 1280 800` captured a visible titlebar and controls
+   (`/tmp/xv6-glmaze-titlebar/glmaze-titlebar-cpu.png`). Guest-side
+   `mouseinject` proof used the visible control centers and captured
+   `/glmaze-min-before.ppm`/`/glmaze-min-after.ppm` as byte-identical images
+   showing minimize remains visible under the Weston mitigation,
+   `/glmaze-max-after.ppm` showing a maximized GL Maze window with `[]`
+   control state, and `/glmaze-close-after.ppm` showing the desktop after the
+   close control exits the window. Post-change rebuilds passed:
+   `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+   `cmake --build build-x86_64 --target image -j$(nproc)`. The requested stock
+   §8 media gate then passed:
+   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+   scripts/gpu/perf-video-gate.expect` exited 0, captured
+   `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+   rect=0,0 1280x800`, emitted
+   `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
+   dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
+   Remaining fix
    options for the broader sweep: (a) port `libdecor` and adopt it in the
    xv6-native clients; (b) rebase the GL demos onto the toytoolkit; (c) add
    `xdg-decoration` server-side support to the shell. Remaining clients to
-   sweep: glmaze, netsurf.
+   sweep: netsurf.
 
 2. **Fixed 2026-06-10 — desktop launcher labels now match their targets.**
    The misleading placeholder entries were removed or renamed in
@@ -1315,6 +1342,36 @@ interaction, framebuffer capture, and the §8 step-7 gate must stay green.
    Guest-side framebuffer proof `/perf-video-frame.ppm` was dumped to
    `/tmp/perf-video-frame-forcecomp.png`; the host check saw a 1280x800 image
    with `984304/1024000` nonblack pixels and `53419` unique colors.
+   **Update 2026-06-11 (host-visible cadence split) — guest scanout keeps
+   advancing while the host window may still look bursty.** After a manual
+   observation that the live YouTube player appeared to flip only every few
+   seconds, the temporary `tmp/webkit-youtube-cadence.expect` harness captured
+   consecutive guest framebuffer images from the same real watch URL. The
+   original no-drain path changed on every 200ms sample: all 14 adjacent
+   frame pairs differed by roughly 162k-175k pixels, with bboxes confined to
+   the YouTube player region. A follow-up run replaced
+   `virtio_gpu_present_no_drain=1` with `virtio_gpu_present_no_drain=0` and
+   sampled every 500ms; all 19 adjacent pairs again changed in the player
+   region (`/tmp/xv6-youtube-cadence-drain/*.ppm`), with clean counters in
+   `build-x86_64/icon-webkit-validate/run-youtube-cadence-drain.log`
+   (`virtio_failures=0`, `virtio_timeouts=0`, `display_presents=1986`,
+   `display_completions=1986`, `virtio_async_pending=1`,
+   `bo_present_last_virtio_us=86`). A passive GTK run with no repeated
+   `fbstat` sampling during the observation window also stayed clean
+   (`display_presents=2733`, `display_completions=2733`,
+   `virtio_async_pending=0`, `bo_present_last_virtio_us=339` in
+   `run-youtube-watch-drain-nosample.log`). For frontend A/B, forcing
+   `QEMU_WSL_GL_DISPLAY=sdl` switched QEMU from GTK to SDL and again kept the
+   guest clean (`display_presents=2267`, `display_completions=2267`,
+   `virtio_async_pending=0`, `bo_present_last_virtio_us=7712` in
+   `run-youtube-watch-sdl-drain-nosample.log`). This means the stationary/bursty
+   symptom is no longer supported as a guest framebuffer or KMS page-flip
+   stall in these samples; the remaining suspect is either host QEMU/WSLg GL
+   presentation cadence or live-site/WebKit workload churn that is visible to
+   a human but not as a guest scanout wedge. Keep the WebKit cache hard-link
+   failures and repeated `GLib-CRITICAL g_close(fd:6) failed with EBADF` on the
+   short list, but do not regress the already-proven local §8 perf-video gate
+   while tuning the live YouTube path.
 
 4. **Fixed 2026-06-10 — visible cursor no longer uploads an empty/black-box
    image.** The failing path was Weston/Wayland cursor shm pool growth:
@@ -1526,6 +1583,25 @@ broad fail-closed DRM shim:
   The dumped framebuffer is PNG 1280x800 with `nonblack=564592/1024000`,
   `unique=2068`, and showed the WebKit GPU API smoke window alive with the
   black `boot` video frame.
+- **GL Maze titlebar slice fixed (2026-06-11):** `glmaze` now draws a
+  client-side `GL Maze` titlebar above its GL content, keeps the render
+  viewport below the 30-pixel titlebar, draws minimize/maximize/close controls
+  into the shm-present buffer after GL readback, and wires titlebar drag plus
+  controls through xdg-toplevel. Fresh framebuffer proof captured
+  `/glmaze-titlebar.ppm` with a visible titlebar and controls. Guest-side
+  `mouseinject` proof captured `/glmaze-min-before.ppm` and
+  `/glmaze-min-after.ppm` as byte-identical images after minimize,
+  `/glmaze-max-after.ppm` with the maximized window still visible, and
+  `/glmaze-close-after.ppm` showing the desktop after close. Rebuilds passed:
+  `cmake --build build-x86_64/ports --target port-wayland -j$(nproc)` and
+  `cmake --build build-x86_64 --target image -j$(nproc)`.
+- **Post-GL-Maze-titlebar media gate (2026-06-11):** the requested stock
+  `REPO_ROOT=/home/es/xv6-os timeout 320 expect
+  scripts/gpu/perf-video-gate.expect` run exited 0, captured
+  `fb_ppm_current path=/perf-video-frame.ppm screen=1280x800 scanout=1280x800
+  rect=0,0 1280x800`, emitted
+  `RESULT pass fps=60.1 speed=1.001 presentedFPS=0.0 decodedFPS=60.1
+  dropPct=0.00 advanced=15.24`, and printed `__WEBKIT_API_SMOKE_DONE_0__`.
 - **Post-filemgr-titlebar media gate (2026-06-10):** the requested stock
   `REPO_ROOT=/home/es/xv6-os timeout 320 expect
   scripts/gpu/perf-video-gate.expect` run emitted
@@ -1552,8 +1628,8 @@ broad fail-closed DRM shim:
   not a clean-shutdown validator.
 - **Open desktop-usability defects (2026-06-10 manual session) — §10.4 is the
   active work queue:** missing titlebars remain for the other non-toytoolkit
-  clients (`glmaze`, `netsurf`; filemgr, Peanut-GB, GL Smoke, Mesa GL Smoke,
-  and Mesa EGL Demo are now covered), MiniBrowser cannot load live
+  clients (`netsurf`; filemgr, Peanut-GB, GL Smoke, Mesa GL Smoke,
+  Mesa EGL Demo, and GL Maze are now covered), MiniBrowser cannot load live
   sites and its window goes black (UI-client commit stall/black surface remains;
   guest DNS/TLS is now proven), and the panel has no task list for open windows.
   The WebKitGTK API media/backend path remains proven; MiniBrowser UI-client
