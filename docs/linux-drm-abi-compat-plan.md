@@ -132,16 +132,27 @@ Files under `kernel/kernel/`:
 
 Keep these when touching the code:
 
-- [ ] **Caps = behavior.** Never advertise a `GET_CAP`/`GETPARAM` capability
+- [x] **Caps = behavior.** Never advertise a `GET_CAP`/`GETPARAM` capability
       whose ioctl path returns `-EOPNOTSUPP`; flip the cap in the same change
-      that implements the feature.
-- [ ] **Fail-closed, honest errno.** Unimplemented paths return the Linux
+      that implements the feature. Current proof 2026-06-12:
+      `build-x86_64/proof-drmabitest.log` shows
+      `GETPARAM(RESOURCE_BLOB)=1`, `GETPARAM(HOST_VISIBLE)=0`, and
+      host-visible blob creation skipped rather than advertised.
+- [x] **Fail-closed, honest errno.** Unimplemented paths return the Linux
       errno a real driver would; never fake success to pass a validator.
-- [ ] **Fences must signal.** Any exported fence/out-fence must be backed by a
-      real completion; a never-signaling fd hangs a compositor.
-- [ ] **Per-file handle scope.** PRIME import creates a *new* handle in the
+      Current proof 2026-06-12: `proof-drmabitest.log` and
+      `proof-gpu-validate.log` reject invalid virtgpu/KMS ioctls and bad
+      submits without panic or success.
+- [x] **Fences must signal.** Any exported fence/out-fence must be backed by a
+      real completion; a never-signaling fd hangs a compositor. Current proof
+      2026-06-12: `proof-gpu-validate.log` records sync fd polling,
+      `virgltest` fence signaled values, display presents/completions, and
+      completed `mesawlegl`/`mesaglsmoke` clients.
+- [x] **Per-file handle scope.** PRIME import creates a *new* handle in the
       importing file; `GEM_CLOSE` drops only the file's reference, never the
-      global BO.
+      global BO. Current proof 2026-06-12: `proof-gpu-validate.log` has
+      `gbmtest` PRIME import and `virgltest: dmabuf-resource-import ok`;
+      `proof-drmabitest.log` has `DRM_PRIME_VIRTGPU_RESOURCE.valid`.
 
 ---
 
@@ -156,29 +167,51 @@ validation.
 
 Validator checklist for a milestone:
 
-- [ ] `drmabitest` — every ioctl with known-good and error inputs,
+- [x] `drmabitest` — every ioctl with known-good and error inputs,
       Linux-matching errno/struct output (focused `--virtgpu-only` for
-      blob/virtgpu checks).
-- [ ] libdrm conformance — `modetest`, `kmscube`, `drm_info` against
-      `/dev/dri/card0`.
-- [ ] Mesa bring-up — stock Mesa virgl through `gpu-validate`, `kmscube`,
+      blob/virtgpu checks). Fresh proof 2026-06-12:
+      `build-x86_64/proof-drmabitest.log` runs the full suite and
+      `--virtgpu-only`, reaches `drmabitest: end` twice, and has zero
+      `FAIL`/`mismatch`/panic markers.
+- [x] libdrm conformance — `modetest`, `kmscube`, `drm_info` against
+      `/dev/dri/card0`. Fresh proof 2026-06-12:
+      `build-x86_64/proof-upstream-drm-tools.log` records
+      `DRMINFO-CARD0-PASS`, `DRMINFO-RENDER-PASS`,
+      `MODETEST-CONNECTORS-PASS`, `MODETEST-PLANES-PASS`, and
+      `KMSCUBE-RENDER-PASS` with virtio_gpu/virgl renderer output.
+- [x] Mesa bring-up — stock Mesa virgl through `gpu-validate`, `kmscube`,
       `virgl-kms-validate.sh` (direct KMS GBM/EGL), `mesawlegl`,
-      `mesaglsmoke`.
-- [ ] Blob/zero-copy — non-GL guest blob path: `GETPARAM(RESOURCE_BLOB)==1`,
-      fail-closed `HOST_VISIBLE=0`.
-- [ ] Compositor end-to-end — Weston + WebKit/GL apps; compare trace shape +
-      on-screen output + framebuffer samples, never counters alone.
-- [ ] Regression guard — fail-closed counters, caps/behavior agreement.
-- [ ] **§8-style fullscreen-video gate (MANDATORY after any GPU/DRM/desktop
+      `mesaglsmoke`. Fresh proof 2026-06-12:
+      `build-x86_64/proof-gpu-validate.log`,
+      `build-x86_64/proof-virgl-kms-validate.log`, and
+      `build-x86_64/proof-virgl-kms-validate.png` show GBM/PRIME,
+      linux-dmabuf, virgl submits/fences, direct KMS EGL, nonblank
+      1280x800 rendered output, and completed `mesawlegl`/`mesaglsmoke`.
+- [x] Blob/zero-copy — non-GL guest blob path: `GETPARAM(RESOURCE_BLOB)==1`,
+      fail-closed `HOST_VISIBLE=0`. Fresh proof 2026-06-12:
+      `proof-drmabitest.log` reports `RESOURCE_BLOB=1`, `HOST_VISIBLE=0`,
+      and skipped host-visible blob probes on both `card0` and `renderD128`.
+- [x] Compositor end-to-end — Weston + WebKit/GL apps; compare trace shape +
+      on-screen output + framebuffer samples, never counters alone. Fresh
+      proof 2026-06-12: `proof-gpu-validate.log` records Weston and GL client
+      completion, `proof-webkit-virgl-gpu-validate.log` records accelerated
+      WebKit WebGL ready/render/complete titles, and the mandatory gate frame
+      is `build-x86_64/perf-video-gate/perf-video-frame.png`.
+- [x] Regression guard — fail-closed counters, caps/behavior agreement.
+      Fresh proof 2026-06-12: `proof-gpu-validate.log` records invalid-submit
+      rejection, bad-submit isolation, OpenGL-submit backend separation
+      `status=PASS`, and fail-closed Hyper-V/Nouveau diagnostic matrices;
+      `proof-drmabitest.log` covers the current DRM ioctl error matrix.
+- [x] **§8-style fullscreen-video gate (MANDATORY after any GPU/DRM/desktop
       change).** `expect scripts/gpu/perf-video-gate.expect`: the offline
       1280×800@60 H.264 clip (`rootfs-overlay/share/webkit/perf-*.mp4|html`)
       must play fullscreen at default resolution with `speed ≥ 0.9×`,
       `dropPct < 10`, zero `virtio_failures`/`virtio_timeouts`/panics, plus a
       mid-playback in-guest framebuffer capture. Any stutter, resolution
       downgrade, or fault fails the whole milestone. Latest pass 2026-06-12:
-      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00`,
-      `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png` extracted by
-      the harness.
+      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00
+      advanced=15.23`, `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`
+      extracted by the harness.
       Matrix wrapper: `scripts/gpu/perf-video-gate-matrix.sh`.
 
 Host/boot caveats: use headless `DISPLAY_MODE=nographic` boots for kernel/DRM
