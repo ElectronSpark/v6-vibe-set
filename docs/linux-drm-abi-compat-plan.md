@@ -21,7 +21,7 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00
+      `RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9 dropPct=0.00
       advanced=15.23`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
@@ -288,8 +288,16 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       mapped-blob round-trip, and the gate passes at ≥ transfer-model FPS;
       evidence under `build-x86_64/host-visible-blob-evidence/`.
 - [ ] **7. Host GUI importer (§10.5) — complete-support backlog.** See the
-      dedicated checklist below. New progress: the embedded-runtime Python
-      Wayland client is now proved; Chromium and a Wayland-native toolkit/GL
+      dedicated checklist below. New progress: the focused proof harness is
+      closed and the two supported imported apps have fresh same-image proof:
+      IDLE/X11 (`HOSTIDLE-X11-PASS`, verifier summary
+      `build-x86_64/host-gui-proof-verify/host-idle-x11-proof-summary.tsv`)
+      and the embedded-runtime Python Wayland REPL (`HOSTPYREPL-PASS`,
+      verifier summary
+      `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`).
+      Mandatory gate on the rebuilt image passed with
+      `xv6-perf-video:RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9
+      dropPct=0.00`. Chromium and a non-black Wayland-native toolkit/GL
       imported app remain open.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
@@ -385,10 +393,17 @@ the deferred follow-up lane.
       invisible-window phase: xv6 returned `-EOPNOTSUPP` for AF_UNIX
       `sendto(NULL)`/`recvfrom()`, breaking the XCB/XWM handshake;
       `lwip_port/sys_socket.c` now routes them to the Unix socket
-      read/write paths. Final proof: `HOSTIDLE-X11-PASS` with a visibly
-      mapped `XV6-IDLE-X11-PROOF` window, `4+5` → `9` input frame
-      (`diff-ae.txt = 3755` changed pixels), clean Ctrl+Q exit
-      (`build-x86_64/host-idle-x11-proof/`); same-image gate passed.
+      read/write paths. Fresh proof after the 2026-06-12 image refresh:
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565922
+      input_changed_pixels=3755 exit_changed_pixels=566005` with a visibly
+      mapped `XV6-IDLE-X11-PROOF` window, `4+5` → `9` input frame, clean
+      Ctrl+Q exit, and `HOSTGUI-PROOF-VERIFY-PASS app=host-idle-x11`
+      (`build-x86_64/host-idle-x11-proof/`,
+      `build-x86_64/host-gui-proof-verify/host-idle-x11-proof-summary.tsv`).
+      The same rebuilt image passed the mandatory gate:
+      `xv6-perf-video:RESULT pass fps=59.9 speed=1.002
+      decodedFPS=59.9 dropPct=0.00 advanced=15.23`
+      (`build-x86_64/perf-video-gate/run.log`).
       Known benign: Xwayland GLAMOR falls back to software; xkbcomp keymap
       warnings are non-fatal.
 - [ ] **Wayland Chromium — deferred follow-up (not a passing proof).**
@@ -423,12 +438,20 @@ the deferred follow-up lane.
       `scripts/gpu/host-python-repl-proof.expect` boots a fresh copy of the
       image, launches the imported app, verifies Wayland map + `Python ready`
       + `host-python-repl: eval 6*7`, captures baseline/launch/input frames,
-      and verifies Escape exit. Result:
-      `HOSTPYREPL-PASS launch_changed_pixels=368256 input_changed_pixels=207`
-      with screenshots/logs under
+      and verifies real Escape exit through `keyinject key esc` (the process
+      is absent from `HOSTPYREPL_AFTER_ESC_PS_DONE`; `keyinject` now maps
+      `esc`/`escape` to key code 1). Fresh result after the 2026-06-12 image
+      refresh:
+      `HOSTPYREPL-PASS launch_changed_pixels=368256
+      input_changed_pixels=207 exit_changed_pixels=368256`, with non-black
+      phase verification
+      (`HOSTGUI-PROOF-VERIFY-PASS app=host-python-repl`,
+      input phase nonblack pixels `1023522`) and screenshots/logs under
       `build-x86_64/host-python-repl-proof/`
       (`host-python-repl-launch.png`, `host-python-repl-input.png`,
-      `run.log`).
+      `host-python-repl-exit.png`, `run.log`;
+      verifier summary:
+      `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`).
 - [ ] **Wayland-native toolkit app proof** (e.g. imported
       `eglgears_wayland`). Current negative evidence, 2026-06-12:
       a temporary `/bin/host-eglgears-wayland` import launched from the guest
@@ -440,14 +463,20 @@ the deferred follow-up lane.
       (`build-x86_64/host-eglgears-wayland-proof/run.log`). This is not a
       pass. A follow-up temporary `/bin/host-es2gears-wayland` import was
       also rejected after user inspection showed only a black box, so it was
-      removed from the default overlay before the next image/gate run. Keep
+      removed from the default overlay before the next image/gate run. Latest
+      black-box reports remain negative evidence, not checkbox credit. Keep
       the checkbox open until the imported app produces a non-black animated
       surface and exits cleanly.
-- [ ] **Focused host-GUI proof harness** that fails on "desktop icon only"
-      captures and leaves `before/after-launch/after-input/after-exit`
-      PPM/PNG bundles per app. First dedicated instances now exist for IDLE
-      (`HOSTIDLE-X11-PASS`) and the embedded Python REPL
-      (`HOSTPYREPL-PASS`); generalize this pattern before counting Chromium.
+- [x] **Focused host-GUI proof harness — closed 2026-06-12.**
+      `scripts/gpu/host-gui-proof-verify.py` now rejects missing logs, failure
+      markers, black/near-black captures, wrong dimensions, and unchanged
+      phase pairs. The app harnesses leave `before/launch/input/exit` PPM/PNG
+      bundles, diff PNGs, and TSV summaries. Fresh same-image evidence:
+      `HOSTGUI-PROOF-VERIFY-PASS app=host-idle-x11` and
+      `HOSTGUI-PROOF-VERIFY-PASS app=host-python-repl`, with summaries under
+      `build-x86_64/host-gui-proof-verify/`. New imported apps, including the
+      deferred Chromium lane, must pass this verifier before they can count as
+      supported.
 - [ ] **Done when:** four representative imported apps pass the validation
       rule — (1) Wayland-native toolkit app, (2) GL/EGL/Wayland app,
       (3) embedded-runtime Python GUI app, (4) X11/Tk app (IDLE is the
