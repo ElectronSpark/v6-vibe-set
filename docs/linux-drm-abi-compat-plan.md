@@ -22,13 +22,14 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
       `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00
-      advanced=15.28`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
+      advanced=15.23`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
       renderD128 registered, virgl capsets 1+2, Weston desktop with 17
       entries on the current image, zero async-timeout/EIO/panic markers in
       the gate baseline. The imported `eglgears_wayland` negative test below
-      is a separate client-triggered virgl timeout, not a baseline boot fault.
+      and the rejected `host-es2gears-wayland` black-box attempt are separate
+      client-triggered failures, not baseline boot faults.
 
 ## Goal
 
@@ -404,8 +405,11 @@ the deferred follow-up lane.
       box and the run wedges with `virtio_gpu: async command 0x207 timed out`
       followed by repeated `got error from kernel - expect bad rendering 5`
       (`build-x86_64/host-eglgears-wayland-proof/run.log`). This is not a
-      pass; keep the checkbox open until the imported app produces a
-      non-black animated surface and exits cleanly.
+      pass. A follow-up temporary `/bin/host-es2gears-wayland` import was
+      also rejected after user inspection showed only a black box, so it was
+      removed from the default overlay before the next image/gate run. Keep
+      the checkbox open until the imported app produces a non-black animated
+      surface and exits cleanly.
 - [ ] **Focused host-GUI proof harness** that fails on "desktop icon only"
       captures and leaves `before/after-launch/after-input/after-exit`
       PPM/PNG bundles per app. First dedicated instances now exist for IDLE
