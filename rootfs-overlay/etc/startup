@@ -4,4 +4,6 @@
 # Tokens are split on whitespace; no quoting or shell expansion.
 # Each entry is fork()+exec()'d as an independent process.
 
+/bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-system.conf --nofork --nopidfile
+/bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-session.conf --nofork --nopidfile
 /bin/weston-session

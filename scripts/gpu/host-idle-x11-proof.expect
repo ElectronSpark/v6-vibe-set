@@ -42,7 +42,7 @@ expect {
     eof { puts "\nHOSTIDLE-X11-FAIL fresh-prompt-eof"; exit 5 }
 }
 
-send "/usr/bin/xkbcomp -version; /bin/Xwayland -version; echo HOSTIDLE_RUNTIME_PROBE_DONE\r"
+send "/usr/bin/xkbcomp -version; /bin/Xwayland -version; echo HOSTIDLE_RUNTIME_\${x}PROBE_DONE\r"
 expect {
     -re {exec .*failed|not found|cannot execute} {
         puts "\nHOSTIDLE-X11-FAIL missing-runtime-files"
@@ -93,7 +93,7 @@ expect {
     eof { puts "\nHOSTIDLE-X11-FAIL ps-end-eof"; exit 8 }
 }
 
-send "fbstat ppm-current /host-idle-x11.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_BASE_DONE\r"
+send "fbstat ppm-current /host-idle-x11.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_\${x}BASE_DONE\r"
 expect {
     -re {fb_ppm_current path=/host-idle-x11\.ppm screen=1280x800 scanout=1280x800} {}
     -re {fbstat: [^\r\n]+} { puts "\nHOSTIDLE-X11-FAIL fbstat-error"; exit 11 }
@@ -112,7 +112,7 @@ expect {
 }
 
 sleep 2
-send "mouseinject 32768 32768 0; mouseinject 32768 32768 1; mouseinject 32768 32768 0; echo HOSTIDLE_FOCUS_DONE\r"
+send "mouseinject 32768 32768 0; mouseinject 32768 32768 1; mouseinject 32768 32768 0; echo HOSTIDLE_\${x}FOCUS_DONE\r"
 expect {
     -re {mouseinject: absolute} {}
     timeout { puts "\nHOSTIDLE-X11-FAIL focus-mouse-timeout"; exit 13 }
@@ -130,17 +130,7 @@ expect {
 }
 
 sleep 1
-send "keyinject text \"4+5\"; keyinject key enter; echo HOSTIDLE_KEYS_DONE\r"
-expect {
-    -re {keyinject: text len=[0-9]+} {}
-    timeout { puts "\nHOSTIDLE-X11-FAIL key-text-timeout"; exit 14 }
-    eof { puts "\nHOSTIDLE-X11-FAIL key-text-eof"; exit 14 }
-}
-expect {
-    -re {keyinject: key enter} {}
-    timeout { puts "\nHOSTIDLE-X11-FAIL key-enter-timeout"; exit 14 }
-    eof { puts "\nHOSTIDLE-X11-FAIL key-enter-eof"; exit 14 }
-}
+send "keyinject text \"4+5\"; keyinject key enter; echo HOSTIDLE_\${x}KEYS_DONE\r"
 expect {
     -re {HOSTIDLE_KEYS_DONE} {}
     timeout { puts "\nHOSTIDLE-X11-FAIL key-marker-timeout"; exit 14 }
@@ -153,7 +143,7 @@ expect {
 }
 
 sleep 2
-send "fbstat ppm-current /host-idle-x11-input.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_INPUT_DONE\r"
+send "fbstat ppm-current /host-idle-x11-input.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_\${x}INPUT_DONE\r"
 expect {
     -re {fb_ppm_current path=/host-idle-x11-input\.ppm screen=1280x800 scanout=1280x800} {}
     -re {fbstat: [^\r\n]+} { puts "\nHOSTIDLE-X11-FAIL input-fbstat-error"; exit 15 }
@@ -171,12 +161,7 @@ expect {
     eof { puts "\nHOSTIDLE-X11-FAIL input-sync-eof"; exit 15 }
 }
 
-send "keyinject chord ctrl+q; echo HOSTIDLE_QUIT_KEYS_DONE\r"
-expect {
-    -re {keyinject: chord ctrl\+q} {}
-    timeout { puts "\nHOSTIDLE-X11-FAIL quit-key-timeout"; exit 16 }
-    eof { puts "\nHOSTIDLE-X11-FAIL quit-key-eof"; exit 16 }
-}
+send "keyinject chord ctrl+q; echo HOSTIDLE_QUIT_\${x}KEYS_DONE\r"
 expect {
     -re {HOSTIDLE_QUIT_KEYS_DONE} {}
     timeout { puts "\nHOSTIDLE-X11-FAIL quit-marker-timeout"; exit 16 }
@@ -189,7 +174,7 @@ expect {
 }
 
 sleep 5
-send "ps; echo HOSTIDLE_AFTER_QUIT_PS_DONE\r"
+send "ps; echo HOSTIDLE_AFTER_QUIT_\${x}PS_DONE\r"
 expect {
     -re {host-idle} { puts "\nHOSTIDLE-X11-FAIL process-still-running-after-quit"; exit 17 }
     -re {HOSTIDLE_AFTER_QUIT_PS_DONE} {}

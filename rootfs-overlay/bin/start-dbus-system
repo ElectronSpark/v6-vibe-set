@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+mkdir -p /run/dbus /var/run/dbus /tmp/dbus
+chmod 0755 /run /run/dbus /var/run /var/run/dbus /tmp/dbus 2>/dev/null || true
+
+exec /bin/dbus-daemon-host \
+    --config-file=/usr/share/dbus-1/xv6-system.conf \
+    --nofork \
+    --nopidfile
