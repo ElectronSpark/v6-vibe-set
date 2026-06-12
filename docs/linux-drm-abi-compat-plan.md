@@ -21,9 +21,9 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=56.5 speed=1.001 decodedFPS=56.5 dropPct=0.12
-      advanced=15.25`,
-      `__WEBKIT_API_SMOKE_DONE_0__`.
+      `RESULT pass fps=53.3 speed=1.000 decodedFPS=53.3 dropPct=0.12
+      advanced=15.22`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
+      proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session boot log clean — `dma_fence: selftest ok`, card0 +
       renderD128 registered, virgl capsets 1+2, Weston desktop with 17
       entries, zero async-timeout/EIO/panic markers (Xwayland GLAMOR software
@@ -174,7 +174,9 @@ Validator checklist for a milestone:
       `dropPct < 10`, zero `virtio_failures`/`virtio_timeouts`/panics, plus a
       mid-playback in-guest framebuffer capture. Any stutter, resolution
       downgrade, or fault fails the whole milestone. Latest pass 2026-06-12:
-      `RESULT pass fps=56.5 speed=1.001 decodedFPS=56.5 dropPct=0.12`.
+      `RESULT pass fps=53.3 speed=1.000 decodedFPS=53.3 dropPct=0.12`,
+      `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png` extracted by
+      the harness.
       Matrix wrapper: `scripts/gpu/perf-video-gate-matrix.sh`.
 
 Host/boot caveats: use headless `DISPLAY_MODE=nographic` boots for kernel/DRM
