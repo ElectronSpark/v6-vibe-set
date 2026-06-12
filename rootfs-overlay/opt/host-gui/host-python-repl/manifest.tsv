@@ -1,0 +1,10 @@
+kind	host_path	guest_path	bytes	sha256
+executable	/home/es/xv6-os/config-temp/host-python-repl/host-python-repl	/opt/host-gui/host-python-repl/bin/host-python-repl	114688	47780a74c8d9d8ee2fe1f97e02b18a93401456e6131d13d1993d1876bbb90d02
+launcher	/home/es/xv6-os/config-temp/host-python-repl/host-python-repl-launcher	/bin/host-python-repl	23000	09d424ca021a15a7493d7a24057348ad2562c9e7179e1232264c249080d8abb9
+wrapper	generated	/opt/host-gui/host-python-repl/run	42	9c66c085137ec03def32382961b333c2539d13b0b91074d79e17912e559e923b
+desktop	generated	/root/desktop/imported-host-python-repl.desktop	114	a60a21bdd1f9f603f7ff7f86796b36c074cab1164e0104eb11cf20c56a0c9027
+guest-runtime	/home/es/xv6-os/build-x86_64/sysroot/lib/libwayland-client.so.0	/lib/libwayland-client.so.0	-	a80e298a7bd7349e13765ae5c95ce7ededb0ef4495980a8e67265cbff768b8cd
+guest-runtime	/home/es/xv6-os/build-x86_64/sysroot/lib/libpython3.12.so.1.0	/lib/libpython3.12.so.1.0	28580560	808624a0268d76c199bb4430d0dc130f6acb00d0c124f93f27e17a8ad5f176e0
+glibc-runtime	/lib64/ld-linux-x86-64.so.2	/lib64/ld-linux-x86-64.so.2	236616	1cd555ac46b7887edeaf3c42aac5408c8135e52f6b37870da2cf82d5fe14e829
+glibc-runtime	/lib/x86_64-linux-gnu/libc.so.6	/lib/x86_64-linux-gnu/libc.so.6	2125328	d8db8739a1633c972cec6a4fe0566bdcec6fd088f98723492ab0361f66238f75
+glibc-runtime	/lib/x86_64-linux-gnu/libm.so.6	/lib/x86_64-linux-gnu/libm.so.6	952616	1b87a1a50b496cfead2b0ad134c2ff536705c82608db240c7e8aa48d6c0e4217
