@@ -14,20 +14,25 @@ set app_log "/tmp/host-gui-host-python-repl.log"
 set guest_before "/host-python-repl-before.ppm"
 set guest_launch "/host-python-repl-launch.ppm"
 set guest_input "/host-python-repl-input.ppm"
+set guest_exit "/host-python-repl-exit.ppm"
 set host_before "$outdir/host-python-repl-before.ppm"
 set host_launch "$outdir/host-python-repl-launch.ppm"
 set host_input "$outdir/host-python-repl-input.ppm"
+set host_exit "$outdir/host-python-repl-exit.ppm"
 set png_before "$outdir/host-python-repl-before.png"
 set png_launch "$outdir/host-python-repl-launch.png"
 set png_input "$outdir/host-python-repl-input.png"
+set png_exit "$outdir/host-python-repl-exit.png"
 set diff_launch "$outdir/host-python-repl-launch-diff.png"
 set diff_input "$outdir/host-python-repl-input-diff.png"
+set diff_exit "$outdir/host-python-repl-exit-diff.png"
 set diff_launch_txt "$outdir/diff-launch-ae.txt"
 set diff_input_txt "$outdir/diff-input-ae.txt"
+set diff_exit_txt "$outdir/diff-exit-ae.txt"
 
-exec sh -c "rm -f '$runlog' '$tmpimg' '$host_before' '$host_launch' '$host_input' '$png_before' '$png_launch' '$png_input' '$diff_launch' '$diff_input' '$diff_launch_txt' '$diff_input_txt'"
+exec sh -c "rm -f '$runlog' '$tmpimg' '$host_before' '$host_launch' '$host_input' '$host_exit' '$png_before' '$png_launch' '$png_input' '$png_exit' '$diff_launch' '$diff_input' '$diff_exit' '$diff_launch_txt' '$diff_input_txt' '$diff_exit_txt'"
 exec cp $fsimg $tmpimg
-foreach guest [list $guest_before $guest_launch $guest_input] {
+foreach guest [list $guest_before $guest_launch $guest_input $guest_exit] {
     catch { exec sh -c "debugfs -w -R 'rm $guest' '$tmpimg' >/dev/null 2>&1" }
 }
 
@@ -80,14 +85,17 @@ proc capture_fb {guest marker label} {
 }
 
 proc extract_artifacts {} {
-    global tmpimg guest_before guest_launch guest_input
-    global host_before host_launch host_input png_before png_launch png_input
-    global diff_launch diff_input diff_launch_txt diff_input_txt
+    global tmpimg guest_before guest_launch guest_input guest_exit
+    global host_before host_launch host_input host_exit
+    global png_before png_launch png_input png_exit
+    global diff_launch diff_input diff_exit
+    global diff_launch_txt diff_input_txt diff_exit_txt
 
     foreach pair [list \
         [list $guest_before $host_before $png_before] \
         [list $guest_launch $host_launch $png_launch] \
-        [list $guest_input $host_input $png_input]] {
+        [list $guest_input $host_input $png_input] \
+        [list $guest_exit $host_exit $png_exit]] {
         set guest [lindex $pair 0]
         set ppm [lindex $pair 1]
         set png [lindex $pair 2]
@@ -103,7 +111,8 @@ proc extract_artifacts {} {
 
     set launch_ae [exec sh -c "compare -metric AE '$host_before' '$host_launch' '$diff_launch' 2>&1 || true"]
     set input_ae [exec sh -c "compare -metric AE '$host_launch' '$host_input' '$diff_input' 2>&1 || true"]
-    exec sh -c "printf '%s\\n' '$launch_ae' > '$diff_launch_txt'; printf '%s\\n' '$input_ae' > '$diff_input_txt'"
+    set exit_ae [exec sh -c "compare -metric AE '$host_input' '$host_exit' '$diff_exit' 2>&1 || true"]
+    exec sh -c "printf '%s\\n' '$launch_ae' > '$diff_launch_txt'; printf '%s\\n' '$input_ae' > '$diff_input_txt'; printf '%s\\n' '$exit_ae' > '$diff_exit_txt'"
     if {$launch_ae < 1000} {
         puts "\nHOSTPYREPL-FAIL launch-screenshot-unchanged changed_pixels=$launch_ae"
         exit 32
@@ -112,7 +121,11 @@ proc extract_artifacts {} {
         puts "\nHOSTPYREPL-FAIL input-screenshot-unchanged changed_pixels=$input_ae"
         exit 33
     }
-    return [list $launch_ae $input_ae]
+    if {$exit_ae < 1000} {
+        puts "\nHOSTPYREPL-FAIL exit-screenshot-unchanged changed_pixels=$exit_ae"
+        exit 34
+    }
+    return [list $launch_ae $input_ae $exit_ae]
 }
 
 log_file -a $runlog
@@ -212,15 +225,28 @@ optional_prompt
 
 sleep 3
 send "ps; echo HOSTPYREPL_AFTER_ESC_PS_DONE\r"
-expect {
-    -re {host-python-repl} { fail 14 "HOSTPYREPL-FAIL process-still-running-after-esc" }
-    -re {HOSTPYREPL_AFTER_ESC_PS_DONE} {}
-    timeout { fail 14 "HOSTPYREPL-FAIL after-esc-ps-timeout" }
-    eof { fail 14 "HOSTPYREPL-FAIL after-esc-ps-eof" }
+set saw_after_esc_done 0
+while {!$saw_after_esc_done} {
+    expect {
+        -re {([0-9]+) /opt/host-gui/host-python-repl/bin/host-python-repl} {
+            fail 14 "HOSTPYREPL-FAIL process-still-running-after-esc"
+        }
+        -re {HOSTPYREPL_AFTER_ESC_PS_DONE} {
+            if {[regexp {([0-9]+) /opt/host-gui/host-python-repl/bin/host-python-repl} $expect_out(buffer) -> found_pid]} {
+                fail 14 "HOSTPYREPL-FAIL process-still-running-after-esc"
+            }
+            set saw_after_esc_done 1
+        }
+        timeout { fail 14 "HOSTPYREPL-FAIL after-esc-ps-timeout" }
+        eof { fail 14 "HOSTPYREPL-FAIL after-esc-ps-eof" }
+    }
 }
+optional_prompt
+
+capture_fb $guest_exit "HOSTPYREPL_EXIT_FB_DONE" "HOSTPYREPL-FAIL exit"
 
 catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
 sleep 1
 set aes [extract_artifacts]
-puts "\nHOSTPYREPL-PASS launch_changed_pixels=[lindex $aes 0] input_changed_pixels=[lindex $aes 1] host_png=$png_input log=$runlog"
+puts "\nHOSTPYREPL-PASS launch_changed_pixels=[lindex $aes 0] input_changed_pixels=[lindex $aes 1] exit_changed_pixels=[lindex $aes 2] launch_png=$png_launch input_png=$png_input exit_png=$png_exit log=$runlog"
 exit 0
