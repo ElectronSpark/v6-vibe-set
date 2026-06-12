@@ -121,7 +121,8 @@ is_graphics_runtime_lib() {
     local base
     base="$(basename "$1")"
     case "${base}" in
-        libEGL.so*|libGL.so*|libGLES*.so*|libOpenGL.so*|libglapi.so*|\
+        libEGL.so*|libGL.so*|libGLX.so*|libGLdispatch.so*|\
+        libGLES*.so*|libOpenGL.so*|libglapi.so*|\
         libgbm.so*|libdrm.so*|libdrm_*.so*|libwayland-*.so*|libweston-*.so*)
             return 0
             ;;
