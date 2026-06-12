@@ -9,7 +9,10 @@ int
 main(int argc, char **argv)
 {
     const char *program = "/opt/host-gui/host-idle/host-idle";
-    char **child_argv = calloc((size_t)argc + 1, sizeof(char *));
+    const char *default_args[] = { "-n", "-i", "-t", "Host IDLE X11" };
+    int default_argc = (int)(sizeof(default_args) / sizeof(default_args[0]));
+    int child_argc = argc > 1 ? argc : default_argc + 1;
+    char **child_argv = calloc((size_t)child_argc + 1, sizeof(char *));
     int logfd;
 
     if (!child_argv) {
@@ -17,8 +20,13 @@ main(int argc, char **argv)
         return 127;
     }
     child_argv[0] = (char *)program;
-    for (int i = 1; i < argc; i++)
-        child_argv[i] = argv[i];
+    if (argc > 1) {
+        for (int i = 1; i < argc; i++)
+            child_argv[i] = argv[i];
+    } else {
+        for (int i = 0; i < default_argc; i++)
+            child_argv[i + 1] = (char *)default_args[i];
+    }
 
     setenv("DISPLAY", getenv("DISPLAY") ? getenv("DISPLAY") : ":0", 1);
     setenv("XDG_RUNTIME_DIR",

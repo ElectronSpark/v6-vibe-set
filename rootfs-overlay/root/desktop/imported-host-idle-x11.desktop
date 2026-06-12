@@ -3,3 +3,5 @@ Type=Application
 Name=Host IDLE X11
 Exec=/bin/host-idle-x11
 Terminal=false
+IconChar=I
+IconColor=0xFF4C7D3F

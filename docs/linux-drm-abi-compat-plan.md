@@ -824,11 +824,12 @@ Implementation plan:
   the guest desktop. X11-only host apps must fail with a clear diagnostic until
   that bridge is present, rather than a silent desktop no-op.
 - **Current priority order (2026-06-12):** keep Chromium deferred while the
-  X11/XWayland checkpoint is finalized first. The IDLE/Tk framebuffer,
-  keyboard/input, and clean-exit proof remains the active support evidence.
-  After that X11 lane is committed and gated, return to Chromium as the required
-  follow-up; Chrome still needs browser-surface/presentation closure and must
-  not be counted as a passing §10.5 proof yet.
+  X11/XWayland checkpoint is finalized first. The IDLE/Tk process, keyboard,
+  and clean-exit harness remains useful support evidence, but the fresh manual
+  screenshot audit shows that the Tk toplevel is still not visibly mapped. After
+  that X11 visible-window gap is closed, committed, and gated, return to
+  Chromium as the required follow-up; Chrome still needs browser-surface/
+  presentation closure and must not be counted as a passing §10.5 proof yet.
 
 Current repro/evidence:
 
@@ -855,8 +856,9 @@ Current repro/evidence:
   `path=/bin/Xwayland`, the staged Xwayland runtime now includes
   `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
   PyInstaller IDLE launcher is exposed through the guest ELF
-  `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes on a
-  fresh image and was rerun on the current image on 2026-06-12: it verifies
+  `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes its
+  process/input checks on a fresh image and was rerun on the current image on
+  2026-06-12: it verifies
   `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
   live `/bin/Xwayland` and
   `/opt/host-gui/host-idle/host-idle` processes, and captures
@@ -869,7 +871,13 @@ Current repro/evidence:
   `mouseinject`, types `4+5` and Enter through `keyinject`, captures
   `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the `host-idle`
   process is gone after quit
-  (`build-x86_64/host-idle-x11-proof/run.log`).
+  (`build-x86_64/host-idle-x11-proof/run.log`). Manual screenshot evidence
+  collected after the no-argument launcher fix is in
+  `build-x86_64/host-idle-x11-manual-evidence/`: the desktop baseline,
+  no-argument launch, and post-input screenshots are all 1280x800 captures, but
+  the launch/input captures still show only the desktop even while `ps` shows
+  Xwayland and IDLE alive. The X11 lane is therefore reopened for visible Tk
+  toplevel mapping and screenshot-visible input delta.
 - IDLE/Tk packaging note (2026-06-11): after host Tk/IDLE became available,
   a PyInstaller `--onefile` launcher was built at
   `config-temp/host-idle/dist/host-idle` from
@@ -1038,6 +1046,27 @@ Ordered roughly by value; none of these may regress the §8 step-7 gate. The
 2026-06-11 active closure queue is complete. Items marked **closed** are kept
 as the metric record for that closure pass. Items marked **deferred** or
 **optional** are backlog work, not blockers for finishing the active queue.
+
+**Screenshot evidence rule (added 2026-06-12).** Every §13 runtime step must
+record a durable visual artifact alongside the log/metric artifact before it is
+called closed: store the raw guest framebuffer capture (`.ppm`) and, when
+practical, a reviewer-friendly `.png` under a named
+`build-x86_64/<step>-evidence/` or existing per-harness output directory. For
+before/after UI controls, keep both frames and the changed-pixel TSV/result.
+For non-visual ABI, OOM, or filesystem-only work, mark screenshot evidence as
+`N/A` in the item and point to the console metric plus the mandatory §8
+framebuffer capture if the change required a rebuilt image. The screenshot
+must show the relevant state, not just a process list: "desktop icon only" is
+negative evidence for GUI-app support.
+
+**Runtime evidence checklist (added 2026-06-12).** For any §13 step that boots
+the GUI or launches an app, record the evidence bundle while the result is
+fresh: baseline desktop frame, after-launch frame, after-input/action frame,
+after-exit-or-cleanup frame, serial/debug log, per-app `/tmp` log when present,
+and the exact command line/harness name. Negative screenshots are still
+required and must be named as negative evidence in the item status. For
+before/after harnesses such as titlebar controls, the before/after PPM/PNG pair
+plus the changed-pixel summary satisfies the baseline/action requirement.
 
 **2026-06-11 closure metrics.**
 - Rebuilt the current image with `cmake --build build-x86_64 --target image
@@ -1259,6 +1288,13 @@ pushes still require an explicit operator decision.
    plus the same frames passes end to end.
    *Build scope:* launcher knobs → `port-wayland` + `image`; harness-only A/Bs
    → no rebuild.
+   *Screenshot evidence:* retain the host-visible player-crop frame sequence
+   and a current guest/host screenshot set in
+   `build-x86_64/webkit-youtube-smoothness-<date>/` when this is resumed. The
+   current residual proof used host captures from
+   `/tmp/xv6-youtube-host-cadence/`; the closure run should copy or regenerate
+   comparable PNG/PPM evidence under `build-x86_64/` and link it here with the
+   QoS/cadence summary.
    *Deferred done when:* a ≥300 s real watch-page soak shows ≤5 `avdec_h264`
    QoS drops per minute with max lateness <100 ms in the persisted GStreamer
    log, every adjacent host-visible player-crop pair changed, and the §8 gate
@@ -1302,6 +1338,13 @@ pushes still require an explicit operator decision.
    finishing the rest of §13.
    *Build scope:* none for the watch; a recovery fix would be `kernel` (or
    `port-weston`) + `image`.
+   *Screenshot evidence:* the focused visual reproducer uses the titlebar
+   before/after framebuffer captures already produced by
+   `scripts/gpu/titlebar-control-matrix.sh`, especially
+   `build-x86_64/titlebar-control-matrix/glmaze-max-before.ppm` and
+   `glmaze-max-after.ppm`, plus the changed-pixel row in
+   `glmaze-summary.tsv`. Any future recurrence must keep the failing screenshot
+   pair before collecting deeper virtio/KMS logs.
    *Done when:* the focused reproducer no longer emits `async command … timed
    out`, `expect bad rendering`, or `got error from kernel` markers on the
    rebuilt image; at least one post-fix §8 gate run passes with zero
@@ -1321,6 +1364,10 @@ pushes still require an explicit operator decision.
    unrelated Sparse errors outside the OOM/RSS accounting path, but reports no
    OOM/RSS-specific errors. The §8 gate passed on the same image
    (`fps=60.1`, `decodedFPS=60.1`, `dropPct=0.00`, `advanced=15.23`).
+   *Screenshot evidence:* N/A for the OOM selector itself; this is a
+   serial/metric-only ABI correctness step. Because it rebuilt the kernel/image,
+   the same-image §8 run supplies the required GUI framebuffer evidence for
+   regression coverage.
 4. **Typed-URL/Enter navigation harness — CLOSED 2026-06-11.** Dedicated input-path coverage for
    typing a URL + Enter in MiniBrowser, before claiming that keyboard
    navigation path separately. Implemented as `tmp/webkit-typed-url-enter.expect`
@@ -1334,6 +1381,10 @@ pushes still require an explicit operator decision.
    `/typed-url.ppm` at `screen=1280x800 scanout=1280x800`, and printed
    `TYPEDURL-PASS target=file:///share/webkit/human-button.html`. The §8 gate
    passed on the same image (`fps=59.0`, `dropPct=0.00`).
+   *Screenshot evidence:* `/typed-url.ppm` is the required guest framebuffer
+   capture for this step; future reruns should extract it into
+   `build-x86_64/webkit-typed-url/typed-url.ppm` and convert a matching PNG for
+   review next to `run-with-uri-evidence.log`.
 5. **Unified client-decoration strategy — CLOSED FOR LOCAL C CLIENTS 2026-06-11 (NetSurf skipped).** Replace the six local C-client
    titlebar implementations (§10.4 item 1) with one mechanism: (a) port
    `libdecor`, (b) rebase the GL demos onto toytoolkit, or (c) server-side
@@ -1388,6 +1439,12 @@ pushes still require an explicit operator decision.
    scope.
    *Build scope:* option (a) new port + `port-wayland` + `image`; (b)/(c)
    `port-weston-clean` + `port-weston` + `port-wayland` + `image`.
+   *Screenshot evidence:* each local C client/control pair keeps before/after
+   guest framebuffer captures under
+   `build-x86_64/titlebar-control-matrix/<app>-<control>-before.ppm` and
+   `...-after.ppm`, with per-app summaries in
+   `build-x86_64/titlebar-control-matrix/*-summary.tsv`. NetSurf is skipped in
+   this matrix; do not count NetSurf screenshots for this closure item.
    *Done when:* all six local C clients render titlebars through the single
    mechanism, the per-client drawing code is deleted (net-negative diff in
    `ports/wayland/src/`), each local C client passes the §10.4-item-1
@@ -1400,6 +1457,11 @@ pushes still require an explicit operator decision.
    66–73 FPS, so this is an optimization, not a gap.
    *Build scope:* host-side QEMU/backend work only; no guest rebuild to
    re-probe (boot flips the cap at init).
+   *Screenshot evidence:* optional backend proof is primarily
+   `drmabitest --virtgpu-only` plus the host-visible probe log; if a capable
+   backend appears, also keep the same-image §8 framebuffer capture and a short
+   desktop screenshot under `build-x86_64/host-visible-blob-evidence/` so the
+   performance/correctness claim is tied to visible scanout.
    *Optional done when:* on a capable backend the init probe succeeds,
    `VIRTGPU_GETPARAM(HOST_VISIBLE)=1`, `drmabitest --virtgpu-only` passes a
    mapped-blob write/read round-trip, and the §8 gate passes with FPS ≥ the
@@ -1420,10 +1482,20 @@ pushes still require an explicit operator decision.
    `/bin/true` temp-overlay import writes five hashed manifest entries, and an
    `eglgears_wayland` dry-run reports 13 copied support libs with 4
    guest-runtime skips.
+   *Screenshot evidence:* existing smoke imports are manifest/log-only. Any
+   visible-app claim in this item must include guest framebuffer screenshots
+   before launch, after launch, after input, and after exit/cleanup. The IDLE/Tk
+   X11 checkpoint now has positive evidence in
+   `build-x86_64/host-idle-x11-proof/`, including a mapped Tk toplevel,
+   `4+5`/Enter input, and a clean-exit process check; the older
+   `build-x86_64/host-idle-x11-manual-evidence/` bundle is retained as the
+   superseded desktop-only negative baseline.
 
    Current priority order (2026-06-12): keep Chromium deferred and finish the
-   X11/XWayland checkpoint first. The IDLE/Tk framebuffer, keyboard/input, and
-   clean-exit proof is the active passing X11 support evidence. Chromium must
+   X11/XWayland checkpoint first. Earlier screenshot evidence reopened the
+   visible-window part of the X11 checkpoint because IDLE and Xwayland were
+   alive while the framebuffer remained on the desktop; that negative evidence
+   is superseded by the final visible-window closure update below. Chromium must
    not block that checkpoint, but it remains the required follow-up lane for
    Wayland Chrome support after the X11 work is committed and gated.
 
@@ -1439,11 +1511,30 @@ pushes still require an explicit operator decision.
    captures `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the
    `host-idle` process is gone after quit
    (`build-x86_64/host-idle-x11-proof/run.log`). After the 2026-06-12
-   X11-first reordering, the proof was rerun on the current image and passed:
+   X11-first reordering, the process/input harness was rerun on the current
+   image and printed:
    `HOSTIDLE-X11-PASS framebuffer=/host-idle-x11.ppm
-   input=/host-idle-x11-input.ppm`. Chromium must not block this checkpoint;
-   after the X11 commit is squared away, Chromium diagnostics become the next
-   required follow-up without reopening the X11 lane. After the later Chrome
+   input=/host-idle-x11-input.ppm`.
+
+   Superseded manual screenshot audit (2026-06-12, after the no-argument launcher fix):
+   extracted framebuffer evidence lives under
+   `build-x86_64/host-idle-x11-manual-evidence/`:
+   `idle-evidence-01-desktop.ppm`/`.png` (desktop baseline),
+   `idle-evidence-02-noarg-launch.ppm`/`.png` (desktop-equivalent
+   `/bin/host-idle-x11` launch),
+   `idle-evidence-03-input.ppm`/`.png` (after focus plus `4+5` injection),
+   `idle-evidence-04-post-quit.ppm`/`.png` (first Ctrl+Q attempt), and
+   `idle-evidence-04-post-cleanup.ppm`/`.png` (after manual process cleanup).
+   The matching serial/debug transcript is
+   `build-x86_64/host-idle-x11-manual-evidence/manual-debugcon.log`.
+   The launch and input screenshots still show only the Weston desktop, while
+   `ps` in the same run shows `/bin/Xwayland :0` and
+   `/opt/host-gui/host-idle/host-idle -n -i -t Host IDLE X11` alive and
+   `/tmp/host-idle-x11.log` contains the launcher exec line. Treat the harness
+   result as process/keyboard plumbing evidence only. This desktop-only evidence
+   is retained as the negative baseline that the final IDLE/Tk screenshot proof
+   below replaced. Chromium remained deferred while this visible-window gap was
+   open. After the later Chrome
    diagnostic rebuilds, the mandatory §8 gate initially timed out under the
    320 s wrapper after WebKit reached `webkit_gpu_policy` and multiple DRM
    render opens. The culprit was the desktop supervisor's broad
@@ -1455,6 +1546,64 @@ pushes still require an explicit operator decision.
    `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00` with
    `__WEBKIT_API_SMOKE_DONE_0__`
    (`build-x86_64/perf-video-gate/run.log`).
+   *Screenshot evidence:* this intermediate X11 checkpoint evidence was negative:
+   `idle-evidence-01-desktop`, `idle-evidence-02-noarg-launch`,
+   `idle-evidence-03-input`, `idle-evidence-04-post-quit`, and
+   `idle-evidence-04-post-cleanup` under
+   `build-x86_64/host-idle-x11-manual-evidence/`. The closure screenshot must
+   replace that with a visibly mapped IDLE/Tk window and a visible input result
+   after `4+5`/Enter; the final closure bundle below now does that.
+
+   Follow-up XWM diagnostic run (2026-06-12): after forcing
+   `port-weston-clean`, rebuilding `port-weston`, rebuilding `port-wayland`,
+   and running `image`, the installed
+   `build-x86_64/sysroot/lib/libweston-15/xwayland.so` timestamp is
+   `2026-06-12 14:00:46 -0400` and the refreshed
+   `build-x86_64/fs.img` timestamp is `2026-06-12 14:03:33 -0400`.
+   `expect scripts/gpu/host-idle-x11-proof.expect` still prints its process
+   plumbing `HOSTIDLE-X11-PASS`, but the new Weston/XWM diagnostic shows the
+   socket is initially valid before XCB takes it:
+   `xwm fd pre-xcb: fd=43 poll=1 revents=0x4 so_type=1 so_error=0`, then
+   `xcb_connect_to_fd` fails with `error=1` and a post-XCB poll sees
+   `revents=0x20` (`POLLHUP`). Xwayland and IDLE remain alive in `ps`, so the
+   next fix belongs around the Xwayland `-wm` handshake or the AF_UNIX/XCB
+   setup exchange, not desktop launch. Evidence lives in
+   `build-x86_64/host-idle-x11-proof/run.log`.
+   *Screenshot evidence:* the same run extracted
+   `build-x86_64/host-idle-x11-proof/host-idle-x11.ppm`/`.png` and
+   `host-idle-x11-input.ppm`/`.png`; `diff-ae.txt` is `0`, proving the launch
+   and input frames are visually identical desktop-only negative evidence.
+
+   X11 checkpoint closure update (2026-06-12): root cause was the AF_UNIX
+   `send()` path. glibc/XCB can enter the kernel as `sendto(fd, buf, len,
+   flags, NULL, 0)`, but xv6 returned `-EOPNOTSUPP` for all AF_UNIX
+   `sendto()`/`recvfrom()` calls. `kernel/kernel/lwip_port/sys_socket.c` now
+   routes connected AF_UNIX `sendto(NULL)` to the Unix socket `.write` path and
+   `recvfrom()` to `.read`, honoring `MSG_DONTWAIT` and `MSG_NOSIGNAL` where
+   applicable. After rebuilding `kernel` and then `image`, the IDLE/X11 proof
+   reached a real Weston/XWM connection: the diagnostic run logged
+   `created wm, root 88`, XCB property/configure/map events, and
+   `XWM: map shell surface` for window `4194322`. The steady harness now drops
+   verbose XWM logging and uses shell-expanded markers so command echo cannot
+   create false PASS markers. Final proof:
+   `expect scripts/gpu/host-idle-x11-proof.expect` printed
+   `HOSTIDLE-X11-PASS framebuffer=/host-idle-x11.ppm
+   input=/host-idle-x11-input.ppm`; post-quit `ps` no longer listed
+   `host-idle`.
+   Post-cleanup validation removed the temporary Weston/XWM and Unix-socket trace
+   diagnostics, rebuilt `kernel`, forced `port-weston-clean` + `port-weston`,
+   rebuilt `port-wayland`, and then rebuilt `image` before booting the proof
+   image. The final extracted evidence lives under
+   `build-x86_64/host-idle-x11-proof/`: `host-idle-x11.ppm`/`.png` shows the
+   mapped `XV6-IDLE-X11-PROOF` IDLE window, `host-idle-x11-input.ppm`/`.png`
+   shows `4+5` and result `9`, and `diff-ae.txt` reports `3755` changed
+   pixels. This replaces the earlier desktop-only negative evidence for the
+   IDLE/Tk X11 checkpoint. The mandatory same-image §8 gate then passed via
+   `expect scripts/gpu/perf-video-gate.expect`:
+   `RESULT pass fps=60.0 speed=1.000 decodedFPS=60.0 dropPct=0.00
+   advanced=15.21` with `__WEBKIT_API_SMOKE_DONE_0__`
+   (`build-x86_64/perf-video-gate/run.log`). Its refreshed framebuffer
+   evidence is `build-x86_64/perf-video-gate/perf-video-frame.ppm`/`.png`.
 
    Parked Chromium follow-up after the X11 checkpoint (2026-06-12): a diagnostic
    `host_chromium=1` desktop autostart path was added so Chrome can be launched
@@ -1519,8 +1668,9 @@ pushes still require an explicit operator decision.
    `path=/bin/Xwayland`, the staged Xwayland runtime now includes
    `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
    PyInstaller IDLE launcher is exposed through the guest ELF
-   `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes on a
-   fresh image and was rerun on the current image on 2026-06-12: it verifies
+   `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes its
+   process/input checks on a fresh image and was rerun on the current image on
+   2026-06-12: it verifies
    `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
    live `/bin/Xwayland` and
    `/opt/host-gui/host-idle/host-idle` processes, and captures
@@ -1528,10 +1678,15 @@ pushes still require an explicit operator decision.
    software because GLAMOR cannot initialize on this stack, and xkbcomp emits
    non-fatal keymap warnings, but the previous fatal
    `exec /usr/bin/xkbcomp failed` / keyboard initialization failure is closed.
-   The same harness now proves keyboard/input and clean exit: after focusing
+   The same harness now exercises keyboard/input and clean exit: after focusing
    the X11 window it injects `4+5`, captures `/host-idle-x11-input.ppm`,
    sends `Ctrl+Q`, and confirms `host-idle` no longer appears in `ps`
-   (`build-x86_64/host-idle-x11-proof/run.log`).
+   (`build-x86_64/host-idle-x11-proof/run.log`). A later manual screenshot
+   audit (`build-x86_64/host-idle-x11-manual-evidence/`) found that the
+   no-argument launcher starts IDLE with the intended default arguments, but
+   the launch/input screenshots remain desktop-only. Next step: instrument
+   Xwayland/Weston X11 surface mapping and Tk toplevel realization, then require
+   screenshot-visible IDLE content before counting this as complete support.
 
    IDLE/Tk update (2026-06-11): host `tkinter` and `idlelib` are installed, and
    PyInstaller 6.20.0 produced a single executable
@@ -1631,22 +1786,40 @@ pushes still require an explicit operator decision.
    child-status trace for the supervised Chrome process, then assign the
    remaining silence to ProcessSingleton/zygote startup, early child exit,
    Wayland dispatch, or toolkit/runtime initialization.
+   *Screenshot evidence:* current Chromium evidence is also negative:
+   `build-x86_64/wayland-chromium-supervisor-diag/wayland-chromium-supervisor.png`
+   and the low-noise `/wayland-chromium-low-noise.ppm` capture show only the
+   desktop/icon. Do not mark Chrome support complete until the screenshot shows
+   a mapped browser surface and a second screenshot proves visible navigation or
+   input.
 
    Complete-support plan:
    - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
      wrapper; no support path may depend on xv6 shell-script exec behavior.
+     Evidence per launcher: baseline desktop screenshot, post-launch
+     screenshot, wrapper log, and process/exit status.
    - Prefer guest platform runtimes by default: guest dynamic loader, Wayland,
      Mesa/DRM/GBM, Weston, GLib/GTK/GdkPixbuf, and Python stdlib/shared libs.
      Copy only app-private support libraries into `/opt/host-gui/<id>/lib`
-     unless a full-bundle mode has its own passing runtime proof.
+     unless a full-bundle mode has its own passing runtime proof. Evidence per
+     runtime-policy change: manifest diff, per-app `/tmp` log, and a
+     before/after screenshot pair showing whether the window maps.
    - Teach the importer to classify toolkit/module/data dependencies
      (`gdk-pixbuf`, GTK modules, GSettings schemas, icon themes, Python
      stdlib/extension modules) and either bind them to the guest copy or stage
-     a complete self-consistent copy with manifest evidence.
+     a complete self-consistent copy with manifest evidence. Evidence per
+     importer change: manifest rows for staged/skipped/classified assets plus
+     a GUI screenshot bundle from one affected app.
    - Add a focused host-GUI proof harness that boots a fresh image, launches
      the imported desktop entry or `/bin/host-python-repl`, waits for a mapped
      toplevel, captures guest `ps`, per-app log, `fbstat ppm-current`, and exits
-     QEMU cleanly. The harness must fail on "desktop icon only" captures.
+     QEMU cleanly. The harness must fail on "desktop icon only" captures and
+     leave `before.ppm/.png`, `after-launch.ppm/.png`,
+     `after-input.ppm/.png`, and `after-exit.ppm/.png` in its output
+     directory.
+   - For every representative app, write a small evidence bundle:
+     `before.ppm/.png`, `after-launch.ppm/.png`, `after-input.ppm/.png`,
+     `after-exit.ppm/.png`, `run.log`, and the relevant per-app `/tmp` log.
    - Close ABI gaps exposed by imported apps in the owning layer
      (`kernel`, `user`, or `ports`) instead of adding one-off app shortcuts.
 
@@ -1679,10 +1852,15 @@ pushes still require an explicit operator decision.
    sizes/offsets (`160` and `80` bytes, field offsets listed above). Mesa can
    re-enable `-Dallow-kcmp` at its upstream default in the next port-config
    cleanup.
+   *Screenshot evidence:* N/A for `kcmp` and fbdev layout probes; these are
+   serial/compile metrics. If a future port-config cleanup requires a rebuilt
+   image, keep the mandatory §8 framebuffer capture with that run.
 9. **Housekeeping — CLOSED 2026-06-11.** Delete the empty leftover directories
    `ports/xv6-gbm/src/` and `ports/mesa/src/src/gallium/winsys/virgl/xv6/`
    (untracked on-disk remnants of the Task-1 deletions, found by the
    2026-06-11 audit).
+   *Screenshot evidence:* N/A; this is repository filesystem cleanup. Evidence
+   is the clean `find`/`git status` output recorded in the closure metrics.
    *Build scope:* none.
    *Metric:* both paths are absent, and `git -C ports status --short` reports
    no related untracked entries.

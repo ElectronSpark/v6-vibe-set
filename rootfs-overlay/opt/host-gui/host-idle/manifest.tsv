@@ -1,7 +1,7 @@
 kind	host_path	guest_path	bytes	sha256
 source	scripts/image/host-idle-x11-launcher.c	/bin/host-idle-x11	-	-
 source	config-temp/host-idle/idle_launcher.py	/opt/host-gui/host-idle/host-idle	-	-
-file	rootfs-overlay/bin/host-idle-x11	/bin/host-idle-x11	22016	e6edac67e811c81b1e84eed2e23ad40b6edc6ca66d3fbfd9c14978c1f000aca7
+file	rootfs-overlay/bin/host-idle-x11	/bin/host-idle-x11	22456	a1bdb878ca87ca9aa51f66f92eb922eb83a9c7621e6a67c48c0a7e14e61d9443
 file	rootfs-overlay/opt/host-gui/host-idle/host-idle	/opt/host-gui/host-idle/host-idle	18518288	fa14dada3f268e4c6c8d0885338689c925355e8d30e59ad04f87c12f8854237e
 wrapper	rootfs-overlay/opt/host-gui/host-idle/run	/opt/host-gui/host-idle/run	39	f50dc19bfdd3b55ca81d281c7bc500daca6be25d71b1f2a8d42ad08efda82f0d
 desktop	rootfs-overlay/root/desktop/imported-host-idle-x11.desktop	/root/desktop/imported-host-idle-x11.desktop	91	432f6ea2703d4c097d1fbe6ca9bf760ecf5b271f7b3e13eaeb99fec11bf8be57
