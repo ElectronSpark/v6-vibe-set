@@ -490,7 +490,9 @@ them. All verified absent on the target:
   `/init` → startup script (`scripts/image/make-initrd.sh`), not a managed
   session.
 - **Display manager / greeter (GDM/SDDM/greetd)** — GUI is launched directly.
-- **XWayland / X11 server** — not ported; X11-only apps will not run.
+- **XWayland / X11 server** — now staged through Weston's Xwayland bridge for
+  the host-GUI importer track. The first proof target is Python IDLE/Tk; broader
+  X11 app coverage is still gated on the §10.5 support matrix.
 - **Settings/portal stack** (xdg-desktop-portal, accountsservice, upower) —
   absent, and blocked behind D-Bus anyway.
 
@@ -784,37 +786,130 @@ are in git history. Residual follow-ups extracted from this log live in §13.
 
 ---
 
-### 10.5 Host GUI programs as native guest processes — planned follow-up
+### 10.5 Host GUI programs as native guest processes — complete-support track
 
 The goal is simple: an x86_64 Linux GUI binary from the host should be able to
 run **inside xv6** as a normal guest process. xv6 should provide the Linux ABI
 that the program expects; the answer is not host-side forwarding, a remote
 desktop trick, or per-application rewrites.
 
-First implementation slice:
+Implementation plan:
 
-- Provide an offline importer for a host executable or `.desktop` file. It
-  copies the program, ELF interpreter, shared-library closure, and required app
-  data into the x86_64 guest image, then creates a guest desktop entry.
-- Preserve xv6's own graphics/runtime stack while importing. Do not overwrite
-  the staged Wayland, Mesa, DRM, or Weston libraries with host copies unless a
-  future compatibility test proves that is safe.
-- Launch imported apps through the existing Weston session with the same
-  guest-side environment discipline used for the validated WebKit path:
-  `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, toolkit backend hints, and a per-app
-  log under `/tmp`.
-- When an imported program fails, fix the missing Linux ABI surface in xv6
-  rather than adding app-specific shortcuts. Expected work includes syscall
-  semantics, `mmap`/thread/futex behavior, procfs/sysfs expectations,
-  device/ioctl coverage, dynamic-loader assumptions, and Wayland/X11 runtime
-  support.
+- **Importer contract.** Provide an offline importer for a host executable or
+  `.desktop` file. It copies the program, ELF interpreter, shared-library
+  closure, and required app data into the x86_64 guest image, then creates a
+  guest desktop entry. Imports must be reproducible: every staged file and every
+  skipped guest-runtime library is recorded in a manifest.
+- **Runtime-library policy.** Preserve xv6's own graphics/runtime stack while
+  importing. Do not overwrite or shadow the staged Wayland, Mesa, DRM, Weston,
+  GLib, GTK, GdkPixbuf, or Python runtime libraries with host copies unless a
+  future compatibility test proves a fully bundled runtime is safe. The default
+  launcher should prefer the guest dynamic loader and guest toolkit stack; only
+  non-platform application-private libraries should live under
+  `/opt/host-gui/<id>/lib`.
+- **Launcher contract.** Imported apps launch through the existing Weston
+  session with the same guest-side environment discipline used for the validated
+  WebKit path: `XDG_RUNTIME_DIR=/tmp`, `WAYLAND_DISPLAY=wayland-0`, toolkit
+  backend hints, no shell-script-only launch dependency, and a per-app log under
+  `/tmp`.
+- **ABI closure loop.** When an imported program fails, fix the missing Linux
+  ABI surface in xv6 rather than adding app-specific shortcuts. Expected work
+  includes syscall semantics, `mmap`/thread/futex behavior, procfs/sysfs
+  expectations, device/ioctl coverage, dynamic-loader assumptions, shared data
+  directories, toolkit module discovery, and Wayland/X11 runtime support.
+- **Support matrix.** Complete support requires at least one representative
+  from each supported GUI class: Wayland-native toolkit app, imported
+  GL/EGL/Wayland app, an embedded-runtime app such as a host-built Python GUI
+  REPL, and an X11/Tk app once the existing X/Xorg support track is wired into
+  the guest desktop. X11-only host apps must fail with a clear diagnostic until
+  that bridge is present, rather than a silent desktop no-op.
+- **Current priority order (2026-06-12):** keep Chromium deferred while the
+  X11/XWayland lane is finished first: preserve the IDLE/Tk proof, document the
+  staged Xwayland runtime, and package/commit the X11 support cleanly. After
+  that checkpoint, return to the parked Wayland Chromium candidate and continue
+  its ABI/runtime closure.
+
+Current repro/evidence:
+
+- The first real target is a host-built GTK + embedded `libpython3.12` GUI REPL
+  (`Host Python REPL`). Host IDLE/Tk is now packaged as a concrete X11/Tk
+  candidate, but the guest still needs an X server/XWayland bridge before that
+  binary can count as a visible GUI proof.
+- The imported REPL desktop icon appears and `/bin/host-python-repl` launches
+  as a guest ELF. The app reaches Wayland:
+  `gdk-wayland: wl_display_connect ok` and `display opened`, and `ps` shows the
+  imported process alive.
+- The current blocker is before embedded Python initialization: GTK logs
+  `cannot register existing type 'GdkPixbuf'` followed by
+  `gdk_cairo_surface_create_from_pixbuf` criticals, and the framebuffer capture
+  still shows only the desktop. This is treated as a platform/toolkit-runtime
+  packaging bug, not an application-specific workaround opportunity.
+- In-progress fix (2026-06-11): the first embedded-runtime proof has been
+  narrowed to a host-built Wayland/shm + embedded Python REPL, avoiding GTK
+  while preserving the real support contract: imported host ELF, guest Weston
+  window, keyboard input, Python evaluation, per-app log, and framebuffer
+  proof. The stale private GTK runtime bundle is no longer part of the normal
+  launch path.
+- IDLE/Tk X11 proof (2026-06-12): Weston is built with `xwayland=true` and
+  `path=/bin/Xwayland`, the staged Xwayland runtime now includes
+  `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
+  PyInstaller IDLE launcher is exposed through the guest ELF
+  `/bin/host-idle-x11`. `tmp/host-idle-x11-proof.expect` passes on a fresh
+  image and was rerun on the current image on 2026-06-12: it verifies
+  `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
+  live `/bin/Xwayland` and
+  `/opt/host-gui/host-idle/host-idle` processes, and captures
+  `/host-idle-x11.ppm` with `fbstat ppm-current`. Xwayland still falls back to
+  software because GLAMOR cannot initialize on this stack, and xkbcomp emits
+  non-fatal keymap warnings, but the previous fatal
+  `exec /usr/bin/xkbcomp failed` / keyboard initialization failure is closed.
+- IDLE/Tk packaging note (2026-06-11): after host Tk/IDLE became available,
+  a PyInstaller `--onefile` launcher was built at
+  `config-temp/host-idle/dist/host-idle` from
+  `config-temp/host-idle/idle_launcher.py`. The resulting ELF is a single
+  executable at the Python/Tk bundle layer. Linux Tk is X11-based, so this
+  artifact is the first passing X11/XWayland proof target for host-GUI
+  completion.
+- Wayland Chromium candidate (resumed 2026-06-12): host Chromium was absent,
+  and the Ubuntu `chromium-browser` package is only a snap transition, so
+  Playwright's Chrome-for-Testing bundle was staged as `Wayland Chromium`
+  (`Google Chrome for Testing 148.0.7778.96`,
+  `/opt/host-gui/wayland-chromium/chrome-linux64/chrome`) with a guest
+  `/bin/wayland-chromium` launcher and desktop entry. The binary advertises
+  Ozone/Wayland support and now progresses past several Linux ABI gaps:
+  `vm_mprotect()` accepts Linux-style ranges spanning contiguous VMAs;
+  `prctl()` accepts the dumpability, no-new-privs, timer-slack,
+  `PR_GET_SECCOMP`, and `PR_SET_VMA_ANON_NAME` probes used by Chrome and
+  Crashpad; AF_UNIX `SO_PASSCRED`/`SCM_CREDENTIALS` now satisfies Crashpad's
+  credential handshake; `getsockname()`/`getpeername()` copy out caller-sized
+  socket lengths; and tmpfs `mkdir()` now preserves caller-supplied directory
+  permissions instead of forcing `0755`, clearing Chromium's
+  `ProcessSingleton` temp-directory `0700` CHECK. Follow-up Wayland traces
+  showed Chrome reaching `/tmp/wayland-0` and sending ancillary fd payloads, so
+  `sendmsg()`/`recvmsg()` now use LP64 `msghdr.msg_controllen` and
+  `cmsghdr.cmsg_len` fields and validate copied `SCM_RIGHTS` lengths before
+  importing fds. Chromium then exposed a GWP-ASan guard-page remap fatal:
+  `mmap(ptr, page_size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+  0, 0)` returned `EINVAL` because xv6 rejected anonymous mappings whose fd was
+  not `-1`; Linux ignores the fd for `MAP_ANONYMOUS`, so `vm_mmap()` now does
+  the same and `mmaptest` has a regression for that pattern. Current proof
+  status: `tmp/wayland-chromium-runtime-diag.expect` no longer sees the old
+  `rip=0x4637fd97` breakpoint trap or the later GWP-ASan `mmap: Invalid
+  argument` fatal. Chrome remains alive past singleton setup and eventually
+  opens `/dev/dri/renderD128`, but it still has not produced a Weston
+  client/surface or framebuffer proof before the diagnostic timeout. Treat this
+  as a late startup / scheduler / graphics-runtime investigation, not as a
+  passing §10.5 app proof yet. Chromium is parked until the X11/XWayland IDLE
+  lane is finalized, then becomes the next required §10.5 item.
 
 Validation rule:
 
 - A host GUI program counts as supported only when it launches from the guest
   desktop, maps a visible window under Weston, accepts input, exits cleanly,
   and has log plus framebuffer/screenshot proof. Existing Weston/WebKit and
-  §8 fullscreen-video gates must stay green after the compatibility work.
+  §8 fullscreen-video gates must stay green after the compatibility work. After
+  any rebuild, run `image` before booting; after closing support, run the
+  mandatory §8 fullscreen-video gate on the same image.
 
 ---
 
@@ -1230,10 +1325,11 @@ pushes still require an explicit operator decision.
    mapped-blob write/read round-trip, and the §8 gate passes with FPS ≥ the
    transfer-model baseline. This remains backend-dependent follow-up, not a
    blocker for active closure on this host.
-7. **Host GUI importer (§10.5) — DEFERRED RUNTIME PROOF.** The next feature slice: offline import of a
-   host Linux GUI binary + library closure into the guest image, launched
-   through the Weston session; fix missing ABI surface, not per-app
-   shortcuts.
+7. **Host GUI importer (§10.5) — COMPLETE SUPPORT BACKLOG.** Implement full
+   support for imported host Linux GUI binaries as native guest processes, not
+   just an importer smoke test. The target is desktop launch through Weston,
+   visible windows, input, clean exit, and durable ABI/runtime fixes when a host
+   app exposes a gap.
    Progress: `scripts/image/import-host-gui.sh` implements the offline import
    path for executables and `.desktop` files, stages the imported program under
    `/opt/host-gui/<id>/`, preserves the guest Wayland/Mesa/DRM/Weston stack by
@@ -1243,14 +1339,129 @@ pushes still require an explicit operator decision.
    `.desktop` dry-run, and temporary-overlay file-generation checks pass; a
    `/bin/true` temp-overlay import writes five hashed manifest entries, and an
    `eglgears_wayland` dry-run reports 13 copied support libs with 4
-   guest-runtime skips. Runtime GUI proof is deferred.
-   *Build scope:* importer script + `image`; ABI fixes as they surface →
-   `kernel`/`user` + `image`.
-   *Deferred done when:* one imported host GUI app meets the §10.5 validation rule
-   (desktop launch, visible Weston window, input accepted, clean exit, log +
-   framebuffer proof) and all existing GPU/WebKit validators plus the §8 gate
-   stay green. The importer tooling and dry-run/file-generation checks are
-   landed; runtime proof is deferred and does not block the active queue.
+   guest-runtime skips.
+
+   Current priority order (2026-06-12): keep Chromium deferred while the
+   X11/XWayland lane is finished first: preserve the IDLE/Tk proof, document the
+   staged Xwayland runtime, and package/commit the X11 support cleanly. After
+   that checkpoint, return to the parked Wayland Chromium candidate and continue
+   its ABI/runtime closure.
+
+   Host Python REPL repro (2026-06-11): a host-built GTK + embedded
+   `libpython3.12` REPL was staged as `Host Python REPL`. The imported REPL
+   desktop icon appears, `/bin/host-python-repl` launches as an ELF, and GTK reaches Wayland
+   (`wl_display_connect ok`, `display opened`), but no window maps. The guest
+   log stops before the app's Python-init marker with
+   `GLib-GObject-CRITICAL ... cannot register existing type 'GdkPixbuf'` and
+   `Gdk-CRITICAL ... gdk_cairo_surface_create_from_pixbuf`; framebuffer proof
+   still shows only the desktop. Treat this as the first complete-support bug:
+   fix the platform runtime/library/module policy so imported GTK/Python apps
+   use a single coherent guest toolkit stack.
+
+   In-progress implementation (2026-06-11): replace the GTK proof target with
+   a host-built toolkit-free Wayland client that draws through `wl_shm`, embeds
+   Python 3.12, accepts raw Wayland keyboard input, and evaluates Python inside
+   the guest window. The desktop entry and `/bin/host-python-repl` launcher now
+   exec the imported ELF directly with the validated Weston environment, and
+   the stale private GTK/GdkPixbuf library bundle was removed from the overlay.
+
+   IDLE/Tk X11 proof (2026-06-12): Weston is built with `xwayland=true` and
+   `path=/bin/Xwayland`, the staged Xwayland runtime now includes
+   `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
+   PyInstaller IDLE launcher is exposed through the guest ELF
+   `/bin/host-idle-x11`. `tmp/host-idle-x11-proof.expect` passes on a fresh
+   image and was rerun on the current image on 2026-06-12: it verifies
+   `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
+   live `/bin/Xwayland` and
+   `/opt/host-gui/host-idle/host-idle` processes, and captures
+   `/host-idle-x11.ppm` with `fbstat ppm-current`. Xwayland still falls back to
+   software because GLAMOR cannot initialize on this stack, and xkbcomp emits
+   non-fatal keymap warnings, but the previous fatal
+   `exec /usr/bin/xkbcomp failed` / keyboard initialization failure is closed.
+
+   IDLE/Tk update (2026-06-11): host `tkinter` and `idlelib` are installed, and
+   PyInstaller 6.20.0 produced a single executable
+   `config-temp/host-idle/dist/host-idle` plus a one-directory fallback
+   `config-temp/host-idle/dist/host-idle-dir`. The one-file ELF only has
+   glibc/zlib/pthread/dl loader dependencies and embeds the Tk/IDLE payload,
+   and the bundled Tk stack is satisfied by the guest XWayland bridge.
+
+   Wayland Chromium update (resumed after the 2026-06-12 X11 proof): a
+   Wayland-capable Chrome-for-Testing
+   bundle was found through Playwright after no host Chromium/Chrome package was
+   installed and Ubuntu's `chromium-browser` candidate resolved to snap-only
+   packaging. The staged candidate lives at
+   `/opt/host-gui/wayland-chromium/chrome-linux64/chrome`
+   (`Google Chrome for Testing 148.0.7778.96`), with `/bin/wayland-chromium`,
+   a desktop entry, copied non-platform host support libraries, and manifest
+   hashes under `rootfs-overlay/opt/host-gui/wayland-chromium/`. First boot hit
+   glibc's dynamic-loader error
+   `cannot apply additional memory protection after relocation: Cannot allocate
+   memory`; root cause was xv6 `vm_mprotect()` rejecting Linux-valid protection
+   ranges that span contiguous VMAs. `kernel/kernel/mm/vm.c` now walks and
+   protects the range VMA-by-VMA, and `kernel` + `image` rebuilt cleanly. The
+   next trace exposed Chromium Linux ABI probes in `prctl()`, so
+   `kernel/kernel/proc/sys_misc.c` and thread-group state now support
+   `PR_GET/SET_DUMPABLE`, `PR_GET/SET_NO_NEW_PRIVS`, `PR_GET/SET_TIMERSLACK`,
+   `PR_GET_SECCOMP`, and no-op `PR_SET_VMA_ANON_NAME`. Follow-up Chromium
+   traces then exposed three more ABI gaps: AF_UNIX `SO_PASSCRED` was a no-op
+   and `recvmsg()` lacked `SCM_CREDENTIALS`, `getsockname()`/`getpeername()`
+   ignored caller socklen copyout semantics, and tmpfs forced new directories
+   to `0755`. The AF_UNIX credential/socklen fixes removed Crashpad's
+   `missing credentials` path, and preserving the tmpfs mkdir mode cleared the
+   `ProcessSingleton` temp-directory permission CHECK that previously ended in
+   `pid 47 chrome: breakpoint trap rip=0x4637fd97`. A later trace showed
+   Chrome reaching `/tmp/wayland-0` and sending ancillary fd payloads, so
+   `kernel/kernel/lwip_port/sys_socket.c` now uses LP64
+   `msghdr.msg_controllen` and `cmsghdr.cmsg_len` fields and validates copied
+   `SCM_RIGHTS` lengths before importing fds. Chromium then reached
+   `components/gwp_asan/client/guarded_page_allocator_posix.cc:40`, where it
+   remaps guard pages with `MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE` and
+   `fd=0`; `kernel/kernel/mm/vm.c` now matches Linux by ignoring fd for
+   anonymous mappings, and `user/programs/mmaptest/mmaptest.c` includes a
+   regression for that exact pattern. `kernel` and then `image` rebuilt
+   cleanly. Current blocker: the GWP-ASan `mmap: Invalid argument` fatal is
+   gone, Chrome remains alive and eventually opens `/dev/dri/renderD128`, but
+   no Weston Chrome client/surface is logged before the diagnostic timeout and
+   no framebuffer proof exists yet. Next debug step: add low-noise wait-state /
+   scheduler / Wayland-connect visibility after the render-node open so the
+   late startup stall can be assigned to the owning ABI or graphics-runtime
+   layer. This is parked behind finalizing the X11/XWayland IDLE lane, then
+   becomes the next required completion item.
+
+   Complete-support plan:
+   - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
+     wrapper; no support path may depend on xv6 shell-script exec behavior.
+   - Prefer guest platform runtimes by default: guest dynamic loader, Wayland,
+     Mesa/DRM/GBM, Weston, GLib/GTK/GdkPixbuf, and Python stdlib/shared libs.
+     Copy only app-private support libraries into `/opt/host-gui/<id>/lib`
+     unless a full-bundle mode has its own passing runtime proof.
+   - Teach the importer to classify toolkit/module/data dependencies
+     (`gdk-pixbuf`, GTK modules, GSettings schemas, icon themes, Python
+     stdlib/extension modules) and either bind them to the guest copy or stage
+     a complete self-consistent copy with manifest evidence.
+   - Add a focused host-GUI proof harness that boots a fresh image, launches
+     the imported desktop entry or `/bin/host-python-repl`, waits for a mapped
+     toplevel, captures guest `ps`, per-app log, `fbstat ppm-current`, and exits
+     QEMU cleanly. The harness must fail on "desktop icon only" captures.
+   - Close ABI gaps exposed by imported apps in the owning layer
+     (`kernel`, `user`, or `ports`) instead of adding one-off app shortcuts.
+
+   *Build scope:* importer/overlay/desktop entry changes → `image`; launcher or
+   guest helper changes in `user/` → `user` + `image`; toolkit/runtime fixes →
+   the narrow owning `port-*` target + `image`; kernel ABI fixes → `kernel` +
+   `image`. After any rebuild or overlay change, always run `image` before
+   booting.
+   *Done when:* at least four representative imported host GUI apps meet the
+   §10.5 validation rule: (1) a Wayland-native toolkit app, (2) a GL/EGL/Wayland
+   app, (3) the host-built Python GUI REPL or equivalent embedded-runtime app,
+   and (4) an X11/Tk app, with the PyInstaller IDLE binary as the first target.
+   Each must launch from the guest desktop, map a visible desktop window,
+   accept keyboard/mouse input, exit cleanly, and provide per-app log plus
+   framebuffer/screenshot proof. The same image must pass the existing
+   GPU/WebKit validators relevant to the touched layer and the mandatory §8
+   fullscreen-video gate. Until the X11 bridge is present, X11-only host apps
+   must fail with a clear diagnostic rather than a silent desktop no-op.
 8. **Optional ABI completeness — CLOSED FOR CURRENT SCOPE 2026-06-11.**
    `kcmp(KCMP_FILE)` is implemented for same-process fd comparison, covered by
    `drmabitest`, and the x86_64 fbdev struct-layout audit is recorded. The
