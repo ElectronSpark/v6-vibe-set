@@ -823,11 +823,12 @@ Implementation plan:
   REPL, and an X11/Tk app once the existing X/Xorg support track is wired into
   the guest desktop. X11-only host apps must fail with a clear diagnostic until
   that bridge is present, rather than a silent desktop no-op.
-- **Current priority order (2026-06-12):** keep Chromium deferred while the
-  X11/XWayland lane is finished first: preserve the IDLE/Tk proof, document the
-  staged Xwayland runtime, and package/commit the X11 support cleanly. After
-  that checkpoint, return to the parked Wayland Chromium candidate and continue
-  its ABI/runtime closure.
+- **Current priority order (2026-06-12):** keep Chromium deferred and finish
+  the X11/XWayland lane first. The active work is to preserve the IDLE/Tk
+  framebuffer proof, harden the keyboard/input plus clean-exit proof, document
+  the staged Xwayland runtime, and package/commit any remaining X11 support
+  cleanup. After that X11 checkpoint is complete, return to the parked Wayland
+  Chromium candidate and continue its ABI/runtime closure.
 
 Current repro/evidence:
 
@@ -854,8 +855,8 @@ Current repro/evidence:
   `path=/bin/Xwayland`, the staged Xwayland runtime now includes
   `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
   PyInstaller IDLE launcher is exposed through the guest ELF
-  `/bin/host-idle-x11`. `tmp/host-idle-x11-proof.expect` passes on a fresh
-  image and was rerun on the current image on 2026-06-12: it verifies
+  `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes on a
+  fresh image and was rerun on the current image on 2026-06-12: it verifies
   `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
   live `/bin/Xwayland` and
   `/opt/host-gui/host-idle/host-idle` processes, and captures
@@ -863,6 +864,12 @@ Current repro/evidence:
   software because GLAMOR cannot initialize on this stack, and xkbcomp emits
   non-fatal keymap warnings, but the previous fatal
   `exec /usr/bin/xkbcomp failed` / keyboard initialization failure is closed.
+  The proof harness was hardened on 2026-06-12 and passed again: it launches
+  IDLE as `-n -i -t XV6-IDLE-X11-PROOF`, focuses the window through
+  `mouseinject`, types `4+5` and Enter through `keyinject`, captures
+  `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the `host-idle`
+  process is gone after quit
+  (`build-x86_64/host-idle-x11-proof/run.log`).
 - IDLE/Tk packaging note (2026-06-11): after host Tk/IDLE became available,
   a PyInstaller `--onefile` launcher was built at
   `config-temp/host-idle/dist/host-idle` from
@@ -870,7 +877,7 @@ Current repro/evidence:
   executable at the Python/Tk bundle layer. Linux Tk is X11-based, so this
   artifact is the first passing X11/XWayland proof target for host-GUI
   completion.
-- Wayland Chromium candidate (resumed 2026-06-12): host Chromium was absent,
+- Wayland Chromium candidate (parked follow-up, 2026-06-12): host Chromium was absent,
   and the Ubuntu `chromium-browser` package is only a snap transition, so
   Playwright's Chrome-for-Testing bundle was staged as `Wayland Chromium`
   (`Google Chrome for Testing 148.0.7778.96`,
@@ -899,8 +906,9 @@ Current repro/evidence:
   opens `/dev/dri/renderD128`, but it still has not produced a Weston
   client/surface or framebuffer proof before the diagnostic timeout. Treat this
   as a late startup / scheduler / graphics-runtime investigation, not as a
-  passing §10.5 app proof yet. Chromium is parked until the X11/XWayland IDLE
-  lane is finalized, then becomes the next required §10.5 item.
+  passing §10.5 app proof yet. Keep this diagnostic state parked while X11 is
+  the active lane; after the X11 input/exit and packaging checkpoint closes,
+  Chromium becomes the next required §10.5 item.
 
 Validation rule:
 
@@ -1342,10 +1350,47 @@ pushes still require an explicit operator decision.
    guest-runtime skips.
 
    Current priority order (2026-06-12): keep Chromium deferred while the
-   X11/XWayland lane is finished first: preserve the IDLE/Tk proof, document the
-   staged Xwayland runtime, and package/commit the X11 support cleanly. After
-   that checkpoint, return to the parked Wayland Chromium candidate and continue
-   its ABI/runtime closure.
+   X11/XWayland lane is finished first. The IDLE/Tk framebuffer, keyboard/input,
+   and clean-exit proof now passes; finish package/commit cleanup for this X11
+   checkpoint, then return to the parked Wayland Chromium candidate and
+   continue its ABI/runtime closure.
+
+   X11 checkpoint (2026-06-12): the X11/XWayland lane is now packaged and
+   committed locally. `ports` commit `57ac23c` enables Weston's Xwayland bridge
+   and stages the runtime hook; super-repo commit `6f5ab57` stages
+   `/bin/host-idle-x11`, the PyInstaller IDLE payload, Xwayland/xkbcomp/XKB
+   data, and the glibc/zlib loader closure. After rebuilding `image`,
+   `scripts/gpu/host-idle-x11-proof.expect` passed again on the fresh image,
+   verifying Xwayland 24.1.6, xkbcomp 1.4.6, live IDLE and Xwayland processes,
+   and `/host-idle-x11.ppm` framebuffer capture. The hardened proof now also
+   launches IDLE as `-n -i -t XV6-IDLE-X11-PROOF`, focuses the X11 window with
+   `mouseinject`, types `4+5` and Enter through `/dev/kbd` via `keyinject`,
+   captures `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the
+   `host-idle` process is gone after quit
+   (`build-x86_64/host-idle-x11-proof/run.log`). Chromium must not block this
+   checkpoint; resume the parked Chromium late-startup diagnostics only after
+   this X11 follow-up is closed.
+
+   Parked Chromium follow-up after X11 checkpoint (2026-06-12): a diagnostic
+   `host_chromium=1` desktop autostart path was added so Chrome can be launched
+   after Weston is ready without relying on fragile serial shell input. After
+   each kernel diagnostic tweak, `kernel` and then `image` were rebuilt before
+   boot. The autostart run confirms `/bin/wayland-chromium` launches with
+   `host_chromium_url=about:blank`, the Chromium process reaches DRM legacy
+   opens and `/dev/dri/renderD128` (`tgid=44`), and the previous breakpoint,
+   ProcessSingleton, GWP-ASan, and coredump failures do not reappear in the
+   boot log. The render-open thread-dump probe had to skip the early Weston
+   session-shell render open (`tgid=41 name=sh`) and then triggered on the
+   Chromium render open (`tgid=44`, current opener name observed as
+   `weston-session`). Current evidence from
+   `build-x86_64/wayland-chromium-drm-dump-final/run.log`: the dump worker
+   prints `chrome-drm-dump: begin sample=0 tgid=44` but no per-thread rows or
+   matching `end` within the post-trigger window. A nonblocking dump-path
+   adjustment is staged as WIP, but it remains parked with the rest of the
+   Chromium work until the X11-first checkpoint is closed. When Chrome resumes,
+   the next step is to collect safe thread state and assign the late startup
+   stall to scheduler, wait-channel, Wayland-connect, or graphics-runtime
+   ownership.
 
    Host Python REPL repro (2026-06-11): a host-built GTK + embedded
    `libpython3.12` REPL was staged as `Host Python REPL`. The imported REPL
@@ -1369,8 +1414,8 @@ pushes still require an explicit operator decision.
    `path=/bin/Xwayland`, the staged Xwayland runtime now includes
    `/usr/bin/xkbcomp`, `libxkbfile`, and `/usr/share/X11/xkb`, and the
    PyInstaller IDLE launcher is exposed through the guest ELF
-   `/bin/host-idle-x11`. `tmp/host-idle-x11-proof.expect` passes on a fresh
-   image and was rerun on the current image on 2026-06-12: it verifies
+   `/bin/host-idle-x11`. `scripts/gpu/host-idle-x11-proof.expect` passes on a
+   fresh image and was rerun on the current image on 2026-06-12: it verifies
    `xkbcomp 1.4.6`, Xwayland 24.1.6, launches IDLE with `DISPLAY=:0`, observes
    live `/bin/Xwayland` and
    `/opt/host-gui/host-idle/host-idle` processes, and captures
@@ -1378,6 +1423,10 @@ pushes still require an explicit operator decision.
    software because GLAMOR cannot initialize on this stack, and xkbcomp emits
    non-fatal keymap warnings, but the previous fatal
    `exec /usr/bin/xkbcomp failed` / keyboard initialization failure is closed.
+   The same harness now proves keyboard/input and clean exit: after focusing
+   the X11 window it injects `4+5`, captures `/host-idle-x11-input.ppm`,
+   sends `Ctrl+Q`, and confirms `host-idle` no longer appears in `ps`
+   (`build-x86_64/host-idle-x11-proof/run.log`).
 
    IDLE/Tk update (2026-06-11): host `tkinter` and `idlelib` are installed, and
    PyInstaller 6.20.0 produced a single executable
@@ -1386,7 +1435,7 @@ pushes still require an explicit operator decision.
    glibc/zlib/pthread/dl loader dependencies and embeds the Tk/IDLE payload,
    and the bundled Tk stack is satisfied by the guest XWayland bridge.
 
-   Wayland Chromium update (resumed after the 2026-06-12 X11 proof): a
+   Wayland Chromium update (parked until the X11-first checkpoint closes): a
    Wayland-capable Chrome-for-Testing
    bundle was found through Playwright after no host Chromium/Chrome package was
    installed and Ubuntu's `chromium-browser` candidate resolved to snap-only
@@ -1426,8 +1475,8 @@ pushes still require an explicit operator decision.
    no framebuffer proof exists yet. Next debug step: add low-noise wait-state /
    scheduler / Wayland-connect visibility after the render-node open so the
    late startup stall can be assigned to the owning ABI or graphics-runtime
-   layer. This is parked behind finalizing the X11/XWayland IDLE lane, then
-   becomes the next required completion item.
+   layer. This is parked behind finalizing the X11/XWayland IDLE input/exit and
+   packaging lane, then becomes the next required completion item.
 
    Complete-support plan:
    - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
