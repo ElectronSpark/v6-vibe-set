@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Host Python REPL
+Exec=/bin/host-python-repl
+IconChar=H
+IconColor=0xFF3D7CA6

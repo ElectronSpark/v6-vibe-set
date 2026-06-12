@@ -253,7 +253,9 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       mapped-blob round-trip, and the gate passes at ≥ transfer-model FPS;
       evidence under `build-x86_64/host-visible-blob-evidence/`.
 - [ ] **7. Host GUI importer (§10.5) — complete-support backlog.** See the
-      dedicated checklist below.
+      dedicated checklist below. New progress: the embedded-runtime Python
+      Wayland client is now proved; Chromium and a Wayland-native toolkit/GL
+      imported app remain open.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
@@ -378,15 +380,27 @@ the deferred follow-up lane.
       the remaining zygote/startup stall after resource loading; require a
       mapped browser surface + visible navigation screenshot before counting
       Chrome as supported.
-- [ ] **Embedded-runtime app (host Python REPL).** GTK variant blocked on
-      `cannot register existing type 'GdkPixbuf'` (toolkit-runtime packaging
-      bug); in-progress replacement is a toolkit-free `wl_shm` + embedded
-      Python 3.12 client launched via `/bin/host-python-repl`.
+- [x] **Embedded-runtime app (host Python REPL) — closed 2026-06-12.**
+      GTK variant remains blocked on `cannot register existing type
+      'GdkPixbuf'` (toolkit-runtime packaging bug), so the passing proof uses
+      a toolkit-free `wl_shm` + embedded Python 3.12 client launched via
+      `/bin/host-python-repl`. Final proof:
+      `scripts/gpu/host-python-repl-proof.expect` boots a fresh copy of the
+      image, launches the imported app, verifies Wayland map + `Python ready`
+      + `host-python-repl: eval 6*7`, captures baseline/launch/input frames,
+      and verifies Escape exit. Result:
+      `HOSTPYREPL-PASS launch_changed_pixels=368256 input_changed_pixels=207`
+      with screenshots/logs under
+      `build-x86_64/host-python-repl-proof/`
+      (`host-python-repl-launch.png`, `host-python-repl-input.png`,
+      `run.log`).
 - [ ] **Wayland-native toolkit app proof** (e.g. imported
       `eglgears_wayland`; dry-run staged, runtime proof pending).
 - [ ] **Focused host-GUI proof harness** that fails on "desktop icon only"
       captures and leaves `before/after-launch/after-input/after-exit`
-      PPM/PNG bundles per app.
+      PPM/PNG bundles per app. First dedicated instances now exist for IDLE
+      (`HOSTIDLE-X11-PASS`) and the embedded Python REPL
+      (`HOSTPYREPL-PASS`); generalize this pattern before counting Chromium.
 - [ ] **Done when:** four representative imported apps pass the validation
       rule — (1) Wayland-native toolkit app, (2) GL/EGL/Wayland app,
       (3) embedded-runtime Python GUI app, (4) X11/Tk app (IDLE is the
