@@ -17,9 +17,12 @@ if {[info exists env(PERF_VIDEO_GATE_OUTDIR)] && $env(PERF_VIDEO_GATE_OUTDIR) ne
 }
 exec mkdir -p $outdir
 set shot    "$outdir/perf-video-live.ppm"
+set guest_frame "/perf-video-frame.ppm"
+set host_frame "$outdir/perf-video-frame.ppm"
+set host_frame_png "$outdir/perf-video-frame.png"
 set monsock "$outdir/qemu-monitor.sock"
 set runlog  "$outdir/run.log"
-exec sh -c "rm -f $shot $monsock $runlog"
+exec sh -c "rm -f $shot $shot.nc.log $host_frame $host_frame_png $monsock $runlog"
 
 set env(DISPLAY_MODE)          "gtk"
 set env(USE_KVM)               "1"
@@ -38,7 +41,35 @@ proc screendump {sock dst} {
     catch { exec sh -c "printf 'screendump $dst\\n' | nc -U -w 4 -q 1 $sock >>$dst.nc.log 2>&1 || echo nc-failed >>$dst.nc.log" }
 }
 
+proc finish {code label} {
+    global qemu_pid fsimg guest_frame host_frame host_frame_png runlog fb_done
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    sleep 1
+
+    if {$code == 0} {
+        if {!$fb_done} {
+            puts "\nGATE-FAIL no-frame-marker log=$runlog"
+            exit 6
+        }
+        if {[catch { exec sh -c "debugfs -R 'dump $guest_frame $host_frame' '$fsimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nGATE-FAIL frame-extract $dump_out log=$runlog"
+            exit 7
+        }
+        if {[catch { exec convert $host_frame $host_frame_png } convert_out]} {
+            puts "\nGATE-FAIL frame-convert $convert_out log=$runlog"
+            exit 8
+        }
+        puts "\n$label frame_ppm=$host_frame frame_png=$host_frame_png log=$runlog"
+        exit 0
+    }
+
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
 spawn timeout --foreground 320 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+set qemu_pid [exp_pid]
 
 set shot_done   0
 set result_seen 0
@@ -54,7 +85,7 @@ expect {
         set t $expect_out(1,string)
         if {!$shot_done && $t >= 4} { screendump $monsock $shot; set shot_done 1 }
         if {!$fb_sent && $t >= 5} {
-            send "fbstat ppm-current /perf-video-frame.ppm 0 0 1280 800; sync; echo XV6_FBSHOT_DONE\r"
+            send "fbstat ppm-current $guest_frame 0 0 1280 800; sync; echo XV6_FBSHOT_DONE\r"
             set fb_sent 1
         }
         exp_continue
@@ -66,17 +97,15 @@ expect {
         exp_continue
     }
     -re {panic|fatal page fault|coredump: generating|virtio_failure|WebKit smoke failed} {
-        puts "\nGATE-FAIL crash-marker"
-        exit 3
+        finish 3 "GATE-FAIL crash-marker"
     }
     -re {__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
-        if {$result_seen} { exit 0 }
+        if {$result_seen} { finish 0 "GATE-PASS" }
         exp_continue
     }
     timeout {
-        if {$result_seen} { exit 0 }
-        puts "\nGATE-FAIL timeout"
-        exit 4
+        if {$result_seen} { finish 0 "GATE-PASS" }
+        finish 4 "GATE-FAIL timeout"
     }
-    eof { if {$result_seen} { exit 0 } else { exit 5 } }
+    eof { if {$result_seen} { finish 0 "GATE-PASS" } else { finish 5 "GATE-FAIL eof" } }
 }
