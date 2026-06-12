@@ -328,7 +328,7 @@ cat > "${desktop_path}" <<EOF
 [Desktop Entry]
 Type=Application
 Name=${APP_NAME}
-Exec=${guest_root}/run
+Exec=/bin/sh ${guest_root}/run
 IconChar=H
 IconColor=0xFF3D7CA6
 EOF

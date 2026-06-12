@@ -21,11 +21,11 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9 dropPct=0.00
-      advanced=15.23`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
+      `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
+      advanced=15.24`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
-      renderD128 registered, virgl capsets 1+2, Weston desktop with 17
+      renderD128 registered, virgl capsets 1+2, Weston desktop with 18
       entries on the current image, zero async-timeout/EIO/panic markers in
       the gate baseline. The imported `eglgears_wayland` negative test below
       and the rejected `host-es2gears-wayland` black-box attempt are separate
@@ -289,16 +289,19 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       evidence under `build-x86_64/host-visible-blob-evidence/`.
 - [ ] **7. Host GUI importer (§10.5) — complete-support backlog.** See the
       dedicated checklist below. New progress: the focused proof harness is
-      closed and the two supported imported apps have fresh same-image proof:
+      closed and three supported imported apps have fresh same-image proof:
       IDLE/X11 (`HOSTIDLE-X11-PASS`, verifier summary
       `build-x86_64/host-gui-proof-verify/host-idle-x11-proof-summary.tsv`)
       and the embedded-runtime Python Wayland REPL (`HOSTPYREPL-PASS`,
       verifier summary
-      `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`).
+      `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`)
+      plus an imported host GTK/Wayland app (`HOSTGTK-SMOKE-PASS`,
+      verifier summary
+      `build-x86_64/host-gui-proof-verify/host-gtk-smoke-proof-summary.tsv`).
       Mandatory gate on the rebuilt image passed with
-      `xv6-perf-video:RESULT pass fps=59.9 speed=1.002 decodedFPS=59.9
-      dropPct=0.00`. Chromium and a non-black Wayland-native toolkit/GL
-      imported app remain open.
+      `xv6-perf-video:RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0
+      dropPct=0.00`. Chromium and a non-black GL/EGL/Wayland imported app
+      remain open.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
@@ -452,10 +455,31 @@ the deferred follow-up lane.
       `host-python-repl-exit.png`, `run.log`;
       verifier summary:
       `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`).
-- [ ] **Wayland-native toolkit app proof** (e.g. imported
-      `eglgears_wayland`). Current negative evidence, 2026-06-12:
-      a temporary `/bin/host-eglgears-wayland` import launched from the guest
-      and reached
+- [x] **Wayland-native toolkit app proof — closed for imported GTK
+      2026-06-12.** `scripts/image/host-gtk-smoke.c` is a host-built
+      GTK/Wayland app imported as `/bin/host-gtk-smoke`. The initial black-box
+      failure was a launcher/toolkit packaging issue: the generated shell
+      wrapper used unsupported guest-shell constructs, and decorated GTK
+      windows aborted while loading stock titlebar pixbuf resources. The
+      closed lane now uses `scripts/image/host-gtk-smoke-launcher.c` to set
+      Wayland env and exec the bundled loader directly, and the smoke window
+      is explicitly undecorated so it does not require GTK CSD icon resources.
+      Fresh same-image proof:
+      `HOSTGTK-SMOKE-PASS launch_changed_pixels=126656
+      input_changed_pixels=618 exit_changed_pixels=126656`; log evidence
+      shows `host-gtk-smoke: ready`, typed text progression through
+      `host-gtk-smoke: changed text= xv6`, and clean Escape exit. Screenshot
+      evidence is under `build-x86_64/host-gtk-smoke-proof/`
+      (`host-gtk-smoke-launch.png`, `host-gtk-smoke-input.png`,
+      `host-gtk-smoke-exit.png`, `run.log`), with non-black verifier summary
+      `build-x86_64/host-gui-proof-verify/host-gtk-smoke-proof-summary.tsv`
+      (`HOSTGUI-PROOF-VERIFY-PASS app=host-gtk-smoke`; input phase nonblack
+      pixels `1023080`). Same rebuilt image gate:
+      `xv6-perf-video:RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0
+      dropPct=0.00 advanced=15.24`, `GATE-PASS`.
+- [ ] **GL/EGL/Wayland imported app proof.** Current negative evidence,
+      2026-06-12: a temporary `/bin/host-eglgears-wayland` import launched
+      from the guest and reached
       guest Mesa/virgl (`xv6-mesa: wayland selecting drm with virgl`;
       three `/dev/dri/renderD128` opens), but the visible result is a black
       box and the run wedges with `virtio_gpu: async command 0x207 timed out`
@@ -473,15 +497,17 @@ the deferred follow-up lane.
       phase pairs. The app harnesses leave `before/launch/input/exit` PPM/PNG
       bundles, diff PNGs, and TSV summaries. Fresh same-image evidence:
       `HOSTGUI-PROOF-VERIFY-PASS app=host-idle-x11` and
-      `HOSTGUI-PROOF-VERIFY-PASS app=host-python-repl`, with summaries under
+      `HOSTGUI-PROOF-VERIFY-PASS app=host-python-repl`, plus
+      `HOSTGUI-PROOF-VERIFY-PASS app=host-gtk-smoke`, with summaries under
       `build-x86_64/host-gui-proof-verify/`. New imported apps, including the
       deferred Chromium lane, must pass this verifier before they can count as
       supported.
 - [ ] **Done when:** four representative imported apps pass the validation
-      rule — (1) Wayland-native toolkit app, (2) GL/EGL/Wayland app,
-      (3) embedded-runtime Python GUI app, (4) X11/Tk app (IDLE is the
-      first); each with launch/input/exit screenshots, per-app logs, and the
-      mandatory gate green on the same image.
+      rule — (1) Wayland-native toolkit app (GTK smoke now passes),
+      (2) GL/EGL/Wayland app, (3) embedded-runtime Python GUI app,
+      (4) X11/Tk app (IDLE is the first); each with launch/input/exit
+      screenshots, per-app logs, and the mandatory gate green on the same
+      image.
 
 ---
 
