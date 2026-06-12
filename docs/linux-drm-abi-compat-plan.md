@@ -1,6 +1,6 @@
 # Linux DRM / GPU Graphics ABI Compatibility Plan
 
-Last updated: 2026-06-11 (audited; completed gap analyses and closure
+Last updated: 2026-06-12 (audited; completed gap analyses and closure
 narratives condensed — full versions preserved in git history and
 `docs/linux-drm-abi-audit.md`. Same-day status check: §13 items 2, 3, 4, 5,
 8, 9 are closed in local commits for the active queue. Item 5 is closed for
@@ -823,19 +823,19 @@ Implementation plan:
   REPL, and an X11/Tk app once the existing X/Xorg support track is wired into
   the guest desktop. X11-only host apps must fail with a clear diagnostic until
   that bridge is present, rather than a silent desktop no-op.
-- **Current priority order (2026-06-12):** keep Chromium deferred and finish
-  the X11/XWayland lane first. The active work is to preserve the IDLE/Tk
-  framebuffer proof, harden the keyboard/input plus clean-exit proof, document
-  the staged Xwayland runtime, and package/commit any remaining X11 support
-  cleanup. After that X11 checkpoint is complete, return to the parked Wayland
-  Chromium candidate and continue its ABI/runtime closure.
+- **Current priority order (2026-06-12):** defer Chromium while finishing the
+  X11/XWayland checkpoint. Keep the IDLE/Tk framebuffer, keyboard/input, and
+  clean-exit proof as the active support evidence. Once that X11 checkpoint is
+  committed and the required gates are green, return to the parked Chromium
+  lane; Chrome still needs Wayland surface/presentation closure and must not be
+  counted as a passing §10.5 proof yet.
 
 Current repro/evidence:
 
-- The first real target is a host-built GTK + embedded `libpython3.12` GUI REPL
-  (`Host Python REPL`). Host IDLE/Tk is now packaged as a concrete X11/Tk
-  candidate, but the guest still needs an X server/XWayland bridge before that
-  binary can count as a visible GUI proof.
+- The first complete-support target was a host-built GTK + embedded
+  `libpython3.12` GUI REPL (`Host Python REPL`). Host IDLE/Tk is now packaged
+  as the concrete X11/Tk candidate, and the X11/XWayland bridge remains the
+  active support lane to finish before returning to Chromium.
 - The imported REPL desktop icon appears and `/bin/host-python-repl` launches
   as a guest ELF. The app reaches Wayland:
   `gdk-wayland: wl_display_connect ok` and `display opened`, and `ps` shows the
@@ -877,7 +877,7 @@ Current repro/evidence:
   executable at the Python/Tk bundle layer. Linux Tk is X11-based, so this
   artifact is the first passing X11/XWayland proof target for host-GUI
   completion.
-- Wayland Chromium candidate (parked follow-up, 2026-06-12): host Chromium was absent,
+- Wayland Chromium candidate (deferred follow-up, 2026-06-12): host Chromium was absent,
   and the Ubuntu `chromium-browser` package is only a snap transition, so
   Playwright's Chrome-for-Testing bundle was staged as `Wayland Chromium`
   (`Google Chrome for Testing 148.0.7778.96`,
@@ -902,13 +902,52 @@ Current repro/evidence:
   the same and `mmaptest` has a regression for that pattern. Current proof
   status: `tmp/wayland-chromium-runtime-diag.expect` no longer sees the old
   `rip=0x4637fd97` breakpoint trap or the later GWP-ASan `mmap: Invalid
-  argument` fatal. Chrome remains alive past singleton setup and eventually
-  opens `/dev/dri/renderD128`, but it still has not produced a Weston
-  client/surface or framebuffer proof before the diagnostic timeout. Treat this
-  as a late startup / scheduler / graphics-runtime investigation, not as a
-  passing §10.5 app proof yet. Keep this diagnostic state parked while X11 is
-  the active lane; after the X11 input/exit and packaging checkpoint closes,
-  Chromium becomes the next required §10.5 item.
+  argument` fatal. A desktop-supervised launch path now supports
+  `host_chromium=1`, optional bounded framebuffer capture
+  (`host_chromium_fbstat=1`, `host_chromium_fbstat_timer=N`), and bounded log
+  evidence. The current proof
+  `tmp/wayland-chromium-supervisor-diag.expect` reaches Chrome thread startup
+  and render-node opens, and `fbstat ppm-current` succeeds at `timer-2` and
+  `timer-3`; extracted screenshots in
+  `build-x86_64/wayland-chromium-supervisor-diag/` are valid 1280x800 PPM/PNG
+  files but still show only the Weston desktop and the `Wayland Chromium`
+  launcher icon, not a mapped browser window. Removing the forced
+  single-process/software-GPU flags caused child `breakpoint trap` exits and
+  did not improve presentation; full `WAYLAND_DEBUG=client` logging was too
+  invasive and prevented the supervisor timer from reaching the evidence point.
+  A focused Weston desktop-shell trace (`host_chromium_surface_trace=1`) was
+  added on 2026-06-12 and a conservative wrapper attempt disabled the AT bridge,
+  GTK modules, and Chromium renderer accessibility. That attempt did not clear
+  the repeated `GLib-GObject`/`AtkObject` registration failures. The follow-up
+  fresh-image run now proves a narrower Wayland state:
+  `tmp/wayland-chromium-supervisor-diag.expect` reaches `get-xdg-surface`,
+  `get-toplevel`, `set-app-id=chromium-browser`, an empty first commit,
+  `[xv6-chromium-surface] added`, and `send-configure`, but no
+  `ack-configure`, `toplevel-commit-content`, or mapped/content surface through
+  `timer-7`. A `chrome_syscall_trace=1` run shows fd `0x13` is an AF_UNIX
+  connection to `/tmp/wayland-0`; Chrome reads the initial registry data and
+  later sends the xdg surface requests on that fd, then repeatedly polls a
+  three-fd set with no ready events before the browser content appears. Next
+  debug step: add a focused Chrome/Wayland pollfd or AF_UNIX readiness probe so
+  the missing post-configure read/ack can be assigned to socket readiness
+  propagation, Chromium event dispatch, or another Wayland protocol/runtime
+  blocker. 2026-06-12 parked follow-up notes: the Chrome launcher now prefers guest
+  platform libraries before the copied host support bundle and no longer passes
+  conflicting direct-proxy flags. `/proc/sys/fs/inotify/{max_user_watches,
+  max_user_instances,max_queued_events}` is implemented and proven by
+  `build-x86_64/procfs-inotify-smoke/run.log` (`8192`, `128`, `16384`), which
+  removes one Chromium ABI warning. A post-procfs Chromium run hung before the
+  normal bounded evidence marker after `DRM: open node=render owner=7 tgid=44`,
+  so it was terminated and QEMU cleanup was verified; do not count that run as
+  a passing Chromium proof. The launcher now also sets
+  `XV6_GTK_DISABLE_ACCESSIBILITY=1`, and the GTK port includes that gated
+  accessibility bypass; the rebuilt `libgtk-3.so.0` contains the knob and the
+  follow-up run no longer emits the previous ATK/GObject duplicate-registration
+  errors. However, that run still did not map a browser surface: within the
+  bounded evidence window Chrome logged DRM render-node/device discovery
+  failures and no fresh `xv6-chromium` xdg-surface events appeared. This is not
+  a passing §10.5 app proof yet, and Chrome remains deferred until the X11
+  checkpoint is finalized.
 
 Validation rule:
 
@@ -953,7 +992,7 @@ Stock Mesa/GBM/libdrm and upstream Weston run on this ABI with no private
 winsys, no source patches, and no runtime monkey-patching (§10.3). The
 2026-06-10 desktop-session defects are closed with runtime proof (§10.4).
 The mandatory §8 step-7 fullscreen-video gate is green on the current tree
-(`RESULT pass fps≈60 dropPct=0.00`, `__WEBKIT_API_SMOKE_DONE_0__`) and must
+(`RESULT pass fps=54.9 dropPct=0.12`, `__WEBKIT_API_SMOKE_DONE_0__`) and must
 be re-run after any GPU/DRM/desktop change; validate with trace shape +
 on-screen output + framebuffer samples, never counters alone. Deferred
 backlog work is tracked in §13.
@@ -1349,15 +1388,14 @@ pushes still require an explicit operator decision.
    `eglgears_wayland` dry-run reports 13 copied support libs with 4
    guest-runtime skips.
 
-   Current priority order (2026-06-12): keep Chromium deferred while the
-   X11/XWayland lane is finished first. The IDLE/Tk framebuffer, keyboard/input,
-   and clean-exit proof now passes; finish package/commit cleanup for this X11
-   checkpoint, then return to the parked Wayland Chromium candidate and
-   continue its ABI/runtime closure.
+   Current priority order (2026-06-12): keep Chromium deferred and finish the
+   X11/XWayland checkpoint first. The IDLE/Tk framebuffer, keyboard/input, and
+   clean-exit proof is the active passing X11 support evidence. Chromium must
+   not block that checkpoint, but it remains the required follow-up lane for
+   Wayland Chrome support after the X11 work is committed and gated.
 
-   X11 checkpoint (2026-06-12): the X11/XWayland lane is now packaged and
-   committed locally. `ports` commit `57ac23c` enables Weston's Xwayland bridge
-   and stages the runtime hook; super-repo commit `6f5ab57` stages
+   X11 checkpoint (2026-06-12): the X11/XWayland lane is now packaged locally.
+   `ports` contains Weston's Xwayland bridge and runtime hook; the super repo stages
    `/bin/host-idle-x11`, the PyInstaller IDLE payload, Xwayland/xkbcomp/XKB
    data, and the glibc/zlib loader closure. After rebuilding `image`,
    `scripts/gpu/host-idle-x11-proof.expect` passed again on the fresh image,
@@ -1368,10 +1406,13 @@ pushes still require an explicit operator decision.
    captures `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the
    `host-idle` process is gone after quit
    (`build-x86_64/host-idle-x11-proof/run.log`). Chromium must not block this
-   checkpoint; resume the parked Chromium late-startup diagnostics only after
-   this X11 follow-up is closed.
+   checkpoint; after the X11 commit is squared away, Chromium diagnostics
+   become the next required follow-up without reopening the X11 lane. The
+   mandatory §8 gate also passed on the same current image:
+   `RESULT pass fps=54.9 speed=1.001 decodedFPS=54.9 dropPct=0.12` with
+   `__WEBKIT_API_SMOKE_DONE_0__`.
 
-   Parked Chromium follow-up after X11 checkpoint (2026-06-12): a diagnostic
+   Parked Chromium follow-up after the X11 checkpoint (2026-06-12): a diagnostic
    `host_chromium=1` desktop autostart path was added so Chrome can be launched
    after Weston is ready without relying on fragile serial shell input. After
    each kernel diagnostic tweak, `kernel` and then `image` were rebuilt before
@@ -1386,11 +1427,31 @@ pushes still require an explicit operator decision.
    `build-x86_64/wayland-chromium-drm-dump-final/run.log`: the dump worker
    prints `chrome-drm-dump: begin sample=0 tgid=44` but no per-thread rows or
    matching `end` within the post-trigger window. A nonblocking dump-path
-   adjustment is staged as WIP, but it remains parked with the rest of the
-   Chromium work until the X11-first checkpoint is closed. When Chrome resumes,
-   the next step is to collect safe thread state and assign the late startup
-   stall to scheduler, wait-channel, Wayland-connect, or graphics-runtime
-   ownership.
+   adjustment and later low-noise xdg/ATK experiments are staged as WIP. Chrome
+   was rerun on fresh images with
+   `host_chromium_surface_trace=1`; it reaches xdg object creation and Weston
+   sends an initial configure, but Chromium never sends `ack_configure` or a
+   content commit through `timer-7`. A `chrome_syscall_trace=1` run identifies
+   fd `0x13` as `/tmp/wayland-0` and shows initial registry reads plus xdg
+   request sends, followed by repeated empty `ppoll()` returns. Next step:
+   instrument the Chrome Wayland pollfd/AF_UNIX readiness path narrowly enough
+   to decide whether the missing post-configure ack is a socket readiness
+   propagation bug, Chromium event-dispatch stall, or a protocol/runtime
+   blocker. 2026-06-12 continuation: the wrapper now prefers guest platform
+   libraries ahead of copied host support libraries and the conflicting
+   direct-proxy flags were removed. Procfs now exposes
+   `/proc/sys/fs/inotify/{max_user_watches,max_user_instances,
+   max_queued_events}`; `build-x86_64/procfs-inotify-smoke/run.log` proves the
+   guest reads `8192`, `128`, and `16384`. A fresh Chrome run after that change
+   did not reach the supervisor evidence marker and stopped advancing after
+   `DRM: open node=render owner=7 tgid=44`; the harness/QEMU were terminated
+   and no QEMU process was left running. A subsequent GTK accessibility bypass
+   removed the ATK/GObject duplicate-registration errors, but the bounded run
+   still did not map a browser surface and now stops before fresh
+   `xv6-chromium` xdg events while logging DRM render-node discovery failures.
+   Next Chrome pass should either widen the bounded evidence trigger around
+   render-node open or add a targeted post-render-open wait/trace before
+   treating this as a regression.
 
    Host Python REPL repro (2026-06-11): a host-built GTK + embedded
    `libpython3.12` REPL was staged as `Host Python REPL`. The imported REPL
@@ -1435,7 +1496,7 @@ pushes still require an explicit operator decision.
    glibc/zlib/pthread/dl loader dependencies and embeds the Tk/IDLE payload,
    and the bundled Tk stack is satisfied by the guest XWayland bridge.
 
-   Wayland Chromium update (parked until the X11-first checkpoint closes): a
+   Wayland Chromium update (deferred until after the X11-first checkpoint): a
    Wayland-capable Chrome-for-Testing
    bundle was found through Playwright after no host Chromium/Chrome package was
    installed and Ubuntu's `chromium-browser` candidate resolved to snap-only
@@ -1469,14 +1530,28 @@ pushes still require an explicit operator decision.
    `fd=0`; `kernel/kernel/mm/vm.c` now matches Linux by ignoring fd for
    anonymous mappings, and `user/programs/mmaptest/mmaptest.c` includes a
    regression for that exact pattern. `kernel` and then `image` rebuilt
-   cleanly. Current blocker: the GWP-ASan `mmap: Invalid argument` fatal is
-   gone, Chrome remains alive and eventually opens `/dev/dri/renderD128`, but
-   no Weston Chrome client/surface is logged before the diagnostic timeout and
-   no framebuffer proof exists yet. Next debug step: add low-noise wait-state /
-   scheduler / Wayland-connect visibility after the render-node open so the
-   late startup stall can be assigned to the owning ABI or graphics-runtime
-   layer. This is parked behind finalizing the X11/XWayland IDLE input/exit and
-   packaging lane, then becomes the next required completion item.
+   cleanly. Current parked blocker: the GWP-ASan `mmap: Invalid argument` fatal is
+   gone, Chrome remains alive and eventually opens `/dev/dri/renderD128`.
+   Resumed 2026-06-12 diagnostics added desktop-supervised autostart, bounded
+   `fbstat` capture, and bounded Chromium evidence knobs. The current
+   `timer-2`/`timer-3` framebuffer captures are valid files, but still show
+   only the Weston desktop and the `Wayland Chromium` launcher icon. A relaxed
+   multi-process/GPU wrapper produced child `breakpoint trap` exits without a
+   visible browser surface, and full Wayland protocol logging was too
+   invasive. Parked follow-up work added a gated Weston
+   desktop-shell trace (`host_chromium_surface_trace=1`) and reran
+   `tmp/wayland-chromium-supervisor-diag.expect` on fresh images. The trace
+   string is present in the installed `desktop-shell.so`, but no
+   `[xv6-chromium-surface]` add/commit/map events appeared before `timer-3`.
+   A GTK accessibility bypass is now gated by
+   `XV6_GTK_DISABLE_ACCESSIBILITY=1` and enabled by the Chrome launcher; after
+   rebuilding `port-gtk3` and `image`, the Chromium diagnostic no longer shows
+   the repeated `GLib-GObject`/`AtkObject` registration failures. That did not
+   produce a visible browser surface: the bounded run logs DRM render-node
+   discovery failures and no fresh `xv6-chromium` xdg-surface events before
+   `timer-7`. Next debug step after the X11 checkpoint is committed and gated:
+   assign the new pre-surface Chrome stall to DRM device discovery, startup,
+   Wayland protocol, scheduler, or graphics-runtime behavior.
 
    Complete-support plan:
    - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
