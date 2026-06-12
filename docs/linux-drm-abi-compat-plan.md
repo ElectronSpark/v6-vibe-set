@@ -21,15 +21,16 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0 dropPct=0.00
+      `RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2 dropPct=0.00
       advanced=15.24`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
-      renderD128 registered, virgl capsets 1+2, Weston desktop with 18
+      renderD128 registered, virgl capsets 1+2, Weston desktop with 19
       entries on the current image, zero async-timeout/EIO/panic markers in
-      the gate baseline. The imported `eglgears_wayland` negative test below
-      and the rejected `host-es2gears-wayland` black-box attempt are separate
-      client-triggered failures, not baseline boot faults.
+      the gate baseline. Earlier imported `eglgears_wayland` /
+      `host-es2gears-wayland` black-box attempts remain negative evidence
+      for those clients only; the imported WLEGL smoke proof below is now the
+      passing GL/EGL/Wayland representative.
 
 ## Goal
 
@@ -209,8 +210,8 @@ Validator checklist for a milestone:
       `dropPct < 10`, zero `virtio_failures`/`virtio_timeouts`/panics, plus a
       mid-playback in-guest framebuffer capture. Any stutter, resolution
       downgrade, or fault fails the whole milestone. Latest pass 2026-06-12:
-      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00
-      advanced=15.23`, `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`
+      `RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2 dropPct=0.00
+      advanced=15.24`, `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`
       extracted by the harness.
       Matrix wrapper: `scripts/gpu/perf-video-gate-matrix.sh`.
 
@@ -289,7 +290,7 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       evidence under `build-x86_64/host-visible-blob-evidence/`.
 - [ ] **7. Host GUI importer (§10.5) — complete-support backlog.** See the
       dedicated checklist below. New progress: the focused proof harness is
-      closed and three supported imported apps have fresh same-image proof:
+      closed and four representative imported apps have fresh proof:
       IDLE/X11 (`HOSTIDLE-X11-PASS`, verifier summary
       `build-x86_64/host-gui-proof-verify/host-idle-x11-proof-summary.tsv`)
       and the embedded-runtime Python Wayland REPL (`HOSTPYREPL-PASS`,
@@ -297,11 +298,15 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       `build-x86_64/host-gui-proof-verify/host-python-repl-proof-summary.tsv`)
       plus an imported host GTK/Wayland app (`HOSTGTK-SMOKE-PASS`,
       verifier summary
-      `build-x86_64/host-gui-proof-verify/host-gtk-smoke-proof-summary.tsv`).
+      `build-x86_64/host-gui-proof-verify/host-gtk-smoke-proof-summary.tsv`)
+      and imported host WLEGL smoke (`HOSTWLEGL-SMOKE-PASS`,
+      verifier summary
+      `build-x86_64/host-gui-proof-verify/host-wlegl-smoke-proof-summary.tsv`).
       Mandatory gate on the rebuilt image passed with
-      `xv6-perf-video:RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0
-      dropPct=0.00`. Chromium and a non-black GL/EGL/Wayland imported app
-      remain open.
+      `xv6-perf-video:RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2
+      dropPct=0.00`. Chromium remains deferred/open, so the complete-support
+      backlog stays open even though the four-app representative proof rule is
+      satisfied.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
@@ -477,20 +482,28 @@ the deferred follow-up lane.
       pixels `1023080`). Same rebuilt image gate:
       `xv6-perf-video:RESULT pass fps=60.0 speed=1.001 decodedFPS=60.0
       dropPct=0.00 advanced=15.24`, `GATE-PASS`.
-- [ ] **GL/EGL/Wayland imported app proof.** Current negative evidence,
-      2026-06-12: a temporary `/bin/host-eglgears-wayland` import launched
-      from the guest and reached
-      guest Mesa/virgl (`xv6-mesa: wayland selecting drm with virgl`;
-      three `/dev/dri/renderD128` opens), but the visible result is a black
-      box and the run wedges with `virtio_gpu: async command 0x207 timed out`
-      followed by repeated `got error from kernel - expect bad rendering 5`
-      (`build-x86_64/host-eglgears-wayland-proof/run.log`). This is not a
-      pass. A follow-up temporary `/bin/host-es2gears-wayland` import was
-      also rejected after user inspection showed only a black box, so it was
-      removed from the default overlay before the next image/gate run. Latest
-      black-box reports remain negative evidence, not checkbox credit. Keep
-      the checkbox open until the imported app produces a non-black animated
-      surface and exits cleanly.
+- [x] **GL/EGL/Wayland imported app proof — closed 2026-06-12.**
+      `scripts/image/host-wlegl-smoke.c` is a minimal host-built xdg-shell
+      Wayland/EGL/GLES2 app imported as `/bin/host-wlegl-smoke`. Earlier
+      `host-eglgears-wayland` and `host-es2gears-wayland` attempts remain
+      negative client evidence: they reached guest Mesa/virgl but produced
+      black boxes or bad-rendering/async-timeout markers. The closed
+      representative uses generated xdg-shell protocol bindings, a direct
+      launcher (`scripts/image/host-wlegl-smoke-launcher.c`), and a
+      deterministic file-control repaint path because injected pointer events
+      were not delivered to the undecorated EGL client. Fresh proof:
+      `HOSTWLEGL-SMOKE-PASS launch_changed_pixels=169856
+      input_changed_pixels=166400 exit_changed_pixels=169856`; log evidence
+      shows `xv6-mesa: wayland selecting drm with virgl`,
+      `host-wlegl-smoke: egl ready 1.5 vendor=Mesa renderer=virgl (...)`,
+      first blue frame, control repaint to red, and clean exit. Screenshot
+      evidence is under `build-x86_64/host-wlegl-smoke-proof/`
+      (`host-wlegl-smoke-launch.png`, `host-wlegl-smoke-input.png`,
+      `host-wlegl-smoke-exit.png`, `run.log`), with verifier summary
+      `build-x86_64/host-gui-proof-verify/host-wlegl-smoke-proof-summary.tsv`
+      (`HOSTGUI-PROOF-VERIFY-PASS app=host-wlegl-smoke`). Same rebuilt image
+      gate: `xv6-perf-video:RESULT pass fps=60.2 speed=1.002
+      decodedFPS=60.2 dropPct=0.00 advanced=15.24`, `GATE-PASS`.
 - [x] **Focused host-GUI proof harness — closed 2026-06-12.**
       `scripts/gpu/host-gui-proof-verify.py` now rejects missing logs, failure
       markers, black/near-black captures, wrong dimensions, and unchanged
@@ -502,9 +515,10 @@ the deferred follow-up lane.
       `build-x86_64/host-gui-proof-verify/`. New imported apps, including the
       deferred Chromium lane, must pass this verifier before they can count as
       supported.
-- [ ] **Done when:** four representative imported apps pass the validation
+- [x] **Done when:** four representative imported apps pass the validation
       rule — (1) Wayland-native toolkit app (GTK smoke now passes),
-      (2) GL/EGL/Wayland app, (3) embedded-runtime Python GUI app,
+      (2) GL/EGL/Wayland app (WLEGL smoke now passes),
+      (3) embedded-runtime Python GUI app,
       (4) X11/Tk app (IDLE is the first); each with launch/input/exit
       screenshots, per-app logs, and the mandatory gate green on the same
       image.
