@@ -1,0 +1,107 @@
+#!/usr/bin/env expect
+
+set timeout 180
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/dnsdiag"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/dnsdiag.fs.img"
+set empty "$outdir/empty-startup"
+set guest_script "$outdir/dnsdiag.sh"
+exec sh -c "rm -f '$runlog' '$tmpimg' '$empty' '$guest_script'; cp '$fsimg' '$tmpimg'; : > '$empty'"
+exec sh -c "cat > '$guest_script' <<'EOF'\necho DNSDIAG_BEGIN\ncat /etc/resolv.conf\ndnsstress www.youtube.com 10.0.2.3 1 1\necho DNSDIAG_WWW_RC=$?\ndnsstress example.com 10.0.2.3 1 1\necho DNSDIAG_EXAMPLE_RC=$?\necho DNSDIAG_DONE\nEOF"
+catch { exec sh -c "debugfs -w -R 'rm /etc/startup' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $empty /etc/startup' '$tmpimg' >/dev/null 2>&1"
+catch { exec sh -c "debugfs -w -R 'rm /dnsdiag.sh' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $guest_script /dnsdiag.sh' '$tmpimg' >/dev/null 2>&1"
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "1"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 video=80x25"
+
+log_file -a $runlog
+
+spawn timeout --foreground 170 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {root:/#} {}
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nDNSDIAG-FAIL crash-marker"
+        exit 2
+    }
+    timeout {
+        puts "\nDNSDIAG-FAIL no-prompt"
+        exit 3
+    }
+    eof {
+        puts "\nDNSDIAG-FAIL early-eof"
+        exit 4
+    }
+}
+
+expect {
+    -re {lwip: (netif up|DNS from DHCP)} {}
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nDNSDIAG-FAIL crash-marker"
+        exit 5
+    }
+    timeout {
+        puts "\nDNSDIAG-FAIL no-net-ready"
+        exit 6
+    }
+    eof {
+        puts "\nDNSDIAG-FAIL net-ready-eof"
+        exit 7
+    }
+}
+
+send "/bin/sh /dnsdiag.sh; /bin/shutdown\r"
+
+set pass_count 0
+set done 0
+expect {
+    -re {dnsstress: RESULT pass failed_children=0} {
+        incr pass_count
+        exp_continue
+    }
+    -re {dnsstress: RESULT fail failed_children=[0-9]+} {
+        puts "\nDNSDIAG-FAIL dnsstress-result"
+        exit 8
+    }
+    -re {DNSDIAG_DONE} {
+        set done 1
+        if {$pass_count >= 2} {
+            puts "\nDNSDIAG-PASS"
+            catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+            exit 0
+        }
+        puts "\nDNSDIAG-FAIL rc"
+        exit 9
+    }
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nDNSDIAG-FAIL crash-marker"
+        exit 10
+    }
+    timeout {
+        if {$done && $pass_count >= 2} {
+            puts "\nDNSDIAG-PASS"
+            exit 0
+        }
+        puts "\nDNSDIAG-FAIL timeout"
+        exit 11
+    }
+    eof {
+        if {$done && $pass_count >= 2} {
+            puts "\nDNSDIAG-PASS"
+            exit 0
+        }
+        puts "\nDNSDIAG-FAIL eof"
+        exit 12
+    }
+}
