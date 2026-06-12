@@ -823,19 +823,19 @@ Implementation plan:
   REPL, and an X11/Tk app once the existing X/Xorg support track is wired into
   the guest desktop. X11-only host apps must fail with a clear diagnostic until
   that bridge is present, rather than a silent desktop no-op.
-- **Current priority order (2026-06-12):** defer Chromium while finishing the
-  X11/XWayland checkpoint. Keep the IDLE/Tk framebuffer, keyboard/input, and
-  clean-exit proof as the active support evidence. Once that X11 checkpoint is
-  committed and the required gates are green, return to the parked Chromium
-  lane; Chrome still needs Wayland surface/presentation closure and must not be
-  counted as a passing §10.5 proof yet.
+- **Current priority order (2026-06-12):** keep Chromium deferred while the
+  X11/XWayland checkpoint is finalized first. The IDLE/Tk framebuffer,
+  keyboard/input, and clean-exit proof remains the active support evidence.
+  After that X11 lane is committed and gated, return to Chromium as the required
+  follow-up; Chrome still needs browser-surface/presentation closure and must
+  not be counted as a passing §10.5 proof yet.
 
 Current repro/evidence:
 
 - The first complete-support target was a host-built GTK + embedded
   `libpython3.12` GUI REPL (`Host Python REPL`). Host IDLE/Tk is now packaged
-  as the concrete X11/Tk candidate, and the X11/XWayland bridge remains the
-  active support lane to finish before returning to Chromium.
+  as the concrete X11/Tk candidate, and the X11/XWayland bridge is the support
+  lane to finish before returning to Chromium.
 - The imported REPL desktop icon appears and `/bin/host-python-repl` launches
   as a guest ELF. The app reaches Wayland:
   `gdk-wayland: wl_display_connect ok` and `display opened`, and `ps` shows the
@@ -931,23 +931,33 @@ Current repro/evidence:
   debug step: add a focused Chrome/Wayland pollfd or AF_UNIX readiness probe so
   the missing post-configure read/ack can be assigned to socket readiness
   propagation, Chromium event dispatch, or another Wayland protocol/runtime
-  blocker. 2026-06-12 parked follow-up notes: the Chrome launcher now prefers guest
-  platform libraries before the copied host support bundle and no longer passes
-  conflicting direct-proxy flags. `/proc/sys/fs/inotify/{max_user_watches,
-  max_user_instances,max_queued_events}` is implemented and proven by
-  `build-x86_64/procfs-inotify-smoke/run.log` (`8192`, `128`, `16384`), which
-  removes one Chromium ABI warning. A post-procfs Chromium run hung before the
-  normal bounded evidence marker after `DRM: open node=render owner=7 tgid=44`,
-  so it was terminated and QEMU cleanup was verified; do not count that run as
-  a passing Chromium proof. The launcher now also sets
-  `XV6_GTK_DISABLE_ACCESSIBILITY=1`, and the GTK port includes that gated
-  accessibility bypass; the rebuilt `libgtk-3.so.0` contains the knob and the
-  follow-up run no longer emits the previous ATK/GObject duplicate-registration
-  errors. However, that run still did not map a browser surface: within the
-  bounded evidence window Chrome logged DRM render-node/device discovery
-  failures and no fresh `xv6-chromium` xdg-surface events appeared. This is not
-  a passing §10.5 app proof yet, and Chrome remains deferred until the X11
-  checkpoint is finalized.
+  blocker. 2026-06-12 parked follow-up notes: the Chrome launcher now prefers
+  guest platform libraries before the copied host support bundle and uses
+  explicit direct-proxy flags, explicit D-Bus addresses, and an opt-in
+  `WAYLAND_CHROMIUM_EXTRA_FLAGS` hook for narrow flag experiments.
+  `/proc/sys/fs/inotify/{max_user_watches,max_user_instances,max_queued_events}`
+  is implemented and proven by `build-x86_64/procfs-inotify-smoke/run.log`
+  (`8192`, `128`, `16384`), which removes one Chromium ABI warning. The
+  launcher also sets `XV6_GTK_DISABLE_ACCESSIBILITY=1`, and the GTK port
+  includes that gated accessibility bypass. The post-X11 Chromium resumption
+  found a separate DRM-discovery bug: Chrome's built-in device scan was reading
+  xv6's internal `st_rdev` layout with Linux `major()`/`minor()` macros.
+  `kernel/kernel/vfs/vfs_syscall.c` now encodes `st_rdev` with Linux `dev_t`
+  layout for character/block stat copyout and decodes Linux `dev_t` for
+  `mknod()`. After rebuilding `kernel` and `image`,
+  `tmp/wayland-chromium-supervisor-diag.expect` no longer reports
+  `drmGetDevices2()` render-node discovery failures; Chrome reaches guest
+  Wayland, opens `/dev/dri/renderD128`, initializes Mesa virgl, and GDK
+  completes its Wayland roundtrips. The browser still does not map content:
+  `build-x86_64/wayland-chromium-supervisor-diag/wayland-chromium-supervisor.png`
+  remains desktop-only through `timer-7`. X11 Chromium was tried with
+  `WAYLAND_CHROMIUM_BACKEND=x11` after the X11 checkpoint and also remained
+  desktop-only, so the remaining Chrome blocker is shared startup/toolkit
+  behavior. Current loud evidence is repeated D-Bus failure, `Cannot use V8
+  Proxy resolver in single process mode`, and the `GLib-GObject`/`AtkObject`
+  duplicate-type failure. This is not a passing §10.5 app proof yet. Keep this
+  work parked until the X11 checkpoint is finalized, then return to Chrome as
+  the required end-of-lane follow-up.
 
 Validation rule:
 
@@ -1405,11 +1415,14 @@ pushes still require an explicit operator decision.
    `mouseinject`, types `4+5` and Enter through `/dev/kbd` via `keyinject`,
    captures `/host-idle-x11-input.ppm`, sends `Ctrl+Q`, and verifies the
    `host-idle` process is gone after quit
-   (`build-x86_64/host-idle-x11-proof/run.log`). Chromium must not block this
-   checkpoint; after the X11 commit is squared away, Chromium diagnostics
-   become the next required follow-up without reopening the X11 lane. The
-   mandatory §8 gate also passed on the same current image:
-   `RESULT pass fps=54.9 speed=1.001 decodedFPS=54.9 dropPct=0.12` with
+   (`build-x86_64/host-idle-x11-proof/run.log`). After the 2026-06-12
+   X11-first reordering, the proof was rerun on the current image and passed:
+   `HOSTIDLE-X11-PASS framebuffer=/host-idle-x11.ppm
+   input=/host-idle-x11-input.ppm`. Chromium must not block this checkpoint;
+   after the X11 commit is squared away, Chromium diagnostics become the next
+   required follow-up without reopening the X11 lane. The mandatory §8 gate
+   passed on the same current image:
+   `RESULT pass fps=57.8 speed=1.002 decodedFPS=57.8 dropPct=0.11` with
    `__WEBKIT_API_SMOKE_DONE_0__`.
 
    Parked Chromium follow-up after the X11 checkpoint (2026-06-12): a diagnostic
@@ -1544,14 +1557,29 @@ pushes still require an explicit operator decision.
    string is present in the installed `desktop-shell.so`, but no
    `[xv6-chromium-surface]` add/commit/map events appeared before `timer-3`.
    A GTK accessibility bypass is now gated by
-   `XV6_GTK_DISABLE_ACCESSIBILITY=1` and enabled by the Chrome launcher; after
-   rebuilding `port-gtk3` and `image`, the Chromium diagnostic no longer shows
-   the repeated `GLib-GObject`/`AtkObject` registration failures. That did not
-   produce a visible browser surface: the bounded run logs DRM render-node
-   discovery failures and no fresh `xv6-chromium` xdg-surface events before
-   `timer-7`. Next debug step after the X11 checkpoint is committed and gated:
-   assign the new pre-surface Chrome stall to DRM device discovery, startup,
-   Wayland protocol, scheduler, or graphics-runtime behavior.
+   `XV6_GTK_DISABLE_ACCESSIBILITY=1` and enabled by the Chrome launcher.
+   Resumed post-X11 diagnostics found that Chromium's built-in DRM discovery
+   was still reading xv6's internal `st_rdev` layout through Linux
+   `major()`/`minor()` macros. `kernel/kernel/vfs/vfs_syscall.c` now encodes
+   character/block `st_rdev` values with Linux `dev_t` layout on stat copyout
+   and decodes Linux `dev_t` for `mknod()`. After rebuilding `kernel` and
+   `image`, `tmp/wayland-chromium-supervisor-diag.expect` no longer reports
+   `drmGetDevices2() has not found any devices`; it reaches guest Wayland,
+   opens `/dev/dri/renderD128`, initializes Mesa virgl
+   (`driver=virtio_gpu`, GL core `42`, GLES2 `31`), and GDK completes its
+   Wayland registry roundtrips. The browser still does not map content:
+   `build-x86_64/wayland-chromium-supervisor-diag/wayland-chromium-supervisor.png`
+   remains desktop-only through `timer-7`. The current blocker is later than
+   DRM discovery and before a usable browser surface: Chrome logs repeated
+   D-Bus failures, `Cannot use V8 Proxy resolver in single process mode`, and
+   the `GLib-GObject`/`AtkObject` duplicate-type failure. The launcher now uses
+   explicit direct-proxy flags, explicit D-Bus addresses, and an opt-in
+   `WAYLAND_CHROMIUM_EXTRA_FLAGS` hook for narrower flag experiments; X11
+   Chromium (`WAYLAND_CHROMIUM_BACKEND=x11`) was also tried after the X11
+   checkpoint and remained desktop-only, so the remaining Chrome blocker is
+   shared startup/toolkit behavior rather than a pure Wayland compositor miss.
+   Do not spend the active X11-first pass here, but do return to this Chrome
+   blocker after the X11 lane is finalized.
 
    Complete-support plan:
    - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
