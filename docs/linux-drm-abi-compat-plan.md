@@ -734,9 +734,8 @@ are in git history. Residual follow-ups extracted from this log live in §13.
    - **Decode-QoS jitter (residual, §13 item 1):** remaining live-YouTube
      jitter is `avdec_h264` "Dropping frame due to QoS" pressure (39 drops
      over ~65 s, lateness up to ~200 ms), not a present stall.
-    `WEBKIT_GST_MAX_AVC1_RESOLUTION=360P` is the YouTube default
-    (`webkit_gst_max_avc1=VALUE` override; legacy
-    `webkit_gst_max_avc1_480p=1` still selects 480P), and
+    `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` is the YouTube default
+    (`webkit_gst_max_avc1=VALUE` override), and
     `webkit_gst_debug_persist=1` persists GStreamer/runtime probe logs across
     shutdown. The MiniBrowser `webkit_web_view_load_uri` interposer also
     canonicalizes typed hostnames such as `www.youtube.com` to HTTPS and applies
@@ -1068,6 +1067,24 @@ required and must be named as negative evidence in the item status. For
 before/after harnesses such as titlebar controls, the before/after PPM/PNG pair
 plus the changed-pixel summary satisfies the baseline/action requirement.
 
+**Screenshot evidence ledger (added 2026-06-12).** Each numbered item below has
+an explicit screenshot-evidence expectation. Keep this ledger current whenever
+an item status changes; if an item is non-visual, say `N/A` and name the
+serial/compile metric plus the mandatory §8 frame from the same rebuilt image
+when applicable.
+
+| Item | Required screenshot evidence | Current artifact / gap |
+|---|---|---|
+| 1 — Live-YouTube smoothness | Host-visible player crop sequence plus guest fullscreen/watch-page frames, stored under a dated `build-x86_64/webkit-youtube-smoothness-*/` directory with QoS/cadence summaries. | Deferred. Residual cadence frames currently live in `/tmp/xv6-youtube-host-cadence/`; next closure run must copy or regenerate durable PNG/PPM evidence under `build-x86_64/`. |
+| 2 — virgl async-timeout/EIO spiral | Before/after visual reproducer frames for the control action that used to trigger the timeout, plus changed-pixel summary and §8 gate frame. | `build-x86_64/titlebar-control-matrix/glmaze-max-before.ppm`, `glmaze-max-after.ppm`, `glmaze-summary.tsv`; §8 sample frame under `build-x86_64/perf-video-gate/`. |
+| 3 — OOM victim attribution | N/A for the selector itself; record serial OOM/RSS metrics and the mandatory §8 framebuffer if the kernel/image was rebuilt. | Closed by `tmp/oom-survival.expect` metrics; same-image §8 screenshot evidence is `build-x86_64/perf-video-gate/perf-video-frame.ppm`/`.png`. |
+| 4 — Typed-URL/Enter harness | Guest framebuffer after typing and pressing Enter, extracted from `/typed-url.ppm` into `build-x86_64/webkit-typed-url/` as both `.ppm` and `.png`. | Complete: `build-x86_64/webkit-typed-url/typed-url-human-button.ppm`/`.png` from the 2026-06-12 rerun shows MiniBrowser on `file:///share/webkit/human-button.html` with the fixture title/button visible; `build-x86_64/webkit-typed-url/typed-url-www-youtube-net-480p.ppm`/`.png` shows networked typed `www.youtube.com` normalized to `https://www.youtube.com/` and rendered; logs are `build-x86_64/webkit-typed-url/run-human-button-tracked.log` and `run-www-youtube-net-480p.log`. |
+| 5 — Unified client decorations | For every non-skipped local C client/control pair, keep before/after PPM/PNG frames and the `*-summary.tsv` changed-pixel row. NetSurf is skipped for this queue. | Complete for local C clients: `build-x86_64/titlebar-control-matrix/{filemgr,peanutgb,glsmoke,glmaze,mesaglsmoke,mesawlegl}-*-before.ppm/.png`, `*-after.ppm/.png`, and per-client summaries. |
+| 6 — Host-visible zero-copy blob | Guest desktop/framebuffer proof for any backend that accepts host-visible blobs, alongside probe logs proving cap negotiation and map success/failure. | Optional/host-blocked; no positive screenshot exists. Next resumed run should store frames under `build-x86_64/host-visible-blob-evidence/`. |
+| 7 — Host GUI importer / complete support | Per representative app: baseline desktop, post-launch, post-input/action, and post-exit frames, plus wrapper/per-app logs. Negative "desktop icon only" frames count only as blocker evidence. | IDLE/X11 positive: `build-x86_64/host-idle-x11-proof/host-idle-x11.ppm`/`.png`, `host-idle-x11-input.ppm`/`.png`, `host-idle-x11-diff.png`, `diff-ae.txt`; Chromium negative: `build-x86_64/wayland-chromium-fresh-wayland/chromium-fresh-wayland.ppm`/`.png` and `build-x86_64/wayland-chromium-supervisor-diag/wayland-chromium-supervisor.png`. |
+| 8 — Optional ABI completeness | N/A for `kcmp` and fbdev layout probes; use serial/compile metrics and §8 framebuffer when rebuilt. | Closed by `tmp/drmabitest-kcmp.expect` and fbdev layout probe metrics; same-image §8 frame is `build-x86_64/perf-video-gate/perf-video-frame.ppm`/`.png` when applicable. |
+| 9 — Housekeeping | N/A; repository filesystem cleanup only. | Closed by `find`/`git status` metrics in this section. |
+
 **2026-06-11 closure metrics.**
 - Rebuilt the current image with `cmake --build build-x86_64 --target image
   -j$(nproc)`; the rootfs was regenerated at
@@ -1270,7 +1287,7 @@ pushes still require an explicit operator decision.
 1. **Live-YouTube smoothness (decode QoS) — DEFERRED BACKLOG.** Residual jitter is `avdec_h264`
    "Dropping frame due to QoS" pressure (39 drops over ~65 s of media time,
    lateness up to ~200 ms), not a present stall. Defaults already applied:
-   GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=360P` for
+   GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P` for
    YouTube-compat launches and typed YouTube navigation; `webkit_gst_max_avc1`
    remains the explicit resolution override. Next: decoder/queue A/Bs with
    `webkit_gst_debug_persist=1` evidence capture.
@@ -1286,6 +1303,27 @@ pushes still require an explicit operator decision.
    combines both halves and currently reports the residual as failing only on
    QoS (`qos_rc=1 cadence_rc=0`), while a synthetic 300 s low-drop QoS fixture
    plus the same frames passes end to end.
+   2026-06-12 DNS/navigation follow-up: `expect scripts/net/dnsdiag.expect`
+   boots a temporary no-desktop image with `QEMU_NET=1`, waits for lwIP
+   readiness, and proves DHCP DNS `10.0.2.3` with `dnsstress
+   www.youtube.com 10.0.2.3 1 1` and `dnsstress example.com 10.0.2.3 1 1`
+   (`build-x86_64/dnsdiag/run.log`, both `RESULT pass failed_children=0`).
+   `WEBKIT_TYPED_QEMU_NET=1 WEBKIT_TYPED_TARGET_URL=www.youtube.com
+   WEBKIT_TYPED_ARTIFACT_PREFIX=typed-url-www-youtube-net-480p
+   WEBKIT_TYPED_POST_ENTER_WAIT=60 expect
+   scripts/gpu/webkit-typed-url-enter.expect`
+   boots a temporary image copy and produced
+   `build-x86_64/webkit-typed-url/typed-url-www-youtube-net-480p.png`:
+   MiniBrowser displays `https://www.youtube.com/` and YouTube content, so
+   raw DNS and browser typed-hostname canonicalization are no longer open.
+   That run also exposed that the previous `360P` cap is invalid in this
+   WebKit build; the default was corrected to the supported lowest cap,
+   `480P`.
+   Post-rebuild mandatory §8 gate (2026-06-12): after `port-wayland` and a
+   refreshed `image`, `expect scripts/gpu/perf-video-gate.expect` passed with
+   `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00
+   advanced=15.26` and `__WEBKIT_API_SMOKE_DONE_0__`; the fresh framebuffer
+   evidence is `build-x86_64/perf-video-gate/perf-video-frame.ppm`/`.png`.
    *Build scope:* launcher knobs → `port-wayland` + `image`; harness-only A/Bs
    → no rebuild.
    *Screenshot evidence:* retain the host-visible player-crop frame sequence
@@ -1370,8 +1408,9 @@ pushes still require an explicit operator decision.
    regression coverage.
 4. **Typed-URL/Enter navigation harness — CLOSED 2026-06-11.** Dedicated input-path coverage for
    typing a URL + Enter in MiniBrowser, before claiming that keyboard
-   navigation path separately. Implemented as `tmp/webkit-typed-url-enter.expect`
-   plus the `keyinject` user program. The required kernel fix was making
+   navigation path separately. Implemented as
+   `scripts/gpu/webkit-typed-url-enter.expect` plus the `keyinject` user
+   program. The required kernel fix was making
    `/dev/kbd` synthetic writes real and registering the cdev writable.
    *Build scope used:* `kernel` + `user` + `image` because the harness exposed
    a real `/dev/kbd` write-path bug.
@@ -1381,10 +1420,14 @@ pushes still require an explicit operator decision.
    `/typed-url.ppm` at `screen=1280x800 scanout=1280x800`, and printed
    `TYPEDURL-PASS target=file:///share/webkit/human-button.html`. The §8 gate
    passed on the same image (`fps=59.0`, `dropPct=0.00`).
-   *Screenshot evidence:* `/typed-url.ppm` is the required guest framebuffer
-   capture for this step; future reruns should extract it into
-   `build-x86_64/webkit-typed-url/typed-url.ppm` and convert a matching PNG for
-   review next to `run-with-uri-evidence.log`.
+   *Screenshot evidence:* the 2026-06-12 rerun boots a temporary image copy,
+   extracts `/typed-url.ppm` into
+   `build-x86_64/webkit-typed-url/typed-url-human-button.ppm`, and converts
+   `build-x86_64/webkit-typed-url/typed-url-human-button.png`. The PNG shows
+   MiniBrowser on `file:///share/webkit/human-button.html` with the
+   `[Private] human-button:PASS` title and the "I am a human" fixture visible;
+   the matching command transcript is
+   `build-x86_64/webkit-typed-url/run-human-button-tracked.log`.
 5. **Unified client-decoration strategy — CLOSED FOR LOCAL C CLIENTS 2026-06-11 (NetSurf skipped).** Replace the six local C-client
    titlebar implementations (§10.4 item 1) with one mechanism: (a) port
    `libdecor`, (b) rebase the GL demos onto toytoolkit, or (c) server-side
@@ -1441,8 +1484,8 @@ pushes still require an explicit operator decision.
    `port-weston-clean` + `port-weston` + `port-wayland` + `image`.
    *Screenshot evidence:* each local C client/control pair keeps before/after
    guest framebuffer captures under
-   `build-x86_64/titlebar-control-matrix/<app>-<control>-before.ppm` and
-   `...-after.ppm`, with per-app summaries in
+   `build-x86_64/titlebar-control-matrix/<app>-<control>-before.ppm`/`.png`
+   and `...-after.ppm`/`.png`, with per-app summaries in
    `build-x86_64/titlebar-control-matrix/*-summary.tsv`. NetSurf is skipped in
    this matrix; do not count NetSurf screenshots for this closure item.
    *Done when:* all six local C clients render titlebars through the single
