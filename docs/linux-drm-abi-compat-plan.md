@@ -21,13 +21,14 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=53.3 speed=1.000 decodedFPS=53.3 dropPct=0.12
-      advanced=15.22`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
+      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00
+      advanced=15.28`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
-- [x] GUI-session boot log clean — `dma_fence: selftest ok`, card0 +
+- [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
       renderD128 registered, virgl capsets 1+2, Weston desktop with 17
-      entries, zero async-timeout/EIO/panic markers (Xwayland GLAMOR software
-      fallback matches the §10.5 known state).
+      entries on the current image, zero async-timeout/EIO/panic markers in
+      the gate baseline. The imported `eglgears_wayland` negative test below
+      is a separate client-triggered virgl timeout, not a baseline boot fault.
 
 ## Goal
 
@@ -174,7 +175,7 @@ Validator checklist for a milestone:
       `dropPct < 10`, zero `virtio_failures`/`virtio_timeouts`/panics, plus a
       mid-playback in-guest framebuffer capture. Any stutter, resolution
       downgrade, or fault fails the whole milestone. Latest pass 2026-06-12:
-      `RESULT pass fps=53.3 speed=1.000 decodedFPS=53.3 dropPct=0.12`,
+      `RESULT pass fps=59.5 speed=1.001 decodedFPS=59.5 dropPct=0.00`,
       `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png` extracted by
       the harness.
       Matrix wrapper: `scripts/gpu/perf-video-gate-matrix.sh`.
@@ -395,7 +396,16 @@ the deferred follow-up lane.
       (`host-python-repl-launch.png`, `host-python-repl-input.png`,
       `run.log`).
 - [ ] **Wayland-native toolkit app proof** (e.g. imported
-      `eglgears_wayland`; dry-run staged, runtime proof pending).
+      `eglgears_wayland`). Current negative evidence, 2026-06-12:
+      a temporary `/bin/host-eglgears-wayland` import launched from the guest
+      and reached
+      guest Mesa/virgl (`xv6-mesa: wayland selecting drm with virgl`;
+      three `/dev/dri/renderD128` opens), but the visible result is a black
+      box and the run wedges with `virtio_gpu: async command 0x207 timed out`
+      followed by repeated `got error from kernel - expect bad rendering 5`
+      (`build-x86_64/host-eglgears-wayland-proof/run.log`). This is not a
+      pass; keep the checkbox open until the imported app produces a
+      non-black animated surface and exits cleanly.
 - [ ] **Focused host-GUI proof harness** that fails on "desktop icon only"
       captures and leaves `before/after-launch/after-input/after-exit`
       PPM/PNG bundles per app. First dedicated instances now exist for IDLE
