@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Host IDLE X11
+Exec=/bin/host-idle-x11
+Terminal=false
