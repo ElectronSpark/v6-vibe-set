@@ -1,0 +1,202 @@
+#!/usr/bin/env expect
+
+set timeout 220
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/host-idle-x11-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+exec sh -c "rm -f $runlog"
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0"
+set send_slow {1 .01}
+
+log_file -a $runlog
+spawn timeout --foreground 210 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+
+expect {
+    -re {loaded [0-9]+ desktop entries} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        puts "\nHOSTIDLE-X11-FAIL crash-marker"
+        exit 3
+    }
+    timeout { puts "\nHOSTIDLE-X11-FAIL no-desktop"; exit 4 }
+    eof { puts "\nHOSTIDLE-X11-FAIL early-eof"; exit 5 }
+}
+
+sleep 3
+send "\r"
+expect {
+    -re {root:/#} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL no-fresh-prompt"; exit 5 }
+    eof { puts "\nHOSTIDLE-X11-FAIL fresh-prompt-eof"; exit 5 }
+}
+
+send "/usr/bin/xkbcomp -version; /bin/Xwayland -version; echo HOSTIDLE_RUNTIME_PROBE_DONE\r"
+expect {
+    -re {exec .*failed|not found|cannot execute} {
+        puts "\nHOSTIDLE-X11-FAIL missing-runtime-files"
+        exit 6
+    }
+    -re {HOSTIDLE_RUNTIME_PROBE_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL missing-runtime-files"; exit 6 }
+    eof { puts "\nHOSTIDLE-X11-FAIL runtime-files-eof"; exit 6 }
+}
+expect {
+    -re {root:/#} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL no-prompt-after-ls"; exit 6 }
+    eof { puts "\nHOSTIDLE-X11-FAIL runtime-ls-eof"; exit 6 }
+}
+
+send -s "rm -f /tmp/host-idle-x11.log; XV6_GUI_SESSION=1 XDG_RUNTIME_DIR=/tmp DISPLAY=:0 /bin/host-idle-x11 -n -i -t XV6-IDLE-X11-PROOF &\r"
+expect {
+    -re {root:/#} {}
+    -re {exec .*failed|not found|cannot execute} {
+        puts "\nHOSTIDLE-X11-FAIL launch"
+        exit 7
+    }
+    timeout { puts "\nHOSTIDLE-X11-FAIL no-prompt-after-launch"; exit 7 }
+    eof { puts "\nHOSTIDLE-X11-FAIL launch-eof"; exit 7 }
+}
+
+set timeout 1
+for {set i 0} {$i < 15} {incr i} {
+    expect {
+        -re {exec /usr/bin/xkbcomp failed|Keyboard initialization failed|Fatal server error} {
+            puts "\nHOSTIDLE-X11-FAIL xwayland-keyboard"
+            exit 12
+        }
+        timeout {}
+        eof { puts "\nHOSTIDLE-X11-FAIL xwayland-eof"; exit 12 }
+    }
+}
+set timeout 220
+send "ps\r"
+expect {
+    -re {host-idle|Xwayland} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL process-missing"; exit 8 }
+    eof { puts "\nHOSTIDLE-X11-FAIL process-eof"; exit 8 }
+}
+expect {
+    -re {root:/#} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL ps-end-timeout"; exit 8 }
+    eof { puts "\nHOSTIDLE-X11-FAIL ps-end-eof"; exit 8 }
+}
+
+send "fbstat ppm-current /host-idle-x11.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_BASE_DONE\r"
+expect {
+    -re {fb_ppm_current path=/host-idle-x11\.ppm screen=1280x800 scanout=1280x800} {}
+    -re {fbstat: [^\r\n]+} { puts "\nHOSTIDLE-X11-FAIL fbstat-error"; exit 11 }
+    timeout { puts "\nHOSTIDLE-X11-FAIL fbstat-timeout"; exit 11 }
+    eof { puts "\nHOSTIDLE-X11-FAIL fbstat-eof"; exit 11 }
+}
+expect {
+    -re {HOSTIDLE_FB_BASE_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL fb-base-marker-timeout"; exit 11 }
+    eof { puts "\nHOSTIDLE-X11-FAIL fb-base-marker-eof"; exit 11 }
+}
+expect {
+    -re {root:/#} {}
+    timeout {}
+    eof { puts "\nHOSTIDLE-X11-FAIL sync-eof"; exit 11 }
+}
+
+sleep 2
+send "mouseinject 32768 32768 0; mouseinject 32768 32768 1; mouseinject 32768 32768 0; echo HOSTIDLE_FOCUS_DONE\r"
+expect {
+    -re {mouseinject: absolute} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL focus-mouse-timeout"; exit 13 }
+    eof { puts "\nHOSTIDLE-X11-FAIL focus-mouse-eof"; exit 13 }
+}
+expect {
+    -re {HOSTIDLE_FOCUS_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL focus-marker-timeout"; exit 13 }
+    eof { puts "\nHOSTIDLE-X11-FAIL focus-marker-eof"; exit 13 }
+}
+expect {
+    -re {root:/#} {}
+    timeout {}
+    eof { puts "\nHOSTIDLE-X11-FAIL focus-prompt-eof"; exit 13 }
+}
+
+sleep 1
+send "keyinject text \"4+5\"; keyinject key enter; echo HOSTIDLE_KEYS_DONE\r"
+expect {
+    -re {keyinject: text len=[0-9]+} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL key-text-timeout"; exit 14 }
+    eof { puts "\nHOSTIDLE-X11-FAIL key-text-eof"; exit 14 }
+}
+expect {
+    -re {keyinject: key enter} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL key-enter-timeout"; exit 14 }
+    eof { puts "\nHOSTIDLE-X11-FAIL key-enter-eof"; exit 14 }
+}
+expect {
+    -re {HOSTIDLE_KEYS_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL key-marker-timeout"; exit 14 }
+    eof { puts "\nHOSTIDLE-X11-FAIL key-marker-eof"; exit 14 }
+}
+expect {
+    -re {root:/#} {}
+    timeout {}
+    eof { puts "\nHOSTIDLE-X11-FAIL key-prompt-eof"; exit 14 }
+}
+
+sleep 2
+send "fbstat ppm-current /host-idle-x11-input.ppm 0 0 1280 800; sync; echo HOSTIDLE_FB_INPUT_DONE\r"
+expect {
+    -re {fb_ppm_current path=/host-idle-x11-input\.ppm screen=1280x800 scanout=1280x800} {}
+    -re {fbstat: [^\r\n]+} { puts "\nHOSTIDLE-X11-FAIL input-fbstat-error"; exit 15 }
+    timeout { puts "\nHOSTIDLE-X11-FAIL input-fbstat-timeout"; exit 15 }
+    eof { puts "\nHOSTIDLE-X11-FAIL input-fbstat-eof"; exit 15 }
+}
+expect {
+    -re {HOSTIDLE_FB_INPUT_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL input-fb-marker-timeout"; exit 15 }
+    eof { puts "\nHOSTIDLE-X11-FAIL input-fb-marker-eof"; exit 15 }
+}
+expect {
+    -re {root:/#} {}
+    timeout {}
+    eof { puts "\nHOSTIDLE-X11-FAIL input-sync-eof"; exit 15 }
+}
+
+send "keyinject chord ctrl+q; echo HOSTIDLE_QUIT_KEYS_DONE\r"
+expect {
+    -re {keyinject: chord ctrl\+q} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL quit-key-timeout"; exit 16 }
+    eof { puts "\nHOSTIDLE-X11-FAIL quit-key-eof"; exit 16 }
+}
+expect {
+    -re {HOSTIDLE_QUIT_KEYS_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL quit-marker-timeout"; exit 16 }
+    eof { puts "\nHOSTIDLE-X11-FAIL quit-marker-eof"; exit 16 }
+}
+expect {
+    -re {root:/#} {}
+    timeout {}
+    eof { puts "\nHOSTIDLE-X11-FAIL quit-prompt-eof"; exit 16 }
+}
+
+sleep 5
+send "ps; echo HOSTIDLE_AFTER_QUIT_PS_DONE\r"
+expect {
+    -re {host-idle} { puts "\nHOSTIDLE-X11-FAIL process-still-running-after-quit"; exit 17 }
+    -re {HOSTIDLE_AFTER_QUIT_PS_DONE} {}
+    timeout { puts "\nHOSTIDLE-X11-FAIL after-quit-ps-timeout"; exit 17 }
+    eof { puts "\nHOSTIDLE-X11-FAIL after-quit-ps-eof"; exit 17 }
+}
+
+puts "\nHOSTIDLE-X11-PASS framebuffer=/host-idle-x11.ppm input=/host-idle-x11-input.ppm"
+catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+exit 0
