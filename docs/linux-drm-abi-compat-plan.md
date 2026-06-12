@@ -932,9 +932,11 @@ Current repro/evidence:
   the missing post-configure read/ack can be assigned to socket readiness
   propagation, Chromium event dispatch, or another Wayland protocol/runtime
   blocker. 2026-06-12 parked follow-up notes: the Chrome launcher now prefers
-  guest platform libraries before the copied host support bundle and uses
-  explicit direct-proxy flags, explicit D-Bus addresses, and an opt-in
-  `WAYLAND_CHROMIUM_EXTRA_FLAGS` hook for narrow flag experiments.
+  guest platform libraries before the copied host support bundle, uses
+  `--no-proxy-server` instead of the earlier direct-proxy pair, exports guest
+  GLib/GIO runtime paths (`XDG_DATA_DIRS`, `GSETTINGS_SCHEMA_DIR`,
+  `GIO_MODULE_DIR`, `GIO_USE_TLS`), and keeps explicit D-Bus addresses plus an
+  opt-in `WAYLAND_CHROMIUM_EXTRA_FLAGS` hook for narrow flag experiments.
   `/proc/sys/fs/inotify/{max_user_watches,max_user_instances,max_queued_events}`
   is implemented and proven by `build-x86_64/procfs-inotify-smoke/run.log`
   (`8192`, `128`, `16384`), which removes one Chromium ABI warning. The
@@ -953,11 +955,29 @@ Current repro/evidence:
   remains desktop-only through `timer-7`. X11 Chromium was tried with
   `WAYLAND_CHROMIUM_BACKEND=x11` after the X11 checkpoint and also remained
   desktop-only, so the remaining Chrome blocker is shared startup/toolkit
-  behavior. Current loud evidence is repeated D-Bus failure, `Cannot use V8
-  Proxy resolver in single process mode`, and the `GLib-GObject`/`AtkObject`
-  duplicate-type failure. This is not a passing §10.5 app proof yet. Keep this
-  work parked until the X11 checkpoint is finalized, then return to Chrome as
-  the required end-of-lane follow-up.
+  behavior. After the X11 checkpoint was revalidated and the §8 gate passed,
+  `ports/wayland/src/desktop.c` gained supervised Chrome knobs
+  `host_chromium_backend=`, `host_chromium_multiprocess=1`, and
+  `host_chromium_extra_flags=` so follow-up runs no longer depend on fragile
+  serial-shell launches. `tmp/wayland-chromium-supervisor-low-noise.expect`
+  with the updated wrapper confirms the GLib schema assertion is gone and
+  framebuffer capture succeeds (`/wayland-chromium-low-noise.ppm`). In
+  single-process mode, Chrome still reaches GDK/Wayland/Mesa but logs repeated
+  D-Bus failures, `Cannot use V8 Proxy resolver in single process mode`, and
+  the `GLib-GObject`/`AtkObject` duplicate-type failure. In multiprocess mode,
+  the bounded timer-3 run no longer reproduces the old breakpoint trap and the
+  launcher log stays quiet after `exec`; the supervised pid remains alive at
+  timers 0-3 (`alive=1`), `chrome_crashpad` is reaped with status 0, and
+  `fbstat` captures `/wayland-chromium-low-noise.ppm` in 200 ms. No browser
+  surface maps and no fresh `xv6-chromium` xdg trace appears. Attempted `ps`
+  and direct `/proc` traversal from the supervisor both block in this Chrome
+  state, so lifecycle evidence must come from nonblocking pid probes, existing
+  wait/reap logs, or a kernel-side tracepoint rather than in-band procfs reads.
+  This is not a passing §10.5 app proof yet. Next Chrome step: add a
+  nonblocking kernel-side fork/exec/exit or child-status trace for the
+  supervised Chrome process, then assign the remaining silence to
+  ProcessSingleton/zygote startup, early child exit, Wayland dispatch, or
+  toolkit/runtime initialization.
 
 Validation rule:
 
@@ -1001,11 +1021,14 @@ of its broad fail-closed DRM shim:
 Stock Mesa/GBM/libdrm and upstream Weston run on this ABI with no private
 winsys, no source patches, and no runtime monkey-patching (§10.3). The
 2026-06-10 desktop-session defects are closed with runtime proof (§10.4).
-The mandatory §8 step-7 fullscreen-video gate is green on the current tree
-(`RESULT pass fps=54.9 dropPct=0.12`, `__WEBKIT_API_SMOKE_DONE_0__`) and must
-be re-run after any GPU/DRM/desktop change; validate with trace shape +
-on-screen output + framebuffer samples, never counters alone. Deferred
-backlog work is tracked in §13.
+The mandatory §8 step-7 fullscreen-video gate must be re-run after any
+GPU/DRM/desktop change; validate with trace shape + on-screen output +
+framebuffer samples, never counters alone. Latest 2026-06-12 status on the
+Chrome-diagnostic rebuilt image: after changing the WebKit smoke supervisor to
+poll the launched WebKit client pid instead of broad `waitpid(-1, WNOHANG)`,
+`expect scripts/gpu/perf-video-gate.expect` passed with
+`RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00` and
+`__WEBKIT_API_SMOKE_DONE_0__`. Deferred backlog work is tracked in §13.
 
 ---
 
@@ -1420,10 +1443,18 @@ pushes still require an explicit operator decision.
    `HOSTIDLE-X11-PASS framebuffer=/host-idle-x11.ppm
    input=/host-idle-x11-input.ppm`. Chromium must not block this checkpoint;
    after the X11 commit is squared away, Chromium diagnostics become the next
-   required follow-up without reopening the X11 lane. The mandatory §8 gate
-   passed on the same current image:
-   `RESULT pass fps=57.8 speed=1.002 decodedFPS=57.8 dropPct=0.11` with
-   `__WEBKIT_API_SMOKE_DONE_0__`.
+   required follow-up without reopening the X11 lane. After the later Chrome
+   diagnostic rebuilds, the mandatory §8 gate initially timed out under the
+   320 s wrapper after WebKit reached `webkit_gpu_policy` and multiple DRM
+   render opens. The culprit was the desktop supervisor's broad
+   `waitpid(-1, WNOHANG)` inside the WebKit smoke loop; it could wedge behind
+   unrelated helper child state before reaching the periodic title probes. The
+   supervisor now polls the launched WebKit client pid directly and checks the
+   compositor pid separately. On the same rebuilt image,
+   `expect scripts/gpu/perf-video-gate.expect` passed:
+   `RESULT pass fps=60.1 speed=1.002 decodedFPS=60.1 dropPct=0.00` with
+   `__WEBKIT_API_SMOKE_DONE_0__`
+   (`build-x86_64/perf-video-gate/run.log`).
 
    Parked Chromium follow-up after the X11 checkpoint (2026-06-12): a diagnostic
    `host_chromium=1` desktop autostart path was added so Chrome can be launched
@@ -1570,16 +1601,36 @@ pushes still require an explicit operator decision.
    Wayland registry roundtrips. The browser still does not map content:
    `build-x86_64/wayland-chromium-supervisor-diag/wayland-chromium-supervisor.png`
    remains desktop-only through `timer-7`. The current blocker is later than
-   DRM discovery and before a usable browser surface: Chrome logs repeated
-   D-Bus failures, `Cannot use V8 Proxy resolver in single process mode`, and
-   the `GLib-GObject`/`AtkObject` duplicate-type failure. The launcher now uses
-   explicit direct-proxy flags, explicit D-Bus addresses, and an opt-in
-   `WAYLAND_CHROMIUM_EXTRA_FLAGS` hook for narrower flag experiments; X11
-   Chromium (`WAYLAND_CHROMIUM_BACKEND=x11`) was also tried after the X11
-   checkpoint and remained desktop-only, so the remaining Chrome blocker is
-   shared startup/toolkit behavior rather than a pure Wayland compositor miss.
-   Do not spend the active X11-first pass here, but do return to this Chrome
-   blocker after the X11 lane is finalized.
+   DRM discovery and before a usable browser surface. X11 Chromium
+   (`WAYLAND_CHROMIUM_BACKEND=x11`) was also tried after the X11 checkpoint and
+   remained desktop-only, so the remaining Chrome blocker is shared
+   startup/toolkit behavior rather than a pure Wayland compositor miss.
+   Post-X11 return pass (2026-06-12): `ports/wayland/src/desktop.c` now lets
+   supervised Chrome runs choose `host_chromium_backend=`,
+   `host_chromium_multiprocess=1`, and `host_chromium_extra_flags=` from the
+   kernel command line. The launcher now uses `--no-proxy-server` instead of
+   the earlier direct-proxy pair and exports the guest GLib/GIO runtime paths
+   (`XDG_DATA_DIRS`, `GSETTINGS_SCHEMA_DIR`, `GIO_MODULE_DIR`, `GIO_USE_TLS`).
+   After rebuilding `port-wayland` as needed and then `image` before booting,
+   `CHROMIUM_MULTIPROCESS=1
+   expect tmp/wayland-chromium-supervisor-low-noise.expect` was rerun after the
+   X11 proof and §8 gate. It shows the GLib schema assertion is gone and
+   `fbstat` captures `/wayland-chromium-low-noise.ppm`.
+   Single-process Chrome still reaches GDK/Wayland/Mesa but logs D-Bus
+   failures, the expected single-process V8 proxy resolver error, and the
+   `GLib-GObject`/`AtkObject` duplicate-type failure. Multiprocess Chrome no
+   longer reproduces the old breakpoint trap during the bounded timer-3 run and
+   the launcher log stays quiet after `exec`; the supervised pid remains alive
+   at timers 0-3 (`alive=1`), `chrome_crashpad` is reaped with status 0, and
+   `fbstat` captures `/wayland-chromium-low-noise.ppm` in 200 ms. No browser
+   surface maps and no fresh `xv6-chromium` xdg trace appears. Attempted `ps`
+   and direct `/proc` traversal from the supervisor both block in this Chrome
+   state, so lifecycle evidence must come from nonblocking pid probes, existing
+   wait/reap logs, or a kernel-side tracepoint rather than in-band procfs
+   reads. Next Chrome step: add a nonblocking kernel-side fork/exec/exit or
+   child-status trace for the supervised Chrome process, then assign the
+   remaining silence to ProcessSingleton/zygote startup, early child exit,
+   Wayland dispatch, or toolkit/runtime initialization.
 
    Complete-support plan:
    - Harden launchers so desktop `Exec=` and shell launch both use a guest ELF
