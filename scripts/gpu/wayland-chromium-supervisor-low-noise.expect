@@ -1,0 +1,95 @@
+#!/usr/bin/env expect
+
+set timeout 190
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/wayland-chromium-supervisor-low-noise"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set monitor "$outdir/qemu-monitor.sock"
+set tmpimg "$outdir/wayland-chromium.fs.img"
+
+set backend [expr {[info exists env(CHROMIUM_BACKEND)] ? $env(CHROMIUM_BACKEND) : "wayland"}]
+set multiprocess [expr {[info exists env(CHROMIUM_MULTIPROCESS)] ? $env(CHROMIUM_MULTIPROCESS) : "1"}]
+set extra_flags [expr {[info exists env(CHROMIUM_EXTRA_FLAGS)] ? $env(CHROMIUM_EXTRA_FLAGS) : ""}]
+set lifecycle_trace [expr {[info exists env(CHROMIUM_LIFECYCLE_TRACE)] ? $env(CHROMIUM_LIFECYCLE_TRACE) : "1"}]
+set syscall_trace [expr {[info exists env(CHROMIUM_SYSCALL_TRACE)] ? $env(CHROMIUM_SYSCALL_TRACE) : "0"}]
+set artifact_prefix [expr {[info exists env(CHROMIUM_ARTIFACT_PREFIX)] ? $env(CHROMIUM_ARTIFACT_PREFIX) : "wayland-chromium-low-noise"}]
+regsub -all {[^A-Za-z0-9._-]} $artifact_prefix {_} artifact_prefix
+
+set guest_ppm "/wayland-chromium-low-noise.ppm"
+set host_ppm "$outdir/$artifact_prefix.ppm"
+set host_png "$outdir/$artifact_prefix.png"
+set mp_token [expr {$multiprocess eq "1" ? " host_chromium_multiprocess=1" : ""}]
+set extra_token [expr {$extra_flags ne "" ? " host_chromium_extra_flags=$extra_flags" : ""}]
+set trace_token [expr {$lifecycle_trace ne "0" ? " chrome_lifecycle_trace=1" : ""}]
+set syscall_token [expr {$syscall_trace ne "0" ? " chrome_syscall_trace=1" : ""}]
+
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$host_ppm' '$host_png'"
+exec cp $fsimg $tmpimg
+catch { exec sh -c "debugfs -w -R 'rm $guest_ppm' '$tmpimg' >/dev/null 2>&1" }
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=about:blank host_chromium_backend=$backend$mp_token$extra_token host_chromium_fbstat=1 host_chromium_fbstat_timer=1 host_chromium_fbstat_path=$guest_ppm host_chromium_evidence=1 host_chromium_evidence_lines=360 host_chromium_evidence_timers=4 host_chromium_surface_trace=1$trace_token$syscall_token chrome_poll_summary=0 chrome_drm_ioctl_trace=0"
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+proc finish {code label} {
+    global qemu_pid tmpimg guest_ppm host_ppm host_png runlog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    sleep 1
+
+    if {$code == 0} {
+        if {[catch { exec sh -c "debugfs -R 'dump $guest_ppm $host_ppm' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nCHROMIUM-SUPERVISOR-LOW-NOISE-FAIL extract-ppm $dump_out log=$runlog"
+            exit 6
+        }
+        if {[catch { exec convert $host_ppm $host_png } convert_out]} {
+            puts "\nCHROMIUM-SUPERVISOR-LOW-NOISE-FAIL convert-png $convert_out log=$runlog"
+            exit 6
+        }
+        set pass_line "$label log=$runlog host_ppm=$host_ppm host_png=$host_png"
+        puts "\n$pass_line"
+        set pass_log [open $runlog a]
+        puts $pass_log $pass_line
+        close $pass_log
+    } else {
+        puts "\n$label log=$runlog"
+    }
+    exit $code
+}
+
+log_user 0
+log_file -a $runlog
+spawn timeout --foreground 190 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {Chromium evidence end reason=timer-3} {
+        finish 0 "CHROMIUM-SUPERVISOR-LOW-NOISE-DONE"
+    }
+    -re {Chromium fbstat capture timeout} {
+        finish 7 "CHROMIUM-SUPERVISOR-LOW-NOISE-FAIL fbstat-timeout"
+    }
+    -re {Chromium evidence end reason=client-exit} {
+        finish 0 "CHROMIUM-SUPERVISOR-LOW-NOISE-EXIT"
+    }
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        finish 3 "CHROMIUM-SUPERVISOR-LOW-NOISE-FAIL crash"
+    }
+    timeout {
+        finish 4 "CHROMIUM-SUPERVISOR-LOW-NOISE-FAIL timeout"
+    }
+    eof {
+        finish 5 "CHROMIUM-SUPERVISOR-LOW-NOISE-FAIL eof"
+    }
+}
