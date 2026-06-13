@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Host X11 EGL/GLX Smoke
+Exec=/bin/host-x11-egl-smoke
+IconChar=H
+IconColor=0xFF3D7CA6
