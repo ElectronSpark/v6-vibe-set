@@ -8,10 +8,11 @@ narratives, gap analyses, and closure evidence live in git history and
 2026-06-11 §13 active closure queue is closed.** Phases 0–6 are landed and
 committed, all validators pass, stock Mesa/GBM/libdrm and upstream Weston
 drive the kernel through the standard Linux UAPI, and the runtime crutches
-are deleted. Remaining work is deferred backlog (live-YouTube decode QoS,
-long soaks, optional host-visible zero-copy, and the §10.5 Linux GUI ABI
-probe track). Host GUI programs are probes for missing kernel/ABI behavior,
-not deliverables to port as applications.
+are deleted. The new active focus is **Linux GUI ABI compatibility, with X11
+and XWayland first**. Host GUI programs are probes for missing kernel/ABI
+behavior, not deliverables to port as applications; app-specific WebKit,
+YouTube, and Chromium work is stress backlog unless it reduces to a concrete
+minimal Linux ABI defect.
 
 **VM re-verification 2026-06-12 (current image):**
 
@@ -250,8 +251,8 @@ QEMU 9.0.2 rejects classic virgl + blob (`blobs and virgl are not compatible
 ## 6. Remaining work queue (§13)
 
 Ordered roughly by value; none of these may regress the §5 video gate. The
-2026-06-11 active closure queue is complete; open boxes below are deferred
-backlog, not blockers.
+2026-06-11 active closure queue is complete. New open boxes below are
+kernel/user ABI work, not product-porting work.
 
 **Current priority (2026-06-12): Linux GUI ABI + X11 first.** The next active
 work should strengthen kernel/user ABI compatibility for ordinary Linux GUI
@@ -272,19 +273,35 @@ that reproduces the missing behavior; change or shrink host libraries/programs
 as needed so the work stays focused on xv6 kernel ABI compatibility rather
 than app-specific packaging.
 
-- [ ] **1. Live-YouTube smoothness (decode QoS) — deferred backlog.**
-      Residual jitter is `avdec_h264` QoS drops (39 over ~65 s, lateness to
-      ~200 ms), not a present stall. Defaults applied: GStreamer-GL sink +
-      `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P`. Tooling ready:
-      `scripts/gpu/webkit-qos-report.py`, `webkit-cadence-report.py`,
-      `webkit-youtube-smoothness-report.sh`. DNS + typed navigation proven
-      (`scripts/net/dnsdiag.expect` PASS;
-      `build-x86_64/webkit-typed-url/typed-url-www-youtube-*.png`). One 60 s
-      run hit `TYPEDURL-FAIL webkit-crash` (page-process instability, not
-      DNS). *Done when:* a ≥300 s real watch-page soak shows ≤5 QoS
-      drops/min, max lateness <100 ms, every adjacent host-visible
-      player-crop pair changed, and the gate passes on the same image;
-      evidence under `build-x86_64/webkit-youtube-smoothness-<date>/`.
+- [ ] **1. X11 MIT-SHM data path — active next ABI item.**
+      The current XCB proof only queries MIT-SHM; it does not yet prove the
+      Linux shared-memory path that real X11 toolkits use for image transport.
+      Add or extend a tiny host-built XCB/XShm probe that performs
+      `shmget`/`shmat`/`shmctl` lifecycle, `X_ShmAttach`,
+      `X_ShmPutImage` or shared pixmap drawing, visible framebuffer change,
+      keyboard input, WM_DELETE exit, and cleanup. If SysV SHM support is
+      missing or partial, implement the minimal Linux-compatible kernel/user
+      ABI and prove it with the focused probe before trying another large app.
+      *Done when:* `HOSTX11-SHM-PASS` (or equivalent) records launch/input/exit
+      screenshots plus log under `build-x86_64/host-x11-shm-proof/`, and the
+      mandatory video gate passes on the same image.
+- [ ] **1b. X11 DRI3/Present/GLX fd-passing path — active after MIT-SHM.**
+      Prove the X11 accelerated presentation ABI with a minimal GLX/EGL-on-X11
+      probe before returning to Chromium. Required surfaces: Xwayland DRI3
+      extension discovery, PRIME/DRM fd passing over AF_UNIX, Present event
+      delivery, sync/fence behavior when exposed, visible animation, input,
+      clean teardown, and no regression in `drmabitest`/video gate. Missing
+      behavior becomes a focused kernel/user ABI fix, not a browser-specific
+      workaround.
+  - Deferred browser stress backlog: Live-YouTube QoS is no longer an active
+        compatibility blocker. Keep the existing tooling
+        (`scripts/gpu/webkit-qos-report.py`, `webkit-cadence-report.py`,
+        `webkit-youtube-smoothness-report.sh`) for later confidence runs, but
+        only reopen it as ABI work if a short reproducer shows a kernel/user
+        defect. Previous facts remain: DNS + typed navigation passed, defaults
+        are GStreamer-GL sink + `WEBKIT_GST_MAX_AVC1_RESOLUTION=480P`, and the
+        observed residual was `avdec_h264` QoS jitter rather than a present
+        stall.
 - [x] **2. virgl async-timeout/EIO spiral — closed for active queue
       2026-06-11 (long soak deferred).** Root cause: the
       `virtio_gpu_present_no_drain=1` path waited on the source fence only
@@ -293,8 +310,9 @@ than app-specific packaging.
       Maze maximize reproducer now completes with zero async/EIO markers
       (`changed_pixels=680477/1024000`); two 1800 s soaks passed
       (`build-x86_64/virgl-async-soak/`).
-  - [ ] Deferred confidence: 3 consecutive ≥30 min soaks + 10 gate runs
-        (nightly-class, non-blocking; `VIRGL_SOAK_SECONDS=60` for smoke).
+  - [x] Deferred confidence moved out of the active queue: 3 consecutive
+        ≥30 min soaks + 10 gate runs are nightly-class stress evidence, not
+        Linux GUI ABI blockers (`VIRGL_SOAK_SECONDS=60` for smoke).
 - [x] **3. OOM victim attribution — closed 2026-06-11.** Badness scored from
       lock-free live RSS (`mm_rss_pages`); no `vm_rlock()` in the scan path;
       OOM kill no longer double-frees `thread_group`. Metric: three 768 MB
@@ -517,7 +535,7 @@ gate.
       image gate:
       `xv6-perf-video:RESULT pass fps=29.7 speed=0.995
       decodedFPS=29.7 dropPct=1.35 advanced=14.95`, `GATE-PASS`.
-- [ ] **Wayland Chromium stress probe — deferred behind X11 ABI work.**
+- [x] **Wayland Chromium stress probe — deferred behind X11 ABI work.**
       Chrome-for-Testing 148 staged at
       `/opt/host-gui/wayland-chromium/`. Linux ABI gaps already closed on
       this lane: multi-VMA `mprotect`, Chrome/Crashpad `prctl` set, AF_UNIX
@@ -543,10 +561,9 @@ gate.
       `GLib-GObject: cannot register existing type 'AtkObject'` before any
       Weston surface map; the screenshot remains desktop-only. Treat that as
       host-library closure drift unless a smaller reproducer shows a kernel
-      ABI defect. *Next step after X11 probes:* either isolate a minimal
-      kernel ABI reproducer from Chromium's trace, or replace Chromium with a
-      smaller host GUI probe that exercises the same Linux ABI surface with
-      clearer proof.
+      ABI defect. Reopen only after the X11 MIT-SHM and X11 DRI3/Present/GLX
+      probes above are closed, or earlier if Chromium yields a smaller
+      kernel-facing Linux ABI reproducer with clearer proof.
 - [x] **Embedded-runtime app (host Python REPL) — closed 2026-06-12.**
       GTK variant remains blocked on `cannot register existing type
       'GdkPixbuf'` (toolkit-runtime packaging bug), so the passing proof uses
