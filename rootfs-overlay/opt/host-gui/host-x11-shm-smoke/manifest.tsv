@@ -10,4 +10,4 @@ library	/lib/x86_64-linux-gnu/libXdmcp.so.6	/opt/host-gui/host-x11-shm-smoke/lib
 library	/lib/x86_64-linux-gnu/libbsd.so.0	/opt/host-gui/host-x11-shm-smoke/lib/libbsd.so.0	80888	e86cd4f0019f42c2ba5e60602e0edc8694d2948377d98c3654d0f6bddb5254bb
 library	/lib/x86_64-linux-gnu/libmd.so.0	/opt/host-gui/host-x11-shm-smoke/lib/libmd.so.0	55536	423e18586b6ea740f4465afd64f7a9a4cb7264ed979c8e7256f9085af5345fef
 wrapper	generated	/opt/host-gui/host-x11-shm-smoke/run	799	5d63adb3580ba8e716c37028db545df860c68140e3adddaa7f46f23bfed37455
-desktop	generated	/root/desktop/imported-host-x11-shm-smoke.desktop	143	ec941b0201998c33b6f2211bbf5a42375904ba3d2d797b30b3d41f870a88df6a
+desktop-script	generated	/root/desktop/imported-host-x11-shm-smoke	44	8a9af2623f082ff3738b6961b8b030f19834fb25f6fa3bd87f6c750781dacf0e

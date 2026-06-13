@@ -11,4 +11,4 @@ skipped-guest-runtime	/lib/x86_64-linux-gnu/libEGL.so.1	guest-provided	-	-
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libGLESv2.so.2	guest-provided	-	-
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libGLdispatch.so.0	guest-provided	-	-
 wrapper	generated	/opt/host-gui/host-wlegl-smoke/run	785	f1af6385ca9e43fb36519c8f020dfabe025450f5f335cdcbd9104b95c11ea5da
-desktop	generated	/root/desktop/imported-host-wlegl-smoke.desktop	114	b603c2c3e44548abfa025291530a5a9244689d920f0292806d225116fa394f97
+desktop-script	generated	/root/desktop/imported-host-wlegl-smoke	42	c34959245c3dc55b70bc907808e282d12373d82c46ea8d5f7b39343b4bcb0de7

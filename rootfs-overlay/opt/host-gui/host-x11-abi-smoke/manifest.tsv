@@ -8,4 +8,4 @@ library	/lib/x86_64-linux-gnu/libXdmcp.so.6	/opt/host-gui/host-x11-abi-smoke/lib
 library	/lib/x86_64-linux-gnu/libbsd.so.0	/opt/host-gui/host-x11-abi-smoke/lib/libbsd.so.0	80888	e86cd4f0019f42c2ba5e60602e0edc8694d2948377d98c3654d0f6bddb5254bb
 library	/lib/x86_64-linux-gnu/libmd.so.0	/opt/host-gui/host-x11-abi-smoke/lib/libmd.so.0	55536	423e18586b6ea740f4465afd64f7a9a4cb7264ed979c8e7256f9085af5345fef
 wrapper	generated	/opt/host-gui/host-x11-abi-smoke/run	799	d77d816cee191d1bc4950078bb110b597e4c78dbef9a5664d14a6db2d789758a
-desktop	generated	/root/desktop/imported-host-x11-abi-smoke.desktop	139	e2a7832c94a94a1db58357d1bbc80b118ab63c4beec840cb73b3a9208af504f9
+desktop-script	generated	/root/desktop/imported-host-x11-abi-smoke	44	b160894a024e775319d012a2d4c534e9cfe7af2bf3c34098e35c45c2da597041

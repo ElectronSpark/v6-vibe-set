@@ -134,134 +134,51 @@ if [[ -f "${STAGE}/share/gstreamer-1.0/registry.x86_64.bin" ]]; then
     ln -sfn / "${STAGE}/tmp/xv6-hyperv-build/sysroot"
 fi
 
-cat > "${STAGE}/root/desktop/terminal.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Terminal
-Exec=/bin/weston-terminal
-IconChar=>
-IconColor=0xFF3D6E9E
-EOF
+find "${STAGE}/root/desktop" -maxdepth 1 -type f -name '*.desktop' -delete
 
-cat > "${STAGE}/root/desktop/files.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Files
-Exec=/bin/filemgr /root
-IconChar=F
-IconColor=0xFFA67C52
-EOF
+write_desktop_script() {
+    local name="$1"
+    local command="$2"
+    local path="${STAGE}/root/desktop/${name}"
 
-cat > "${STAGE}/root/desktop/proc.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Proc Files
-Exec=/bin/filemgr /proc
-IconChar=P
-IconColor=0xFF3DA67C
+    cat > "${path}" <<EOF
+#!/bin/sh
+exec ${command}
 EOF
+    chmod 0755 "${path}"
+}
 
-cat > "${STAGE}/root/desktop/python.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Python
-Exec=/bin/weston-terminal --shell=/bin/python3.12
-IconChar=Y
-IconColor=0xFF7C3DA6
-EOF
-
-cat > "${STAGE}/root/desktop/config.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Config Files
-Exec=/bin/filemgr /etc
-IconChar=C
-IconColor=0xFF7B7B7B
-EOF
-
-cat > "${STAGE}/root/desktop/3ddemo.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=3D Demo
-Exec=/bin/mesademo
-IconChar=3
-IconColor=0xFF6EA63D
-EOF
+write_desktop_script "Terminal" "/bin/weston-terminal"
+write_desktop_script "Files" "/bin/filemgr /root"
+write_desktop_script "Proc Files" "/bin/filemgr /proc"
+write_desktop_script "Python" "/bin/weston-terminal --shell=/bin/python3.12"
+write_desktop_script "Config Files" "/bin/filemgr /etc"
+write_desktop_script "3D Demo" "/bin/mesademo"
 
 if [[ -x "${STAGE}/bin/glmaze" ]]; then
-cat > "${STAGE}/root/desktop/glmaze.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=GL Maze
-Exec=/bin/glmaze
-IconChar=G
-IconColor=0xFF3DA67C
-EOF
+    write_desktop_script "GL Maze" "/bin/glmaze"
 fi
 
 if [[ -x "${STAGE}/bin/glsmoke" ]]; then
-cat > "${STAGE}/root/desktop/glsmoke.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=GL Smoke
-Exec=/bin/glsmoke
-IconChar=G
-IconColor=0xFF7C3DA6
-EOF
+    write_desktop_script "GL Smoke" "/bin/glsmoke"
 fi
 
 if [[ -x "${STAGE}/bin/mesaglsmoke" ]]; then
-cat > "${STAGE}/root/desktop/glsphere.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=GL Sphere
-Exec=/bin/mesaglsmoke --demo
-IconChar=S
-IconColor=0xFF3D7CA6
-EOF
+    write_desktop_script "GL Sphere" "/bin/mesaglsmoke --demo"
 fi
 
 if [[ -x "${STAGE}/bin/mesawlegl" ]]; then
-cat > "${STAGE}/root/desktop/egl-demo.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=EGL Demo
-Exec=/bin/mesawlegl --demo
-IconChar=E
-IconColor=0xFFA67C3D
-EOF
+    write_desktop_script "EGL Demo" "/bin/mesawlegl --demo"
 fi
 
 if [[ -x "${STAGE}/bin/peanutgb" &&
       -f "${STAGE}/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb" ]]; then
-cat > "${STAGE}/root/desktop/peanutgb.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Game Boy
-Exec=/bin/peanutgb
-Arg=/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb
-IconChar=G
-IconColor=0xFFA63D7C
-EOF
+    write_desktop_script "Game Boy" \
+        "/bin/peanutgb /root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb"
 fi
 
-cat > "${STAGE}/root/desktop/editor.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Editor
-Exec=/bin/weston-terminal --shell=/bin/vim
-IconChar=V
-IconColor=0xFFA65C3D
-EOF
-
-cat > "${STAGE}/root/desktop/browser.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Browser
-Exec=/bin/netsurf
-IconChar=W
-IconColor=0xFF3D6E9E
-EOF
+write_desktop_script "Editor" "/bin/weston-terminal --shell=/bin/vim"
+write_desktop_script "Browser" "/bin/netsurf"
 
 is_webkit_placeholder() {
     local path="$1"
@@ -271,26 +188,12 @@ is_webkit_placeholder() {
 }
 
 if [[ -x "${STAGE}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
-cat > "${STAGE}/root/desktop/webkit.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=WebKit
-Exec=/bin/weston-session --launch-webkit
-IconChar=K
-IconColor=0xFF9B59B6
-EOF
+    write_desktop_script "WebKit" "/bin/weston-session --launch-webkit"
 elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]] &&
      ! is_webkit_placeholder "${STAGE}/bin/webkitgpusmoke"; then
-cat > "${STAGE}/root/desktop/webkit.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=WebKit
-Exec=/bin/webkitgpusmoke
-IconChar=K
-IconColor=0xFF9B59B6
-EOF
+    write_desktop_script "WebKit" "/bin/webkitgpusmoke"
 else
-    rm -f "${STAGE}/root/desktop/webkit.desktop"
+    rm -f "${STAGE}/root/desktop/WebKit"
 fi
 
 if command -v ssh-keygen >/dev/null 2>&1; then

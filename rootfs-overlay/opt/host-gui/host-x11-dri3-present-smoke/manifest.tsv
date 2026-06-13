@@ -10,4 +10,4 @@ library	/lib/x86_64-linux-gnu/libXdmcp.so.6	/opt/host-gui/host-x11-dri3-present-
 library	/lib/x86_64-linux-gnu/libbsd.so.0	/opt/host-gui/host-x11-dri3-present-smoke/lib/libbsd.so.0	80888	e86cd4f0019f42c2ba5e60602e0edc8694d2948377d98c3654d0f6bddb5254bb
 library	/lib/x86_64-linux-gnu/libmd.so.0	/opt/host-gui/host-x11-dri3-present-smoke/lib/libmd.so.0	55536	423e18586b6ea740f4465afd64f7a9a4cb7264ed979c8e7256f9085af5345fef
 wrapper	generated	/opt/host-gui/host-x11-dri3-present-smoke/run	862	cb2078e82309615fd6254ef97d67d6e98423d65d5222e3e00858058cee2d046e
-desktop	generated	/root/desktop/imported-host-x11-dri3-present-smoke.desktop	157	154a44acaee70a2549e55ea04fb647a99155b8a0eebdee6a0814f1f19696b905
+desktop-script	generated	/root/desktop/imported-host-x11-dri3-present-smoke	53	a3c4003d9ad6f0bb89956f904dbe2f2b659c323890c68b835e33e7052f95acc0

@@ -1,6 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Host WLEGL Smoke
-Exec=/bin/host-wlegl-smoke
-IconChar=H
-IconColor=0xFF3D7CA6

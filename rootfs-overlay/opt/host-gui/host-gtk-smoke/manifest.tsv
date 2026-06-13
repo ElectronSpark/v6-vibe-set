@@ -71,4 +71,4 @@ skipped-guest-runtime	/lib/x86_64-linux-gnu/libwayland-client.so.0	guest-provide
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libwayland-cursor.so.0	guest-provided	-	-
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libwayland-egl.so.1	guest-provided	-	-
 wrapper	generated	/opt/host-gui/host-gtk-smoke/run	771	9cc2c7a5904e8a114d169d9aa23a4a737d67b0534342e652b0f85b182a74ca4e
-desktop	generated	/root/desktop/imported-host-gtk-smoke.desktop	110	6bae5b0d28a66abb79fcb74c6e65482adceece187625c0cc52ac1461b7f0d278
+desktop-script	generated	/root/desktop/imported-host-gtk-smoke	40	bbc6f66268c8408eb2f8ab6d41c68b40644032efa7baabad134204e0bd81f479

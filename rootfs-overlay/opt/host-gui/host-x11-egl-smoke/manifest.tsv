@@ -14,4 +14,4 @@ skipped-guest-runtime	/lib/x86_64-linux-gnu/libGL.so.1	guest-provided	-	-
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libGLdispatch.so.0	guest-provided	-	-
 skipped-guest-runtime	/lib/x86_64-linux-gnu/libGLX.so.0	guest-provided	-	-
 wrapper	generated	/opt/host-gui/host-x11-egl-smoke/run	799	da0d9248cb87efd1af19ad3e23f6922b954429bf8ef01bc2d10fc02673f795eb
-desktop	generated	/root/desktop/imported-host-x11-egl-smoke.desktop	143	5d5b0251f058abd6393018b236197989012bfbb56117cdfdb3473c82aaebf739
+desktop-script	generated	/root/desktop/imported-host-x11-egl-smoke	44	62224f6b667dda5b8b1d9cd0f97bb597d8520bda9bfed0c19fff0675bd03f069
