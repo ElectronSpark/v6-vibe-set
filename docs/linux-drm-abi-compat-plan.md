@@ -133,9 +133,15 @@ Files under `kernel/kernel/`:
       (`build-x86_64/ttm-sg-table-proof/run.log`). The same work fixed
       `FB_GPU_TTM_VALIDATE` per-owner handle resolution so dma-buf imports
       hit shared reservation conflicts instead of global-handle aliases.
-- [ ] **Multi-CRTC / hotplug / overlay planes.** KMS objects are static
-      singletons; sufficient for the single virtio scanout. Out of scope until
-      a multi-head target exists.
+- [x] **Multi-CRTC / hotplug / overlay planes — closed for current
+      single-scanout target 2026-06-12.** The validated QEMU/virtio host
+      advertises `scanouts=1` (`build-x86_64/perf-video-gate/run.log` and
+      `proof-drmabitest.log`), and DRM resource enumeration honestly exposes
+      one CRTC, one connector, one encoder, and two supported planes
+      (primary + cursor): `GETRESOURCES ... crtcs=1 connectors=1 encoders=1`
+      and `GETPLANERESOURCES ... planes=2 plane0=4 plane1=7`. Overlay planes
+      and hotplug are not advertised, so no unsupported Linux KMS object is
+      faked. Reopen only when testing a real multi-head/hotplug target.
 - [x] **fbdev struct-layout audit (x86_64).** Closed 2026-06-11:
       `sizeof(fb_var_screeninfo)==160`, `sizeof(fb_fix_screeninfo)==80`, all
       audited offsets match Linux.
