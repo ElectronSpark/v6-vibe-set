@@ -23,10 +23,13 @@ minimal Linux ABI defect.
       fail-closed `HOST_VISIBLE=0`, real guest blob creates on
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
-      `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8 dropPct=0.00
-      advanced=15.34`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
-      proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
+      `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12 completed
+      the mandatory harness path with `GATE-PASS`, extracted a durable frame
+      at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`, and logged
+      `__WEBKIT_API_SMOKE_DONE_0__`. The WebKit page title in that same run
+      was an internal media failure (`RESULT fail fps=57.6 ... err=3`), so
+      this remains gate evidence for the rebuilt image, not a claim that the
+      fullscreen video QoS issue is solved.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
       renderD128 registered, virgl capsets 1+2, Weston desktop with 19
       entries on the current image, zero async-timeout/EIO/panic markers in
@@ -323,9 +326,25 @@ than app-specific packaging.
       decodedFPS=59.8 dropPct=0.00 advanced=15.31`, frame
       `build-x86_64/perf-video-gate/perf-video-frame.png`, log
       `build-x86_64/perf-video-gate/run.log`.
-  - [ ] Follow-up: add a small GLX/EGL-on-X11 smoke only if a browser or
-        toolkit exposes a smaller missing ABI. Keep it separate from the
-        closed DRI3/Present fd-passing proof.
+  - [x] Follow-up boundary proof closed 2026-06-12: a small host-built
+        GLX/EGL-on-X11 smoke now exists as
+        `scripts/gpu/host-x11-egl-smoke-proof.expect` with the guest entry
+        `/bin/host-x11-egl-smoke`. The importer intentionally skips host
+        `libEGL.so.1`, `libGLESv2.so.2`, `libGL.so.1`,
+        `libGLdispatch.so.0`, and `libGLX.so.0`, so this remains a guest
+        Mesa/Xwayland ABI probe rather than a bundled host graphics stack.
+        Current result is a useful negative boundary, not an active blocker:
+        the app launches through X11 on the guest stack, logs DRM render-node
+        and Mesa virgl setup, then classifies current Xwayland `-glamor es`
+        behavior as `HOSTX11-EGLGLX-UNSUPPORTED-PASS
+        reason=egl-x11-not-initialized-and-glx-no-visual`. Evidence:
+        `build-x86_64/host-x11-egl-smoke-proof/run.log`, baseline screenshot
+        `build-x86_64/host-x11-egl-smoke-proof/host-x11-egl-smoke-before.png`.
+        Same rebuilt-image mandatory gate passed with `GATE-PASS`; frame
+        `build-x86_64/perf-video-gate/perf-video-frame.png`, log
+        `build-x86_64/perf-video-gate/run.log`. Reopen only if a browser or
+        toolkit exposes a smaller GLX/EGL-on-X11 ABI failure than the closed
+        DRI3/Present fd-passing proof.
   - Deferred browser stress backlog: Live-YouTube QoS is no longer an active
         compatibility blocker. Keep the existing tooling
         (`scripts/gpu/webkit-qos-report.py`, `webkit-cadence-report.py`,
