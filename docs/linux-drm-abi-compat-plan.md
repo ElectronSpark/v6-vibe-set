@@ -9,7 +9,9 @@ narratives, gap analyses, and closure evidence live in git history and
 committed, all validators pass, stock Mesa/GBM/libdrm and upstream Weston
 drive the kernel through the standard Linux UAPI, and the runtime crutches
 are deleted. Remaining work is deferred backlog (live-YouTube decode QoS,
-long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
+long soaks, optional host-visible zero-copy, and the §10.5 Linux GUI ABI
+probe track). Host GUI programs are probes for missing kernel/ABI behavior,
+not deliverables to port as applications.
 
 **VM re-verification 2026-06-12 (current image):**
 
@@ -21,8 +23,8 @@ long soaks, optional host-visible zero-copy, and the §10.5 host-GUI track).
       card0/renderD128, host-visible probe `skipped=1`, nonzero `fb0:sample`.
 - [x] §8 step-7 fullscreen-video gate — latest post-image run
       `expect scripts/gpu/perf-video-gate.expect` on 2026-06-12:
-      `RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2 dropPct=0.00
-      advanced=15.24`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
+      `RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8 dropPct=0.00
+      advanced=15.34`, `__WEBKIT_API_SMOKE_DONE_0__`, with durable frame
       proof at `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`.
 - [x] GUI-session baseline clean — `dma_fence: selftest ok`, card0 +
       renderD128 registered, virgl capsets 1+2, Weston desktop with 19
@@ -115,9 +117,16 @@ Files under `kernel/kernel/`:
 - [ ] **Host-visible zero-copy blob (optional, host-blocked).** Kernel side is
       code-complete and fail-closed; needs a host backend that accepts
       mappable HOST3D blobs (§6 item 6).
-- [ ] **`sg_table`-equivalent scatter-list abstraction.** Only needed if a
-      real DMA-capable importer (IOMMU/device DMA, second GPU, v4l) ever
-      consumes an imported buffer. Low priority for pure-sysmem QEMU.
+- [x] **`sg_table`-equivalent scatter-list abstraction — closed
+      2026-06-12.** GEM/BO metadata now carries an `fb_gpu_sg_table` view over
+      shmem pages, including entry count, total length, first/base/last DMA
+      addresses, and propagation through GEM copies/imported handles. Proof:
+      `expect scripts/gpu/ttm-sg-table-proof.expect` with
+      `ttmtest: ttm_sg_table_matrix sg_nents=16 expected=16
+      total_len=65536 ... status=PASS` and `TTM-SG-TABLE-PASS`
+      (`build-x86_64/ttm-sg-table-proof/run.log`). The same work fixed
+      `FB_GPU_TTM_VALIDATE` per-owner handle resolution so dma-buf imports
+      hit shared reservation conflicts instead of global-handle aliases.
 - [ ] **Multi-CRTC / hotplug / overlay planes.** KMS objects are static
       singletons; sufficient for the single virtio scanout. Out of scope until
       a multi-head target exists.
@@ -210,9 +219,11 @@ Validator checklist for a milestone:
       `dropPct < 10`, zero `virtio_failures`/`virtio_timeouts`/panics, plus a
       mid-playback in-guest framebuffer capture. Any stutter, resolution
       downgrade, or fault fails the whole milestone. Latest pass 2026-06-12:
-      `RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2 dropPct=0.00
-      advanced=15.24`, `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`
-      extracted by the harness.
+      `RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8 dropPct=0.00
+      advanced=15.34`, `build-x86_64/perf-video-gate/perf-video-frame.ppm/.png`
+      extracted by the harness. The harness runs against a temporary copy of
+      the image with optional host D-Bus startup removed, preserving the video
+      gate as a kernel/DRM/WebKit baseline rather than a host-program smoke.
       Matrix wrapper: `scripts/gpu/perf-video-gate-matrix.sh`.
 
 Host/boot caveats: use headless `DISPLAY_MODE=nographic` boots for kernel/DRM
@@ -236,6 +247,10 @@ or the per-harness output dir) alongside logs/metrics: baseline desktop,
 after-launch, after-input, after-exit frames where applicable. Non-visual ABI
 work marks screenshots `N/A` and points at the console metric plus the
 mandatory same-image gate frame. "Desktop icon only" is negative evidence.
+When a host GUI app fails, first reduce it to the smallest Linux ABI probe
+that reproduces the missing behavior; change or shrink host libraries/programs
+as needed so the work stays focused on xv6 kernel ABI compatibility rather
+than app-specific packaging.
 
 - [ ] **1. Live-YouTube smoothness (decode QoS) — deferred backlog.**
       Residual jitter is `avdec_h264` QoS drops (39 over ~65 s, lateness to
@@ -288,9 +303,12 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       `GETPARAM(HOST_VISIBLE)=1`, `drmabitest --virtgpu-only` passes a
       mapped-blob round-trip, and the gate passes at ≥ transfer-model FPS;
       evidence under `build-x86_64/host-visible-blob-evidence/`.
-- [ ] **7. Host GUI importer (§10.5) — complete-support backlog.** See the
-      dedicated checklist below. New progress: the focused proof harness is
-      closed and four representative imported apps have fresh proof:
+- [ ] **7. Linux GUI ABI probes (§10.5) — kernel-focused backlog.** See the
+      dedicated checklist below. The importer and host apps are diagnostic
+      pressure tests for Linux process, file, socket, memory-management,
+      input, DRM, Wayland, and X11 ABI coverage. New progress: the focused
+      proof harness is closed and four representative imported apps have
+      fresh proof:
       IDLE/X11 (`HOSTIDLE-X11-PASS`, verifier summary
       `build-x86_64/host-gui-proof-verify/host-idle-x11-proof-summary.tsv`)
       and the embedded-runtime Python Wayland REPL (`HOSTPYREPL-PASS`,
@@ -303,16 +321,20 @@ mandatory same-image gate frame. "Desktop icon only" is negative evidence.
       verifier summary
       `build-x86_64/host-gui-proof-verify/host-wlegl-smoke-proof-summary.tsv`).
       Mandatory gate on the rebuilt image passed with
-      `xv6-perf-video:RESULT pass fps=60.2 speed=1.002 decodedFPS=60.2
-      dropPct=0.00`. Chromium remains deferred/open, so the complete-support
-      backlog stays open even though the four-app representative proof rule is
-      satisfied.
+      `xv6-perf-video:RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8
+      dropPct=0.00`. The gate harness now uses a temporary image with
+      `weston-session`-only startup so optional host D-Bus probes cannot
+      contaminate the kernel/video ABI baseline. Chromium remains useful as a
+      stress probe, but it is not the deliverable; if it exposes only
+      host-library packaging drift, reduce or replace it with a smaller ABI
+      reproducer. This backlog stays open only for unclosed Linux ABI gaps
+      found by the probes.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
-      recorded. Conditional leftover: `sg_table` abstraction if a real DMA
-      importer appears. Mesa may re-enable `-Dallow-kcmp` at next port-config
-      refresh.
+      recorded. Follow-up `sg_table` diagnostics closed 2026-06-12 with
+      `TTM-SG-TABLE-PASS`; Mesa may re-enable `-Dallow-kcmp` at next
+      port-config refresh.
 - [x] **9. Housekeeping — closed 2026-06-11.** Empty leftover dirs
       `ports/xv6-gbm/src/` and `ports/mesa/src/src/gallium/winsys/virgl/xv6/`
       deleted; no related untracked entries remain. Current unrelated
@@ -380,16 +402,25 @@ by design; xv6 `sh` has no `export`/`>>`, redirects need a space.
 
 ---
 
-## 9. Host GUI programs as native guest processes (§10.5)
+## 9. Linux GUI ABI probes (§10.5)
 
-Goal: an x86_64 Linux GUI binary from the host runs **inside xv6** as a
-normal guest process; fix missing Linux ABI surface in xv6 rather than adding
-app-specific shortcuts. A host app counts as supported only when it launches
-from the guest desktop, maps a visible window under Weston, accepts input,
-exits cleanly, and has log + framebuffer proof.
+Goal: prove that unmodified Linux GUI stacks can drive xv6 through Linux ABI
+surfaces as normal guest processes. Host GUI programs are **probes**, not
+ports: when a large application fails, classify the failure first. Kernel ABI
+gaps become kernel/user ABI work with a minimal reproducer and proof; host
+library packaging conflicts or app policy choices should be reduced, swapped,
+or documented without turning the plan into a product-specific port.
 
-**Priority order (2026-06-12):** X11/XWayland checkpoint first; Chromium is
-the deferred follow-up lane.
+A probe counts only when it launches from the guest desktop or supervised
+session, maps a visible Weston/XWayland window, accepts input, exits cleanly,
+and has log + framebuffer proof. A failed probe is useful only when it points
+to a concrete Linux ABI gap or justifies replacing the probe with a smaller
+one.
+
+**Priority order (2026-06-12):** kernel ABI coverage first. Keep the X11,
+Wayland, GL/EGL, GTK, and embedded-runtime proofs as representative coverage;
+use Chromium only as a stress probe for unresolved ABI gaps, not as the next
+app to port.
 
 - [x] **Importer.** `scripts/image/import-host-gui.sh` stages
       executable/interpreter/library closure under `/opt/host-gui/<id>/` with
@@ -414,7 +445,7 @@ the deferred follow-up lane.
       (`build-x86_64/perf-video-gate/run.log`).
       Known benign: Xwayland GLAMOR falls back to software; xkbcomp keymap
       warnings are non-fatal.
-- [ ] **Wayland Chromium — deferred follow-up (not a passing proof).**
+- [ ] **Wayland Chromium stress probe — deferred diagnostic, not a port.**
       Chrome-for-Testing 148 staged at
       `/opt/host-gui/wayland-chromium/`. Linux ABI gaps already closed on
       this lane: multi-VMA `mprotect`, Chrome/Crashpad `prctl` set, AF_UNIX
@@ -434,10 +465,15 @@ the deferred follow-up lane.
       `host_chromium_multiprocess=1`, `host_chromium_extra_flags=`,
       `host_chromium_surface_trace=1`, `chrome_lifecycle_trace=1`,
       `chrome_syscall_trace=1`. In-band procfs reads block in this state —
-      use nonblocking pid probes or kernel-side traces. *Next step:* decode
-      the remaining zygote/startup stall after resource loading; require a
-      mapped browser surface + visible navigation screenshot before counting
-      Chrome as supported.
+      use nonblocking pid probes or kernel-side traces. Fresh diagnostic
+      2026-06-12: single-process Wayland reaches GDK/Wayland, guest
+      Mesa/virgl, `wl_display_connect`, registry roundtrips, and then reports
+      `GLib-GObject: cannot register existing type 'AtkObject'` before any
+      Weston surface map; the screenshot remains desktop-only. Treat that as
+      host-library closure drift unless a smaller reproducer shows a kernel
+      ABI defect. *Next step:* either isolate a minimal kernel ABI reproducer
+      from Chromium's trace, or replace Chromium with a smaller host GUI probe
+      that exercises the same Linux ABI surface with clearer proof.
 - [x] **Embedded-runtime app (host Python REPL) — closed 2026-06-12.**
       GTK variant remains blocked on `cannot register existing type
       'GdkPixbuf'` (toolkit-runtime packaging bug), so the passing proof uses
@@ -547,4 +583,4 @@ plumbing, and a shmem-backed allocator — with stock Mesa/GBM/libdrm and
 upstream Weston running on it unmodified. The §5 fullscreen-video gate must
 be re-run after any GPU/DRM/desktop change; validate with trace shape +
 on-screen output + framebuffer samples, never counters alone. Open work is
-the deferred backlog in §6 and the host-GUI support track in §9.
+the deferred backlog in §6 and the Linux GUI ABI probe track in §9.

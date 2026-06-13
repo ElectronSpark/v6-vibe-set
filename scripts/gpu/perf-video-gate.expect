@@ -22,7 +22,13 @@ set host_frame "$outdir/perf-video-frame.ppm"
 set host_frame_png "$outdir/perf-video-frame.png"
 set monsock "$outdir/qemu-monitor.sock"
 set runlog  "$outdir/run.log"
-exec sh -c "rm -f $shot $shot.nc.log $host_frame $host_frame_png $monsock $runlog"
+set tmpimg  "$outdir/perf-video-gate.fs.img"
+set startup_override "$outdir/startup-no-dbus"
+exec sh -c "rm -f $shot $shot.nc.log $host_frame $host_frame_png $monsock $runlog $tmpimg"
+exec cp $fsimg $tmpimg
+exec sh -c "printf '%s\n' '# Temporary perf-video gate startup: skip optional host D-Bus helpers.' '/bin/weston-session' > '$startup_override'"
+exec sh -c "printf '%s\n' 'rm /etc/startup' 'write $startup_override /etc/startup' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+set fsimg $tmpimg
 
 set env(DISPLAY_MODE)          "gtk"
 set env(USE_KVM)               "1"
