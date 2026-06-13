@@ -1,6 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Host GTK Smoke
-Exec=/bin/host-gtk-smoke
-IconChar=H
-IconColor=0xFF3D7CA6

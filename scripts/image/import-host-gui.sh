@@ -254,7 +254,7 @@ done < <(ldd "${HOST_EXE}")
 
 app_root="${OVERLAY}/opt/host-gui/${APP_ID}"
 guest_root="/opt/host-gui/${APP_ID}"
-desktop_path="${OVERLAY}/root/desktop/imported-${APP_ID}.desktop"
+desktop_path="${OVERLAY}/root/desktop/imported-${APP_ID}"
 wrapper="${app_root}/run"
 manifest="${app_root}/manifest.tsv"
 
@@ -268,7 +268,7 @@ for lib in "${skipped[@]}"; do
 done
 if [[ "${DRY_RUN}" == "1" ]]; then
     note "dry-run: would stage ${app_root}"
-    note "dry-run: would create ${desktop_path}"
+    note "dry-run: would create executable desktop script ${desktop_path}"
     exit 0
 fi
 
@@ -325,14 +325,11 @@ chmod 0755 "${wrapper}"
 manifest_add_file "wrapper" "generated" "${guest_root}/run" "${wrapper}"
 
 cat > "${desktop_path}" <<EOF
-[Desktop Entry]
-Type=Application
-Name=${APP_NAME}
-Exec=/bin/sh ${guest_root}/run
-IconChar=H
-IconColor=0xFF3D7CA6
+#!/bin/sh
+exec /bin/sh ${guest_root}/run "\$@"
 EOF
-manifest_add_file "desktop" "generated" "/root/desktop/imported-${APP_ID}.desktop" "${desktop_path}"
+chmod 0755 "${desktop_path}"
+manifest_add_file "desktop-script" "generated" "/root/desktop/imported-${APP_ID}" "${desktop_path}"
 
 note "staged=${app_root}"
 note "desktop=${desktop_path}"
