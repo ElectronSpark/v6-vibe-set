@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Host X11 ABI Smoke
+Exec=/bin/host-x11-abi-smoke
+IconChar=H
+IconColor=0xFF3D7CA6

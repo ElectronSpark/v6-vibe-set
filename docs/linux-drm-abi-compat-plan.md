@@ -333,7 +333,8 @@ than app-specific packaging.
       backend reopen condition: init probe succeeds, `HOST_VISIBLE=1`,
       mapped-blob round-trip passes, and the gate stays at or above the
       transfer-model FPS.
-- [ ] **7. Linux GUI ABI probes (§10.5) — X11-first kernel-focused backlog.** See the
+- [x] **7. Linux GUI ABI probes (§10.5) — X11-first kernel-focused backlog
+      closed for current scope 2026-06-12.** See the
       dedicated checklist below. The importer and host apps are diagnostic
       pressure tests for Linux process, file, socket, memory-management,
       input, DRM, Wayland, and X11 ABI coverage. New progress: the focused
@@ -350,18 +351,27 @@ than app-specific packaging.
       and imported host WLEGL smoke (`HOSTWLEGL-SMOKE-PASS`,
       verifier summary
       `build-x86_64/host-gui-proof-verify/host-wlegl-smoke-proof-summary.tsv`).
+      The X11-first follow-up is now a toolkit-free host XCB probe,
+      `/bin/host-x11-abi-smoke`, which directly exercises Xwayland
+      map/configure, AF_UNIX/XCB event delivery, MIT-SHM extension query,
+      selection ownership, pixmap-backed drawing, keyboard input, and
+      WM_DELETE_WINDOW client-message exit:
+      `HOSTX11ABI-SMOKE-PASS launch_changed_pixels=254485
+      input_changed_pixels=191080 exit_changed_pixels=254485` with verifier
+      summary
+      `build-x86_64/host-gui-proof-verify/host-x11-abi-smoke-proof-summary.tsv`
+      and screenshots/logs under `build-x86_64/host-x11-abi-smoke-proof/`.
       Mandatory gate on the rebuilt image passed with
       `xv6-perf-video:RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8
-      dropPct=0.00`. The gate harness now uses a temporary image with
-      `weston-session`-only startup so optional host D-Bus probes cannot
-      contaminate the kernel/video ABI baseline. Next priority is more X11
-      ABI coverage, not more app packaging: add or run small Xlib/XCB/Tk/GTK
-      X11 probes for window map/configure, input, AF_UNIX/XCB behavior,
-      shared-memory/pixmap paths, selections/clipboard, and clean WM exit.
+      dropPct=0.00` for the earlier imported-app batch and
+      `xv6-perf-video:RESULT pass fps=29.7 speed=0.995 decodedFPS=29.7
+      dropPct=1.35` after the final XCB probe image refresh. The gate harness now
+      uses a temporary image with `weston-session`-only startup so optional
+      host D-Bus probes cannot contaminate the kernel/video ABI baseline.
       Chromium remains useful as a later stress probe, but it is not the
       deliverable; if it exposes only host-library packaging drift, reduce or
-      replace it with a smaller ABI reproducer. This backlog stays open only
-      for unclosed Linux ABI gaps found by the probes.
+      replace it with a smaller ABI reproducer. Reopen this checklist only
+      when a host GUI probe identifies a concrete unclosed Linux ABI gap.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
@@ -456,12 +466,13 @@ embedded-runtime proofs as representative coverage, but spend new effort on
 small X11 probes before returning to Chromium. Use Chromium only as a stress
 probe for unresolved ABI gaps, not as the next app to port.
 
-**Next X11 ABI work:** extend beyond the passing IDLE/Tk checkpoint with
-small host-built X11 probes that exercise Xlib/XCB map/configure/destroy,
-keyboard and pointer input, MIT-SHM or pixmap/image transfer where available,
-clipboard/selection ownership, WM_DELETE_WINDOW, and clean Xwayland teardown.
-Each probe must use the same proof rule: visible XWayland window, input,
-clean exit, logs, screenshots, and same-image gate.
+**X11 ABI proof:** IDLE/Tk proves a real toolkit stack, and the
+`host-x11-abi-smoke` XCB probe proves the smaller ABI surface directly:
+map/configure/destroy, keyboard and pointer input, MIT-SHM discovery,
+pixmap/image transfer, selection ownership, WM_DELETE_WINDOW, and clean
+Xwayland teardown. Each future X11 probe must use the same proof rule:
+visible XWayland window, input, clean exit, logs, screenshots, and same-image
+gate.
 
 - [x] **Importer.** `scripts/image/import-host-gui.sh` stages
       executable/interpreter/library closure under `/opt/host-gui/<id>/` with
@@ -486,6 +497,26 @@ clean exit, logs, screenshots, and same-image gate.
       (`build-x86_64/perf-video-gate/run.log`).
       Known benign: Xwayland GLAMOR falls back to software; xkbcomp keymap
       warnings are non-fatal.
+- [x] **Focused XCB/X11 ABI smoke — closed 2026-06-12.**
+      `scripts/image/host-x11-abi-smoke.c` is a tiny host-built XCB program
+      imported as `/bin/host-x11-abi-smoke` with a direct launcher. It avoids
+      toolkit policy and proves the kernel-facing X11 ABI surface directly:
+      Xwayland AF_UNIX/XCB connection, window map/configure, MIT-SHM
+      extension discovery (`mit_shm_present=1`), selection ownership
+      (`status=PASS`), pixmap-backed drawing, pointer focus, keyboard input,
+      WM_DELETE_WINDOW client-message delivery, and clean process exit.
+      Fresh proof:
+      `HOSTX11ABI-SMOKE-PASS launch_changed_pixels=254485
+      input_changed_pixels=191080 exit_changed_pixels=254485`; screenshots
+      and log are under `build-x86_64/host-x11-abi-smoke-proof/`
+      (`host-x11-abi-smoke-launch.png`,
+      `host-x11-abi-smoke-input.png`,
+      `host-x11-abi-smoke-exit.png`, `run.log`), with verifier summary
+      `build-x86_64/host-gui-proof-verify/host-x11-abi-smoke-proof-summary.tsv`
+      (`HOSTGUI-PROOF-VERIFY-PASS app=host-x11-abi-smoke`). Same rebuilt
+      image gate:
+      `xv6-perf-video:RESULT pass fps=29.7 speed=0.995
+      decodedFPS=29.7 dropPct=1.35 advanced=14.95`, `GATE-PASS`.
 - [ ] **Wayland Chromium stress probe — deferred behind X11 ABI work.**
       Chrome-for-Testing 148 staged at
       `/opt/host-gui/wayland-chromium/`. Linux ABI gaps already closed on
