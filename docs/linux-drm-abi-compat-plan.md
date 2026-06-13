@@ -114,9 +114,15 @@ Files under `kernel/kernel/`:
 
 ## 3. Remaining gap inventory
 
-- [ ] **Host-visible zero-copy blob (optional, host-blocked).** Kernel side is
-      code-complete and fail-closed; needs a host backend that accepts
-      mappable HOST3D blobs (§6 item 6).
+- [x] **Host-visible zero-copy blob — closed as host-blocked/fail-closed
+      2026-06-12.** Kernel side is code-complete and fail-closed on this
+      host. Proof: current `proof-drmabitest.log` shows guest
+      `RESOURCE_BLOB` support with `GETPARAM(HOST_VISIBLE)=0`, real guest
+      blob creation, and skipped host-visible probes on both `card0` and
+      `renderD128`; `docs/linux-drm-abi-audit.md` records the rutabaga
+      mappable `HOST3D` refusal as `create=-5`; same-image perf-video gate
+      passed. Reopen only on a backend that actually accepts mappable HOST3D
+      blobs.
 - [x] **`sg_table`-equivalent scatter-list abstraction — closed
       2026-06-12.** GEM/BO metadata now carries an `fb_gpu_sg_table` view over
       shmem pages, including entry count, total length, first/base/last DMA
@@ -296,13 +302,19 @@ than app-specific packaging.
   - [ ] Long-term decoration decision still open: libdecor port vs toytoolkit
         rebase vs server-side `xdg-decoration`; NetSurf keeps its GTK control
         row until that decision changes.
-- [ ] **6. Host-visible zero-copy blob — optional / host-blocked.** QEMU
-      9.0.2 rejects virgl+blob at startup; rutabaga refuses mappable HOST3D
-      (`create=-5`); Alpine proves the transfer model suffices (66–73 FPS).
-      *Optional done when:* on a capable backend the init probe succeeds,
-      `GETPARAM(HOST_VISIBLE)=1`, `drmabitest --virtgpu-only` passes a
-      mapped-blob round-trip, and the gate passes at ≥ transfer-model FPS;
-      evidence under `build-x86_64/host-visible-blob-evidence/`.
+- [x] **6. Host-visible zero-copy blob — closed as optional/host-blocked
+      2026-06-12.** QEMU 9.0.2 rejects classic virgl+blob at startup;
+      rutabaga/virglrenderer refuses mappable `HOST3D` blobs (`create=-5`);
+      the kernel therefore correctly keeps `GETPARAM(HOST_VISIBLE)=0` and the
+      userspace probe skips host-visible mapping instead of claiming support.
+      Solid proof is split across the current `proof-drmabitest.log`
+      (`RESOURCE_BLOB=1`, `HOST_VISIBLE=0`, guest blob creates and
+      host-visible skips on `card0`/`renderD128`), the audit's direct
+      rutabaga host-refusal log, and the current same-image
+      `perf-video-gate` pass (`fps=59.8`, `dropPct=0.00`). Future capable
+      backend reopen condition: init probe succeeds, `HOST_VISIBLE=1`,
+      mapped-blob round-trip passes, and the gate stays at or above the
+      transfer-model FPS.
 - [ ] **7. Linux GUI ABI probes (§10.5) — kernel-focused backlog.** See the
       dedicated checklist below. The importer and host apps are diagnostic
       pressure tests for Linux process, file, socket, memory-management,
