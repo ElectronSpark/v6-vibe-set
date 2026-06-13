@@ -1,0 +1,292 @@
+#!/usr/bin/env expect
+
+set timeout 230
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/host-x11-abi-smoke-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/host-x11-abi-smoke.fs.img"
+set app_log "/tmp/host-gui-host-x11-abi-smoke.log"
+
+array set guest {
+    before /host-x11-abi-smoke-before.ppm
+    launch /host-x11-abi-smoke-launch.ppm
+    input /host-x11-abi-smoke-input.ppm
+    exit /host-x11-abi-smoke-exit.ppm
+}
+
+proc host_ppm {phase} {
+    global outdir
+    return "$outdir/host-x11-abi-smoke-$phase.ppm"
+}
+
+proc host_png {phase} {
+    global outdir
+    return "$outdir/host-x11-abi-smoke-$phase.png"
+}
+
+exec sh -c "rm -f '$runlog' '$tmpimg' '$outdir'/host-x11-abi-smoke-*.ppm '$outdir'/host-x11-abi-smoke-*.png '$outdir'/diff-*.txt"
+exec cp $fsimg $tmpimg
+set startup_override "$outdir/startup-no-dbus"
+exec sh -c "printf '%s\n' '# Temporary proof startup: skip host D-Bus helpers.' '/bin/weston-session' > '$startup_override'"
+exec sh -c "printf '%s\n' 'rm /etc/startup' 'write $startup_override /etc/startup' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+foreach phase [array names guest] {
+    catch { exec sh -c "debugfs -w -R 'rm $guest($phase)' '$tmpimg' >/dev/null 2>&1" }
+}
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0"
+set send_slow {1 .01}
+
+proc fail {code label} {
+    global qemu_pid runlog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
+proc optional_prompt {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 2
+    expect {
+        -re {root:/#} {}
+        timeout {}
+        eof {}
+    }
+    set timeout $old_timeout
+}
+
+proc capture_fb {phase marker label} {
+    global guest
+
+    send "fbstat ppm-current $guest($phase) 0 0 1280 800; sync; echo $marker\r"
+    expect {
+        -re "fb_ppm_current path=$guest($phase) screen=1280x800 scanout=1280x800" {}
+        -re {fbstat: [^\r\n]+} { fail 20 "$label fbstat-error" }
+        timeout { fail 20 "$label fbstat-timeout" }
+        eof { fail 20 "$label fbstat-eof" }
+    }
+    expect {
+        -re $marker {}
+        timeout { fail 21 "$label marker-timeout" }
+        eof { fail 21 "$label marker-eof" }
+    }
+    optional_prompt
+}
+
+proc extract_artifacts {} {
+    global tmpimg guest outdir
+
+    foreach phase {before launch input exit} {
+        set ppm [host_ppm $phase]
+        set png [host_png $phase]
+        if {[catch { exec sh -c "debugfs -R 'dump $guest($phase) $ppm' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nHOSTX11ABI-SMOKE-FAIL extract-$phase $dump_out"
+            exit 30
+        }
+        if {[catch { exec convert $ppm $png } convert_out]} {
+            puts "\nHOSTX11ABI-SMOKE-FAIL convert-$phase $convert_out"
+            exit 31
+        }
+    }
+
+    set launch_ae [exec sh -c "compare -metric AE '[host_ppm before]' '[host_ppm launch]' '$outdir/host-x11-abi-smoke-launch-diff.png' 2>&1 || true"]
+    set input_ae [exec sh -c "compare -metric AE '[host_ppm launch]' '[host_ppm input]' '$outdir/host-x11-abi-smoke-input-diff.png' 2>&1 || true"]
+    set exit_ae [exec sh -c "compare -metric AE '[host_ppm input]' '[host_ppm exit]' '$outdir/host-x11-abi-smoke-exit-diff.png' 2>&1 || true"]
+    exec sh -c "printf '%s\\n' '$launch_ae' > '$outdir/diff-launch-ae.txt'; printf '%s\\n' '$input_ae' > '$outdir/diff-input-ae.txt'; printf '%s\\n' '$exit_ae' > '$outdir/diff-exit-ae.txt'"
+
+    if {$launch_ae < 1000} {
+        puts "\nHOSTX11ABI-SMOKE-FAIL launch-screenshot-unchanged changed_pixels=$launch_ae"
+        exit 32
+    }
+    if {$input_ae < 100} {
+        puts "\nHOSTX11ABI-SMOKE-FAIL input-screenshot-unchanged changed_pixels=$input_ae"
+        exit 33
+    }
+    if {$exit_ae < 1000} {
+        puts "\nHOSTX11ABI-SMOKE-FAIL exit-screenshot-unchanged changed_pixels=$exit_ae"
+        exit 34
+    }
+    return [list $launch_ae $input_ae $exit_ae]
+}
+
+log_file -a $runlog
+spawn timeout --foreground 220 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 3 "HOSTX11ABI-SMOKE-FAIL crash-marker"
+    }
+    timeout { fail 4 "HOSTX11ABI-SMOKE-FAIL no-desktop" }
+    eof { fail 5 "HOSTX11ABI-SMOKE-FAIL early-eof" }
+}
+
+sleep 2
+send "\r"
+expect {
+    -re {root:/#} {}
+    timeout { fail 6 "HOSTX11ABI-SMOKE-FAIL no-fresh-prompt" }
+    eof { fail 6 "HOSTX11ABI-SMOKE-FAIL fresh-prompt-eof" }
+}
+
+capture_fb before "HOSTX11ABI_BASE_DONE" "HOSTX11ABI-SMOKE-FAIL before"
+
+send "rm -f $app_log; /bin/host-x11-abi-smoke &\r"
+expect {
+    -re {root:/#} {}
+    -re {exec .*failed|not found|cannot execute} { fail 7 "HOSTX11ABI-SMOKE-FAIL launch" }
+    timeout { fail 7 "HOSTX11ABI-SMOKE-FAIL no-prompt-after-launch" }
+    eof { fail 7 "HOSTX11ABI-SMOKE-FAIL launch-eof" }
+}
+
+sleep 4
+send "cat $app_log; echo HOSTX11ABI_LOG_DONE\r"
+set saw_start 0
+set saw_connect 0
+set saw_shm 0
+set saw_selection 0
+set saw_map 0
+set saw_configure 0
+set saw_pixmap 0
+set saw_log_done 0
+while {!($saw_start && $saw_connect && $saw_shm && $saw_selection && $saw_map && $saw_configure && $saw_pixmap && $saw_log_done)} {
+    expect {
+        -re {host-x11-abi-smoke: start} { set saw_start 1 }
+        -re {host-x11-abi-smoke: connected root=} { set saw_connect 1 }
+        -re {host-x11-abi-smoke: mit_shm_present=} { set saw_shm 1 }
+        -re {host-x11-abi-smoke: selection_owner .*status=PASS} { set saw_selection 1 }
+        -re {host-x11-abi-smoke: map_notify} { set saw_map 1 }
+        -re {host-x11-abi-smoke: configure_notify} { set saw_configure 1 }
+        -re {host-x11-abi-smoke: pixmap_draw mode=launch} { set saw_pixmap 1 }
+        -re {HOSTX11ABI_LOG_DONE} { set saw_log_done 1 }
+        -re {status=FAIL|host-x11-abi-smoke: connect failed|host-x11-abi-smoke: atom setup failed|host-x11-abi-smoke: event eof|No such file|cannot execute} {
+            fail 8 "HOSTX11ABI-SMOKE-FAIL app-log-error"
+        }
+        timeout { fail 8 "HOSTX11ABI-SMOKE-FAIL launch-log-timeout" }
+        eof { fail 8 "HOSTX11ABI-SMOKE-FAIL launch-log-eof" }
+    }
+}
+optional_prompt
+
+capture_fb launch "HOSTX11ABI_LAUNCH_FB_DONE" "HOSTX11ABI-SMOKE-FAIL launch"
+
+send "mouseinject 32768 32768 0; mouseinject 32768 32768 1; mouseinject 32768 32768 0; echo HOSTX11ABI_FOCUS_DONE\r"
+expect {
+    -re {HOSTX11ABI_FOCUS_DONE} {}
+    timeout { fail 11 "HOSTX11ABI-SMOKE-FAIL focus-timeout" }
+    eof { fail 11 "HOSTX11ABI-SMOKE-FAIL focus-eof" }
+}
+optional_prompt
+
+sleep 1
+send "keyinject text \"xv6\"; echo HOSTX11ABI_KEYS_DONE\r"
+expect {
+    -re {HOSTX11ABI_KEYS_DONE} {}
+    timeout { fail 12 "HOSTX11ABI-SMOKE-FAIL key-timeout" }
+    eof { fail 12 "HOSTX11ABI-SMOKE-FAIL key-eof" }
+}
+optional_prompt
+
+sleep 2
+send "cat $app_log; echo HOSTX11ABI_INPUT_LOG_DONE\r"
+expect {
+    -re {host-x11-abi-smoke: input_ready} {}
+    timeout { fail 13 "HOSTX11ABI-SMOKE-FAIL input-log-timeout" }
+    eof { fail 13 "HOSTX11ABI-SMOKE-FAIL input-log-eof" }
+}
+expect {
+    -re {HOSTX11ABI_INPUT_LOG_DONE} {}
+    timeout { fail 13 "HOSTX11ABI-SMOKE-FAIL input-log-marker-timeout" }
+    eof { fail 13 "HOSTX11ABI-SMOKE-FAIL input-log-marker-eof" }
+}
+optional_prompt
+
+capture_fb input "HOSTX11ABI_INPUT_FB_DONE" "HOSTX11ABI-SMOKE-FAIL input"
+
+send "keyinject key esc; echo HOSTX11ABI_ESC_DONE\r"
+expect {
+    -re {HOSTX11ABI_ESC_DONE} {}
+    timeout { fail 14 "HOSTX11ABI-SMOKE-FAIL esc-timeout" }
+    eof { fail 14 "HOSTX11ABI-SMOKE-FAIL esc-eof" }
+}
+optional_prompt
+
+sleep 3
+send "cat $app_log; echo HOSTX11ABI_EXIT_LOG_DONE\r"
+set saw_sent 0
+set saw_received 0
+set saw_exited 0
+set saw_exit_log_done 0
+while {!($saw_sent && $saw_received && $saw_exited && $saw_exit_log_done)} {
+    expect {
+        -re {host-x11-abi-smoke: wm_delete_sent} { set saw_sent 1 }
+        -re {host-x11-abi-smoke: wm_delete_received} { set saw_received 1 }
+        -re {host-x11-abi-smoke: exited} { set saw_exited 1 }
+        -re {HOSTX11ABI_EXIT_LOG_DONE} { set saw_exit_log_done 1 }
+        timeout { fail 15 "HOSTX11ABI-SMOKE-FAIL exit-log-timeout" }
+        eof { fail 15 "HOSTX11ABI-SMOKE-FAIL exit-log-eof" }
+    }
+}
+optional_prompt
+
+send "ps; echo HOSTX11ABI_AFTER_ESC_PS_DONE\r"
+set saw_after_esc_done 0
+while {!$saw_after_esc_done} {
+    expect {
+        -re {host-x11-abi-smoke} {
+            fail 16 "HOSTX11ABI-SMOKE-FAIL process-still-running-after-esc"
+        }
+        -re {HOSTX11ABI_AFTER_ESC_PS_DONE} {
+            if {[regexp {host-x11-abi-smoke} $expect_out(buffer)]} {
+                fail 16 "HOSTX11ABI-SMOKE-FAIL process-still-running-after-esc"
+            }
+            set saw_after_esc_done 1
+        }
+        timeout { fail 16 "HOSTX11ABI-SMOKE-FAIL after-esc-ps-timeout" }
+        eof { fail 16 "HOSTX11ABI-SMOKE-FAIL after-esc-ps-eof" }
+    }
+}
+optional_prompt
+
+capture_fb exit "HOSTX11ABI_EXIT_FB_DONE" "HOSTX11ABI-SMOKE-FAIL exit"
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+sleep 1
+set aes [extract_artifacts]
+
+set verify_out [exec python3 "$root/scripts/gpu/host-gui-proof-verify.py" \
+    --app host-x11-abi-smoke \
+    --out-dir "$build/host-gui-proof-verify" \
+    --log "$runlog" \
+    --require-log {host-x11-abi-smoke: connected root=} \
+    --require-log {host-x11-abi-smoke: mit_shm_present=} \
+    --require-log {host-x11-abi-smoke: selection_owner .*status=PASS} \
+    --require-log {host-x11-abi-smoke: configure_notify} \
+    --require-log {host-x11-abi-smoke: pixmap_draw mode=input} \
+    --require-log {host-x11-abi-smoke: wm_delete_received} \
+    --phase before=[host_ppm before] \
+    --phase launch=[host_ppm launch] \
+    --phase input=[host_ppm input] \
+    --phase exit=[host_ppm exit] \
+    --diff before:launch:1000 \
+    --diff launch:input:100 \
+    --diff input:exit:1000]
+puts $verify_out
+
+puts "\nHOSTX11ABI-SMOKE-PASS launch_changed_pixels=[lindex $aes 0] input_changed_pixels=[lindex $aes 1] exit_changed_pixels=[lindex $aes 2] launch_png=[host_png launch] input_png=[host_png input] exit_png=[host_png exit] log=$runlog"
+exit 0
