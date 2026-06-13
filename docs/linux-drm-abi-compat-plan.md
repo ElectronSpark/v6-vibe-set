@@ -253,6 +253,14 @@ Ordered roughly by value; none of these may regress the §5 video gate. The
 2026-06-11 active closure queue is complete; open boxes below are deferred
 backlog, not blockers.
 
+**Current priority (2026-06-12): Linux GUI ABI + X11 first.** The next active
+work should strengthen kernel/user ABI compatibility for ordinary Linux GUI
+programs, especially X11/XWayland process, socket, shm, input, selection,
+window-management, and optional GLX/MIT-SHM paths. Treat large applications
+as probes only after a smaller ABI reproducer exists. Live-YouTube QoS and
+Chromium remain useful stress lanes, but they are lower priority than X11 ABI
+coverage unless they expose a concrete minimal kernel ABI defect.
+
 **Evidence rules (2026-06-12).** Every runtime step records a durable visual
 artifact (raw `.ppm` + reviewer `.png` under `build-x86_64/<step>-evidence/`
 or the per-harness output dir) alongside logs/metrics: baseline desktop,
@@ -305,9 +313,13 @@ than app-specific packaging.
       `mesaglsmoke`, `mesawlegl`); zero per-client titlebar definitions
       remain. Min/max/close framebuffer matrix passes for all six
       (`build-x86_64/titlebar-control-matrix/*-summary.tsv`); gate green.
-  - [ ] Long-term decoration decision still open: libdecor port vs toytoolkit
-        rebase vs server-side `xdg-decoration`; NetSurf keeps its GTK control
-        row until that decision changes.
+  - [x] Long-term decoration decision made 2026-06-12: keep decorations out
+        of the kernel ABI path. Local in-tree C clients keep the shared
+        `xv6_titlebar` helper because that is already proven; imported Linux
+        GUI probes should use their toolkit/X11/XWayland/client decoration
+        paths. Do not spend priority on a libdecor port, toytoolkit rebase, or
+        compositor-side `xdg-decoration` unless a small Linux ABI probe
+        requires it. NetSurf/GTK keeps its toolkit control row.
 - [x] **6. Host-visible zero-copy blob — closed as optional/host-blocked
       2026-06-12.** QEMU 9.0.2 rejects classic virgl+blob at startup;
       rutabaga/virglrenderer refuses mappable `HOST3D` blobs (`create=-5`);
@@ -321,7 +333,7 @@ than app-specific packaging.
       backend reopen condition: init probe succeeds, `HOST_VISIBLE=1`,
       mapped-blob round-trip passes, and the gate stays at or above the
       transfer-model FPS.
-- [ ] **7. Linux GUI ABI probes (§10.5) — kernel-focused backlog.** See the
+- [ ] **7. Linux GUI ABI probes (§10.5) — X11-first kernel-focused backlog.** See the
       dedicated checklist below. The importer and host apps are diagnostic
       pressure tests for Linux process, file, socket, memory-management,
       input, DRM, Wayland, and X11 ABI coverage. New progress: the focused
@@ -342,11 +354,14 @@ than app-specific packaging.
       `xv6-perf-video:RESULT pass fps=59.8 speed=1.004 decodedFPS=59.8
       dropPct=0.00`. The gate harness now uses a temporary image with
       `weston-session`-only startup so optional host D-Bus probes cannot
-      contaminate the kernel/video ABI baseline. Chromium remains useful as a
-      stress probe, but it is not the deliverable; if it exposes only
-      host-library packaging drift, reduce or replace it with a smaller ABI
-      reproducer. This backlog stays open only for unclosed Linux ABI gaps
-      found by the probes.
+      contaminate the kernel/video ABI baseline. Next priority is more X11
+      ABI coverage, not more app packaging: add or run small Xlib/XCB/Tk/GTK
+      X11 probes for window map/configure, input, AF_UNIX/XCB behavior,
+      shared-memory/pixmap paths, selections/clipboard, and clean WM exit.
+      Chromium remains useful as a later stress probe, but it is not the
+      deliverable; if it exposes only host-library packaging drift, reduce or
+      replace it with a smaller ABI reproducer. This backlog stays open only
+      for unclosed Linux ABI gaps found by the probes.
 - [x] **8. Optional ABI completeness — closed for current scope 2026-06-11.**
       `kcmp(KCMP_FILE)` proven on both DRM nodes (dup fds equal, separate
       opens non-equal, `-EBADF`/`-EINVAL` honest); fbdev x86_64 layout audit
@@ -435,10 +450,18 @@ and has log + framebuffer proof. A failed probe is useful only when it points
 to a concrete Linux ABI gap or justifies replacing the probe with a smaller
 one.
 
-**Priority order (2026-06-12):** kernel ABI coverage first. Keep the X11,
-Wayland, GL/EGL, GTK, and embedded-runtime proofs as representative coverage;
-use Chromium only as a stress probe for unresolved ABI gaps, not as the next
-app to port.
+**Priority order (2026-06-12):** X11/XWayland ABI coverage first, then other
+Linux GUI ABI probes. Keep the existing Wayland, GL/EGL, GTK, and
+embedded-runtime proofs as representative coverage, but spend new effort on
+small X11 probes before returning to Chromium. Use Chromium only as a stress
+probe for unresolved ABI gaps, not as the next app to port.
+
+**Next X11 ABI work:** extend beyond the passing IDLE/Tk checkpoint with
+small host-built X11 probes that exercise Xlib/XCB map/configure/destroy,
+keyboard and pointer input, MIT-SHM or pixmap/image transfer where available,
+clipboard/selection ownership, WM_DELETE_WINDOW, and clean Xwayland teardown.
+Each probe must use the same proof rule: visible XWayland window, input,
+clean exit, logs, screenshots, and same-image gate.
 
 - [x] **Importer.** `scripts/image/import-host-gui.sh` stages
       executable/interpreter/library closure under `/opt/host-gui/<id>/` with
@@ -463,7 +486,7 @@ app to port.
       (`build-x86_64/perf-video-gate/run.log`).
       Known benign: Xwayland GLAMOR falls back to software; xkbcomp keymap
       warnings are non-fatal.
-- [ ] **Wayland Chromium stress probe — deferred diagnostic, not a port.**
+- [ ] **Wayland Chromium stress probe — deferred behind X11 ABI work.**
       Chrome-for-Testing 148 staged at
       `/opt/host-gui/wayland-chromium/`. Linux ABI gaps already closed on
       this lane: multi-VMA `mprotect`, Chrome/Crashpad `prctl` set, AF_UNIX
@@ -489,9 +512,10 @@ app to port.
       `GLib-GObject: cannot register existing type 'AtkObject'` before any
       Weston surface map; the screenshot remains desktop-only. Treat that as
       host-library closure drift unless a smaller reproducer shows a kernel
-      ABI defect. *Next step:* either isolate a minimal kernel ABI reproducer
-      from Chromium's trace, or replace Chromium with a smaller host GUI probe
-      that exercises the same Linux ABI surface with clearer proof.
+      ABI defect. *Next step after X11 probes:* either isolate a minimal
+      kernel ABI reproducer from Chromium's trace, or replace Chromium with a
+      smaller host GUI probe that exercises the same Linux ABI surface with
+      clearer proof.
 - [x] **Embedded-runtime app (host Python REPL) — closed 2026-06-12.**
       GTK variant remains blocked on `cannot register existing type
       'GdkPixbuf'` (toolkit-runtime packaging bug), so the passing proof uses
