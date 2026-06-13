@@ -297,7 +297,8 @@ than app-specific packaging.
       decodedFPS=60.0 dropPct=0.00 advanced=15.20`, frame
       `build-x86_64/perf-video-gate/perf-video-frame.png`, log
       `build-x86_64/perf-video-gate/run.log`.
-- [ ] **1b. X11 DRI3/Present/GLX fd-passing path — active after MIT-SHM.**
+- [x] **1b. X11 DRI3/Present fd-passing path — closed 2026-06-12
+      (GLX stress deferred).**
       Prove the X11 accelerated presentation ABI with a minimal GLX/EGL-on-X11
       probe before returning to Chromium. Required surfaces: Xwayland DRI3
       extension discovery, PRIME/DRM fd passing over AF_UNIX, Present event
@@ -305,6 +306,26 @@ than app-specific packaging.
       clean teardown, and no regression in `drmabitest`/video gate. Missing
       behavior becomes a focused kernel/user ABI fix, not a browser-specific
       workaround.
+      2026-06-12: focused toolkit-free XCB proof now passes for DRI3/Present.
+      The first run failed before fd passing because Xwayland disabled GLAMOR
+      and advertised `DRI3 present=0`; the fix keeps Weston on real Xwayland
+      while installing an ELF `/bin/Xwayland` wrapper that execs
+      `/bin/Xwayland.real -glamor es`, plus Mesa loader hints for the session.
+      Evidence: `HOSTX11-DRI3-PRESENT-PASS launch_changed_pixels=268198
+      input_changed_pixels=204037 exit_changed_pixels=268198`; log
+      `build-x86_64/host-x11-dri3-present-smoke-proof/run.log`; screenshots
+      `build-x86_64/host-x11-dri3-present-smoke-proof/host-x11-dri3-present-smoke-launch.png`,
+      `...-input.png`, and `...-exit.png`. The proof logs Xwayland
+      `DRI3 present=1`, `Present present=1`, `dri3_open_fd status=PASS
+      nfd=1 ... drm_name=virtio_gpu version=0.1.0`, Present complete events,
+      keyboard input redraws, and WM_DELETE exit. Same rebuilt-image mandatory
+      gate passed: `GATE-PASS`, WebKit video result `fps=59.8
+      decodedFPS=59.8 dropPct=0.00 advanced=15.31`, frame
+      `build-x86_64/perf-video-gate/perf-video-frame.png`, log
+      `build-x86_64/perf-video-gate/run.log`.
+  - [ ] Follow-up: add a small GLX/EGL-on-X11 smoke only if a browser or
+        toolkit exposes a smaller missing ABI. Keep it separate from the
+        closed DRI3/Present fd-passing proof.
   - Deferred browser stress backlog: Live-YouTube QoS is no longer an active
         compatibility blocker. Keep the existing tooling
         (`scripts/gpu/webkit-qos-report.py`, `webkit-cadence-report.py`,

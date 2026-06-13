@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Host X11 DRI3 Present Smoke
+Exec=/bin/host-x11-dri3-present-smoke
+IconChar=D
+IconColor=0xFF3D7CA6
