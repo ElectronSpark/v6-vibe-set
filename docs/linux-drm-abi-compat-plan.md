@@ -273,7 +273,7 @@ that reproduces the missing behavior; change or shrink host libraries/programs
 as needed so the work stays focused on xv6 kernel ABI compatibility rather
 than app-specific packaging.
 
-- [ ] **1. X11 MIT-SHM data path — active next ABI item.**
+- [x] **1. X11 MIT-SHM data path — closed 2026-06-12.**
       The current XCB proof only queries MIT-SHM; it does not yet prove the
       Linux shared-memory path that real X11 toolkits use for image transport.
       Add or extend a tiny host-built XCB/XShm probe that performs
@@ -285,6 +285,18 @@ than app-specific packaging.
       *Done when:* `HOSTX11-SHM-PASS` (or equivalent) records launch/input/exit
       screenshots plus log under `build-x86_64/host-x11-shm-proof/`, and the
       mandatory video gate passes on the same image.
+      2026-06-12: focused proof now passes after fixing the kernel
+      `shmctl(IPC_STAT)` ABI to copy out Linux `shmid64_ds` rather than the
+      compact xv6-private `shmid_ds`. Evidence:
+      `HOSTX11-SHM-PASS launch_changed_pixels=254600
+      input_changed_pixels=192000 exit_changed_pixels=254512`, log
+      `build-x86_64/host-x11-shm-smoke-proof/run.log`, screenshots
+      `build-x86_64/host-x11-shm-smoke-proof/host-x11-shm-smoke-launch.png`,
+      `...-input.png`, and `...-exit.png`. Same rebuilt-image mandatory
+      gate passed: `GATE-PASS`, WebKit video result `fps=60.0
+      decodedFPS=60.0 dropPct=0.00 advanced=15.20`, frame
+      `build-x86_64/perf-video-gate/perf-video-frame.png`, log
+      `build-x86_64/perf-video-gate/run.log`.
 - [ ] **1b. X11 DRI3/Present/GLX fd-passing path — active after MIT-SHM.**
       Prove the X11 accelerated presentation ABI with a minimal GLX/EGL-on-X11
       probe before returning to Chromium. Required surfaces: Xwayland DRI3

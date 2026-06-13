@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Host X11 MIT-SHM Smoke
+Exec=/bin/host-x11-shm-smoke
+IconChar=S
+IconColor=0xFF3D7CA6
