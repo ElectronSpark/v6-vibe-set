@@ -1,2 +1,1 @@
-#!/bin/sh
-exec /bin/host-python-repl "$@"
+../../bin/host-python-repl
