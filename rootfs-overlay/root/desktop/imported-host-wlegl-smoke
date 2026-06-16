@@ -1,2 +1,1 @@
-#!/bin/sh
-exec /bin/host-wlegl-smoke "$@"
+../../bin/host-wlegl-smoke

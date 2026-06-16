@@ -72,6 +72,21 @@ if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
 
+# libxkbcommon looks for X11 Compose tables at runtime.  Stage the compact
+# locale test data we already build with libxkbcommon so Weston clients do not
+# warn and disable compose when the host image lacks full X11 locale files.
+XKB_COMPOSE_SRC="${REPO_ROOT}/ports/libxkbcommon/src/test/data/locale"
+if [[ ! -f "${STAGE}/share/X11/locale/compose.dir" &&
+      -f "${XKB_COMPOSE_SRC}/compose.dir" ]]; then
+    mkdir -p "${STAGE}/share/X11/locale"
+    rsync -aH "${XKB_COMPOSE_SRC}/" "${STAGE}/share/X11/locale/"
+fi
+if [[ -d "${STAGE}/share/X11/locale" &&
+      ! -e "${STAGE}/usr/share/X11/locale" ]]; then
+    mkdir -p "${STAGE}/usr/share/X11"
+    ln -sfn ../../../share/X11/locale "${STAGE}/usr/share/X11/locale"
+fi
+
 # 5b. Runtime configuration expected by network clients and OpenSSH.
 cat > "${STAGE}/etc/hosts" <<'EOF'
 127.0.0.1 localhost
@@ -160,7 +175,7 @@ write_desktop_link_if_executable "Terminal" "/bin/weston-terminal"
 write_desktop_link_if_executable "Files" "/bin/xv6-open-files-root"
 write_desktop_link_if_executable "Proc Files" "/bin/xv6-open-files-proc"
 write_desktop_link_if_executable "Python" "/bin/xv6-open-python"
-write_desktop_link_if_executable "Config Files" "/bin/xv6-open-files-etc"
+write_desktop_link_if_executable "Settings" "/bin/xv6-settings"
 write_desktop_link_if_executable "3D Demo" "/bin/mesademo"
 
 if [[ -x "${STAGE}/bin/glmaze" ]]; then

@@ -41,6 +41,12 @@ permission. Use the available access directly. Do not push without asking.
       `cmake --build build-x86_64 --target rootfs-refresh -j2`, or
       `scripts/container/enter-container.sh xv6-rootfs-refresh`; it reuses the
       staged sysroot and overlay without rebuilding user or ports.
+- [ ] Narrow Weston runtime refresh path available after Weston source/runtime
+      edits:
+      `cmake --build build-x86_64/ports --target port-weston-runtime-refresh -j2`,
+      followed by the rootfs refresh target above. This reuses the configured
+      Weston Meson build and avoids the aggregate `port-weston` dependency
+      graph walking Mesa/Cairo when only Weston needs restaging.
 - [ ] If rootfs/sysroot/user/ports contents actually changed, refresh the image
       before booting.
 - [ ] Prefer the narrow rootfs script over broad rebuilds when rootfs refresh is
@@ -64,6 +70,12 @@ permission. Use the available access directly. Do not push without asking.
 - [ ] Desktop entries should remain symlinks to ELF binaries where possible.
 - [ ] Avoid adding launcher scripts unless Linux ABI support cannot reasonably
       make the ELF launch directly.
+- [ ] The native Settings panel is allowed to mutate guest runtime state. It
+      currently applies resolution presets through `FBIOPUT_VSCREENINFO` and
+      network presets through Linux-shaped interface/route ioctls plus
+      `/etc/resolv.conf`. Resolution changes must be confirmed from the panel
+      or they automatically roll back to the previous mode; use the narrow
+      `port-wayland-settings-install` target after Settings-only edits.
 
 ## Current Baseline
 
@@ -78,7 +90,7 @@ permission. Use the available access directly. Do not push without asking.
 - [ ] Latest mandatory video gate evidence is in
       `build-x86_64/perf-video-gate/run.log`.
 - [ ] Latest gate result:
-      `xv6-perf-video:RESULT pass fps=55.2 speed=1.003 presentedFPS=0.0 decodedFPS=55.2 dropPct=0.12 advanced=15.40`.
+      `xv6-perf-video:RESULT pass fps=59.6 speed=1.003 presentedFPS=0.0 decodedFPS=59.6 dropPct=0.00 advanced=15.31`.
 - [ ] Latest gate frame evidence:
       `build-x86_64/perf-video-gate/perf-video-frame.ppm`.
 - [ ] Latest gate PNG evidence:
@@ -99,6 +111,7 @@ Current active kernel patch area:
 - [ ] `kernel/kernel/pci.c`
 - [ ] `kernel/kernel/inc/dev/pci.h`
 - [ ] `kernel/kernel/dev/fb/fb_device_ioctl.c`
+- [ ] `kernel/kernel/dev/fb/fb_drm_kms_atomic_props.c`
 - [ ] `kernel/kernel/dev/fb/fb_drm_kms_properties.c`
 - [ ] `kernel/kernel/dev/fb/dma_fence.c`
 - [ ] `kernel/kernel/dev/fb/fb_drm_dispatch.c`
@@ -119,11 +132,17 @@ Latest cursor artifact mitigation:
       host cursor plane.
 - [ ] KMS cursor plane moves with the same cursor FB avoid re-uploading the
       image and issue only a cursor move.
+- [ ] Chromium can still expose cursor-shape changes that reuse the same KMS
+      cursor `fb_id`. Atomic cursor commits now remember whether `FB_ID` was
+      present in the commit: same-`fb_id` `FB_ID` commits force a fresh
+      hardware cursor image upload, while move-only commits still issue only
+      `MOVE_CURSOR`.
 - [ ] Follow-up after a user report that the cursor can still occasionally
       become a black box: a checksum-based "same fb_id, changed pixels"
       reupload experiment regressed pointer/click proof and was backed out. Do
-      not treat the checksum attempt as the fix; continue from cursor FB reuse,
-      plane update ordering, resource lifetime, and host cursor-image caching.
+      not treat the checksum attempt as the fix; continue from atomic `FB_ID`
+      reupload semantics, cursor FB reuse, plane update ordering, resource
+      lifetime, and host cursor-image caching.
 - [ ] Temporary scanout-read stage logs from the refresh/readback diagnostic were
       removed after they did not fire on the Chrome unresponsive path. Keep
       warning/error logs and opt-in traces; do not restore normal-path
@@ -134,8 +153,8 @@ Latest cursor artifact mitigation:
       above.
 - [ ] Verification: `timeout 240 expect scripts/gpu/host-idle-x11-proof.expect`
       passed with pointer movement, key input, screenshots, and clean teardown:
-      `HOSTIDLE-X11-PASS launch_changed_pixels=566086
-      input_changed_pixels=3955 exit_changed_pixels=565869`.
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565869
+      input_changed_pixels=3755 exit_changed_pixels=565869`.
 
 Latest AF_UNIX change:
 
@@ -271,6 +290,17 @@ Latest live Chromium/surface follow-up:
       Next display A/B should compare the direct-primary
       `virtio-vga-gl-primary` path with `virtio-gpu-gl-primary`/Bochs-visible
       fallback before changing kernel GPU paths.
+- [ ] Later 2026-06-16 gradient after Settings/desktop-entry work was a
+      separate Weston runtime staging failure, not Chromium render evidence:
+      `/bin/weston-session` started, then Weston failed to load
+      `libexec_weston.so.0` because the private library was installed under
+      `/lib/weston` while `/bin/weston` carried a host-build absolute rpath.
+      Fixed by giving Weston a guest-relative runpath
+      `$ORIGIN/../lib/weston:$ORIGIN/../lib` and declaring
+      `lib/weston/libexec_weston.so*` as Weston port outputs. Verification:
+      `host-idle-x11-proof.expect` passed with
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565947
+      input_changed_pixels=284 exit_changed_pixels=565864`.
 - [ ] Bochs-visible/virtio-render fallback A/B:
       `chromium-gradient-bochs-visible-20260615a` proved QEMU monitor
       `screendump` works again with `virtio-gpu-gl-primary`, but xv6 still

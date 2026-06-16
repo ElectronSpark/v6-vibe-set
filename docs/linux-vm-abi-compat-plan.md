@@ -233,11 +233,34 @@ Key local files:
       caused early D-Bus crashes in dynamic-linker code. Do not re-enable that
       shortcut without a reducer that proves BIO vector offsets, completion
       ownership, and page-cache data contents for multiple order-0 pages.
-- [ ] The next concrete gap is safe Linux-like filemap fault-around for
-      order-0 ext4 pcache pages: batch disk I/O for neighboring mmap fault
-      pages without corrupting ELF/shared-library mappings, then optionally
-      install adjacent PTEs after VMA revalidation so the browser avoids a trap
-      per page.
+- [x] Re-enabled order-0 ext4 mmap readahead conservatively: only complete
+      file pages are submitted, BIO success is required before marking pages
+      uptodate, and merged runs verify each page's physical block continuity
+      instead of trusting a first/last-block shortcut. The temp-image reducer
+      `/tmp/xv6-mmap-ra-proof/mmap_ra.py` booted the current kernel, mmap-read
+      seven 256 KiB regions of Chromium inode 4024, and matched host-image
+      SHA-256 hashes in `/tmp/xv6-mmap-ra-proof/run.log`.
+- [x] Follow-up gradient regression: an ungated synchronous mmap readahead hook
+      made Weston miss the wrapper's 4 second `/tmp/wayland-0.lock` startup
+      timeout, leaving the QEMU window at the gradient background. The retained
+      hook now advances `pc->ra_pos` and defaults to files at least 64 MiB
+      (`vm_file_fault_ra_min_bytes=` can tune it), so normal Weston/shared
+      library startup avoids the synchronous 4 MiB readahead path.
+- [x] Chromium-visible benefit from safe filemap readahead: after freeing
+      generated proof `*.fs.img` copies from
+      `build-x86_64/chromium-normal-desktop-proof`, the gated current-kernel
+      Weston probe `weston-ready-ra-gated-20260616a` reached desktop icons.
+      The comparable Ctrl+T run
+      `chromium-newtab-filefault-ra-gated-20260616b` used
+      `vm_file_fault_trace=1 vm_file_fault_trace_ms=25` and reduced Chromium
+      inode 4024 slow file-fault rows from 33 rows / 2966 ms sum / 539 ms max
+      in `chromium-newtab-filefault-nextblocker-20260616a` to 9 rows / 327 ms
+      sum / 45 ms max. `ra_ms` stayed 0 in sampled rows because the remaining
+      visible rows are normal fills/cached frontier effects, not long
+      synchronous readahead waits.
+- [ ] Next concrete gap: decide whether adjacent PTE install after VMA
+      revalidation is warranted, using the remaining post-Ctrl+T rows and a
+      reducer that covers unaligned ELF mappings and partial-tail pages.
 
 ## Gap Checklist
 
@@ -248,7 +271,12 @@ Key local files:
       `copyin`, `copyout`, `copyinstr`, `pagefault`, `mmap`, `munmap`,
       `mprotect`, `mremap`, `madvise`, `brk`, `rseq`, procfs/fdtable usercopy,
       and driver/usercopy paths.
-- [ ] Re-run plain Chromium new-tab and long-idle probes with only the VM
+- [x] Re-run plain Chromium new-tab probe with only the VM file-fault
+      diagnostic enabled. `chromium-newtab-filefault-ra-gated-20260616b`
+      completed with desktop startup, Chrome launch, Ctrl+T injection, and
+      improved inode 4024 file-fault timing; QEMU monitor screendumps returned
+      `Error: no surface`, so this is serial/trace evidence only.
+- [ ] Re-run long-idle probe with only the VM
       diagnostic enabled. Avoid broad syscall tracing unless the VM trace is
       empty.
 - [ ] Build a small reducer once the trace names the contended operation:
@@ -291,11 +319,13 @@ Key local files:
 - [x] Avoid sparse VMA hole scanning during `vm_copy()` by visiting present
       page-table leaves in range and preserving the existing COW/rmap/refcount
       rules.
-- [ ] Build a focused ext4/page-cache mmap readahead reducer before touching
-      the order-0 BIO path again: map a known file, fault neighboring pages,
-      verify each page's bytes against `pread()`, include unaligned ELF-style
-      mappings and partial-tail pages, and compare against Linux filemap
-      fault-around semantics.
+- [x] Build a focused ext4/page-cache mmap readahead reducer before touching
+      the order-0 BIO path again: map the known Chromium binary, fault
+      representative neighboring full-page regions, and verify bytes against
+      host-image SHA-256 hashes.
+- [ ] Extend the mmap readahead reducer for unaligned ELF-style mappings,
+      partial-tail pages, and Linux filemap fault-around comparison before
+      attempting adjacent PTE installation.
 - [ ] Validate against:
       focused VM reducer, plain Chromium Ctrl+T latency probe, long-idle
       Chromium probe, AF_UNIX fd-passing smoke, and mandatory video gate if a
