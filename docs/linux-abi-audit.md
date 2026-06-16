@@ -369,7 +369,7 @@ Native-missing entries are syscalls with a matching kernel handler but no Linux 
 | 331 | `__NR_pkey_free` | `native-ok` | SYS_pkey_free_x86 -> sys_pkey_free | SYS_pkey_free_x86 |  | no | native number is wired to matching handler |
 | 332 | `__NR_statx` | `struct-risk` | SYS_statx_x86 -> sys_statx | SYS_statx_x86 |  | yes | native number is wired; audit structs/flags/semantics |
 | 333 | `__NR_io_pgetevents` | `native-ok` | SYS_io_pgetevents_x86 -> sys_io_pgetevents | SYS_io_pgetevents_x86 |  | no | native number is wired to matching handler |
-| 334 | `__NR_rseq` | `native-ok` | SYS_rseq_x86 -> sys_rseq | SYS_rseq_x86 |  | yes | native number is wired to matching handler |
+| 334 | `__NR_rseq` | `unsupported-fail-closed` | SYS_rseq_x86 -> sys_rseq | SYS_rseq_x86 |  | yes | native number is wired but returns ENOSYS until full scheduler-side rseq semantics exist |
 | 424 | `__NR_pidfd_send_signal` | `native-ok` | SYS_pidfd_send_signal_x86 -> sys_pidfd_send_signal | SYS_pidfd_send_signal_x86 |  | no | native number is wired to matching handler |
 | 425 | `__NR_io_uring_setup` | `native-ok` | SYS_io_uring_setup_x86 -> sys_io_uring_setup | SYS_io_uring_setup_x86 |  | no | native number is wired to matching handler |
 | 426 | `__NR_io_uring_enter` | `native-ok` | SYS_io_uring_enter_x86 -> sys_io_uring_enter | SYS_io_uring_enter_x86 |  | no | native number is wired to matching handler |

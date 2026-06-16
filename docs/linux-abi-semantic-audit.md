@@ -361,7 +361,7 @@
 | 331 | `__NR_pkey_free` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 332 | `__NR_statx` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw bad-pointer dispatch test passes and Linux-sized struct is copied | full Linux conformance matrix not exhaustively tested |
 | 333 | `__NR_io_pgetevents` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 334 | `__NR_rseq` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 334 | `__NR_rseq` | `other` | `unsupported-fail-closed` | `needs-full-rseq` | yes | raw dispatch reaches fail-closed handler | returns ENOSYS until scheduler updates user rseq state and aborts active critical sections |
 | 424 | `__NR_pidfd_send_signal` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 425 | `__NR_io_uring_setup` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 426 | `__NR_io_uring_enter` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |

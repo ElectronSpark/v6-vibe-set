@@ -43,6 +43,7 @@ Build commands (inside container or via enter-container.sh <cmd>):
   xv6-kernel-x86      configure x86_64 and build only the kernel
   xv6-user-ports      build user programs and all ports
   xv6-images          build fs.img, initrd.cpio.gz, and boot.img
+  xv6-rootfs-refresh  refresh fs.img from the existing staged sysroot
   xv6-hyperv-image    build a Hyper-V Gen2 bootable xv6-hyperv.vhdx
 
 Launch commands (inside container):
@@ -117,6 +118,9 @@ case "${command_name}" in
         ;;
     xv6-images)
         build_targets rootfs initrd image
+        ;;
+    xv6-rootfs-refresh)
+        build_targets rootfs-refresh
         ;;
     xv6-hyperv-image)
         build_targets hyperv-image

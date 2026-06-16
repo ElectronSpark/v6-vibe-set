@@ -390,13 +390,18 @@ case "${ARCH}" in
                                 ;;
                 esac
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
-                        # Prefer the accelerated virtio-gpu scanout for GTK GUI
-                        # launches whenever the host can provide a GL backend.
-                        # Fall back to Bochs on non-GL hosts so plain boots
-                        # remain fail-closed instead of forcing virgl/llvmpipe.
+                        # Prefer accelerated virtio-gpu for GTK GUI launches
+                        # whenever the host can provide a GL backend.  On
+                        # WSLg/D3D12, QEMU's direct GTK/GL primary scanout can
+                        # disappear into a checker/gradient host surface, so
+                        # keep Bochs visible and use virtio-gpu-gl as the
+                        # render node unless a caller explicitly asks for the
+                        # direct primary path.
                         if [[ "${DISPLAY_MODE}" == "gtk" &&
-                              ( "${HOST_GL_MODE}" == "wsl-d3d12" ||
-                                host_dri_available ) ]]; then
+                              "${HOST_GL_MODE}" == "wsl-d3d12" ]]; then
+                                QEMU_GPU="virtio-gpu-gl-primary"
+                        elif [[ "${DISPLAY_MODE}" == "gtk" &&
+                                host_dri_available ]]; then
                                 QEMU_GPU="virtio-vga-gl-primary"
                         else
                                 QEMU_GPU="bochs"

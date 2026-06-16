@@ -10,6 +10,12 @@ argument-hint: 'Describe the GUI symptom and latest runtime observation'
 
 This skill is a moving debug notebook for GUI runtime behavior. It is not ground truth and can become deprecated without notice. Prefer current generated `wlcomp.c`, kernel source, and the stable `xv6-wayland-kernel-bridge` skill when they conflict.
 
+For Linux GUI ABI convergence, X11/XWayland, Chromium/WebKit host-app stress,
+AF_UNIX/SCM fd passing, dynamic guest-service role discovery, or desktop
+launcher ABI policy, start with `.github/skills/xv6-linux-gui-abi/SKILL.md`.
+Use this GUI runtime skill only after the problem is specifically about
+compositor/runtime observation rather than the broader Linux ABI track.
+
 Current companion docs in this directory:
 
 - `WEBKIT_TODO.md`: active WebKit validation checklist.
@@ -42,6 +48,11 @@ Current companion docs in this directory:
 ## Methodology
 
 - Split every GUI symptom into producer, wait path, consumer, and renderer. For cursor freezes, that means mouse IRQ/ring, cdev poll/kqueue, compositor read loop, and framebuffer update.
+- Localize runtime mismatches with the smallest focused program or compositor
+  probe that reproduces the behavior. Grow the reducer one event, buffer,
+  request, fd, or timing edge at a time. Use the full GUI application as the
+  reproducer only when the behavior depends on its full process graph,
+  toolkit/compositor interaction, or timing.
 - Always compare source intent with generated compositor output before changing kernel code.
 - Keep browser/client effects separate from base desktop effects. Disable NetSurf for kernel freeze triage unless the browser is the experiment.
 - For NetSurf launch failures, separate the two launchers first: `desktop.c` autostart at session boot and `wlcomp.c` desktop/menu launchers after the compositor is running.

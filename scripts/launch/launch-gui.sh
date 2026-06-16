@@ -51,8 +51,8 @@ maybe_rebuild_stale_gui_image() {
     fi
 
     if newer_than_fsimg "${ROOT}/rootfs-overlay"; then
-        echo "launch-gui: rootfs overlay is newer than ${FSIMG}; rebuilding image..." >&2
-        "${ROOT}/scripts/container/enter-container.sh" xv6-images
+        echo "launch-gui: rootfs overlay is newer than ${FSIMG}; refreshing rootfs from existing sysroot..." >&2
+        "${ROOT}/scripts/container/enter-container.sh" xv6-rootfs-refresh
     fi
 }
 

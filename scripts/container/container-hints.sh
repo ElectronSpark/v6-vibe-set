@@ -15,6 +15,7 @@ Build commands:
   xv6-kernel-x86      x86_64 kernel only
   xv6-user-ports      user programs and all ports
   xv6-images          fs.img, initrd.cpio.gz, boot.img
+  xv6-rootfs-refresh  refresh fs.img from existing staged sysroot
   xv6-hyperv-image    Hyper-V Gen2 bootable VHDX
 
 Launch commands:

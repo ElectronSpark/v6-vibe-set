@@ -117,6 +117,10 @@ shell_quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+c_string_literal() {
+    python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
 is_graphics_runtime_lib() {
     local base
     base="$(basename "$1")"
@@ -128,6 +132,25 @@ is_graphics_runtime_lib() {
             ;;
     esac
     return 1
+}
+
+add_nss_module_libs() {
+    local lib="$1"
+    local dir
+    local module
+
+    case "$(basename "${lib}")" in
+        libnss3.so*|libnssutil3.so*|libsmime3.so*) ;;
+        *) return 0 ;;
+    esac
+
+    dir="$(dirname "${lib}")"
+    for module in libsoftokn3.so libfreeblpriv3.so libfreebl3.so; do
+        if [[ -e "${dir}/${module}" ]]; then
+            append_unique "${dir}/${module}" "${libs[@]}" &&
+                libs+=("${dir}/${module}")
+        fi
+    done
 }
 
 resolve_executable() {
@@ -249,13 +272,17 @@ while IFS= read -r line; do
         append_unique "${path}" "${skipped[@]}" && skipped+=("${path}")
         continue
     fi
-    append_unique "${path}" "${libs[@]}" && libs+=("${path}")
+    if append_unique "${path}" "${libs[@]}"; then
+        libs+=("${path}")
+        add_nss_module_libs "${path}"
+    fi
 done < <(ldd "${HOST_EXE}")
 
 app_root="${OVERLAY}/opt/host-gui/${APP_ID}"
 guest_root="/opt/host-gui/${APP_ID}"
 desktop_path="${OVERLAY}/root/desktop/imported-${APP_ID}"
-wrapper="${app_root}/run"
+launcher_src="${app_root}/launcher.c"
+launcher_bin="${OVERLAY}/bin/host-${APP_ID}"
 manifest="${app_root}/manifest.tsv"
 
 note "input=${INPUT}"
@@ -268,7 +295,8 @@ for lib in "${skipped[@]}"; do
 done
 if [[ "${DRY_RUN}" == "1" ]]; then
     note "dry-run: would stage ${app_root}"
-    note "dry-run: would create executable desktop script ${desktop_path}"
+    note "dry-run: would compile ELF launcher ${launcher_bin}"
+    note "dry-run: would create desktop symlink ${desktop_path} -> ../../bin/host-${APP_ID}"
     exit 0
 fi
 
@@ -276,7 +304,8 @@ if [[ -e "${app_root}" && "${REPLACE}" != "1" ]]; then
     die "${app_root} exists; pass --replace to overwrite"
 fi
 rm -rf "${app_root}"
-mkdir -p "${app_root}/bin" "${app_root}/lib" "${app_root}/data" "${OVERLAY}/root/desktop"
+mkdir -p "${app_root}/bin" "${app_root}/lib" "${app_root}/data" \
+    "${OVERLAY}/bin" "${OVERLAY}/root/desktop"
 printf 'kind\thost_path\tguest_path\tbytes\tsha256\n' > "${manifest}"
 
 cp -aL "${HOST_EXE}" "${app_root}/bin/$(basename "${HOST_EXE}")"
@@ -301,35 +330,118 @@ if [[ "${INPUT}" == *.desktop ]]; then
 fi
 
 default_args=("${EXEC_ARGS[@]:1}")
-quoted_defaults=()
-for arg in "${default_args[@]}"; do
-    quoted_defaults+=("$(shell_quote "${arg}")")
-done
+{
+    cat <<EOF
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-cat > "${wrapper}" <<EOF
-#!/bin/sh
-export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/tmp/wayland-root}"
-export WAYLAND_DISPLAY="\${WAYLAND_DISPLAY:-wayland-0}"
-export GDK_BACKEND="\${GDK_BACKEND:-wayland}"
-export QT_QPA_PLATFORM="\${QT_QPA_PLATFORM:-wayland}"
-export SDL_VIDEODRIVER="\${SDL_VIDEODRIVER:-wayland}"
-export SSL_CERT_FILE="\${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
-export LD_LIBRARY_PATH="${guest_root}/lib:/lib:/lib64:/usr/lib:/usr/lib64:\${LD_LIBRARY_PATH:-}"
-cd "${guest_root}" || exit 127
-exec "${guest_root}/lib/$(basename "${interp}")" \\
-    --library-path "${guest_root}/lib:/lib:/lib64:/usr/lib:/usr/lib64" \\
-    "${guest_root}/bin/$(basename "${HOST_EXE}")" ${quoted_defaults[*]} "\$@" \\
-    >>"/tmp/host-gui-${APP_ID}.log" 2>&1
+static const char *guest_root = $(c_string_literal "${guest_root}");
+static const char *app_id = $(c_string_literal "${APP_ID}");
+static const char *interp_base = $(c_string_literal "$(basename "${interp}")");
+static const char *exe_base = $(c_string_literal "$(basename "${HOST_EXE}")");
+static const char *default_args[] = {
 EOF
-chmod 0755 "${wrapper}"
-manifest_add_file "wrapper" "generated" "${guest_root}/run" "${wrapper}"
+    for arg in "${default_args[@]}"; do
+        printf '    %s,\n' "$(c_string_literal "${arg}")"
+    done
+    cat <<'EOF'
+    NULL
+};
 
-cat > "${desktop_path}" <<EOF
-#!/bin/sh
-exec /bin/sh ${guest_root}/run "\$@"
+static char *
+join3(const char *a, const char *b, const char *c)
+{
+    size_t len = strlen(a) + strlen(b) + strlen(c) + 1;
+    char *out = malloc(len);
+    if (!out)
+        return NULL;
+    snprintf(out, len, "%s%s%s", a, b, c);
+    return out;
+}
+
+int
+main(int argc, char **argv)
+{
+    char log_path[256];
+    char *interp;
+    char *program;
+    char *ld_path;
+    char *env_ld_path;
+    char **child_argv;
+    size_t default_count = 0;
+    size_t out = 0;
+    int fd;
+
+    setenv("XDG_RUNTIME_DIR", "/tmp/wayland-root", 0);
+    setenv("WAYLAND_DISPLAY", "wayland-0", 0);
+    setenv("GDK_BACKEND", "wayland", 0);
+    setenv("QT_QPA_PLATFORM", "wayland", 0);
+    setenv("SDL_VIDEODRIVER", "wayland", 0);
+    setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt", 0);
+
+    snprintf(log_path, sizeof(log_path), "/tmp/host-gui-%s.log", app_id);
+    fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
+    }
+
+    if (chdir(guest_root) < 0) {
+        fprintf(stderr, "host-gui-launcher: chdir %s failed: %s\n",
+                guest_root, strerror(errno));
+        return 127;
+    }
+
+    interp = join3(guest_root, "/lib/", interp_base);
+    program = join3(guest_root, "/bin/", exe_base);
+    ld_path = join3(guest_root, "/lib:/lib:/lib64:/usr/lib:/usr/lib64", "");
+    env_ld_path = getenv("LD_LIBRARY_PATH")
+        ? join3(ld_path, ":", getenv("LD_LIBRARY_PATH"))
+        : strdup(ld_path);
+    if (!interp || !program || !ld_path || !env_ld_path) {
+        fprintf(stderr, "host-gui-launcher: out of memory\n");
+        return 127;
+    }
+    setenv("LD_LIBRARY_PATH", env_ld_path, 1);
+
+    while (default_args[default_count])
+        default_count++;
+
+    child_argv = calloc(4 + default_count + (size_t)argc, sizeof(char *));
+    if (!child_argv) {
+        fprintf(stderr, "host-gui-launcher: out of memory\n");
+        return 127;
+    }
+    child_argv[out++] = interp;
+    child_argv[out++] = "--library-path";
+    child_argv[out++] = ld_path;
+    child_argv[out++] = program;
+    for (size_t i = 0; i < default_count; i++)
+        child_argv[out++] = (char *)default_args[i];
+    for (int i = 1; i < argc; i++)
+        child_argv[out++] = argv[i];
+    child_argv[out] = NULL;
+
+    fprintf(stderr, "host-gui-launcher: exec %s via %s\n", program, interp);
+    execv(interp, child_argv);
+    fprintf(stderr, "host-gui-launcher: exec failed: %s\n", strerror(errno));
+    return 127;
+}
 EOF
-chmod 0755 "${desktop_path}"
-manifest_add_file "desktop-script" "generated" "/root/desktop/imported-${APP_ID}" "${desktop_path}"
+} > "${launcher_src}"
+
+cc -O2 -Wall -o "${launcher_bin}" "${launcher_src}"
+manifest_add_file "launcher-source" "generated" "${guest_root}/launcher.c" "${launcher_src}"
+manifest_add_file "launcher" "generated" "/bin/host-${APP_ID}" "${launcher_bin}"
+
+rm -f "${desktop_path}"
+ln -s "../../bin/host-${APP_ID}" "${desktop_path}"
+manifest_add_file "desktop-symlink" "generated" "/root/desktop/imported-${APP_ID}" "${desktop_path}"
 
 note "staged=${app_root}"
 note "desktop=${desktop_path}"

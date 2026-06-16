@@ -87,6 +87,7 @@ RUN chmod 0755 /usr/local/bin/xv6-command \
     && ln -s xv6-command /usr/local/bin/xv6-help \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
+    && ln -s xv6-command /usr/local/bin/xv6-rootfs-refresh \
     && ln -s xv6-command /usr/local/bin/xv6-hyperv-image \
     && ln -s xv6-command /usr/local/bin/xv6-launch \
     && ln -s xv6-command /usr/local/bin/xv6-launch-nokvm \

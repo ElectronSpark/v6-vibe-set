@@ -327,8 +327,10 @@ Struct-risk syscalls:
 Recently implemented runtime syscalls:
 
 `fork(57)`, `times(100)`, `getpgrp(111)`, `setfsuid(122)`, `setfsgid(123)`,
-`capget(125)`, `capset(126)`, `waitid(247)`, `getcpu(309)`, `rseq(334)`,
-plus legacy `eventfd(284)` and scheduler parameter stubs.
+`capget(125)`, `capset(126)`, `waitid(247)`, `getcpu(309)`, plus legacy
+`eventfd(284)` and scheduler parameter stubs. `rseq(334)` is wired but
+intentionally fails closed with `-ENOSYS` until the scheduler-side Linux
+contract is implemented.
 
 Observed differences and risks:
 
@@ -345,7 +347,10 @@ Observed differences and risks:
   `WNOWAIT` model. Full stopped/continued and rusage parity remain.
 - `arch_prctl` supports FS but rejects GS. That is probably fine for userland,
   but exact errno and FS/GS read/write behavior should be tested.
-- `rseq(334)` implements a registration-aware per-thread model.
+- `rseq(334)` intentionally returns `-ENOSYS` for now. The previous
+  registration-only model was unsafe because Linux success also promises
+  scheduler updates to the user rseq area and critical-section aborts on
+  migration/preemption.
 - `getcpu(309)` reports CPU id and NUMA node zero.
 - Credentials and capabilities are minimal. `capget`/`capset` provide a
   harmless Linux-compatible empty capability model.
@@ -374,10 +379,9 @@ Fix plan:
    accounting.
 7. Done: implement `getpgrp(111)` as `getpgid(0)`.
 8. Done: implement `getcpu(309)` with CPU id and optional node zero.
-9. Done: implement `rseq(334)` as a registration-aware stub at minimum:
-   validate size/flags/signature, store per-thread pointer, return `-ENOSYS`
-   only if deliberately unsupported. Prefer a Linux-compatible no-op
-   registration model if glibc expects success.
+9. Reopened: keep `rseq(334)` fail-closed with `-ENOSYS` until xv6 implements
+   Linux's full scheduler contract. A registration-only stub is not compatible
+   enough for Chromium-class runtimes.
 10. Done: implement `capget`/`capset` as an all-zero capability model with correct
     version handling and `-EPERM` for unsupported raises.
 11. Done: implement `setfsuid`/`setfsgid` fields in thread group credentials.
@@ -481,8 +485,9 @@ Differences and risks:
   `futex_requeue(456)` are newer syscalls and unsupported.
 - PI futexes and some advanced operations are not implemented.
 - Shared futex keying and file-backed mappings need stress tests.
-- `rseq` has a registration-aware compatibility model and is covered by raw
-  syscall tests. More stress around restartable sequences remains deferred.
+- `rseq` is wired but intentionally fail-closed with `-ENOSYS`. Full
+  restartable-sequence support remains deferred until scheduler migration and
+  abort semantics are implemented.
 
 Fix plan:
 
@@ -659,7 +664,8 @@ Steps:
 4. Stage glibc dynamic loader and libc in a test rootfs.
 5. Implement or validate startup syscalls:
    `brk`, `mmap`, `mprotect`, `munmap`, `arch_prctl`, `set_tid_address`,
-   `set_robust_list`, `rseq`, `getrandom`, `prlimit64`, `readlinkat`.
+   `set_robust_list`, `getrandom`, `prlimit64`, `readlinkat`; keep `rseq`
+   fail-closed until full support exists.
 
 Status: done for the startup probe surface. Static and dynamic host glibc
 startup probes pass in the VM.
@@ -670,8 +676,9 @@ Goal: libc, pthreads, shell-like programs, and common runtimes work.
 
 Steps:
 
-1. Implement `fork`, `waitid`, `times`, `getpgrp`, `getcpu`, `rseq`,
-   `capget`, `capset`, `setfsuid`, `setfsgid`.
+1. Implement `fork`, `waitid`, `times`, `getpgrp`, `getcpu`, `capget`,
+   `capset`, `setfsuid`, `setfsgid`; keep `rseq` as a full-support item, not
+   a registration-only stub.
 2. Complete `clone` and `clone3` validation and supported semantics.
 3. Stress futex, robust list, clear child tid, TLS, and thread exit.
 4. Expand resource limits and `/proc/<pid>/limits`.
