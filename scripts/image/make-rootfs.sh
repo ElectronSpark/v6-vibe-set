@@ -136,49 +136,59 @@ fi
 
 find "${STAGE}/root/desktop" -maxdepth 1 -type f -name '*.desktop' -delete
 
-write_desktop_script() {
+write_desktop_link() {
     local name="$1"
-    local command="$2"
+    local target="$2"
     local path="${STAGE}/root/desktop/${name}"
 
-    cat > "${path}" <<EOF
-#!/bin/sh
-exec ${command}
-EOF
-    chmod 0755 "${path}"
+    rm -f "${path}"
+    ln -s "${target}" "${path}"
 }
 
-write_desktop_script "Terminal" "/bin/weston-terminal"
-write_desktop_script "Files" "/bin/filemgr /root"
-write_desktop_script "Proc Files" "/bin/filemgr /proc"
-write_desktop_script "Python" "/bin/weston-terminal --shell=/bin/python3.12"
-write_desktop_script "Config Files" "/bin/filemgr /etc"
-write_desktop_script "3D Demo" "/bin/mesademo"
+write_desktop_link_if_executable() {
+    local name="$1"
+    local target="$2"
+
+    if [[ -x "${STAGE}${target}" ]]; then
+        write_desktop_link "${name}" "${target}"
+    else
+        rm -f "${STAGE}/root/desktop/${name}"
+    fi
+}
+
+write_desktop_link_if_executable "Terminal" "/bin/weston-terminal"
+write_desktop_link_if_executable "Files" "/bin/xv6-open-files-root"
+write_desktop_link_if_executable "Proc Files" "/bin/xv6-open-files-proc"
+write_desktop_link_if_executable "Python" "/bin/xv6-open-python"
+write_desktop_link_if_executable "Config Files" "/bin/xv6-open-files-etc"
+write_desktop_link_if_executable "3D Demo" "/bin/mesademo"
 
 if [[ -x "${STAGE}/bin/glmaze" ]]; then
-    write_desktop_script "GL Maze" "/bin/glmaze"
+    write_desktop_link "GL Maze" "/bin/glmaze"
 fi
 
 if [[ -x "${STAGE}/bin/glsmoke" ]]; then
-    write_desktop_script "GL Smoke" "/bin/glsmoke"
+    write_desktop_link "GL Smoke" "/bin/glsmoke"
 fi
 
-if [[ -x "${STAGE}/bin/mesaglsmoke" ]]; then
-    write_desktop_script "GL Sphere" "/bin/mesaglsmoke --demo"
+if [[ -x "${STAGE}/bin/mesaglsmoke" &&
+      -x "${STAGE}/bin/xv6-open-gl-sphere" ]]; then
+    write_desktop_link "GL Sphere" "/bin/xv6-open-gl-sphere"
 fi
 
-if [[ -x "${STAGE}/bin/mesawlegl" ]]; then
-    write_desktop_script "EGL Demo" "/bin/mesawlegl --demo"
+if [[ -x "${STAGE}/bin/mesawlegl" &&
+      -x "${STAGE}/bin/xv6-open-egl-demo" ]]; then
+    write_desktop_link "EGL Demo" "/bin/xv6-open-egl-demo"
 fi
 
 if [[ -x "${STAGE}/bin/peanutgb" &&
-      -f "${STAGE}/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb" ]]; then
-    write_desktop_script "Game Boy" \
-        "/bin/peanutgb /root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb"
+      -f "${STAGE}/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb" &&
+      -x "${STAGE}/bin/xv6-open-game-boy" ]]; then
+    write_desktop_link "Game Boy" "/bin/xv6-open-game-boy"
 fi
 
-write_desktop_script "Editor" "/bin/weston-terminal --shell=/bin/vim"
-write_desktop_script "Browser" "/bin/netsurf"
+write_desktop_link_if_executable "Editor" "/bin/xv6-open-editor"
+write_desktop_link_if_executable "Browser" "/bin/netsurf"
 
 is_webkit_placeholder() {
     local path="$1"
@@ -188,10 +198,10 @@ is_webkit_placeholder() {
 }
 
 if [[ -x "${STAGE}/libexec/webkit2gtk-4.1/MiniBrowser" ]]; then
-    write_desktop_script "WebKit" "/bin/weston-session --launch-webkit"
+    write_desktop_link_if_executable "WebKit" "/bin/xv6-open-webkit"
 elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]] &&
      ! is_webkit_placeholder "${STAGE}/bin/webkitgpusmoke"; then
-    write_desktop_script "WebKit" "/bin/webkitgpusmoke"
+    write_desktop_link "WebKit" "/bin/webkitgpusmoke"
 else
     rm -f "${STAGE}/root/desktop/WebKit"
 fi
@@ -315,12 +325,36 @@ stage_host_path() {
     chmod 0755 "${STAGE}${src}" 2>/dev/null || true
 }
 
+stage_host_path_force() {
+    local src="$1"
+    [[ -e "${src}" ]] || return 0
+    mkdir -p "${STAGE}$(dirname "${src}")"
+    cp -L "${src}" "${STAGE}${src}"
+    chmod 0755 "${STAGE}${src}" 2>/dev/null || true
+}
+
 stage_ldd_dependencies() {
     local obj="$1"
     command -v ldd >/dev/null 2>&1 || return 0
     while IFS= read -r lib; do
         [[ -n "${lib}" && -e "${lib}" ]] || continue
         stage_host_path "${lib}"
+    done < <(
+        LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/usr/lib:${STAGE}/lib/x86_64-linux-gnu:${STAGE}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+            ldd "${obj}" 2>/dev/null |
+        awk '
+            /=> \// { print $3; next }
+            /^[[:space:]]*\// { print $1; next }
+        '
+    )
+}
+
+stage_ldd_dependencies_force() {
+    local obj="$1"
+    command -v ldd >/dev/null 2>&1 || return 0
+    while IFS= read -r lib; do
+        [[ -n "${lib}" && -e "${lib}" ]] || continue
+        stage_host_path_force "${lib}"
     done < <(
         LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/usr/lib:${STAGE}/lib/x86_64-linux-gnu:${STAGE}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
             ldd "${obj}" 2>/dev/null |
@@ -345,6 +379,23 @@ stage_mesa_runtime() {
 
     for path in /usr/share/glvnd/egl_vendor.d/*.json; do
         stage_host_path "${path}"
+    done
+
+    # Host Chromium's X11/GLX path asks GLVND for libGLX_mesa.so.0.  The
+    # guest Mesa port currently provides EGL/Wayland and the GLVND frontend,
+    # but not Mesa's GLX vendor module.  Stage the upstream host Mesa GLX
+    # closure coherently instead of mixing libGLX_mesa with the guest Mesa
+    # gallium DSO.
+    for path in \
+        /lib/x86_64-linux-gnu/libGLX_mesa.so* \
+        /usr/lib/x86_64-linux-gnu/libGLX_mesa.so* \
+        /lib/x86_64-linux-gnu/libGLX_indirect.so* \
+        /usr/lib/x86_64-linux-gnu/libGLX_indirect.so* \
+        /usr/lib/x86_64-linux-gnu/dri/virtio_gpu_dri.so \
+        /usr/lib/x86_64-linux-gnu/dri/swrast_dri.so \
+        /usr/lib/x86_64-linux-gnu/dri/kms_swrast_dri.so; do
+        stage_host_path_force "${path}"
+        stage_ldd_dependencies_force "${path}"
     done
 
     shopt -u nullglob

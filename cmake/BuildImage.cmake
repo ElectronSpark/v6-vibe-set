@@ -43,6 +43,14 @@ add_custom_target(rootfs
 	BYPRODUCTS ${_fsimg}
 	COMMENT "Building ext4 rootfs ${_fsimg} (${_fsimg_size_mb} MiB) from ${XV6_SYSROOT}")
 
+# Fast diagnostic path: rebuild fs.img from the already-staged sysroot and
+# overlay without making CMake walk user or ports first. Use this when a GUI
+# ABI loop only needs a fresh rootfs copy, not rebuilt payloads.
+add_custom_target(rootfs-refresh
+	COMMAND ${_rootfs_command}
+	DEPENDS ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+	COMMENT "Refreshing ext4 rootfs ${_fsimg} from existing ${XV6_SYSROOT}")
+
 # ---------------------------------------------------------------------
 # Legacy initrd / boot-image path (unused by current run-qemu.sh, but
 # kept until scripts/image/make-initrd.sh and make-image.sh are removed).

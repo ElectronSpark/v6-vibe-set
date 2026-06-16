@@ -7,6 +7,10 @@ The authoritative skill files for this repo live in `.github/skills`. `.codex/sk
 ## Repo Workflow Skill
 
 - `xv6-os-debugging`: repo-level workflow for QEMU, kernel symbols, GUI/Wayland ports, NetSurf, OpenSSL/OpenSSH, rootfs images, and nested submodule commit/push rules.
+- `xv6-linux-gui-abi`: Linux GUI ABI workflow for X11/XWayland,
+  Chromium/WebKit host-app stress, AF_UNIX/SCM, D-Bus Unix sockets,
+  procfs/fdtable/epoll/futex issues exposed by GUI apps, and desktop launcher
+  ABI policy.
 
 ## Kernel Module Skills
 
@@ -55,6 +59,9 @@ These skills are deliberately provisional methodology playbooks. They are not gr
 
 ## Routing Hints
 
+- Linux GUI ABI, X11/XWayland, Chromium host-app stress, AF_UNIX/SCM fd
+  passing, or desktop symlink-vs-launcher policy: start with
+  `xv6-linux-gui-abi`, then route to the matching kernel module skill.
 - GUI input freezes: start with `xv6-wayland-kernel-bridge`, then `xv6-kernel-input`, `xv6-kernel-event-wait`, and `xv6-kernel-timers`.
 - Ambiguous or changing debug evidence: start with `xv6-debug-fluid-triage`, then promote stable conclusions into the matching module skill.
 - Fresh build or container reproducibility failures: start with `xv6-debug-build-repro`, then route to `xv6-kernel-build-init` once the failure is stable.

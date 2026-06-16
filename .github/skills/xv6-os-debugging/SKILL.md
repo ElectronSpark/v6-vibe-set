@@ -1,6 +1,6 @@
 ---
 name: xv6-os-debugging
-description: 'Use when: working in this xv6-os repo on QEMU boot, kernel symbols, GUI/Wayland ports, NetSurf, OpenSSL/OpenSSH, rootfs images, or nested submodule commit/push workflows.'
+description: 'Use when: working in this xv6-os repo on QEMU boot, kernel symbols, GUI/Wayland ports, Linux GUI ABI/X11/Chromium stress, NetSurf, OpenSSL/OpenSSH, rootfs images, or nested submodule commit/push workflows.'
 argument-hint: 'Describe the xv6-os build, runtime, or port symptom'
 ---
 
@@ -12,6 +12,13 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 
 ## Fast Workflow
 
+- For Linux GUI ABI, X11/XWayland, Chromium/WebKit stress, AF_UNIX/SCM, or
+  host GUI proof work, read `.github/skills/xv6-linux-gui-abi/SKILL.md`.
+  If the task references the active compatibility plan or current run state,
+  also read `docs/linux-drm-abi-compat-plan.md`.
+- For suspected ABI mismatches, prefer a minimal reducer that reproduces one
+  syscall, event, fd, socket, mapping, or protocol edge. Use the full process
+  only when the interaction is too complex to isolate cheaply.
 - Build a single port from the configured tree, for example:
   - `cmake --build build-x86_64/ports --target port-netsurf -j2`
   - `cmake --build build-x86_64/ports --target port-openssl port-openssh -j2` is not portable to all Make versions; invoke one target at a time if needed.

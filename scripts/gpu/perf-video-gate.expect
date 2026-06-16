@@ -79,6 +79,7 @@ set qemu_pid [exp_pid]
 
 set shot_done   0
 set result_seen 0
+set result_pass 0
 set fb_sent     0
 set fb_done     0
 
@@ -97,21 +98,34 @@ expect {
         exp_continue
     }
     -re {XV6_FBSHOT_DONE} { set fb_done 1; exp_continue }
-    -re {xv6-perf-video:RESULT[^']*} {
+    -re {xv6-perf-video:RESULT pass[^']*} {
         if {!$shot_done} { screendump $monsock $shot; set shot_done 1 }
         set result_seen 1
+        set result_pass 1
+        exp_continue
+    }
+    -re {xv6-perf-video:RESULT fail[^']*} {
+        if {!$shot_done} { screendump $monsock $shot; set shot_done 1 }
+        set result_seen 1
+        set result_pass 0
         exp_continue
     }
     -re {panic|fatal page fault|coredump: generating|virtio_failure|WebKit smoke failed} {
         finish 3 "GATE-FAIL crash-marker"
     }
     -re {__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
-        if {$result_seen} { finish 0 "GATE-PASS" }
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
         exp_continue
     }
     timeout {
-        if {$result_seen} { finish 0 "GATE-PASS" }
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
         finish 4 "GATE-FAIL timeout"
     }
-    eof { if {$result_seen} { finish 0 "GATE-PASS" } else { finish 5 "GATE-FAIL eof" } }
+    eof {
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
+        finish 5 "GATE-FAIL eof"
+    }
 }

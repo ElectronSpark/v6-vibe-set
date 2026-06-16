@@ -1,0 +1,359 @@
+#!/usr/bin/env expect
+
+set timeout [expr {[info exists env(X11_DRI3_PROOF_TIMEOUT)] ? $env(X11_DRI3_PROOF_TIMEOUT) : 420}]
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/x11-idle-dri3-teardown-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/x11-idle-dri3-teardown.fs.img"
+set app_log "/tmp/host-gui-host-x11-dri3-present-smoke.log"
+set pre_close_ppm "/x11-idle-dri3-pre-close.ppm"
+set post_ppm "/x11-idle-dri3-post-close.ppm"
+set strict_titlebar_close [expr {[info exists env(X11_DRI3_STRICT_TITLEBAR_CLOSE)] && $env(X11_DRI3_STRICT_TITLEBAR_CLOSE) ne "0"}]
+set post_close_soak [expr {[info exists env(X11_DRI3_POST_CLOSE_SOAK)] ? $env(X11_DRI3_POST_CLOSE_SOAK) : 90}]
+set extra_append [expr {[info exists env(X11_DRI3_EXTRA_APPEND)] ? $env(X11_DRI3_EXTRA_APPEND) : ""}]
+set drag_after_dri3 [expr {![info exists env(X11_DRI3_DRAG_AFTER_DRI3)] || $env(X11_DRI3_DRAG_AFTER_DRI3) ne "0"}]
+set skip_pre_close_capture [expr {[info exists env(X11_DRI3_SKIP_PRE_CLOSE_CAPTURE)] && $env(X11_DRI3_SKIP_PRE_CLOSE_CAPTURE) ne "0"}]
+set pre_close_settle [expr {[info exists env(X11_DRI3_PRE_CLOSE_SETTLE)] ? $env(X11_DRI3_PRE_CLOSE_SETTLE) : 4}]
+
+exec sh -c "rm -f '$runlog' '$tmpimg' '$outdir'/post-close.*"
+exec cp $fsimg $tmpimg
+set startup_override "$outdir/startup-no-dbus"
+exec sh -c "printf '%s\n' '# Temporary proof startup: skip host D-Bus helpers.' 'XV6_XWM_FRAME_TRACE=1 /bin/weston-session' > '$startup_override'"
+exec sh -c "printf '%s\n' 'rm /etc/startup' 'write $startup_override /etc/startup' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+catch { exec sh -c "debugfs -w -R 'rm $post_ppm' '$tmpimg' >/dev/null 2>&1" }
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 $extra_append"
+
+proc fail {code label} {
+    global qemu_pid runlog
+
+    stop_qemu
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
+proc stop_qemu {} {
+    global qemu_pid
+
+    catch {
+        exec timeout 5 sh -c "for p in \$(pgrep -P $qemu_pid 2>/dev/null || true); do kill -TERM \$p 2>/dev/null || true; done; kill -TERM $qemu_pid 2>/dev/null || true; sleep 1; for p in \$(pgrep -P $qemu_pid 2>/dev/null || true); do kill -KILL \$p 2>/dev/null || true; done; kill -KILL $qemu_pid 2>/dev/null || true"
+    }
+}
+
+proc expect_prompt {label} {
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 90 "$label mesa-eio"
+        }
+        -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+            fail 91 "$label crash-marker"
+        }
+        -re {root:/#} {}
+        timeout { fail 92 "$label prompt-timeout" }
+        eof { fail 93 "$label eof" }
+    }
+}
+
+proc soak_no_eio {seconds label} {
+    send "sleep $seconds\r"
+    expect -timeout [expr {$seconds + 30}] {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 100 "$label mesa-eio"
+        }
+        -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+            fail 101 "$label crash-marker"
+        }
+        -re {root:/#} {}
+        timeout { fail 103 "$label timeout" }
+        eof { fail 102 "$label eof" }
+    }
+}
+
+log_file -a $runlog
+spawn timeout --foreground $timeout bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+        fail 1 "X11-IDLE-DRI3-FAIL early-mesa-eio"
+    }
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 2 "X11-IDLE-DRI3-FAIL early-crash-marker"
+    }
+    timeout { fail 3 "X11-IDLE-DRI3-FAIL no-desktop" }
+    eof { fail 4 "X11-IDLE-DRI3-FAIL early-eof" }
+}
+
+sleep 8
+send "\r"
+expect_prompt "X11-IDLE-DRI3-FAIL fresh"
+
+send "rm -f /tmp/host-idle-x11.log $app_log\r"
+expect_prompt "X11-IDLE-DRI3-FAIL rm"
+send "export XV6_GUI_SESSION=1\r"
+expect_prompt "X11-IDLE-DRI3-FAIL env1"
+send "export XDG_RUNTIME_DIR=/tmp\r"
+expect_prompt "X11-IDLE-DRI3-FAIL env2"
+send "export DISPLAY=:0\r"
+expect_prompt "X11-IDLE-DRI3-FAIL env3"
+
+send "/bin/host-idle-x11 -n -i -t XV6-IDLE-X11-TEARDOWN &\r"
+expect_prompt "X11-IDLE-DRI3-FAIL idle-launch"
+soak_no_eio 18 "X11-IDLE-DRI3-FAIL idle-soak"
+
+if {!$drag_after_dri3} {
+    send "mouseinject 8192 6554 1\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-dri3-drag-press"
+    send "mouseinject 1536 62258 1\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-dri3-drag-move"
+    send "mouseinject 1536 62258 0\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-dri3-drag-release"
+    send "echo X11_IDLE_PRE_DRI3_DRAG_DONE\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 30 "X11-IDLE-DRI3-FAIL pre-dri3-drag-mesa-eio"
+        }
+        -re {X11_IDLE_PRE_DRI3_DRAG_DONE} {}
+        timeout { fail 31 "X11-IDLE-DRI3-FAIL pre-dri3-drag-timeout" }
+        eof { fail 32 "X11-IDLE-DRI3-FAIL pre-dri3-drag-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-dri3-drag-prompt"
+}
+
+send "/root/desktop/imported-host-x11-dri3-present-smoke &\r"
+expect_prompt "X11-IDLE-DRI3-FAIL dri3-launch"
+soak_no_eio 12 "X11-IDLE-DRI3-FAIL dri3-soak"
+
+send "cat $app_log; echo X11_DRI3_LAUNCH_LOG_DONE\r"
+set saw_fd 0
+set saw_present 0
+set saw_complete 0
+set saw_launch_done 0
+while {!($saw_fd && $saw_present && $saw_complete && $saw_launch_done)} {
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 20 "X11-IDLE-DRI3-FAIL launch-log-mesa-eio"
+        }
+        -re {host-x11-dri3-present-smoke: dri3_open_fd status=PASS} { set saw_fd 1 }
+        -re {host-x11-dri3-present-smoke: present_pixmap mode=launch serial=} { set saw_present 1 }
+        -re {host-x11-dri3-present-smoke: present_complete serial=} { set saw_complete 1 }
+        -re {X11_DRI3_LAUNCH_LOG_DONE} { set saw_launch_done 1 }
+        -re {status=FAIL|connect failed|event eof|cannot execute|No such file} {
+            fail 21 "X11-IDLE-DRI3-FAIL launch-log-error"
+        }
+        timeout { fail 22 "X11-IDLE-DRI3-FAIL launch-log-timeout" }
+        eof { fail 23 "X11-IDLE-DRI3-FAIL launch-log-eof" }
+    }
+}
+expect_prompt "X11-IDLE-DRI3-FAIL launch-log-prompt"
+
+if {$drag_after_dri3} {
+    send "mouseinject 8192 6554 1\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL live-dri3-drag-press"
+    send "mouseinject 1536 62258 1\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL live-dri3-drag-move"
+    send "mouseinject 1536 62258 0\r"
+    expect_prompt "X11-IDLE-DRI3-FAIL live-dri3-drag-release"
+    send "echo X11_IDLE_LIVE_DRI3_DRAG_DONE\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 30 "X11-IDLE-DRI3-FAIL live-dri3-drag-mesa-eio"
+        }
+        -re {X11_IDLE_LIVE_DRI3_DRAG_DONE} {}
+        timeout { fail 31 "X11-IDLE-DRI3-FAIL live-dri3-drag-timeout" }
+        eof { fail 32 "X11-IDLE-DRI3-FAIL live-dri3-drag-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL live-dri3-drag-prompt"
+}
+
+set saw_input_ready 1
+set saw_input_present 1
+if {!$drag_after_dri3} {
+    set saw_input_ready 0
+    set saw_input_present 0
+    send "mouseinject 32768 32768 0; mouseinject 32768 32768 1; mouseinject 32768 32768 0; echo X11_DRI3_FOCUS_DONE\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 40 "X11-IDLE-DRI3-FAIL focus-mesa-eio"
+        }
+        -re {X11_DRI3_FOCUS_DONE} {}
+        timeout { fail 41 "X11-IDLE-DRI3-FAIL focus-timeout" }
+        eof { fail 42 "X11-IDLE-DRI3-FAIL focus-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL focus-prompt"
+
+    send "keyinject text \"xv6\"; echo X11_DRI3_INPUT_DONE\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 43 "X11-IDLE-DRI3-FAIL input-mesa-eio"
+        }
+        -re {X11_DRI3_INPUT_DONE} {}
+        timeout { fail 44 "X11-IDLE-DRI3-FAIL input-timeout" }
+        eof { fail 45 "X11-IDLE-DRI3-FAIL input-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL input-prompt"
+
+    sleep 2
+    send "cat $app_log; echo X11_DRI3_INPUT_LOG_DONE\r"
+    set saw_input_done 0
+    while {!($saw_input_ready && $saw_input_present && $saw_input_done)} {
+        expect {
+            -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+                fail 46 "X11-IDLE-DRI3-FAIL input-log-mesa-eio"
+            }
+            -re {host-x11-dri3-present-smoke: input_ready} { set saw_input_ready 1 }
+            -re {host-x11-dri3-present-smoke: present_pixmap mode=input serial=} { set saw_input_present 1 }
+            -re {X11_DRI3_INPUT_LOG_DONE} { set saw_input_done 1 }
+            -re {status=FAIL|connect failed|event eof|cannot execute|No such file} {
+                fail 47 "X11-IDLE-DRI3-FAIL input-log-error"
+            }
+            timeout { fail 48 "X11-IDLE-DRI3-FAIL input-log-timeout" }
+            eof { fail 49 "X11-IDLE-DRI3-FAIL input-log-eof" }
+        }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL input-log-prompt"
+}
+
+if {!$skip_pre_close_capture} {
+    send "fbstat ppm-current $pre_close_ppm 0 0 1280 800; sync; echo X11_DRI3_PRE_CLOSE_CAPTURE_DONE\r"
+    expect {
+        -re "fb_ppm_current path=$pre_close_ppm screen=1280x800 scanout=1280x800" {}
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-mesa-eio"
+        }
+        -re {fbstat: [^\r\n]+} { fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-error" }
+        timeout { fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-timeout" }
+        eof { fail 49 "X11-IDLE-DRI3-FAIL pre-close-capture-eof" }
+    }
+    expect {
+        -re {X11_DRI3_PRE_CLOSE_CAPTURE_DONE} {}
+        timeout { fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-marker-timeout" }
+        eof { fail 49 "X11-IDLE-DRI3-FAIL pre-close-capture-marker-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-close-capture-prompt"
+} else {
+    send "echo X11_DRI3_PRE_CLOSE_CAPTURE_SKIPPED\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-skip-mesa-eio"
+        }
+        -re {X11_DRI3_PRE_CLOSE_CAPTURE_SKIPPED} {}
+        timeout { fail 48 "X11-IDLE-DRI3-FAIL pre-close-capture-skip-timeout" }
+        eof { fail 49 "X11-IDLE-DRI3-FAIL pre-close-capture-skip-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL pre-close-capture-skip-prompt"
+}
+
+if {$pre_close_settle > 0} {
+    soak_no_eio $pre_close_settle "X11-IDLE-DRI3-FAIL pre-close-settle"
+}
+
+send "mouseinject dblclick 45347 14336 100000\r"
+expect_prompt "X11-IDLE-DRI3-FAIL titlebar-close-first-dblclick"
+send "sleep 2\r"
+expect_prompt "X11-IDLE-DRI3-FAIL titlebar-close-gap"
+send "mouseinject dblclick 45220 14336 100000\r"
+expect_prompt "X11-IDLE-DRI3-FAIL titlebar-close-second-dblclick"
+send "echo X11_DRI3_TITLEBAR_CLOSE_DONE\r"
+expect {
+    -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+        fail 50 "X11-IDLE-DRI3-FAIL titlebar-close-mesa-eio"
+    }
+    -re {X11_DRI3_TITLEBAR_CLOSE_DONE} {}
+    timeout { fail 51 "X11-IDLE-DRI3-FAIL titlebar-close-timeout" }
+    eof { fail 52 "X11-IDLE-DRI3-FAIL titlebar-close-eof" }
+}
+expect_prompt "X11-IDLE-DRI3-FAIL titlebar-close-prompt"
+
+sleep 8
+send "cat $app_log\r"
+set saw_sent 0
+set saw_delete 0
+set saw_exit 0
+set saw_log_done 0
+set close_method "titlebar"
+while {!$saw_log_done} {
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 60 "X11-IDLE-DRI3-FAIL exit-log-mesa-eio"
+        }
+        -re {host-x11-dri3-present-smoke: wm_delete_sent} { set saw_sent 1 }
+        -re {host-x11-dri3-present-smoke: wm_delete_received} { set saw_delete 1 }
+        -re {host-x11-dri3-present-smoke: exited} { set saw_exit 1 }
+        -re {root:/#} { set saw_log_done 1 }
+        -re {status=FAIL|connect failed|event eof|cannot execute|No such file} {
+            fail 61 "X11-IDLE-DRI3-FAIL exit-log-error"
+        }
+        timeout { fail 62 "X11-IDLE-DRI3-FAIL exit-log-timeout" }
+        eof { fail 63 "X11-IDLE-DRI3-FAIL exit-log-eof" }
+    }
+}
+if {!$saw_delete} {
+    set saw_delete [exec sh -c "grep -aq 'host-x11-dri3-present-smoke: wm_delete_received' '$runlog' && echo 1 || echo 0"]
+}
+if {!$saw_exit} {
+    set saw_exit [exec sh -c "grep -aq 'host-x11-dri3-present-smoke: exited' '$runlog' && echo 1 || echo 0"]
+}
+if {!$saw_delete || !$saw_exit} {
+    if {$strict_titlebar_close} {
+        fail 64 "X11-IDLE-DRI3-FAIL strict-titlebar-close-missing-wm-delete-or-exit"
+    }
+    set close_method "escape"
+    send "keyinject key esc; echo X11_DRI3_ESC_CLOSE_DONE\r"
+    expect {
+        -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+            fail 64 "X11-IDLE-DRI3-FAIL esc-close-mesa-eio"
+        }
+        -re {X11_DRI3_ESC_CLOSE_DONE} {}
+        timeout { fail 65 "X11-IDLE-DRI3-FAIL esc-close-timeout" }
+        eof { fail 66 "X11-IDLE-DRI3-FAIL esc-close-eof" }
+    }
+    expect_prompt "X11-IDLE-DRI3-FAIL esc-close-prompt"
+
+    sleep 8
+    send "cat $app_log\r"
+    set saw_esc_log_done 0
+    while {!$saw_esc_log_done} {
+        expect {
+            -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
+                fail 67 "X11-IDLE-DRI3-FAIL esc-exit-log-mesa-eio"
+            }
+            -re {host-x11-dri3-present-smoke: wm_delete_sent} { set saw_sent 1 }
+            -re {host-x11-dri3-present-smoke: wm_delete_received} { set saw_delete 1 }
+            -re {host-x11-dri3-present-smoke: exited} { set saw_exit 1 }
+            -re {root:/#} { set saw_esc_log_done 1 }
+            -re {status=FAIL|connect failed|event eof|cannot execute|No such file} {
+                fail 68 "X11-IDLE-DRI3-FAIL esc-exit-log-error"
+            }
+            timeout { fail 69 "X11-IDLE-DRI3-FAIL esc-exit-log-timeout" }
+            eof { fail 70 "X11-IDLE-DRI3-FAIL esc-exit-log-eof" }
+        }
+    }
+    if {!$saw_delete} {
+        set saw_delete [exec sh -c "grep -aq 'host-x11-dri3-present-smoke: wm_delete_received' '$runlog' && echo 1 || echo 0"]
+    }
+    if {!$saw_exit} {
+        set saw_exit [exec sh -c "grep -aq 'host-x11-dri3-present-smoke: exited' '$runlog' && echo 1 || echo 0"]
+    }
+}
+if {!$saw_delete || !$saw_exit} {
+    fail 64 "X11-IDLE-DRI3-FAIL exit-log-missing-wm-delete-or-exit"
+}
+soak_no_eio $post_close_soak "X11-IDLE-DRI3-FAIL post-close-soak"
+
+stop_qemu
+set dri3_input_checked [expr {!$drag_after_dri3 && $saw_input_ready && $saw_input_present}]
+puts "\nX11-IDLE-DRI3-PASS idle_drag=1 drag_after_dri3=$drag_after_dri3 dri3_fd=1 dri3_input_checked=$dri3_input_checked close_method=$close_method saw_wm_delete=$saw_delete saw_dri3_exit=$saw_exit skip_pre_close_capture=$skip_pre_close_capture post_close_soak=$post_close_soak log=$runlog"
