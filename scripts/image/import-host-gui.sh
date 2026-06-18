@@ -381,6 +381,9 @@ main(int argc, char **argv)
     setenv("GDK_BACKEND", "wayland", 0);
     setenv("QT_QPA_PLATFORM", "wayland", 0);
     setenv("SDL_VIDEODRIVER", "wayland", 0);
+    setenv("XCURSOR_PATH", "/share/icons", 0);
+    setenv("XCURSOR_THEME", "Adwaita", 0);
+    setenv("XCURSOR_SIZE", "24", 0);
     setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt", 0);
 
     snprintf(log_path, sizeof(log_path), "/tmp/host-gui-%s.log", app_id);

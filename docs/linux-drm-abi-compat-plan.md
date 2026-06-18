@@ -1,6 +1,6 @@
 # Linux DRM / GUI ABI Compatibility Plan
 
-Last updated: 2026-06-15.
+Last updated: 2026-06-17.
 
 This document is the handoff prompt and active checklist for the Linux GUI ABI
 effort. Keep it compact enough for a fresh session to read, but do not strip
@@ -90,7 +90,7 @@ permission. Use the available access directly. Do not push without asking.
 - [ ] Latest mandatory video gate evidence is in
       `build-x86_64/perf-video-gate/run.log`.
 - [ ] Latest gate result:
-      `xv6-perf-video:RESULT pass fps=59.6 speed=1.003 presentedFPS=0.0 decodedFPS=59.6 dropPct=0.00 advanced=15.31`.
+      `xv6-perf-video:RESULT pass fps=58.0 speed=1.003 presentedFPS=0.0 decodedFPS=58.0 dropPct=0.00 advanced=15.31`.
 - [ ] Latest gate frame evidence:
       `build-x86_64/perf-video-gate/perf-video-frame.ppm`.
 - [ ] Latest gate PNG evidence:
@@ -143,6 +143,14 @@ Latest cursor artifact mitigation:
       not treat the checksum attempt as the fix; continue from atomic `FB_ID`
       reupload semantics, cursor FB reuse, plane update ordering, resource
       lifetime, and host cursor-image caching.
+- [ ] A focused Chromium/X11 `fbstat` run showed the guest cursor BO is not an
+      opaque black square: the latest cursor upload was 64x64 with
+      `alpha_zero=3842`, `alpha_opaque=91`, and
+      `kms_cursor_upload_failures=0`. The remaining black box is therefore in
+      the virtio/QEMU cursor-plane composition path. A later software-cursor
+      default hid the pointer inside Chromium, so `/bin/weston-session` now
+      defaults back to `XV6_WESTON_SOFTWARE_CURSOR=0`; use
+      `weston_software_cursor=1` only for explicit fallback experiments.
 - [ ] Temporary scanout-read stage logs from the refresh/readback diagnostic were
       removed after they did not fire on the Chrome unresponsive path. Keep
       warning/error logs and opt-in traces; do not restore normal-path
@@ -151,10 +159,160 @@ Latest cursor artifact mitigation:
 - [ ] Verification: `cmake --build build-x86_64 --target kernel -j2` passed.
 - [ ] Verification: mandatory video gate passed with the latest result
       above.
+- [ ] Verification: software-cursor mitigation rebuilt with
+      `port-weston-runtime-refresh`, `port-wayland`, and `rootfs-refresh`;
+      mandatory video gate passed:
+      `xv6-perf-video:RESULT pass fps=54.6 speed=1.003 presentedFPS=0.0
+      decodedFPS=54.6 dropPct=0.12 advanced=15.44`.
+- [ ] Follow-up after the user reported host-cursor lag over Chromium: default
+      session was restored to `XV6_WESTON_SOFTWARE_CURSOR=0`; rebuild,
+      rootfs/ISO refresh, and GUI gates passed for the hardware-cursor default:
+      `xv6-perf-video:RESULT pass fps=58.8 speed=1.006 presentedFPS=0.0
+      decodedFPS=58.8 dropPct=0.00 advanced=15.35` and
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565967
+      input_changed_pixels=3755 exit_changed_pixels=565885`.
+- [ ] Follow-up after the black-box report persisted: cursor image uploads now
+      use a fenced `TRANSFER_TO_HOST_2D` before posting `UPDATE_CURSOR` to the
+      separate virtio cursor queue. This matches the virtio-gpu ordering rule
+      that cursor resources must be transferred and fenced before cursor queue
+      updates can consume them.
+- [ ] Cursor command buffer reuse no longer assumes in-order virtqueue
+      completion. The cursor queue now reclaims command slots by used-ring
+      descriptor id and only reuses slots that QEMU has actually returned,
+      preventing high-rate Chromium cursor traffic from overwriting an
+      in-flight cursor command.
+- [ ] Exported package refreshed after the cursor-queue fix:
+      `/home/es/xv6-wayland-chromium-qemu/` still contains only
+      `launch-qemu.sh` and `xv6-wayland-chromium.iso`.
+- [ ] Verification after the cursor-queue fix:
+      `cmake --build build-x86_64 --target kernel -j2` passed;
+      `git diff --check` and nested kernel/ports diff checks passed;
+      mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=59.5 speed=1.002 presentedFPS=0.0
+      decodedFPS=59.5 dropPct=0.00 advanced=15.29`; X11 proof passed with
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565967
+      input_changed_pixels=299 exit_changed_pixels=565885`.
 - [ ] Verification: `timeout 240 expect scripts/gpu/host-idle-x11-proof.expect`
       passed with pointer movement, key input, screenshots, and clean teardown:
-      `HOSTIDLE-X11-PASS launch_changed_pixels=565869
-      input_changed_pixels=3755 exit_changed_pixels=565869`.
+      `HOSTIDLE-X11-PASS launch_changed_pixels=588096
+      input_changed_pixels=613 exit_changed_pixels=588077`.
+- [ ] Follow-up after the software cursor default hid the pointer in Chromium:
+      `/bin/weston-session` was restored to
+      `XV6_WESTON_SOFTWARE_CURSOR=0`. Keep `weston_software_cursor=1` as a
+      diagnostic boot knob only; the black-box cursor issue must be fixed in
+      the hardware cursor path rather than by defaulting Chromium users to the
+      software fallback. The exported ISO was refreshed again, and the
+      mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=57.4 speed=1.003 presentedFPS=0.0
+      decodedFPS=57.4 dropPct=0.00 advanced=15.36`.
+- [ ] Follow-up kernel cursor-init fix: the virtio cursor queue now starts
+      hidden until a valid cursor resource has been uploaded, and a show/move
+      request before the first image upload records the position without
+      sending `MOVE_CURSOR` for an unbound resource. This prevents an early
+      Weston/Chromium cursor move from asking QEMU to display an uninitialized
+      hardware cursor. Verification: `cmake --build build-x86_64 --target
+      kernel -j2` passed; the exported ISO was refreshed; mandatory video gate
+      passed with `xv6-perf-video:RESULT pass fps=57.8 speed=1.003
+      presentedFPS=0.0 decodedFPS=57.8 dropPct=0.00 advanced=15.28`.
+      Focused X11 proof also passed:
+      `HOSTIDLE-X11-PASS launch_changed_pixels=1.02016e+06
+      input_changed_pixels=3955 exit_changed_pixels=588096`.
+      Chromium/X11 low-noise proof completed on `about:blank` with a mapped
+      Chrome screenshot:
+      `CHROMIUM-SUPERVISOR-LOW-NOISE-DONE`, artifact prefix
+      `cursor-init-chromium-x11`; Weston reported `cursor planes: yes`.
+- [ ] Follow-up after the black box persisted in the interactive
+      `./scripts/launch/launch-gui.sh` path: do not use software cursor as the
+      fix. The `launch-gui.sh` software-cursor fallback experiment was removed
+      at user request; continue fixing the virtio/KMS hardware cursor plane.
+- [ ] Follow-up after the user requested no software cursor at all: the GTK
+      launch path now keeps `weston_software_cursor` unset and enables
+      `virtio_gpu_cursor_rgba_compat=1` instead. The kernel leaves the guest
+      cursor BO format unchanged, but translates the uploaded virtio cursor
+      resource to the unpremultiplied RGBA byte order QEMU GTK expects before
+      posting `UPDATE_CURSOR`.
+- [ ] Verification for the no-software-cursor GTK compat path:
+      `AUTO_BUILD=0 QEMU_DRY_RUN=1 ./scripts/launch/launch-gui.sh` showed
+      `show-cursor=off`, `virtio_gpu_cursor_rgba_compat=1`,
+      `root=/dev/disk0`, and `video=1280x800` with no
+      `weston_software_cursor`; `git diff --check` passed for the touched
+      plan/launcher/kernel files; `cmake --build build-x86_64 --target kernel
+      -j2` passed; mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=58.8 speed=1.004 presentedFPS=0.0
+      decodedFPS=58.8 dropPct=0.00 advanced=15.42`.
+- [ ] X11/Chromium verification for the same no-software-cursor GTK path:
+      `timeout 240 expect scripts/gpu/host-idle-x11-proof.expect` passed with
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565885
+      input_changed_pixels=299 exit_changed_pixels=565967`. Chromium low-noise
+      with QEMU monitor `screendump` reached Chromium/Weston evidence but could
+      not extract a PPM because QEMU returned `Error: no surface`. Re-running
+      with `CHROMIUM_GUEST_FBSTAT=1` passed:
+      `CHROMIUM-SUPERVISOR-LOW-NOISE-DONE`, artifact prefix
+      `no-software-cursor-gtk-compat-guestfb`; the PNG shows Chromium mapped at
+      `about:blank` and Weston reported `cursor planes: yes`.
+- [ ] Follow-up after the black-box cursor still persisted: match Linux's
+      virtualized cursor ABI more closely without enabling software cursors.
+      The DRM core now accepts `DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT`; the KMS
+      cursor plane exposes `HOTSPOT_X` and `HOTSPOT_Y` only to clients that opt
+      into that cap; atomic cursor commits preserve and apply the hotspot when
+      uploading the hardware cursor image. Weston now opts into the cap before
+      plane discovery and sends the normal pointer sprite hotspot with cursor
+      atomic commits. The rootfs image was refreshed after rebuilding the
+      Weston DRM backend.
+- [ ] Verification for the hotspot-aware hardware cursor path: no
+      `weston_software_cursor` launch flag, `show-cursor=off`, and
+      `virtio_gpu_cursor_rgba_compat=1`; kernel build passed; direct Weston
+      Ninja rebuild compiled `kms.c` and `state-propose.c`; rootfs refresh
+      wrote `build-x86_64/fs.img`; mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=56.5 speed=1.004 presentedFPS=0.0
+      decodedFPS=56.5 dropPct=0.00 advanced=15.46`; X11 proof passed with
+      `HOSTIDLE-X11-PASS launch_changed_pixels=565885
+      input_changed_pixels=3755 exit_changed_pixels=565885`.
+- [ ] Follow-up after the black-box cursor still persisted with Chromium:
+      default GTK launches no longer send guest cursor images through QEMU
+      GTK's cursor pixbuf path. `launch-gui.sh` now keeps the host pointer
+      visible with `show-cursor=on`, keeps Weston software cursors disabled,
+      and adds `virtio_gpu_host_cursor_only=1` for GTK/virgl by default. The
+      kernel accepts cursor uploads and moves in this mode only as state
+      updates and does not post `UPDATE_CURSOR` or `MOVE_CURSOR` commands to
+      the virtio cursor queue. This is a host-frontend mitigation, not a
+      Weston software-cursor fallback; the old guest hardware cursor upload
+      path remains available with `virtio_gpu_host_cursor_only=0`.
+- [ ] Verification for the GTK host-pointer cursor mitigation:
+      `AUTO_BUILD=0 QEMU_DRY_RUN=1 ./scripts/launch/launch-gui.sh` showed
+      `show-cursor=on`, `virtio_gpu_host_cursor_only=1`,
+      `virtio_gpu_cursor_rgba_compat=1`, `root=/dev/disk0`, and `video=1280x800`
+      with no `weston_software_cursor`; `git diff --check` passed for the
+      touched launcher/kernel files; `cmake --build build-x86_64 --target
+      kernel -j2` passed; mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=58.0 speed=1.003 presentedFPS=0.0
+      decodedFPS=58.0 dropPct=0.00 advanced=15.31`; X11 proof passed with
+      `HOSTIDLE-X11-PASS launch_changed_pixels=588179
+      input_changed_pixels=3955 exit_changed_pixels=588096`.
+- [ ] Follow-up after the black box disappeared but cursor shapes stopped
+      changing: that is the expected tradeoff of
+      `virtio_gpu_host_cursor_only=1`. The launcher now exposes
+      `QEMU_GTK_CURSOR_MODE=host|guest`: `host` is the default black-box-free
+      mode with a fixed host cursor shape, while `guest` restores guest
+      hardware cursor image uploads and surface-specific cursor shapes for
+      focused debugging of the QEMU/GTK cursor alpha/composition path.
+- [ ] Verification for `QEMU_GTK_CURSOR_MODE`: default dry-run shows
+      `show-cursor=on`, `virtio_gpu_host_cursor_only=1`, and
+      `virtio_gpu_cursor_rgba_compat=1`; guest-mode dry-run shows
+      `show-cursor=off`, `virtio_gpu_cursor_rgba_compat=1`, and no
+      `virtio_gpu_host_cursor_only`; `git diff --check` passed for the
+      launcher edit.
+- [ ] Prior software-cursor diagnostic evidence:
+      `cmake --build build-x86_64/ports --target
+      port-wayland-session-install -j2` passed; direct rootfs refresh with
+      `scripts/image/make-rootfs.sh build-x86_64/sysroot
+      build-x86_64/fs.img 3456` passed; mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=59.1 speed=1.003 presentedFPS=0.0
+      decodedFPS=59.1 dropPct=0.00 advanced=15.41`; Chromium/X11 boot proved
+      Weston logged `xv6: using software cursor rendering` and
+      `cursor planes: no`. The exported package was refreshed and
+      `/home/es/xv6-wayland-chromium-qemu/` still contains only
+      `launch-qemu.sh` and `xv6-wayland-chromium.iso`.
 
 Latest AF_UNIX change:
 
