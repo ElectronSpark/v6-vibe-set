@@ -72,6 +72,26 @@ if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
 
+stage_wayland_chromium_launcher() {
+    local src="${REPO_ROOT}/scripts/image/wayland-chromium-launcher.c"
+    local chrome="${STAGE}/opt/host-gui/wayland-chromium/chrome-linux64/chrome"
+    local out="${STAGE}/bin/wayland-chromium"
+    local cc_bin="${CC:-cc}"
+
+    [[ -f "${src}" && -x "${chrome}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        if [[ -x "${out}" ]]; then
+            echo "make-rootfs: warning: ${cc_bin} not found; keeping existing Chromium launcher" >&2
+            return 0
+        fi
+        echo "make-rootfs: ${cc_bin} not found; cannot build Chromium launcher" >&2
+        exit 1
+    fi
+
+    mkdir -p "${STAGE}/bin"
+    "${cc_bin}" -O2 -Wall -Wextra -o "${out}" "${src}"
+}
+
 # libxkbcommon looks for X11 Compose tables at runtime.  Stage the compact
 # locale test data we already build with libxkbcommon so Weston clients do not
 # warn and disable compose when the host image lacks full X11 locale files.
@@ -149,6 +169,8 @@ if [[ -f "${STAGE}/share/gstreamer-1.0/registry.x86_64.bin" ]]; then
     ln -sfn / "${STAGE}/tmp/xv6-hyperv-build/sysroot"
 fi
 
+stage_wayland_chromium_launcher
+
 find "${STAGE}/root/desktop" -maxdepth 1 -type f -name '*.desktop' -delete
 
 write_desktop_link() {
@@ -204,6 +226,7 @@ fi
 
 write_desktop_link_if_executable "Editor" "/bin/xv6-open-editor"
 write_desktop_link_if_executable "Browser" "/bin/netsurf"
+write_desktop_link_if_executable "Chromium" "/bin/wayland-chromium"
 
 is_webkit_placeholder() {
     local path="$1"

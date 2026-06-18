@@ -54,8 +54,15 @@
 #                           DMABUF setup before the xv6 desktop appears.
 #   QEMU_GTK_GRAB_ON_HOVER=on
 #                           Grab pointer/keyboard as the cursor enters GTK.
-#   QEMU_GTK_SHOW_CURSOR=off
-#                           Hide the host cursor and use the guest cursor.
+#   QEMU_GTK_CURSOR_MODE=host
+#                           GTK cursor policy: host keeps QEMU GTK's host
+#                           pointer visible and suppresses guest cursor-image
+#                           uploads to avoid WSLg black cursor squares; guest
+#                           restores guest hardware cursor images and shape
+#                           changes for focused cursor debugging.
+#   QEMU_GTK_SHOW_CURSOR=on
+#                           Keep the host cursor visible in GTK. Default is
+#                           on for host cursor mode and off for guest mode.
 #   QEMU_SDL_GRAB_MOD=lctrl-lalt
 #                           SDL mouse/keyboard ungrab modifier.
 #   QEMU_SDL_SHOW_CURSOR=on
@@ -112,7 +119,19 @@ QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-x11}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
-QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
+QEMU_GTK_CURSOR_MODE="${QEMU_GTK_CURSOR_MODE:-host}"
+case "${QEMU_GTK_CURSOR_MODE}" in
+        host)
+                QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-on}"
+                ;;
+        guest)
+                QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
+                ;;
+        *)
+                echo "unsupported QEMU_GTK_CURSOR_MODE: ${QEMU_GTK_CURSOR_MODE}" >&2
+                exit 2
+                ;;
+esac
 QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
 QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
 QEMU_GTK_GL="${QEMU_GTK_GL:-auto}"
@@ -462,6 +481,19 @@ case "${ARCH}" in
                 fi
                 if [[ "${QEMU_GPU}" == *"-gl"* ]]; then
                         qemu_prepend_default_flag virtio_gpu_3d_scanout 1
+                        if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                                # QEMU GTK's guest cursor pixbuf path can
+                                # render Chromium cursor images as a black
+                                # square on WSLg.  Keep Weston off the
+                                # software cursor path in both modes; host
+                                # mode uses the frontend pointer, while guest
+                                # mode restores hardware cursor images so
+                                # surface-specific shapes can be debugged.
+                                if [[ "${QEMU_GTK_CURSOR_MODE}" == "host" ]]; then
+                                        qemu_prepend_default_flag virtio_gpu_host_cursor_only 1
+                                fi
+                                qemu_prepend_default_flag virtio_gpu_cursor_rgba_compat 1
+                        fi
                         # Keep the VM desktop at the configured guest mode.
                         # The full-screen pageflip-copy path is useful for
                         # KMS experiments, but it can make the host window
@@ -496,9 +528,12 @@ case "${ARCH}" in
                 #                         as the host cursor enters the canvas;
                 #                         without this, GTK may keep motion
                 #                         events on the host side.
-                #   - show-cursor=off     Hide the host pointer so the guest
-                #                         cursor is the only cursor visible in
-                #                         the VM.
+                #   - QEMU_GTK_CURSOR_MODE=host
+                #                         Keep the host pointer visible and
+                #                         suppress guest cursor-image uploads.
+                #   - QEMU_GTK_CURSOR_MODE=guest
+                #                         Restore guest hardware cursor images
+                #                         and shape changes for cursor debugging.
                 # Press Ctrl-Alt-G to release the grab.
                 if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                         DISPLAY_ARGS=(-nographic -serial mon:stdio)
