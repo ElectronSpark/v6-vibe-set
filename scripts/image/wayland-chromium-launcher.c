@@ -71,6 +71,7 @@ int main(int argc, char **argv)
     char *child_argv[MAX_ARGS];
     const char *backend = getenv("WAYLAND_CHROMIUM_BACKEND");
     const char *multiprocess = getenv("WAYLAND_CHROMIUM_MULTIPROCESS");
+    const char *alsa_output_device = getenv("WAYLAND_CHROMIUM_ALSA_OUTPUT_DEVICE");
     char *extra_flags = getenv("WAYLAND_CHROMIUM_EXTRA_FLAGS");
     int use_x11 = backend && strcmp(backend, "x11") == 0;
     int use_multiprocess = multiprocess && strcmp(multiprocess, "1") == 0;
@@ -100,6 +101,7 @@ int main(int argc, char **argv)
     set_default_env("GSETTINGS_SCHEMA_DIR", "/share/glib-2.0/schemas");
     set_default_env("GIO_MODULE_DIR", "/lib/gio/modules");
     set_default_env("GIO_USE_TLS", "gnutls");
+    set_default_env("ALSA_CONFIG_PATH", "/usr/share/alsa/alsa.conf");
     set_default_env("XV6_GTK_DISABLE_ACCESSIBILITY", "1");
     set_default_env("XV6_DRM_TRACE", "1");
     set_default_env("DBUS_SESSION_BUS_ADDRESS",
@@ -161,6 +163,15 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS,
                "--user-data-dir=/tmp/wayland-chromium-profile");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-logging=stderr");
+    if (!alsa_output_device || !alsa_output_device[0])
+        alsa_output_device = "default";
+    if (strcmp(alsa_output_device, "none") != 0) {
+        static char alsa_output_arg[128];
+
+        snprintf(alsa_output_arg, sizeof(alsa_output_arg),
+                 "--alsa-output-device=%s", alsa_output_device);
+        append_arg(child_argv, &idx, MAX_ARGS, alsa_output_arg);
+    }
     append_extra_flags(child_argv, &idx, MAX_ARGS, extra_flags);
 
     for (int i = 1; i < argc && idx + 1 < MAX_ARGS; i++)

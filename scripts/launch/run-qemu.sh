@@ -50,10 +50,14 @@
 #                           while relative devices can be host-edge clamped.
 #   QEMU_AUDIO=virtio       Audio device path: virtio or none. virtio exposes
 #                           a QEMU virtio-sound PCI card to the guest.
-#   QEMU_AUDIO_BACKEND=none Host audio backend for virtio-sound. The default
-#                           creates a silent card that does not require host
-#                           PulseAudio/PipeWire. Set pa, pipewire, sdl, wav,
-#                           etc. for audible playback on capable hosts.
+#   QEMU_AUDIO_STREAMS=1    Number of virtio-sound streams. The default is one
+#                           playback stream because the xv6 driver is currently
+#                           playback-only; use 2 when capture support lands.
+#   QEMU_AUDIO_BACKEND=auto Host audio backend for virtio-sound. auto picks
+#                           PulseAudio/PipeWire/SDL for interactive launches
+#                           when available and stays silent for nographic.
+#                           Set none for a silent card, or pa, pipewire, sdl,
+#                           wav, etc. for an explicit QEMU backend.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_GTK_GL=auto        GTK OpenGL mode for QEMU. auto uses GLES on WSL
 #                           virgl because gtk,gl=on can stop at GtkGLArea
@@ -104,7 +108,8 @@ else
 fi
 QEMU_NET="${QEMU_NET:-1}"
 QEMU_AUDIO="${QEMU_AUDIO:-virtio}"
-QEMU_AUDIO_BACKEND="${QEMU_AUDIO_BACKEND:-none}"
+QEMU_AUDIO_STREAMS="${QEMU_AUDIO_STREAMS:-1}"
+QEMU_AUDIO_BACKEND="${QEMU_AUDIO_BACKEND:-auto}"
 QEMU_AUDIO_ID="${QEMU_AUDIO_ID:-xv6snd0}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 QEMU_GPU="${QEMU_GPU:-auto}"
@@ -324,6 +329,45 @@ host_dri_has_render_node() {
                 [[ -e "${node}" ]] && return 0
         done
         return 1
+}
+
+qemu_audio_backend_available() {
+        local backend="$1"
+
+        qemu-system-"${ARCH}" -audiodev help 2>&1 |
+                awk '/^Available audio drivers:/{seen=1; next} seen && NF {print $1}' |
+                grep -qx -- "${backend}"
+}
+
+resolve_qemu_audio_backend() {
+        if [[ "${QEMU_AUDIO_BACKEND}" != "auto" ]]; then
+                return 0
+        fi
+
+        if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
+                QEMU_AUDIO_BACKEND="none"
+                return 0
+        fi
+
+        if qemu_audio_backend_available pa &&
+           { [[ -n "${PULSE_SERVER:-}" ]] ||
+             [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ]]; }; then
+                QEMU_AUDIO_BACKEND="pa"
+                return 0
+        fi
+
+        if qemu_audio_backend_available pipewire &&
+           [[ -S "${PIPEWIRE_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}/pipewire-0" ]]; then
+                QEMU_AUDIO_BACKEND="pipewire"
+                return 0
+        fi
+
+        if [[ "${DISPLAY_MODE}" == "sdl" ]] && qemu_audio_backend_available sdl; then
+                QEMU_AUDIO_BACKEND="sdl"
+                return 0
+        fi
+
+        QEMU_AUDIO_BACKEND="none"
 }
 
 host_is_wsl() {
@@ -605,10 +649,12 @@ case "${ARCH}" in
                         NET_ARGS=(-net none)
                 fi
                 AUDIO_ARGS=()
+                resolve_qemu_audio_backend
                 case "${QEMU_AUDIO}" in
                         virtio)
+                                echo "run-qemu: using ${QEMU_AUDIO_BACKEND} audio backend for virtio-sound" >&2
                                 AUDIO_ARGS=(-audiodev "${QEMU_AUDIO_BACKEND},id=${QEMU_AUDIO_ID}"
-                                            -device "virtio-sound-pci,audiodev=${QEMU_AUDIO_ID}")
+                                            -device "virtio-sound-pci,audiodev=${QEMU_AUDIO_ID},streams=${QEMU_AUDIO_STREAMS}")
                                 ;;
                         none|0)
                                 ;;

@@ -1,6 +1,6 @@
 # Linux DRM / GUI ABI Compatibility Plan
 
-Last updated: 2026-06-17.
+Last updated: 2026-06-18.
 
 This document is the handoff prompt and active checklist for the Linux GUI ABI
 effort. Keep it compact enough for a fresh session to read, but do not strip
@@ -98,6 +98,42 @@ permission. Use the available access directly. Do not push without asking.
 - [ ] Keep fullscreen YouTube performance open; the local video gate being green
       does not prove YouTube is solved.
 
+Latest audio bring-up:
+
+- [ ] QEMU GUI launches now default `QEMU_AUDIO_BACKEND=auto` for virtio-sound:
+      interactive GTK/SDL paths pick an available host backend and nographic
+      stays silent. Explicit `QEMU_AUDIO_BACKEND=wav,path=...` remains useful
+      for deterministic smoke evidence.
+- [ ] The kernel virtio-sound playback path is interrupt-capable on a shared
+      PCI IRQ line. The IRQ core now supports chained handlers for shared
+      legacy INTx lines, and the virtio-sound interrupt handler ignores shared
+      IRQs when its ISR status is clear.
+- [ ] xv6 exposes OSS `/dev/dsp` plus a minimal Linux ALSA hardware surface:
+      `/dev/snd/controlC0` and playback `/dev/snd/pcmC0D0p`. The current GUI
+      image still routes ALSA's `default` PCM through libasound's file plugin
+      to `/dev/dsp` for broad compatibility; Chromium's launcher sets
+      `ALSA_CONFIG_PATH` and defaults `--alsa-output-device=default`.
+- [ ] Verification: direct `/dev/dsp` WAV proof produced nonzero samples;
+      an in-guest libasound reducer opened `default`, configured S16_LE
+      stereo 48 kHz, wrote frames, and produced nonzero WAV samples; Chromium
+      WebAudio smoke opened `/usr/share/alsa/alsa.conf` and `/dev/dsp` on its
+      `AudioThread`, and QEMU captured
+      `/tmp/xv6-chromium-audio-alsa-default.wav` with size `11474040` and
+      `11403444` nonzero bytes after the header.
+- [ ] Latest ALSA hardware proof: a raw ioctl reducer opened
+      `/dev/snd/controlC0` and `/dev/snd/pcmC0D0p`, queried card/PCM info,
+      configured S16_LE stereo 48 kHz, wrote `4800` frames with
+      `SNDRV_PCM_IOCTL_WRITEI_FRAMES`, drained, and produced
+      `/tmp/xv6-alsa-hwprobe.wav` with nonzero samples. A libasound `hw:0,0`
+      reducer opened the hardware PCM, completed `snd_pcm_set_params()`, wrote
+      `4800` frames, drained, and produced `/tmp/xv6-alsa-lib-hwprobe.wav`
+      with nonzero samples against the refreshed rootfs image.
+- [ ] Remaining audio ABI gaps: the ALSA surface is intentionally minimal
+      playback-only hardware enumeration, not a complete ALSA implementation.
+      Timer, capture, mmap, async notification, mixer controls, and richer
+      channel-map/status behavior remain future compatibility work if a Linux
+      GUI/audio program proves it needs them.
+
 ## Recently Touched Kernel Area
 
 Current active kernel patch area:
@@ -121,6 +157,14 @@ Current active kernel patch area:
 - [ ] `kernel/kernel/vfs/unix_socket.c`
 - [ ] `kernel/kernel/lwip_port/sys_arch.c`
 - [ ] `kernel/kernel/lwip_port/sys_socket.c`
+- [ ] `kernel/kernel/dev/ossaudio.c`
+- [ ] `kernel/kernel/inc/trap.h`
+- [ ] `kernel/kernel/irq/irq.c`
+- [ ] `kernel/kernel/virtio_snd.c`
+- [ ] `scripts/launch/run-qemu.sh`
+- [ ] `scripts/image/wayland-chromium-launcher.c`
+- [ ] `rootfs-overlay/usr/share/alsa/alsa.conf`
+- [ ] `rootfs-overlay/share/chromium-audio-smoke.html`
 
 Latest cursor artifact mitigation:
 
