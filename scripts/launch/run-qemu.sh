@@ -48,6 +48,12 @@
 #                           GTK and vmmouse for SDL because QEMU's SDL frontend
 #                           can fail to deliver absolute tablet motion on WSLg
 #                           while relative devices can be host-edge clamped.
+#   QEMU_AUDIO=virtio       Audio device path: virtio or none. virtio exposes
+#                           a QEMU virtio-sound PCI card to the guest.
+#   QEMU_AUDIO_BACKEND=none Host audio backend for virtio-sound. The default
+#                           creates a silent card that does not require host
+#                           PulseAudio/PipeWire. Set pa, pipewire, sdl, wav,
+#                           etc. for audible playback on capable hosts.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_GTK_GL=auto        GTK OpenGL mode for QEMU. auto uses GLES on WSL
 #                           virgl because gtk,gl=on can stop at GtkGLArea
@@ -97,6 +103,9 @@ else
         QEMU_MACHINE_AUTO=0
 fi
 QEMU_NET="${QEMU_NET:-1}"
+QEMU_AUDIO="${QEMU_AUDIO:-virtio}"
+QEMU_AUDIO_BACKEND="${QEMU_AUDIO_BACKEND:-none}"
+QEMU_AUDIO_ID="${QEMU_AUDIO_ID:-xv6snd0}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 QEMU_GPU="${QEMU_GPU:-auto}"
 QEMU_GDB="${QEMU_GDB:-0}"
@@ -595,6 +604,19 @@ case "${ARCH}" in
                 else
                         NET_ARGS=(-net none)
                 fi
+                AUDIO_ARGS=()
+                case "${QEMU_AUDIO}" in
+                        virtio)
+                                AUDIO_ARGS=(-audiodev "${QEMU_AUDIO_BACKEND},id=${QEMU_AUDIO_ID}"
+                                            -device "virtio-sound-pci,audiodev=${QEMU_AUDIO_ID}")
+                                ;;
+                        none|0)
+                                ;;
+                        *)
+                                echo "unsupported QEMU_AUDIO: ${QEMU_AUDIO}" >&2
+                                exit 2
+                                ;;
+                esac
                 GPU_ARGS=()
                 gpu_gl_opts="xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES}"
                 # virgl ('-gl') GPU types enable 3D via virglrenderer.  QEMU's
@@ -751,6 +773,7 @@ case "${ARCH}" in
                         "${GPU_ARGS[@]}"
                         "${INPUT_ARGS[@]}"
                         "${NET_ARGS[@]}"
+                        "${AUDIO_ARGS[@]}"
                         -append "${QEMU_APPEND}"
                         "${QEMU_GDB_ARGS[@]}")
                 if [[ -n "${QEMU_EXTRA}" ]]; then
