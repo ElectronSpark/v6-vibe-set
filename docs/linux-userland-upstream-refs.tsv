@@ -19,7 +19,7 @@ libxml2	ports/libxml2/src	imported-source	v2.15.0-85-ga7511af0 a7511af09f99 mast
 libpng	ports/libpng/src	imported-source	v1.6.58-128-g614ab644f 614ab644f809 libpng18	https://github.com/pnggroup/libpng.git	0
 libjpeg-turbo	ports/libjpeg-turbo/src	imported-source	3.1.90-13-g9b09d516 9b09d5164c34 main	https://github.com/libjpeg-turbo/libjpeg-turbo.git	0
 freetype	ports/freetype/src	imported-source	VER-2-14-3-22-g1803559c4 1803559c4ee4 master	https://gitlab.freedesktop.org/freetype/freetype.git	0
-fontconfig	ports/fontconfig/src	imported-source	8d5b933 8d5b933bc4ad main	https://gitlab.freedesktop.org/fontconfig/fontconfig.git	0
+fontconfig	ports/fontconfig/src	imported-source	29f5a46 29f5a469ee74 main	https://gitlab.freedesktop.org/fontconfig/fontconfig.git	0
 pixman	ports/pixman/src	imported-source	6fe11b2 6fe11b29cd20 master	https://gitlab.freedesktop.org/pixman/pixman.git	0
 fribidi	ports/fribidi/src	imported-source	5c85a17 5c85a174650a master	https://github.com/fribidi/fribidi.git	0
 harfbuzz	ports/harfbuzz/src	imported-source	73db8cc 73db8cc1a5fe main	https://github.com/harfbuzz/harfbuzz.git	0
