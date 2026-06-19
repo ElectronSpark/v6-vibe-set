@@ -40,8 +40,8 @@ libepoxy	ports/libepoxy/src	imported-source	1.5.10-33-g05001ee 05001ee156ca xv6-
 wayland-protocols	ports/wayland-protocols/src	data-or-headers	911ab50 911ab509edf6 main	https://gitlab.freedesktop.org/wayland/wayland-protocols.git	0
 libxkbcommon	ports/libxkbcommon/src	imported-source	151c367 151c367afb21 master	https://github.com/xkbcommon/libxkbcommon.git	0
 xv6-gbm	ports/xv6-gbm	local-shim	local	local	0
-mesa	ports/mesa/src	imported-source	85114b90 85114b90acdd v6-port	https://gitlab.freedesktop.org/mesa/mesa.git	0
-weston	ports/weston/src	imported-source	15.0.1-11-g29c4d756 29c4d7561d5e v6-port	https://gitlab.freedesktop.org/wayland/weston.git	0
+mesa	ports/mesa/src	imported-source	5ca5a64d 5ca5a64d5546 v6-port	https://gitlab.freedesktop.org/mesa/mesa.git	0
+weston	ports/weston/src	imported-source	15.0.1-12-g47630479 47630479175f v6-port	https://gitlab.freedesktop.org/wayland/weston.git	0
 netsurf-buildsystem	ports/netsurf-buildsystem/src	build-wrapper	771d7cb 771d7cb06918 master	git://git.netsurf-browser.org/buildsystem.git	0
 netsurf-libwapcaplet	ports/netsurf-libwapcaplet/src	imported-source	c7c128d c7c128d3eb32 master	git://git.netsurf-browser.org/libwapcaplet.git	0
 netsurf-libparserutils	ports/netsurf-libparserutils/src	imported-source	6b0cbf0 6b0cbf086ca8 master	git://git.netsurf-browser.org/libparserutils.git	0
