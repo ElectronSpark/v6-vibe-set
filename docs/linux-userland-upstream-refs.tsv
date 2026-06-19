@@ -27,7 +27,7 @@ glib	ports/glib/src	imported-source	eee20d547 eee20d54723c main	https://gitlab.g
 atk	ports/atk/src	imported-source	df8fb97 df8fb9750779 master	https://gitlab.gnome.org/Archive/atk.git	0
 cairo	ports/cairo/src	imported-source	4ca0d58 4ca0d581cbbb master	https://gitlab.freedesktop.org/cairo/cairo.git	0
 gdk-pixbuf	ports/gdk-pixbuf/src	imported-source	5e6796b 5e6796b2e4d0 master	https://gitlab.gnome.org/GNOME/gdk-pixbuf.git	0
-pango	ports/pango/src	imported-source	42abec2 42abec279c99 main	https://gitlab.gnome.org/GNOME/pango.git	0
+pango	ports/pango/src	imported-source	668cedc 668cedc2db6b main	https://gitlab.gnome.org/GNOME/pango.git	0
 gtk3	ports/gtk3/src	imported-source	3.24.52-15-g2642677d1f 2642677d1fbf v6-port	https://gitlab.gnome.org/GNOME/gtk.git	0
 libudev	ports/libudev/src	local-shim	local	local	0
 libseat	ports/libseat/src	local-shim	local	local	0
