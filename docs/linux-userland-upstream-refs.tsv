@@ -23,7 +23,7 @@ fontconfig	ports/fontconfig/src	imported-source	29f5a46 29f5a469ee74 main	https:
 pixman	ports/pixman/src	imported-source	6fe11b2 6fe11b29cd20 master	https://gitlab.freedesktop.org/pixman/pixman.git	0
 fribidi	ports/fribidi/src	imported-source	5c85a17 5c85a174650a master	https://github.com/fribidi/fribidi.git	0
 harfbuzz	ports/harfbuzz/src	imported-source	73db8cc 73db8cc1a5fe main	https://github.com/harfbuzz/harfbuzz.git	0
-glib	ports/glib/src	imported-source	a7b72b71b a7b72b71bcf7 main	https://gitlab.gnome.org/GNOME/glib.git	0
+glib	ports/glib/src	imported-source	eee20d547 eee20d54723c main	https://gitlab.gnome.org/GNOME/glib.git	0
 atk	ports/atk/src	imported-source	db329b0 db329b0face5 master	https://gitlab.gnome.org/Archive/atk.git	0
 cairo	ports/cairo/src	imported-source	4ca0d58 4ca0d581cbbb master	https://gitlab.freedesktop.org/cairo/cairo.git	0
 gdk-pixbuf	ports/gdk-pixbuf/src	imported-source	0205330 0205330875bf master	https://gitlab.gnome.org/GNOME/gdk-pixbuf.git	0
