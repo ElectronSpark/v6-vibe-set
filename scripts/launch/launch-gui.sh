@@ -13,11 +13,24 @@ ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
-QEMU_GPU="${QEMU_GPU:-auto}"
+# Keep the one-command GUI launcher featureful by default.  Use a non-GL
+# virtio-gpu device so hosts with broken QEMU virgl modules still boot through
+# the Bochs display fallback; callers can opt into virgl with QEMU_GPU=*-gl.
+QEMU_GPU="${QEMU_GPU:-virtio-gpu}"
+QEMU_NET="${QEMU_NET:-1}"
+QEMU_NET_MODEL="${QEMU_NET_MODEL:-e1000}"
+QEMU_AUDIO="${QEMU_AUDIO:-virtio}"
+QEMU_INPUT="${QEMU_INPUT:-virtio}"
+USE_KVM="${USE_KVM:-1}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0 weston=1 netsurf=0 webkit=0}"
 AUTO_BUILD="${AUTO_BUILD:-1}"
 export DISPLAY_MODE
 export QEMU_GPU
+export QEMU_NET
+export QEMU_NET_MODEL
+export QEMU_AUDIO
+export QEMU_INPUT
+export USE_KVM
 export QEMU_APPEND
 
 newer_than_fsimg() {
@@ -118,6 +131,11 @@ cmd=(bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}")
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     printf 'DISPLAY_MODE=%q' "${DISPLAY_MODE}"
     printf ' QEMU_GPU=%q' "${QEMU_GPU}"
+    printf ' QEMU_NET=%q' "${QEMU_NET}"
+    printf ' QEMU_NET_MODEL=%q' "${QEMU_NET_MODEL}"
+    printf ' QEMU_AUDIO=%q' "${QEMU_AUDIO}"
+    printf ' QEMU_INPUT=%q' "${QEMU_INPUT}"
+    printf ' USE_KVM=%q' "${USE_KVM}"
     printf ' %q' "${cmd[@]}"
     printf '\n'
     exit 0
