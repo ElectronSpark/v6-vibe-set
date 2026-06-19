@@ -1,0 +1,14 @@
+item	kind	upstream_ref	current_delta	abi_adaptation	target_owner	status	validation
+libpng	imported-source	ports/libpng/src@v1.6.58-128-g614ab644f 614ab644f809 libpng18	imported src has no xv6 marker, source delta, or patch file; procfs/errno hits are upstream CPU-feature and tool behavior	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-libpng -j2
+libjpeg-turbo	imported-source	ports/libjpeg-turbo/src@3.1.90-13-g9b09d516 9b09d5164c34 main	pending review	pending	kernel-abi	pending	not run
+freetype	imported-source	ports/freetype/src@VER-2-14-3-22-g1803559c4 1803559c4ee4 master	pending review	pending	kernel-abi	pending	not run
+fontconfig	imported-source	ports/fontconfig/src@8d5b933 8d5b933bc4ad main	pending review	pending	kernel-abi	pending	not run
+pixman	imported-source	ports/pixman/src@6fe11b2 6fe11b29cd20 master	pending review	pending	kernel-abi	pending	not run
+fribidi	imported-source	ports/fribidi/src@5c85a17 5c85a174650a master	pending review	pending	build-wrapper	pending	not run
+harfbuzz	imported-source	ports/harfbuzz/src@73db8cc 73db8cc1a5fe main	pending review	pending	kernel-abi	pending	not run
+glib	imported-source	ports/glib/src@a7b72b71b a7b72b71bcf7 main	pending review	pending	kernel-abi	pending	not run
+atk	imported-source	ports/atk/src@db329b0 db329b0face5 master	pending review	pending	kernel-abi	pending	not run
+cairo	imported-source	ports/cairo/src@4ca0d58 4ca0d581cbbb master	pending review	pending	kernel-abi	pending	not run
+gdk-pixbuf	imported-source	ports/gdk-pixbuf/src@0205330 0205330875bf master	pending review	pending	kernel-abi	pending	not run
+pango	imported-source	ports/pango/src@42abec2 42abec279c99 main	pending review	pending	kernel-abi	pending	not run
+gtk3	imported-source	ports/gtk3/src@3.24.52-15-g2642677d1f 2642677d1fbf v6-port	pending review	pending	kernel-abi	pending	not run
