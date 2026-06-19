@@ -90,13 +90,56 @@ permission. Use the available access directly. Do not push without asking.
 - [ ] Latest mandatory video gate evidence is in
       `build-x86_64/perf-video-gate/run.log`.
 - [ ] Latest gate result:
-      `xv6-perf-video:RESULT pass fps=58.0 speed=1.003 presentedFPS=0.0 decodedFPS=58.0 dropPct=0.00 advanced=15.31`.
+      `xv6-perf-video:RESULT pass fps=59.2 speed=1.004 presentedFPS=0.0 decodedFPS=59.2 dropPct=0.00 advanced=15.32`.
 - [ ] Latest gate frame evidence:
       `build-x86_64/perf-video-gate/perf-video-frame.ppm`.
 - [ ] Latest gate PNG evidence:
       `build-x86_64/perf-video-gate/perf-video-frame.png`.
 - [ ] Keep fullscreen YouTube performance open; the local video gate being green
-      does not prove YouTube is solved.
+      does not prove YouTube is solved. Current durable YouTube evidence is
+      watch-page playback, not deterministic fullscreen playback.
+- [ ] Latest YouTube watch-page cursor-motion probe:
+      `chromium-youtube-wayland-quicoff-long` requested `vq=hd720` on the real
+      YouTube watch page, ran native Wayland Chromium with `--disable-quic`,
+      and captured 8 steady plus 8 cursor-motion full-frame samples. All
+      adjacent pairs advanced (`steady` about 177k-181k changed pixels;
+      `cursor` about 174k-219k). Frame evidence lives under
+      `build-x86_64/chromium-youtube-smoothness/chromium-youtube-wayland-quicoff-long-frames/`.
+      `chromium-youtube-fullscreen-250ms-20260618a` passed 30 steady samples
+      and 30 cursor-motion samples at 250 ms requested cadence with zero
+      inactive adjacent crop pairs. Evidence lives under
+      `build-x86_64/chromium-youtube-smoothness/`.
+- [ ] Mesa Gallium VA is now staged for the KVM/virgl path:
+      `ports/mesa/CMakeLists.txt` enables `-Dgallium-va=enabled`,
+      `-Dvideo-codecs=all_free`, forces the libva fallback subproject, and
+      cleans stale sysroot `libva*.so` regular files before install so libva
+      soname symlinks can be created. The sysroot has `include/va/va.h`,
+      `lib/pkgconfig/libva.pc`, `lib/libva.so -> libva.so.2`, and
+      `lib/dri/virtio_gpu_drv_video.so -> ../libgallium-26.2.0-devel.so`.
+- [ ] Chromium's launcher now defaults `LIBVA_DRIVERS_PATH=/lib/dri`,
+      `LIBVA_DRIVER_NAME=virtio_gpu`, `--ignore-gpu-blocklist`,
+      `--enable-gpu-rasterization`, and
+      `--enable-features=UseOzonePlatform,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder,CanvasOopRasterization`.
+      The old `vaInitialize failed` line no longer appeared in the latest
+      YouTube artifacts, but verbose Chromium `--vmodule=*vaapi*,*video*`
+      diagnostics also did not prove a VA decoder was selected. Keep hardware
+      video decode as an open proof item rather than a solved claim.
+- [ ] Latest real YouTube evidence after the VA staging:
+      `chromium-youtube-va-fullscreen` entered YouTube fullscreen on
+      `https://www.youtube.com/watch?v=dQw4w9WgXcQ&vq=hd720&autoplay=1&mute=1`,
+      captured steady and cursor-motion frame series, and adjacent whole-frame
+      deltas were large in both phases. Evidence:
+      `build-x86_64/chromium-youtube-smoothness/chromium-youtube-va-fullscreen.run.log`
+      and `build-x86_64/chromium-youtube-smoothness/chromium-youtube-va-fullscreen-frames/`.
+      A shorter default-launcher check reached the YouTube page, but captured
+      too early/paused and is not a smoothness baseline.
+- [ ] Chromium native-Wayland menu popup placement was fixed in Weston xdg-shell
+      constraint handling. The reduced proof is
+      `scripts/gpu/chromium-menu-proof.expect`. Before the fix, Chromium asked
+      for a `436x710` menu and Weston configured `popup=582,-80 436x126`,
+      leaving the visible top-strip menu. After the fix, the same proof
+      configured `popup=582,80 436x640` and captured a full menu in
+      `build-x86_64/chromium-menu-proof/chromium-menu-flip-fix.png`.
 
 Latest audio bring-up:
 
@@ -134,6 +177,31 @@ Latest audio bring-up:
       channel-map/status behavior remain future compatibility work if a Linux
       GUI/audio program proves it needs them.
 
+Latest Chromium file-lock crash:
+
+- [ ] Chromium could panic the kernel while opening with
+      `spin_lock reentry on 'vfs_inode_flock'`. The reduced kernel bug was in
+      the blocking `F_SETLKW`/`flock()` wait path: `tq_wait_in_state()` drops
+      and then reacquires the passed spinlock before returning, but
+      `vfs_file_lock_ctl()` retried by jumping to a loop top that locked the
+      same inode lock again.
+- [ ] `kernel/kernel/vfs/file_lock.c` now locks before the retry loop and
+      treats a successful wake as returning with `inode->file_lock` already
+      held. Nonblocking `F_SETLK`, `F_GETLK`, unlock, and interrupted wait
+      exits keep their explicit unlock/return paths.
+- [ ] Verification: `git diff --check`, `git -C kernel diff --check`, and
+      `git -C ports diff --check` passed. `cmake --build build-x86_64
+      --target kernel -j2` passed. Mandatory video gate passed with
+      `xv6-perf-video:RESULT pass fps=59.0 speed=1.003 presentedFPS=0.0
+      decodedFPS=59.0 dropPct=0.00 advanced=15.36`.
+- [ ] Verification: focused Chromium X11 multiprocess `about:blank` run passed
+      after the fix with guest framebuffer evidence:
+      `CHROMIUM-SUPERVISOR-LOW-NOISE-DONE` in
+      `build-x86_64/wayland-chromium-supervisor-low-noise/chromium-flock-reentry-fix-guestfb-20260618.run.log`.
+- [ ] Note: `kernel-sparse` still fails on pre-existing Hyper-V sparse parse
+      errors and broad context warnings; no new `file_lock.c` sparse complaint
+      appeared in that run.
+
 ## Recently Touched Kernel Area
 
 Current active kernel patch area:
@@ -161,6 +229,7 @@ Current active kernel patch area:
 - [ ] `kernel/kernel/inc/trap.h`
 - [ ] `kernel/kernel/irq/irq.c`
 - [ ] `kernel/kernel/virtio_snd.c`
+- [ ] `kernel/kernel/vfs/file_lock.c`
 - [ ] `scripts/launch/run-qemu.sh`
 - [ ] `scripts/image/wayland-chromium-launcher.c`
 - [ ] `rootfs-overlay/usr/share/alsa/alsa.conf`
@@ -2048,7 +2117,28 @@ Keep these as focused ABI probes, not product goals:
       ordinary HTTPS visual/page-title proof survives the capture path.
 - [ ] Use the narrower `rootfs-refresh` path for GUI ABI loops when only the
       rootfs image copy needs refreshing.
-- [ ] Keep fullscreen YouTube performance open as a performance backlog.
+- [ ] Current YouTube 720p/cursor-motion evidence: native Wayland Chromium is
+      the better current path than X11. `chromium-youtube-wayland-quicoff-long`
+      reached a live YouTube watch page with video advancing through both
+      steady and cursor-motion capture windows, using the default
+      Wayland backend plus `--disable-quic`; adjacent full-frame deltas stayed
+      nonzero in every sampled pair (`steady` about 177k-181k changed pixels,
+      `cursor` about 174k-219k). The prior X11 diagnostic still showed
+      Chromium GPU-process `GetVSyncParametersIfAvailable()` failures, so keep
+      X11 presentation timing separate from the ordinary desktop Chromium path.
+- [ ] Launcher optimization staged for the ordinary desktop Chromium path:
+      `/bin/wayland-chromium` defaults to native Wayland unless explicitly
+      overridden, sets `LIBVA_DRIVERS_PATH=/lib/dri` and
+      `LIBVA_DRIVER_NAME=virtio_gpu`, enables Chromium's
+      `AcceleratedVideoDecodeLinuxGL`/VAAPI ignore-driver-check features, and
+      disables QUIC to avoid YouTube taking the UDP/QUIC path through QEMU user
+      networking/lwIP while video is being profiled.
+- [ ] Fullscreen YouTube validation remains open: the current automated probe
+      can show watch-page video progress under cursor motion, but the
+      fullscreen trigger is not deterministic yet (`keyinject` delivered `f`
+      and direct control clicks landed, but the captured frame remained the
+      normal watch page or hit a transient player/page state). Keep this as a
+      harness gap, not proof that fullscreen playback is solved.
 - [ ] Commit finished closed work in logical chunks when requested.
 - [ ] Commit inner submodules first, then super repo pointer bumps.
 - [ ] Ask before pushing.
