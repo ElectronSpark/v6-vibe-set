@@ -9,7 +9,7 @@ libpng-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not 
 zlib	imported-source	zlib-1.3.2.1-motley	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-zlib -j2
 bzip2	imported-source	66c46b8 66c46b8c9436 master	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-bzip2 -j2
 xz	imported-source	ebb0e67 ebb0e6789cef master	imported src has no xv6 marker or xv6-specific adaptation; syscall/procfs/poll hits are upstream Linux behavior	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-xz -j2
-libffi	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+libffi	imported-source	2263d60 2263d6037f8e master	removed wrapper workaround disabling exec-static trampolines; imported src has no xv6 marker and sysroot provides linux/limits.h	no	sysroot-data-headers	done	cmake --build build-x86_64/ports --target port-libffi -j2
 libexpat	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 pcre2	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 json-c	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
