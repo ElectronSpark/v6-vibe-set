@@ -1,6 +1,6 @@
 item	kind	upstream_ref	current_delta	abi_adaptation	target_owner	status	validation
 libpng	imported-source	ports/libpng/src@v1.6.58-128-g614ab644f 614ab644f809 libpng18	imported src has no xv6 marker, source delta, or patch file; procfs/errno hits are upstream CPU-feature and tool behavior	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-libpng -j2
-libjpeg-turbo	imported-source	ports/libjpeg-turbo/src@3.1.90-13-g9b09d516 9b09d5164c34 main	pending review	pending	kernel-abi	pending	not run
+libjpeg-turbo	imported-source	ports/libjpeg-turbo/src@3.1.90-13-g9b09d516 9b09d5164c34 main; original https://github.com/libjpeg-turbo/libjpeg-turbo.git	imported src has no xv6 marker, source delta, or patch file; procfs/syscall/errno hits are upstream SIMD CPU-feature detection and ordinary test/error handling	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-libjpeg-turbo -j2
 freetype	imported-source	ports/freetype/src@VER-2-14-3-22-g1803559c4 1803559c4ee4 master	pending review	pending	kernel-abi	pending	not run
 fontconfig	imported-source	ports/fontconfig/src@8d5b933 8d5b933bc4ad main	pending review	pending	kernel-abi	pending	not run
 pixman	imported-source	ports/pixman/src@6fe11b2 6fe11b29cd20 master	pending review	pending	kernel-abi	pending	not run
