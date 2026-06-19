@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PLAN = ROOT / "docs/linux-userland-upstream-depatch-plan.md"
 DEFAULT_OUT = ROOT / "build-x86_64/userland-depatch-inventory.tsv"
 DEFAULT_ALLOWLIST = ROOT / "build-x86_64/userland-depatch-allowlist.tsv"
+DEFAULT_REVIEWED_ALLOWLIST = ROOT / "docs/linux-userland-depatch-allowlist.tsv"
 
 FIELDS = [
     "name",
@@ -625,6 +626,56 @@ def write_tsv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None
         writer.writerows(rows)
 
 
+def read_tsv(path: Path, fields: list[str]) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if reader.fieldnames != fields:
+            raise SystemExit(
+                f"{rel(path)} header mismatch: expected {fields}, got {reader.fieldnames}"
+            )
+        return [{field: row.get(field, "") for field in fields} for row in reader]
+
+
+def row_key(row: dict[str, str]) -> tuple[str, str, str]:
+    return (row["name"], row["path"], row["kind"])
+
+
+def verify_reviewed_allowlist(generated: list[dict[str, str]], reviewed_path: Path) -> None:
+    if not reviewed_path.exists():
+        raise SystemExit(f"reviewed allowlist missing: {rel(reviewed_path)}")
+
+    reviewed = read_tsv(reviewed_path, ALLOWLIST_FIELDS)
+    generated_by_key = {row_key(row): row for row in generated}
+    reviewed_by_key = {row_key(row): row for row in reviewed}
+
+    missing = sorted(set(generated_by_key) - set(reviewed_by_key))
+    stale = sorted(set(reviewed_by_key) - set(generated_by_key))
+    changed = sorted(
+        key
+        for key in set(generated_by_key) & set(reviewed_by_key)
+        if generated_by_key[key] != reviewed_by_key[key]
+    )
+
+    errors = []
+    if missing:
+        errors.append(
+            "allowlist entries need review: "
+            + ", ".join(f"{name} ({path})" for name, path, _kind in missing)
+        )
+    if stale:
+        errors.append(
+            "reviewed allowlist has stale entries: "
+            + ", ".join(f"{name} ({path})" for name, path, _kind in stale)
+        )
+    if changed:
+        errors.append(
+            "reviewed allowlist entries changed: "
+            + ", ".join(f"{name} ({path})" for name, path, _kind in changed)
+        )
+    if errors:
+        raise SystemExit("\n".join(errors))
+
+
 def verify_coverage(items: list[Item]) -> None:
     actual = actual_inventory_names()
     expected = plan_names(items)
@@ -644,6 +695,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--allowlist-output", type=Path, default=DEFAULT_ALLOWLIST)
+    parser.add_argument("--reviewed-allowlist", type=Path, default=DEFAULT_REVIEWED_ALLOWLIST)
+    parser.add_argument("--check-reviewed-allowlist", action="store_true")
     parser.add_argument("--no-allowlist", action="store_true")
     return parser.parse_args()
 
@@ -657,10 +710,14 @@ def main() -> int:
     write_tsv(args.output, FIELDS, inventory_rows)
     if not args.no_allowlist:
         write_tsv(args.allowlist_output, ALLOWLIST_FIELDS, allowlist_rows)
+    if args.check_reviewed_allowlist:
+        verify_reviewed_allowlist(allowlist_rows, args.reviewed_allowlist)
 
     print(f"wrote {len(inventory_rows)} inventory rows to {rel(args.output)}")
     if not args.no_allowlist:
         print(f"wrote {len(allowlist_rows)} allowlist rows to {rel(args.allowlist_output)}")
+    if args.check_reviewed_allowlist:
+        print(f"reviewed allowlist matches {rel(args.reviewed_allowlist)}")
     return 0
 
 
