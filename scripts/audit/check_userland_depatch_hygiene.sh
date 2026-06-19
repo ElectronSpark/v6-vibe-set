@@ -8,4 +8,5 @@ python3 scripts/audit/userland_depatch_inventory.py \
     --check-reviewed-allowlist \
     --check-reviewed-source-refs \
     --check-reviewed-user-programs \
+    --check-reviewed-phases \
     "$@"
