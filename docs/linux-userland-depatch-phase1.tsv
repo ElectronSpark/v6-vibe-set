@@ -13,7 +13,7 @@ libffi	imported-source	2263d60 2263d6037f8e master	removed wrapper workaround di
 libexpat	imported-source	ports/libexpat/src@R_2_7_5-110-g1870998e 1870998e114e master	imported src has no xv6 marker or xv6-specific adaptation; getrandom/syscall/errno hits are upstream Linux behavior and GUI text hits are test data	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-libexpat -j2
 pcre2	imported-source	ports/pcre2/src@ac0eb71 ac0eb7122a0a main	imported src has no xv6 marker, source delta, patch file, or ABI adaptation hits	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-pcre2 -j2
 json-c	imported-source	ports/json-c/src@json-c-0.18-20240915 41a55cfcedb5	imported src has no xv6 marker, source delta, or patch file; errno/getrandom fallback hits are upstream behavior	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-json-c -j2
-sqlite	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+sqlite	imported-source	ports/sqlite/src@7539d2f 7539d2f1ba7d master	imported src has no xv6 marker, source delta, or patch file; errno/VFS/procfs/struct hits are upstream SQLite, autosetup, and tests	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-sqlite -j2
 ncurses	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 readline	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 openssl	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
