@@ -20,6 +20,8 @@ DEFAULT_PLAN = ROOT / "docs/linux-userland-upstream-depatch-plan.md"
 DEFAULT_OUT = ROOT / "build-x86_64/userland-depatch-inventory.tsv"
 DEFAULT_ALLOWLIST = ROOT / "build-x86_64/userland-depatch-allowlist.tsv"
 DEFAULT_REVIEWED_ALLOWLIST = ROOT / "docs/linux-userland-depatch-allowlist.tsv"
+DEFAULT_SOURCE_REFS = ROOT / "build-x86_64/userland-depatch-source-refs.tsv"
+DEFAULT_REVIEWED_SOURCE_REFS = ROOT / "docs/linux-userland-upstream-refs.tsv"
 
 FIELDS = [
     "name",
@@ -36,6 +38,7 @@ FIELDS = [
 ]
 
 ALLOWLIST_FIELDS = ["name", "path", "kind", "role", "allowed_scope"]
+SOURCE_REF_FIELDS = ["name", "path", "kind", "upstream_ref", "source_delta_count"]
 
 BUILD_WRAPPERS = {
     "cmake",
@@ -255,6 +258,18 @@ def is_git_worktree(path: Path) -> bool:
     return run_git(path, "rev-parse", "--is-inside-work-tree") == "true"
 
 
+def git_toplevel(path: Path) -> Path | None:
+    top = run_git(path, "rev-parse", "--show-toplevel")
+    if not top:
+        return None
+    return Path(top).resolve()
+
+
+def is_git_root(path: Path) -> bool:
+    top = git_toplevel(path)
+    return top == path.resolve() if top else False
+
+
 def parse_checklist(plan: Path) -> list[tuple[str, str]]:
     if not plan.exists():
         raise SystemExit(f"missing plan file: {rel(plan)}")
@@ -350,7 +365,7 @@ def source_paths(item: Item) -> list[Path]:
     for child in sorted(item.path.iterdir()):
         if child.name.startswith(".") or child.name == "patches":
             continue
-        if child.is_dir() and is_git_worktree(child):
+        if child.is_dir() and is_git_root(child):
             candidates.append(child)
     if item.kind in {"build-wrapper", "data-or-headers"} and not candidates:
         return []
@@ -360,7 +375,7 @@ def source_paths(item: Item) -> list[Path]:
 
 
 def git_ref(path: Path) -> str:
-    if not is_git_worktree(path):
+    if not is_git_root(path):
         return ""
     head = run_git(path, "rev-parse", "--short=12", "HEAD")
     branch = run_git(path, "rev-parse", "--abbrev-ref", "HEAD")
@@ -369,12 +384,47 @@ def git_ref(path: Path) -> str:
     return " ".join(parts)
 
 
+def embedded_source_ref(item: Item, source: Path) -> str:
+    if item.name == "zlib":
+        zlib_h = source / "zlib.h"
+        if zlib_h.exists():
+            match = re.search(
+                r'#define\s+ZLIB_VERSION\s+"([^"]+)"',
+                zlib_h.read_text(encoding="utf-8", errors="ignore"),
+            )
+            if match:
+                return f"zlib-{match.group(1)}"
+    if item.name == "hwdata":
+        pc_in = source / "hwdata.pc.in"
+        if pc_in.exists():
+            match = re.search(
+                r"^Version:\s*(\S+)",
+                pc_in.read_text(encoding="utf-8", errors="ignore"),
+                re.M,
+            )
+            if match:
+                return f"local-minimal-hwdata-{match.group(1)}"
+    return ""
+
+
+def source_ref(item: Item, source: Path) -> str:
+    ref = git_ref(source)
+    if ref:
+        return ref
+    ref = embedded_source_ref(item, source)
+    if ref:
+        return ref
+    if item.kind in {"local-shim", "build-wrapper"}:
+        return "local"
+    return "unknown"
+
+
 def upstream_ref(item: Item, sources: list[Path]) -> str:
     if item.kind in {"local-program", "local-shim", "build-wrapper"}:
         return "local"
     refs = []
     for src in sources:
-        ref = git_ref(src)
+        ref = source_ref(item, src)
         if ref:
             refs.append(f"{rel(src)}@{ref}")
     if refs:
@@ -387,10 +437,19 @@ def upstream_ref(item: Item, sources: list[Path]) -> str:
 def source_delta_count(sources: list[Path]) -> int:
     total = 0
     for src in sources:
-        if is_git_worktree(src):
+        top = git_toplevel(src)
+        if not top:
+            continue
+        if top == src.resolve():
             status = run_git(src, "status", "--porcelain")
-            if status:
-                total += len(status.splitlines())
+        else:
+            try:
+                pathspec = src.resolve().relative_to(top).as_posix()
+            except ValueError:
+                continue
+            status = run_git(top, "status", "--porcelain", "--", pathspec)
+        if status:
+            total += len(status.splitlines())
     return total
 
 
@@ -618,6 +677,26 @@ def build_rows(items: list[Item]) -> tuple[list[dict[str, str]], list[dict[str, 
     return rows, allowlist
 
 
+def build_source_ref_rows(items: list[Item]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in items:
+        if item.section != "Ports, Libraries, Programs, Data, And Headers":
+            continue
+        for source in source_paths(item):
+            if source.name != "src" and not is_git_worktree(source) and item.kind != "local-shim":
+                continue
+            rows.append(
+                {
+                    "name": item.name,
+                    "path": rel(source),
+                    "kind": item.kind,
+                    "upstream_ref": source_ref(item, source),
+                    "source_delta_count": str(source_delta_count([source])),
+                }
+            )
+    return rows
+
+
 def write_tsv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -640,11 +719,16 @@ def row_key(row: dict[str, str]) -> tuple[str, str, str]:
     return (row["name"], row["path"], row["kind"])
 
 
-def verify_reviewed_allowlist(generated: list[dict[str, str]], reviewed_path: Path) -> None:
+def verify_reviewed_rows(
+    generated: list[dict[str, str]],
+    reviewed_path: Path,
+    fields: list[str],
+    label: str,
+) -> None:
     if not reviewed_path.exists():
-        raise SystemExit(f"reviewed allowlist missing: {rel(reviewed_path)}")
+        raise SystemExit(f"reviewed {label} missing: {rel(reviewed_path)}")
 
-    reviewed = read_tsv(reviewed_path, ALLOWLIST_FIELDS)
+    reviewed = read_tsv(reviewed_path, fields)
     generated_by_key = {row_key(row): row for row in generated}
     reviewed_by_key = {row_key(row): row for row in reviewed}
 
@@ -659,21 +743,29 @@ def verify_reviewed_allowlist(generated: list[dict[str, str]], reviewed_path: Pa
     errors = []
     if missing:
         errors.append(
-            "allowlist entries need review: "
+            f"{label} entries need review: "
             + ", ".join(f"{name} ({path})" for name, path, _kind in missing)
         )
     if stale:
         errors.append(
-            "reviewed allowlist has stale entries: "
+            f"reviewed {label} has stale entries: "
             + ", ".join(f"{name} ({path})" for name, path, _kind in stale)
         )
     if changed:
         errors.append(
-            "reviewed allowlist entries changed: "
+            f"reviewed {label} entries changed: "
             + ", ".join(f"{name} ({path})" for name, path, _kind in changed)
         )
     if errors:
         raise SystemExit("\n".join(errors))
+
+
+def verify_reviewed_allowlist(generated: list[dict[str, str]], reviewed_path: Path) -> None:
+    verify_reviewed_rows(generated, reviewed_path, ALLOWLIST_FIELDS, "allowlist")
+
+
+def verify_reviewed_source_refs(generated: list[dict[str, str]], reviewed_path: Path) -> None:
+    verify_reviewed_rows(generated, reviewed_path, SOURCE_REF_FIELDS, "source refs")
 
 
 def verify_coverage(items: list[Item]) -> None:
@@ -697,7 +789,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allowlist-output", type=Path, default=DEFAULT_ALLOWLIST)
     parser.add_argument("--reviewed-allowlist", type=Path, default=DEFAULT_REVIEWED_ALLOWLIST)
     parser.add_argument("--check-reviewed-allowlist", action="store_true")
+    parser.add_argument("--source-refs-output", type=Path, default=DEFAULT_SOURCE_REFS)
+    parser.add_argument("--reviewed-source-refs", type=Path, default=DEFAULT_REVIEWED_SOURCE_REFS)
+    parser.add_argument("--check-reviewed-source-refs", action="store_true")
     parser.add_argument("--no-allowlist", action="store_true")
+    parser.add_argument("--no-source-refs", action="store_true")
     return parser.parse_args()
 
 
@@ -707,17 +803,26 @@ def main() -> int:
     items = [classify(section, name) for section, name in rows]
     verify_coverage(items)
     inventory_rows, allowlist_rows = build_rows(items)
+    source_ref_rows = build_source_ref_rows(items)
     write_tsv(args.output, FIELDS, inventory_rows)
     if not args.no_allowlist:
         write_tsv(args.allowlist_output, ALLOWLIST_FIELDS, allowlist_rows)
+    if not args.no_source_refs:
+        write_tsv(args.source_refs_output, SOURCE_REF_FIELDS, source_ref_rows)
     if args.check_reviewed_allowlist:
         verify_reviewed_allowlist(allowlist_rows, args.reviewed_allowlist)
+    if args.check_reviewed_source_refs:
+        verify_reviewed_source_refs(source_ref_rows, args.reviewed_source_refs)
 
     print(f"wrote {len(inventory_rows)} inventory rows to {rel(args.output)}")
     if not args.no_allowlist:
         print(f"wrote {len(allowlist_rows)} allowlist rows to {rel(args.allowlist_output)}")
+    if not args.no_source_refs:
+        print(f"wrote {len(source_ref_rows)} source ref rows to {rel(args.source_refs_output)}")
     if args.check_reviewed_allowlist:
         print(f"reviewed allowlist matches {rel(args.reviewed_allowlist)}")
+    if args.check_reviewed_source_refs:
+        print(f"reviewed source refs match {rel(args.reviewed_source_refs)}")
     return 0
 
 

@@ -1,0 +1,63 @@
+name	path	kind	upstream_ref	source_delta_count
+khronos-headers	ports/khronos-headers/egl-registry	data-or-headers	3d7796b 3d7796b3721d main	0
+khronos-headers	ports/khronos-headers/opengl-registry	data-or-headers	9cb90ca 9cb90ca4902d main	0
+hwdata	ports/hwdata/src	data-or-headers	local-minimal-hwdata-0.1	0
+zlib	ports/zlib/src	imported-source	zlib-1.3.2.1-motley	0
+bzip2	ports/bzip2/src	imported-source	66c46b8 66c46b8c9436 master	0
+xz	ports/xz/src	imported-source	ebb0e67 ebb0e6789cef master	0
+libffi	ports/libffi/src	imported-source	2263d60 2263d6037f8e master	0
+libexpat	ports/libexpat/src	imported-source	R_2_7_5-110-g1870998e 1870998e114e master	0
+pcre2	ports/pcre2/src	imported-source	ac0eb71 ac0eb7122a0a main	0
+json-c	ports/json-c/src	imported-source	json-c-0.18-20240915 41a55cfcedb5	0
+sqlite	ports/sqlite/src	imported-source	7539d2f 7539d2f1ba7d master	0
+ncurses	ports/ncurses/src	imported-source	87c2c84 87c2c84cbd23 master	0
+readline	ports/readline/src	imported-source	553d6bb 553d6bb272f2 master	0
+openssl	ports/openssl/src	imported-source	1d21d077 1d21d0773b60 v6-port	0
+curl	ports/curl/src	imported-source	rc-8_20_0-3-17-g961a13e366 961a13e366ea master	0
+openssh	ports/openssh/src	imported-source	V_9_9_P2 d76b26751166	0
+libxml2	ports/libxml2/src	imported-source	v2.15.0-85-ga7511af0 a7511af09f99 master	0
+libpng	ports/libpng/src	imported-source	v1.6.58-128-g614ab644f 614ab644f809 libpng18	0
+libjpeg-turbo	ports/libjpeg-turbo/src	imported-source	3.1.90-13-g9b09d516 9b09d5164c34 main	0
+freetype	ports/freetype/src	imported-source	VER-2-14-3-22-g1803559c4 1803559c4ee4 master	0
+fontconfig	ports/fontconfig/src	imported-source	8d5b933 8d5b933bc4ad main	0
+pixman	ports/pixman/src	imported-source	6fe11b2 6fe11b29cd20 master	0
+fribidi	ports/fribidi/src	imported-source	5c85a17 5c85a174650a master	0
+harfbuzz	ports/harfbuzz/src	imported-source	73db8cc 73db8cc1a5fe main	0
+glib	ports/glib/src	imported-source	a7b72b71b a7b72b71bcf7 main	0
+atk	ports/atk/src	imported-source	db329b0 db329b0face5 master	0
+cairo	ports/cairo/src	imported-source	4ca0d58 4ca0d581cbbb master	0
+gdk-pixbuf	ports/gdk-pixbuf/src	imported-source	0205330 0205330875bf master	0
+pango	ports/pango/src	imported-source	42abec2 42abec279c99 main	0
+gtk3	ports/gtk3/src	imported-source	3.24.52-15-g2642677d1f 2642677d1fbf v6-port	0
+libudev	ports/libudev/src	local-shim	local	0
+libseat	ports/libseat/src	local-shim	local	0
+libevdev	ports/libevdev/src	local-shim	local	0
+libinput	ports/libinput/src	local-shim	local	0
+libdrm	ports/libdrm/src	imported-source	libdrm-2.4.134-6-g666624d 666624d10ce4 main	0
+drm_info	ports/drm_info/src	imported-source	v2.10.0 462458e0f292	0
+kmscube	ports/kmscube/src	imported-source	fd9ac5d fd9ac5d4080f master	0
+libepoxy	ports/libepoxy/src	imported-source	1.5.10-33-g05001ee 05001ee156ca xv6-gpu-runtime	0
+wayland-protocols	ports/wayland-protocols/src	data-or-headers	911ab50 911ab509edf6 main	0
+libxkbcommon	ports/libxkbcommon/src	imported-source	151c367 151c367afb21 master	0
+xv6-gbm	ports/xv6-gbm	local-shim	local	0
+mesa	ports/mesa/src	imported-source	85114b90 85114b90acdd v6-port	0
+weston	ports/weston/src	imported-source	15.0.1-11-g29c4d756 29c4d7561d5e v6-port	0
+netsurf-buildsystem	ports/netsurf-buildsystem/src	build-wrapper	771d7cb 771d7cb06918 master	0
+netsurf-libwapcaplet	ports/netsurf-libwapcaplet/src	imported-source	c7c128d c7c128d3eb32 master	0
+netsurf-libparserutils	ports/netsurf-libparserutils/src	imported-source	6b0cbf0 6b0cbf086ca8 master	0
+netsurf-libcss	ports/netsurf-libcss/src	imported-source	104d87f 104d87fde48b master	0
+netsurf-libnsbmp	ports/netsurf-libnsbmp/src	imported-source	ea063c9 ea063c9f46ac master	0
+netsurf-libnsgif	ports/netsurf-libnsgif/src	imported-source	24ddb64 24ddb6421c31 master	0
+netsurf-libnslog	ports/netsurf-libnslog/src	imported-source	9c19d16 9c19d16e196a master	0
+netsurf-libnspsl	ports/netsurf-libnspsl/src	imported-source	82815c2 82815c2bc7fd master	0
+netsurf-libnsutils	ports/netsurf-libnsutils/src	imported-source	0bd3906 0bd39060740b master	0
+netsurf-libhubbub	ports/netsurf-libhubbub/src	imported-source	6651b8c 6651b8cf87a4 master	0
+netsurf-libsvgtiny	ports/netsurf-libsvgtiny/src	imported-source	7ede71b 7ede71b572a1 master	0
+netsurf-nsgenbind	ports/netsurf-nsgenbind/src	imported-source	44c6736 44c6736937ae master	0
+netsurf-libdom	ports/netsurf-libdom/src	imported-source	f69781e f69781e1f062 master	0
+netsurf	ports/netsurf/src	imported-source	6fedd6c 6fedd6c76cc0	0
+cpython	ports/cpython/src	imported-source	v3.12.12-27-gc51ea47a56e c51ea47a56e4 v6-3.12	0
+vim	ports/vim/src	imported-source	v9.2.0173 e21c4a649a83 master	0
+peanut-gb	ports/peanut-gb/src	imported-source	v1.3.0-25-g8e65698 8e656982f086 master	0
+wayland-src	ports/wayland-src/src	imported-source	3c5ad4f 3c5ad4f5716b v6-port	0
+wayland	ports/wayland/src	local-shim	local	0
