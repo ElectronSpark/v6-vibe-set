@@ -1,0 +1,22 @@
+item	kind	upstream_ref	current_delta	abi_adaptation	target_owner	status	validation
+cmake	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
+linux-uapi-headers	data-or-headers	see docs/linux-userland-upstream-refs.tsv	pending review	pending	sysroot-data-headers	pending	not run
+khronos-headers	data-or-headers	see docs/linux-userland-upstream-refs.tsv	pending review	pending	sysroot-data-headers	pending	not run
+hwdata	data-or-headers	local-minimal-hwdata-0.1	pending review	pending	sysroot-data-headers	pending	not run
+wayland-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
+glib-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
+libpng-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
+zlib	imported-source	zlib-1.3.2.1-motley	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-zlib -j2
+bzip2	imported-source	66c46b8 66c46b8c9436 master	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-bzip2 -j2
+xz	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+libffi	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+libexpat	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+pcre2	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+json-c	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+sqlite	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+ncurses	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+readline	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+openssl	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+curl	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+openssh	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+libxml2	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
