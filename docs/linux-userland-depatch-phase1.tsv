@@ -1,11 +1,11 @@
 item	kind	upstream_ref	current_delta	abi_adaptation	target_owner	status	validation
-cmake	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
-linux-uapi-headers	data-or-headers	see docs/linux-userland-upstream-refs.tsv	pending review	pending	sysroot-data-headers	pending	not run
-khronos-headers	data-or-headers	see docs/linux-userland-upstream-refs.tsv	pending review	pending	sysroot-data-headers	pending	not run
-hwdata	data-or-headers	local-minimal-hwdata-0.1	pending review	pending	sysroot-data-headers	pending	not run
-wayland-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
-glib-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
-libpng-host	build-wrapper	local	build wrapper only	no	build-wrapper	pending	not run
+cmake	build-wrapper	local	shared local port wrapper and patch gate only; no imported source tree or port target	no	build-wrapper	done	scripts/audit/check_userland_depatch_hygiene.sh
+linux-uapi-headers	data-or-headers	host linux-libc-dev 6.8.0-124.124	host Linux UAPI headers copied into sysroot; no source package delta, patch file, xv6 marker, or ABI adaptation hit	no	sysroot-data-headers	done	cmake --build build-x86_64/ports --target port-linux-uapi-headers -j2
+khronos-headers	data-or-headers	egl-registry 3d7796b 3d7796b3721d main; opengl-registry 9cb90ca 9cb90ca4902d main	imported registry headers have no source delta, patch file, or xv6 marker; GUI text hits are registry/spec data	no	sysroot-data-headers	done	cmake --build build-x86_64/ports --target port-khronos-headers -j2
+hwdata	data-or-headers	local-minimal-hwdata-0.1	local minimal hwdata package with explicit xv6-owned marker; no ABI adaptation hits	no	sysroot-data-headers	done	cmake --build build-x86_64/ports --target port-hwdata -j2
+wayland-host	build-wrapper	local	host wayland-scanner wrapper only; no imported source tree, patch file, or ABI adaptation hit	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-wayland-host -j2
+glib-host	build-wrapper	local	host GLib tool wrapper only; no imported source tree, patch file, or ABI adaptation hit	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-glib-host -j2
+libpng-host	build-wrapper	local	host libpng tool dependency wrapper only; no imported source tree, patch file, or ABI adaptation hit	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-libpng-host -j2
 zlib	imported-source	zlib-1.3.2.1-motley	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-zlib -j2
 bzip2	imported-source	66c46b8 66c46b8c9436 master	imported src has no xv6 marker or ABI adaptation; xv6 text is wrapper-only	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-bzip2 -j2
 xz	imported-source	ebb0e67 ebb0e6789cef master	imported src has no xv6 marker or xv6-specific adaptation; syscall/procfs/poll hits are upstream Linux behavior	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-xz -j2
