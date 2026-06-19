@@ -175,12 +175,16 @@ ABI_PATTERNS = {
     "linux_syscall_number": re.compile(r"\b(?:__NR_|SYS_)[A-Za-z0-9_]+"),
     "errno_rewrite": re.compile(r"\b(?:errno\s*=\s*E[A-Z0-9_]+|return\s+-E[A-Z0-9_]+)"),
     "linux_struct_surface": re.compile(
-        r"\bstruct\s+(?:statx?|dirent64?|termios|pollfd|iovec|msghdr|cmsghdr|"
-        r"sockaddr|input_event|drm_[A-Za-z0-9_]+)\b"
+        r"(?:\bstruct\s+(?:statx?|dirent64?|termios|pollfd|iovec|msghdr|cmsghdr|"
+        r"sockaddr|input_event|drm_[A-Za-z0-9_]+)\s*\{|"
+        r"\btypedef\s+struct\s+(?:statx?|dirent64?|termios|pollfd|iovec|msghdr|"
+        r"cmsghdr|sockaddr|input_event|drm_[A-Za-z0-9_]+)\b)"
     ),
     "procfs_fallback": re.compile(r"(?:\"/proc|'/proc|/proc/|\bprocfs\b)", re.IGNORECASE),
     "feature_disable": re.compile(
-        r"\b(?:disable|disabled|unsupported|workaround|fallback|stub)\b",
+        r"(?:xv6|__xv6__|__XV6__).{0,80}\b(?:disable|without|unsupported|stub|fallback)\b|"
+        r"\b(?:disable|without|unsupported|stub|fallback)\b.{0,80}(?:xv6|__xv6__|__XV6__)|"
+        r"-D[A-Za-z0-9_]*(?:XV6|xv6)[A-Za-z0-9_]*(?:DISABLE|WITHOUT|NO_)[A-Za-z0-9_]*=",
         re.IGNORECASE,
     ),
     "gui_event_ipc_surface": re.compile(
@@ -636,7 +640,12 @@ def build_rows(items: list[Item]) -> tuple[list[dict[str, str]], list[dict[str, 
         sources = source_paths(item)
         patches = patch_files(item)
         wrappers = wrapper_files(item, sources, patches)
-        scan_roots = [*sources, *patches, *wrappers]
+        if item.kind in {"imported-source", "data-or-headers"}:
+            scan_roots = [*sources, *patches]
+        elif item.kind == "build-wrapper":
+            scan_roots = [*wrappers, *patches]
+        else:
+            scan_roots = [*sources, *patches, *wrappers]
         marker_count, hits = scan_text(scan_roots)
         deltas = source_delta_count(sources)
         rows.append(
