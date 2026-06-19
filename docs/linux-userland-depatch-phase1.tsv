@@ -15,7 +15,7 @@ pcre2	imported-source	ports/pcre2/src@ac0eb71 ac0eb7122a0a main	imported src has
 json-c	imported-source	ports/json-c/src@json-c-0.18-20240915 41a55cfcedb5	imported src has no xv6 marker, source delta, or patch file; errno/getrandom fallback hits are upstream behavior	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-json-c -j2
 sqlite	imported-source	ports/sqlite/src@7539d2f 7539d2f1ba7d master	imported src has no xv6 marker, source delta, or patch file; errno/VFS/procfs/struct hits are upstream SQLite, autosetup, and tests	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-sqlite -j2
 ncurses	imported-source	ports/ncurses/src@87c2c84 87c2c84cbd23 master	imported src has no xv6 marker or source delta; tracked patch file is upstream mode-only release artifact; errno/poll/procfs hits are upstream configure, terminal, and test behavior	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-ncurses -j2
-readline	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+readline	imported-source	ports/readline/src@553d6bb 553d6bb272f2 master	imported src has no xv6 marker, source delta, or patch file; errno/procfs/signal/terminal hits are upstream readline and autoconf behavior	no	kernel-abi	done	cmake --build build-x86_64/ports --target port-readline -j2
 openssl	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 curl	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 openssh	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
