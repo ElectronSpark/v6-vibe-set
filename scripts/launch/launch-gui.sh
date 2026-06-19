@@ -13,10 +13,12 @@ ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
-QEMU_GPU="${QEMU_GPU:-virtio-vga-gl-primary}"
+QEMU_GPU="${QEMU_GPU:-auto}"
+QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0 weston=1 netsurf=0 webkit=0}"
 AUTO_BUILD="${AUTO_BUILD:-1}"
 export DISPLAY_MODE
 export QEMU_GPU
+export QEMU_APPEND
 
 newer_than_fsimg() {
     local path

@@ -17,7 +17,8 @@ set artifact_prefix [expr {[info exists env(CHROMIUM_ARTIFACT_PREFIX)] ? $env(CH
 set chromium_url [expr {[info exists env(CHROMIUM_URL)] ? $env(CHROMIUM_URL) : "https://www.youtube.com/watch?v=dQw4w9WgXcQ&vq=hd720&autoplay=1&mute=1"}]
 set backend [expr {[info exists env(CHROMIUM_BACKEND)] ? $env(CHROMIUM_BACKEND) : "wayland"}]
 set multiprocess [expr {[info exists env(CHROMIUM_MULTIPROCESS)] ? $env(CHROMIUM_MULTIPROCESS) : "1"}]
-set extra_flags [expr {[info exists env(CHROMIUM_EXTRA_FLAGS)] ? $env(CHROMIUM_EXTRA_FLAGS) : "--autoplay-policy=no-user-gesture-required --ignore-gpu-blocklist --enable-gpu-rasterization --disable-quic --enable-features=AcceleratedVideoDecodeLinuxGL,VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,VaapiVideoEncoder,CanvasOopRasterization --disable-features=UseChromeOSDirectVideoDecoder"}]
+set extra_flags_from_env [info exists env(CHROMIUM_EXTRA_FLAGS)]
+set extra_flags [expr {$extra_flags_from_env ? $env(CHROMIUM_EXTRA_FLAGS) : "--autoplay-policy=no-user-gesture-required --ignore-gpu-blocklist --enable-gpu-rasterization --disable-quic --enable-features=AcceleratedVideoDecodeLinuxGL,VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,VaapiVideoEncoder,CanvasOopRasterization --disable-features=UseChromeOSDirectVideoDecoder"}]
 set qemu_net [expr {[info exists env(CHROMIUM_QEMU_NET)] ? $env(CHROMIUM_QEMU_NET) : "1"}]
 set warmup_seconds [expr {[info exists env(CHROMIUM_YOUTUBE_WARMUP_SECONDS)] ? $env(CHROMIUM_YOUTUBE_WARMUP_SECONDS) : "75"}]
 set sample_count [expr {[info exists env(CHROMIUM_YOUTUBE_SAMPLES)] ? $env(CHROMIUM_YOUTUBE_SAMPLES) : "12"}]
@@ -27,11 +28,14 @@ set cursor_step_delay_ms [expr {[info exists env(CHROMIUM_YOUTUBE_CURSOR_STEP_DE
 set cursor_path [expr {[info exists env(CHROMIUM_YOUTUBE_CURSOR_PATH)] ? $env(CHROMIUM_YOUTUBE_CURSOR_PATH) : "video"}]
 set fullscreen [expr {[info exists env(CHROMIUM_YOUTUBE_FULLSCREEN)] ? $env(CHROMIUM_YOUTUBE_FULLSCREEN) : "0"}]
 set fullscreen_settle_ms [expr {[info exists env(CHROMIUM_YOUTUBE_FULLSCREEN_SETTLE_MS)] ? $env(CHROMIUM_YOUTUBE_FULLSCREEN_SETTLE_MS) : "5000"}]
+set fullscreen_click_x [expr {[info exists env(CHROMIUM_YOUTUBE_FULLSCREEN_CLICK_X)] ? $env(CHROMIUM_YOUTUBE_FULLSCREEN_CLICK_X) : "44236"}]
+set fullscreen_click_y [expr {[info exists env(CHROMIUM_YOUTUBE_FULLSCREEN_CLICK_Y)] ? $env(CHROMIUM_YOUTUBE_FULLSCREEN_CLICK_Y) : "48086"}]
 set minimal_startup [expr {[info exists env(CHROMIUM_YOUTUBE_MINIMAL_STARTUP)] ? $env(CHROMIUM_YOUTUBE_MINIMAL_STARTUP) : "0"}]
 set evidence_lines [expr {[info exists env(CHROMIUM_EVIDENCE_LINES)] ? $env(CHROMIUM_EVIDENCE_LINES) : "80"}]
 set chrome_poll_summary [expr {[info exists env(CHROMIUM_POLL_SUMMARY)] ? $env(CHROMIUM_POLL_SUMMARY) : "0"}]
 set chrome_drm_ioctl_trace [expr {[info exists env(CHROMIUM_DRM_IOCTL_TRACE)] ? $env(CHROMIUM_DRM_IOCTL_TRACE) : "0"}]
 set chrome_drm_fence_trace [expr {[info exists env(CHROMIUM_DRM_FENCE_TRACE)] ? $env(CHROMIUM_DRM_FENCE_TRACE) : "0"}]
+set chromium_surface_trace [expr {[info exists env(CHROMIUM_SURFACE_TRACE)] ? $env(CHROMIUM_SURFACE_TRACE) : "0"}]
 set cursor_failure "none"
 
 if {![string is integer -strict $warmup_seconds] || $warmup_seconds < 5} { set warmup_seconds 75 }
@@ -47,12 +51,25 @@ if {$cursor_path ne "video" && $cursor_path ne "toolbar" && $cursor_path ne "des
 if {$fullscreen ne "0" && $fullscreen ne "1"} { set fullscreen "0" }
 if {![string is integer -strict $fullscreen_settle_ms] || $fullscreen_settle_ms < 0} { set fullscreen_settle_ms 5000 }
 if {$fullscreen_settle_ms > 30000} { set fullscreen_settle_ms 30000 }
+if {![string is integer -strict $fullscreen_click_x] || $fullscreen_click_x < 0 || $fullscreen_click_x > 65535} { set fullscreen_click_x 44236 }
+if {![string is integer -strict $fullscreen_click_y] || $fullscreen_click_y < 0 || $fullscreen_click_y > 65535} { set fullscreen_click_y 48086 }
+if {$fullscreen eq "1" && !$extra_flags_from_env} {
+    # Chromium's argv fullscreen path produces a real xdg fullscreen surface.
+    # Once there, the default click coordinate lands on YouTube's player
+    # fullscreen control for the 1280x800 watch-page layout.
+    set extra_flags "--start-fullscreen"
+} elseif {$fullscreen eq "1" && [string first "--start-fullscreen" $extra_flags] < 0} {
+    set extra_flags [string trim "$extra_flags --start-fullscreen"]
+}
 if {![string is integer -strict $evidence_lines] || $evidence_lines < 20} { set evidence_lines 80 }
 if {$evidence_lines > 420} { set evidence_lines 420 }
 foreach knob {chrome_poll_summary chrome_drm_ioctl_trace chrome_drm_fence_trace} {
     if {[set $knob] ne "0" && [set $knob] ne "1"} {
         set $knob "0"
     }
+}
+if {$chromium_surface_trace ne "0" && $chromium_surface_trace ne "1"} {
+    set chromium_surface_trace "0"
 }
 set warmup_timer [expr {int(($warmup_seconds + 14) / 15)}]
 if {$warmup_timer < 1} { set warmup_timer 1 }
@@ -84,7 +101,8 @@ set env(QEMU_NET)              $qemu_net
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
-set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=$chromium_url host_chromium_backend=$backend$mp_token$extra_token host_chromium_evidence=1 host_chromium_evidence_lines=$evidence_lines host_chromium_evidence_timers=$warmup_timer host_chromium_surface_trace=0 chrome_poll_summary=$chrome_poll_summary chrome_drm_ioctl_trace=$chrome_drm_ioctl_trace chrome_drm_fence_trace=$chrome_drm_fence_trace$append_token"
+set surface_trace_token [expr {$chromium_surface_trace eq "1" ? " host_chromium_surface_trace=1" : " host_chromium_surface_trace=0"}]
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=$chromium_url host_chromium_backend=$backend$mp_token$extra_token host_chromium_evidence=1 host_chromium_evidence_lines=$evidence_lines host_chromium_evidence_timers=$warmup_timer$surface_trace_token chrome_poll_summary=$chrome_poll_summary chrome_drm_ioctl_trace=$chrome_drm_ioctl_trace chrome_drm_fence_trace=$chrome_drm_fence_trace$append_token"
 set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
 
 proc monitor_cmd {sock cmd dst} {
@@ -170,14 +188,17 @@ proc wait_shell_prompt {} {
 }
 
 proc prepare_fullscreen {} {
-    global timeout fullscreen fullscreen_settle_ms
+    global timeout fullscreen fullscreen_settle_ms fullscreen_click_x fullscreen_click_y
 
     if {$fullscreen eq "0"} {
         return 1
     }
 
     set marker "CHROMIUM_YOUTUBE_FOCUS_PAGE_DONE"
-    send "mouseinject 45056 40960 0; mouseinject 45056 40960 1; mouseinject 45056 40960 0; echo $marker\r"
+    # Focus the YouTube player, not the right-side page/content column.
+    # The default 1280x800 watch page places the player around x=140..785,
+    # y=265..625; this absolute tablet coordinate lands near its center.
+    send "mouseinject 24576 32768 0; echo $marker\r"
     set old_timeout $timeout
     set timeout 20
     expect {
@@ -194,8 +215,29 @@ proc prepare_fullscreen {} {
     set timeout $old_timeout
     after 500
 
+    set marker "CHROMIUM_YOUTUBE_SHOW_CONTROLS_DONE"
+    send "mouseinject $fullscreen_click_x $fullscreen_click_y 0; echo $marker\r"
+    set old_timeout $timeout
+    set timeout 20
+    expect {
+        -re [marker_re $marker] {}
+        timeout {
+            set timeout $old_timeout
+            send "\002"
+            after 3000
+            send "\020"
+            after 3000
+            return 0
+        }
+    }
+    set timeout $old_timeout
+    after 1000
+
     set marker "CHROMIUM_YOUTUBE_FULLSCREEN_DONE"
-    send "keyinject text f; echo $marker\r"
+    # Click the player's own fullscreen control.  The keyboard shortcut can
+    # enter a browser/page fullscreen state without expanding the video element
+    # on this imported Chromium build, which gives a false fullscreen proof.
+    send "mouseinject $fullscreen_click_x $fullscreen_click_y 0; mouseinject $fullscreen_click_x $fullscreen_click_y 1; mouseinject $fullscreen_click_x $fullscreen_click_y 0; echo $marker\r"
     set old_timeout $timeout
     set timeout 20
     expect {
@@ -276,6 +318,28 @@ proc capture_window {label} {
     return 1
 }
 
+proc preserve_guest_logs {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 15
+    wait_shell_prompt
+    foreach item {
+        {host.log /tmp/host-gui-wayland-chromium.log /yt-host.log}
+        {chrome.log /tmp/chrome_debug.log /yt-chrome.log}
+        {weston.log /tmp/weston.log /yt-weston.log}
+    } {
+        set name [lindex $item 0]
+        set path [lindex $item 1]
+        set guest_copy [lindex $item 2]
+        send "cat $path > $guest_copy\r"
+        wait_shell_prompt
+    }
+    send "sync\r"
+    wait_shell_prompt
+    set timeout $old_timeout
+}
+
 proc cursor_sweep {} {
     global timeout cursor_step_timeout_ms cursor_step_delay_ms cursor_failure
     # The coordinates are guest absolute tablet values.  Sweep over the
@@ -324,11 +388,21 @@ proc cursor_sweep {} {
 proc finish {code label} {
     global qemu_pid runlog artifact_runlog capture_dir tmpimg sample_count
 
+    catch { preserve_guest_logs }
     catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
     catch { exec kill $qemu_pid }
     sleep 1
 
     catch { exec sh -c "debugfs -R 'dump /chromium-youtube-fullscreen.ppm $capture_dir/fullscreen.ppm' '$tmpimg' >/dev/null 2>&1" }
+    foreach item {
+        {host.log /yt-host.log}
+        {chrome.log /yt-chrome.log}
+        {weston.log /yt-weston.log}
+    } {
+        set log_name [lindex $item 0]
+        set guest_copy [lindex $item 1]
+        catch { exec sh -c "debugfs -R 'dump $guest_copy $capture_dir/$log_name' '$tmpimg' >/dev/null 2>&1" }
+    }
     foreach capture_label {steady cursor} {
 	for {set i 0} {$i < $sample_count} {incr i} {
 	    set guest_path [format "/chromium-youtube-%s-%02d.ppm" $capture_label $i]
