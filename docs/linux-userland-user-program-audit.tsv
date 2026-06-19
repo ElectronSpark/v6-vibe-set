@@ -1,6 +1,6 @@
 name	path	role	source_delta_count	xv6_marker_count	abi_adaptation_hits	status	allowed_scope
-init	user/programs/init	production-command	0	2	linux_syscall_number=2,procfs_fallback=3,raw_syscall=1	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
-sh	user/programs/sh	production-command	0	4	gui_event_ipc_surface=2,linux_syscall_number=3,procfs_fallback=1,raw_syscall=1	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+init	user/programs/init	production-command	0	2	procfs_fallback=3	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+sh	user/programs/sh	production-command	0	4	gui_event_ipc_surface=2,linux_syscall_number=1,procfs_fallback=1,raw_syscall=1	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
 cat	user/programs/cat	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 echo	user/programs/echo	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 sleep	user/programs/sleep	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
@@ -10,7 +10,7 @@ shutdown	user/programs/shutdown	production-command	0	0	0	production-command	ordi
 sync	user/programs/sync	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 free	user/programs/free	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 ps	user/programs/ps	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
-top	user/programs/top	production-command	0	0	procfs_fallback=5	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+top	user/programs/top	production-command	0	0	procfs_fallback=10	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
 lsblk	user/programs/lsblk	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 mount	user/programs/mount	production-command	0	1	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
 umount	user/programs/umount	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
