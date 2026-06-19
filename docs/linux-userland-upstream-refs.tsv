@@ -33,9 +33,9 @@ libudev	ports/libudev/src	local-shim	local	local	0
 libseat	ports/libseat/src	local-shim	local	local	0
 libevdev	ports/libevdev/src	local-shim	local	local	0
 libinput	ports/libinput/src	local-shim	local	local	0
-libdrm	ports/libdrm/src	imported-source	libdrm-2.4.134-6-g666624d 666624d10ce4 main	https://gitlab.freedesktop.org/mesa/drm.git	0
+libdrm	ports/libdrm/src	imported-source	libdrm-2.4.134-7-g843048a 843048aac648 main	https://gitlab.freedesktop.org/mesa/drm.git	0
 drm_info	ports/drm_info/src	imported-source	v2.10.0 462458e0f292	https://gitlab.freedesktop.org/emersion/drm_info.git	0
-kmscube	ports/kmscube/src	imported-source	fd9ac5d fd9ac5d4080f master	https://gitlab.freedesktop.org/mesa/kmscube.git	0
+kmscube	ports/kmscube/src	imported-source	c42763b c42763bc2cf5 master	https://gitlab.freedesktop.org/mesa/kmscube.git	0
 libepoxy	ports/libepoxy/src	imported-source	1.5.10-33-g05001ee 05001ee156ca xv6-gpu-runtime	https://github.com/anholt/libepoxy.git	0
 wayland-protocols	ports/wayland-protocols/src	data-or-headers	911ab50 911ab509edf6 main	https://gitlab.freedesktop.org/wayland/wayland-protocols.git	0
 libxkbcommon	ports/libxkbcommon/src	imported-source	151c367 151c367afb21 master	https://github.com/xkbcommon/libxkbcommon.git	0
