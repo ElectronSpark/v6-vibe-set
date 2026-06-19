@@ -1,0 +1,87 @@
+name	path	role	source_delta_count	xv6_marker_count	abi_adaptation_hits	status	allowed_scope
+init	user/programs/init	production-command	0	2	linux_syscall_number=2,procfs_fallback=3,raw_syscall=1	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+sh	user/programs/sh	production-command	0	4	gui_event_ipc_surface=2,linux_syscall_number=3,procfs_fallback=1,raw_syscall=1	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+cat	user/programs/cat	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+echo	user/programs/echo	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+sleep	user/programs/sleep	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+kill	user/programs/kill	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+reboot	user/programs/reboot	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+shutdown	user/programs/shutdown	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+sync	user/programs/sync	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+free	user/programs/free	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+ps	user/programs/ps	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+top	user/programs/top	production-command	0	0	procfs_fallback=5	needs-review	ordinary Linux/libc-visible behavior; no private ABI adaptation
+lsblk	user/programs/lsblk	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+mount	user/programs/mount	production-command	0	1	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+umount	user/programs/umount	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+mknod	user/programs/mknod	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+mkdir	user/programs/mkdir	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+cp	user/programs/cp	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+mv	user/programs/mv	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+rm	user/programs/rm	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+ln	user/programs/ln	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+find	user/programs/find	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+grep	user/programs/grep	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+wc	user/programs/wc	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+xargs	user/programs/xargs	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+dd	user/programs/dd	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+losetup	user/programs/losetup	production-command	0	0	0	production-command	ordinary Linux/libc-visible behavior; no private ABI adaptation
+mkfs_xv6fs	user/programs/mkfs_xv6fs	xv6-filesystem-tool	0	2	0	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dumpinode	user/programs/dumpinode	xv6-filesystem-tool	0	0	0	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dumpchan	user/programs/dumpchan	xv6-filesystem-tool	0	0	0	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dumppcache	user/programs/dumppcache	xv6-filesystem-tool	0	0	0	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dumprq	user/programs/dumprq	xv6-filesystem-tool	0	0	0	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+bigfile	user/programs/bigfile	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+devtest	user/programs/devtest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dh	user/programs/dh	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+wallclock	user/programs/wallclock	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+timerdemo	user/programs/timerdemo	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+pngtest	user/programs/pngtest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+keyinject	user/programs/keyinject	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+mouseinject	user/programs/mouseinject	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+mousetest	user/programs/mousetest	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+waitgdb	user/programs/waitgdb	local-diagnostic	0	1	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+kprofile	user/programs/kprofile	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+pingpong	user/programs/pingpong	local-diagnostic	0	1	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+primes	user/programs/primes	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+randtest	user/programs/randtest	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+zombie	user/programs/zombie	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+forktest	user/programs/forktest	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+vforktest	user/programs/vforktest	abi-probe	0	0	linux_syscall_number=2	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+clonetest	user/programs/clonetest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+cloexectest	user/programs/cloexectest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+cowtest	user/programs/cowtest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+mmaptest	user/programs/mmaptest	abi-probe	0	3	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+mmapbigfile	user/programs/mmapbigfile	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+fdtabletest	user/programs/fdtabletest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+iovectest	user/programs/iovectest	abi-probe	0	1	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+kqueuetest	user/programs/kqueuetest	abi-probe	0	0	gui_event_ipc_surface=4	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+timerfdstress	user/programs/timerfdstress	abi-probe	0	0	gui_event_ipc_surface=2,linux_syscall_number=6	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+syscalltest	user/programs/syscalltest	abi-probe	0	0	errno_rewrite=4,linux_syscall_number=295,raw_syscall=2	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+linuxsyscallabitest	user/programs/linuxsyscallabitest	abi-probe	0	0	procfs_fallback=10	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+testsig	user/programs/testsig	abi-probe	0	0	errno_rewrite=1	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+usertests	user/programs/usertests	stress-test	0	3	feature_disable=1	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+grind	user/programs/grind	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+crashtest	user/programs/crashtest	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+stressfs	user/programs/stressfs	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+iobench	user/programs/iobench	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+symlinktest	user/programs/symlinktest	local-diagnostic	0	0	0	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+blocksendwake	user/programs/blocksendwake	stress-test	0	0	linux_syscall_number=8	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dontwaitsend	user/programs/dontwaitsend	stress-test	0	0	linux_syscall_number=6	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dnsstress	user/programs/dnsstress	stress-test	0	0	gui_event_ipc_surface=2,linux_struct_surface=1,linux_syscall_number=4	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+tcpstress	user/programs/tcpstress	stress-test	0	0	gui_event_ipc_surface=2,linux_struct_surface=1,linux_syscall_number=4	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+fbstat	user/programs/fbstat	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+gldemo	user/programs/gldemo	local-diagnostic	0	0	gui_event_ipc_surface=1	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+virgltest	user/programs/virgltest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+gpubuftest	user/programs/gpubuftest	abi-probe	0	0	gui_event_ipc_surface=3,linux_struct_surface=1,linux_syscall_number=1	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+gpucorevalidate	user/programs/gpucorevalidate	abi-probe	0	0	procfs_fallback=1	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+drmabitest	user/programs/drmabitest	abi-probe	0	0	errno_rewrite=4,gui_event_ipc_surface=6,linux_struct_surface=2,linux_syscall_number=3	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+drmiftest	user/programs/drmiftest	abi-probe	0	0	gui_event_ipc_surface=1,linux_struct_surface=1,linux_syscall_number=1	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+drmprimeprobe	user/programs/drmprimeprobe	abi-probe	0	0	gui_event_ipc_surface=4,linux_struct_surface=3,linux_syscall_number=7	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+nouveauabitest	user/programs/nouveauabitest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+dxgprobe	user/programs/dxgprobe	abi-probe	0	14	errno_rewrite=2,linux_syscall_number=2,raw_syscall=1	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+d3d12probe	user/programs/d3d12probe	abi-probe	0	5	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+ttmtest	user/programs/ttmtest	abi-probe	0	0	0	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+webkitabitest	user/programs/webkitabitest	abi-probe	0	11	errno_rewrite=4,gui_event_ipc_surface=70,linux_struct_surface=3,linux_syscall_number=36,procfs_fallback=13	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+webkitnettest	user/programs/webkitnettest	abi-probe	0	1	gui_event_ipc_surface=6,linux_struct_surface=2,linux_syscall_number=10	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+preempttest	user/programs/preempttest	stress-test	0	0	0	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only

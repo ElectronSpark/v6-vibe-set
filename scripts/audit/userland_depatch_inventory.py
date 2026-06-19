@@ -22,6 +22,8 @@ DEFAULT_ALLOWLIST = ROOT / "build-x86_64/userland-depatch-allowlist.tsv"
 DEFAULT_REVIEWED_ALLOWLIST = ROOT / "docs/linux-userland-depatch-allowlist.tsv"
 DEFAULT_SOURCE_REFS = ROOT / "build-x86_64/userland-depatch-source-refs.tsv"
 DEFAULT_REVIEWED_SOURCE_REFS = ROOT / "docs/linux-userland-upstream-refs.tsv"
+DEFAULT_USER_PROGRAM_AUDIT = ROOT / "build-x86_64/userland-user-program-audit.tsv"
+DEFAULT_REVIEWED_USER_PROGRAM_AUDIT = ROOT / "docs/linux-userland-user-program-audit.tsv"
 
 FIELDS = [
     "name",
@@ -38,7 +40,24 @@ FIELDS = [
 ]
 
 ALLOWLIST_FIELDS = ["name", "path", "kind", "role", "allowed_scope"]
-SOURCE_REF_FIELDS = ["name", "path", "kind", "upstream_ref", "source_delta_count"]
+SOURCE_REF_FIELDS = [
+    "name",
+    "path",
+    "kind",
+    "upstream_ref",
+    "original_upstream_url",
+    "source_delta_count",
+]
+USER_PROGRAM_AUDIT_FIELDS = [
+    "name",
+    "path",
+    "role",
+    "source_delta_count",
+    "xv6_marker_count",
+    "abi_adaptation_hits",
+    "status",
+    "allowed_scope",
+]
 
 BUILD_WRAPPERS = {
     "cmake",
@@ -164,6 +183,27 @@ LOCAL_DIAGNOSTICS = {
     "symlinktest",
     "waitgdb",
     "wallclock",
+}
+
+ORIGINAL_UPSTREAM_URLS = {
+    "atk": "https://gitlab.gnome.org/Archive/atk.git",
+    "cpython": "https://github.com/python/cpython.git",
+    "fontconfig": "https://gitlab.freedesktop.org/fontconfig/fontconfig.git",
+    "gdk-pixbuf": "https://gitlab.gnome.org/GNOME/gdk-pixbuf.git",
+    "glib": "https://gitlab.gnome.org/GNOME/glib.git",
+    "gtk3": "https://gitlab.gnome.org/GNOME/gtk.git",
+    "libdrm": "https://gitlab.freedesktop.org/mesa/drm.git",
+    "libffi": "https://github.com/libffi/libffi.git",
+    "mesa": "https://gitlab.freedesktop.org/mesa/mesa.git",
+    "netsurf": "git://git.netsurf-browser.org/netsurf.git",
+    "openssl": "https://github.com/openssl/openssl.git",
+    "pango": "https://gitlab.gnome.org/GNOME/pango.git",
+    "peanut-gb": "https://github.com/deltabeard/Peanut-GB.git",
+    "readline": "https://git.savannah.gnu.org/git/readline.git",
+    "sqlite": "https://github.com/sqlite/sqlite.git",
+    "vim": "https://github.com/vim/vim.git",
+    "wayland-src": "https://gitlab.freedesktop.org/wayland/wayland.git",
+    "weston": "https://gitlab.freedesktop.org/wayland/weston.git",
 }
 
 ABI_PATTERNS = {
@@ -420,6 +460,22 @@ def source_ref(item: Item, source: Path) -> str:
         return ref
     if item.kind in {"local-shim", "build-wrapper"}:
         return "local"
+    return "unknown"
+
+
+def original_upstream_url(item: Item, source: Path) -> str:
+    if item.kind in {"local-program", "local-shim"}:
+        return "local"
+    if item.name in ORIGINAL_UPSTREAM_URLS:
+        return ORIGINAL_UPSTREAM_URLS[item.name]
+    if item.name == "zlib":
+        return "https://github.com/madler/zlib.git"
+    if item.name == "hwdata":
+        return "local-minimal-hwdata"
+    if is_git_worktree(source):
+        url = run_git(source, "config", "--get", "remote.origin.url")
+        if url:
+            return url
     return "unknown"
 
 
@@ -700,9 +756,44 @@ def build_source_ref_rows(items: list[Item]) -> list[dict[str, str]]:
                     "path": rel(source),
                     "kind": item.kind,
                     "upstream_ref": source_ref(item, source),
+                    "original_upstream_url": original_upstream_url(item, source),
                     "source_delta_count": str(source_delta_count([source])),
                 }
             )
+    return rows
+
+
+def build_user_program_audit_rows(items: list[Item]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in items:
+        if item.kind != "local-program":
+            continue
+        sources = source_paths(item)
+        wrappers = wrapper_files(item, sources, [])
+        marker_count, hits = scan_text([*sources, *wrappers])
+        deltas = source_delta_count(sources)
+        allowed_scope = (
+            "ordinary Linux/libc-visible behavior; no private ABI adaptation"
+            if item.role == "production-command"
+            else "xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only"
+        )
+        status = (
+            "needs-review"
+            if item.role == "production-command" and hits
+            else item.role
+        )
+        rows.append(
+            {
+                "name": item.name,
+                "path": rel(item.path),
+                "role": item.role,
+                "source_delta_count": str(deltas),
+                "xv6_marker_count": str(marker_count),
+                "abi_adaptation_hits": format_hits(hits),
+                "status": status,
+                "allowed_scope": allowed_scope,
+            }
+        )
     return rows
 
 
@@ -725,7 +816,7 @@ def read_tsv(path: Path, fields: list[str]) -> list[dict[str, str]]:
 
 
 def row_key(row: dict[str, str]) -> tuple[str, str, str]:
-    return (row["name"], row["path"], row["kind"])
+    return (row["name"], row["path"], row.get("kind", row.get("role", "")))
 
 
 def verify_reviewed_rows(
@@ -777,6 +868,18 @@ def verify_reviewed_source_refs(generated: list[dict[str, str]], reviewed_path: 
     verify_reviewed_rows(generated, reviewed_path, SOURCE_REF_FIELDS, "source refs")
 
 
+def verify_reviewed_user_program_audit(
+    generated: list[dict[str, str]],
+    reviewed_path: Path,
+) -> None:
+    verify_reviewed_rows(
+        generated,
+        reviewed_path,
+        USER_PROGRAM_AUDIT_FIELDS,
+        "user program audit",
+    )
+
+
 def verify_coverage(items: list[Item]) -> None:
     actual = actual_inventory_names()
     expected = plan_names(items)
@@ -801,8 +904,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-refs-output", type=Path, default=DEFAULT_SOURCE_REFS)
     parser.add_argument("--reviewed-source-refs", type=Path, default=DEFAULT_REVIEWED_SOURCE_REFS)
     parser.add_argument("--check-reviewed-source-refs", action="store_true")
+    parser.add_argument("--user-programs-output", type=Path, default=DEFAULT_USER_PROGRAM_AUDIT)
+    parser.add_argument(
+        "--reviewed-user-programs",
+        type=Path,
+        default=DEFAULT_REVIEWED_USER_PROGRAM_AUDIT,
+    )
+    parser.add_argument("--check-reviewed-user-programs", action="store_true")
     parser.add_argument("--no-allowlist", action="store_true")
     parser.add_argument("--no-source-refs", action="store_true")
+    parser.add_argument("--no-user-programs", action="store_true")
     return parser.parse_args()
 
 
@@ -813,25 +924,34 @@ def main() -> int:
     verify_coverage(items)
     inventory_rows, allowlist_rows = build_rows(items)
     source_ref_rows = build_source_ref_rows(items)
+    user_program_rows = build_user_program_audit_rows(items)
     write_tsv(args.output, FIELDS, inventory_rows)
     if not args.no_allowlist:
         write_tsv(args.allowlist_output, ALLOWLIST_FIELDS, allowlist_rows)
     if not args.no_source_refs:
         write_tsv(args.source_refs_output, SOURCE_REF_FIELDS, source_ref_rows)
+    if not args.no_user_programs:
+        write_tsv(args.user_programs_output, USER_PROGRAM_AUDIT_FIELDS, user_program_rows)
     if args.check_reviewed_allowlist:
         verify_reviewed_allowlist(allowlist_rows, args.reviewed_allowlist)
     if args.check_reviewed_source_refs:
         verify_reviewed_source_refs(source_ref_rows, args.reviewed_source_refs)
+    if args.check_reviewed_user_programs:
+        verify_reviewed_user_program_audit(user_program_rows, args.reviewed_user_programs)
 
     print(f"wrote {len(inventory_rows)} inventory rows to {rel(args.output)}")
     if not args.no_allowlist:
         print(f"wrote {len(allowlist_rows)} allowlist rows to {rel(args.allowlist_output)}")
     if not args.no_source_refs:
         print(f"wrote {len(source_ref_rows)} source ref rows to {rel(args.source_refs_output)}")
+    if not args.no_user_programs:
+        print(f"wrote {len(user_program_rows)} user program audit rows to {rel(args.user_programs_output)}")
     if args.check_reviewed_allowlist:
         print(f"reviewed allowlist matches {rel(args.reviewed_allowlist)}")
     if args.check_reviewed_source_refs:
         print(f"reviewed source refs match {rel(args.reviewed_source_refs)}")
+    if args.check_reviewed_user_programs:
+        print(f"reviewed user program audit matches {rel(args.reviewed_user_programs)}")
     return 0
 
 
