@@ -102,6 +102,8 @@ int main(int argc, char **argv)
     set_default_env("GIO_MODULE_DIR", "/lib/gio/modules");
     set_default_env("GIO_USE_TLS", "gnutls");
     set_default_env("ALSA_CONFIG_PATH", "/usr/share/alsa/alsa.conf");
+    set_default_env("LIBVA_DRIVERS_PATH", "/lib/dri");
+    set_default_env("LIBVA_DRIVER_NAME", "virtio_gpu");
     set_default_env("XV6_GTK_DISABLE_ACCESSIBILITY", "1");
     set_default_env("XV6_DRM_TRACE", "1");
     set_default_env("DBUS_SESSION_BUS_ADDRESS",
@@ -133,7 +135,12 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, chrome_bin);
     append_arg(child_argv, &idx, MAX_ARGS,
                use_x11 ? "--ozone-platform=x11" : "--ozone-platform=wayland");
-    append_arg(child_argv, &idx, MAX_ARGS, "--enable-features=UseOzonePlatform");
+    append_arg(child_argv, &idx, MAX_ARGS,
+               "--enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,"
+               "VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,"
+               "VaapiVideoEncoder,CanvasOopRasterization");
+    append_arg(child_argv, &idx, MAX_ARGS, "--ignore-gpu-blocklist");
+    append_arg(child_argv, &idx, MAX_ARGS, "--enable-gpu-rasterization");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-setuid-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-seccomp-filter-sandbox");
@@ -149,6 +156,7 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-breakpad");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-crashpad");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-crash-reporter");
+    append_arg(child_argv, &idx, MAX_ARGS, "--disable-quic");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-component-update");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-background-networking");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-sync");
