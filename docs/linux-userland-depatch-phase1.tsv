@@ -12,7 +12,7 @@ xz	imported-source	ebb0e67 ebb0e6789cef master	imported src has no xv6 marker or
 libffi	imported-source	2263d60 2263d6037f8e master	removed wrapper workaround disabling exec-static trampolines; imported src has no xv6 marker and sysroot provides linux/limits.h	no	sysroot-data-headers	done	cmake --build build-x86_64/ports --target port-libffi -j2
 libexpat	imported-source	ports/libexpat/src@R_2_7_5-110-g1870998e 1870998e114e master	imported src has no xv6 marker or xv6-specific adaptation; getrandom/syscall/errno hits are upstream Linux behavior and GUI text hits are test data	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-libexpat -j2
 pcre2	imported-source	ports/pcre2/src@ac0eb71 ac0eb7122a0a main	imported src has no xv6 marker, source delta, patch file, or ABI adaptation hits	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-pcre2 -j2
-json-c	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
+json-c	imported-source	ports/json-c/src@json-c-0.18-20240915 41a55cfcedb5	imported src has no xv6 marker, source delta, or patch file; errno/getrandom fallback hits are upstream behavior	no	build-wrapper	done	cmake --build build-x86_64/ports --target port-json-c -j2
 sqlite	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 ncurses	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
 readline	imported-source	see docs/linux-userland-upstream-refs.tsv	pending review	pending	wrapper	pending	not run
