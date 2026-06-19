@@ -24,6 +24,7 @@ DEFAULT_SOURCE_REFS = ROOT / "build-x86_64/userland-depatch-source-refs.tsv"
 DEFAULT_REVIEWED_SOURCE_REFS = ROOT / "docs/linux-userland-upstream-refs.tsv"
 DEFAULT_USER_PROGRAM_AUDIT = ROOT / "build-x86_64/userland-user-program-audit.tsv"
 DEFAULT_REVIEWED_USER_PROGRAM_AUDIT = ROOT / "docs/linux-userland-user-program-audit.tsv"
+DEFAULT_REVIEWED_PHASES_GLOB = "docs/linux-userland-depatch-phase*.tsv"
 
 FIELDS = [
     "name",
@@ -57,6 +58,16 @@ USER_PROGRAM_AUDIT_FIELDS = [
     "abi_adaptation_hits",
     "status",
     "allowed_scope",
+]
+PHASE_FIELDS = [
+    "item",
+    "kind",
+    "upstream_ref",
+    "current_delta",
+    "abi_adaptation",
+    "target_owner",
+    "status",
+    "validation",
 ]
 
 BUILD_WRAPPERS = {
@@ -880,6 +891,62 @@ def verify_reviewed_user_program_audit(
     )
 
 
+def read_phase_rows(pattern: str) -> list[dict[str, str]]:
+    paths = sorted(ROOT.glob(pattern))
+    if not paths:
+        raise SystemExit(f"reviewed phase files missing: {pattern}")
+
+    rows: list[dict[str, str]] = []
+    for path in paths:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            if reader.fieldnames != PHASE_FIELDS:
+                raise SystemExit(
+                    f"{rel(path)} header mismatch: expected {PHASE_FIELDS}, got {reader.fieldnames}"
+                )
+            rows.extend(
+                {field: row.get(field, "") for field in PHASE_FIELDS}
+                for row in reader
+            )
+    return rows
+
+
+def verify_reviewed_phase_coverage(
+    inventory_rows: list[dict[str, str]],
+    reviewed_phases_glob: str,
+) -> None:
+    reviewed_rows = read_phase_rows(reviewed_phases_glob)
+    reviewed_by_item: dict[str, list[dict[str, str]]] = {}
+    for row in reviewed_rows:
+        reviewed_by_item.setdefault(row["item"], []).append(row)
+
+    errors: list[str] = []
+    checked = 0
+    for row in inventory_rows:
+        name = row["name"]
+        kind = row["kind"]
+        if kind == "local-program":
+            continue
+        checked += 1
+        matching = reviewed_by_item.get(name, [])
+        accepted = [
+            phase
+            for phase in matching
+            if phase["status"] == "done" and phase["abi_adaptation"] == "no"
+        ]
+        if not accepted:
+            errors.append(f"{name} ({kind}) lacks done/no reviewed phase coverage")
+        if kind in {"imported-source", "data-or-headers"} and row["source_delta_count"] != "0":
+            errors.append(
+                f"{name} ({kind}) has source_delta_count={row['source_delta_count']}"
+            )
+
+    if errors:
+        raise SystemExit("\n".join(errors))
+
+    print(f"reviewed phase coverage accepts {checked} non-local-program inventory rows")
+
+
 def verify_coverage(items: list[Item]) -> None:
     actual = actual_inventory_names()
     expected = plan_names(items)
@@ -911,6 +978,8 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_REVIEWED_USER_PROGRAM_AUDIT,
     )
     parser.add_argument("--check-reviewed-user-programs", action="store_true")
+    parser.add_argument("--reviewed-phases-glob", default=DEFAULT_REVIEWED_PHASES_GLOB)
+    parser.add_argument("--check-reviewed-phases", action="store_true")
     parser.add_argument("--no-allowlist", action="store_true")
     parser.add_argument("--no-source-refs", action="store_true")
     parser.add_argument("--no-user-programs", action="store_true")
@@ -938,6 +1007,8 @@ def main() -> int:
         verify_reviewed_source_refs(source_ref_rows, args.reviewed_source_refs)
     if args.check_reviewed_user_programs:
         verify_reviewed_user_program_audit(user_program_rows, args.reviewed_user_programs)
+    if args.check_reviewed_phases:
+        verify_reviewed_phase_coverage(inventory_rows, args.reviewed_phases_glob)
 
     print(f"wrote {len(inventory_rows)} inventory rows to {rel(args.output)}")
     if not args.no_allowlist:
