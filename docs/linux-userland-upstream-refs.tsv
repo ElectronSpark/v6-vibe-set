@@ -55,7 +55,7 @@ netsurf-libhubbub	ports/netsurf-libhubbub/src	imported-source	6651b8c 6651b8cf87
 netsurf-libsvgtiny	ports/netsurf-libsvgtiny/src	imported-source	7ede71b 7ede71b572a1 master	git://git.netsurf-browser.org/libsvgtiny.git	0
 netsurf-nsgenbind	ports/netsurf-nsgenbind/src	imported-source	44c6736 44c6736937ae master	git://git.netsurf-browser.org/nsgenbind.git	0
 netsurf-libdom	ports/netsurf-libdom/src	imported-source	f69781e f69781e1f062 master	git://git.netsurf-browser.org/libdom.git	0
-netsurf	ports/netsurf/src	imported-source	6fedd6c 6fedd6c76cc0	git://git.netsurf-browser.org/netsurf.git	0
+netsurf	ports/netsurf/src	imported-source	e9578ac e9578ac53f05	git://git.netsurf-browser.org/netsurf.git	0
 cpython	ports/cpython/src	imported-source	v3.12.12-27-gc51ea47a56e c51ea47a56e4 v6-3.12	https://github.com/python/cpython.git	0
 vim	ports/vim/src	imported-source	v9.2.0173 e21c4a649a83 master	https://github.com/vim/vim.git	0
 peanut-gb	ports/peanut-gb/src	imported-source	v1.3.0-25-g8e65698 8e656982f086 master	https://github.com/deltabeard/Peanut-GB.git	0
