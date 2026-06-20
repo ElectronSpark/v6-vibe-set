@@ -266,8 +266,10 @@ if [[ -e "${sysroot}/lib/libgtk-3.so.0" &&
         exit 1
     fi
     if command -v readelf >/dev/null 2>&1; then
+        gtk_symbols="$(readelf -Ws "${sysroot}/lib/libgtk-3.so.0" 2>/dev/null || true)"
         gdk_symbols="$(readelf -Ws "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null || true)"
-        if ! grep -q 'gdk_running_in_sandbox' <<<"${gdk_symbols}"; then
+        if grep -q 'UND gdk__private__' <<<"${gtk_symbols}" &&
+           ! grep -q 'gdk__private__' <<<"${gdk_symbols}"; then
             echo "webkit-runtime-check: staged libgdk-3.so.0 lacks GTK private ABI used by libgtk-3" >&2
             exit 1
         fi

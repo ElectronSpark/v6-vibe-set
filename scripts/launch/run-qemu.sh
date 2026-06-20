@@ -188,8 +188,7 @@ qemu_prepend_default_flag() {
 
 print_kvm_hint() {
         echo "run-qemu: smooth WebKit video needs KVM; the current launch would fall back to slow TCG." >&2
-        echo "run-qemu: make /dev/kvm readable/writable by this user, then restart the shell/WSL session." >&2
-        echo "run-qemu: common fix: sudo usermod -aG kvm ${USER}; in WSL, also check /dev/kvm group/udev permissions." >&2
+        echo "run-qemu: /dev/kvm is not readable/writable by this user in the current host environment." >&2
         echo "run-qemu: set QEMU_REQUIRE_KVM=0 only for deliberate non-accelerated debugging." >&2
 }
 
@@ -225,7 +224,7 @@ fi
 # exposes /dev/kvm; set USE_KVM=0 to force TCG for deterministic debugging.
 # ──────────────────────────────────────────────────────────────────────
 if [[ -z "${USE_KVM:-}" ]]; then
-        if [[ "${ARCH}" == "x86_64" && -e /dev/kvm ]]; then
+        if [[ "${ARCH}" == "x86_64" && -r /dev/kvm && -w /dev/kvm ]]; then
                 USE_KVM=1
         else
                 USE_KVM=0
@@ -235,16 +234,7 @@ KVM_ARGS=()
 if [[ "${USE_KVM}" == "1" && -e /dev/kvm ]]; then
         if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
                 echo "run-qemu: /dev/kvm exists but is not accessible to ${USER}." >&2
-                if [[ -t 0 ]]; then
-                        echo "run-qemu: requesting sudo to chmod a+rw /dev/kvm ..." >&2
-                        if sudo chmod a+rw /dev/kvm; then
-                                echo "run-qemu: /dev/kvm is now accessible." >&2
-                        else
-                                echo "run-qemu: sudo failed; falling back to TCG unless this launch requires KVM." >&2
-                        fi
-                else
-                        echo "run-qemu: noninteractive shell; not prompting for sudo." >&2
-                fi
+                echo "run-qemu: falling back to TCG unless this launch requires KVM." >&2
         fi
         if [[ -r /dev/kvm && -w /dev/kvm ]]; then
                 KVM_ARGS=(-enable-kvm)
@@ -393,7 +383,7 @@ print_host_gpu_hint() {
         echo "run-qemu:   bare host: ensure a hardware /dev/dri/renderD* is readable/writable" >&2
         echo "run-qemu:   WSL2: ensure /dev/dxg exists; QEMU_HOST_GL=auto will use Mesa D3D12 with GTK" >&2
         echo "run-qemu:   docker: add --device /dev/dri and, for blobs, --device /dev/udmabuf" >&2
-        echo "run-qemu:   optional host setup for blobs: sudo modprobe udmabuf" >&2
+        echo "run-qemu:   blobs: /dev/udmabuf must already exist and be accessible" >&2
 }
 
 case "${ARCH}" in
@@ -462,19 +452,12 @@ case "${ARCH}" in
                                 ;;
                 esac
                 if [[ "${QEMU_GPU}" == "auto" ]]; then
-                        # Prefer accelerated virtio-gpu for GTK GUI launches
-                        # whenever the host can provide a GL backend.  On
-                        # WSLg/D3D12, QEMU's direct GTK/GL primary scanout can
-                        # disappear into a checker/gradient host surface, so
-                        # keep Bochs visible and use virtio-gpu-gl as the
-                        # render node unless a caller explicitly asks for the
-                        # direct primary path.
-                        if [[ "${DISPLAY_MODE}" == "gtk" &&
-                              "${HOST_GL_MODE}" == "wsl-d3d12" ]]; then
-                                QEMU_GPU="virtio-gpu-gl-primary"
-                        elif [[ "${DISPLAY_MODE}" == "gtk" &&
-                                host_dri_available ]]; then
-                                QEMU_GPU="virtio-vga-gl-primary"
+                        # Keep normal interactive GUI launches on the single
+                        # visible non-GL virtio-gpu scanout.  Direct virgl
+                        # remains available for focused GPU/Chromium probes by
+                        # passing QEMU_GPU=virtio-vga-gl-primary explicitly.
+                        if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                                QEMU_GPU="virtio-gpu-primary"
                         else
                                 QEMU_GPU="bochs"
                         fi
@@ -712,6 +695,7 @@ case "${ARCH}" in
                                 GPU_ARGS=(-device "virtio-gpu-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-primary)
+                                qemu_prepend_default_flag virtio_gpu_force_scanout 1
                                 GPU_ARGS=(-vga none -device "virtio-gpu-pci,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
                         virtio-gpu-gl)

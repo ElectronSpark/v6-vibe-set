@@ -193,6 +193,38 @@ write_desktop_link_if_executable() {
     fi
 }
 
+prune_broken_desktop_links() {
+    local path link target
+
+    shopt -s nullglob
+    for path in "${STAGE}/root/desktop"/*; do
+        [[ -L "${path}" ]] || continue
+        link="$(readlink "${path}")" || continue
+        if [[ "${link}" = /* ]]; then
+            target="${STAGE}${link}"
+        else
+            target="$(realpath -m "$(dirname "${path}")/${link}")"
+        fi
+        if [[ "${target}" != "${STAGE}/"* || ! -x "${target}" ]]; then
+            echo "make-rootfs: removing broken desktop link $(basename "${path}") -> ${link}" >&2
+            rm -f "${path}"
+        fi
+    done
+    shopt -u nullglob
+}
+
+prune_probe_desktop_links() {
+    local path
+
+    shopt -s nullglob
+    for path in "${STAGE}/root/desktop"/imported-host-*; do
+        [[ -e "${path}" || -L "${path}" ]] || continue
+        echo "make-rootfs: hiding probe desktop link $(basename "${path}")" >&2
+        rm -f "${path}"
+    done
+    shopt -u nullglob
+}
+
 write_desktop_link_if_executable "Terminal" "/bin/weston-terminal"
 write_desktop_link_if_executable "Files" "/bin/xv6-open-files-root"
 write_desktop_link_if_executable "Proc Files" "/bin/xv6-open-files-proc"
@@ -243,6 +275,9 @@ elif [[ -x "${STAGE}/bin/webkitgpusmoke" ]] &&
 else
     rm -f "${STAGE}/root/desktop/WebKit"
 fi
+
+prune_probe_desktop_links
+prune_broken_desktop_links
 
 if command -v ssh-keygen >/dev/null 2>&1; then
     ssh-keygen -t ed25519 -f "${STAGE}/etc/ssh/ssh_host_ed25519_key" -N "" -q 2>/dev/null || true

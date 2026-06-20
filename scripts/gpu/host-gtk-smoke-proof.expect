@@ -37,14 +37,14 @@ foreach phase [array names guest] {
     catch { exec sh -c "debugfs -w -R 'rm $guest($phase)' '$tmpimg' >/dev/null 2>&1" }
 }
 
-set env(DISPLAY_MODE)          "gtk"
-set env(USE_KVM)               "1"
-set env(QEMU_GPU)              "virtio-vga-gl-primary"
-set env(QEMU_INPUT)            "virtio"
-set env(QEMU_NET)              "0"
-set env(QEMU_ALLOW_WSL_SDL_GL) "1"
-set env(QEMU_VIRTIO_GPU_XRES)  "1280"
-set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(DISPLAY_MODE)          [expr {[info exists env(DISPLAY_MODE)] ? $env(DISPLAY_MODE) : "gtk"}]
+set env(USE_KVM)               [expr {[info exists env(USE_KVM)] ? $env(USE_KVM) : "1"}]
+set env(QEMU_GPU)              [expr {[info exists env(QEMU_GPU)] ? $env(QEMU_GPU) : "virtio-vga-gl-primary"}]
+set env(QEMU_INPUT)            [expr {[info exists env(QEMU_INPUT)] ? $env(QEMU_INPUT) : "virtio"}]
+set env(QEMU_NET)              [expr {[info exists env(QEMU_NET)] ? $env(QEMU_NET) : "0"}]
+set env(QEMU_ALLOW_WSL_SDL_GL) [expr {[info exists env(QEMU_ALLOW_WSL_SDL_GL)] ? $env(QEMU_ALLOW_WSL_SDL_GL) : "1"}]
+set env(QEMU_VIRTIO_GPU_XRES)  [expr {[info exists env(QEMU_VIRTIO_GPU_XRES)] ? $env(QEMU_VIRTIO_GPU_XRES) : "1280"}]
+set env(QEMU_VIRTIO_GPU_YRES)  [expr {[info exists env(QEMU_VIRTIO_GPU_YRES)] ? $env(QEMU_VIRTIO_GPU_YRES) : "800"}]
 set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0"
 set send_slow {1 .01}
 
@@ -129,6 +129,7 @@ set qemu_pid [exp_pid]
 
 expect {
     -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
     -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
         fail 3 "HOSTGTK-SMOKE-FAIL crash-marker"
     }

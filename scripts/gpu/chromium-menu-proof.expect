@@ -13,8 +13,9 @@ set monitor "$outdir/qemu-monitor.sock"
 set tmpimg "$outdir/chromium-menu.fs.img"
 set artifact_prefix [expr {[info exists env(CHROMIUM_ARTIFACT_PREFIX)] ? $env(CHROMIUM_ARTIFACT_PREFIX) : "chromium-menu"}]
 set backend [expr {[info exists env(CHROMIUM_BACKEND)] ? $env(CHROMIUM_BACKEND) : "wayland"}]
-set click_x [expr {[info exists env(CHROMIUM_MENU_CLICK_X)] ? $env(CHROMIUM_MENU_CLICK_X) : "55700"}]
-set click_y [expr {[info exists env(CHROMIUM_MENU_CLICK_Y)] ? $env(CHROMIUM_MENU_CLICK_Y) : "12500"}]
+set click_x [expr {[info exists env(CHROMIUM_MENU_CLICK_X)] ? $env(CHROMIUM_MENU_CLICK_X) : "60300"}]
+set click_y [expr {[info exists env(CHROMIUM_MENU_CLICK_Y)] ? $env(CHROMIUM_MENU_CLICK_Y) : "8600"}]
+set menu_diff_min [expr {[info exists env(CHROMIUM_MENU_DIFF_MIN)] ? $env(CHROMIUM_MENU_DIFF_MIN) : "50000"}]
 set chromium_url [expr {[info exists env(CHROMIUM_URL)] ? $env(CHROMIUM_URL) : "about:blank"}]
 set extra_flags [expr {[info exists env(CHROMIUM_EXTRA_FLAGS)] ? $env(CHROMIUM_EXTRA_FLAGS) : "--disable-quic"}]
 
@@ -40,6 +41,7 @@ set env(USE_KVM)               "1"
 set env(QEMU_GPU)              "virtio-vga-gl-primary"
 set env(QEMU_INPUT)            "virtio"
 set env(QEMU_NET)              "0"
+set env(QEMU_AUDIO)            "none"
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
@@ -49,6 +51,7 @@ set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
 proc finish {code label} {
     global qemu_pid runlog artifact_runlog tmpimg ppm png before_ppm before_png
     global guest_ppm guest_before_ppm
+    global menu_diff_min
 
     catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
     catch { exec kill $qemu_pid }
@@ -66,6 +69,17 @@ proc finish {code label} {
     if {$code == 0 && [catch { exec convert $ppm $png } convert_out]} {
         set label "CHROMIUM-MENU-PROOF-FAIL convert-png $convert_out"
         set code 7
+    }
+    if {$code == 0 && [file exists $before_ppm] && [file exists $ppm]} {
+        set diff_pixels 0
+        if {[catch { exec sh -c "compare -metric AE '$before_ppm' '$ppm' null: 2>&1 || true" } diff_out]} {
+            set label "CHROMIUM-MENU-PROOF-FAIL compare $diff_out"
+            set code 8
+        } elseif {[regexp {([0-9]+)} $diff_out -> diff_pixels] == 0 ||
+                  $diff_pixels < $menu_diff_min} {
+            set label "CHROMIUM-MENU-PROOF-FAIL menu-not-visible diff_pixels=$diff_pixels min=$menu_diff_min"
+            set code 9
+        }
     }
 
     set line "$label log=$artifact_runlog host_ppm=$ppm host_png=$png before_ppm=$before_ppm before_png=$before_png"

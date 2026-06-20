@@ -419,6 +419,7 @@ validate_launch_contract()
     append+=" ${TOKEN}"
     dry="$(QEMU_DRY_RUN=1 DISPLAY_MODE="${MODE}" USE_KVM=1 \
         QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=0 \
+        QEMU_AUDIO=none \
         QEMU_VIRTIO_GPU_XRES="${XRES}" QEMU_VIRTIO_GPU_YRES="${YRES}" \
         QEMU_APPEND="${append}" \
         bash scripts/launch/run-qemu.sh x86_64 \
@@ -508,6 +509,7 @@ set env(USE_KVM) "${USE_KVM:-1}"
 set env(QEMU_GPU) "virtio-vga-gl-primary"
 set env(QEMU_INPUT) "${QEMU_INPUT:-virtio}"
 set env(QEMU_NET) "${QEMU_NET:-0}"
+set env(QEMU_AUDIO) "none"
 set env(QEMU_VIRTIO_GPU_XRES) "${XRES}"
 set env(QEMU_VIRTIO_GPU_YRES) "${YRES}"
 set env(QEMU_ALLOW_WSL_SDL_GL) "${QEMU_ALLOW_WSL_SDL_GL:-1}"
