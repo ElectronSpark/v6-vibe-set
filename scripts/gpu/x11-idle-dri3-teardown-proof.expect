@@ -87,6 +87,7 @@ set qemu_pid [exp_pid]
 
 expect {
     -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
     -re {got error from kernel|expect bad rendering|DRM: execbuffer failed|virtio_gpu: context failed} {
         fail 1 "X11-IDLE-DRI3-FAIL early-mesa-eio"
     }
@@ -133,7 +134,7 @@ if {!$drag_after_dri3} {
     expect_prompt "X11-IDLE-DRI3-FAIL pre-dri3-drag-prompt"
 }
 
-send "/root/desktop/imported-host-x11-dri3-present-smoke &\r"
+send "/bin/host-x11-dri3-present-smoke &\r"
 expect_prompt "X11-IDLE-DRI3-FAIL dri3-launch"
 soak_no_eio 12 "X11-IDLE-DRI3-FAIL dri3-soak"
 

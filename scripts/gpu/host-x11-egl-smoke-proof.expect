@@ -129,6 +129,7 @@ set qemu_pid [exp_pid]
 
 expect {
     -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
     -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
         fail 3 "HOSTX11EGL-FAIL crash-marker"
     }

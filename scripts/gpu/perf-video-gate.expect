@@ -35,10 +35,14 @@ set env(USE_KVM)               "1"
 set env(QEMU_GPU)              "virtio-vga-gl-primary"
 set env(QEMU_INPUT)            "virtio"
 set env(QEMU_NET)              "0"
+set env(QEMU_AUDIO)            "none"
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_url=file:///share/webkit/perf-video.html webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 weston=1 video=1280x800"
+if {[info exists env(PERF_VIDEO_EXTRA_APPEND)] && $env(PERF_VIDEO_EXTRA_APPEND) ne ""} {
+    append env(QEMU_APPEND) " " $env(PERF_VIDEO_EXTRA_APPEND)
+}
 set env(QEMU_EXTRA) "-monitor unix:$monsock,server,nowait"
 
 log_file -a $runlog

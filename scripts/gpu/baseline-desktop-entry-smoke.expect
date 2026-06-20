@@ -1,0 +1,247 @@
+#!/usr/bin/env expect
+
+set timeout 260
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/baseline-desktop-entry-smoke"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/baseline-desktop-entry-smoke.fs.img"
+
+array set guest {
+    before /baseline-desktop-before.ppm
+    hover /baseline-desktop-hover.ppm
+    after /baseline-desktop-after.ppm
+}
+
+proc host_ppm {phase} {
+    global outdir
+    return "$outdir/baseline-desktop-$phase.ppm"
+}
+
+proc host_png {phase} {
+    global outdir
+    return "$outdir/baseline-desktop-$phase.png"
+}
+
+exec sh -c "rm -f '$runlog' '$tmpimg' '$outdir'/baseline-desktop-*.ppm '$outdir'/baseline-desktop-*.png '$outdir'/diff-*.txt"
+exec cp $fsimg $tmpimg
+foreach phase [array names guest] {
+    catch { exec sh -c "debugfs -w -R 'rm $guest($phase)' '$tmpimg' >/dev/null 2>&1" }
+}
+
+set desktop_listing [exec sh -c "debugfs -R 'ls -p /root/desktop' '$tmpimg' 2>/dev/null"]
+foreach name {"3D Demo" "Browser" "Chromium" "EGL Demo" "Editor" "Files" "GL Maze" "GL Smoke" "GL Sphere" "Game Boy" "Proc Files" "Python" "Settings" "Terminal" "WebKit"} {
+    if {[string first "/$name/" $desktop_listing] < 0} {
+        puts "\nBASELINE-DESKTOP-ENTRY-FAIL missing-image-entry-$name"
+        exit 2
+    }
+}
+
+set env(DISPLAY_MODE) "none"
+set env(USE_KVM) [expr {[info exists env(USE_KVM)] ? $env(USE_KVM) : "1"}]
+set env(QEMU_GPU) "virtio-gpu-primary"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_VIRTIO_GPU_XRES) "1280"
+set env(QEMU_VIRTIO_GPU_YRES) "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 baseline_desktop_entry_smoke=1"
+set send_slow {1 .01}
+
+proc fail {code label} {
+    global qemu_pid runlog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
+proc optional_prompt {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 2
+    expect {
+        -re {root:/#} {}
+        timeout {}
+        eof {}
+    }
+    set timeout $old_timeout
+}
+
+proc capture_fb {phase marker label} {
+    global guest
+
+    send "fbstat ppm-current $guest($phase) 0 0 1280 800; sync; echo $marker\r"
+    expect {
+        -re "fb_ppm_current path=$guest($phase) screen=1280x800 scanout=1280x800" {}
+        -re {fbstat: [^\r\n]+} { fail 20 "$label fbstat-error" }
+        timeout { fail 20 "$label fbstat-timeout" }
+        eof { fail 20 "$label fbstat-eof" }
+    }
+    expect {
+        -re $marker {}
+        timeout { fail 21 "$label marker-timeout" }
+        eof { fail 21 "$label marker-eof" }
+    }
+    optional_prompt
+}
+
+proc extract_artifacts {} {
+    global tmpimg guest outdir
+
+    foreach phase {before hover after} {
+        set ppm [host_ppm $phase]
+        set png [host_png $phase]
+        if {[catch { exec sh -c "debugfs -R 'dump $guest($phase) $ppm' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nBASELINE-DESKTOP-ENTRY-FAIL extract-$phase $dump_out"
+            exit 30
+        }
+        if {[catch { exec convert $ppm $png } convert_out]} {
+            puts "\nBASELINE-DESKTOP-ENTRY-FAIL convert-$phase $convert_out"
+            exit 31
+        }
+    }
+
+    set hover_ae [exec sh -c "compare -metric AE '[host_ppm before]' '[host_ppm hover]' '$outdir/baseline-desktop-hover-diff.png' 2>&1 || true"]
+    exec sh -c "printf '%s\\n' '$hover_ae' > '$outdir/diff-hover-ae.txt'"
+    if {$hover_ae < 100} {
+        puts "\nBASELINE-DESKTOP-ENTRY-FAIL hover-screenshot-unchanged changed_pixels=$hover_ae"
+        exit 32
+    }
+
+    set launch_ae [exec sh -c "compare -metric AE '[host_ppm before]' '[host_ppm after]' '$outdir/baseline-desktop-after-diff.png' 2>&1 || true"]
+    exec sh -c "printf '%s\\n' '$launch_ae' > '$outdir/diff-after-ae.txt'"
+    if {$launch_ae < 1000} {
+        puts "\nBASELINE-DESKTOP-ENTRY-FAIL launch-screenshot-unchanged changed_pixels=$launch_ae"
+        exit 33
+    }
+    return "$hover_ae $launch_ae"
+}
+
+proc send_checked {cmd marker label} {
+    send "$cmd; echo $marker\r"
+    expect {
+        -re {execve failed|exec .*failed|not found|cannot execute|child [0-9]+ exited status=127} { fail 40 "$label exec-marker" }
+        -re {PANIC|fatal page fault|spin_lock reentry|Out of memory|weston exited|desktop icons exited} { fail 41 "$label crash-marker" }
+        -re $marker {}
+        timeout { fail 42 "$label timeout" }
+        eof { fail 43 "$label eof" }
+    }
+    optional_prompt
+}
+
+proc expect_no_bad_markers {label} {
+    send "cat /tmp/desktop-icons-app.log; ps; echo BASELINE_MARKER_SCAN_DONE\r"
+    expect {
+        -re {execve failed|exec .*failed|not found|cannot execute|child [0-9]+ exited status=127} { fail 50 "$label bad-launch-marker" }
+        -re {PANIC|fatal page fault|spin_lock reentry|Out of memory|weston exited|desktop icons exited} { fail 51 "$label crash-marker" }
+        -re {BASELINE_MARKER_SCAN_DONE} {}
+        timeout { fail 52 "$label marker-scan-timeout" }
+        eof { fail 53 "$label marker-scan-eof" }
+    }
+    optional_prompt
+}
+
+proc click_icon {name x y} {
+    set safe [string map {" " "_"} $name]
+    send "/bin/mouseinject dblclick $x $y 120000\r"
+    expect {
+        -re "mouseinject: dblclick x=$x y=$y" {}
+        -re {execve failed|exec .*failed|not found|cannot execute|child [0-9]+ exited status=127} {
+            fail 60 "BASELINE-DESKTOP-ENTRY-FAIL click-$safe"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|Out of memory|weston exited|desktop icons exited} {
+            fail 61 "BASELINE-DESKTOP-ENTRY-FAIL click-$safe-crash"
+        }
+        timeout { fail 62 "BASELINE-DESKTOP-ENTRY-FAIL click-$safe-timeout" }
+        eof { fail 62 "BASELINE-DESKTOP-ENTRY-FAIL click-$safe-eof" }
+    }
+    optional_prompt
+}
+
+proc expect_process {pattern label} {
+    send "ps; echo BASELINE_PS_DONE\r"
+    set saw 0
+    set done 0
+    while {!$done} {
+        expect {
+            -re $pattern { set saw 1 }
+            -re {PANIC|fatal page fault|spin_lock reentry|Out of memory|weston exited|desktop icons exited|status=127|execve failed} {
+                fail 70 "$label bad-marker"
+            }
+            -re {BASELINE_PS_DONE} { set done 1 }
+            timeout { fail 71 "$label ps-timeout" }
+            eof { fail 71 "$label ps-eof" }
+        }
+    }
+    if {!$saw} {
+        fail 72 "$label process-missing"
+    }
+    optional_prompt
+}
+
+log_file -a $runlog
+spawn timeout --foreground 250 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {FB: registered /dev/fb0 \(virtio-gpu direct 1280x800x32} {}
+    -re {PANIC|fatal page fault|spin_lock reentry} { fail 3 "BASELINE-DESKTOP-ENTRY-FAIL early-crash" }
+    timeout { fail 4 "BASELINE-DESKTOP-ENTRY-FAIL no-fb0" }
+    eof { fail 5 "BASELINE-DESKTOP-ENTRY-FAIL early-eof" }
+}
+
+expect {
+    -re {weston-desktop-shell: loaded 15 desktop entries from /root/desktop} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|status=127|execve failed} {
+        fail 6 "BASELINE-DESKTOP-ENTRY-FAIL no-desktop"
+    }
+    timeout { fail 7 "BASELINE-DESKTOP-ENTRY-FAIL desktop-timeout" }
+    eof { fail 8 "BASELINE-DESKTOP-ENTRY-FAIL desktop-eof" }
+}
+
+sleep 2
+send "\r"
+expect {
+    -re {root:/#} {}
+    timeout { fail 9 "BASELINE-DESKTOP-ENTRY-FAIL no-prompt" }
+    eof { fail 9 "BASELINE-DESKTOP-ENTRY-FAIL prompt-eof" }
+}
+
+capture_fb before "BASELINE_DESKTOP_BEFORE_DONE" "BASELINE-DESKTOP-ENTRY-FAIL before"
+
+# Settings is row 2, column 5 in the current 15-icon desktop grid.  Use the
+# desktop client path, not shell env spoofing; xv6 sh has no export builtin.
+# The xv6 /dev/mouse absolute ABI carries QEMU/libinput coordinates as a
+# 0..65535 unsigned range in signed 16-bit fields; the libinput shim
+# zero-extends them before Weston scales to output coordinates.
+send_checked "/bin/mouseinject 35929 17309 0" "BASELINE_MOVE_SETTINGS_DONE" "BASELINE-DESKTOP-ENTRY-FAIL move-settings"
+sleep 1
+capture_fb hover "BASELINE_DESKTOP_HOVER_DONE" "BASELINE-DESKTOP-ENTRY-FAIL hover"
+click_icon "Settings" 35929 17309
+sleep 5
+send "cat /tmp/desktop-icons-trace.log; cat /tmp/desktop-icons-app.log; echo BASELINE_TRACE_DONE\r"
+expect {
+    -re {BASELINE_TRACE_DONE} {}
+    timeout { fail 64 "BASELINE-DESKTOP-ENTRY-FAIL trace-timeout" }
+    eof { fail 64 "BASELINE-DESKTOP-ENTRY-FAIL trace-eof" }
+}
+optional_prompt
+expect_no_bad_markers "BASELINE-DESKTOP-ENTRY-FAIL settings"
+capture_fb after "BASELINE_DESKTOP_AFTER_DONE" "BASELINE-DESKTOP-ENTRY-FAIL after"
+expect_no_bad_markers "BASELINE-DESKTOP-ENTRY-FAIL final"
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+sleep 1
+set changed [extract_artifacts]
+set hover_changed [lindex $changed 0]
+set launch_changed [lindex $changed 1]
+set result "BASELINE-DESKTOP-ENTRY-PASS hover_changed_pixels=$hover_changed launch_changed_pixels=$launch_changed before_png=[host_png before] hover_png=[host_png hover] after_png=[host_png after] log=$runlog"
+exec sh -c "printf '%s\\n' '$result' > '$outdir/result.txt'"
+puts "\n$result"
+exit 0

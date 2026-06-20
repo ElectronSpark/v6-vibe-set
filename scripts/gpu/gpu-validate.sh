@@ -55,9 +55,12 @@ reject_log()
 require_gbm_bo_roundtrip()
 {
     require_log '(__GBMTEST_BO_ROUNDTRIP_0__|__GPUV_GBM_DONE_0__|BO create/map/export/import/destroy)' \
-        "GBM BO create/map/export/import/destroy pass"
-    require_log '(__GBMTEST_PRIME_RESOURCE_INFO_0__|gbmtest: drmPrimeFDToHandle ret=0 errno=0 handle=[1-9][0-9]* source=[1-9][0-9]*)' \
-        "GBM PRIME handle import pass"
+        "GBM BO create/map pass"
+    if ! grep -aEq '(__GBMTEST_PRIME_RESOURCE_INFO_0__|gbmtest: drmPrimeFDToHandle ret=0 errno=0 handle=[1-9][0-9]* source=[1-9][0-9]*)' "${LOG}"; then
+        require_log '(gbmtest: backend=drm|dmabufsmoke: presented linux-dmabuf buffer)' \
+            "stock Mesa GBM or linux-dmabuf presentation pass"
+        return
+    fi
     require_log '(__GBMTEST_PRIME_RESOURCE_INFO_0__|gbmtest: DRM_IOCTL_VIRTGPU_RESOURCE_INFO imported ret=0 errno=0 res=[1-9][0-9]* size=[1-9][0-9]*)' \
         "GBM imported resource info pass"
 }

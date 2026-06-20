@@ -74,6 +74,7 @@ spawn timeout --foreground 250 bash scripts/launch/run-qemu.sh x86_64 $kernel $t
 expect {
     -re {\[desktop\] desktop icons are provided by weston-desktop-shell} {}
     -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
     timeout { puts "\nTYPEDURL-FAIL no-desktop"; exit 2 }
     eof { puts "\nTYPEDURL-FAIL early-eof"; exit 2 }
 }

@@ -26,8 +26,14 @@ set(_hyperv_cmdline "BOOT_IMAGE=/xv6.bin root=/dev/disk0p2 netsurf=0 webkit=0 gl
 	CACHE STRING "Kernel command line embedded in the Hyper-V EFI loader")
 file(GLOB_RECURSE _rootfs_overlay_files CONFIGURE_DEPENDS
 	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
+set(_rootfs_overlay_deps "")
+foreach(_rootfs_overlay_file IN LISTS _rootfs_overlay_files)
+	if(NOT IS_SYMLINK "${_rootfs_overlay_file}")
+		list(APPEND _rootfs_overlay_deps "${_rootfs_overlay_file}")
+	endif()
+endforeach()
 
-set(_rootfs_deps user ports ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh)
+set(_rootfs_deps user ports ${_rootfs_overlay_deps} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh)
 set(_rootfs_command
 	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
 		${XV6_SYSROOT} ${_fsimg} ${_fsimg_size_mb})
@@ -48,7 +54,7 @@ add_custom_target(rootfs
 # ABI loop only needs a fresh rootfs copy, not rebuilt payloads.
 add_custom_target(rootfs-refresh
 	COMMAND ${_rootfs_command}
-	DEPENDS ${_rootfs_overlay_files} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+	DEPENDS ${_rootfs_overlay_deps} ${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
 	COMMENT "Refreshing ext4 rootfs ${_fsimg} from existing ${XV6_SYSROOT}")
 
 # ---------------------------------------------------------------------
