@@ -1,0 +1,300 @@
+#!/usr/bin/env expect
+
+set timeout 320
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/qt-wayland-smoke"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/qt-wayland-smoke.fs.img"
+set app_log "/tmp/qt-wayland-smoke.log"
+set guest_pid "/tmp/qt-wayland-smoke.pid"
+
+array set guest {
+    before /qt-wayland-smoke-before.ppm
+    launch /qt-wayland-smoke-launch.ppm
+    frame /qt-wayland-smoke-frame.ppm
+    exit /qt-wayland-smoke-exit.ppm
+}
+
+proc host_ppm {phase} {
+    global outdir
+    return "$outdir/qt-wayland-smoke-$phase.ppm"
+}
+
+proc host_png {phase} {
+    global outdir
+    return "$outdir/qt-wayland-smoke-$phase.png"
+}
+
+exec sh -c "rm -f '$runlog' '$tmpimg' '$outdir'/qt-wayland-smoke-*.ppm '$outdir'/qt-wayland-smoke-*.png '$outdir'/diff-*.txt"
+exec cp $fsimg $tmpimg
+foreach phase [array names guest] {
+    catch { exec sh -c "debugfs -w -R 'rm $guest($phase)' '$tmpimg' >/dev/null 2>&1" }
+}
+catch { exec sh -c "debugfs -w -R 'rm $app_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_pid' '$tmpimg' >/dev/null 2>&1" }
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_AUDIO)            "none"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 desktop=kde video=1280x800 netsurf=0 webkit=0 kde_audio=0"
+set send_slow {1 .01}
+
+proc fail {code label} {
+    global qemu_pid runlog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    catch { exec kill $qemu_pid }
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
+proc optional_prompt {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 2
+    expect {
+        -re {root:/#} {}
+        timeout {}
+        eof {}
+    }
+    set timeout $old_timeout
+}
+
+proc sync_prompt {{seconds 20}} {
+    global timeout
+    set old_timeout $timeout
+    set timeout $seconds
+    send "\025"
+    sleep 1
+    send "\r"
+    expect {
+        -re {root:/#} {
+            set timeout $old_timeout
+            return
+        }
+        timeout {
+            set timeout $old_timeout
+            fail 8 "QT-WAYLAND-SMOKE-FAIL prompt-sync-timeout"
+        }
+        eof { fail 5 "QT-WAYLAND-SMOKE-FAIL prompt-sync-eof" }
+    }
+}
+
+proc capture_fb {phase marker label} {
+    global guest timeout
+
+    sync_prompt
+    set old_timeout $timeout
+    set timeout 25
+    send "fbstat ppm-current $guest($phase) 0 0 1280 800; sync; echo $marker\r"
+    expect {
+        -re "fb_ppm_current path=$guest($phase) screen=1280x800 scanout=1280x800" {}
+        -re {fbstat: [^\r\n]+} { fail 20 "$label fbstat-error" }
+        timeout { fail 20 "$label fbstat-timeout" }
+        eof { fail 20 "$label fbstat-eof" }
+    }
+    expect {
+        -re $marker {}
+        timeout { fail 21 "$label marker-timeout" }
+        eof { fail 21 "$label marker-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+}
+
+proc metric_ae {from to diff_path} {
+    set text [exec sh -c "compare -metric AE '$from' '$to' '$diff_path' 2>&1 || true"]
+    if {[regexp {([0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?)} $text -> value]} {
+        return [expr {int(ceil(double($value)))}]
+    }
+    return 0
+}
+
+proc extract_artifacts {} {
+    global tmpimg guest outdir
+
+    foreach phase {before launch frame exit} {
+        set ppm [host_ppm $phase]
+        set png [host_png $phase]
+        if {[catch { exec sh -c "debugfs -R 'dump $guest($phase) $ppm' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nQT-WAYLAND-SMOKE-FAIL extract-$phase $dump_out"
+            exit 30
+        }
+        if {[catch { exec convert $ppm $png } convert_out]} {
+            puts "\nQT-WAYLAND-SMOKE-FAIL convert-$phase $convert_out"
+            exit 31
+        }
+    }
+
+    set launch_ae [metric_ae [host_ppm before] [host_ppm launch] "$outdir/qt-wayland-smoke-launch-diff.png"]
+    set frame_ae [metric_ae [host_ppm launch] [host_ppm frame] "$outdir/qt-wayland-smoke-frame-diff.png"]
+    set exit_ae [metric_ae [host_ppm frame] [host_ppm exit] "$outdir/qt-wayland-smoke-exit-diff.png"]
+    exec sh -c "printf '%s\n' '$launch_ae' > '$outdir/diff-launch-ae.txt'; printf '%s\n' '$frame_ae' > '$outdir/diff-frame-ae.txt'; printf '%s\n' '$exit_ae' > '$outdir/diff-exit-ae.txt'"
+
+    if {$launch_ae < 1000} {
+        puts "\nQT-WAYLAND-SMOKE-FAIL launch-screenshot-unchanged changed_pixels=$launch_ae"
+        exit 32
+    }
+    if {$frame_ae < 100} {
+        puts "\nQT-WAYLAND-SMOKE-FAIL frame-screenshot-unchanged changed_pixels=$frame_ae"
+        exit 33
+    }
+    if {$exit_ae < 100} {
+        puts "\nQT-WAYLAND-SMOKE-FAIL exit-screenshot-unchanged changed_pixels=$exit_ae"
+        exit 34
+    }
+    return [list $launch_ae $frame_ae $exit_ae]
+}
+
+log_file -a $runlog
+spawn timeout --foreground 300 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {FB: registered /dev/fb0 \(virtio-gpu direct 1280x800x32} {}
+    -re {PANIC|fatal page fault|spin_lock reentry} {
+        fail 3 "QT-WAYLAND-SMOKE-FAIL early-crash"
+    }
+    timeout { fail 4 "QT-WAYLAND-SMOKE-FAIL no-fb0" }
+    eof { fail 5 "QT-WAYLAND-SMOKE-FAIL early-eof" }
+}
+
+expect {
+    -re {xv6-desktop-session: selected desktop=kde} {}
+    -re {xv6-desktop-session: selected desktop=weston} {
+        fail 4 "QT-WAYLAND-SMOKE-FAIL weston-selected"
+    }
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+        fail 3 "QT-WAYLAND-SMOKE-FAIL launch-crash"
+    }
+    timeout { fail 4 "QT-WAYLAND-SMOKE-FAIL no-desktop-dispatch" }
+    eof { fail 5 "QT-WAYLAND-SMOKE-FAIL dispatch-eof" }
+}
+
+expect {
+    -re {kde-session: starting KDE Plasma desktop} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+        fail 3 "QT-WAYLAND-SMOKE-FAIL session-crash"
+    }
+    timeout { fail 4 "QT-WAYLAND-SMOKE-FAIL no-kde-session" }
+    eof { fail 5 "QT-WAYLAND-SMOKE-FAIL session-eof" }
+}
+
+expect {
+    -re {kde-session: KWin and plasmashell are running} {}
+    -re {KWin startup attempt=[0-9]+ failed|KWin startup failed after retries} {
+        fail 8 "QT-WAYLAND-SMOKE-FAIL kde-session-startup-retry"
+    }
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+        fail 3 "QT-WAYLAND-SMOKE-FAIL kde-ready-crash"
+    }
+    timeout { fail 8 "QT-WAYLAND-SMOKE-FAIL kde-ready-timeout" }
+    eof { fail 5 "QT-WAYLAND-SMOKE-FAIL kde-ready-eof" }
+}
+
+sleep 10
+capture_fb before "QT_WAYLAND_BASE_DONE" "QT-WAYLAND-SMOKE-FAIL before"
+
+sync_prompt
+send "rm -f $app_log $guest_pid; echo QT_WAYLAND_CLEAN_DONE\r"
+expect {
+    -re {QT_WAYLAND_CLEAN_DONE} {}
+    timeout { fail 7 "QT-WAYLAND-SMOKE-FAIL clean-timeout" }
+    eof { fail 7 "QT-WAYLAND-SMOKE-FAIL clean-eof" }
+}
+optional_prompt
+
+set old_timeout $timeout
+set timeout 20
+send "/bin/qt-wayland-smoke-launcher &\r"
+expect {
+    -re {root:/#} {}
+    -re {exec .*failed|not found|cannot execute} { fail 7 "QT-WAYLAND-SMOKE-FAIL launch" }
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+        fail 4 "QT-WAYLAND-SMOKE-FAIL launch-crash"
+    }
+    timeout { fail 7 "QT-WAYLAND-SMOKE-FAIL launch-timeout" }
+    eof { fail 7 "QT-WAYLAND-SMOKE-FAIL launch-eof" }
+}
+set timeout $old_timeout
+optional_prompt
+
+sleep 8
+send "cat $app_log; echo QT_WAYLAND_LOG_DONE\r"
+set saw_exec 0
+set saw_ready 0
+set saw_frame 0
+set saw_done 0
+while {!$saw_done} {
+    expect {
+        -re {qt-wayland-smoke-launcher: exec /usr/bin/qmlscene} { set saw_exec 1 }
+        -re {XV6_QT_WAYLAND_SMOKE_READY} { set saw_ready 1 }
+        -re {XV6_QT_WAYLAND_SMOKE_FRAME} { set saw_frame 1 }
+        -re {QT_WAYLAND_LOG_DONE} { set saw_done 1 }
+        -re {(could not connect|Failed to create wl_display|This application failed to start|Could not load the Qt platform plugin|No such file|exec failed|Segmentation fault|Aborted)} {
+            fail 8 "QT-WAYLAND-SMOKE-FAIL app-log-error"
+        }
+        timeout { fail 8 "QT-WAYLAND-SMOKE-FAIL app-log-timeout" }
+        eof { fail 8 "QT-WAYLAND-SMOKE-FAIL app-log-eof" }
+    }
+}
+if {!($saw_exec && $saw_ready && $saw_frame)} {
+    fail 8 "QT-WAYLAND-SMOKE-FAIL app-log-incomplete exec=$saw_exec ready=$saw_ready frame=$saw_frame"
+}
+optional_prompt
+
+capture_fb launch "QT_WAYLAND_LAUNCH_FB_DONE" "QT-WAYLAND-SMOKE-FAIL launch"
+sleep 2
+capture_fb frame "QT_WAYLAND_FRAME_FB_DONE" "QT-WAYLAND-SMOKE-FAIL frame"
+
+sync_prompt
+send "kill \$(cat $guest_pid); echo QT_WAYLAND_TERM_DONE\r"
+expect {
+    -re {QT_WAYLAND_TERM_DONE} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+        fail 4 "QT-WAYLAND-SMOKE-FAIL term-crash"
+    }
+    timeout { fail 13 "QT-WAYLAND-SMOKE-FAIL term-timeout" }
+    eof { fail 13 "QT-WAYLAND-SMOKE-FAIL term-eof" }
+}
+optional_prompt
+
+sleep 3
+send "ps; echo QT_WAYLAND_AFTER_TERM_PS_DONE\r"
+set saw_after_term_done 0
+while {!$saw_after_term_done} {
+    expect {
+        -re {qmlscene} {
+            fail 14 "QT-WAYLAND-SMOKE-FAIL process-still-running-after-term"
+        }
+        -re {QT_WAYLAND_AFTER_TERM_PS_DONE} {
+            if {[regexp {qmlscene} $expect_out(buffer)]} {
+                fail 14 "QT-WAYLAND-SMOKE-FAIL process-still-running-after-term"
+            }
+            set saw_after_term_done 1
+        }
+        timeout { fail 14 "QT-WAYLAND-SMOKE-FAIL after-term-ps-timeout" }
+        eof { fail 14 "QT-WAYLAND-SMOKE-FAIL after-term-ps-eof" }
+    }
+}
+optional_prompt
+
+capture_fb exit "QT_WAYLAND_EXIT_FB_DONE" "QT-WAYLAND-SMOKE-FAIL exit"
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+catch { exec kill $qemu_pid }
+sleep 1
+set aes [extract_artifacts]
+puts "\nQT-WAYLAND-SMOKE-PASS launch_changed_pixels=[lindex $aes 0] frame_changed_pixels=[lindex $aes 1] exit_changed_pixels=[lindex $aes 2] launch_png=[host_png launch] frame_png=[host_png frame] exit_png=[host_png exit] log=$runlog"
+exit 0

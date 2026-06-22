@@ -11,6 +11,8 @@
 #
 # Set ROOTFS_OVERLAY=/path/to/overlay to use an alternate overlay directory for
 # one-off diagnostic images.  The default is the repository's rootfs-overlay.
+# Set ROOTFS_EXTRA_OVERLAYS to a colon-separated list of generated overlays
+# that should be layered after ROOTFS_OVERLAY.
 set -euo pipefail
 
 SYSROOT="${1:?usage: $0 <sysroot_dir> <out_img> [size_mb]}"
@@ -33,6 +35,7 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 
 mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,libexec,usr,share,var}
+chmod 01777 "${STAGE}/tmp"
 
 # 1. xv6-style user binaries: bin/_<name> -> /bin/<name>
 shopt -s nullglob
@@ -71,6 +74,53 @@ OVERLAY="${ROOTFS_OVERLAY:-${REPO_ROOT}/rootfs-overlay}"
 if [[ -d "${OVERLAY}" ]]; then
     rsync -aH "${OVERLAY}/" "${STAGE}/"
 fi
+if [[ -n "${ROOTFS_EXTRA_OVERLAYS:-}" ]]; then
+    IFS=: read -r -a extra_overlays <<< "${ROOTFS_EXTRA_OVERLAYS}"
+    for extra_overlay in "${extra_overlays[@]}"; do
+        [[ -n "${extra_overlay}" ]] || continue
+        if [[ -d "${extra_overlay}" ]]; then
+            rsync -aH "${extra_overlay}/" "${STAGE}/"
+        else
+            echo "make-rootfs: warning: extra overlay not found: ${extra_overlay}" >&2
+        fi
+    done
+fi
+
+# Linux desktop daemons expect the conventional libmount runtime state.
+# xv6 synthesizes /proc mounts in-kernel, but GLib/libmount also probes
+# /run/mount and /etc/mtab while constructing Unix mount monitors.
+mkdir -p "${STAGE}/run/mount"
+ln -sfn /proc/self/mounts "${STAGE}/etc/mtab"
+ln -sfn /usr/share/zoneinfo/Etc/UTC "${STAGE}/etc/localtime"
+
+prune_overlay_graphics_runtime() {
+    local dir
+    local pattern
+
+    for dir in \
+        "${STAGE}/lib/x86_64-linux-gnu" \
+        "${STAGE}/usr/lib" \
+        "${STAGE}/usr/lib/x86_64-linux-gnu"; do
+        [[ -d "${dir}" ]] || continue
+        for pattern in \
+            libEGL.so* \
+            libGL.so* \
+            libGLX.so* \
+            libGLdispatch.so* \
+            libGLES*.so* \
+            libOpenGL.so* \
+            libglapi.so* \
+            libgbm.so* \
+            libdrm.so* \
+            libdrm_*.so* \
+            libwayland-*.so* \
+            libweston-*.so*; do
+            find "${dir}" -maxdepth 1 \( -type f -o -type l \) -name "${pattern}" -delete
+        done
+    done
+}
+
+prune_overlay_graphics_runtime
 
 stage_wayland_chromium_launcher() {
     local src="${REPO_ROOT}/scripts/image/wayland-chromium-launcher.c"
@@ -90,6 +140,311 @@ stage_wayland_chromium_launcher() {
 
     mkdir -p "${STAGE}/bin"
     "${cc_bin}" -O2 -Wall -Wextra -o "${out}" "${src}"
+}
+
+stage_wayland_chromium_desktop_entry() {
+    local desktop="${STAGE}/usr/share/applications/xv6-wayland-chromium.desktop"
+
+    [[ -x "${STAGE}/bin/wayland-chromium" ]] || return 0
+    mkdir -p "$(dirname "${desktop}")"
+    cat > "${desktop}" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Exec=/bin/wayland-chromium
+Icon=chromium
+Categories=Network;WebBrowser;
+Terminal=false
+EOF
+}
+
+stage_plain_image_program() {
+    local src="$1"
+    local out="$2"
+    local cc_bin="${CC:-cc}"
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        if [[ -x "${out}" ]]; then
+            echo "make-rootfs: warning: ${cc_bin} not found; keeping existing $(basename "${out}")" >&2
+            return 0
+        fi
+        echo "make-rootfs: ${cc_bin} not found; cannot build $(basename "${out}")" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "${out}")"
+    "${cc_bin}" -O2 -Wall -Wextra -o "${out}" "${src}"
+}
+
+stage_login1_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-login1-shim.c"
+    local out="${STAGE}/bin/xv6-login1-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-login1-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-login1-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs} -ldl
+}
+
+stage_bluez_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-bluez-shim.c"
+    local out="${STAGE}/bin/xv6-bluez-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-bluez-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-bluez-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+}
+
+stage_kde_libinput_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-libinput-probe.c"
+    local out="${STAGE}/bin/kde-libinput-probe"
+    local cc_bin="${CC:-cc}"
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-libinput-probe" >&2
+        exit 1
+    fi
+
+    mkdir -p "${STAGE}/bin"
+    "${cc_bin}" -O2 -Wall -Wextra \
+        -I"${SYSROOT}/include" -L"${SYSROOT}/lib" \
+        -Wl,-rpath,/usr/lib/x86_64-linux-gnu -Wl,-rpath,/lib \
+        -o "${out}" "${src}" -linput -ludev -pthread
+}
+
+stage_kde_proc_mountinfo_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-proc-mountinfo-probe.c"
+    local out="${STAGE}/bin/kde-proc-mountinfo-probe"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-proc-mountinfo-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build kde-proc-mountinfo-probe" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs} -ldl
+}
+
+stage_kde_kwin_screenshot_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-kwin-screenshot-probe.c"
+    local out="${STAGE}/bin/kde-kwin-screenshot-probe"
+    local desktop="${STAGE}/usr/share/applications/org.xv6.kde-kwin-screenshot-probe.desktop"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-kwin-screenshot-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build kde-kwin-screenshot-probe" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin" "$(dirname "${desktop}")"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+    cat > "${desktop}" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=xv6 KDE KWin Screenshot Probe
+Exec=/bin/kde-kwin-screenshot-probe
+NoDisplay=true
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+EOF
+}
+
+stage_kde_drm_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-drm-probe.c"
+    local out="${STAGE}/bin/kde-drm-probe"
+    local cc_bin="${CC:-cc}"
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-drm-probe" >&2
+        exit 1
+    fi
+
+    mkdir -p "${STAGE}/bin"
+    "${cc_bin}" -O2 -Wall -Wextra \
+        -I"${SYSROOT}/include" -I"${SYSROOT}/include/libdrm" \
+        -L"${SYSROOT}/lib" -Wl,-rpath,/lib \
+        -o "${out}" "${src}" -ldrm
+}
+
+stage_kde_wayland_seat_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-wayland-seat-probe.c"
+    local out="${STAGE}/bin/kde-wayland-seat-probe"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-wayland-seat-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build kde-wayland-seat-probe" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags wayland-client
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs wayland-client
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+}
+
+stage_kde_abi_overrides() {
+    local dir="${STAGE}/opt/xv6-kde-abi-libs"
+
+    mkdir -p "${dir}"
+    ln -sfn /lib/libinput.so.10 "${dir}/libinput.so.10"
+    ln -sfn /lib/libudev.so.1 "${dir}/libudev.so.1"
+    ln -sfn /lib/libdrm.so.2 "${dir}/libdrm.so.2"
+}
+
+stage_kde_session_launchers() {
+    if [[ -x "${STAGE}/bin/Xwayland" ]]; then
+        mkdir -p "${STAGE}/usr/bin"
+        rm -f "${STAGE}/usr/bin/Xwayland"
+        ln -sfn ../../bin/Xwayland "${STAGE}/usr/bin/Xwayland"
+    fi
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-session.c" \
+        "${STAGE}/bin/kde-session"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-desktop-session.c" \
+        "${STAGE}/bin/xv6-desktop-session"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-plasma-session-child.c" \
+        "${STAGE}/bin/kde-plasma-session-child"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-abi-probe.c" \
+        "${STAGE}/bin/kde-abi-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-dlopen-probe.c" \
+        "${STAGE}/bin/kde-dlopen-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
+        "${STAGE}/bin/kde-unix-socket-probe"
+    stage_kde_wayland_seat_probe
+    stage_kde_drm_probe
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-process-probe.c" \
+        "${STAGE}/bin/kde-process-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-app-launch-probe.c" \
+        "${STAGE}/bin/kde-app-launch-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-smoke-agent.c" \
+        "${STAGE}/bin/kde-smoke-agent"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-konsole-shell-wrapper.c" \
+        "${STAGE}/bin/kde-konsole-shell-wrapper"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-terminal-launcher.c" \
+        "${STAGE}/bin/kde-terminal-launcher"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/qt-wayland-smoke-launcher.c" \
+        "${STAGE}/bin/qt-wayland-smoke-launcher"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-config-atomic-probe.c" \
+        "${STAGE}/bin/kde-config-atomic-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pulse-cookie-probe.c" \
+        "${STAGE}/bin/kde-pulse-cookie-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-proc-comm-probe.c" \
+        "${STAGE}/bin/kde-proc-comm-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pty-shell-probe.c" \
+        "${STAGE}/bin/kde-pty-shell-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pty-openpty-probe.c" \
+        "${STAGE}/bin/kde-pty-openpty-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pty-readiness-probe.c" \
+        "${STAGE}/bin/kde-pty-readiness-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-kwriteconfig-probe.c" \
+        "${STAGE}/bin/kde-kwriteconfig-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-trash-stat-probe.c" \
+        "${STAGE}/bin/kde-trash-stat-probe"
+    stage_login1_shim
+    stage_bluez_shim
+    stage_kde_libinput_probe
+    stage_kde_proc_mountinfo_probe
+    stage_kde_kwin_screenshot_probe
+    stage_kde_abi_overrides
 }
 
 # libxkbcommon looks for X11 Compose tables at runtime.  Stage the compact
@@ -118,6 +473,16 @@ EOF
 
 cat > "${STAGE}/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
+messagebus:x:101:101:System Message Bus:/nonexistent:/bin/false
+polkitd:x:102:102:User for polkitd:/nonexistent:/bin/false
+systemd-network:x:103:103:systemd Network Management:/nonexistent:/bin/false
+avahi:x:104:104:Avahi mDNS daemon:/nonexistent:/bin/false
+dnsmasq:x:105:105:dnsmasq daemon:/nonexistent:/bin/false
+geoclue:x:106:106:Geoclue daemon:/nonexistent:/bin/false
+whoopsie:x:107:107:Crash report daemon:/nonexistent:/bin/false
+rtkit:x:108:108:RealtimeKit daemon:/nonexistent:/bin/false
+systemd-resolve:x:109:109:systemd Resolver:/nonexistent:/bin/false
+systemd-timesync:x:110:110:systemd Time Synchronization:/nonexistent:/bin/false
 sshd:x:74:74:Privilege-separated SSH:/var/empty:/bin/false
 guest:x:1000:1000:Guest User:/home/guest:/bin/sh
 nobody:x:65534:65534:Nobody:/nonexistent:/bin/false
@@ -125,6 +490,18 @@ EOF
 
 cat > "${STAGE}/etc/group" <<'EOF'
 root:x:0:root
+messagebus:x:101:
+polkitd:x:102:
+systemd-network:x:103:
+avahi:x:104:
+dnsmasq:x:105:
+geoclue:x:106:
+whoopsie:x:107:
+rtkit:x:108:
+systemd-resolve:x:109:
+systemd-timesync:x:110:
+netdev:x:111:
+bluetooth:x:112:
 wheel:x:10:root
 sshd:x:74:
 guest:x:1000:guest
@@ -133,6 +510,16 @@ EOF
 
 cat > "${STAGE}/etc/shadow" <<'EOF'
 root::20517:0:99999:7:::
+messagebus:!:20517:0:99999:7:::
+polkitd:!:20517:0:99999:7:::
+systemd-network:!:20517:0:99999:7:::
+avahi:!:20517:0:99999:7:::
+dnsmasq:!:20517:0:99999:7:::
+geoclue:!:20517:0:99999:7:::
+whoopsie:!:20517:0:99999:7:::
+rtkit:!:20517:0:99999:7:::
+systemd-resolve:!:20517:0:99999:7:::
+systemd-timesync:!:20517:0:99999:7:::
 sshd:!:20517:0:99999:7:::
 guest:!:20517:0:99999:7:::
 nobody:!:20517:0:99999:7:::
@@ -170,6 +557,49 @@ if [[ -f "${STAGE}/share/gstreamer-1.0/registry.x86_64.bin" ]]; then
 fi
 
 stage_wayland_chromium_launcher
+stage_wayland_chromium_desktop_entry
+stage_kde_session_launchers
+
+stage_kde_desktop_shortcut() {
+    local name="$1"
+    local source="$2"
+    local out="${STAGE}/root/Desktop/${name}.desktop"
+
+    [[ -f "${STAGE}${source}" ]] || return 0
+    mkdir -p "${STAGE}/root/Desktop"
+    cp -a "${STAGE}${source}" "${out}"
+    if ! grep -q '^X-KDE-Trusted=' "${out}"; then
+        printf '\nX-KDE-Trusted=true\n' >> "${out}"
+    fi
+    chmod 0755 "${out}"
+}
+
+rm -f "${STAGE}/root/Desktop/Terminal.desktop"
+stage_kde_desktop_shortcut "Konsole" "/usr/share/applications/org.kde.konsole.desktop"
+if [[ -x "${STAGE}/usr/bin/qterminal" || -x "${STAGE}/usr/bin/xterm" ]]; then
+    mkdir -p "${STAGE}/usr/share/applications"
+    cat > "${STAGE}/usr/share/applications/xv6-terminal.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Terminal
+GenericName=Terminal Emulator
+Comment=Open an interactive shell
+Exec=/bin/kde-terminal-launcher
+Icon=utilities-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true
+X-KDE-Trusted=true
+EOF
+    stage_kde_desktop_shortcut "Terminal" "/usr/share/applications/xv6-terminal.desktop"
+fi
+stage_kde_desktop_shortcut "Files" "/usr/share/applications/org.kde.dolphin.desktop"
+if [[ -f "${STAGE}/usr/share/applications/org.kde.kwrite.desktop" ]]; then
+    stage_kde_desktop_shortcut "Text Editor" "/usr/share/applications/org.kde.kwrite.desktop"
+else
+    stage_kde_desktop_shortcut "Text Editor" "/usr/share/applications/org.kde.kate.desktop"
+fi
+stage_kde_desktop_shortcut "Chromium" "/usr/share/applications/xv6-wayland-chromium.desktop"
 
 find "${STAGE}/root/desktop" -maxdepth 1 -type f -name '*.desktop' -delete
 
@@ -251,7 +681,7 @@ if [[ -x "${STAGE}/bin/mesawlegl" &&
 fi
 
 if [[ -x "${STAGE}/bin/peanutgb" &&
-      -f "${STAGE}/root/roms/Pokemon_Blue_Version_USA_Europe_SGB_Enhanced.gb" &&
+      -f "${STAGE}/root/roms/dmg-acid2.gb" &&
       -x "${STAGE}/bin/xv6-open-game-boy" ]]; then
     write_desktop_link "Game Boy" "/bin/xv6-open-game-boy"
 fi
@@ -346,7 +776,9 @@ stage_host_glibc() {
             continue
         fi
 
-        if [[ -e "${interp}" ]]; then
+        if [[ -e "${STAGE}${interp}" ]]; then
+            :
+        elif [[ -e "${interp}" ]]; then
             mkdir -p "${STAGE}$(dirname "${interp}")"
             cp -L "${interp}" "${STAGE}${interp}"
             chmod 0755 "${STAGE}${interp}"
@@ -366,9 +798,9 @@ stage_host_glibc() {
                 /^[[:space:]]*\// { print $1; next }
             '
         )
-    done < <(find "${STAGE}/bin" "${STAGE}/libexec" "${STAGE}/lib" "${STAGE}/usr/lib" \
-        -type f \( -perm -111 -o -name '*.so' -o -name '*.so.*' \) \
-        -print0 2>/dev/null)
+    done < <(find "${STAGE}/bin" "${STAGE}/usr/bin" \
+        "${STAGE}/libexec" "${STAGE}/usr/libexec" \
+        -type f -perm -111 -print0 2>/dev/null)
 }
 
 stage_has_sysroot_library() {
@@ -390,6 +822,7 @@ stage_has_sysroot_library() {
 stage_host_path() {
     local src="$1"
     [[ -e "${src}" ]] || return 0
+    [[ "${src}" == "${STAGE}/"* ]] && return 0
     if stage_has_sysroot_library "${src}" && [[ ! -e "${STAGE}${src}" ]]; then
         return 0
     fi
@@ -401,6 +834,7 @@ stage_host_path() {
 stage_host_path_force() {
     local src="$1"
     [[ -e "${src}" ]] || return 0
+    [[ "${src}" == "${STAGE}/"* ]] && return 0
     mkdir -p "${STAGE}$(dirname "${src}")"
     cp -L "${src}" "${STAGE}${src}"
     chmod 0755 "${STAGE}${src}" 2>/dev/null || true
@@ -411,6 +845,7 @@ stage_ldd_dependencies() {
     command -v ldd >/dev/null 2>&1 || return 0
     while IFS= read -r lib; do
         [[ -n "${lib}" && -e "${lib}" ]] || continue
+        [[ "${lib}" == "${STAGE}/"* ]] && continue
         stage_host_path "${lib}"
     done < <(
         LD_LIBRARY_PATH="${STAGE}/lib:${STAGE}/usr/lib:${STAGE}/lib/x86_64-linux-gnu:${STAGE}/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
@@ -443,6 +878,7 @@ stage_mesa_runtime() {
     shopt -s nullglob
 
     for path in \
+        /usr/lib/x86_64-linux-gnu/libOpenGL.so* \
         /usr/lib/x86_64-linux-gnu/libEGL_mesa.so* \
         /usr/lib/x86_64-linux-gnu/dri/swrast_dri.so \
         /usr/lib/x86_64-linux-gnu/dri/kms_swrast_dri.so; do
@@ -480,8 +916,9 @@ stage_mesa_runtime
 if [[ "${SIZE_MB}" == "auto" ]]; then
     stage_kib="$(du -sk "${STAGE}" | awk '{print $1}')"
     # ext4 -d needs room for metadata, directories, and future runtime writes.
-    # Use about 45% headroom plus 256 MiB, then round up to a 128 MiB boundary.
-    SIZE_MB=$(( (stage_kib * 145 / 100 + 262144 + 1023) / 1024 ))
+    # Full Plasma images have enough first-run cache/config churn that a small
+    # percentage cushion still leaves KDE without practical breathing room.
+    SIZE_MB=$(( (stage_kib * 170 / 100 + 1048576 + 1023) / 1024 ))
     if (( SIZE_MB < 1024 )); then
         SIZE_MB=1024
     fi
@@ -508,6 +945,16 @@ set_inode_field /var/empty gid 0
 set_inode_field /var/empty mode 040755
 set_inode_field /root uid 0
 set_inode_field /root gid 0
+set_inode_field /root/Desktop uid 0
+set_inode_field /root/Desktop gid 0
+set_inode_field /root/Desktop/Chromium.desktop uid 0
+set_inode_field /root/Desktop/Chromium.desktop gid 0
+set_inode_field /root/Desktop/Files.desktop uid 0
+set_inode_field /root/Desktop/Files.desktop gid 0
+set_inode_field /root/Desktop/Konsole.desktop uid 0
+set_inode_field /root/Desktop/Konsole.desktop gid 0
+set_inode_field "/root/Desktop/Text Editor.desktop" uid 0
+set_inode_field "/root/Desktop/Text Editor.desktop" gid 0
 set_inode_field /root/.ssh uid 0
 set_inode_field /root/.ssh gid 0
 set_inode_field /root/.ssh mode 040700

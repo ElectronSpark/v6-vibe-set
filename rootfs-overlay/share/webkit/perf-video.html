@@ -15,6 +15,7 @@
   const params = new URLSearchParams(location.search);
   const asset = params.get("asset") || "perf-1280x800-60fps.mp4";
   const runMs = parseInt(params.get("ms") || "15000", 10);
+  const showHud = params.get("hud") !== "0";
   const video = document.getElementById("v");
   const hud = document.getElementById("hud");
   const lines = [];
@@ -23,7 +24,8 @@
     document.title = "xv6-perf-video:" + line.slice(0, 110);
     console.log("PERF-VIDEO " + line);
   }
-  function hudset(s) { hud.textContent = s; }
+  if (!showHud) hud.style.display = "none";
+  function hudset(s) { if (showHud) hud.textContent = s; }
 
   ["loadstart", "loadedmetadata", "loadeddata", "canplay", "playing",
    "waiting", "stalled", "pause", "ended", "error"].forEach(ev => {

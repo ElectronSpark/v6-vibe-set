@@ -15,7 +15,9 @@ RUN apt-get update \
         cmake \
         cpio \
         curl \
+        dbus \
         e2fsprogs \
+        ffmpeg \
         file \
         flex \
         gawk \
@@ -29,10 +31,13 @@ RUN apt-get update \
         gstreamer1.0-plugins-bad \
         gstreamer1.0-plugins-base \
         gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-ugly \
         gstreamer1.0-tools \
         libevdev2 \
         libdrm2 \
+        libdrm-dev \
         libegl-mesa0 \
+        libegl-dev \
         libexpat1-dev \
         libgdk-pixbuf2.0-bin \
         libegl1 \
@@ -40,14 +45,21 @@ RUN apt-get update \
         libgbm1 \
         libgl1 \
         libgl1-mesa-dri \
+        libgl-dev \
         libglx-mesa0 \
+        libgles-dev \
         libgmp-dev \
+        libgtk-3-0 \
+        libgtk-3-dev \
+        libpython3.12-dev \
         libsecret-1-0 \
         libltdl-dev \
         libtool \
         m4 \
         libmpc-dev \
         libmpfr-dev \
+        libopengl0 \
+        libopengl-dev \
         make \
         meson \
         mtools \
@@ -64,6 +76,33 @@ RUN apt-get update \
         qemu-system-x86 \
         qemu-utils \
         libvirglrenderer1 \
+        libwayland-dev \
+        libx11-6 \
+        libx11-dev \
+        libxau6 \
+        libxcb1 \
+        libxcb1-dev \
+        libxcb-composite0 \
+        libxcb-dri3-0 \
+        libxcb-dri3-dev \
+        libxcb-present0 \
+        libxcb-present-dev \
+        libxcb-shape0 \
+        libxcb-shm0 \
+        libxcb-shm0-dev \
+        libxcb-xfixes0 \
+        libxcvt0 \
+        libxdamage1 \
+        libxdmcp6 \
+        libxext6 \
+        libxext-dev \
+        libxfixes3 \
+        libxfont2 \
+        libxkbfile1 \
+        libxrender1 \
+        libxshmfence1 \
+        libxshmfence-dev \
+        libxtst6 \
         rsync \
         sparse \
         tar \
@@ -71,6 +110,7 @@ RUN apt-get update \
         unzip \
         wget \
         xkb-data \
+        xwayland \
         xz-utils \
         zlib1g-dev \
     && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2' \

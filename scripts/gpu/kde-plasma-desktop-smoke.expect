@@ -1,0 +1,929 @@
+#!/usr/bin/env expect
+
+set timeout 360
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/kde-plasma-desktop-smoke"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set monitor "$outdir/qemu-monitor.sock"
+set tmpimg "$outdir/kde-plasma.fs.img"
+set ppm "$outdir/kde-plasma.ppm"
+set png "$outdir/kde-plasma.png"
+set qemu_trace_events "$outdir/qemu-trace-events"
+set qemu_trace "$outdir/kde-plasma-qemu.trace"
+set qemu_trace_summary "$outdir/kde-plasma-qemu-trace-summary.txt"
+set guest_before_ppm "/kde-plasma-before.ppm"
+set guest_after_ppm "/kde-plasma-after.ppm"
+set guest_final_ppm "/kde-plasma-final.ppm"
+set guest_agent_log "/tmp/kde-smoke-agent.log"
+set guest_agent_status "/tmp/kde-smoke-agent.status"
+set before_ppm "$outdir/kde-plasma-before.ppm"
+set after_ppm "$outdir/kde-plasma-after.ppm"
+set final_ppm "$outdir/kde-plasma-final.ppm"
+set agent_log "$outdir/kde-smoke-agent.log"
+set agent_status "$outdir/kde-smoke-agent.status"
+set before_png "$outdir/kde-plasma-before.png"
+set after_png "$outdir/kde-plasma-after.png"
+set final_png "$outdir/kde-plasma-final.png"
+set diff_png "$outdir/kde-plasma-input-diff.png"
+set host_startup_png "$outdir/kde-plasma-host-startup.png"
+set host_input_before_png "$outdir/kde-plasma-host-input-before.png"
+set host_input_after_png "$outdir/kde-plasma-host-input-after.png"
+set host_x11_egl_png "$outdir/kde-plasma-host-x11-egl.png"
+set host_final_png "$outdir/kde-plasma-host-final.png"
+set input_diff_min 10000
+set visual_warnings ""
+
+proc assert_default_launch_contract {} {
+    global root
+
+    set dry [exec sh -c "cd '$root' && env -u QEMU_GPU -u QEMU_APPEND -u DISPLAY_MODE AUTO_BUILD=0 QEMU_DRY_RUN=1 ./scripts/launch/launch-gui.sh 2>&1"]
+    if {![regexp {virtio-vga-gl} $dry]} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-FAIL default-launch-no-virgl\n$dry"
+        exit 8
+    }
+    if {![regexp {desktop=kde} $dry]} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-FAIL default-launch-no-kde\n$dry"
+        exit 8
+    }
+    if {[regexp {weston=1} $dry]} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-FAIL default-launch-weston-cmdline\n$dry"
+        exit 8
+    }
+}
+
+assert_default_launch_contract
+
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
+exec cp $fsimg $tmpimg
+set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
+set x11_egl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x11-egl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
+catch { exec sh -c "debugfs -w -R 'rm $guest_before_ppm' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_after_ppm' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_final_ppm' '$tmpimg' >/dev/null 2>&1" }
+
+set env(DISPLAY_MODE) "gtk"
+set env(USE_KVM) [expr {[info exists env(USE_KVM)] ? $env(USE_KVM) : "1"}]
+set env(QEMU_GPU) [expr {[info exists env(QEMU_GPU)] ? $env(QEMU_GPU) : "virtio-vga-gl-primary"}]
+set env(QEMU_INPUT) [expr {[info exists env(QEMU_INPUT)] ? $env(QEMU_INPUT) : "virtio"}]
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_VIRTIO_GPU_XRES) "1280"
+set env(QEMU_VIRTIO_GPU_YRES) "800"
+set qemu_append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
+append qemu_append " virtio_gpu_disable_pageflip_copy=0"
+append qemu_append " virtio_gpu_pageflip_copy=1"
+append qemu_append " virtio_gpu_present_minimal_drain=1"
+append qemu_append " virtio_gpu_present_no_drain=0"
+append qemu_append " kde_smoke_agent=1"
+if {$chromium_available} {
+    append qemu_append " kde_smoke_require_chromium=1"
+}
+if {[info exists env(QEMU_APPEND_EXTRA)] && $env(QEMU_APPEND_EXTRA) ne ""} {
+    append qemu_append " " $env(QEMU_APPEND_EXTRA)
+}
+set env(QEMU_APPEND) $qemu_append
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait -trace events=$qemu_trace_events,file=$qemu_trace"
+
+proc screendump {} {
+    global monitor ppm
+    catch { exec sh -c "printf 'screendump $ppm\\n' | nc -U -w 4 -q 1 '$monitor' >>'$ppm.nc.log' 2>&1 || echo nc-failed >>'$ppm.nc.log'" }
+}
+
+proc optional_monitor_screendump {} {
+    if {[info exists ::env(KDE_SMOKE_QEMU_SCREENDUMP)] && $::env(KDE_SMOKE_QEMU_SCREENDUMP) ne "0"} {
+        screendump
+    }
+}
+
+proc host_screenshot {name path} {
+    global root outdir
+    catch { exec sh -c "'$root/scripts/gpu/capture-host-screen.sh' '$path' > '$outdir/kde-plasma-host-$name.log' 2>&1 || true" }
+}
+
+proc fb_visual_enabled {} {
+    return 1
+}
+
+proc fb_visual_required {} {
+    return [expr {[info exists ::env(KDE_SMOKE_REQUIRE_FB_VISUAL)] && $::env(KDE_SMOKE_REQUIRE_FB_VISUAL) ne "0"}]
+}
+
+proc note_visual_warning {message} {
+    global visual_warnings
+
+    if {$visual_warnings eq ""} {
+        set visual_warnings $message
+    } else {
+        append visual_warnings "; " $message
+    }
+    puts "KDE-PLASMA-DESKTOP-SMOKE-WARN $message"
+}
+
+proc finish {code label} {
+    global qemu_pid runlog tmpimg ppm png guest_before_ppm guest_after_ppm
+    global guest_final_ppm
+    global guest_agent_log guest_agent_status agent_log agent_status
+    global before_ppm after_ppm final_ppm before_png after_png final_png
+    global diff_png input_diff_min outdir
+    global qemu_trace qemu_trace_summary
+    global host_final_png
+
+    host_screenshot "final" $host_final_png
+    optional_monitor_screendump
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    catch { exec kill $qemu_pid }
+    sleep 1
+
+    if {[file exists $ppm]} {
+        catch { exec convert $ppm $png }
+    }
+    catch { exec sh -c "debugfs -R 'dump $guest_before_ppm $before_ppm' '$tmpimg' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump $guest_after_ppm $after_ppm' '$tmpimg' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump $guest_final_ppm $final_ppm' '$tmpimg' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump $guest_agent_log $agent_log' '$tmpimg' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump $guest_agent_status $agent_status' '$tmpimg' >/dev/null 2>&1" }
+    if {[file exists $before_ppm]} {
+        catch { exec convert $before_ppm $before_png }
+    }
+    if {[file exists $after_ppm]} {
+        catch { exec convert $after_ppm $after_png }
+    }
+    if {[file exists $final_ppm]} {
+        catch { exec convert $final_ppm $final_png }
+    }
+    if {$code == 0 && ![fb_visual_enabled]} {
+        set code 0
+    } elseif {$code == 0 && [file exists $before_ppm] && [file exists $after_ppm]} {
+        set diff_pixels_text 0
+        set diff_out [exec sh -c "compare -metric AE '$before_ppm' '$after_ppm' '$diff_png' 2>&1 || true"]
+        regexp {([0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?)} $diff_out -> diff_pixels_text
+        set diff_pixels [expr {int(ceil(double($diff_pixels_text)))}]
+        exec sh -c "printf '%s\n' '$diff_pixels' > '$outdir/kde-plasma-input-diff.txt'"
+        if {$diff_pixels < $input_diff_min} {
+            if {[fb_visual_required]} {
+                set code 8
+                set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL input-no-visible-change diff_pixels=$diff_pixels min=$input_diff_min"
+            } else {
+                note_visual_warning "input-readback-no-visible-change diff_pixels=$diff_pixels min=$input_diff_min"
+            }
+        }
+    } elseif {$code == 0} {
+        if {[fb_visual_required]} {
+            set code 8
+            set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL input-capture-missing"
+        } else {
+            note_visual_warning "input-capture-missing"
+        }
+    }
+    if {$code == 0} {
+        set startup_regression "$outdir/kde-plasma-startup-regression.txt"
+        catch { exec sh -c "grep -En 'automatically choosing Wayland because WAYLAND_DISPLAY is set|KWin startup attempt=[0-9]+ failed|KWin startup failed after retries' '$runlog' > '$startup_regression' || true" }
+        if {[file exists $startup_regression] && [file size $startup_regression] > 0} {
+            set code 8
+            set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL startup-retry-regression"
+        }
+    }
+    if {$code == 0} {
+        set service_regression "$outdir/kde-plasma-service-regression.txt"
+        catch { exec sh -c "grep -En 'KApplicationTrader: mimeType \"x-scheme-handler/file\" not found|QString::arg: 2 argument\\(s\\) missing in Terminal|Parse error in tiles configuration for monitor|Program to run not set|Could not find .*, starting .*/bin/sh|Could not start program .*/bin/sh|Process operation timed out' '$runlog' > '$service_regression' || true" }
+        if {[file exists $service_regression] && [file size $service_regression] > 0} {
+            set code 8
+            set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL service-metadata-regression"
+        }
+    }
+    catch { exec sh -c "{
+        printf '%s\n' 'xv6 KDE virtio-gpu trace counts'
+        for event in virtio_gpu_cmd_ctx_submit virtio_gpu_cmd_set_scanout virtio_gpu_cmd_res_flush virtio_gpu_fence_ctrl virtio_gpu_fence_resp virtio_gpu_cmd_res_create_3d virtio_gpu_cmd_res_xfer_toh_3d; do
+            printf '%s %s\n' \"\$event\" \"\$(grep -c \"\$event\" '$qemu_trace' 2>/dev/null || true)\"
+        done
+    } > '$qemu_trace_summary'" }
+
+    puts "\n$label log=$runlog ppm=$ppm png=$png before_png=$before_png after_png=$after_png"
+    exit $code
+}
+
+proc optional_prompt {} {
+    global timeout
+    set old_timeout $timeout
+    set timeout 3
+    expect {
+        -re {root:/#} {}
+        timeout {}
+        eof {}
+    }
+    set timeout $old_timeout
+}
+
+proc sync_prompt {{seconds 20}} {
+    global timeout
+    set old_timeout $timeout
+    set timeout $seconds
+    send "\025"
+    sleep 1
+    send "\r"
+    expect {
+        -re {root:/#} {
+            set timeout $old_timeout
+            return 1
+        }
+        timeout {
+            set timeout $old_timeout
+            send "\020"
+            sleep 3
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL prompt-sync-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL prompt-sync-eof" }
+    }
+}
+
+proc legacy_serial_validation_enabled {} {
+    return [expr {[info exists ::env(KDE_SMOKE_LEGACY_SERIAL)] && $::env(KDE_SMOKE_LEGACY_SERIAL) ne "0"}]
+}
+
+proc launch_guest_smoke_agent {} {
+    global timeout chromium_available
+
+    set old_timeout $timeout
+    set timeout 20
+    send "\025"
+    sleep 1
+    send "\r"
+    expect {
+        -re {root:/#} {}
+        timeout {
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL agent-prompt-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL agent-prompt-eof" }
+    }
+
+    set args ""
+    if {$chromium_available} {
+        append args " --require-chromium"
+    }
+    send "rm -f /tmp/kde-smoke-agent.log /tmp/kde-smoke-agent.status /tmp/kde-smoke-agent.done /kde-plasma-before.ppm /kde-plasma-after.ppm; /bin/kde-smoke-agent$args & echo KDE_SMOKE_AGENT_LAUNCHED\r"
+    expect {
+        -re {KDE_SMOKE_AGENT_LAUNCHED} {
+            set timeout $old_timeout
+            return
+        }
+        -re {not found|cannot execute|exec failed|status=127} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL agent-launch"
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL agent-launch-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL agent-launch-eof" }
+    }
+}
+
+proc wait_for_guest_smoke_agent {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 420
+    expect {
+        -re {KDE_SMOKE_AGENT_DONE status=PASS} {
+            set timeout $old_timeout
+            return
+        }
+        -re {KDE_SMOKE_AGENT_DONE status=FAIL} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL guest-agent-fail"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL guest-agent-crash"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL guest-agent-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL guest-agent-eof" }
+    }
+}
+
+proc wait_for_kde_session_ready {} {
+    global timeout
+    set old_timeout $timeout
+    set timeout 240
+    expect {
+        -re {kde-session: KWin and plasmashell are running} {
+            set timeout $old_timeout
+            return
+        }
+        -re {KWin startup attempt=[0-9]+ failed|KWin startup failed after retries} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+            finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-eof" }
+    }
+    set timeout $old_timeout
+}
+
+proc run_guest_check {command label timeout_seconds} {
+    global timeout
+    set old_timeout $timeout
+    sync_prompt
+    set timeout $timeout_seconds
+    send [format {%s; echo %s_STATUS:$?} $command $label]
+    send "\r"
+    expect {
+        -re {kde_wayland_seat_probe timeout phase=(startup|connect|registry|roundtrip-[0-9]+|validate)} {
+            set phase [string trim $expect_out(1,string)]
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-timeout-$phase"
+        }
+        -re {kde_wayland_seat_probe (connect failed|roundtrip-[0-9]+ failed|no wl_seat|no seat capabilities|no pointer capability|no keyboard capability|pointer capability without object|invalid pointer version)} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-output-fail"
+        }
+        -re {kde_[a-z0-9_]+_probe result=FAIL} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-output-fail"
+        }
+        -re {kde_[a-z0-9_]+_probe result=([1-9][0-9]*)} {
+            set result [string trim $expect_out(1,string)]
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-result-$result"
+        }
+        -re {kde_[a-z0-9_]+_probe result=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_[a-z0-9_]+_probe result=0} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_libinput_probe[^\r\n]*event0=[0-9]+[^\r\n]*event1=[0-9]+} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_drm_probe done} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_app_launch_probe[^\r\n]*status=FAIL} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-output-fail"
+        }
+        -re {kde_process_probe[^\r\n]*status=WAIT} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-output-wait"
+        }
+        -re {kde_wayland_seat_probe[^\r\n]*caps=0x[0-9a-fA-F]+[^\r\n]*keyboard_events=[0-9]+} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_app_launch_probe[^\r\n]*status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_process_probe[^\r\n]*status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re [format {%s_STATUS:([0-9]+)} $label] {
+            set status [string trim $expect_out(1,string)]
+            set timeout $old_timeout
+            optional_prompt
+            if {$status ne "0"} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-status-$status"
+            }
+            return
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-status-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-status-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+}
+
+proc run_kwin_screenshot_probe {} {
+    global timeout
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 45
+    set label "kde-kwin-screenshot-probe"
+    send [format {/bin/kde-kwin-screenshot-probe; echo %s_STATUS:$?} $label]
+    send "\r"
+    expect {
+        -re {kde_kwin_screenshot_probe result=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_kwin_screenshot_probe result=FAIL} {
+            set timeout $old_timeout
+            note_visual_warning "kwin-screenshot-readback-black"
+            optional_prompt
+            return
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-kwin-screenshot-probe-crash"
+        }
+        timeout {
+            set timeout $old_timeout
+            note_visual_warning "kwin-screenshot-probe-timeout"
+            optional_prompt
+            return
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-kwin-screenshot-probe-eof" }
+    }
+    set timeout $old_timeout
+    note_visual_warning "kwin-screenshot-probe-unmatched"
+    optional_prompt
+}
+
+proc run_wayland_seat_probe {} {
+    for {set attempt 1} {$attempt <= 4} {incr attempt} {
+        set label [format "kde-wayland-seat-probe-%d" $attempt]
+        set old_timeout $::timeout
+        sync_prompt
+        set ::timeout 35
+        send [format {/bin/kde-wayland-seat-probe; echo %s_STATUS:$?} $label]
+        send "\r"
+        expect {
+            -re {kde_wayland_seat_probe[^\r\n]*caps=0x[0-9a-fA-F]+[^\r\n]*keyboard_events=[0-9]+} {
+                set ::timeout $old_timeout
+                optional_prompt
+                return
+            }
+            -re {kde_wayland_seat_probe timeout phase=(startup|connect|registry|roundtrip-[0-9]+|validate)} {
+                set phase [string trim $expect_out(1,string)]
+                set ::timeout $old_timeout
+                optional_prompt
+                if {$attempt == 4} {
+                    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-timeout-$phase"
+                }
+                sleep 5
+            }
+            -re {kde_wayland_seat_probe (connect failed|roundtrip-[0-9]+ failed|no wl_seat|no seat capabilities|no pointer capability|no keyboard capability|pointer capability without object|invalid pointer version)} {
+                set ::timeout $old_timeout
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-output-fail"
+            }
+            -re [format {%s_STATUS:([1-9][0-9]*)} $label] {
+                set status [string trim $expect_out(1,string)]
+                set ::timeout $old_timeout
+                if {$attempt == 4} {
+                    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-status-$status"
+                }
+                optional_prompt
+                sleep 5
+            }
+            timeout {
+                set ::timeout $old_timeout
+                if {$attempt == 4} {
+                    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-status-timeout"
+                }
+                optional_prompt
+                sleep 5
+            }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-eof" }
+        }
+        set ::timeout $old_timeout
+    }
+
+    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-seat-probe-output-fail"
+}
+
+proc run_optional_chromium_probe {} {
+    global timeout chromium_available
+    if {!$chromium_available} {
+        return
+    }
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 90
+    set label "kde-chromium-app-launch-probe"
+
+    send "/bin/kde-app-launch-probe --require-chromium\r"
+    expect {
+        -re {kde_app_launch_probe[^\r\n]*chromium=1[^\r\n]*status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        -re {kde_app_launch_probe[^\r\n]*status=FAIL} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-output-fail"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+}
+
+proc run_optional_direct_app_launch_probe {} {
+    if {![info exists ::env(KDE_SMOKE_DIRECT_APP_PROBE)] || $::env(KDE_SMOKE_DIRECT_APP_PROBE) eq "" || $::env(KDE_SMOKE_DIRECT_APP_PROBE) eq "0"} {
+        return
+    }
+
+    run_guest_check "/bin/kde-app-launch-probe" "kde-app-launch-probe" 90
+    run_optional_chromium_probe
+}
+
+proc run_kde_x11_egl_probe {} {
+    global timeout x11_egl_available host_x11_egl_png
+
+    if {[info exists ::env(KDE_SMOKE_X11_EGL)] && $::env(KDE_SMOKE_X11_EGL) eq "0"} {
+        return
+    }
+    if {!$x11_egl_available} {
+        note_visual_warning "x11-egl-smoke-missing"
+        return
+    }
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 90
+    set log_path "/tmp/host-gui-host-x11-egl-smoke.log"
+
+    send "rm -f $log_path; /bin/host-x11-egl-smoke & echo KDE_X11_EGL_LAUNCHED\r"
+    expect {
+        -re {KDE_X11_EGL_LAUNCHED} {}
+        -re {exec .*failed|not found|cannot execute} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-launch"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-launch-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-launch-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-launch-eof" }
+    }
+    optional_prompt
+    sleep 6
+
+    send "cat $log_path; echo KDE_X11_EGL_LOG_DONE\r"
+    set saw_start 0
+    set saw_connect 0
+    set saw_gl 0
+    set saw_frame 0
+    set saw_done 0
+    while {!$saw_done} {
+        expect {
+            -re {host-x11-egl-smoke: start} { set saw_start 1 }
+            -re {host-x11-egl-smoke: connected display=} { set saw_connect 1 }
+            -re {host-x11-egl-smoke: (egl|glx) ready [^\r\n]*gl_version=\(null\)} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-null-gl-version"
+            }
+            -re {host-x11-egl-smoke: (egl|glx) ready } { set saw_gl 1 }
+            -re {host-x11-egl-smoke: (egl|glx|glX|XOpenDisplay|glx_choose_visual|glx_create_context|glx_make_current|egl[A-Za-z]*) [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-output-fail"
+            }
+            -re {host-x11-egl-smoke: frame=[0-9]+ mode=launch} { set saw_frame 1 }
+            -re {KDE_X11_EGL_LOG_DONE} { set saw_done 1 }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-crash"
+            }
+            timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-timeout" }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-eof" }
+        }
+    }
+    if {!($saw_start && $saw_connect && $saw_gl && $saw_frame)} {
+        optional_prompt
+        set timeout 10
+        send "ls -l $log_path /bin/host-x11-egl-smoke /opt/host-gui/host-x11-egl-smoke/bin/host-x11-egl-smoke /opt/host-gui/host-x11-egl-smoke/lib/ld-linux-x86-64.so.2; ps; echo KDE_X11_EGL_DIAG_DONE\r"
+        expect {
+            -re {KDE_X11_EGL_DIAG_DONE} {}
+            timeout {}
+            eof {}
+        }
+        set timeout $old_timeout
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-incomplete start=$saw_start connect=$saw_connect gl=$saw_gl frame=$saw_frame"
+    }
+    optional_prompt
+    host_screenshot "x11-egl" $host_x11_egl_png
+
+    send "/bin/mouseinject 32768 32768 0; /bin/mouseinject 32768 32768 1; /bin/mouseinject 32768 32768 0; /bin/keyinject text xv6; /bin/keyinject key esc; echo KDE_X11_EGL_INPUT_DONE\r"
+    expect {
+        -re {KDE_X11_EGL_INPUT_DONE} {}
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-input-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-input-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-input-eof" }
+    }
+    optional_prompt
+    sleep 3
+
+    send "cat $log_path; echo KDE_X11_EGL_EXIT_LOG_DONE\r"
+    set saw_input 0
+    set saw_exit 0
+    set saw_exit_done 0
+    while {!$saw_exit_done} {
+        expect {
+            -re {host-x11-egl-smoke: input_ready} { set saw_input 1 }
+            -re {host-x11-egl-smoke: exited} { set saw_exit 1 }
+            -re {host-x11-egl-smoke: [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-output-fail"
+            }
+            -re {KDE_X11_EGL_EXIT_LOG_DONE} { set saw_exit_done 1 }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-crash"
+            }
+            timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-log-timeout" }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-log-eof" }
+        }
+    }
+    set timeout $old_timeout
+    optional_prompt
+    if {!($saw_input && $saw_exit)} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-no-input-exit input=$saw_input exit=$saw_exit"
+    }
+}
+
+proc run_probe_suite {} {
+    run_guest_check "/bin/kde-libinput-probe" "kde-libinput-probe" 20
+    run_guest_check "/bin/kde-dlopen-probe" "kde-dlopen-probe" 30
+    run_guest_check "/bin/kde-unix-socket-probe" "kde-unix-socket-probe" 20
+    run_guest_check "/bin/kde-drm-probe" "kde-drm-probe" 30
+    run_guest_check "/bin/kde-proc-mountinfo-probe" "kde-proc-mountinfo-probe" 30
+    run_guest_check "/bin/kde-config-atomic-probe" "kde-config-atomic-probe" 30
+    run_guest_check "/bin/kde-pulse-cookie-probe" "kde-pulse-cookie-probe" 30
+    run_guest_check "/bin/kde-proc-comm-probe" "kde-proc-comm-probe" 20
+    run_guest_check "/bin/kde-pty-shell-probe" "kde-pty-shell-probe" 30
+}
+
+proc run_late_kde_guardrails {} {
+    run_wayland_seat_probe
+    run_guest_check "/bin/kde-trash-stat-probe" "kde-trash-stat-probe" 20
+    run_guest_check "/bin/kde-kwriteconfig-probe" "kde-kwriteconfig-probe" 60
+    run_kwin_screenshot_probe
+}
+
+proc role_probe_once {required_label require_plasma require_xwayland} {
+    global timeout
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 8
+    set args ""
+    if {$require_xwayland} {
+        append args " --require-xwayland"
+    }
+    send "KDE_PROCESS_PROBE_TRACE=1 /bin/kde-process-probe$args\r"
+    expect {
+        -re {kde_process_probe[^\r\n]*kwin=([0-9]+)[^\r\n]*plasmashell=([0-9]+)[^\r\n]*xwayland=([0-9]+)[^\r\n]*} {
+            set kwin $expect_out(1,string)
+            set plasma $expect_out(2,string)
+            set xwayland $expect_out(3,string)
+            set timeout $old_timeout
+            optional_prompt
+            if {$kwin == "0"} {
+                return 0
+            }
+            if {$require_plasma && $plasma == "0"} {
+                return 0
+            }
+            if {$require_xwayland && $xwayland == "0"} {
+                return 0
+            }
+            return 1
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL crash"
+        }
+        timeout {
+            set timeout $old_timeout
+            if {$require_plasma} {
+                return 0
+            }
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL role-probe-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+    return 0
+}
+
+proc wait_for_roles {required_label require_plasma require_xwayland attempts delay_seconds} {
+    for {set i 0} {$i < $attempts} {incr i} {
+        if {[role_probe_once $required_label $require_plasma $require_xwayland]} {
+            return
+        }
+        sleep $delay_seconds
+    }
+    finish 7 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $required_label"
+}
+
+proc capture_fb {guest_path label} {
+    global timeout
+    if {![fb_visual_enabled]} {
+        return
+    }
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 20
+    send "fbstat ppm-current $guest_path 0 0 1280 800; sync; echo KDE_FB_CAPTURE_DONE_$label\r"
+    expect {
+        -re "KDE_FB_CAPTURE_DONE_$label" {
+            set timeout $old_timeout
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-crash"
+        }
+        -re {fbstat: [^\r\n]+} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-fbstat"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+}
+
+proc click_abs {x y done_label fail_label} {
+    global timeout
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 20
+    send "/bin/mouseinject $x $y 0; /bin/mouseinject $x $y 1; /bin/mouseinject $x $y 0; echo $done_label\r"
+    expect {
+        -re $done_label {
+            set timeout $old_timeout
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-click-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-click-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+}
+
+proc double_click_abs {x y done_prefix fail_label} {
+    global timeout
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 20
+    set done_label "${done_prefix}_DONE"
+    send "/bin/mouseinject dblclick $x $y 250000; echo $done_label\r"
+    expect {
+        -re $done_label {
+            set timeout $old_timeout
+        }
+        -re {mouseinject: (open|write) [^\r\n]*failed} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-click-failed"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-click-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-click-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+    sleep 5
+}
+
+proc click_desktop_app_icons {} {
+    # Seeded KDE desktop icons in a 1280x800 guest. Coordinates are xv6
+    # absolute mouse coordinates, not pixels. The current desktop:/ KIO
+    # activation path is tracked as a gap; these clicks still prove pointer
+    # targeting and selection on each KDE launcher.
+    click_abs 3000 3300 "KDE_DESKTOP_CHROMIUM_DONE" "desktop-chromium"
+    click_abs 8900 3300 "KDE_DESKTOP_DOLPHIN_DONE" "desktop-dolphin"
+    click_abs 14850 3300 "KDE_DESKTOP_KWRITE_DONE" "desktop-kwrite"
+    click_abs 20800 3300 "KDE_DESKTOP_KONSOLE_DONE" "desktop-konsole"
+}
+
+proc try_clicked_desktop_process_probe {} {
+    global timeout chromium_available
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 45
+    set args "--require-apps --require-audio"
+    if {$chromium_available} {
+        append args " --require-chromium"
+    }
+    send [format {KDE_PROCESS_PROBE_TRACE=1 /bin/kde-process-probe %s; echo kde-clicked-apps-process-probe_STATUS:$?} $args]
+    send "\r"
+    expect {
+        -re {kde_process_probe[^\r\n]*status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+            return 1
+        }
+        -re {kde_process_probe[^\r\n]*status=WAIT} {
+            puts "KDE-PLASMA-DESKTOP-SMOKE-WARN desktop-click-activation-did-not-launch-apps"
+            set timeout $old_timeout
+            optional_prompt
+            return 0
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-clicked-apps-process-probe-crash"
+        }
+        timeout {
+            puts "KDE-PLASMA-DESKTOP-SMOKE-WARN desktop-click-activation-process-probe-timeout"
+            set timeout $old_timeout
+            optional_prompt
+            return 0
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-clicked-apps-process-probe-eof" }
+    }
+    set timeout $old_timeout
+    optional_prompt
+    return 0
+}
+
+proc run_direct_app_launch_probe {} {
+    global chromium_available
+
+    if {$chromium_available} {
+        run_guest_check "/bin/kde-app-launch-probe --require-chromium" "kde-app-launch-probe" 120
+    } else {
+        run_guest_check "/bin/kde-app-launch-probe" "kde-app-launch-probe" 90
+    }
+}
+
+log_file -a $runlog
+spawn timeout --foreground $timeout bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {FB: registered /dev/fb0 \(virtio-gpu direct 1280x800x32} {}
+    -re {PANIC|fatal page fault|spin_lock reentry} {
+        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL early-crash"
+    }
+    timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-fb0" }
+    eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL early-eof" }
+}
+
+expect {
+    -re {xv6-desktop-session: selected desktop=kde} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL launch-crash"
+    }
+    timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-desktop-dispatch" }
+    eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL dispatch-eof" }
+}
+
+expect {
+    -re {kde-session: starting KDE Plasma desktop} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
+        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-crash"
+    }
+    timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-kde-session" }
+    eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-eof" }
+}
+
+if {![legacy_serial_validation_enabled]} {
+    wait_for_kde_session_ready
+    sleep 10
+    host_screenshot "startup" $host_startup_png
+    wait_for_guest_smoke_agent
+    capture_fb $guest_final_ppm "final-agent"
+} else {
+    optional_prompt
+    wait_for_kde_session_ready
+    sleep 45
+    optional_prompt
+    wait_for_roles "no-kwin" 0 0 90 1
+    wait_for_roles "no-plasmashell" 1 0 180 1
+    sleep 15
+    capture_fb $guest_before_ppm "post-startup"
+    host_screenshot "startup" $host_startup_png
+    run_guest_check "KDE_PROCESS_PROBE_TRACE=1 /bin/kde-process-probe --require-audio" "kde-audio-process-probe" 20
+    capture_fb $guest_before_ppm "input-before-desktop-icons"
+    host_screenshot "input-before" $host_input_before_png
+    click_desktop_app_icons
+    sleep 35
+    capture_fb $guest_after_ppm "input-after-desktop-icons"
+    host_screenshot "input-after" $host_input_after_png
+    set clicked_apps_launched [try_clicked_desktop_process_probe]
+    if {!$clicked_apps_launched} {
+        run_direct_app_launch_probe
+    }
+    run_optional_direct_app_launch_probe
+    run_kde_x11_egl_probe
+    sleep 10
+    run_guest_check "KDE_PROCESS_PROBE_TRACE=1 /bin/kde-process-probe --require-apps --require-audio" "kde-apps-process-probe" 20
+    run_probe_suite
+    run_late_kde_guardrails
+    capture_fb $guest_final_ppm "final-legacy"
+}
+finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE"

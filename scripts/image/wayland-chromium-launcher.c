@@ -164,10 +164,11 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-renderer-accessibility");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-first-run");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-default-browser-check");
+    append_arg(child_argv, &idx, MAX_ARGS, "--password-store=basic");
     append_arg(child_argv, &idx, MAX_ARGS,
                "--disable-features=AccessibilityService,Crashpad,MediaRouter,"
                "OptimizationHints,CalculateNativeWinOcclusion,"
-               "UseChromeOSDirectVideoDecoder");
+               "UseChromeOSDirectVideoDecoder,UseFreedesktopSecretPortal");
     append_arg(child_argv, &idx, MAX_ARGS,
                "--user-data-dir=/tmp/wayland-chromium-profile");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-logging=stderr");

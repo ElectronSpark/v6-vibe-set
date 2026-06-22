@@ -39,7 +39,7 @@ set env(QEMU_AUDIO)            "none"
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
-set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_url=file:///share/webkit/perf-video.html webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 weston=1 video=1280x800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_url=file:///share/webkit/perf-video.html?hud=0 webkit_log=1 webkit_timeout_ms=45000 webkit_match_video_size=1 webkit_fullscreen=1 desktop_exit_after_smoke=1 weston=1 video=1280x800"
 if {[info exists env(PERF_VIDEO_EXTRA_APPEND)] && $env(PERF_VIDEO_EXTRA_APPEND) ne ""} {
     append env(QEMU_APPEND) " " $env(PERF_VIDEO_EXTRA_APPEND)
 }

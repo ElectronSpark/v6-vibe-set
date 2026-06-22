@@ -10,7 +10,9 @@ static const char *bundle = "/opt/host-gui/host-x11-abi-smoke";
 static const char *loader =
     "/opt/host-gui/host-x11-abi-smoke/lib/ld-linux-x86-64.so.2";
 static const char *library_path =
-    "/opt/host-gui/host-x11-abi-smoke/lib:/lib:/lib64:/usr/lib:/usr/lib64";
+    "/opt/host-gui/host-x11-abi-smoke/lib:"
+    "/lib:/lib/x86_64-linux-gnu:/lib64:"
+    "/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib64";
 static const char *program =
     "/opt/host-gui/host-x11-abi-smoke/bin/host-x11-abi-smoke";
 

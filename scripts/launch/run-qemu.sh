@@ -59,6 +59,14 @@
 #                           Set none for a silent card, or pa, pipewire, sdl,
 #                           wav, etc. for an explicit QEMU backend.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
+#   QEMU_WINDOW_PLACE=0     Set to 1 to move an interactive GTK QEMU window
+#                           to a monitor after launch. This uses X11 window
+#                           positioning, so GTK is launched with GDK_BACKEND=x11
+#                           unless QEMU_GTK_BACKEND is set explicitly.
+#   QEMU_WINDOW_MONITOR=pointer
+#                           Target monitor for QEMU_WINDOW_PLACE=1: pointer,
+#                           current/vscode, a monitor index, or a monitor name
+#                           from `xrandr --listmonitors` such as rdp-3.
 #   QEMU_GTK_GL=auto        GTK OpenGL mode for QEMU. auto uses GLES on WSL
 #                           virgl because gtk,gl=on can stop at GtkGLArea
 #                           DMABUF setup before the xv6 desktop appears.
@@ -149,8 +157,15 @@ esac
 QEMU_GTK_SHOW_MENUBAR="${QEMU_GTK_SHOW_MENUBAR:-off}"
 QEMU_GTK_SHOW_TABS="${QEMU_GTK_SHOW_TABS:-off}"
 QEMU_GTK_GL="${QEMU_GTK_GL:-auto}"
+QEMU_GTK_BACKEND="${QEMU_GTK_BACKEND:-auto}"
 QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
 QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
+QEMU_WINDOW_TITLE="${QEMU_WINDOW_TITLE:-xv6-os QEMU}"
+QEMU_WINDOW_PLACE="${QEMU_WINDOW_PLACE:-0}"
+QEMU_WINDOW_MONITOR="${QEMU_WINDOW_MONITOR:-pointer}"
+QEMU_WINDOW_X_OFFSET="${QEMU_WINDOW_X_OFFSET:-0}"
+QEMU_WINDOW_Y_OFFSET="${QEMU_WINDOW_Y_OFFSET:-0}"
+QEMU_WINDOW_PLACE_TIMEOUT="${QEMU_WINDOW_PLACE_TIMEOUT:-8}"
 QEMU_SDL_GRAB_MOD="${QEMU_SDL_GRAB_MOD:-lctrl-lalt}"
 QEMU_SDL_SHOW_CURSOR="${QEMU_SDL_SHOW_CURSOR:-on}"
 
@@ -484,6 +499,15 @@ case "${ARCH}" in
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]]; then
                         QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
                 fi
+                if [[ "${DISPLAY_MODE}" == "gtk" && "${QEMU_WINDOW_PLACE}" == "1" &&
+                      ! host_is_wsl ]]; then
+                        if [[ "${QEMU_GTK_BACKEND}" == "auto" ]]; then
+                                QEMU_GTK_BACKEND="x11"
+                        fi
+                        if [[ "${QEMU_GTK_BACKEND}" != "x11" ]]; then
+                                echo "run-qemu: warning: QEMU_WINDOW_PLACE=1 needs GTK on X11; current QEMU_GTK_BACKEND=${QEMU_GTK_BACKEND}, so placement may be ignored" >&2
+                        fi
+                fi
                 GTK_GL_MODE="${QEMU_GTK_GL}"
                 if [[ "${GTK_GL_MODE}" == "auto" ]]; then
                         if host_is_wsl && [[ "${DISPLAY_MODE}" == "gtk" &&
@@ -797,6 +821,7 @@ case "${ARCH}" in
                         "${DISPLAY_ARGS[@]}"
                         -debugcon file:/tmp/xv6-debugcon.log
                         -global isa-debugcon.iobase=0xe9
+                        -name "${QEMU_WINDOW_TITLE},process=xv6-qemu"
                         -kernel "${KERNEL}"
                         -drive file="${FSIMG}",if=none,format=raw,id=x0
                         -device virtio-blk-pci,drive=x0
@@ -815,6 +840,9 @@ case "${ARCH}" in
                                 printf '%q ' "${QEMU_ENV_ARGS[@]}"
                         fi
                         if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
+                                if [[ "${QEMU_GTK_BACKEND}" != "auto" ]]; then
+                                        printf 'GDK_BACKEND=%q ' "${QEMU_GTK_BACKEND}"
+                                fi
                                 printf 'GDK_SCALE=%q GDK_DPI_SCALE=%q ' \
                                         "${QEMU_GTK_GDK_SCALE}" \
                                         "${QEMU_GTK_GDK_DPI_SCALE}"
@@ -823,10 +851,51 @@ case "${ARCH}" in
                         exit 0
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
-                        exec env \
-                                "${QEMU_ENV_ARGS[@]}" \
-                                GDK_SCALE="${QEMU_GTK_GDK_SCALE}" \
-                                GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE}" \
+                        GTK_ENV_ARGS=()
+                        if [[ "${QEMU_GTK_BACKEND}" != "auto" ]]; then
+                                GTK_ENV_ARGS+=("GDK_BACKEND=${QEMU_GTK_BACKEND}")
+                        fi
+                        GTK_ENV_ARGS+=(
+                                "GDK_SCALE=${QEMU_GTK_GDK_SCALE}"
+                                "GDK_DPI_SCALE=${QEMU_GTK_GDK_DPI_SCALE}"
+                        )
+                        if [[ "${QEMU_WINDOW_PLACE}" == "1" ]] &&
+                              host_is_wsl &&
+                              command -v powershell.exe >/dev/null 2>&1; then
+                                env "${QEMU_ENV_ARGS[@]}" "${GTK_ENV_ARGS[@]}" \
+                                        "${QEMU_CMD[@]}" &
+                                qemu_pid=$!
+                                ps_script="$(dirname "$0")/place-qemu-window-windows.ps1"
+                                if command -v wslpath >/dev/null 2>&1; then
+                                        ps_script="$(wslpath -w "${ps_script}")"
+                                fi
+                                powershell.exe -NoProfile -ExecutionPolicy Bypass \
+                                        -File "${ps_script}" \
+                                        -Title "${QEMU_WINDOW_TITLE}" \
+                                        -Target "${QEMU_WINDOW_MONITOR}" \
+                                        -XOffset "${QEMU_WINDOW_X_OFFSET}" \
+                                        -YOffset "${QEMU_WINDOW_Y_OFFSET}" \
+                                        -TimeoutSeconds "${QEMU_WINDOW_PLACE_TIMEOUT}" || true
+                                wait "${qemu_pid}"
+                                exit $?
+                        elif [[ "${QEMU_WINDOW_PLACE}" == "1" &&
+                              "${QEMU_GTK_BACKEND}" == "x11" &&
+                              -n "${DISPLAY:-}" &&
+                              -x "$(dirname "$0")/place-qemu-window.py" ]]; then
+                                env "${QEMU_ENV_ARGS[@]}" "${GTK_ENV_ARGS[@]}" \
+                                        "${QEMU_CMD[@]}" &
+                                qemu_pid=$!
+                                "$(dirname "$0")/place-qemu-window.py" \
+                                        --title "${QEMU_WINDOW_TITLE}" \
+                                        --pid "${qemu_pid}" \
+                                        --monitor "${QEMU_WINDOW_MONITOR}" \
+                                        --x-offset "${QEMU_WINDOW_X_OFFSET}" \
+                                        --y-offset "${QEMU_WINDOW_Y_OFFSET}" \
+                                        --timeout "${QEMU_WINDOW_PLACE_TIMEOUT}" || true
+                                wait "${qemu_pid}"
+                                exit $?
+                        fi
+                        exec env "${QEMU_ENV_ARGS[@]}" "${GTK_ENV_ARGS[@]}" \
                                 "${QEMU_CMD[@]}"
                 fi
                 exec env "${QEMU_ENV_ARGS[@]}" "${QEMU_CMD[@]}"

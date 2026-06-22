@@ -6,4 +6,5 @@
 
 /bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-system.conf --nofork --nopidfile
 /bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-session.conf --nofork --nopidfile
-/bin/weston-session
+DBUS_SYSTEM_BUS_ADDRESS=unix:abstract=xv6_system_bus /bin/xv6-login1-shim
+XV6_DESKTOP_DEFAULT=kde /bin/xv6-desktop-session

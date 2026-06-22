@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # stage-gpup-umd.sh - Stage the Hyper-V/WSL GPU-PV D3D12 user-mode runtime into
-# the xv6 rootfs overlay so the guest can run real D3D12 (and compute) work on
+# a generated xv6 rootfs overlay so the guest can run real D3D12 work on
 # the host NVIDIA GPU over /dev/dxg.
 #
 # GPU-P does NOT expose raw PCI BARs to the guest; the only way to drive the
@@ -18,14 +18,14 @@
 # These libraries are proprietary NVIDIA/Microsoft binaries that ship with the
 # WSL GPU-PV runtime (default: /usr/lib/wsl/lib). They are NOT redistributable
 # and must NEVER be committed to the repository. This script copies them from
-# the host at image-build time into a gitignored overlay path.
+# the host at image-build time into a build-directory overlay path.
 #
 # Usage:
 #   scripts/stage-gpup-umd.sh [--src DIR] [--dest DIR] [--with-extras]
 #
 #   --src DIR       Source dir for the GPU-PV runtime (default /usr/lib/wsl/lib)
 #   --dest DIR      Overlay lib dir to populate
-#                   (default: <repo>/rootfs-overlay/usr/lib/wsl/lib)
+#                   (default: <repo>/build-x86_64/gpup-umd-overlay/usr/lib/wsl/lib)
 #   --with-extras   Also stage CUDA / NVML / codec libs (large, optional)
 #
 set -euo pipefail
@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SRC="/usr/lib/wsl/lib"
-DEST="${REPO_ROOT}/rootfs-overlay/usr/lib/wsl/lib"
+DEST="${REPO_ROOT}/build-x86_64/gpup-umd-overlay/usr/lib/wsl/lib"
 WITH_EXTRAS=0
 WITH_PROBE=1
 
@@ -112,16 +112,22 @@ if [[ "${WITH_EXTRAS}" -eq 1 ]]; then
 fi
 
 # The Microsoft D3D12 runtime looks for its UMD next to libd3d12core.so / via
-# the standard loader path. Drop an ld.so.conf.d entry and a profile fragment so
-# the guest resolves /usr/lib/wsl/lib without callers needing to export paths.
-CONF_DIR="${REPO_ROOT}/rootfs-overlay/etc/ld.so.conf.d"
+# the standard loader path. Drop an ld.so.conf.d entry and a profile fragment in
+# the same generated overlay so rootfs-overlay remains text/source only.
+OVERLAY_ROOT="${DEST%/usr/lib/wsl/lib}"
+if [[ "${OVERLAY_ROOT}" == "${DEST}" ]]; then
+    echo "stage-gpup-umd: --dest must end in /usr/lib/wsl/lib" >&2
+    exit 2
+fi
+
+CONF_DIR="${OVERLAY_ROOT}/etc/ld.so.conf.d"
 mkdir -p "${CONF_DIR}"
 cat > "${CONF_DIR}/gpup-wsl.conf" <<'EOF'
 # Hyper-V/WSL GPU-PV D3D12 user-mode runtime (staged by stage-gpup-umd.sh).
 /usr/lib/wsl/lib
 EOF
 
-PROFILE_DIR="${REPO_ROOT}/rootfs-overlay/etc/profile.d"
+PROFILE_DIR="${OVERLAY_ROOT}/etc/profile.d"
 mkdir -p "${PROFILE_DIR}"
 cat > "${PROFILE_DIR}/gpup-d3d12.sh" <<'EOF'
 # Hyper-V/WSL GPU-PV D3D12 runtime search path. The Microsoft D3D12 runtime and
@@ -148,8 +154,10 @@ echo "stage-gpup-umd: wrote ${CONF_DIR}/gpup-wsl.conf and ${PROFILE_DIR}/gpup-d3
 if [[ "${WITH_PROBE}" -eq 1 ]]; then
     PROBE_BUILD="${REPO_ROOT}/user/programs/d3d12probe/build-host.sh"
     if [[ -x "${PROBE_BUILD}" ]]; then
-        if GPUP_RUNTIME_DIR="${SRC}" "${PROBE_BUILD}" >/dev/null 2>&1; then
-            echo "stage-gpup-umd: built host sanity binary user/programs/d3d12probe/d3d12probe-host"
+        probe_build_dir="${OVERLAY_ROOT}/build-host-probe"
+        if GPUP_RUNTIME_DIR="${SRC}" D3D12PROBE_HOST_BUILD_DIR="${probe_build_dir}" \
+                "${PROBE_BUILD}" >/dev/null 2>&1; then
+            echo "stage-gpup-umd: built host sanity binary ${probe_build_dir}/d3d12probe-host"
         else
             echo "stage-gpup-umd: WARNING host sanity binary build failed (non-fatal)" >&2
         fi

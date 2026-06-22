@@ -15,6 +15,7 @@ APP_ID=""
 APP_NAME=""
 DRY_RUN=0
 REPLACE=0
+CREATE_DESKTOP=1
 INPUT=""
 EXTRA_DATA=()
 
@@ -28,6 +29,7 @@ Options:
   --data PATH      Copy an additional host file/directory under app data/.
   --overlay DIR    Rootfs overlay to update, default rootfs-overlay.
   --replace        Replace an existing /opt/host-gui/ID import.
+  --no-desktop     Do not create a /root/desktop imported-app symlink.
   --dry-run        Analyze and print the import plan without writing files.
   -h, --help       Show this help.
 EOF
@@ -153,6 +155,34 @@ add_nss_module_libs() {
     done
 }
 
+scan_elf_deps() {
+    local elf="$1"
+    local line
+    local path
+
+    [[ -f "${elf}" ]] || return 0
+    ldd "${elf}" >/dev/null 2>&1 || return 0
+    while IFS= read -r line; do
+        path=""
+        if [[ "${line}" =~ '=> '[[:space:]]*(/[^[:space:]]+) ]]; then
+            path="${BASH_REMATCH[1]}"
+        elif [[ "${line}" =~ ^[[:space:]]*(/[^[:space:]]+) ]]; then
+            path="${BASH_REMATCH[1]}"
+        fi
+        [[ -n "${path}" && -e "${path}" ]] || continue
+        [[ "$(realpath "${path}")" == "$(realpath "${interp}")" ]] && continue
+        if is_graphics_runtime_lib "${path}"; then
+            append_unique "${path}" "${skipped[@]}" && skipped+=("${path}")
+            continue
+        fi
+        if append_unique "${path}" "${libs[@]}"; then
+            libs+=("${path}")
+            add_nss_module_libs "${path}"
+            scan_elf_deps "${path}"
+        fi
+    done < <(ldd "${elf}")
+}
+
 resolve_executable() {
     local exe="$1"
     if [[ "${exe}" == */* ]]; then
@@ -197,6 +227,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --replace)
             REPLACE=1
+            shift
+            ;;
+        --no-desktop)
+            CREATE_DESKTOP=0
             shift
             ;;
         --dry-run)
@@ -259,24 +293,17 @@ interp="$(
 
 libs=()
 skipped=()
-while IFS= read -r line; do
-    path=""
-    if [[ "${line}" =~ '=> '[[:space:]]*(/[^[:space:]]+) ]]; then
-        path="${BASH_REMATCH[1]}"
-    elif [[ "${line}" =~ ^[[:space:]]*(/[^[:space:]]+) ]]; then
-        path="${BASH_REMATCH[1]}"
+scan_elf_deps "${HOST_EXE}"
+for data in "${EXTRA_DATA[@]}"; do
+    [[ -e "${data}" ]] || die "data path not found: ${data}"
+    if [[ -d "${data}" ]]; then
+        while IFS= read -r -d '' elf; do
+            scan_elf_deps "${elf}"
+        done < <(find "${data}" -type f -print0)
+    else
+        scan_elf_deps "${data}"
     fi
-    [[ -n "${path}" && -e "${path}" ]] || continue
-    [[ "$(realpath "${path}")" == "$(realpath "${interp}")" ]] && continue
-    if is_graphics_runtime_lib "${path}"; then
-        append_unique "${path}" "${skipped[@]}" && skipped+=("${path}")
-        continue
-    fi
-    if append_unique "${path}" "${libs[@]}"; then
-        libs+=("${path}")
-        add_nss_module_libs "${path}"
-    fi
-done < <(ldd "${HOST_EXE}")
+done
 
 app_root="${OVERLAY}/opt/host-gui/${APP_ID}"
 guest_root="/opt/host-gui/${APP_ID}"
@@ -296,7 +323,11 @@ done
 if [[ "${DRY_RUN}" == "1" ]]; then
     note "dry-run: would stage ${app_root}"
     note "dry-run: would compile ELF launcher ${launcher_bin}"
-    note "dry-run: would create desktop symlink ${desktop_path} -> ../../bin/host-${APP_ID}"
+    if [[ "${CREATE_DESKTOP}" == "1" ]]; then
+        note "dry-run: would create desktop symlink ${desktop_path} -> ../../bin/host-${APP_ID}"
+    else
+        note "dry-run: would skip desktop symlink"
+    fi
     exit 0
 fi
 
@@ -376,7 +407,7 @@ main(int argc, char **argv)
     size_t out = 0;
     int fd;
 
-    setenv("XDG_RUNTIME_DIR", "/tmp/wayland-root", 0);
+    setenv("XDG_RUNTIME_DIR", "/tmp", 0);
     setenv("WAYLAND_DISPLAY", "wayland-0", 0);
     setenv("GDK_BACKEND", "wayland", 0);
     setenv("QT_QPA_PLATFORM", "wayland", 0);
@@ -411,6 +442,9 @@ main(int argc, char **argv)
         return 127;
     }
     setenv("LD_LIBRARY_PATH", env_ld_path, 1);
+    setenv("QT_PLUGIN_PATH", join3(guest_root, "/data/plugins", ""), 0);
+    setenv("QT_QPA_PLATFORM_PLUGIN_PATH",
+           join3(guest_root, "/data/plugins/platforms", ""), 0);
 
     while (default_args[default_count])
         default_count++;
@@ -442,11 +476,20 @@ cc -O2 -Wall -o "${launcher_bin}" "${launcher_src}"
 manifest_add_file "launcher-source" "generated" "${guest_root}/launcher.c" "${launcher_src}"
 manifest_add_file "launcher" "generated" "/bin/host-${APP_ID}" "${launcher_bin}"
 
-rm -f "${desktop_path}"
-ln -s "../../bin/host-${APP_ID}" "${desktop_path}"
-manifest_add_file "desktop-symlink" "generated" "/root/desktop/imported-${APP_ID}" "${desktop_path}"
+if [[ "${CREATE_DESKTOP}" == "1" ]]; then
+    rm -f "${desktop_path}"
+    ln -s "../../bin/host-${APP_ID}" "${desktop_path}"
+    manifest_add_file "desktop-symlink" "generated" "/root/desktop/imported-${APP_ID}" "${desktop_path}"
+else
+    rm -f "${desktop_path}"
+    manifest_add_note "desktop-symlink" "not-created" "/root/desktop/imported-${APP_ID}"
+fi
 
 note "staged=${app_root}"
-note "desktop=${desktop_path}"
+if [[ "${CREATE_DESKTOP}" == "1" ]]; then
+    note "desktop=${desktop_path}"
+else
+    note "desktop=not-created"
+fi
 note "manifest=${manifest}"
 note "log=/tmp/host-gui-${APP_ID}.log"
