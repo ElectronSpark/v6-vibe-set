@@ -19,6 +19,7 @@ SEEDS=(
     kactivitymanagerd
     kwayland-integration
     plasma-integration
+    qmlscene
     plasma-pa
     pipewire
     pipewire-pulse
@@ -236,6 +237,21 @@ fix_merged_usr_loader_links() {
         "${OVERLAY}/usr/lib64/ld-linux-x86-64.so.2"
 }
 
+materialize_qtchooser_configs() {
+    local conf_dir="${OVERLAY}/usr/share/qtchooser"
+    local lib_dir="${OVERLAY}/usr/lib/x86_64-linux-gnu/qtchooser"
+    local default_dir="${OVERLAY}/usr/lib/x86_64-linux-gnu/qt-default/qtchooser"
+    local qt5_conf="${conf_dir}/qt5-x86_64-linux-gnu.conf"
+
+    [[ -f "${qt5_conf}" ]] || return 0
+
+    mkdir -p "${lib_dir}" "${default_dir}"
+    rm -f "${lib_dir}/5.conf" "${lib_dir}/qt5.conf" "${default_dir}/default.conf"
+    cp -a "${qt5_conf}" "${lib_dir}/5.conf"
+    cp -a "${qt5_conf}" "${lib_dir}/qt5.conf"
+    cp -a "${qt5_conf}" "${default_dir}/default.conf"
+}
+
 prune_guest_graphics_runtime() {
     local dir
     local pattern
@@ -417,6 +433,18 @@ disable_dead_rtkit_activation() {
     rm -f "${service}"
 }
 
+write_false_compat() {
+    # Several optional D-Bus service files use /bin/false as the canonical
+    # "installed but disabled" activation target.  The minimal image does not
+    # otherwise stage coreutils false, so point it at xv6's tiny native helper
+    # to make those activations fail quickly without an exec ENOENT.
+    mkdir -p "${OVERLAY}/bin" "${OVERLAY}/usr/bin"
+    ln -sf /bin/xv6-false "${OVERLAY}/bin/false"
+    ln -sf /bin/xv6-false "${OVERLAY}/bin/fusermount3"
+    ln -sf /bin/xv6-false "${OVERLAY}/usr/bin/false"
+    ln -sf /bin/xv6-false "${OVERLAY}/usr/bin/fusermount3"
+}
+
 configure_bluez_activation() {
     local service="${OVERLAY}/usr/share/dbus-1/system-services/org.bluez.service"
 
@@ -427,6 +455,44 @@ Name=org.bluez
 Exec=/bin/xv6-bluez-shim
 User=root
 EOF
+}
+
+disable_optional_modemmanager_activation() {
+    local service="${OVERLAY}/usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service"
+
+    # The xv6 KDE VM currently exposes no modem/radio kernel ABI.  Starting
+    # ModemManager during shell bring-up costs visible time and then can only
+    # discover that the hardware class is absent, so keep the package staged
+    # but make D-Bus activation return the package's disabled-path result.
+    if [[ -f "${service}" ]]; then
+        cat > "${service}" <<'EOF'
+[D-BUS Service]
+Name=org.freedesktop.ModemManager1
+Exec=/bin/false
+User=root
+EOF
+    fi
+}
+
+write_portal_defaults() {
+    local dir="${OVERLAY}/usr/share/xdg-desktop-portal"
+    local file
+
+    # Make the portal implementation choice deterministic for the KDE image.
+    # Without this, Chromium startup falls through the GTK fallback path first,
+    # activating extra accessibility and portal helpers before KDE's portal.
+    mkdir -p "${dir}"
+    for file in portals.conf kde-portals.conf KDE-portals.conf; do
+        cat > "${dir}/${file}" <<'EOF'
+[preferred]
+default=kde
+org.freedesktop.impl.portal.Lockdown=none
+org.freedesktop.impl.portal.FileChooser=kde
+org.freedesktop.impl.portal.Settings=kde
+org.freedesktop.impl.portal.ScreenCast=kde
+org.freedesktop.impl.portal.Screenshot=kde
+EOF
+    done
 }
 
 write_minimal_upower_config() {
@@ -521,6 +587,10 @@ patch_pipewire_runtime_config() {
             "${file}"
         perl -0pi -e 's/^[ \t]*access\.legacy = true[ \t]*$/            #access.legacy = true/mg' \
             "${file}"
+        if ! grep -q 'node.name[[:space:]]*=[[:space:]]*"alsa_output.xv6_virtio"' "${file}"; then
+            perl -0pi -e 's/\n    # Use the metadata factory/\n    { factory = adapter\n        args = {\n            factory.name           = api.alsa.pcm.sink\n            node.name              = "alsa_output.xv6_virtio"\n            node.description       = "xv6 virtio PCM"\n            media.class            = "Audio\/Sink"\n            api.alsa.path          = "hw:0"\n            api.alsa.period-size   = 1200\n            api.alsa.headroom      = 0\n            api.alsa.disable-mmap  = true\n            api.alsa.disable-batch = true\n            audio.format           = "S16LE"\n            audio.rate             = 48000\n            audio.channels         = 2\n            audio.position         = "FL,FR"\n        }\n        flags = [ nofail ]\n    }\n\n    # Use the metadata factory/' \
+                "${file}"
+        fi
     fi
 
     file="${OVERLAY}/usr/share/pipewire/pipewire-pulse.conf"
@@ -542,6 +612,10 @@ patch_pipewire_runtime_config() {
         perl -0pi -e 's/^alsa_monitor\.enabled = true$/alsa_monitor.enabled = false/mg' \
             "${file}"
         perl -0pi -e 's/\["alsa\.reserve"\] = true/\["alsa.reserve"\] = false/g' \
+            "${file}"
+        perl -0pi -e 's/\["alsa\.midi"\] = true/\["alsa.midi"\] = false/g' \
+            "${file}"
+        perl -0pi -e 's/\["alsa\.midi\.monitoring"\] = true/\["alsa.midi.monitoring"\] = false/g' \
             "${file}"
     fi
 
@@ -695,6 +769,7 @@ for deb in "${DEBS[@]}"; do
 done
 
 fix_merged_usr_loader_links
+materialize_qtchooser_configs
 prune_guest_graphics_runtime
 patch_xkb_for_xwayland
 write_xv6_mime_package
@@ -704,7 +779,10 @@ generate_kservice_mime_types
 write_minimal_application_mimeinfo_cache
 disable_dead_ksplash_activation
 disable_dead_rtkit_activation
+write_false_compat
 configure_bluez_activation
+disable_optional_modemmanager_activation
+write_portal_defaults
 write_minimal_upower_config
 disable_conflicting_audio_autostart
 patch_optional_hardware_kde_defaults

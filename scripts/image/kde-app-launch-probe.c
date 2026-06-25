@@ -53,7 +53,10 @@ static void set_kde_env(void)
            "/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:"
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
-    setenv("LD_PRELOAD", "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0", 0);
+    setenv("LD_PRELOAD",
+           "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
+           "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
+           0);
     setenv("LIBGL_DRIVERS_PATH", "/lib/dri:/usr/lib/x86_64-linux-gnu/dri", 1);
     setenv("GBM_BACKENDS_PATH", "/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "virtio_gpu", 0);

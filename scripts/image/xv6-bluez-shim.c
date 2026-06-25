@@ -25,19 +25,6 @@ static const char bluez_xml[] =
 
 static GDBusNodeInfo *bluez_info;
 
-static void wait_for_system_bus_ready(void)
-{
-    for (int attempt = 0; attempt < 100; attempt++) {
-        if (access("/tmp/xv6-login1-ready", R_OK) == 0)
-            return;
-        if (attempt == 0 || attempt == 49)
-            fprintf(stderr, "xv6-bluez-shim: waiting for system bus readiness\n");
-        usleep(100000);
-    }
-
-    fprintf(stderr, "xv6-bluez-shim: system bus readiness marker timed out; continuing\n");
-}
-
 static void handle_method_call(GDBusConnection *connection,
                                const char *sender,
                                const char *object_path,
@@ -79,17 +66,23 @@ static const GDBusInterfaceVTable bluez_vtable = {
 static GDBusConnection *connect_system_bus_with_retry(void)
 {
     GError *error = NULL;
+    const char *address = getenv("DBUS_SYSTEM_BUS_ADDRESS");
 
-    for (int attempt = 0; attempt < 100; attempt++) {
-        GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
+    if (!address || !address[0])
+        address = "unix:abstract=xv6_system_bus";
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        GDBusConnection *bus = g_dbus_connection_new_for_address_sync(
+            address,
+            G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+            G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+            NULL, NULL, &error);
         if (bus)
             return bus;
 
-        if (attempt == 0 || attempt == 19 || attempt == 49 || attempt == 99)
-            fprintf(stderr, "xv6-bluez-shim: waiting for system bus: %s\n",
-                    error ? error->message : "unknown error");
+        fprintf(stderr, "xv6-bluez-shim: system bus %s: %s\n",
+                address, error ? error->message : "unknown error");
         g_clear_error(&error);
-        usleep(100000);
     }
 
     return NULL;
@@ -144,8 +137,6 @@ int main(void)
         fprintf(stderr, "xv6-bluez-shim: introspection: %s\n", error->message);
         return 1;
     }
-
-    wait_for_system_bus_ready();
 
     bus = connect_system_bus_with_retry();
     if (!bus) {

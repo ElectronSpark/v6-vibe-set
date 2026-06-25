@@ -401,6 +401,11 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kde-session"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-desktop-session.c" \
         "${STAGE}/bin/xv6-desktop-session"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-false.c" \
+        "${STAGE}/bin/xv6-false"
+    ln -sf /bin/xv6-false "${STAGE}/bin/false"
+    mkdir -p "${STAGE}/usr/bin"
+    ln -sf /bin/xv6-false "${STAGE}/usr/bin/false"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-plasma-session-child.c" \
         "${STAGE}/bin/kde-plasma-session-child"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-abi-probe.c" \

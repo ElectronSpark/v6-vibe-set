@@ -10,6 +10,7 @@ exec mkdir -p $outdir
 set runlog "$outdir/run.log"
 set tmpimg "$outdir/qt-wayland-smoke.fs.img"
 set app_log "/tmp/qt-wayland-smoke.log"
+set app_diag "/tmp/qt-wayland-smoke.diag"
 set guest_pid "/tmp/qt-wayland-smoke.pid"
 
 array set guest {
@@ -35,6 +36,7 @@ foreach phase [array names guest] {
     catch { exec sh -c "debugfs -w -R 'rm $guest($phase)' '$tmpimg' >/dev/null 2>&1" }
 }
 catch { exec sh -c "debugfs -w -R 'rm $app_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $app_diag' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_pid' '$tmpimg' >/dev/null 2>&1" }
 
 set env(DISPLAY_MODE)          "gtk"
@@ -94,7 +96,6 @@ proc sync_prompt {{seconds 20}} {
 proc capture_fb {phase marker label} {
     global guest timeout
 
-    sync_prompt
     set old_timeout $timeout
     set timeout 25
     send "fbstat ppm-current $guest($phase) 0 0 1280 800; sync; echo $marker\r"
@@ -206,8 +207,7 @@ expect {
 sleep 10
 capture_fb before "QT_WAYLAND_BASE_DONE" "QT-WAYLAND-SMOKE-FAIL before"
 
-sync_prompt
-send "rm -f $app_log $guest_pid; echo QT_WAYLAND_CLEAN_DONE\r"
+send "rm -f $app_log $app_diag $guest_pid; echo QT_WAYLAND_CLEAN_DONE\r"
 expect {
     -re {QT_WAYLAND_CLEAN_DONE} {}
     timeout { fail 7 "QT-WAYLAND-SMOKE-FAIL clean-timeout" }
@@ -231,7 +231,7 @@ set timeout $old_timeout
 optional_prompt
 
 sleep 8
-send "cat $app_log; echo QT_WAYLAND_LOG_DONE\r"
+send "cat $app_log; echo QT_WAYLAND_LOG''_DONE\r"
 set saw_exec 0
 set saw_ready 0
 set saw_frame 0
@@ -250,6 +250,12 @@ while {!$saw_done} {
     }
 }
 if {!($saw_exec && $saw_ready && $saw_frame)} {
+    send "cat $app_diag; echo QT_WAYLAND_DIAG''_DONE\r"
+    expect {
+        -re {QT_WAYLAND_DIAG_DONE} {}
+        timeout {}
+        eof {}
+    }
     fail 8 "QT-WAYLAND-SMOKE-FAIL app-log-incomplete exec=$saw_exec ready=$saw_ready frame=$saw_frame"
 }
 optional_prompt
@@ -258,15 +264,22 @@ capture_fb launch "QT_WAYLAND_LAUNCH_FB_DONE" "QT-WAYLAND-SMOKE-FAIL launch"
 sleep 2
 capture_fb frame "QT_WAYLAND_FRAME_FB_DONE" "QT-WAYLAND-SMOKE-FAIL frame"
 
-sync_prompt
-send "kill \$(cat $guest_pid); echo QT_WAYLAND_TERM_DONE\r"
+send "/bin/qt-wayland-smoke-launcher --stop; echo QT_WAYLAND_TERM_DONE\r"
 expect {
-    -re {QT_WAYLAND_TERM_DONE} {}
+    -re {qt-wayland-smoke-launcher: (stopped|killed) pid=[0-9]+} {}
+    -re {stop .*failed|stop still-running} {
+        fail 13 "QT-WAYLAND-SMOKE-FAIL term-failed"
+    }
     -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
         fail 4 "QT-WAYLAND-SMOKE-FAIL term-crash"
     }
     timeout { fail 13 "QT-WAYLAND-SMOKE-FAIL term-timeout" }
     eof { fail 13 "QT-WAYLAND-SMOKE-FAIL term-eof" }
+}
+expect {
+    -re {QT_WAYLAND_TERM_DONE} {}
+    timeout { fail 13 "QT-WAYLAND-SMOKE-FAIL term-marker-timeout" }
+    eof { fail 13 "QT-WAYLAND-SMOKE-FAIL term-marker-eof" }
 }
 optional_prompt
 

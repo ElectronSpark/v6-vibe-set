@@ -110,6 +110,11 @@ static void terminate_child(pid_t pid)
     waitpid(pid, &status, 0);
 }
 
+static int wait_for_pipewire_core(void);
+static int wait_for_pulse_server(void);
+static int wait_for_pactl_entry(char *const argv[], const char *needle,
+                                const char *label);
+
 static void run_optional(char *const argv[], int wait_for_exit, int timeout_ms)
 {
     pid_t pid = fork();
@@ -140,6 +145,40 @@ static void run_optional(char *const argv[], int wait_for_exit, int timeout_ms)
         }
         usleep(100000);
         waited_ms += 100;
+    }
+}
+
+static void run_audio_services(char *const pipewire[],
+                               char *const wireplumber[],
+                               char *const pipewire_pulse[])
+{
+    const char *ld_library_path = getenv("LD_LIBRARY_PATH");
+    const char *ld_preload = getenv("LD_PRELOAD");
+    char *saved_ld_library_path = ld_library_path ? strdup(ld_library_path) : NULL;
+    char *saved_ld_preload = ld_preload ? strdup(ld_preload) : NULL;
+
+    unsetenv("LD_LIBRARY_PATH");
+    unsetenv("LD_PRELOAD");
+    run_optional(pipewire, 0, 0);
+    wait_for_pipewire_core();
+    run_optional(wireplumber, 0, 0);
+    wait_for_pipewire_core();
+    run_optional(pipewire_pulse, 0, 0);
+    wait_for_pulse_server();
+    wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl", "list", "short",
+                                          "sinks", NULL },
+                         "alsa_output.xv6_virtio", "sink");
+    wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl", "list", "short",
+                                          "sources", NULL },
+                         "alsa_output.xv6_virtio.monitor", "monitor");
+
+    if (saved_ld_library_path) {
+        setenv("LD_LIBRARY_PATH", saved_ld_library_path, 1);
+        free(saved_ld_library_path);
+    }
+    if (saved_ld_preload) {
+        setenv("LD_PRELOAD", saved_ld_preload, 1);
+        free(saved_ld_preload);
     }
 }
 
@@ -177,6 +216,80 @@ static int wait_for_pulse_server(void)
     return 0;
 }
 
+static int run_pactl_probe_once(char *const argv[], const char *needle)
+{
+    char buf[4096];
+    int fds[2];
+    pid_t pid;
+    int status = 0;
+    int waited_ms = 0;
+    ssize_t total = 0;
+
+    if (pipe(fds) < 0)
+        return 0;
+
+    pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return 0;
+    }
+
+    if (pid == 0) {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+        if (fds[1] > STDERR_FILENO)
+            close(fds[1]);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+
+    close(fds[1]);
+    while (waitpid(pid, &status, WNOHANG) == 0) {
+        if (waited_ms >= 2000) {
+            terminate_child(pid);
+            close(fds[0]);
+            return 0;
+        }
+        usleep(100000);
+        waited_ms += 100;
+    }
+
+    for (;;) {
+        ssize_t n = read(fds[0], buf + total, sizeof(buf) - 1 - total);
+        if (n <= 0)
+            break;
+        total += n;
+        if (total >= (ssize_t)sizeof(buf) - 1)
+            break;
+    }
+    close(fds[0]);
+    buf[total] = '\0';
+
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+           strstr(buf, needle) != NULL;
+}
+
+static int wait_for_pactl_entry(char *const argv[], const char *needle,
+                                const char *label)
+{
+    for (int i = 0; i < 60; i++) {
+        if (run_pactl_probe_once(argv, needle)) {
+            fprintf(stderr,
+                    "kde-plasma-session-child: PipeWire Pulse %s ready: %s\n",
+                    label, needle);
+            return 1;
+        }
+        usleep(250000);
+    }
+
+    fprintf(stderr,
+            "kde-plasma-session-child: PipeWire Pulse %s missing after grace: %s\n",
+            label, needle);
+    return 0;
+}
+
 static void set_kde_env(void)
 {
     setenv("HOME", "/root", 1);
@@ -209,7 +322,10 @@ static void set_kde_env(void)
            "/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:"
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
-    setenv("LD_PRELOAD", "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0", 0);
+    setenv("LD_PRELOAD",
+           "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
+           "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
+           0);
     setenv("LIBGL_DRIVERS_PATH", "/lib/dri:/usr/lib/x86_64-linux-gnu/dri", 1);
     setenv("GBM_BACKENDS_PATH", "/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "virtio_gpu", 0);
@@ -280,12 +396,7 @@ int main(void)
         fprintf(stderr, "kde-plasma-session-child: audio services disabled by kde_audio=0\n");
     } else {
         fprintf(stderr, "kde-plasma-session-child: starting audio services\n");
-        run_optional(pipewire, 0, 0);
-        wait_for_pipewire_core();
-        run_optional(wireplumber, 0, 0);
-        wait_for_pipewire_core();
-        run_optional(pipewire_pulse, 0, 0);
-        wait_for_pulse_server();
+        run_audio_services(pipewire, wireplumber, pipewire_pulse);
     }
     run_optional(kded, 0, 0);
     run_optional(activity, 0, 0);

@@ -212,6 +212,9 @@ static void seed_kde_config(void)
         "ElectricBorderTiling=false\n"
         "Placement=Smart\n"
         "\n"
+        "[Tiling][4c85f5bb-4dcb-5bec-8433-5c0e6860d679]\n"
+        "tiles={\"layoutDirection\":\"horizontal\",\"tiles\":[{\"width\":0.25},{\"width\":0.5},{\"width\":0.25}]}\n"
+        "\n"
         "[org.kde.kdecoration2]\n"
         "BorderSize=No Borders\n"
         "BorderSizeAuto=false\n"
@@ -443,7 +446,10 @@ static void set_kde_env(void)
            "/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:"
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
-    setenv("LD_PRELOAD", "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0", 0);
+    setenv("LD_PRELOAD",
+           "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
+           "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
+           0);
     setenv("LIBGL_DRIVERS_PATH", "/lib/dri:/usr/lib/x86_64-linux-gnu/dri", 1);
     setenv("GBM_BACKENDS_PATH", "/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "virtio_gpu", 0);
