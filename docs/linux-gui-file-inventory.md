@@ -114,7 +114,9 @@ Tag: `primary-kernel`.
 kernel/kernel/dev/evdev.c
 kernel/kernel/inc/dev/evdev.h
 kernel/kernel/dev/ps2kbd.c
+kernel/kernel/inc/dev/ps2kbd.h
 kernel/kernel/dev/ps2mouse.c
+kernel/kernel/inc/dev/ps2mouse.h
 kernel/kernel/virtio_input.c
 ```
 
@@ -152,8 +154,11 @@ kernel/kernel/proc/futex.c
 kernel/kernel/proc/pid.c
 kernel/kernel/proc/pidfd.c
 kernel/kernel/proc/pgroup.c
+kernel/kernel/proc/rq.c
 kernel/kernel/proc/sched.c
 kernel/kernel/proc/sched_eevdf.c
+kernel/kernel/proc/sched_fifo.c
+kernel/kernel/proc/sched_idle.c
 kernel/kernel/proc/signal.c
 kernel/kernel/proc/sys_misc.c
 kernel/kernel/proc/sys_signal.c
@@ -162,13 +167,30 @@ kernel/kernel/proc/thread.c
 kernel/kernel/proc/thread_group.c
 kernel/kernel/proc/thread_queue.c
 kernel/kernel/proc/workqueue.c
+kernel/kernel/timer/goldfish_rtc.c
 kernel/kernel/timer/sched_timer.c
 kernel/kernel/timer/timer.c
+kernel/kernel/inc/signal.h
+kernel/kernel/inc/signal_types.h
 kernel/kernel/inc/proc/chrome_lifecycle.h
+kernel/kernel/inc/proc/pgroup.h
+kernel/kernel/inc/proc/pgroup_types.h
+kernel/kernel/inc/proc/rq.h
+kernel/kernel/inc/proc/rq_types.h
+kernel/kernel/inc/proc/sched.h
+kernel/kernel/inc/proc/tq.h
+kernel/kernel/inc/proc/tq_type.h
 kernel/kernel/inc/proc/thread_group.h
 kernel/kernel/inc/proc/thread_group_types.h
 kernel/kernel/inc/proc/thread.h
 kernel/kernel/inc/proc/thread_types.h
+kernel/kernel/inc/proc/workqueue.h
+kernel/kernel/inc/proc/workqueue_types.h
+kernel/kernel/inc/timer/goldfish_rtc.h
+kernel/kernel/inc/timer/sched_timer_private.h
+kernel/kernel/inc/timer/timer.h
+kernel/kernel/inc/timer/timer_types.h
+kernel/kernel/inc/uabi/signal.h
 kernel/arch/x86_64/inc/arch_thread.h
 kernel/arch/x86_64/irq/syscall.c
 kernel/arch/x86_64/irq/trap.c
@@ -193,15 +215,34 @@ kernel/kernel/mm/sysmm.c
 kernel/kernel/mm/pcache.c
 kernel/kernel/mm/mm_watermark.c
 kernel/kernel/mm/oom_kill.c
+kernel/kernel/mm/buffer.c
+kernel/kernel/mm/early_allocator.c
 kernel/kernel/mm/folio.c
+kernel/kernel/mm/kalloc.c
 kernel/kernel/mm/page.c
+kernel/kernel/mm/page_private.h
 kernel/kernel/mm/rmap.c
 kernel/kernel/mm/shrinker.c
 kernel/kernel/mm/slab.c
+kernel/kernel/mm/slab_private.h
 kernel/kernel/inc/arch/vm.h
+kernel/kernel/inc/mm/buffer_head.h
+kernel/kernel/inc/mm/early_allocator.h
+kernel/kernel/inc/mm/folio.h
+kernel/kernel/inc/mm/folio_types.h
+kernel/kernel/inc/mm/mm_watermark.h
 kernel/kernel/inc/mm/vm.h
 kernel/kernel/inc/mm/vm_types.h
 kernel/kernel/inc/mm/oom_kill.h
+kernel/kernel/inc/mm/page.h
+kernel/kernel/inc/mm/page_type.h
+kernel/kernel/inc/mm/pcache.h
+kernel/kernel/inc/mm/pcache_types.h
+kernel/kernel/inc/mm/pgtable.h
+kernel/kernel/inc/mm/rmap.h
+kernel/kernel/inc/mm/shrinker.h
+kernel/kernel/inc/mm/slab.h
+kernel/kernel/inc/mm/slab_type.h
 kernel/kernel/inc/uabi/mman.h
 kernel/kernel/inc/uabi/memstat.h
 kernel/kernel/lwext4_port/ext4fs_file.c
@@ -236,6 +277,8 @@ kernel/kernel/vfs/tmpfs/tmpfs_private.h
 kernel/kernel/vfs/tmpfs/tmpfs_smoketest.c
 kernel/kernel/vfs/tmpfs/tmpfs_smoketest.h
 kernel/kernel/vfs/tmpfs/truncate.c
+kernel/kernel/vfs/devtmpfs/CMakeLists.txt
+kernel/kernel/vfs/devtmpfs/devtmpfs_private.h
 kernel/kernel/vfs/devtmpfs/superblock.c
 kernel/kernel/vfs/procfs/file.c
 kernel/kernel/vfs/procfs/inode.c
@@ -250,6 +293,9 @@ kernel/kernel/inc/vfs/fcntl.h
 kernel/kernel/inc/vfs/pipe.h
 kernel/kernel/inc/vfs/pipe_types.h
 kernel/kernel/inc/vfs/unix_socket.h
+kernel/kernel/inc/devtmpfs.h
+kernel/kernel/inc/kqueue.h
+kernel/kernel/inc/kqueue_types.h
 kernel/kernel/kqueue/epoll.c
 kernel/kernel/kqueue/kqueue.c
 kernel/kernel/kqueue/kqueue_filters.c
@@ -279,6 +325,12 @@ kernel/kernel/tty/session.c
 kernel/kernel/tty/termios.c
 kernel/kernel/tty/tty.c
 kernel/kernel/tty/tty_dev.c
+kernel/kernel/inc/tty/session.h
+kernel/kernel/inc/tty/session_types.h
+kernel/kernel/inc/tty/termios.h
+kernel/kernel/inc/tty/tty.h
+kernel/kernel/inc/tty/tty_types.h
+kernel/kernel/inc/uabi/termios.h
 ```
 
 ## Supporting Kernel Storage/I/O
@@ -294,17 +346,21 @@ Tag: `primary-kernel`, supporting I/O.
 
 ```text
 kernel/kernel/virtio_disk.c
+kernel/kernel/dev/iosched.c
+kernel/kernel/inc/dev/iosched.h
+kernel/kernel/inc/dev/iosched_types.h
 ```
 
 ## Current Dirty Kernel Cross-Check
 
-The current dirty-kernel audit set with GUI or GUI-support relevance is
-intentionally represented here: `kernel/kernel/timer/sched_timer.c` and
-`kernel/kernel/timer/timer.c` under scheduler/timer ownership,
-`kernel/arch/x86_64/ipi/ipi.c` under arch VM/TLB synchronization ownership, and
-`kernel/kernel/virtio_disk.c` under supporting storage/I/O ownership. The disk
-file is tracked as a supporting critical path because rootfs/image I/O must not
-regress even though it is not itself a display, input, or GUI syscall ABI file.
+The current dirty kernel state is broad and already represented by the
+ownership sections above rather than by a short hand-picked list. Dirty files
+span scheduler/timer/signal/process, VM/TLB/page-cache/OOM, VFS/procfs/sysfs,
+network/socket, TTY, DRM/GPU, and storage I/O adjacency. Keep using the
+ownership sections as the source of truth for GUI or GUI-support relevance; the
+disk path remains tracked as supporting critical I/O because rootfs/image I/O
+must not regress even though it is not itself a display, input, or GUI syscall
+ABI file.
 
 ## User/Local GUI Probes
 
@@ -431,6 +487,9 @@ user/programs/zombie/zombie.c
 local audio probe relevant to GUI audio ABI work, although it is not listed in
 `docs/linux-gui-kde-inventory.md`.
 
+`user/programs/regpreservetest/regpreservetest.c` is currently untracked in the
+`user` submodule and remains inventoried as a local support-control probe.
+
 ## Ports And Package Boundaries
 
 Responsibility: package wrapper, imported source, local shim, and generated
@@ -487,6 +546,9 @@ ports/libxkbcommon/CMakeLists.txt
 ports/mesa/CMakeLists.txt
 ports/wayland/CMakeLists.txt
 ports/weston/CMakeLists.txt
+ports/weston/xv6-weston.ini
+ports/weston/xwayland-glamor-wrapper.c
+ports/mesa/gl.pc
 ```
 
 Directory-level package boundaries without active wrapper files in this
@@ -567,8 +629,22 @@ track explicitly:
 scripts/image/stage-kde-runtime.sh
 scripts/image/make-rootfs.sh
 scripts/image/stage-host-gui-runtime.sh
+scripts/image/stage-webkit-media.sh
 scripts/image/import-host-gui.sh
 scripts/image/stage-xwayland-runtime.sh
+scripts/image/host-gtk-smoke.c
+scripts/image/host-gtk-smoke-launcher.c
+scripts/image/host-idle-x11-launcher.c
+scripts/image/host-wlegl-smoke.c
+scripts/image/host-wlegl-smoke-launcher.c
+scripts/image/host-x11-abi-smoke.c
+scripts/image/host-x11-abi-smoke-launcher.c
+scripts/image/host-x11-dri3-present-smoke.c
+scripts/image/host-x11-dri3-present-smoke-launcher.c
+scripts/image/host-x11-egl-smoke.c
+scripts/image/host-x11-egl-smoke-launcher.c
+scripts/image/host-x11-shm-smoke.c
+scripts/image/host-x11-shm-smoke-launcher.c
 scripts/image/kde-abi-probe.c
 scripts/image/kde-app-launch-probe.c
 scripts/image/kde-config-atomic-probe.c
@@ -597,7 +673,16 @@ scripts/image/xwayland-kde-wrapper.c
 scripts/image/wayland-chromium-launcher.c
 scripts/image/xv6-bluez-shim.c
 scripts/image/xv6-false.c
+scripts/launch/launch-gui.sh
+scripts/container/check-gui-accel.sh
+scripts/container/docker-build-webkit.sh
+ports/webkit/stage-webkit-runtime.sh
+ports/webkit/apply-xv6-overrides.sh
+ports/webkit/overrides/README.md
 ```
+
+`scripts/image/xv6-false.c` is currently untracked and is inventoried here as
+an xv6-owned support-control probe.
 
 Regression/control harnesses named by the KDE inventory:
 
@@ -608,6 +693,34 @@ scripts/gpu/gpu-validate.sh
 scripts/gpu/virgl-kms-validate.sh
 ```
 
+Additional concrete GUI control/runtime harnesses present in this checkout:
+
+```text
+scripts/gpu/alpine-virgl-desktop-capture.sh
+scripts/gpu/chromium-menu-proof.expect
+scripts/gpu/chromium-youtube-smoothness.expect
+scripts/gpu/host-x11-abi-smoke-proof.expect
+scripts/gpu/host-x11-dri3-present-smoke-proof.expect
+scripts/gpu/host-x11-egl-smoke-proof.expect
+scripts/gpu/host-x11-shm-smoke-proof.expect
+scripts/gpu/hyperv-3d-fps-validate.sh
+scripts/gpu/hyperv-3d-visual-check.sh
+scripts/gpu/hyperv-dxg-validate.sh
+scripts/gpu/hyperv-gpu-core-validate.sh
+scripts/gpu/hyperv-gpu-stress.sh
+scripts/gpu/hyperv-webkit-gpu-validate.sh
+scripts/gpu/perf-video-gate-matrix.sh
+scripts/gpu/perf-video-gate.expect
+scripts/gpu/validate-webkit-runtime.sh
+scripts/gpu/virgl-desktop-validate.sh
+scripts/gpu/wayland-chromium-supervisor-low-noise.expect
+scripts/gpu/webkit-cadence-report.py
+scripts/gpu/webkit-qos-report.py
+scripts/gpu/webkit-typed-url-enter.expect
+scripts/gpu/webkit-virgl-gpu-validate.sh
+scripts/gpu/webkit-youtube-smoothness-report.sh
+```
+
 Rootfs overlay data. The old D-Bus and WebKit globs are expanded to concrete
 current files:
 
@@ -615,8 +728,13 @@ current files:
 rootfs-overlay/etc/startup
 rootfs-overlay/etc/daemons
 rootfs-overlay/usr/share/alsa/alsa.conf
+rootfs-overlay/bin/start-dbus-system
+rootfs-overlay/etc/ld.so.conf.d/gpup-wsl.conf
+rootfs-overlay/etc/profile.d/gpup-d3d12.sh
+rootfs-overlay/run/dbus/.gitkeep
 rootfs-overlay/usr/share/dbus-1/xv6-session.conf
 rootfs-overlay/usr/share/dbus-1/xv6-system.conf
+rootfs-overlay/var/run/dbus/.gitkeep
 rootfs-overlay/share/chromium-audio-smoke.html
 rootfs-overlay/share/webkit/fetch-stream.html
 rootfs-overlay/share/webkit/google-js-load.html

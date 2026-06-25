@@ -39,6 +39,9 @@ regression/control package only.
 - `ports`: matches the de-patching plan package list.
 - `ports/xv6-gbm`: directory exists but currently contains no files; keep it
   as a placeholder local-shim inventory item.
+- `ports/drm_info/patches`, `ports/gtk3/patches`, `ports/kmscube/patches`, and
+  `ports/libepoxy/patches`: empty local patch-slot directories are present and
+  inventoried as build-wrapper patch slots, not active source modifications.
 - `build-x86_64/kde-noble-plasma`: current generated package evidence is
   present; no regeneration was performed for this inventory.
 
@@ -160,6 +163,7 @@ This group corresponds to de-patching Phase 2.
 | `gdk-pixbuf` | `imported-source` | Image loading library. |
 | `pango` | `imported-source` | Text layout library. |
 | `gtk3` | `imported-source` | GTK 3 toolkit. |
+| `gtk3/patches` | `build-wrapper` | Empty local patch-slot directory; no active local patches. |
 
 ## Ports: Graphics, Input, And Desktop ABI
 
@@ -174,8 +178,11 @@ regression/control item only.
 | `libinput` | `local-shim` | xv6-owned libinput-compatible surface. |
 | `libdrm` | `imported-source` | DRM userspace library. |
 | `drm_info` | `imported-source` | DRM inspection program. |
+| `drm_info/patches` | `build-wrapper` | Empty local patch-slot directory; no active local patches. |
 | `kmscube` | `imported-source` | KMS/GBM/EGL diagnostic program. |
+| `kmscube/patches` | `build-wrapper` | Empty local patch-slot directory; no active local patches. |
 | `libepoxy` | `imported-source` | GL dispatch library. |
+| `libepoxy/patches` | `build-wrapper` | Empty local patch-slot directory; no active local patches. |
 | `wayland-libs` | `imported-source` | Target Wayland libraries from shared Wayland source. |
 | `wayland-protocols` | `data-or-headers` | Wayland protocol XML data. |
 | `xkeyboard-config` | `data-or-headers` | Keyboard layout/configuration data. |
@@ -223,6 +230,10 @@ xv6-owned or wrapper-owned rather than becoming imported application patches.
 | `ports/glib-host` | `build-wrapper` | Host helper build. |
 | `ports/libpng-host` | `build-wrapper` | Host helper build. |
 | `ports/netsurf-buildsystem` | `build-wrapper` | NetSurf build system source/helper. |
+| `ports/drm_info/patches` | `build-wrapper` | Empty local patch slot for the `drm_info` wrapper; no active local patches. |
+| `ports/gtk3/patches` | `build-wrapper` | Empty local patch slot for the `gtk3` wrapper; no active local patches. |
+| `ports/kmscube/patches` | `build-wrapper` | Empty local patch slot for the `kmscube` wrapper; no active local patches. |
+| `ports/libepoxy/patches` | `build-wrapper` | Empty local patch slot for the `libepoxy` wrapper; no active local patches. |
 | `ports/libudev` | `local-shim` | xv6-owned udev API/ABI stand-in. |
 | `ports/libseat` | `local-shim` | xv6-owned seat API/ABI stand-in. |
 | `ports/libevdev` | `local-shim` | xv6-owned evdev API/ABI stand-in. |
@@ -242,6 +253,7 @@ Current evidence files under `build-x86_64/kde-noble-plasma`:
 | `packages.resolved.txt` | Present, 1,355 package rows. |
 | `packages.txt` | Present, 963 package rows. |
 | `kde-qt-package-inventory.tsv` | Present, 1 header plus 1,355 package rows. |
+| `empty-dpkg-status` | Present empty dpkg status seed file. |
 
 `kde-qt-package-inventory.tsv` columns:
 
@@ -276,6 +288,26 @@ KDE/Qt/Plasma source. The upstream-clean boundary still requires behavioral
 compatibility to be fixed in kernel/libc/sysroot/rootfs data, build wrappers,
 or local shims, not in KDE/Qt/Plasma source.
 
+## Imported-Source Patch Risk Notes
+
+Empty local patch-slot directories are build-wrapper inventory, not evidence of
+active imported-source modifications:
+
+```text
+ports/drm_info/patches
+ports/gtk3/patches
+ports/kmscube/patches
+ports/libepoxy/patches
+```
+
+Upstream-internal patch and diff files under `ports/*/src` are part of imported
+source payloads or their upstream test/build fixtures. They should not be
+counted as local xv6 de-patching work unless a wrapper applies them as xv6
+patches or the checkout carries a local source delta against the imported
+payload. Current examples include CPython, curl, FreeType, GLib, Mesa, ncurses,
+vim spelling data, and Weston display-info test data patch/diff files under
+their respective `src` trees.
+
 ## Plan Versus Current Tree Mismatches
 
 | Item | Current state | Inventory treatment |
@@ -283,6 +315,7 @@ or local shims, not in KDE/Qt/Plasma source.
 | `alsapcmpoll` | Present in `user/programs`; not listed in `docs/linux-userland-upstream-depatch-plan.md`. | Added as a local Linux/audio ABI probe. |
 | `regpreservetest` | Present in `user/programs` but untracked in the `user` submodule. | Listed as present-but-untracked local program. |
 | `ports/xv6-gbm` | Listed by the plan and present as a directory, but currently empty. | Kept as placeholder `local-shim`. |
+| `ports/drm_info/patches`, `ports/gtk3/patches`, `ports/kmscube/patches`, `ports/libepoxy/patches` | Present as empty directories. | Listed as build-wrapper patch slots, not active imported-source patches. |
 | `docs/linux-kde-minimal-integration-plan.md` | Missing in this checkout. | Not used. |
 
 No port package listed in the de-patching plan is missing from the current
