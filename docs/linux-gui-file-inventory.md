@@ -313,11 +313,19 @@ Tag: `primary-kernel`.
 
 ```text
 kernel/kernel/e1000.c
+kernel/kernel/inc/dev/e1000_dev.h
 kernel/kernel/virtio_net.c
 kernel/kernel/net.c
 kernel/kernel/sysnet.c
 kernel/kernel/lwip_port/lwip_glue.c
 kernel/kernel/lwip_port/sys_socket.c
+kernel/kernel/lwip_port/sys_arch.c
+kernel/kernel/lwip_port/arch/cc.h
+kernel/kernel/lwip_port/arch/sys_arch.h
+kernel/kernel/lwip_port/compat/stdint.h
+kernel/kernel/lwip_port/compat/stdio.h
+kernel/kernel/lwip_port/compat/stdlib.h
+kernel/kernel/lwip_port/compat/time.h
 kernel/kernel/lwip_port/lwipopts.h
 kernel/kernel/tty/ptmx.c
 kernel/kernel/tty/pty.c
@@ -392,6 +400,7 @@ Production commands, filesystem diagnostics, stress tests, and ABI/GUI probes
 currently identified by the KDE inventory:
 
 ```text
+user/programs/alsapcmpoll/alsapcmpoll.c
 user/programs/bigfile/bigfile.c
 user/programs/blocksendwake/blocksendwake.c
 user/programs/cat/cat.c
@@ -483,12 +492,12 @@ user/programs/xargs/xargs.c
 user/programs/zombie/zombie.c
 ```
 
-`user/programs/alsapcmpoll/alsapcmpoll.c` is present in this checkout and is a
-local audio probe relevant to GUI audio ABI work, although it is not listed in
+`user/programs/alsapcmpoll/alsapcmpoll.c` is a local audio probe relevant to
+GUI audio ABI work, although it is not listed in
 `docs/linux-gui-kde-inventory.md`.
 
-`user/programs/regpreservetest/regpreservetest.c` is currently untracked in the
-`user` submodule and remains inventoried as a local support-control probe.
+`user/programs/regpreservetest/regpreservetest.c` is tracked in `user` and
+remains inventoried as a local support-control probe.
 
 ## Ports And Package Boundaries
 
@@ -525,6 +534,7 @@ ports/openssh/CMakeLists.txt
 ports/libxml2/CMakeLists.txt
 ports/cpython/CMakeLists.txt
 ports/vim/CMakeLists.txt
+ports/vim/xv6-vim-launcher.c
 ```
 
 Graphics, input, Wayland, DRM, Mesa, and Weston control package wrappers:
@@ -669,6 +679,8 @@ scripts/image/kde-trash-stat-probe.c
 scripts/image/kde-unix-socket-probe.c
 scripts/image/kde-wayland-seat-probe.c
 scripts/image/qt-wayland-smoke-launcher.c
+scripts/image/xv6-desktop-session.c
+scripts/image/xv6-login1-shim.c
 scripts/image/xwayland-kde-wrapper.c
 scripts/image/wayland-chromium-launcher.c
 scripts/image/xv6-bluez-shim.c
@@ -681,8 +693,8 @@ ports/webkit/apply-xv6-overrides.sh
 ports/webkit/overrides/README.md
 ```
 
-`scripts/image/xv6-false.c` is currently untracked and is inventoried here as
-an xv6-owned support-control probe.
+`scripts/image/xv6-false.c` is tracked and is inventoried here as an xv6-owned
+support-control probe.
 
 Regression/control harnesses named by the KDE inventory:
 
@@ -696,9 +708,12 @@ scripts/gpu/virgl-kms-validate.sh
 Additional concrete GUI control/runtime harnesses present in this checkout:
 
 ```text
+scripts/gpu/baseline-desktop-entry-smoke.expect
 scripts/gpu/alpine-virgl-desktop-capture.sh
 scripts/gpu/chromium-menu-proof.expect
 scripts/gpu/chromium-youtube-smoothness.expect
+scripts/gpu/host-gtk-smoke-proof.expect
+scripts/gpu/host-wlegl-smoke-proof.expect
 scripts/gpu/host-x11-abi-smoke-proof.expect
 scripts/gpu/host-x11-dri3-present-smoke-proof.expect
 scripts/gpu/host-x11-egl-smoke-proof.expect
@@ -709,9 +724,13 @@ scripts/gpu/hyperv-dxg-validate.sh
 scripts/gpu/hyperv-gpu-core-validate.sh
 scripts/gpu/hyperv-gpu-stress.sh
 scripts/gpu/hyperv-webkit-gpu-validate.sh
+scripts/gpu/linux-kde-virgl-baseline.sh
 scripts/gpu/perf-video-gate-matrix.sh
 scripts/gpu/perf-video-gate.expect
+scripts/gpu/titlebar-control-matrix.sh
+scripts/gpu/titlebar-control-report.py
 scripts/gpu/validate-webkit-runtime.sh
+scripts/gpu/virgl-async-soak.expect
 scripts/gpu/virgl-desktop-validate.sh
 scripts/gpu/wayland-chromium-supervisor-low-noise.expect
 scripts/gpu/webkit-cadence-report.py
@@ -719,6 +738,7 @@ scripts/gpu/webkit-qos-report.py
 scripts/gpu/webkit-typed-url-enter.expect
 scripts/gpu/webkit-virgl-gpu-validate.sh
 scripts/gpu/webkit-youtube-smoothness-report.sh
+scripts/gpu/x11-idle-dri3-teardown-proof.expect
 ```
 
 Rootfs overlay data. The old D-Bus and WebKit globs are expanded to concrete
@@ -727,15 +747,20 @@ current files:
 ```text
 rootfs-overlay/etc/startup
 rootfs-overlay/etc/daemons
+rootfs-overlay/etc/gtk-3.0/settings.ini
 rootfs-overlay/usr/share/alsa/alsa.conf
 rootfs-overlay/bin/start-dbus-system
 rootfs-overlay/etc/ld.so.conf.d/gpup-wsl.conf
 rootfs-overlay/etc/profile.d/gpup-d3d12.sh
+rootfs-overlay/etc/udisks2/udisks2.conf
 rootfs-overlay/run/dbus/.gitkeep
 rootfs-overlay/usr/share/dbus-1/xv6-session.conf
 rootfs-overlay/usr/share/dbus-1/xv6-system.conf
 rootfs-overlay/var/run/dbus/.gitkeep
 rootfs-overlay/share/chromium-audio-smoke.html
+rootfs-overlay/share/mime/globs
+rootfs-overlay/share/mime/globs2
+rootfs-overlay/share/mime/text/html.xml
 rootfs-overlay/share/webkit/fetch-stream.html
 rootfs-overlay/share/webkit/google-js-load.html
 rootfs-overlay/share/webkit/google-th-script.html

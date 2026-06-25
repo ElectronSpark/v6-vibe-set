@@ -34,8 +34,8 @@ regression/control package only.
 
 ## Current Tree Evidence
 
-- `user/programs`: matches the de-patching plan plus `alsapcmpoll` and the
-  present-but-untracked `regpreservetest`.
+- `user/programs`: matches the de-patching plan plus `alsapcmpoll` and
+  `regpreservetest`.
 - `ports`: matches the de-patching plan package list.
 - `ports/xv6-gbm`: directory exists but currently contains no files; keep it
   as a placeholder local-shim inventory item.
@@ -102,18 +102,8 @@ mmaptest mmapbigfile fdtabletest iovectest kqueuetest timerfdstress
 syscalltest linuxsyscallabitest testsig fbstat gldemo virgltest gpubuftest
 gpucorevalidate drmabitest drmiftest drmprimeprobe nouveauabitest dxgprobe
 d3d12probe ttmtest webkitabitest webkitnettest
-```
-
-### Present But Untracked
-
-Kind: `local-program`.
-
-```text
 regpreservetest
 ```
-
-`user/programs/regpreservetest/regpreservetest.c` exists in the working tree,
-but `git -C user status --short` reports `?? programs/regpreservetest/`.
 
 ## Ports: Build, Headers, Data, And Base Libraries
 
@@ -212,7 +202,7 @@ This group corresponds to de-patching Phase 4.
 | `netsurf-libdom` | `imported-source` | NetSurf DOM library. |
 | `netsurf` | `imported-source` | Browser/control app. |
 | `cpython` | `imported-source` | Python runtime. |
-| `vim` | `imported-source` | Editor program. |
+| `vim` | `imported-source` | Editor program, with a local xv6 launcher wrapper inventoried below. |
 | `peanut-gb` | `imported-source` | Game Boy emulator dependency for a local demo. |
 | `wayland-src` | `imported-source` | Shared upstream Wayland source for host/target Wayland packages. |
 | `webkit` | `imported-source` | WebKitGTK browser engine/control workload. |
@@ -230,6 +220,7 @@ xv6-owned or wrapper-owned rather than becoming imported application patches.
 | `ports/glib-host` | `build-wrapper` | Host helper build. |
 | `ports/libpng-host` | `build-wrapper` | Host helper build. |
 | `ports/netsurf-buildsystem` | `build-wrapper` | NetSurf build system source/helper. |
+| `ports/vim/xv6-vim-launcher.c` | `local-shim` | xv6-owned launcher/support wrapper for the imported Vim package. |
 | `ports/drm_info/patches` | `build-wrapper` | Empty local patch slot for the `drm_info` wrapper; no active local patches. |
 | `ports/gtk3/patches` | `build-wrapper` | Empty local patch slot for the `gtk3` wrapper; no active local patches. |
 | `ports/kmscube/patches` | `build-wrapper` | Empty local patch slot for the `kmscube` wrapper; no active local patches. |
@@ -313,7 +304,8 @@ their respective `src` trees.
 | Item | Current state | Inventory treatment |
 | --- | --- | --- |
 | `alsapcmpoll` | Present in `user/programs`; not listed in `docs/linux-userland-upstream-depatch-plan.md`. | Added as a local Linux/audio ABI probe. |
-| `regpreservetest` | Present in `user/programs` but untracked in the `user` submodule. | Listed as present-but-untracked local program. |
+| `regpreservetest` | Present and tracked in `user/programs`. | Listed as a local Linux ABI probe. |
+| `ports/vim/xv6-vim-launcher.c` | Present and tracked in `ports`. | Listed as a local wrapper/support file for imported Vim. |
 | `ports/xv6-gbm` | Listed by the plan and present as a directory, but currently empty. | Kept as placeholder `local-shim`. |
 | `ports/drm_info/patches`, `ports/gtk3/patches`, `ports/kmscube/patches`, `ports/libepoxy/patches` | Present as empty directories. | Listed as build-wrapper patch slots, not active imported-source patches. |
 | `docs/linux-kde-minimal-integration-plan.md` | Missing in this checkout. | Not used. |
