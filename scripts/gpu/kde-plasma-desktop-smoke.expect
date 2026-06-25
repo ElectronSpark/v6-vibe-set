@@ -74,12 +74,22 @@ set env(QEMU_NET) "0"
 set env(QEMU_AUDIO) "none"
 set env(QEMU_VIRTIO_GPU_XRES) "1280"
 set env(QEMU_VIRTIO_GPU_YRES) "800"
+set kde_smoke_reducer [expr {[info exists env(KDE_SMOKE_REDUCER)] ? $env(KDE_SMOKE_REDUCER) : ""}]
+if {[info exists env(KDE_SMOKE_AGENT)]} {
+    set kde_smoke_agent $env(KDE_SMOKE_AGENT)
+} elseif {$kde_smoke_reducer eq "x11-egl"} {
+    set kde_smoke_agent "0"
+} else {
+    set kde_smoke_agent "1"
+}
 set qemu_append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
 append qemu_append " virtio_gpu_disable_pageflip_copy=0"
 append qemu_append " virtio_gpu_pageflip_copy=1"
 append qemu_append " virtio_gpu_present_minimal_drain=1"
 append qemu_append " virtio_gpu_present_no_drain=0"
-append qemu_append " kde_smoke_agent=1"
+if {$kde_smoke_agent ne "0"} {
+    append qemu_append " kde_smoke_agent=1"
+}
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
 }
@@ -243,6 +253,19 @@ proc sync_prompt {{seconds 20}} {
 
 proc legacy_serial_validation_enabled {} {
     return [expr {[info exists ::env(KDE_SMOKE_LEGACY_SERIAL)] && $::env(KDE_SMOKE_LEGACY_SERIAL) ne "0"}]
+}
+
+proc guest_smoke_agent_enabled {} {
+    global kde_smoke_agent
+
+    return [expr {$kde_smoke_agent ne "0"}]
+}
+
+proc kde_smoke_reducer {} {
+    if {[info exists ::env(KDE_SMOKE_REDUCER)]} {
+        return $::env(KDE_SMOKE_REDUCER)
+    }
+    return ""
 }
 
 proc launch_guest_smoke_agent {} {
@@ -543,13 +566,100 @@ proc run_optional_direct_app_launch_probe {} {
     run_optional_chromium_probe
 }
 
+proc x11_egl_setup_fallback_line {line} {
+    return [regexp {host-x11-egl-smoke: egl(GetDisplay|Initialize|BindAPI|ChooseConfig|CreateContext|CreateWindowSurface|MakeCurrent) unavailable [^\r\n]*fallback=glx} $line]
+}
+
+proc x11_egl_failure_label_from_line {line} {
+    set line [string trim $line]
+    if {[x11_egl_setup_fallback_line $line]} {
+        return ""
+    }
+    if {[regexp {host-x11-egl-smoke: (egl|glx) ready [^\r\n]*gl_version=\(null\)} $line]} {
+        return "x11-egl-null-gl-version"
+    }
+    if {[regexp {host-x11-egl-smoke: glx_choose_visual missing status=FAIL} $line]} {
+        return "x11-egl-glx_choose_visual-missing-status-FAIL"
+    }
+    if {[regexp {host-x11-egl-smoke: ([A-Za-z0-9_]+) ([A-Za-z0-9_]+)[^\r\n]*status=FAIL} $line -> phase reason]} {
+        return "x11-egl-${phase}-${reason}-status-FAIL"
+    }
+    if {[regexp {host-x11-egl-smoke: ([A-Za-z0-9_]+) [^\r\n]*(failed|missing|unavailable)} $line -> phase reason]} {
+        return "x11-egl-${phase}-${reason}"
+    }
+    return ""
+}
+
+proc x11_egl_scan_launch_log {text start_var connect_var gl_var frame_var failure_var} {
+    upvar 1 $start_var saw_start
+    upvar 1 $connect_var saw_connect
+    upvar 1 $gl_var saw_gl
+    upvar 1 $frame_var saw_frame
+    upvar 1 $failure_var failure_label
+
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-egl-smoke: start} $line]} {
+            set saw_start 1
+        }
+        if {[regexp {host-x11-egl-smoke: connected display=} $line]} {
+            set saw_connect 1
+        }
+        if {[regexp {host-x11-egl-smoke: (egl|glx) ready } $line]} {
+            set saw_gl 1
+        }
+        if {[regexp {host-x11-egl-smoke: frame=[0-9]+ mode=launch} $line]} {
+            set saw_frame 1
+        }
+        if {$failure_label eq ""} {
+            set label [x11_egl_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+}
+
+proc x11_egl_scan_exit_log {text input_var exit_var failure_var} {
+    upvar 1 $input_var saw_input
+    upvar 1 $exit_var saw_exit
+    upvar 1 $failure_var failure_label
+
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-egl-smoke: input_ready} $line]} {
+            set saw_input 1
+        }
+        if {[regexp {host-x11-egl-smoke: exited} $line]} {
+            set saw_exit 1
+        }
+        if {$failure_label eq ""} {
+            set label [x11_egl_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+}
+
+proc x11_egl_failure_suffix {saw_start saw_connect saw_gl saw_frame} {
+    return "start=$saw_start connect=$saw_connect gl=$saw_gl frame=$saw_frame"
+}
+
 proc run_kde_x11_egl_probe {} {
     global timeout x11_egl_available host_x11_egl_png
 
+    set reducer [expr {[kde_smoke_reducer] eq "x11-egl"}]
     if {[info exists ::env(KDE_SMOKE_X11_EGL)] && $::env(KDE_SMOKE_X11_EGL) eq "0"} {
+        if {$reducer} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-disabled"
+        }
         return
     }
     if {!$x11_egl_available} {
+        if {$reducer} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-missing"
+        }
         note_visual_warning "x11-egl-smoke-missing"
         return
     }
@@ -574,31 +684,45 @@ proc run_kde_x11_egl_probe {} {
     optional_prompt
     sleep 6
 
-    send "cat $log_path; echo KDE_X11_EGL_LOG_DONE\r"
+    send "cat $log_path; echo __KDE_X11_EGL_LOG_DONE__\r"
     set saw_start 0
     set saw_connect 0
     set saw_gl 0
     set saw_frame 0
     set saw_done 0
+    set failure_label ""
+    set log_text ""
     while {!$saw_done} {
         expect {
-            -re {host-x11-egl-smoke: start} { set saw_start 1 }
-            -re {host-x11-egl-smoke: connected display=} { set saw_connect 1 }
-            -re {host-x11-egl-smoke: (egl|glx) ready [^\r\n]*gl_version=\(null\)} {
-                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-null-gl-version"
+            -re {host-x11-egl-smoke: start} {
+                append log_text $expect_out(buffer)
             }
-            -re {host-x11-egl-smoke: (egl|glx) ready } { set saw_gl 1 }
-            -re {host-x11-egl-smoke: (egl|glx|glX|XOpenDisplay|glx_choose_visual|glx_create_context|glx_make_current|egl[A-Za-z]*) [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
-                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-output-fail"
+            -re {host-x11-egl-smoke: connected display=} {
+                append log_text $expect_out(buffer)
             }
-            -re {host-x11-egl-smoke: frame=[0-9]+ mode=launch} { set saw_frame 1 }
-            -re {KDE_X11_EGL_LOG_DONE} { set saw_done 1 }
+            -re {host-x11-egl-smoke: (egl|glx) ready } {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-egl-smoke: frame=[0-9]+ mode=launch} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-egl-smoke: [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
+                append log_text $expect_out(buffer)
+            }
+            -re {(^|[\r\n])__KDE_X11_EGL_LOG_DONE__[\r\n]} {
+                append log_text $expect_out(buffer)
+                set saw_done 1
+            }
             -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
                 finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-crash"
             }
             timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-timeout" }
             eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-log-eof" }
         }
+    }
+    x11_egl_scan_launch_log $log_text saw_start saw_connect saw_gl saw_frame failure_label
+    if {$failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $failure_label [x11_egl_failure_suffix $saw_start $saw_connect $saw_gl $saw_frame]"
     }
     if {!($saw_start && $saw_connect && $saw_gl && $saw_frame)} {
         optional_prompt
@@ -610,7 +734,7 @@ proc run_kde_x11_egl_probe {} {
             eof {}
         }
         set timeout $old_timeout
-        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-incomplete start=$saw_start connect=$saw_connect gl=$saw_gl frame=$saw_frame"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-incomplete [x11_egl_failure_suffix $saw_start $saw_connect $saw_gl $saw_frame]"
     }
     optional_prompt
     host_screenshot "x11-egl" $host_x11_egl_png
@@ -627,24 +751,37 @@ proc run_kde_x11_egl_probe {} {
     optional_prompt
     sleep 3
 
-    send "cat $log_path; echo KDE_X11_EGL_EXIT_LOG_DONE\r"
+    send "cat $log_path; echo __KDE_X11_EGL_EXIT_LOG_DONE__\r"
     set saw_input 0
     set saw_exit 0
     set saw_exit_done 0
+    set exit_failure_label ""
+    set exit_log_text ""
     while {!$saw_exit_done} {
         expect {
-            -re {host-x11-egl-smoke: input_ready} { set saw_input 1 }
-            -re {host-x11-egl-smoke: exited} { set saw_exit 1 }
-            -re {host-x11-egl-smoke: [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
-                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-output-fail"
+            -re {host-x11-egl-smoke: input_ready} {
+                append exit_log_text $expect_out(buffer)
             }
-            -re {KDE_X11_EGL_EXIT_LOG_DONE} { set saw_exit_done 1 }
+            -re {host-x11-egl-smoke: exited} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {host-x11-egl-smoke: [^\r\n]*(failed|missing|unavailable|status=FAIL)} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {(^|[\r\n])__KDE_X11_EGL_EXIT_LOG_DONE__[\r\n]} {
+                append exit_log_text $expect_out(buffer)
+                set saw_exit_done 1
+            }
             -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
                 finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-crash"
             }
             timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-log-timeout" }
             eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-log-eof" }
         }
+    }
+    x11_egl_scan_exit_log $exit_log_text saw_input saw_exit exit_failure_label
+    if {$exit_failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-exit-$exit_failure_label"
     }
     set timeout $old_timeout
     optional_prompt
@@ -891,13 +1028,22 @@ expect {
     eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-eof" }
 }
 
-if {![legacy_serial_validation_enabled]} {
+if {[kde_smoke_reducer] eq "x11-egl"} {
+    wait_for_kde_session_ready
+    run_kde_x11_egl_probe
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-X11-EGL-DONE"
+}
+
+if {![legacy_serial_validation_enabled] && [guest_smoke_agent_enabled]} {
     wait_for_kde_session_ready
     sleep 10
     host_screenshot "startup" $host_startup_png
     wait_for_guest_smoke_agent
     capture_fb $guest_final_ppm "final-agent"
 } else {
+    if {![guest_smoke_agent_enabled] && ![legacy_serial_validation_enabled]} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-WARN guest-agent-disabled-using-legacy-serial-validation"
+    }
     optional_prompt
     wait_for_kde_session_ready
     sleep 45

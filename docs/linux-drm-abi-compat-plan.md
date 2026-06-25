@@ -113,6 +113,28 @@ This is the main KDE performance gap versus Linux. KWin can create a virgl
 OpenGL ES 3.1 context, but Xwayland GLAMOR cannot get the GL 2.1+ context it
 expects.
 
+New no-Weston KDE X11/EGL reducer evidence:
+
+```sh
+KDE_SMOKE_REDUCER=x11-egl QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
+
+Artifact directory:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke/
+```
+
+Result marker:
+
+```text
+KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-glx_choose_visual-missing-status-FAIL start=1 connect=1 gl=0 frame=0
+```
+
+Interpretation: KWin Wayland virgl reaches OpenGL ES 3.1, Xwayland GLAMOR
+still reports GL version 0/null, and direct X11 EGL falls back with
+`EGL_NOT_INITIALIZED` before GLX visual selection is missing.
+
 Next reducer:
 
 - Boot with `XV6_XWAYLAND_GLAMOR=auto` in the Xwayland wrapper environment.
