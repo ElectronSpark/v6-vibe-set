@@ -30,6 +30,14 @@ Evidence used for this refresh: current-tree `find`, `rg --files`, and
 `git status --short` checks across the root repo plus `kernel`, `user`, and
 `ports`. No builds or VM launches are required by this inventory.
 
+Current highest-priority kernel-first bottleneck from the available evidence:
+Xwayland GLAMOR/GLX acceleration is still likely blocked in virtgpu context
+semantics, not in Weston or KDE/Qt/Plasma source. Keep the relevant evidence
+paths attached to this inventory context:
+`build-x86_64/kde-plasma-desktop-smoke/verified-x11-egl-20260625-091709` and
+`build-x86_64/kde-plasma-desktop-smoke/verified-default-20260625-091615`.
+This is a current prioritization note, not a solution plan.
+
 ## Work Ownership Split
 
 Legitimate kernel work: files tagged `primary-kernel`, especially DRM/KMS,
@@ -49,6 +57,26 @@ KDE/Qt/Plasma/Chrome/WebKit runtime payloads, host GUI applications, Weston
 source, Chromium/WebKit/KDE/Qt/KWin/Plasma package contents, and `scripts/gpu`
 proof harnesses. Use them to reveal ABI gaps and validate fixes; keep upstream
 payload source clean except marker-only xv6 metadata.
+
+## Dependency-Aware Group Metadata
+
+This table is the dependency-aware index for the detailed file lists below. It
+is ordered kernel-first, then sysroot/rootfs/scripts/probes, then
+ports/userland.
+
+| Group | Owner | Kind | Why in scope | Duplication/generalization candidates |
+| --- | --- | --- | --- | --- |
+| Kernel DRM/KMS/GEM/Sync/Virtgpu | Kernel | DRM/fb/virtgpu/KMS/BO/sync/dma-buf ABI | Owns `/dev/dri`, KMS/atomic, GEM, PRIME, syncobj, virgl, GLX/DRI3, and scanout semantics exposed by KDE/KWin/Xwayland/Qt/Chromium. | Keep fb/DRM/virtgpu ioctl translation centralized; avoid duplicating BO/fence/fd lifetime logic between DRM, fb, virgl, and probes. |
+| Hyper-V/DXG/GPU-P | Kernel | Hyper-V VMBus/vPCI/DXG/D3DKMT/GPU diagnostics | GUI-adjacent GPU transport and native-present evidence path; current KDE/virgl target treats it as out of scope unless explicitly reopened. | Keep DXG object lifetime and present-bind diagnostics in Hyper-V/fb boundaries; do not clone WSL object models as flat metadata blobs. |
+| Input | Kernel | evdev, virtio-input, PS/2, seat-visible input | Wayland, KDE, Xwayland, Chromium, and probes require Linux-shaped input devices and readiness. | Generalize event-device identity and capability reporting across evdev, PS/2, virtio-input, and libinput probes. |
+| Audio | Kernel | OSS/minimal ALSA-facing playback, virtio-snd | KDE/Plasma, Chromium, WebKit, PipeWire/Pulse, and audio smokes need stable playback enumeration and poll behavior. | Share poll/readiness and device capability paths between OSS, virtio-snd, ALSA probes, and rootfs audio defaults. |
+| Process/Futex/Scheduler/Signals | Kernel | clone, futex, pidfd, signal, wait, scheduler, timer | GUI stacks are multi-process and event-loop heavy; missed waits or lifecycle mismatches break launch, IPC, teardown, and frame cadence. | Consolidate Linux lifecycle semantics in proc/futex/pidfd/wait/signal code instead of per-app launch workarounds. |
+| VM/Mmap/Pcache/OOM | Kernel | mmap, mprotect, shared memory, page cache, reclaim | GUI payloads depend on file-backed mappings, shared memory, dma-buf mmap, executable/library loading, and memory pressure behavior. | Keep mmap/protection and page-cache behavior shared between tmpfs, file-backed mappings, DRI/BO mappings, and ELF loading. |
+| VFS/Socket/Event/Procfs | Kernel | fd tables, VFS, procfs/sysfs/tmpfs, AF_UNIX, eventfd/timerfd, poll/epoll | D-Bus, Wayland, X11, KDE services, Chromium/WebKit IPC, and desktop discovery stress Linux fd, socket, procfs, and readiness semantics. | Generalize fd identity, SCM ancillary handling, poll/epoll readiness, and procfs formatting rather than fixing individual apps. |
+| Network/TTY | Kernel | TCP/socket/lwIP glue, netlink, PTY/TTY/termios/session | Browsers and KDE services need fetch paths, terminal/session behavior, and service reachability. | Keep socket readiness/error semantics and terminal session behavior reusable for Chromium, WebKit, Konsole, X11, and probes. |
+| Supporting Kernel Storage/I/O | Kernel | block, disk, filesystem support | Rootfs, package payloads, runtime data, and shared libraries depend on reliable image and filesystem I/O. | Keep disk and cache diagnostics shared with VFS/page-cache work; avoid GUI-specific storage exceptions. |
+| Sysroot/Rootfs/Scripts/Probes | Rootfs/sysroot/scripts | generated runtime data, image staging, launch wrappers, smoke harnesses, imported host probes | Stages KDE/Qt/Plasma, Xwayland, WebKit, Chromium probes, DBus, ALSA, MIME, and reproducible evidence without patching upstream GUI source. | Collapse duplicated host-X11/Wayland smoke launcher patterns where practical; keep wrappers as xv6-owned probes and rootfs data, not app patches. |
+| Ports/Userland Package Boundaries | Ports/userland | CMake wrappers, imported source boundaries, local shims, user probes | Supplies libraries, headers, Wayland/Mesa/X11/WebKit/NetSurf/KDE payload boundaries, and local reducers used to expose ABI gaps. | Keep package wrappers declarative; prefer local shims or kernel ABI fixes over source patches to KDE/Qt/Plasma/Chromium/WebKit/Weston. |
 
 ## Kernel DRM/KMS/GEM/Sync/Virtgpu
 
@@ -860,10 +888,13 @@ rootfs-overlay/share/webkit/youtube-idle-scheduler.html
 ## Guardrails Carried Forward
 
 - This file is an inventory, not an instruction to build, run, or validate.
+- No Weston modifications are part of this inventory step; Weston remains a
+  regression/control boundary.
 - Kernel files are the preferred owner for Linux ABI behavior.
 - KDE, Qt, KWin, Plasma, Chromium, and WebKit source stay upstream-clean except
   marker-only xv6 metadata.
-- Weston remains regression/control only for the current KDE direction.
+- Imported GUI applications are probes for ABI gaps, not patch targets for
+  masking kernel or sysroot defects.
 - Generated KDE/Qt package payloads and Chrome for Testing payloads are runtime
   payload boundaries, not committed source.
 - The missing `docs/linux-kde-minimal-integration-plan.md` is intentionally not

@@ -61,3 +61,4 @@ vim	ports/vim/src	imported-source	v9.2.0173 e21c4a649a83 master	https://github.c
 peanut-gb	ports/peanut-gb/src	imported-source	v1.3.0-25-g8e65698 8e656982f086 master	https://github.com/deltabeard/Peanut-GB.git	0
 wayland-src	ports/wayland-src/src	imported-source	2f7f04d 2f7f04d1e9fc v6-port	https://gitlab.freedesktop.org/wayland/wayland.git	0
 wayland	ports/wayland/src	local-shim	local	local	0
+kde-qt-plasma-overlay	build-x86_64/kde-noble-plasma/kde-qt-package-inventory.tsv	generated-runtime-package-inventory	Ubuntu Noble generated package inventory	scripts/image/stage-kde-runtime.sh	0
