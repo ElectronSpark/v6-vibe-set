@@ -1,6 +1,6 @@
 # Linux GUI File Inventory
 
-Last updated: 2026-06-24.
+Last updated: 2026-06-25.
 
 This is an inventory-only milestone for the active GUI/kernel cleanup goal. It
 records the current files in the checkout that are in scope for KDE/Qt,
@@ -15,6 +15,8 @@ Ownership tags:
 - `runtime-data`: rootfs/sysroot data or generated package inventory.
 - `upstream-payload`: imported source or package payload that should stay
   upstream-clean.
+- `probe-only`: host/imported GUI applications or harnesses used to expose ABI
+  gaps; do not patch them to mask kernel or sysroot defects.
 
 Kernel-preferred ABI ownership is the rule for behavioral compatibility:
 reduce KDE/Qt/KWin/Plasma/Chromium/WebKit failures to Linux ABI gaps and fix
@@ -23,6 +25,30 @@ build/staging wrappers, or local xv6-owned shims. Imported KDE, Qt, KWin,
 Plasma, Chromium, and WebKit source must remain upstream-clean except
 marker-only xv6 metadata. Weston is regression/control only for the current KDE
 direction.
+
+Evidence used for this refresh: current-tree `find`, `rg --files`, and
+`git status --short` checks across the root repo plus `kernel`, `user`, and
+`ports`. No builds or VM launches are required by this inventory.
+
+## Work Ownership Split
+
+Legitimate kernel work: files tagged `primary-kernel`, especially DRM/KMS,
+virtgpu/virgl, framebuffer, Hyper-V/DXG diagnostics, input, audio, network,
+process, VM, VFS, procfs/sysfs/tmpfs, AF_UNIX, poll/epoll, and TTY surfaces.
+These are the right place to close Linux ABI and performance gaps exposed by
+KDE, Xwayland, Chromium, WebKit, or other GUI probes.
+
+Legitimate sysroot/rootfs/build work: port wrapper `CMakeLists.txt` files,
+local xv6 shims, Linux/Khronos/header package boundaries, generated overlay
+staging scripts, rootfs overlay policy/data, and harness scripts. These may
+stage or configure runtime payloads, but should not carry behavioral patches to
+imported GUI source unless a local shim is explicitly listed here.
+
+Probe-only and upstream-clean areas: imported `ports/*/src` trees, generated
+KDE/Qt/Plasma/Chrome/WebKit runtime payloads, host GUI applications, Weston
+source, Chromium/WebKit/KDE/Qt/KWin/Plasma package contents, and `scripts/gpu`
+proof harnesses. Use them to reveal ABI gaps and validate fixes; keep upstream
+payload source clean except marker-only xv6 metadata.
 
 ## Kernel DRM/KMS/GEM/Sync/Virtgpu
 
@@ -154,12 +180,15 @@ kernel/kernel/proc/futex.c
 kernel/kernel/proc/pid.c
 kernel/kernel/proc/pidfd.c
 kernel/kernel/proc/pgroup.c
+kernel/kernel/proc/proc_private.h
 kernel/kernel/proc/rq.c
 kernel/kernel/proc/sched.c
 kernel/kernel/proc/sched_eevdf.c
 kernel/kernel/proc/sched_fifo.c
 kernel/kernel/proc/sched_idle.c
+kernel/kernel/proc/sig_trampoline.S
 kernel/kernel/proc/signal.c
+kernel/kernel/proc/swtch.S
 kernel/kernel/proc/sys_misc.c
 kernel/kernel/proc/sys_signal.c
 kernel/kernel/proc/sysproc.c
@@ -263,8 +292,15 @@ subsystem in this checkout.
 ```text
 kernel/kernel/vfs/fdtable.c
 kernel/kernel/vfs/file.c
+kernel/kernel/vfs/address_space.c
+kernel/kernel/vfs/dcache.c
+kernel/kernel/vfs/file_lock.c
+kernel/kernel/vfs/fs.c
 kernel/kernel/vfs/inode.c
 kernel/kernel/vfs/pipe.c
+kernel/kernel/vfs/uio.c
+kernel/kernel/vfs/vfs_permission.c
+kernel/kernel/vfs/vfs_private.h
 kernel/kernel/vfs/vfs_syscall.c
 kernel/kernel/vfs/unix_socket.c
 kernel/kernel/vfs/eventfd.c
@@ -307,19 +343,30 @@ kernel/kernel/inc/vfs/poll.h
 ## Network/TTY
 
 Responsibility: sockets, TCP/DNS paths, lwIP glue, PTY/TTY/termios/session
-behavior, and Konsole/terminal support.
+behavior, Chromium/WebKit fetch paths, D-Bus service reachability, and
+Konsole/terminal support.
 
-Tag: `primary-kernel`.
+Tag: `primary-kernel`. The xv6-owned network device/socket glue and UAPI
+headers below are legitimate kernel work. The imported lwIP source tree is a
+network ABI dependency but should be treated like upstream payload unless a
+change is isolated to the xv6 port glue.
 
 ```text
 kernel/kernel/e1000.c
 kernel/kernel/inc/dev/e1000_dev.h
+kernel/kernel/dev/netdev.c
+kernel/kernel/inc/dev/net.h
+kernel/kernel/inc/dev/netconf.h
+kernel/kernel/inc/dev/netdev.h
 kernel/kernel/virtio_net.c
 kernel/kernel/net.c
 kernel/kernel/sysnet.c
+kernel/kernel/vfs/netlink.c
+kernel/kernel/inc/netlink.h
 kernel/kernel/lwip_port/lwip_glue.c
 kernel/kernel/lwip_port/sys_socket.c
 kernel/kernel/lwip_port/sys_arch.c
+kernel/kernel/lwip_port/CMakeLists.txt
 kernel/kernel/lwip_port/arch/cc.h
 kernel/kernel/lwip_port/arch/sys_arch.h
 kernel/kernel/lwip_port/compat/stdint.h
@@ -341,6 +388,12 @@ kernel/kernel/inc/tty/tty_types.h
 kernel/kernel/inc/uabi/termios.h
 ```
 
+Imported lwIP source is intentionally not expanded file-by-file here:
+
+```text
+kernel/kernel/lwip/
+```
+
 ## Supporting Kernel Storage/I/O
 
 Responsibility: rootfs, package payload, executable/library, cache, and disk
@@ -359,16 +412,14 @@ kernel/kernel/inc/dev/iosched.h
 kernel/kernel/inc/dev/iosched_types.h
 ```
 
-## Current Dirty Kernel Cross-Check
+## Current Tree Cross-Check
 
-The current dirty kernel state is broad and already represented by the
-ownership sections above rather than by a short hand-picked list. Dirty files
-span scheduler/timer/signal/process, VM/TLB/page-cache/OOM, VFS/procfs/sysfs,
-network/socket, TTY, DRM/GPU, and storage I/O adjacency. Keep using the
-ownership sections as the source of truth for GUI or GUI-support relevance; the
-disk path remains tracked as supporting critical I/O because rootfs/image I/O
-must not regress even though it is not itself a display, input, or GUI syscall
-ABI file.
+Before this documentation edit, `git status --short` reported no local source
+changes in the root repo, `kernel`, `user`, or `ports`. Keep using the
+ownership sections as the source of truth for GUI or GUI-support relevance when
+future dirty state appears; the disk path remains tracked as supporting
+critical I/O because rootfs/image I/O must not regress even though it is not
+itself a display, input, or GUI syscall ABI file.
 
 ## User/Local GUI Probes
 
@@ -638,6 +689,9 @@ track explicitly:
 ```text
 scripts/image/stage-kde-runtime.sh
 scripts/image/make-rootfs.sh
+scripts/image/make-image.sh
+scripts/image/make-initrd.sh
+scripts/image/make-hyperv-image.sh
 scripts/image/stage-host-gui-runtime.sh
 scripts/image/stage-webkit-media.sh
 scripts/image/import-host-gui.sh
@@ -655,6 +709,7 @@ scripts/image/host-x11-egl-smoke.c
 scripts/image/host-x11-egl-smoke-launcher.c
 scripts/image/host-x11-shm-smoke.c
 scripts/image/host-x11-shm-smoke-launcher.c
+scripts/image/hyperv-efiloader.c
 scripts/image/kde-abi-probe.c
 scripts/image/kde-app-launch-probe.c
 scripts/image/kde-config-atomic-probe.c
@@ -686,8 +741,14 @@ scripts/image/wayland-chromium-launcher.c
 scripts/image/xv6-bluez-shim.c
 scripts/image/xv6-false.c
 scripts/launch/launch-gui.sh
+scripts/launch/run-qemu.sh
+scripts/launch/place-qemu-window.py
+scripts/launch/place-qemu-window-windows.ps1
 scripts/container/check-gui-accel.sh
+scripts/container/container-hints.sh
+scripts/container/container-xv6-command.sh
 scripts/container/docker-build-webkit.sh
+scripts/container/enter-container.sh
 ports/webkit/stage-webkit-runtime.sh
 ports/webkit/apply-xv6-overrides.sh
 ports/webkit/overrides/README.md
@@ -710,9 +771,13 @@ Additional concrete GUI control/runtime harnesses present in this checkout:
 ```text
 scripts/gpu/baseline-desktop-entry-smoke.expect
 scripts/gpu/alpine-virgl-desktop-capture.sh
+scripts/gpu/capture-host-screen.sh
 scripts/gpu/chromium-menu-proof.expect
 scripts/gpu/chromium-youtube-smoothness.expect
 scripts/gpu/host-gtk-smoke-proof.expect
+scripts/gpu/host-gui-proof-verify.py
+scripts/gpu/host-idle-x11-proof.expect
+scripts/gpu/host-python-repl-proof.expect
 scripts/gpu/host-wlegl-smoke-proof.expect
 scripts/gpu/host-x11-abi-smoke-proof.expect
 scripts/gpu/host-x11-dri3-present-smoke-proof.expect
@@ -727,8 +792,10 @@ scripts/gpu/hyperv-webkit-gpu-validate.sh
 scripts/gpu/linux-kde-virgl-baseline.sh
 scripts/gpu/perf-video-gate-matrix.sh
 scripts/gpu/perf-video-gate.expect
+scripts/gpu/stage-gpup-umd.sh
 scripts/gpu/titlebar-control-matrix.sh
 scripts/gpu/titlebar-control-report.py
+scripts/gpu/ttm-sg-table-proof.expect
 scripts/gpu/validate-webkit-runtime.sh
 scripts/gpu/virgl-async-soak.expect
 scripts/gpu/virgl-desktop-validate.sh
@@ -748,6 +815,7 @@ current files:
 rootfs-overlay/etc/startup
 rootfs-overlay/etc/daemons
 rootfs-overlay/etc/gtk-3.0/settings.ini
+rootfs-overlay/etc/machine-id
 rootfs-overlay/usr/share/alsa/alsa.conf
 rootfs-overlay/bin/start-dbus-system
 rootfs-overlay/etc/ld.so.conf.d/gpup-wsl.conf
