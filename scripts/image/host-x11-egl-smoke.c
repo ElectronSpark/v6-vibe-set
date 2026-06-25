@@ -51,6 +51,166 @@ log_line(const char *line)
     fflush(stderr);
 }
 
+static const char *egl_error_name(EGLint err);
+
+static const char *
+safe_str(const char *s)
+{
+    return s ? s : "(null)";
+}
+
+static int
+egl_config_attr_or_neg1(EGLDisplay dpy, EGLConfig config, EGLint attr)
+{
+    EGLint value = -1;
+
+    if (dpy == EGL_NO_DISPLAY || !config)
+        return -1;
+    if (!eglGetConfigAttrib(dpy, config, attr, &value))
+        return -1;
+    return value;
+}
+
+static void
+log_egl_no_display_extensions(void)
+{
+    const char *extensions;
+    EGLint err;
+
+    eglGetError();
+    extensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+    if (extensions) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag egl_no_display_extensions=%s\n",
+                extensions);
+    } else {
+        err = eglGetError();
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag egl_no_display_extensions=(not_reported) egl_error=0x%x %s\n",
+                err, egl_error_name(err));
+    }
+    fflush(stderr);
+}
+
+static void
+log_egl_display_strings(EGLDisplay dpy)
+{
+    if (dpy == EGL_NO_DISPLAY) {
+        log_line("host-x11-egl-smoke: diag egl_display_strings display=NULL");
+        return;
+    }
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag egl_vendor=%s egl_version=%s egl_client_apis=%s egl_extensions=%s\n",
+            safe_str(eglQueryString(dpy, EGL_VENDOR)),
+            safe_str(eglQueryString(dpy, EGL_VERSION)),
+            safe_str(eglQueryString(dpy, EGL_CLIENT_APIS)),
+            safe_str(eglQueryString(dpy, EGL_EXTENSIONS)));
+    fflush(stderr);
+}
+
+static void
+log_egl_config(EGLDisplay dpy, EGLConfig config)
+{
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag egl_config config_id=%d native_visual_id=0x%x renderable_type=0x%x surface_type=0x%x red_size=%d green_size=%d blue_size=%d alpha_size=%d\n",
+            egl_config_attr_or_neg1(dpy, config, EGL_CONFIG_ID),
+            egl_config_attr_or_neg1(dpy, config, EGL_NATIVE_VISUAL_ID),
+            egl_config_attr_or_neg1(dpy, config, EGL_RENDERABLE_TYPE),
+            egl_config_attr_or_neg1(dpy, config, EGL_SURFACE_TYPE),
+            egl_config_attr_or_neg1(dpy, config, EGL_RED_SIZE),
+            egl_config_attr_or_neg1(dpy, config, EGL_GREEN_SIZE),
+            egl_config_attr_or_neg1(dpy, config, EGL_BLUE_SIZE),
+            egl_config_attr_or_neg1(dpy, config, EGL_ALPHA_SIZE));
+    fflush(stderr);
+}
+
+static int
+glx_fbconfig_attr_or_neg1(Display *dpy, GLXFBConfig config, int attr)
+{
+    int value = -1;
+
+    if (!dpy || !config)
+        return -1;
+    if (glXGetFBConfigAttrib(dpy, config, attr, &value) != Success)
+        return -1;
+    return value;
+}
+
+static void
+log_glx_diagnostics(Display *dpy, int screen)
+{
+    int error_base = 0;
+    int event_base = 0;
+    int major = 0;
+    int minor = 0;
+    int extension_present = 0;
+    int version_ok = 0;
+    int fbconfig_count = 0;
+    GLXFBConfig *configs = NULL;
+
+    if (!dpy) {
+        log_line("host-x11-egl-smoke: diag glx display=NULL");
+        return;
+    }
+
+    extension_present = glXQueryExtension(dpy, &error_base, &event_base);
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_query_extension present=%d error_base=%d event_base=%d\n",
+            extension_present, error_base, event_base);
+
+    version_ok = glXQueryVersion(dpy, &major, &minor);
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_query_version ok=%d major=%d minor=%d\n",
+            version_ok, major, minor);
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_client vendor=%s version=%s extensions=%s\n",
+            safe_str(glXGetClientString(dpy, GLX_VENDOR)),
+            safe_str(glXGetClientString(dpy, GLX_VERSION)),
+            safe_str(glXGetClientString(dpy, GLX_EXTENSIONS)));
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_server vendor=%s version=%s extensions=%s\n",
+            safe_str(glXQueryServerString(dpy, screen, GLX_VENDOR)),
+            safe_str(glXQueryServerString(dpy, screen, GLX_VERSION)),
+            safe_str(glXQueryServerString(dpy, screen, GLX_EXTENSIONS)));
+
+    configs = glXGetFBConfigs(dpy, screen, &fbconfig_count);
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_fbconfigs count=%d ptr=%p\n",
+            fbconfig_count, (void *)configs);
+    if (configs) {
+        int i;
+        int limit = fbconfig_count < 4 ? fbconfig_count : 4;
+
+        for (i = 0; i < limit; i++) {
+            fprintf(stderr,
+                    "host-x11-egl-smoke: diag glx_fbconfig index=%d fbconfig_id=0x%x visual_id=0x%x render_type=0x%x drawable_type=0x%x red_size=%d green_size=%d blue_size=%d alpha_size=%d doublebuffer=%d\n",
+                    i,
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_FBCONFIG_ID),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_VISUAL_ID),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_RENDER_TYPE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_DRAWABLE_TYPE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_RED_SIZE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_GREEN_SIZE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_BLUE_SIZE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_ALPHA_SIZE),
+                    glx_fbconfig_attr_or_neg1(dpy, configs[i],
+                                              GLX_DOUBLEBUFFER));
+        }
+        XFree(configs);
+    }
+    fflush(stderr);
+}
+
 static const char *
 egl_error_name(EGLint err)
 {
@@ -191,7 +351,8 @@ destroy_window_only(struct app *app)
         XFree(app->visual);
         app->visual = NULL;
     }
-    XSync(app->dpy, False);
+    if (app->dpy)
+        XSync(app->dpy, False);
 }
 
 static int
@@ -210,11 +371,12 @@ setup_egl(struct app *app)
         EGL_CONTEXT_CLIENT_VERSION, 2,
         EGL_NONE,
     };
-    EGLConfig config;
+    EGLConfig config = NULL;
     EGLint num_configs = 0;
     EGLint major = 0;
     EGLint minor = 0;
 
+    log_egl_no_display_extensions();
     app->egl_display = eglGetDisplay((EGLNativeDisplayType)app->dpy);
     if (app->egl_display == EGL_NO_DISPLAY) {
         log_egl_unavailable("eglGetDisplay");
@@ -224,6 +386,7 @@ setup_egl(struct app *app)
         log_egl_unavailable("eglInitialize");
         return -1;
     }
+    log_egl_display_strings(app->egl_display);
     if (!eglBindAPI(EGL_OPENGL_ES_API)) {
         log_egl_unavailable("eglBindAPI");
         return -1;
@@ -233,6 +396,7 @@ setup_egl(struct app *app)
         log_egl_unavailable("eglChooseConfig");
         return -1;
     }
+    log_egl_config(app->egl_display, config);
     app->egl_context = eglCreateContext(app->egl_display, config,
                                         EGL_NO_CONTEXT, context_attrs);
     if (app->egl_context == EGL_NO_CONTEXT) {
@@ -254,9 +418,9 @@ setup_egl(struct app *app)
     fprintf(stderr,
             "host-x11-egl-smoke: egl ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
             major, minor,
-            eglQueryString(app->egl_display, EGL_VENDOR),
-            glGetString(GL_RENDERER),
-            glGetString(GL_VERSION));
+            safe_str(eglQueryString(app->egl_display, EGL_VENDOR)),
+            safe_str((const char *)glGetString(GL_RENDERER)),
+            safe_str((const char *)glGetString(GL_VERSION)));
     fflush(stderr);
     return 0;
 }
@@ -278,6 +442,7 @@ setup_glx(struct app *app)
     int minor = 0;
 
     destroy_window_only(app);
+    log_glx_diagnostics(app->dpy, app->screen);
     app->visual = glXChooseVisual(app->dpy, app->screen, glx_attrs);
     if (!app->visual) {
         log_line("host-x11-egl-smoke: glx_choose_visual missing status=FAIL");
@@ -334,8 +499,9 @@ setup_glx(struct app *app)
     app->use_glx = 1;
     fprintf(stderr,
             "host-x11-egl-smoke: glx ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
-            major, minor, glGetString(GL_VENDOR), glGetString(GL_RENDERER),
-            glGetString(GL_VERSION));
+            major, minor, safe_str((const char *)glGetString(GL_VENDOR)),
+            safe_str((const char *)glGetString(GL_RENDERER)),
+            safe_str((const char *)glGetString(GL_VERSION)));
     fflush(stderr);
     return 0;
 }

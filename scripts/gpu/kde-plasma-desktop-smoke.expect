@@ -33,6 +33,7 @@ set host_startup_png "$outdir/kde-plasma-host-startup.png"
 set host_input_before_png "$outdir/kde-plasma-host-input-before.png"
 set host_input_after_png "$outdir/kde-plasma-host-input-after.png"
 set host_x11_egl_png "$outdir/kde-plasma-host-x11-egl.png"
+set host_x11_dri3_png "$outdir/kde-plasma-host-x11-dri3.png"
 set host_final_png "$outdir/kde-plasma-host-final.png"
 set input_diff_min 10000
 set visual_warnings ""
@@ -57,11 +58,12 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set x11_egl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x11-egl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
+set x11_dri3_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x11-dri3-present-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 catch { exec sh -c "debugfs -w -R 'rm $guest_before_ppm' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_after_ppm' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_final_ppm' '$tmpimg' >/dev/null 2>&1" }
@@ -77,7 +79,7 @@ set env(QEMU_VIRTIO_GPU_YRES) "800"
 set kde_smoke_reducer [expr {[info exists env(KDE_SMOKE_REDUCER)] ? $env(KDE_SMOKE_REDUCER) : ""}]
 if {[info exists env(KDE_SMOKE_AGENT)]} {
     set kde_smoke_agent $env(KDE_SMOKE_AGENT)
-} elseif {$kde_smoke_reducer eq "x11-egl"} {
+} elseif {$kde_smoke_reducer eq "x11-egl" || $kde_smoke_reducer eq "x11-dri3"} {
     set kde_smoke_agent "0"
 } else {
     set kde_smoke_agent "1"
@@ -790,6 +792,336 @@ proc run_kde_x11_egl_probe {} {
     }
 }
 
+proc x11_dri3_failure_label_from_line {line} {
+    set line [string trim $line]
+    if {[regexp {host-x11-dri3-present-smoke: ([A-Za-z0-9_]+)[^\r\n]*status=FAIL} $line -> phase]} {
+        return "x11-dri3-${phase}-status-FAIL"
+    }
+    if {[regexp {host-x11-dri3-present-smoke: (connect|atom setup|event) (failed|eof)} $line -> phase reason]} {
+        regsub -all { } $phase {_} phase
+        return "x11-dri3-${phase}-${reason}"
+    }
+    if {[regexp {No such file|cannot execute|not found} $line]} {
+        return "x11-dri3-exec-missing"
+    }
+    return ""
+}
+
+proc x11_dri3_scan_launch_log {text start_var connect_var dri3_var present_var map_var configure_var fd_var launch_present_var complete_var failure_var} {
+    upvar 1 $start_var saw_start
+    upvar 1 $connect_var saw_connect
+    upvar 1 $dri3_var saw_dri3
+    upvar 1 $present_var saw_present
+    upvar 1 $map_var saw_map
+    upvar 1 $configure_var saw_configure
+    upvar 1 $fd_var saw_fd
+    upvar 1 $launch_present_var saw_launch_present
+    upvar 1 $complete_var saw_complete
+    upvar 1 $failure_var failure_label
+
+    set saw_dri3_ext 0
+    set saw_dri3_version 0
+    set saw_present_ext 0
+    set saw_present_version 0
+    set saw_present_select 0
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-dri3-present-smoke: start} $line]} {
+            set saw_start 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: connected root=} $line]} {
+            set saw_connect 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: extension name=DRI3 present=1} $line]} {
+            set saw_dri3_ext 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: dri3_version major=} $line]} {
+            set saw_dri3_version 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: extension name=Present present=1} $line]} {
+            set saw_present_ext 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_version major=} $line]} {
+            set saw_present_version 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_select_input status=PASS} $line]} {
+            set saw_present_select 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: map_notify} $line]} {
+            set saw_map 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: configure_notify} $line]} {
+            set saw_configure 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: dri3_open_fd status=PASS} $line]} {
+            set saw_fd 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_pixmap mode=launch serial=} $line]} {
+            set saw_launch_present 1
+        }
+        if {$saw_launch_present && [regexp {host-x11-dri3-present-smoke: present_complete serial=} $line]} {
+            set saw_complete 1
+        }
+        if {$failure_label eq ""} {
+            set label [x11_dri3_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+    set saw_dri3 [expr {$saw_dri3_ext && $saw_dri3_version}]
+    set saw_present [expr {$saw_present_ext && $saw_present_version && $saw_present_select}]
+}
+
+proc x11_dri3_scan_input_log {text input_var present_var complete_var failure_var} {
+    upvar 1 $input_var saw_input
+    upvar 1 $present_var saw_input_present
+    upvar 1 $complete_var saw_input_complete
+    upvar 1 $failure_var failure_label
+
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-dri3-present-smoke: input_ready} $line]} {
+            set saw_input 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_pixmap mode=input serial=} $line]} {
+            set saw_input_present 1
+        }
+        if {$saw_input_present && [regexp {host-x11-dri3-present-smoke: present_complete serial=} $line]} {
+            set saw_input_complete 1
+        }
+        if {$failure_label eq ""} {
+            set label [x11_dri3_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+}
+
+proc x11_dri3_scan_exit_log {text sent_var received_var exit_var failure_var} {
+    upvar 1 $sent_var saw_sent
+    upvar 1 $received_var saw_received
+    upvar 1 $exit_var saw_exit
+    upvar 1 $failure_var failure_label
+
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-dri3-present-smoke: wm_delete_sent} $line]} {
+            set saw_sent 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: wm_delete_received} $line]} {
+            set saw_received 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: exited} $line]} {
+            set saw_exit 1
+        }
+        if {$failure_label eq ""} {
+            set label [x11_dri3_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+}
+
+proc x11_dri3_launch_suffix {saw_start saw_connect saw_dri3 saw_present saw_map saw_configure saw_fd saw_launch_present saw_complete} {
+    return "start=$saw_start connect=$saw_connect dri3=$saw_dri3 present=$saw_present map=$saw_map configure=$saw_configure fd=$saw_fd launch_present=$saw_launch_present complete=$saw_complete"
+}
+
+proc run_kde_x11_dri3_probe {} {
+    global timeout x11_dri3_available host_x11_dri3_png
+
+    if {!$x11_dri3_available} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-missing"
+    }
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 90
+    set log_path "/tmp/host-gui-host-x11-dri3-present-smoke.log"
+
+    send "rm -f $log_path; /bin/host-x11-dri3-present-smoke & echo KDE_X11_DRI3_LAUNCHED\r"
+    expect {
+        -re {KDE_X11_DRI3_LAUNCHED} {}
+        -re {exec .*failed|not found|cannot execute} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-launch"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-launch-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-launch-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-launch-eof" }
+    }
+    optional_prompt
+    sleep 8
+
+    send "cat $log_path; echo __KDE_X11_DRI3_LOG_DONE__\r"
+    set saw_start 0
+    set saw_connect 0
+    set saw_dri3 0
+    set saw_present 0
+    set saw_map 0
+    set saw_configure 0
+    set saw_fd 0
+    set saw_launch_present 0
+    set saw_complete 0
+    set saw_done 0
+    set failure_label ""
+    set log_text ""
+    while {!$saw_done} {
+        expect {
+            -re {host-x11-dri3-present-smoke: start} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: connected root=} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: extension name=(DRI3|Present) present=} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: (dri3_version|present_version) major=} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: (present_select_input|dri3_open_fd) status=PASS} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: (map_notify|configure_notify)} {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: present_(pixmap|complete) } {
+                append log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: [^\r\n]*(failed|status=FAIL|event eof)} {
+                append log_text $expect_out(buffer)
+            }
+            -re {(^|[\r\n])__KDE_X11_DRI3_LOG_DONE__[\r\n]} {
+                append log_text $expect_out(buffer)
+                set saw_done 1
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-log-crash"
+            }
+            timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-log-timeout" }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-log-eof" }
+        }
+    }
+    x11_dri3_scan_launch_log $log_text saw_start saw_connect saw_dri3 saw_present saw_map saw_configure saw_fd saw_launch_present saw_complete failure_label
+    if {$failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $failure_label [x11_dri3_launch_suffix $saw_start $saw_connect $saw_dri3 $saw_present $saw_map $saw_configure $saw_fd $saw_launch_present $saw_complete]"
+    }
+    if {!($saw_start && $saw_connect && $saw_dri3 && $saw_present && $saw_map && $saw_configure && $saw_fd && $saw_launch_present && $saw_complete)} {
+        set timeout $old_timeout
+        optional_prompt
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-incomplete [x11_dri3_launch_suffix $saw_start $saw_connect $saw_dri3 $saw_present $saw_map $saw_configure $saw_fd $saw_launch_present $saw_complete]"
+    }
+    optional_prompt
+    host_screenshot "x11-dri3" $host_x11_dri3_png
+
+    send "/bin/mouseinject 32768 32768 0; /bin/mouseinject 32768 32768 1; /bin/mouseinject 32768 32768 0; /bin/keyinject text xv6; echo KDE_X11_DRI3_INPUT_DONE\r"
+    expect {
+        -re {KDE_X11_DRI3_INPUT_DONE} {}
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-eof" }
+    }
+    optional_prompt
+    sleep 3
+
+    send "cat $log_path; echo __KDE_X11_DRI3_INPUT_LOG_DONE__\r"
+    set saw_input 0
+    set saw_input_present 0
+    set saw_input_complete 0
+    set saw_input_done 0
+    set input_failure_label ""
+    set input_log_text ""
+    while {!$saw_input_done} {
+        expect {
+            -re {host-x11-dri3-present-smoke: input_ready} {
+                append input_log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: present_(pixmap|complete) } {
+                append input_log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: [^\r\n]*(failed|status=FAIL|event eof)} {
+                append input_log_text $expect_out(buffer)
+            }
+            -re {(^|[\r\n])__KDE_X11_DRI3_INPUT_LOG_DONE__[\r\n]} {
+                append input_log_text $expect_out(buffer)
+                set saw_input_done 1
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-log-crash"
+            }
+            timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-log-timeout" }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-log-eof" }
+        }
+    }
+    x11_dri3_scan_input_log $input_log_text saw_input saw_input_present saw_input_complete input_failure_label
+    if {$input_failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-input-$input_failure_label"
+    }
+    if {!($saw_input && $saw_input_present && $saw_input_complete)} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-no-input input=$saw_input present=$saw_input_present complete=$saw_input_complete"
+    }
+
+    send "/bin/keyinject key esc; echo KDE_X11_DRI3_ESC_DONE\r"
+    expect {
+        -re {KDE_X11_DRI3_ESC_DONE} {}
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-esc-crash"
+        }
+        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-esc-timeout" }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-esc-eof" }
+    }
+    optional_prompt
+    sleep 3
+
+    send "cat $log_path; echo __KDE_X11_DRI3_EXIT_LOG_DONE__\r"
+    set saw_sent 0
+    set saw_received 0
+    set saw_exit 0
+    set saw_exit_done 0
+    set exit_failure_label ""
+    set exit_log_text ""
+    while {!$saw_exit_done} {
+        expect {
+            -re {host-x11-dri3-present-smoke: wm_delete_sent} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: wm_delete_received} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: exited} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {host-x11-dri3-present-smoke: [^\r\n]*(failed|status=FAIL|event eof)} {
+                append exit_log_text $expect_out(buffer)
+            }
+            -re {(^|[\r\n])__KDE_X11_DRI3_EXIT_LOG_DONE__[\r\n]} {
+                append exit_log_text $expect_out(buffer)
+                set saw_exit_done 1
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-exit-crash"
+            }
+            timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-exit-log-timeout" }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-exit-log-eof" }
+        }
+    }
+    x11_dri3_scan_exit_log $exit_log_text saw_sent saw_received saw_exit exit_failure_label
+    if {$exit_failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-exit-$exit_failure_label"
+    }
+    set timeout $old_timeout
+    optional_prompt
+    if {!($saw_sent && $saw_received && $saw_exit)} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-dri3-no-exit sent=$saw_sent received=$saw_received exit=$saw_exit"
+    }
+}
+
 proc run_probe_suite {} {
     run_guest_check "/bin/kde-libinput-probe" "kde-libinput-probe" 20
     run_guest_check "/bin/kde-dlopen-probe" "kde-dlopen-probe" 30
@@ -1032,6 +1364,12 @@ if {[kde_smoke_reducer] eq "x11-egl"} {
     wait_for_kde_session_ready
     run_kde_x11_egl_probe
     finish 0 "KDE-PLASMA-DESKTOP-SMOKE-X11-EGL-DONE"
+}
+
+if {[kde_smoke_reducer] eq "x11-dri3"} {
+    wait_for_kde_session_ready
+    run_kde_x11_dri3_probe
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-dri3"
 }
 
 if {![legacy_serial_validation_enabled] && [guest_smoke_agent_enabled]} {
