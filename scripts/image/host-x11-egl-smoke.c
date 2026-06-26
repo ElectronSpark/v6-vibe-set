@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 // Tiny host-built X11 EGL/GLES2 ABI probe for the imported-GUI lane.
 //
 // The binary is linked on the host, but the import helper intentionally skips
@@ -11,7 +13,10 @@
 #include <GL/glx.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <dlfcn.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +62,316 @@ static const char *
 safe_str(const char *s)
 {
     return s ? s : "(null)";
+}
+
+static int
+gl_map_line_interesting(const char *line)
+{
+    static const char *needles[] = {
+        "libGL",
+        "libGLX",
+        "libGLdispatch",
+        "libEGL",
+        "libGLES",
+        "libglapi",
+        "libgbm",
+        "libdrm",
+        "Mesa",
+        "mesa",
+        "gallium",
+        "/dri/",
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(needles) / sizeof(needles[0]); i++) {
+        if (strstr(line, needles[i]))
+            return 1;
+    }
+    return 0;
+}
+
+static void
+dump_gl_loader_maps(const char *label)
+{
+    char line[1024];
+    FILE *fp;
+    int matched = 0;
+    int emitted = 0;
+    const int limit = 32;
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=gl_loader_maps status=BEGIN label=%s\n",
+            label);
+    fp = fopen("/proc/self/maps", "r");
+    if (!fp) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag gl_loader_maps label=%s result=FAIL errno=%d %s\n",
+                label, errno, strerror(errno));
+        fflush(stderr);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len;
+
+        if (!gl_map_line_interesting(line))
+            continue;
+        matched++;
+        if (emitted >= limit)
+            continue;
+        len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n')
+            line[len - 1] = '\0';
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag gl_loader_maps label=%s line=%s\n",
+                label, line);
+        emitted++;
+    }
+    fclose(fp);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=gl_loader_maps status=PASS label=%s matched=%d emitted=%d truncated=%d\n",
+            label, matched, emitted, matched > emitted);
+    fflush(stderr);
+}
+
+static void
+log_dladdr_symbol(const char *label, const void *addr)
+{
+    Dl_info info;
+
+    memset(&info, 0, sizeof(info));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=dladdr status=BEGIN label=%s addr=%p\n",
+            label, addr);
+    if (dladdr(addr, &info)) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=dladdr status=PASS label=%s addr=%p symbol=%s file=%s base=0x%" PRIxPTR " symaddr=0x%" PRIxPTR "\n",
+                label, addr, safe_str(info.dli_sname),
+                safe_str(info.dli_fname), (uintptr_t)info.dli_fbase,
+                (uintptr_t)info.dli_saddr);
+    } else {
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag dladdr label=%s addr=%p result=FAIL reason=not_found\n",
+                label, addr);
+    }
+    fflush(stderr);
+}
+
+static const char *
+gl_error_name(GLenum err)
+{
+    switch (err) {
+    case GL_NO_ERROR:
+        return "GL_NO_ERROR";
+    case GL_INVALID_ENUM:
+        return "GL_INVALID_ENUM";
+    case GL_INVALID_VALUE:
+        return "GL_INVALID_VALUE";
+    case GL_INVALID_OPERATION:
+        return "GL_INVALID_OPERATION";
+    case GL_OUT_OF_MEMORY:
+        return "GL_OUT_OF_MEMORY";
+#ifdef GL_INVALID_FRAMEBUFFER_OPERATION
+    case GL_INVALID_FRAMEBUFFER_OPERATION:
+        return "GL_INVALID_FRAMEBUFFER_OPERATION";
+#endif
+    default:
+        return "GL_UNKNOWN_ERROR";
+    }
+}
+
+static const char *
+gl_string_enum_name(GLenum name)
+{
+    switch (name) {
+    case GL_VENDOR:
+        return "GL_VENDOR";
+    case GL_RENDERER:
+        return "GL_RENDERER";
+    case GL_VERSION:
+        return "GL_VERSION";
+    default:
+        return "GL_UNKNOWN_STRING";
+    }
+}
+
+typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
+
+static gl_get_string_proc_t
+glx_get_gl_get_string_proc(void)
+{
+    gl_get_string_proc_t proc = NULL;
+
+#ifdef GLX_ARB_get_proc_address
+    union {
+        __GLXextFuncPtr raw;
+        gl_get_string_proc_t typed;
+    } conv;
+    __GLXextFuncPtr raw_proc;
+
+    raw_proc = glXGetProcAddressARB((const GLubyte *)"glGetString");
+    conv.raw = raw_proc;
+    proc = conv.typed;
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_get_proc_address name=glGetString result=%s ptr=%p\n",
+            proc ? "PASS" : "FAIL", (void *)raw_proc);
+#else
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_get_proc_address name=glGetString result=FAIL reason=not_available_in_headers\n");
+#endif
+    fflush(stderr);
+    return proc;
+}
+
+static const GLubyte *
+log_gl_get_string_linked(GLenum name, const char *tag)
+{
+    GLenum clear_err;
+    GLenum after_err;
+    const GLubyte *value;
+
+    clear_err = glGetError();
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag gl_get_error where=before_linked_glGetString name=%s error=0x%x %s\n",
+            gl_string_enum_name(name), clear_err, gl_error_name(clear_err));
+    value = glGetString(name);
+    after_err = glGetError();
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag gl_get_string_linked tag=%s name=%s result=%s value=%s ptr=%p before_error=0x%x before_name=%s after_error=0x%x after_name=%s\n",
+            tag, gl_string_enum_name(name), value ? "PASS" : "FAIL",
+            safe_str((const char *)value), (const void *)value,
+            clear_err, gl_error_name(clear_err), after_err,
+            gl_error_name(after_err));
+    fflush(stderr);
+    return value;
+}
+
+static void
+log_gl_get_string_proc(GLenum name, gl_get_string_proc_t proc)
+{
+    GLenum clear_err;
+    GLenum after_err;
+    const GLubyte *value;
+
+    if (!proc) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag gl_get_string_proc name=%s proc=%p result=FAIL reason=unavailable\n",
+                gl_string_enum_name(name), (void *)proc);
+        fflush(stderr);
+        return;
+    }
+
+    clear_err = glGetError();
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag gl_get_error where=before_proc_glGetString name=%s error=0x%x %s\n",
+            gl_string_enum_name(name), clear_err, gl_error_name(clear_err));
+    value = proc(name);
+    after_err = glGetError();
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag gl_get_string_proc name=%s result=%s proc=%p value=%s ptr=%p before_error=0x%x before_name=%s after_error=0x%x after_name=%s\n",
+            gl_string_enum_name(name), value ? "PASS" : "FAIL",
+            (void *)proc, safe_str((const char *)value),
+            (const void *)value, clear_err, gl_error_name(clear_err),
+            after_err, gl_error_name(after_err));
+    fflush(stderr);
+}
+
+struct gl_string_results {
+    const GLubyte *vendor;
+    const GLubyte *renderer;
+    const GLubyte *version;
+};
+
+static void
+log_gl_get_string_diagnostics(struct gl_string_results *results)
+{
+    gl_get_string_proc_t proc;
+
+    memset(results, 0, sizeof(*results));
+
+    results->vendor = log_gl_get_string_linked(GL_VENDOR, "canonical");
+    results->renderer = log_gl_get_string_linked(GL_RENDERER, "canonical");
+    results->version = log_gl_get_string_linked(GL_VERSION, "canonical");
+
+    proc = glx_get_gl_get_string_proc();
+    log_gl_get_string_proc(GL_VENDOR, proc);
+    log_gl_get_string_proc(GL_RENDERER, proc);
+    log_gl_get_string_proc(GL_VERSION, proc);
+}
+
+static int
+glx_query_context_attr(Display *dpy, GLXContext ctx, int attr, int *value)
+{
+#ifdef GLX_VERSION_1_3
+    if (!dpy || !ctx || !value)
+        return -1;
+    return glXQueryContext(dpy, ctx, attr, value);
+#else
+    (void)dpy;
+    (void)ctx;
+    (void)attr;
+    (void)value;
+    return -1;
+#endif
+}
+
+static void
+log_glx_query_context_attrs(Display *dpy, GLXContext ctx, int direct)
+{
+    int fbconfig_id = -1;
+    int render_type = -1;
+    int screen = -1;
+    int fbconfig_rc = -1;
+    int render_rc = -1;
+    int screen_rc = -1;
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_query_context_attrs status=BEGIN ctx=%p\n",
+            (void *)ctx);
+#ifdef GLX_FBCONFIG_ID
+    fbconfig_rc = glx_query_context_attr(dpy, ctx, GLX_FBCONFIG_ID,
+                                         &fbconfig_id);
+#endif
+#ifdef GLX_RENDER_TYPE
+    render_rc = glx_query_context_attr(dpy, ctx, GLX_RENDER_TYPE,
+                                       &render_type);
+#endif
+#ifdef GLX_SCREEN
+    screen_rc = glx_query_context_attr(dpy, ctx, GLX_SCREEN, &screen);
+#endif
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_query_context_attrs status=PASS direct=%d fbconfig_rc=%d fbconfig_id=0x%x render_rc=%d render_type=0x%x screen_rc=%d screen=%d\n",
+            direct, fbconfig_rc, fbconfig_id, render_rc, render_type,
+            screen_rc, screen);
+    fflush(stderr);
+}
+
+static void
+log_glx_current_bindings(Display *expected_dpy)
+{
+    GLXContext ctx;
+    GLXDrawable draw;
+    GLXDrawable read_draw = 0;
+    Display *current_dpy = NULL;
+    int has_read_draw = 0;
+    int has_current_dpy = 0;
+
+    ctx = glXGetCurrentContext();
+    draw = glXGetCurrentDrawable();
+#ifdef GLX_VERSION_1_3
+    read_draw = glXGetCurrentReadDrawable();
+    has_read_draw = 1;
+#endif
+#ifdef GLX_VERSION_1_2
+    current_dpy = glXGetCurrentDisplay();
+    has_current_dpy = 1;
+#endif
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_current_bindings status=PASS context=%p drawable=0x%lx read_drawable=0x%lx read_drawable_available=%d display=%p display_available=%d display_matches=%d\n",
+            (void *)ctx, (unsigned long)draw, (unsigned long)read_draw,
+            has_read_draw, (void *)current_dpy, has_current_dpy,
+            has_current_dpy && current_dpy == expected_dpy);
+    fflush(stderr);
 }
 
 static void
@@ -176,9 +491,14 @@ log_glx_diagnostics(Display *dpy, int screen)
             "host-x11-egl-smoke: diag glx_query_extension present=%d error_base=%d event_base=%d\n",
             extension_present, error_base, event_base);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_query_extension status=%s present=%d error_base=%d event_base=%d\n",
+            "host-x11-egl-smoke: diag glx_query_extension result=%s present=%d error_base=%d event_base=%d\n",
             extension_present ? "PASS" : "FAIL", extension_present,
             error_base, event_base);
+    if (extension_present) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_query_extension status=PASS present=%d error_base=%d event_base=%d\n",
+                extension_present, error_base, event_base);
+    }
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_query_version status=BEGIN");
@@ -187,28 +507,33 @@ log_glx_diagnostics(Display *dpy, int screen)
             "host-x11-egl-smoke: diag glx_query_version ok=%d major=%d minor=%d\n",
             version_ok, major, minor);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_query_version status=%s ok=%d major=%d minor=%d\n",
+            "host-x11-egl-smoke: diag glx_query_version result=%s ok=%d major=%d minor=%d\n",
             version_ok ? "PASS" : "FAIL", version_ok, major, minor);
+    if (version_ok) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_query_version status=PASS ok=%d major=%d minor=%d\n",
+                version_ok, major, minor);
+    }
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_client_vendor status=BEGIN");
     client_vendor = glXGetClientString(dpy, GLX_VENDOR);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_client_vendor status=%s vendor=%s\n",
+            "host-x11-egl-smoke: diag glx_client_vendor result=%s vendor=%s\n",
             client_vendor ? "PASS" : "FAIL", safe_str(client_vendor));
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_client_version status=BEGIN");
     client_version = glXGetClientString(dpy, GLX_VERSION);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_client_version status=%s version=%s\n",
+            "host-x11-egl-smoke: diag glx_client_version result=%s version=%s\n",
             client_version ? "PASS" : "FAIL", safe_str(client_version));
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_client_extensions status=BEGIN");
     client_extensions = glXGetClientString(dpy, GLX_EXTENSIONS);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_client_extensions status=%s extensions=%s\n",
+            "host-x11-egl-smoke: diag glx_client_extensions result=%s extensions=%s\n",
             client_extensions ? "PASS" : "FAIL",
             safe_str(client_extensions));
     fprintf(stderr,
@@ -217,7 +542,7 @@ log_glx_diagnostics(Display *dpy, int screen)
             safe_str(client_version),
             safe_str(client_extensions));
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_client_strings status=%s vendor=%s version=%s\n",
+            "host-x11-egl-smoke: diag glx_client_strings result=%s vendor=%s version=%s\n",
             client_version ? "PASS" : "FAIL", safe_str(client_vendor),
             safe_str(client_version));
     fflush(stderr);
@@ -225,21 +550,21 @@ log_glx_diagnostics(Display *dpy, int screen)
     log_line("host-x11-egl-smoke: phase=glx_server_vendor status=BEGIN");
     server_vendor = glXQueryServerString(dpy, screen, GLX_VENDOR);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_server_vendor status=%s vendor=%s\n",
+            "host-x11-egl-smoke: diag glx_server_vendor result=%s vendor=%s\n",
             server_vendor ? "PASS" : "FAIL", safe_str(server_vendor));
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_server_version status=BEGIN");
     server_version = glXQueryServerString(dpy, screen, GLX_VERSION);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_server_version status=%s version=%s\n",
+            "host-x11-egl-smoke: diag glx_server_version result=%s version=%s\n",
             server_version ? "PASS" : "FAIL", safe_str(server_version));
     fflush(stderr);
 
     log_line("host-x11-egl-smoke: phase=glx_server_extensions status=BEGIN");
     server_extensions = glXQueryServerString(dpy, screen, GLX_EXTENSIONS);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_server_extensions status=%s extensions=%s\n",
+            "host-x11-egl-smoke: diag glx_server_extensions result=%s extensions=%s\n",
             server_extensions ? "PASS" : "FAIL",
             safe_str(server_extensions));
     fprintf(stderr,
@@ -248,7 +573,7 @@ log_glx_diagnostics(Display *dpy, int screen)
             safe_str(server_version),
             safe_str(server_extensions));
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_server_strings status=%s vendor=%s version=%s\n",
+            "host-x11-egl-smoke: diag glx_server_strings result=%s vendor=%s version=%s\n",
             server_version ? "PASS" : "FAIL", safe_str(server_vendor),
             safe_str(server_version));
     fflush(stderr);
@@ -262,9 +587,14 @@ log_glx_diagnostics(Display *dpy, int screen)
             "host-x11-egl-smoke: diag glx_fbconfigs count=%d ptr=%p\n",
             fbconfig_count, (void *)configs);
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_fbconfigs status=%s count=%d ptr=%p\n",
+            "host-x11-egl-smoke: diag glx_fbconfigs result=%s count=%d ptr=%p\n",
             fbconfig_count > 0 && configs ? "PASS" : "FAIL",
             fbconfig_count, (void *)configs);
+    if (fbconfig_count > 0 && configs) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fbconfigs status=PASS count=%d ptr=%p\n",
+                fbconfig_count, (void *)configs);
+    }
     if (configs) {
         int i;
         int limit = fbconfig_count < 4 ? fbconfig_count : 4;
@@ -589,6 +919,7 @@ setup_glx(struct app *app)
     int major = 0;
     int minor = 0;
     int direct = 0;
+    struct gl_string_results gl_strings;
 
     destroy_window_only(app);
     log_glx_diagnostics(app->dpy, app->screen);
@@ -680,6 +1011,7 @@ setup_glx(struct app *app)
             "host-x11-egl-smoke: phase=glx_create_context status=PASS direct=%d\n",
             direct);
     fflush(stderr);
+    dump_gl_loader_maps("glx_before_make_current");
     log_line("host-x11-egl-smoke: phase=glx_make_current status=BEGIN");
     if (!glXMakeCurrent(app->dpy, app->win, app->glx_context)) {
         log_line("host-x11-egl-smoke: glx_make_current missing status=FAIL");
@@ -688,23 +1020,26 @@ setup_glx(struct app *app)
     }
     log_line("host-x11-egl-smoke: phase=glx_make_current status=PASS");
     app->use_glx = 1;
-    const GLubyte *gl_vendor = glGetString(GL_VENDOR);
-    const GLubyte *gl_renderer = glGetString(GL_RENDERER);
-    const GLubyte *gl_version = glGetString(GL_VERSION);
+    log_dladdr_symbol("glXMakeCurrent", (const void *)glXMakeCurrent);
+    log_dladdr_symbol("glGetString", (const void *)glGetString);
+    log_glx_current_bindings(app->dpy);
+    log_glx_query_context_attrs(app->dpy, app->glx_context, direct);
+    dump_gl_loader_maps("glx_after_make_current");
+    log_gl_get_string_diagnostics(&gl_strings);
 
     fprintf(stderr,
             "host-x11-egl-smoke: glx ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
-            major, minor, safe_str((const char *)gl_vendor),
-            safe_str((const char *)gl_renderer),
-            safe_str((const char *)gl_version));
+            major, minor, safe_str((const char *)gl_strings.vendor),
+            safe_str((const char *)gl_strings.renderer),
+            safe_str((const char *)gl_strings.version));
     fprintf(stderr,
             "host-x11-egl-smoke: phase=gl_strings status=%s api=glx vendor=%s renderer=%s gl_version=%s\n",
-            gl_version ? "PASS" : "FAIL",
-            safe_str((const char *)gl_vendor),
-            safe_str((const char *)gl_renderer),
-            safe_str((const char *)gl_version));
+            gl_strings.version ? "PASS" : "FAIL",
+            safe_str((const char *)gl_strings.vendor),
+            safe_str((const char *)gl_strings.renderer),
+            safe_str((const char *)gl_strings.version));
     fflush(stderr);
-    if (!gl_version)
+    if (!gl_strings.version)
         return -1;
     return 0;
 }
