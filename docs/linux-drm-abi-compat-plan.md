@@ -339,6 +339,25 @@ validation, and a valid syncobj with `fd=-1` returns `EBADF`. The broader
 queued eventfd waiter lifetime concern remains a separate follow-up that needs
 its own reducer before behavior-changing cleanup.
 
+Post-fix KDE X11/GLX FPS retry artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-033211-x11-glx-fps-after-syncobj-order-no-display-fail/
+```
+
+Result:
+
+```text
+KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-session-probe-FAIL exit_status=1
+host-x11-egl-smoke: phase=session_probe status=FAIL mode=session probe_mode=glx-fps exit_status=1 reason=no-display-candidate
+chrome-drm-detail: syncobj-eventfd owner=3:66 ret=-2 handle=0 flags=0x0 point=0 fd=-1 pad=0 fd_is_eventfd=-1 syncobj_exists=0 state_has_fence=0 reject_reason=syncobj_missing
+```
+
+Interpretation: the KDE retry confirms the Xwayland invalid syncobj eventfd
+probe now returns Linux-shaped `ENOENT`, but this run failed before GLX/FPS
+measurement because the session probe could not open an authorized X display.
+It should not be used as FPS evidence.
+
 Success criteria:
 
 - KDE smoke passes.
