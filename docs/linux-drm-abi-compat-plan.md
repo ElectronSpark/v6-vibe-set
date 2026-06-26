@@ -828,6 +828,36 @@ GLX/Mesa/Xwayland swap-path or loader/profile attribution above these nested
 X11 calls; do not spend the next step on speculative kernel fd/fence/DRI3
 changes from this evidence.
 
+Swap-interval-0 plain GLX swap-only GLX-swap syscall split artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-143937-x11-glx-fps-glx-swap-syscall-trace-pass/
+Verification: git diff --check, kernel diff check, C syntax check for the
+preload, Expect completeness check, three independent audit passes including
+ioctl varargs and pthread cleanup review, host-gui-runtime with `-pthread`,
+rootfs-refresh, focused no-Weston reducer PASS
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+present_trace_result status=PASS pixmap_calls=234 wait_special_calls=100 poll_special_calls=837 complete_events=230 complete_copy=229 complete_suboptimal_copy=1 present_fallback_symbols=2 missing_symbols=0
+glx_swap_trace_result status=PASS pid=119 glx_swap_syscall_trace=1 glx_swap_buffers_calls=234 glx_swap_total_ms=4897.093 glx_swap_accounted_present_ms=553.930 glx_swap_accounted_xcb_ms=90.374 glx_swap_above_xcb_ms=4252.790 glx_swap_syscall_total_ms=4563.773 glx_swap_syscall_nested_x11_ms=544.757 glx_swap_syscall_above_x11_ms=4019.017 glx_swap_syscall_ioctl_calls=236 glx_swap_syscall_ioctl_total_ms=3997.465 glx_swap_syscall_ioctl_max_ms=76.850 glx_swap_syscall_poll_ppoll_calls=571 glx_swap_syscall_poll_ppoll_total_ms=489.369 glx_swap_syscall_poll_ppoll_max_ms=41.541 glx_swap_syscall_read_recv_calls=711 glx_swap_syscall_read_recv_total_ms=62.853 glx_swap_syscall_write_send_calls=235 glx_swap_syscall_write_send_total_ms=14.086 glx_swap_missing_symbols=0 glx_swap_recursion_skips=0
+frames=234 elapsed_seconds=5.045950 fps=46.374 variant=swap-interval0-swap-only
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4911.277 plain_swap_avg_ms=20.988 plain_swap_max_ms=80.978
+```
+
+This extends the child-only trace with passive libc syscall-family attribution
+inside `glXSwapBuffers` and keeps the wrappers disabled outside the GLX swap
+depth. The audited implementation forwards `ioctl` conservatively as a
+three-argument variadic call, balances Present special-event nesting with
+pthread cleanup handlers, and builds the preload with `-pthread`. The passing
+run shows the residual is kernel-facing: 4563.773 ms of the 4897.093 ms GLX
+swap time is spent inside traced syscall wrappers, with 4019.017 ms above the
+nested Present/XCB real calls. `ioctl` dominates that bucket at 3997.465 ms
+over 236 calls; poll/ppoll contributes 489.369 ms, read/recv 62.853 ms, and
+write/send 14.086 ms. The next reducer should identify the dominant DRM ioctl
+request(s), fd roles, and wait semantics inside this GLX swap path before any
+kernel behavior patch.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 

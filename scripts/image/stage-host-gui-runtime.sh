@@ -50,7 +50,7 @@ stage_x11_present_trace_preload() {
         $(pkg-config --cflags xcb) \
         -o "${out}" \
         "${REPO_ROOT}/scripts/image/host-x11-present-trace-preload.c" \
-        -ldl >/dev/null 2>&1; then
+        -ldl -pthread >/dev/null 2>&1; then
         mkdir -p "$(dirname "${dst}")"
         cp -aL "${out}" "${dst}"
         chmod 0755 "${dst}" 2>/dev/null || true

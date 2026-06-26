@@ -1,11 +1,19 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
@@ -59,6 +67,12 @@ typedef struct {
 
 #define MAX_PRESENT_SPECIAL_EVENTS 64
 
+struct syscall_family_stats {
+    uint64_t calls;
+    uint64_t total_ns;
+    uint64_t max_ns;
+};
+
 struct present_trace_stats {
     uint64_t pixmap_calls;
     uint64_t pixmap_checked_calls;
@@ -102,6 +116,13 @@ struct present_trace_stats {
     uint64_t glx_swap_nested_xcb_wait_event_total_ns;
     uint64_t glx_swap_nested_xcb_poll_event_calls;
     uint64_t glx_swap_nested_xcb_poll_event_total_ns;
+    uint64_t glx_swap_syscall_total_ns;
+    uint64_t glx_swap_syscall_nested_x11_ns;
+    struct syscall_family_stats glx_swap_syscall_ioctl;
+    struct syscall_family_stats glx_swap_syscall_poll_ppoll;
+    struct syscall_family_stats glx_swap_syscall_select_pselect;
+    struct syscall_family_stats glx_swap_syscall_read_recv;
+    struct syscall_family_stats glx_swap_syscall_write_send;
     uint64_t glx_swap_missing_symbols;
     uint64_t glx_swap_recursion_skips;
     uint32_t last_serial;
@@ -126,6 +147,16 @@ static void *xcb_wait_for_reply_sym;
 static void *xcb_poll_for_reply_sym;
 static void *xcb_wait_for_event_sym;
 static void *xcb_poll_for_event_sym;
+static void *ioctl_sym;
+static void *poll_sym;
+static void *ppoll_sym;
+static void *select_sym;
+static void *pselect_sym;
+static void *read_sym;
+static void *recvmsg_sym;
+static void *write_sym;
+static void *writev_sym;
+static void *sendmsg_sym;
 static void *present_lib_handle;
 static int present_pixmap_resolved;
 static int present_pixmap_checked_resolved;
@@ -143,12 +174,24 @@ static int xcb_wait_for_reply_resolved;
 static int xcb_poll_for_reply_resolved;
 static int xcb_wait_for_event_resolved;
 static int xcb_poll_for_event_resolved;
+static int ioctl_resolved;
+static int poll_resolved;
+static int ppoll_resolved;
+static int select_resolved;
+static int pselect_resolved;
+static int read_resolved;
+static int recvmsg_resolved;
+static int write_resolved;
+static int writev_resolved;
+static int sendmsg_resolved;
 static int present_id_missing_recorded;
 static int present_lib_handle_resolved;
 static xcb_special_event_t *present_special_events[MAX_PRESENT_SPECIAL_EVENTS];
 static volatile int present_special_events_lock;
 static __thread int glx_swap_depth;
+static __thread int glx_swap_x11_real_call_depth;
 static __thread int present_special_wait_depth;
+static __thread int syscall_trace_suppressed;
 
 typedef xcb_void_cookie_t (*present_pixmap_fn)(
     xcb_connection_t *, xcb_window_t, xcb_pixmap_t, uint32_t, xcb_xfixes_region_t,
@@ -182,6 +225,18 @@ typedef int (*xcb_poll_for_reply_fn)(xcb_connection_t *, unsigned int,
                                      void **, xcb_generic_error_t **);
 typedef xcb_generic_event_t *(*xcb_wait_for_event_fn)(xcb_connection_t *);
 typedef xcb_generic_event_t *(*xcb_poll_for_event_fn)(xcb_connection_t *);
+typedef int (*ioctl_fn)(int, unsigned long, ...);
+typedef int (*poll_fn)(struct pollfd *, nfds_t, int);
+typedef int (*ppoll_fn)(struct pollfd *, nfds_t, const struct timespec *,
+                        const sigset_t *);
+typedef int (*select_fn)(int, fd_set *, fd_set *, fd_set *, struct timeval *);
+typedef int (*pselect_fn)(int, fd_set *, fd_set *, fd_set *,
+                          const struct timespec *, const sigset_t *);
+typedef ssize_t (*read_fn)(int, void *, size_t);
+typedef ssize_t (*recvmsg_fn)(int, struct msghdr *, int);
+typedef ssize_t (*write_fn)(int, const void *, size_t);
+typedef ssize_t (*writev_fn)(int, const struct iovec *, int);
+typedef ssize_t (*sendmsg_fn)(int, const struct msghdr *, int);
 
 void glXSwapBuffers(Display *dpy, GLXDrawable drawable);
 int64_t glXSwapBuffersMscOML(Display *dpy, GLXDrawable drawable,
@@ -238,6 +293,43 @@ static uint64_t load_u64(uint64_t *ptr)
 static uint32_t load_u32(uint32_t *ptr)
 {
     return __atomic_load_n(ptr, __ATOMIC_RELAXED);
+}
+
+static void record_glx_swap_syscall(struct syscall_family_stats *family,
+                                    uint64_t elapsed, int nested_x11)
+{
+    add_u64(&stats.glx_swap_syscall_total_ns, elapsed);
+    if (nested_x11)
+        add_u64(&stats.glx_swap_syscall_nested_x11_ns, elapsed);
+    add_u64(&family->calls, 1);
+    add_u64(&family->total_ns, elapsed);
+    update_max_u64(&family->max_ns, elapsed);
+}
+
+static void enter_glx_swap_x11_real_call(int enabled)
+{
+    if (enabled)
+        glx_swap_x11_real_call_depth++;
+}
+
+static void leave_glx_swap_x11_real_call(int enabled)
+{
+    if (enabled)
+        glx_swap_x11_real_call_depth--;
+}
+
+struct glx_swap_x11_wait_cleanup {
+    int in_glx_swap;
+};
+
+static void glx_swap_x11_wait_cleanup(void *arg)
+{
+    struct glx_swap_x11_wait_cleanup *cleanup = arg;
+
+    if (!cleanup->in_glx_swap)
+        return;
+    present_special_wait_depth--;
+    leave_glx_swap_x11_real_call(1);
 }
 
 static int should_log_progress(uint64_t call_count)
@@ -315,16 +407,18 @@ static void trace_progress(const char *where, const char *event)
 
     if (pos == 0)
         return;
+    syscall_trace_suppressed++;
     if (log_fd >= 0)
         ignored = write(log_fd, buf, pos);
     else
         ignored = write(STDERR_FILENO, buf, pos);
+    syscall_trace_suppressed--;
     (void)ignored;
 }
 
 static void trace_vlogf(const char *fmt, va_list ap)
 {
-    char buf[4096];
+    char buf[12288];
     int len;
 
     len = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -332,6 +426,7 @@ static void trace_vlogf(const char *fmt, va_list ap)
         return;
     if ((size_t)len >= sizeof(buf))
         len = (int)sizeof(buf) - 1;
+    syscall_trace_suppressed++;
     if (log_fd >= 0) {
         ssize_t ignored = write(log_fd, buf, (size_t)len);
         (void)ignored;
@@ -339,6 +434,7 @@ static void trace_vlogf(const char *fmt, va_list ap)
         ssize_t ignored = write(STDERR_FILENO, buf, (size_t)len);
         (void)ignored;
     }
+    syscall_trace_suppressed--;
 }
 
 static void trace_logf(const char *fmt, ...)
@@ -359,6 +455,17 @@ static void *resolve_symbol(const char *name, void **slot, int *resolved)
     *slot = dlsym(RTLD_NEXT, name);
     if (!*slot)
         add_u64(&stats.missing_symbols, 1);
+    __atomic_store_n(resolved, 1, __ATOMIC_RELEASE);
+    return *slot;
+}
+
+static void *resolve_libc_symbol(const char *name, void **slot, int *resolved)
+{
+    if (__atomic_load_n(resolved, __ATOMIC_ACQUIRE))
+        return __atomic_load_n(slot, __ATOMIC_RELAXED);
+
+    dlerror();
+    *slot = dlsym(RTLD_NEXT, name);
     __atomic_store_n(resolved, 1, __ATOMIC_RELEASE);
     return *slot;
 }
@@ -624,7 +731,7 @@ __attribute__((constructor)) static void present_trace_begin(void)
     } else {
         snprintf(exe, sizeof(exe), "(unknown)");
     }
-    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 glx_swap_xcb_trace=1 exe=%s\n",
+    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 glx_swap_xcb_trace=1 glx_swap_syscall_trace=1 exe=%s\n",
                (long)getpid(), exe);
 }
 
@@ -688,6 +795,11 @@ __attribute__((destructor)) static void present_trace_end(void)
             load_u64(&stats.glx_swap_nested_xcb_poll_event_total_ns);
         uint64_t glx_swap_above_present_ns = 0;
         uint64_t glx_swap_above_xcb_ns = 0;
+        uint64_t glx_swap_syscall_total_ns =
+            load_u64(&stats.glx_swap_syscall_total_ns);
+        uint64_t glx_swap_syscall_nested_x11_ns =
+            load_u64(&stats.glx_swap_syscall_nested_x11_ns);
+        uint64_t glx_swap_syscall_above_x11_ns = 0;
 
         if (glx_swap_total_ns > glx_swap_accounted_present_ns)
             glx_swap_above_present_ns =
@@ -697,9 +809,13 @@ __attribute__((destructor)) static void present_trace_end(void)
             glx_swap_above_xcb_ns =
                 glx_swap_total_ns - glx_swap_accounted_present_ns -
                 glx_swap_accounted_xcb_ns;
+        if (glx_swap_syscall_total_ns > glx_swap_syscall_nested_x11_ns)
+            glx_swap_syscall_above_x11_ns =
+                glx_swap_syscall_total_ns - glx_swap_syscall_nested_x11_ns;
         trace_logf(
             "host-x11-present-trace: phase=glx_swap_trace_result status=PASS "
-            "pid=%ld glx_swap_buffers_calls=%" PRIu64 " "
+            "pid=%ld glx_swap_syscall_trace=1 "
+            "glx_swap_buffers_calls=%" PRIu64 " "
             "glx_swap_buffers_msc_oml_calls=%" PRIu64 " "
             "glx_swap_total_ms=%.3f glx_swap_max_ms=%.3f "
             "glx_swap_nested_pixmap_calls=%" PRIu64 " "
@@ -726,6 +842,24 @@ __attribute__((destructor)) static void present_trace_end(void)
             "glx_swap_above_present_ms=%.3f "
             "glx_swap_accounted_xcb_ms=%.3f "
             "glx_swap_above_xcb_ms=%.3f "
+            "glx_swap_syscall_total_ms=%.3f "
+            "glx_swap_syscall_nested_x11_ms=%.3f "
+            "glx_swap_syscall_above_x11_ms=%.3f "
+            "glx_swap_syscall_ioctl_calls=%" PRIu64 " "
+            "glx_swap_syscall_ioctl_total_ms=%.3f "
+            "glx_swap_syscall_ioctl_max_ms=%.3f "
+            "glx_swap_syscall_poll_ppoll_calls=%" PRIu64 " "
+            "glx_swap_syscall_poll_ppoll_total_ms=%.3f "
+            "glx_swap_syscall_poll_ppoll_max_ms=%.3f "
+            "glx_swap_syscall_select_pselect_calls=%" PRIu64 " "
+            "glx_swap_syscall_select_pselect_total_ms=%.3f "
+            "glx_swap_syscall_select_pselect_max_ms=%.3f "
+            "glx_swap_syscall_read_recv_calls=%" PRIu64 " "
+            "glx_swap_syscall_read_recv_total_ms=%.3f "
+            "glx_swap_syscall_read_recv_max_ms=%.3f "
+            "glx_swap_syscall_write_send_calls=%" PRIu64 " "
+            "glx_swap_syscall_write_send_total_ms=%.3f "
+            "glx_swap_syscall_write_send_max_ms=%.3f "
             "glx_swap_missing_symbols=%" PRIu64 " "
             "glx_swap_recursion_skips=%" PRIu64 "\n",
             (long)getpid(),
@@ -771,6 +905,35 @@ __attribute__((destructor)) static void present_trace_end(void)
             (double)glx_swap_above_present_ns / 1000000.0,
             (double)glx_swap_accounted_xcb_ns / 1000000.0,
             (double)glx_swap_above_xcb_ns / 1000000.0,
+            (double)glx_swap_syscall_total_ns / 1000000.0,
+            (double)glx_swap_syscall_nested_x11_ns / 1000000.0,
+            (double)glx_swap_syscall_above_x11_ns / 1000000.0,
+            load_u64(&stats.glx_swap_syscall_ioctl.calls),
+            (double)load_u64(&stats.glx_swap_syscall_ioctl.total_ns) /
+                1000000.0,
+            (double)load_u64(&stats.glx_swap_syscall_ioctl.max_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_syscall_poll_ppoll.calls),
+            (double)load_u64(&stats.glx_swap_syscall_poll_ppoll.total_ns) /
+                1000000.0,
+            (double)load_u64(&stats.glx_swap_syscall_poll_ppoll.max_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_syscall_select_pselect.calls),
+            (double)load_u64(
+                &stats.glx_swap_syscall_select_pselect.total_ns) /
+                1000000.0,
+            (double)load_u64(&stats.glx_swap_syscall_select_pselect.max_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_syscall_read_recv.calls),
+            (double)load_u64(&stats.glx_swap_syscall_read_recv.total_ns) /
+                1000000.0,
+            (double)load_u64(&stats.glx_swap_syscall_read_recv.max_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_syscall_write_send.calls),
+            (double)load_u64(&stats.glx_swap_syscall_write_send.total_ns) /
+                1000000.0,
+            (double)load_u64(&stats.glx_swap_syscall_write_send.max_ns) /
+                1000000.0,
             load_u64(&stats.glx_swap_missing_symbols),
             load_u64(&stats.glx_swap_recursion_skips));
     }
@@ -908,7 +1071,9 @@ int xcb_flush(xcb_connection_t *c)
         return 0;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     result = real_fn(c);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_flush_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -933,7 +1098,9 @@ xcb_generic_error_t *xcb_request_check(xcb_connection_t *c,
         return NULL;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     error = real_fn(c, cookie);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_request_check_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -958,7 +1125,9 @@ void *xcb_wait_for_reply(xcb_connection_t *c, unsigned int request,
         return NULL;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     reply = real_fn(c, request, e);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_wait_reply_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -983,7 +1152,9 @@ int xcb_poll_for_reply(xcb_connection_t *c, unsigned int request,
         return 0;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     result = real_fn(c, request, reply, error);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_poll_reply_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -1007,7 +1178,9 @@ xcb_generic_event_t *xcb_wait_for_event(xcb_connection_t *c)
         return NULL;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     event = real_fn(c);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_wait_event_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -1031,7 +1204,9 @@ xcb_generic_event_t *xcb_poll_for_event(xcb_connection_t *c)
         return NULL;
 
     start = in_glx_swap ? now_ns() : 0;
+    enter_glx_swap_x11_real_call(in_glx_swap);
     event = real_fn(c);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     if (in_glx_swap)
         add_u64(&stats.glx_swap_nested_xcb_poll_event_total_ns,
                 elapsed_ns(start, now_ns()));
@@ -1045,9 +1220,11 @@ xcb_special_event_t *xcb_register_for_special_xge(
     xcb_special_event_t *se;
     xcb_extension_t *present_id;
     uint64_t call_count;
+    int in_glx_swap;
 
     call_count = __atomic_add_fetch(&stats.register_special_xge_calls, 1,
                                     __ATOMIC_RELAXED);
+    in_glx_swap = glx_swap_depth > 0;
     if (should_log_progress(call_count))
         trace_progress("xcb_register_for_special_xge", "enter");
     real_fn = (register_special_xge_fn)resolve_symbol(
@@ -1059,7 +1236,9 @@ xcb_special_event_t *xcb_register_for_special_xge(
         return NULL;
     }
 
+    enter_glx_swap_x11_real_call(in_glx_swap);
     se = real_fn(c, ext, eid, stamp);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     present_id = (xcb_extension_t *)resolve_present_id_symbol();
     if (present_id && ext == present_id)
         track_present_special_event(se);
@@ -1099,9 +1278,11 @@ xcb_void_cookie_t xcb_present_pixmap(
             trace_progress("xcb_present_pixmap", "return");
         return cookie;
     }
+    enter_glx_swap_x11_real_call(in_glx_swap);
     cookie = real_fn(c, window, pixmap, serial, valid, update, x_off, y_off,
                      target_crtc, wait_fence, idle_fence, options, target_msc,
                      divisor, remainder, notifies_len, notifies);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 
@@ -1145,9 +1326,11 @@ xcb_void_cookie_t xcb_present_pixmap_checked(
             trace_progress("xcb_present_pixmap_checked", "return");
         return cookie;
     }
+    enter_glx_swap_x11_real_call(in_glx_swap);
     cookie = real_fn(c, window, pixmap, serial, valid, update, x_off, y_off,
                      target_crtc, wait_fence, idle_fence, options, target_msc,
                      divisor, remainder, notifies_len, notifies);
+    leave_glx_swap_x11_real_call(in_glx_swap);
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 
@@ -1184,9 +1367,19 @@ xcb_generic_event_t *xcb_wait_for_special_event(xcb_connection_t *c,
             trace_progress("xcb_wait_for_special_event", "return");
         return NULL;
     }
-    present_special_wait_depth++;
-    event = real_fn(c, se);
-    present_special_wait_depth--;
+    {
+        struct glx_swap_x11_wait_cleanup cleanup = { in_glx_swap };
+
+        enter_glx_swap_x11_real_call(in_glx_swap);
+        if (in_glx_swap)
+            present_special_wait_depth++;
+        pthread_cleanup_push(glx_swap_x11_wait_cleanup, &cleanup);
+        event = real_fn(c, se);
+        pthread_cleanup_pop(0);
+        if (in_glx_swap)
+            present_special_wait_depth--;
+        leave_glx_swap_x11_real_call(in_glx_swap);
+    }
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 
@@ -1224,9 +1417,19 @@ xcb_generic_event_t *xcb_poll_for_special_event(xcb_connection_t *c,
             trace_progress("xcb_poll_for_special_event", "return");
         return NULL;
     }
-    present_special_wait_depth++;
-    event = real_fn(c, se);
-    present_special_wait_depth--;
+    {
+        struct glx_swap_x11_wait_cleanup cleanup = { in_glx_swap };
+
+        enter_glx_swap_x11_real_call(in_glx_swap);
+        if (in_glx_swap)
+            present_special_wait_depth++;
+        pthread_cleanup_push(glx_swap_x11_wait_cleanup, &cleanup);
+        event = real_fn(c, se);
+        pthread_cleanup_pop(0);
+        if (in_glx_swap)
+            present_special_wait_depth--;
+        leave_glx_swap_x11_real_call(in_glx_swap);
+    }
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 
@@ -1238,4 +1441,303 @@ xcb_generic_event_t *xcb_poll_for_special_event(xcb_connection_t *c,
     if (should_log_progress(call_count))
         trace_progress("xcb_poll_for_special_event", "return");
     return event;
+}
+
+int ioctl(int fd, unsigned long request, ...)
+{
+    ioctl_fn real_fn;
+    va_list ap;
+    void *arg = NULL;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    int result;
+    int saved_errno;
+
+    real_fn = (ioctl_fn)resolve_libc_symbol("ioctl", &ioctl_sym,
+                                            &ioctl_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    va_start(ap, request);
+    arg = va_arg(ap, void *);
+    va_end(ap);
+    result = real_fn(fd, request, arg);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_ioctl, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+int poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+    poll_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    int result;
+    int saved_errno;
+
+    real_fn = (poll_fn)resolve_libc_symbol("poll", &poll_sym,
+                                           &poll_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(fds, nfds, timeout);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_poll_ppoll, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *timeout,
+          const sigset_t *sigmask)
+{
+    ppoll_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    int result;
+    int saved_errno;
+
+    real_fn = (ppoll_fn)resolve_libc_symbol("ppoll", &ppoll_sym,
+                                            &ppoll_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(fds, nfds, timeout, sigmask);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_poll_ppoll, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+           struct timeval *timeout)
+{
+    select_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    int result;
+    int saved_errno;
+
+    real_fn = (select_fn)resolve_libc_symbol("select", &select_sym,
+                                             &select_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(nfds, readfds, writefds, exceptfds, timeout);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_select_pselect,
+                                elapsed, nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+int pselect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+            const struct timespec *timeout, const sigset_t *sigmask)
+{
+    pselect_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    int result;
+    int saved_errno;
+
+    real_fn = (pselect_fn)resolve_libc_symbol("pselect", &pselect_sym,
+                                              &pselect_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(nfds, readfds, writefds, exceptfds, timeout, sigmask);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_select_pselect,
+                                elapsed, nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+ssize_t read(int fd, void *buf, size_t count)
+{
+    read_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    ssize_t result;
+    int saved_errno;
+
+    real_fn = (read_fn)resolve_libc_symbol("read", &read_sym,
+                                           &read_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(fd, buf, count);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_read_recv, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
+{
+    recvmsg_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    ssize_t result;
+    int saved_errno;
+
+    real_fn = (recvmsg_fn)resolve_libc_symbol("recvmsg", &recvmsg_sym,
+                                              &recvmsg_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(sockfd, msg, flags);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_read_recv, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+ssize_t write(int fd, const void *buf, size_t count)
+{
+    write_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    ssize_t result;
+    int saved_errno;
+
+    real_fn = (write_fn)resolve_libc_symbol("write", &write_sym,
+                                            &write_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(fd, buf, count);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_write_send, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
+{
+    writev_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    ssize_t result;
+    int saved_errno;
+
+    real_fn = (writev_fn)resolve_libc_symbol("writev", &writev_sym,
+                                             &writev_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(fd, iov, iovcnt);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_write_send, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
+}
+
+ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
+{
+    sendmsg_fn real_fn;
+    uint64_t start;
+    uint64_t elapsed;
+    int trace;
+    int nested_x11;
+    ssize_t result;
+    int saved_errno;
+
+    real_fn = (sendmsg_fn)resolve_libc_symbol("sendmsg", &sendmsg_sym,
+                                              &sendmsg_resolved);
+    if (!real_fn) {
+        errno = ENOSYS;
+        return -1;
+    }
+    trace = glx_swap_depth > 0 && syscall_trace_suppressed == 0;
+    nested_x11 = trace && glx_swap_x11_real_call_depth > 0;
+    start = trace ? now_ns() : 0;
+    result = real_fn(sockfd, msg, flags);
+    saved_errno = errno;
+    elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
+    if (trace)
+        record_glx_swap_syscall(&stats.glx_swap_syscall_write_send, elapsed,
+                                nested_x11);
+    errno = saved_errno;
+    return result;
 }
