@@ -953,6 +953,44 @@ invalidation of the reducer evidence. Next step: narrow attribution per
 owner/context or add deltas around async make-room/post and failed execbuffer
 returns, without patching KDE, Qt, KWin, Xwayland, Mesa, or Chromium.
 
+Owner-attributed virtgpu submit trace diagnostic evidence:
+
+```text
+Manual KDE GLAMOR auto VM inspection artifact:
+build-x86_64/manual-vm-inspection/20260626-155455-kde-glamor-auto/
+User-visible result: severe jitter, with YouTube playback stopping. Caveat:
+no Chromium-specific stderr or durable role log was captured in this manual
+inspection.
+
+Diagnostic patch verification: independent audit PASS; kernel build PASS.
+
+First trace-on reducer attempt:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-161837-x11-glx-fps-owner-trace-kde-ready-crash-fail/
+Result: failed at KWin readiness with no submits.
+
+Trace-off control:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-162000-x11-glx-fps-owner-trace-off-control-pass/
+Result: PASS.
+
+Repeat trace-on reducer:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-162122-x11-glx-fps-owner-trace-pass/
+Result: PASS.
+Owner rows now include per-emission make_room, wait_progress, and wait_used
+max fields.
+```
+
+This diagnostic preserves the no-behavior-change stance and improves
+attribution over the previous global aggregate. The owner rows show no submit
+failures and no fence failures, so the current signal is queue/backpressure
+stalling rather than a failed fence path. The manual run includes
+`QSGRenderThread` owner stalls around `wait_used` 297 ms and `make_room`
+298 ms. The reducer global summary records `wait_used_max_us=329045`, KWin
+owner max around 56.9 ms, and an Xwayland/probe owner row with about 1.06 s of
+submit time, including about 595 ms of wait spread across roughly 29 ms
+per-emission max intervals. Next step: add Chromium-specific durable
+role/argv/stderr or local fixture capture and correlate browser/GPU/Xwayland
+owner rows before behavior-changing kernel fixes.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
