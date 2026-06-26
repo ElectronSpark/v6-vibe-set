@@ -52,6 +52,7 @@ enum glx_fps_variant_kind {
     GLX_FPS_VARIANT_SWAP_INTERVAL0_SWAP_ONLY,
     GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SWAP_ONLY,
     GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY,
+    GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING,
@@ -145,6 +146,10 @@ struct glx_fps_timing {
     int64_t plain_oml_post_swap_sbc_delta_max;
     int64_t plain_oml_post_swap_msc_delta_total;
     int64_t plain_oml_post_swap_msc_delta_max;
+    int64_t plain_oml_after_sbc_delta_total;
+    int64_t plain_oml_after_sbc_delta_max;
+    int64_t plain_oml_after_msc_delta_total;
+    int64_t plain_oml_after_msc_delta_max;
     int64_t plain_post_swap_xsync_total_ns;
     int64_t plain_post_swap_xsync_max_ns;
 };
@@ -1644,6 +1649,8 @@ glx_fps_variant_kind_name(enum glx_fps_variant_kind kind)
         return "swap-interval0-oml-state-swap-only";
     case GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY:
         return "swap-interval0-oml-state-sampled-swap-only";
+    case GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY:
+        return "swap-interval0-oml-state-sampled-after-swap-only";
     case GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY:
         return "oml-queue3-swap-only";
     case GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY:
@@ -1797,6 +1804,16 @@ read_glx_fps_variant(struct glx_fps_variant *variant)
         if (read_glx_fps_oml_issue_state_sample_interval(variant) != 0) {
             variant->kind = GLX_FPS_VARIANT_BASELINE;
         }
+    } else if (strcmp(raw,
+                      "swap-interval0-oml-state-sampled-after-swap-only")
+               == 0) {
+        variant->kind =
+            GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY;
+        variant->issue_state_sample_interval =
+            GLX_FPS_PLAIN_OML_SAMPLE_INTERVAL;
+        if (read_glx_fps_oml_issue_state_sample_interval(variant) != 0) {
+            variant->kind = GLX_FPS_VARIANT_BASELINE;
+        }
     } else if (strcmp(raw, "oml-queue3-swap-only") == 0) {
         variant->kind = GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY;
         variant->queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
@@ -1927,6 +1944,8 @@ issue_glx_fps_draw_work(struct app *app, int frame,
              GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SWAP_ONLY ||
          variant->kind ==
              GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY ||
+         variant->kind ==
+             GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY ||
          variant->kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY ||
          variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY ||
          variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING ||
@@ -2300,10 +2319,15 @@ run_glx_fps_plain_oml_loop(struct app *app,
     struct glx_oml_api oml;
     int sample_interval = 1;
     int sampled_variant;
+    int after_only_variant;
     int setup_rc;
 
-    sampled_variant = variant->kind ==
-        GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY;
+    after_only_variant = variant->kind ==
+        GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY;
+    sampled_variant =
+        variant->kind ==
+            GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY ||
+        after_only_variant;
     if (sampled_variant)
         sample_interval = variant->issue_state_sample_interval;
     timing->plain_oml_sample_interval = sample_interval;
@@ -2351,7 +2375,7 @@ run_glx_fps_plain_oml_loop(struct app *app,
             return -1;
         }
 
-        if (sample_plain_oml) {
+        if (sample_plain_oml && !after_only_variant) {
             sync_before_start_ns = monotonic_ns();
             if (!oml.get_sync_values(app->dpy, app->win, &before_ust,
                                      &before_msc, &before_sbc)) {
@@ -2380,6 +2404,8 @@ run_glx_fps_plain_oml_loop(struct app *app,
                           &timing->max_plain_swap_ns, swap_ns);
 
         if (sample_plain_oml) {
+            int64_t after_sbc_delta = 0;
+            int64_t after_msc_delta = 0;
             int64_t sbc_delta;
             int64_t msc_delta;
 
@@ -2409,15 +2435,33 @@ run_glx_fps_plain_oml_loop(struct app *app,
                                   elapsed_ns(xsync_start_ns, xsync_end_ns));
             }
 
+            if (timing->plain_oml_samples > 0) {
+                after_sbc_delta = after_sbc - timing->plain_oml_after_last_sbc;
+                after_msc_delta = after_msc - timing->oml_last_msc;
+                if (after_only_variant &&
+                    (after_sbc_delta < 0 || after_msc_delta < 0)) {
+                    fprintf(stderr,
+                            "host-x11-egl-smoke: phase=glx_fps_plain_oml_result status=FAIL reason=plain-oml-after-state-regressed frame=%d prev_after_sbc=%" PRId64 " after_sbc=%" PRId64 " prev_after_msc=%" PRId64 " after_msc=%" PRId64 "\n",
+                            frame, timing->plain_oml_after_last_sbc,
+                            after_sbc, timing->oml_last_msc, after_msc);
+                    fflush(stderr);
+                    *failure_reason = "plain-oml-after-state-regressed";
+                    return -1;
+                }
+            }
+
             sbc_delta = after_sbc - before_sbc;
             msc_delta = after_msc - before_msc;
-            if (sbc_delta < 0 || msc_delta < 0) {
-                fprintf(stderr,
-                        "host-x11-egl-smoke: phase=glx_fps_plain_oml_result status=FAIL reason=plain-oml-state-regressed frame=%d before_sbc=%" PRId64 " after_sbc=%" PRId64 " before_msc=%" PRId64 " after_msc=%" PRId64 "\n",
-                        frame, before_sbc, after_sbc, before_msc, after_msc);
-                fflush(stderr);
-                *failure_reason = "plain-oml-state-regressed";
-                return -1;
+            if (!after_only_variant) {
+                if (sbc_delta < 0 || msc_delta < 0) {
+                    fprintf(stderr,
+                            "host-x11-egl-smoke: phase=glx_fps_plain_oml_result status=FAIL reason=plain-oml-state-regressed frame=%d before_sbc=%" PRId64 " after_sbc=%" PRId64 " before_msc=%" PRId64 " after_msc=%" PRId64 "\n",
+                            frame, before_sbc, after_sbc, before_msc,
+                            after_msc);
+                    fflush(stderr);
+                    *failure_reason = "plain-oml-state-regressed";
+                    return -1;
+                }
             }
 
             timing->plain_oml_samples++;
@@ -2429,14 +2473,28 @@ run_glx_fps_plain_oml_loop(struct app *app,
             timing->plain_oml_last_sample_frame = frame;
             timing->plain_oml_before_last_sbc = before_sbc;
             timing->plain_oml_after_last_sbc = after_sbc;
-            timing->plain_oml_post_swap_sbc_delta_total += sbc_delta;
-            if (timing->plain_oml_samples == 1 ||
-                sbc_delta > timing->plain_oml_post_swap_sbc_delta_max)
-                timing->plain_oml_post_swap_sbc_delta_max = sbc_delta;
-            timing->plain_oml_post_swap_msc_delta_total += msc_delta;
-            if (timing->plain_oml_samples == 1 ||
-                msc_delta > timing->plain_oml_post_swap_msc_delta_max)
-                timing->plain_oml_post_swap_msc_delta_max = msc_delta;
+            if (!after_only_variant) {
+                timing->plain_oml_post_swap_sbc_delta_total += sbc_delta;
+                if (timing->plain_oml_samples == 1 ||
+                    sbc_delta > timing->plain_oml_post_swap_sbc_delta_max)
+                    timing->plain_oml_post_swap_sbc_delta_max = sbc_delta;
+                timing->plain_oml_post_swap_msc_delta_total += msc_delta;
+                if (timing->plain_oml_samples == 1 ||
+                    msc_delta > timing->plain_oml_post_swap_msc_delta_max)
+                    timing->plain_oml_post_swap_msc_delta_max = msc_delta;
+            }
+            if (timing->plain_oml_samples > 1) {
+                timing->plain_oml_after_sbc_delta_total += after_sbc_delta;
+                if (timing->plain_oml_samples == 2 ||
+                    after_sbc_delta >
+                        timing->plain_oml_after_sbc_delta_max)
+                    timing->plain_oml_after_sbc_delta_max = after_sbc_delta;
+                timing->plain_oml_after_msc_delta_total += after_msc_delta;
+                if (timing->plain_oml_samples == 2 ||
+                    after_msc_delta >
+                        timing->plain_oml_after_msc_delta_max)
+                    timing->plain_oml_after_msc_delta_max = after_msc_delta;
+            }
             timing->oml_last_ust = after_ust;
             timing->oml_last_msc = after_msc;
             timing->oml_last_sbc = after_sbc;
@@ -2652,7 +2710,7 @@ log_glx_fps_timing(const char *status, const char *result_status,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
+                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_oml_after_sbc_delta_total=%" PRId64 " plain_oml_after_sbc_delta_max=%" PRId64 " plain_oml_after_msc_delta_total=%" PRId64 " plain_oml_after_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->draw_total_ns),
@@ -2711,10 +2769,14 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 timing->plain_oml_post_swap_sbc_delta_max,
                 timing->plain_oml_post_swap_msc_delta_total,
                 timing->plain_oml_post_swap_msc_delta_max,
+                timing->plain_oml_after_sbc_delta_total,
+                timing->plain_oml_after_sbc_delta_max,
+                timing->plain_oml_after_msc_delta_total,
+                timing->plain_oml_after_msc_delta_max,
                 ns_to_ms(timing->plain_post_swap_xsync_total_ns),
                 ns_to_ms(timing->plain_post_swap_xsync_max_ns));
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
+                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_oml_after_sbc_delta_total=%" PRId64 " plain_oml_after_sbc_delta_max=%" PRId64 " plain_oml_after_msc_delta_total=%" PRId64 " plain_oml_after_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->gl_issue_total_ns),
@@ -2775,6 +2837,10 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 timing->plain_oml_post_swap_sbc_delta_max,
                 timing->plain_oml_post_swap_msc_delta_total,
                 timing->plain_oml_post_swap_msc_delta_max,
+                timing->plain_oml_after_sbc_delta_total,
+                timing->plain_oml_after_sbc_delta_max,
+                timing->plain_oml_after_msc_delta_total,
+                timing->plain_oml_after_msc_delta_max,
                 ns_to_ms(timing->plain_post_swap_xsync_total_ns),
                 ns_to_ms(timing->plain_post_swap_xsync_max_ns));
     } else {
@@ -2831,7 +2897,7 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d swap_only_skipped_draw_frames=%d variant=%s invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
+                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d swap_only_skipped_draw_frames=%d variant=%s invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f oml_get_sync_before_total_ms=%.3f oml_get_sync_after_total_ms=%.3f oml_issue_state_sample_interval=%d oml_issue_state_sampled_ratio=%d/%" PRId64 " oml_issue_state_first_sample_frame=%d oml_issue_state_last_sample_frame=%d oml_issue_state_first_sample_sbc=%" PRId64 " oml_issue_state_last_sample_sbc=%" PRId64 " oml_issue_state_samples=%d oml_post_issue_sbc_completed_count=%d oml_post_issue_sbc_lag_max=%" PRId64 " oml_post_issue_msc_delta_total=%" PRId64 " oml_post_issue_msc_delta_max=%" PRId64 " swap_interval_requested=%d swap_interval_set_api=%s swap_interval_set_status=%s swap_interval_before=%d swap_interval_after=%d plain_swap_issue_total_ms=%.3f plain_swap_avg_ms=%.3f plain_swap_max_ms=%.3f plain_oml_available=%d plain_oml_samples=%d plain_oml_sample_interval=%d plain_oml_sampled_ratio=%d/%d plain_oml_first_sample_frame=%d plain_oml_last_sample_frame=%d plain_oml_get_sync_before_total_ms=%.3f plain_oml_get_sync_after_total_ms=%.3f plain_oml_before_first_sbc=%" PRId64 " plain_oml_before_last_sbc=%" PRId64 " plain_oml_after_first_sbc=%" PRId64 " plain_oml_after_last_sbc=%" PRId64 " plain_oml_post_swap_sbc_delta_total=%" PRId64 " plain_oml_post_swap_sbc_delta_max=%" PRId64 " plain_oml_post_swap_msc_delta_total=%" PRId64 " plain_oml_post_swap_msc_delta_max=%" PRId64 " plain_oml_after_sbc_delta_total=%" PRId64 " plain_oml_after_sbc_delta_max=%" PRId64 " plain_oml_after_msc_delta_total=%" PRId64 " plain_oml_after_msc_delta_max=%" PRId64 " plain_post_swap_xsync_total_ms=%.3f plain_post_swap_xsync_max_ms=%.3f\n",
                 status, safe_str(reason), renderer_buf, vendor_buf,
                 version_buf, app->glx_direct_available, app->glx_direct,
                 frames, elapsed_seconds, fps,
@@ -2898,6 +2964,10 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
                 timing ? timing->plain_oml_post_swap_sbc_delta_max : 0,
                 timing ? timing->plain_oml_post_swap_msc_delta_total : 0,
                 timing ? timing->plain_oml_post_swap_msc_delta_max : 0,
+                timing ? timing->plain_oml_after_sbc_delta_total : 0,
+                timing ? timing->plain_oml_after_sbc_delta_max : 0,
+                timing ? timing->plain_oml_after_msc_delta_total : 0,
+                timing ? timing->plain_oml_after_msc_delta_max : 0,
                 timing ? ns_to_ms(
                     timing->plain_post_swap_xsync_total_ns) : 0.0,
                 timing ? ns_to_ms(
@@ -2937,7 +3007,9 @@ run_glx_fps(struct app *app)
     if (variant.kind == GLX_FPS_VARIANT_SWAP_INTERVAL0_SWAP_ONLY ||
         variant.kind == GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SWAP_ONLY ||
         variant.kind ==
-            GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY)
+            GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY ||
+        variant.kind ==
+            GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY)
         timing.swap_interval_requested = 0;
     if (variant.invalid) {
         log_glx_fps_result(app, "FAIL", "invalid_variant", NULL, NULL, NULL,
@@ -2987,7 +3059,9 @@ run_glx_fps(struct app *app)
     if ((variant.kind == GLX_FPS_VARIANT_SWAP_INTERVAL0_SWAP_ONLY ||
          variant.kind == GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SWAP_ONLY ||
          variant.kind ==
-             GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY) &&
+             GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY ||
+         variant.kind ==
+             GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY) &&
         glx_fps_setup_swap_interval0(app, &timing) != 0) {
         loop_failed = 1;
         loop_failure_reason = "swap_interval_setup";
@@ -3001,7 +3075,9 @@ run_glx_fps(struct app *app)
         if (variant.kind ==
                 GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SWAP_ONLY ||
             variant.kind ==
-                GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY) {
+                GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_SWAP_ONLY ||
+            variant.kind ==
+                GLX_FPS_VARIANT_SWAP_INTERVAL0_OML_STATE_SAMPLED_AFTER_SWAP_ONLY) {
             if (run_glx_fps_plain_oml_loop(app, &variant, &timing,
                                            start_ns, &now_ns,
                                            &loop_failure_reason) != 0)

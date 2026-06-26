@@ -646,6 +646,38 @@ sampled `glXGetSyncValuesOML` overhead. Next evidence should compare sparse
 interval choices or GLX/Xwayland/Mesa swap-path attribution, not a speculative
 kernel patch.
 
+Sparse swap-interval-0 plain GLX swap-only post-swap-only OML-state reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-oml-state-sampled-after-swap-only kde_x11_egl_glx_fps_oml_issue_state_sample_interval=16 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-113134-x11-glx-fps-swap-interval0-oml-state-sampled-after16-pass/
+Verification: static diff checks across root/kernel/user/ports, host-gui-runtime, rootfs-refresh, focused no-Weston reducer PASS on first run with no retry; the history copy had its copied kde-plasma.fs.img removed only from the copy
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_swap_interval status=PASS requested=0 set_api=EXT before=1 after=0
+phase=glx_fps_result status=PASS frames=241 elapsed_seconds=5.011420 fps=48.090 variant=swap-interval0-oml-state-sampled-after-swap-only
+swap_only_skipped_draw_frames=240
+plain_oml_available=1 plain_oml_samples=16 plain_oml_sample_interval=16 plain_oml_sampled_ratio=16/241 plain_oml_first_sample_frame=1 plain_oml_last_sample_frame=241
+plain_swap_issue_total_ms=4393.292 plain_swap_avg_ms=18.229 plain_swap_max_ms=76.994
+plain_oml_get_sync_before_total_ms=0.000 plain_oml_get_sync_after_total_ms=566.516
+plain_oml_before_first_sbc=0 plain_oml_before_last_sbc=0 plain_oml_after_first_sbc=0 plain_oml_after_last_sbc=239
+plain_oml_post_swap_sbc_delta_total=0 max=0 plain_oml_post_swap_msc_delta_total=0 max=0
+plain_oml_after_sbc_delta_total=239 max=19 plain_oml_after_msc_delta_total=72 max=6
+plain_post_swap_xsync_total_ms=0.000 max=0.000
+QEMU trace: ctx_submit=653 set_scanout=79 res_flush=79 fence_ctrl/fence_resp=653/653 res_create_3d=43 res_xfer_toh_3d=2
+```
+
+This is xv6-owned harness/probe evidence, not a KDE/Mesa/Xwayland source patch.
+It removes the pre-swap OML observer from the sparse interval16 sampler and
+keeps post-swap XSync at zero. FPS rose to 48.090, above the earlier sparse
+before+after sampler at 41.781 and slightly above the non-sampling interval0
+plain swap-only run at 45.971, but still below the Linux GLX baseline of
+55.638 and raw Present depth8 at 54.980. That attributes much of the earlier
+sparse sampler penalty to pre-swap `glXGetSyncValuesOML`; the residual gap
+remains ordinary GLX/Mesa/Xwayland swap path behavior above raw Present, not a
+reason for speculative kernel/DRI3/fd-passing patches. The log does not emit
+max values for OML get-sync before/after, nor first/last MSC fields for plain
+after-swap samples.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
