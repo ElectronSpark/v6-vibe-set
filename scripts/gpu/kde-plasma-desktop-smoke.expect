@@ -900,8 +900,8 @@ proc x11_egl_glx_probe_failure_suffix {saw_start saw_connect saw_egl_init saw_gl
     return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings draw=$saw_draw result=$saw_result exit_status=$exit_status"
 }
 
-proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max exit_status} {
-    return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value variant=$variant requested_depth=$requested_depth result_variant=$result_variant oml_available=$oml_available queue_depth=$queue_depth sbc_issued=$sbc_issued sbc_completed=$sbc_completed max_pending=$max_pending oml_gl_flush_total_ms=$gl_flush_total oml_swap_msc_issue_total_ms=$swap_msc_issue_total oml_get_sync_before_total_ms=$get_sync_before_total oml_get_sync_after_total_ms=$get_sync_after_total oml_issue_state_samples=$issue_state_samples oml_post_issue_sbc_completed_count=$post_issue_sbc_completed_count oml_post_issue_sbc_lag_max=$post_issue_sbc_lag_max oml_post_issue_msc_delta_total=$post_issue_msc_delta_total oml_post_issue_msc_delta_max=$post_issue_msc_delta_max exit_status=$exit_status"
+proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth requested_sample_interval result_variant oml_available queue_depth sbc_issued sbc_completed max_pending oml_last_sbc gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_sample_interval issue_state_sampled_ratio issue_state_first_sample_frame issue_state_last_sample_frame issue_state_first_sample_sbc issue_state_last_sample_sbc issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max exit_status} {
+    return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value variant=$variant requested_depth=$requested_depth requested_sample_interval=$requested_sample_interval result_variant=$result_variant oml_available=$oml_available queue_depth=$queue_depth sbc_issued=$sbc_issued sbc_completed=$sbc_completed max_pending=$max_pending oml_last_sbc=$oml_last_sbc oml_gl_flush_total_ms=$gl_flush_total oml_swap_msc_issue_total_ms=$swap_msc_issue_total oml_get_sync_before_total_ms=$get_sync_before_total oml_get_sync_after_total_ms=$get_sync_after_total oml_issue_state_sample_interval=$issue_state_sample_interval oml_issue_state_sampled_ratio=$issue_state_sampled_ratio oml_issue_state_first_sample_frame=$issue_state_first_sample_frame oml_issue_state_last_sample_frame=$issue_state_last_sample_frame oml_issue_state_first_sample_sbc=$issue_state_first_sample_sbc oml_issue_state_last_sample_sbc=$issue_state_last_sample_sbc oml_issue_state_samples=$issue_state_samples oml_post_issue_sbc_completed_count=$post_issue_sbc_completed_count oml_post_issue_sbc_lag_max=$post_issue_sbc_lag_max oml_post_issue_msc_delta_total=$post_issue_msc_delta_total oml_post_issue_msc_delta_max=$post_issue_msc_delta_max exit_status=$exit_status"
 }
 
 proc x11_glx_fps_oml_queue_failure_label {variant expected_variant expected_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending label_prefix {gl_flush_total ""} {swap_msc_issue_total ""} {require_split_timing 0}} {
@@ -972,13 +972,20 @@ proc x11_glx_fps_oml_flush_swap_failure_label {variant requested_depth result_va
     return [x11_glx_fps_oml_queue_failure_label $variant "oml-queue-depth-flush-swap-timing" $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending "x11-glx-fps-oml-flush-swap" $gl_flush_total $swap_msc_issue_total 1]
 }
 
-proc x11_glx_fps_oml_issue_state_failure_label {variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max} {
+proc x11_glx_fps_oml_issue_state_failure_label {variant requested_depth requested_sample_interval result_variant oml_available queue_depth sbc_issued sbc_completed max_pending oml_last_sbc gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_sample_interval issue_state_sampled_ratio issue_state_first_sample_frame issue_state_last_sample_frame issue_state_first_sample_sbc issue_state_last_sample_sbc issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max} {
     set label [x11_glx_fps_oml_queue_failure_label $variant "oml-queue-depth-issue-state-timing" $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending "x11-glx-fps-oml-issue-state" $gl_flush_total $swap_msc_issue_total 1]
     if {$label ne ""} {
         return $label
     }
     if {$variant ne "oml-queue-depth-issue-state-timing"} {
         return ""
+    }
+    if {$requested_sample_interval eq ""} {
+        set requested_sample_interval 1
+    }
+    if {![string is integer -strict $requested_sample_interval] ||
+        $requested_sample_interval < 1 || $requested_sample_interval > 64} {
+        return "x11-glx-fps-oml-issue-state-requested-sample-interval-invalid"
     }
     if {$get_sync_before_total eq ""} {
         return "x11-glx-fps-oml-issue-state-get-sync-before-total-missing"
@@ -998,8 +1005,76 @@ proc x11_glx_fps_oml_issue_state_failure_label {variant requested_depth result_v
     if {![string is integer -strict $issue_state_samples]} {
         return "x11-glx-fps-oml-issue-state-samples-invalid"
     }
-    if {$issue_state_samples != $sbc_issued} {
-        return "x11-glx-fps-oml-issue-state-samples-mismatch"
+    if {$requested_sample_interval == 1} {
+        if {$issue_state_samples != $sbc_issued} {
+            return "x11-glx-fps-oml-issue-state-samples-mismatch"
+        }
+    } else {
+        set expected_samples [expr {($sbc_issued + $requested_sample_interval - 1) / $requested_sample_interval}]
+        if {$issue_state_samples != $expected_samples} {
+            return "x11-glx-fps-oml-issue-state-samples-mismatch"
+        }
+        if {$issue_state_sample_interval eq ""} {
+            return "x11-glx-fps-oml-issue-state-sample-interval-missing"
+        }
+        if {![string is integer -strict $issue_state_sample_interval] ||
+            $issue_state_sample_interval != $requested_sample_interval} {
+            return "x11-glx-fps-oml-issue-state-sample-interval-mismatch"
+        }
+        if {$issue_state_sampled_ratio eq ""} {
+            return "x11-glx-fps-oml-issue-state-sampled-ratio-missing"
+        }
+        if {![regexp {^([0-9]+)/([0-9]+)$} $issue_state_sampled_ratio -> ratio_samples ratio_issued]} {
+            return "x11-glx-fps-oml-issue-state-sampled-ratio-invalid"
+        }
+        if {$ratio_samples != $issue_state_samples ||
+            $ratio_issued != $sbc_issued} {
+            return "x11-glx-fps-oml-issue-state-sampled-ratio-mismatch"
+        }
+        if {$issue_state_first_sample_frame eq "" ||
+            $issue_state_last_sample_frame eq "" ||
+            $issue_state_first_sample_sbc eq "" ||
+            $issue_state_last_sample_sbc eq ""} {
+            return "x11-glx-fps-oml-issue-state-sample-bounds-missing"
+        }
+        if {![string is integer -strict $issue_state_first_sample_frame] ||
+            ![string is integer -strict $issue_state_last_sample_frame] ||
+            ![string is integer -strict $issue_state_first_sample_sbc] ||
+            ![string is integer -strict $issue_state_last_sample_sbc]} {
+            return "x11-glx-fps-oml-issue-state-sample-bounds-invalid"
+        }
+        if {$issue_state_first_sample_frame <= 0 ||
+            $issue_state_last_sample_frame <= 0 ||
+            $issue_state_first_sample_sbc <= 0 ||
+            $issue_state_last_sample_sbc <= 0} {
+            return "x11-glx-fps-oml-issue-state-sample-bounds-zero"
+        }
+        if {$issue_state_first_sample_frame > $issue_state_last_sample_frame ||
+            $issue_state_first_sample_sbc > $issue_state_last_sample_sbc} {
+            return "x11-glx-fps-oml-issue-state-sample-bounds-order"
+        }
+        set expected_last_sample_frame [expr {1 + ($issue_state_samples - 1) * $requested_sample_interval}]
+        if {$issue_state_first_sample_frame != 1} {
+            return "x11-glx-fps-oml-issue-state-first-sample-frame-mismatch"
+        }
+        if {$issue_state_last_sample_frame != $expected_last_sample_frame} {
+            return "x11-glx-fps-oml-issue-state-last-sample-frame-mismatch"
+        }
+        if {$issue_state_first_sample_sbc != 1} {
+            return "x11-glx-fps-oml-issue-state-first-sample-sbc-mismatch"
+        }
+        if {$issue_state_last_sample_sbc != $expected_last_sample_frame} {
+            return "x11-glx-fps-oml-issue-state-last-sample-sbc-mismatch"
+        }
+        if {$oml_last_sbc eq ""} {
+            return "x11-glx-fps-oml-issue-state-last-sbc-missing"
+        }
+        if {![string is integer -strict $oml_last_sbc]} {
+            return "x11-glx-fps-oml-issue-state-last-sbc-invalid"
+        }
+        if {$issue_state_last_sample_sbc > $oml_last_sbc} {
+            return "x11-glx-fps-oml-issue-state-last-sample-sbc-after-last-sbc"
+        }
     }
     if {$post_issue_sbc_completed_count eq ""} {
         return "x11-glx-fps-oml-issue-state-sbc-completed-count-missing"
@@ -1183,7 +1258,7 @@ proc x11_egl_scan_glx_probe_log {text start_var connect_var egl_init_var glx_ext
     }
 }
 
-proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var glx_version_var fbconfigs_var visual_var context_var current_var strings_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var variant_var requested_depth_var result_variant_var oml_available_var queue_depth_var sbc_issued_var sbc_completed_var max_pending_var gl_flush_total_var swap_msc_issue_total_var get_sync_before_total_var get_sync_after_total_var issue_state_samples_var post_issue_sbc_completed_count_var post_issue_sbc_lag_max_var post_issue_msc_delta_total_var post_issue_msc_delta_max_var failure_var} {
+proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var glx_version_var fbconfigs_var visual_var context_var current_var strings_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var variant_var requested_depth_var requested_sample_interval_var result_variant_var oml_available_var queue_depth_var sbc_issued_var sbc_completed_var max_pending_var oml_last_sbc_var gl_flush_total_var swap_msc_issue_total_var get_sync_before_total_var get_sync_after_total_var issue_state_sample_interval_var issue_state_sampled_ratio_var issue_state_first_sample_frame_var issue_state_last_sample_frame_var issue_state_first_sample_sbc_var issue_state_last_sample_sbc_var issue_state_samples_var post_issue_sbc_completed_count_var post_issue_sbc_lag_max_var post_issue_msc_delta_total_var post_issue_msc_delta_max_var failure_var} {
     upvar 1 $start_var saw_start
     upvar 1 $connect_var saw_connect
     upvar 1 $egl_init_var saw_egl_init
@@ -1202,16 +1277,24 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
     upvar 1 $fps_value_var fps_value
     upvar 1 $variant_var variant
     upvar 1 $requested_depth_var requested_depth
+    upvar 1 $requested_sample_interval_var requested_sample_interval
     upvar 1 $result_variant_var result_variant
     upvar 1 $oml_available_var oml_available
     upvar 1 $queue_depth_var queue_depth
     upvar 1 $sbc_issued_var sbc_issued
     upvar 1 $sbc_completed_var sbc_completed
     upvar 1 $max_pending_var max_pending
+    upvar 1 $oml_last_sbc_var oml_last_sbc
     upvar 1 $gl_flush_total_var gl_flush_total
     upvar 1 $swap_msc_issue_total_var swap_msc_issue_total
     upvar 1 $get_sync_before_total_var get_sync_before_total
     upvar 1 $get_sync_after_total_var get_sync_after_total
+    upvar 1 $issue_state_sample_interval_var issue_state_sample_interval
+    upvar 1 $issue_state_sampled_ratio_var issue_state_sampled_ratio
+    upvar 1 $issue_state_first_sample_frame_var issue_state_first_sample_frame
+    upvar 1 $issue_state_last_sample_frame_var issue_state_last_sample_frame
+    upvar 1 $issue_state_first_sample_sbc_var issue_state_first_sample_sbc
+    upvar 1 $issue_state_last_sample_sbc_var issue_state_last_sample_sbc
     upvar 1 $issue_state_samples_var issue_state_samples
     upvar 1 $post_issue_sbc_completed_count_var post_issue_sbc_completed_count
     upvar 1 $post_issue_sbc_lag_max_var post_issue_sbc_lag_max
@@ -1231,6 +1314,9 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
         }
         if {[regexp {^probe_glx_fps_oml_queue_depth=([0-9]+)} $line -> found_requested_depth]} {
             set requested_depth $found_requested_depth
+        }
+        if {[regexp {^probe_glx_fps_oml_issue_state_sample_interval=([0-9]+)} $line -> found_requested_sample_interval]} {
+            set requested_sample_interval $found_requested_sample_interval
         }
         if {!$in_glx_fps} {
             if {$failure_label eq ""} {
@@ -1295,6 +1381,9 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
             if {[regexp {oml_max_pending_sbc=([0-9]+)} $line -> found_max_pending]} {
                 set max_pending $found_max_pending
             }
+            if {[regexp {oml_last_sbc=(-?[0-9]+)} $line -> found_oml_last_sbc]} {
+                set oml_last_sbc $found_oml_last_sbc
+            }
             if {[regexp {oml_gl_flush_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_gl_flush_total _]} {
                 set gl_flush_total $found_gl_flush_total
             }
@@ -1306,6 +1395,24 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
             }
             if {[regexp {oml_get_sync_after_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_get_sync_after_total _]} {
                 set get_sync_after_total $found_get_sync_after_total
+            }
+            if {[regexp {oml_issue_state_sample_interval=([0-9]+)} $line -> found_issue_state_sample_interval]} {
+                set issue_state_sample_interval $found_issue_state_sample_interval
+            }
+            if {[regexp {oml_issue_state_sampled_ratio=([0-9]+/[0-9]+)} $line -> found_issue_state_sampled_ratio]} {
+                set issue_state_sampled_ratio $found_issue_state_sampled_ratio
+            }
+            if {[regexp {oml_issue_state_first_sample_frame=([0-9]+)} $line -> found_issue_state_first_sample_frame]} {
+                set issue_state_first_sample_frame $found_issue_state_first_sample_frame
+            }
+            if {[regexp {oml_issue_state_last_sample_frame=([0-9]+)} $line -> found_issue_state_last_sample_frame]} {
+                set issue_state_last_sample_frame $found_issue_state_last_sample_frame
+            }
+            if {[regexp {oml_issue_state_first_sample_sbc=(-?[0-9]+)} $line -> found_issue_state_first_sample_sbc]} {
+                set issue_state_first_sample_sbc $found_issue_state_first_sample_sbc
+            }
+            if {[regexp {oml_issue_state_last_sample_sbc=(-?[0-9]+)} $line -> found_issue_state_last_sample_sbc]} {
+                set issue_state_last_sample_sbc $found_issue_state_last_sample_sbc
             }
             if {[regexp {oml_issue_state_samples=([0-9]+)} $line -> found_issue_state_samples]} {
                 set issue_state_samples $found_issue_state_samples
@@ -1709,24 +1816,32 @@ proc run_kde_x11_glx_fps_session_probe {} {
     set fps_value ""
     set variant ""
     set requested_depth ""
+    set requested_sample_interval ""
     set result_variant ""
     set oml_available ""
     set queue_depth ""
     set sbc_issued ""
     set sbc_completed ""
     set max_pending ""
+    set oml_last_sbc ""
     set gl_flush_total ""
     set swap_msc_issue_total ""
     set get_sync_before_total ""
     set get_sync_after_total ""
+    set issue_state_sample_interval ""
+    set issue_state_sampled_ratio ""
+    set issue_state_first_sample_frame ""
+    set issue_state_last_sample_frame ""
+    set issue_state_first_sample_sbc ""
+    set issue_state_last_sample_sbc ""
     set issue_state_samples ""
     set post_issue_sbc_completed_count ""
     set post_issue_sbc_lag_max ""
     set post_issue_msc_delta_total ""
     set post_issue_msc_delta_max ""
     set failure_label ""
-    x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max failure_label
-    set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max $exit_status]
+    x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth requested_sample_interval result_variant oml_available queue_depth sbc_issued sbc_completed max_pending oml_last_sbc gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_sample_interval issue_state_sampled_ratio issue_state_first_sample_frame issue_state_last_sample_frame issue_state_first_sample_sbc issue_state_last_sample_sbc issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max failure_label
+    set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $requested_sample_interval $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $oml_last_sbc $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_sample_interval $issue_state_sampled_ratio $issue_state_first_sample_frame $issue_state_last_sample_frame $issue_state_first_sample_sbc $issue_state_last_sample_sbc $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max $exit_status]
     host_screenshot "x11-egl" $host_x11_egl_png
 
     if {$failure_label ne ""} {
@@ -1759,7 +1874,7 @@ proc run_kde_x11_glx_fps_session_probe {} {
     if {$oml_failure_label ne ""} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $oml_failure_label $suffix"
     }
-    set oml_failure_label [x11_glx_fps_oml_issue_state_failure_label $variant $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max]
+    set oml_failure_label [x11_glx_fps_oml_issue_state_failure_label $variant $requested_depth $requested_sample_interval $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $oml_last_sbc $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_sample_interval $issue_state_sampled_ratio $issue_state_first_sample_frame $issue_state_last_sample_frame $issue_state_first_sample_sbc $issue_state_last_sample_sbc $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max]
     if {$oml_failure_label ne ""} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $oml_failure_label $suffix"
     }

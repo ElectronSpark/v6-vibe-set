@@ -521,6 +521,48 @@ intrusive, such as sparse state sampling or sampling only after every Nth
 issue, before drawing kernel conclusions. Still no speculative kernel patch:
 fences remain 1:1 and raw Present depth8 remains the performance control.
 
+Sparse GLX OML issue-state timing reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=oml-queue-depth-issue-state-timing kde_x11_egl_glx_fps_oml_queue_depth=8 kde_x11_egl_glx_fps_oml_issue_state_sample_interval=16 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-130930-x11-glx-fps-oml-issue-state-sparse16-depth8-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=216 elapsed_seconds=5.076195 fps=42.552
+variant=oml-queue-depth-issue-state-timing
+oml_available=1 oml_queue_depth=8 oml_sbc_issued=216 oml_sbc_completed=216 oml_max_pending_sbc=8
+oml_issue_total_ms=4091.230 oml_wait_total_ms=17.118 oml_drain_wait_total_ms=60.962 oml_gl_flush_before_swap=1
+oml_gl_flush_total_ms=6.257 oml_swap_msc_issue_total_ms=4091.230
+oml_get_sync_before_total_ms=602.750 oml_get_sync_after_total_ms=263.182
+oml_issue_state_sample_interval=16 oml_issue_state_sampled_ratio=14/216
+oml_issue_state_first_sample_frame=1 oml_issue_state_last_sample_frame=209
+oml_issue_state_first_sample_sbc=1 oml_issue_state_last_sample_sbc=209
+oml_issue_state_samples=14
+oml_post_issue_sbc_completed_count=1 oml_post_issue_sbc_lag_max=4
+oml_post_issue_msc_delta_total=5 oml_post_issue_msc_delta_max=1
+QEMU trace: ctx_submit=630 set_scanout=90 res_flush=90 fence_ctrl/fence_resp=630/630 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+The harness/probe now supports
+`kde_x11_egl_glx_fps_oml_issue_state_sample_interval=N` /
+`HOST_X11_EGL_GLX_FPS_OML_ISSUE_STATE_SAMPLE_INTERVAL` for
+`oml-queue-depth-issue-state-timing`. The dense/default interval is 1, the
+validated range is 1..64, and the sparse Expect gate validates the exact sample
+count plus first/last sample cadence. This run used interval 16 and produced
+14 samples, matching `ceil(216/16)=14`, from frame/SBC 1 through 209.
+
+Interpretation: sparse issue-state sampling is materially less intrusive than
+the dense timing probe and roughly in line with the previous flush/swap
+issue-time profile, while still below the Linux GLX baseline of 55.638 FPS. It
+reinforces that `glXSwapBuffersMscOML`/swap pacing remains the main residual
+gap: sampled post-issue state mostly lagged, with only 1 sampled post-issue SBC
+already complete. The next reducer/fix should continue from
+GLX/Mesa/Xwayland swap/MSC pacing evidence, not fd passing/DRI3 or pre-swap
+`glFlush`. Audit caveats: the status file records the reducer, `run.log` does
+not literally include the env assignment, `cmdline` has
+`kde_smoke_require_chromium=1` followed by the later `=0` override, no Weston
+matches were present, PNGs are nonzero, and some sidecar logs are zero-byte.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
@@ -633,12 +675,13 @@ variant recorded only 7.406 ms in pre-swap `glFlush` but 4762.982 ms in
 the sampling path with 134 samples for 134 issued SBCs, 33 post-issue samples
 already complete, max post-issue lag 5 SBC, and MSC delta 80 total / 2 max, but
 its two extra `glXGetSyncValuesOML` calls per issue were intrusive enough to
-drop the run to 26.444 FPS. Next evidence should use sparse state sampling or
-sample only every Nth issue, then compare the GLX/Xwayland/Mesa swap request
-path or add a GLX non-OML/present-backed split rather than starting from a
-speculative kernel patch. The current virtgpu fence trace still shows submitted
-and responded fences matching 1:1, so raw virtgpu fence starvation remains
-unproven. The
+drop the run to 26.444 FPS. Sparse issue-state sampling at interval 16 then
+recorded 216 frames at 42.552 FPS with 14/216 samples, only 1 sampled
+post-issue SBC already complete, max lag 4 SBC, and MSC delta 5 total / 1 max.
+That keeps the evidence on GLX/Mesa/Xwayland swap/MSC pacing rather than fd
+passing/DRI3, pre-swap `glFlush`, or a speculative kernel patch. The current
+virtgpu fence trace still shows submitted and responded fences matching 1:1, so
+raw virtgpu fence starvation remains unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 
