@@ -262,9 +262,52 @@ chrome-drm-detail: syncobj-eventfd owner=3:68 ret=-22 handle=0 flags=0x0 point=0
 Interpretation: the first Xwayland `DRM_IOCTL_SYNCOBJ_EVENTFD` call in this
 run is an invalid/feature-probe-shaped request, not a real eventfd arm:
 `handle=0` and `fd=-1`. The diagnostic patch intentionally preserves current
-errno behavior. The next semantic step should be a small local reducer for
-Linux-vs-xv6 validation ordering and errno on invalid `SYNCOBJ_EVENTFD`
-argument combinations before changing kernel behavior.
+errno behavior.
+
+Current focused reducer artifact:
+
+```text
+build-x86_64/drmabitest-syncobj-eventfd-validation-virgl-20260626-030504/
+```
+
+Command run inside a no-Weston virgl boot:
+
+```sh
+/bin/drmabitest --syncobj-eventfd-validation
+```
+
+Result summary:
+
+```text
+expect_status=0
+rows=12
+pass=6
+fail=6
+skip=0
+```
+
+Key rows:
+
+```text
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd_minus1: handle=0 fd=-1 ret=-22 errno=22 linux_errno=2 status=FAIL
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd0: handle=0 fd=0 ret=-22 errno=22 linux_errno=2 status=FAIL
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_eventfd: handle=0 fd=5 ret=-2 errno=2 linux_errno=2 status=PASS
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_fd_minus1: handle=1 fd=-1 ret=-22 errno=22 linux_errno=9 status=FAIL
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_non_eventfd: handle=1 fd=6 ret=-22 errno=22 linux_errno=22 status=PASS
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_eventfd: handle=1 fd=5 ret=0 errno=0 linux_errno=0 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd_minus1: handle=0 fd=-1 ret=-22 errno=22 linux_errno=2 status=FAIL
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd0: handle=0 fd=0 ret=-22 errno=22 linux_errno=2 status=FAIL
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_eventfd: handle=0 fd=5 ret=-2 errno=2 linux_errno=2 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_fd_minus1: handle=2 fd=-1 ret=-22 errno=22 linux_errno=9 status=FAIL
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_non_eventfd: handle=2 fd=6 ret=-22 errno=22 linux_errno=22 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_eventfd: handle=2 fd=5 ret=0 errno=0 linux_errno=0 status=PASS
+```
+
+Interpretation: xv6 currently validates some eventfd arguments before matching
+Linux's syncobj-handle ordering. The next semantic step is kernel-side
+`DRM_IOCTL_SYNCOBJ_EVENTFD` validation ordering: invalid syncobj handles should
+return `ENOENT` before fd validation, and a valid syncobj with `fd=-1` should
+return `EBADF` rather than the current `EINVAL`.
 
 Success criteria:
 
