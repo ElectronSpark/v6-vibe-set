@@ -921,6 +921,38 @@ aggregate kernel trace around `virtio_gpu_user_submit()`,
 `virtio_gpu_async_make_room()`, virtqueue notify/wait, and fence drain paths,
 rather than more per-call console logging or a behavior-changing patch.
 
+Low-noise virtgpu submit aggregate reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0 virtio_gpu_submit_trace=1' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-153520-x11-glx-fps-glx-swap-virtgpu-submit-trace-pass/
+Verification: git diff --check, kernel diff check, kernel build. Independent
+audit PASS by Jason the 4th; no blocking findings. The diagnostic kernel patch
+is gated by `virtio_gpu_submit_trace=1`, emitting compact
+`virtio-gpu-submit-trace:` aggregate teardown summaries.
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_result status=PASS frames=240 elapsed_seconds=5.024100 fps=47.770 variant=swap-interval0-swap-only renderer="virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))" swap_interval_after=0 plain_swap_issue_total_ms=4963.477 plain_swap_avg_ms=20.681 plain_swap_max_ms=69.613
+glx_swap_trace_result status=PASS glx_swap_buffers_calls=240 glx_swap_total_ms=4955.289 glx_swap_syscall_ioctl_total_ms=4282.132 glx_swap_syscall_poll_ppoll_total_ms=351.111
+glx_swap_ioctl_trace_result status=PASS ioctl_bucket_count=3 ioctl_bucket_drops=0 top0_name=DRM_IOCTL_VIRTGPU_EXECBUFFER top0_role=drm-render top0_calls=240 top0_total_ms=4272.070 top0_max_ms=44.490 top0_ret_ok=232 top0_ret_fail=8 top1_name=DRM_IOCTL_VIRTGPU_RESOURCE_CREATE top1_total_ms=9.945 top2_name=DRM_IOCTL_PRIME_HANDLE_TO_FD top2_total_ms=0.117
+virtio-gpu-submit-trace: submit_calls=666 submit_us=6550226 lock_wait_us=2510799 attach_count=0 attach_us=0 async_prepare_us=36897 post_us=3988852 first_submit=5 failures=0 fence_calls=7 fence_us=18598 fence_drains=2 fence_drain_us=1 fence_failures=0 wait_used_calls=1016 wait_used_us=5050071 wait_used_max_us=231971 async_wait_progress_calls=617 async_wait_progress_us=4533879 make_room_calls=666 make_room_us=3660088 make_room_stalls=526 make_room_wait_us=3657717 make_room_max_wait_us=34369
+QEMU trace: ctx_submit=667 set_scanout=87 res_flush=87 fence_ctrl/fence_resp=667/667 res_create_3d=45 res_xfer_toh_3d=2
+```
+
+This low-noise trace confirms that the earlier per-call kernel `printf` run
+was perturbing FPS. The remaining swap cost is still host-visible execbuffer
+ioctl time: 4272.070 ms of 4282.132 ms traced ioctl time is
+`DRM_IOCTL_VIRTGPU_EXECBUFFER` on the render node. The kernel aggregate points
+at async queue/make-room/wait-progress/post/op-lock time as the next evidence
+surface, not at an immediate speculative behavior patch. Caveat: the kernel
+summary is cumulative global state, so KWin, Xwayland, and probe clients are
+mixed together; correlate it with the host-side GLX/ioctl bucket. The run also
+logged Plasma-side `Cannot allocate memory` and a plasmashell breakpoint trap
+after startup, but the `x11-glx-fps` session probe passed and artifacts were
+preserved, so treat those as residual desktop stability signals rather than an
+invalidation of the reducer evidence. Next step: narrow attribution per
+owner/context or add deltas around async make-room/post and failed execbuffer
+returns, without patching KDE, Qt, KWin, Xwayland, Mesa, or Chromium.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
@@ -1041,9 +1073,16 @@ EXT, observed the MESA getter move from 1 to 0, and reached 232 frames at
 45.971 FPS while ordinary `glXSwapBuffers` still consumed 4965.974 ms of the
 run. That keeps the evidence on GLX/Mesa/Xwayland swap-path pacing above raw
 Present rather than fd passing/DRI3, pre-swap draw work, OML-only throttling,
-or a speculative kernel patch. The current virtgpu fence trace still shows
-submitted and responded fences matching 1:1, so raw virtgpu fence starvation
-remains unproven. The
+or a speculative kernel patch. The GLX-swap ioctl bucket later isolated the
+dominant host-visible cost to `DRM_IOCTL_VIRTGPU_EXECBUFFER` on the render
+node, and the low-noise `virtio_gpu_submit_trace=1` run preserved 47.770 FPS
+while recording cumulative async make-room, wait-progress, post, and op-lock
+timing. Because those kernel counters are global and mix desktop clients with
+the probe, the next step is per-owner/context or delta attribution around
+virtgpu async queue/post and failed execbuffer returns, not a behavior-changing
+kernel patch. The current virtgpu fence trace still shows submitted and
+responded fences matching 1:1, so raw virtgpu fence starvation remains
+unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 
