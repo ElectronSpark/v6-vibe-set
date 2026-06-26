@@ -166,7 +166,7 @@ KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xw
 Artifact directory:
 
 ```text
-build-x86_64/kde-plasma-desktop-smoke-history/20260626-053055-x11-glx-fps-session-probe-pass/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-061223-x11-glx-fps-timing-pass/
 ```
 
 Result marker:
@@ -183,7 +183,8 @@ host-x11-egl-smoke: phase=glx-fps status=BEGIN mode=session display=:0
 host-x11-egl-smoke: phase=start status=BEGIN mode=glx-fps
 host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)) gl_version=4.2 (Compatibility Profile) Mesa 25.2.8-0ubuntu0.24.04.2
 host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps ... direct_available=1 direct=1
-host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=32 elapsed_seconds=5.260654 fps=6.083 ... direct=1
+host-x11-egl-smoke: phase=glx_fps_timing status=PASS result_status=PASS frames=31 event_total_ms=2.962 draw_total_ms=2979.471 swap_total_ms=2140.386 final_xsync_ms=237.682 max_swap_ms=94.047 max_draw_ms=411.108 max_event_ms=1.112 avg_swap_ms=69.045
+host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=31 elapsed_seconds=5.362771 fps=5.781 ... direct=1
 host-x11-egl-smoke: phase=session_probe status=PASS mode=session probe_mode=glx-fps exit_status=0
 chrome-drm-detail: virtgpu-context-create ... proc=Xwayland.real ... capset=2 ... ret=0
 chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=Xwayland.real ... capset=2 ... ret=0
@@ -196,8 +197,18 @@ blocker, not the GLX probe itself. The active FPS reducer now uses the
 xv6-owned KDE session process to launch `/bin/host-x11-egl-smoke --glx-fps`,
 which avoids KDE log noise corrupting typed shell commands. GLX starts, binds a
 direct virgl context, records renderer strings, submits 3D work, and completes
-the finite FPS loop. The measured FPS is still far below the Linux baseline, so
-this closes the GLX/FPS startup evidence gap but not performance parity.
+the finite FPS loop. The added phase timing shows the low FPS is not event
+drain (`2.962 ms` total); most time is split between pre-swap GL work
+(`2979.471 ms`) and `glXSwapBuffers` (`2140.386 ms`, `69.045 ms` average).
+The measured FPS is still far below the Linux baseline, so this closes the
+GLX/FPS startup evidence gap but not performance parity.
+
+A same-command retry before the timing pass hit a known pre-probe KWin startup
+crash signature and was preserved separately at:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-014657-x11-glx-fps-timing-kwin-crash/
+```
 
 Default KDE regression artifact after the session-probe change:
 
@@ -220,13 +231,21 @@ Remaining success criteria:
 
 ### 2. KDE Performance Parity
 
-Status: open after GLX FPS probe startup; FPS is recorded but low.
+Status: open after GLX FPS timing proof; FPS is recorded but low.
 
 The current xv6 KDE desktop is visually correct and responsive, and focused
 Xwayland GLX context/draw proof now works with automatic policy mapped to
 effective `-glamor es`. The deterministic KDE/X11 FPS reducer now records a
-direct GLX/virgl result of 32 frames over 5.260654 seconds, or 6.083 FPS. It
-does not yet match the Linux KDE baseline of 55.638 FPS.
+direct GLX/virgl result of 31 frames over 5.362771 seconds, or 5.781 FPS. Its
+timing reducer records negligible event-drain overhead and concentrates the
+remaining delay in pre-swap GL dispatch plus `glXSwapBuffers`. It does not yet
+match the Linux KDE baseline of 55.638 FPS.
+
+Next evidence target: reduce or instrument the Xwayland/DRI3 Present and
+syncobj notification path, especially the current
+`DRM_IOCTL_SYNCOBJ_EVENTFD` `-EINVAL` from Xwayland, before making any kernel
+behavior change. The current virtgpu fence trace still shows submitted and
+responded fences matching 1:1, so raw virtgpu fence starvation is not proven.
 
 Success criteria:
 

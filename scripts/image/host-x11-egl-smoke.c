@@ -46,6 +46,16 @@ struct gl_api {
     gl_get_error_proc_t get_error;
 };
 
+struct glx_fps_timing {
+    int64_t event_total_ns;
+    int64_t draw_total_ns;
+    int64_t swap_total_ns;
+    int64_t final_xsync_ns;
+    int64_t max_event_ns;
+    int64_t max_draw_ns;
+    int64_t max_swap_ns;
+};
+
 struct app {
     Display *dpy;
     int screen;
@@ -115,6 +125,28 @@ monotonic_ns(void)
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
         return 0;
     return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+static int64_t
+elapsed_ns(int64_t start_ns, int64_t end_ns)
+{
+    if (start_ns == 0 || end_ns <= start_ns)
+        return 0;
+    return end_ns - start_ns;
+}
+
+static void
+add_timing_sample(int64_t *total_ns, int64_t *max_ns, int64_t sample_ns)
+{
+    *total_ns += sample_ns;
+    if (sample_ns > *max_ns)
+        *max_ns = sample_ns;
+}
+
+static double
+ns_to_ms(int64_t ns)
+{
+    return (double)ns / 1000000.0;
 }
 
 static const GLubyte *
@@ -1383,9 +1415,14 @@ drain_x11_events_for_fps(struct app *app)
 }
 
 static int
-draw_glx_fps_frame(struct app *app, int frame)
+draw_glx_fps_frame(struct app *app, int frame,
+                   struct glx_fps_timing *timing)
 {
     const float t = (float)(frame % 120) / 119.0f;
+    int64_t draw_start_ns;
+    int64_t draw_end_ns;
+    int64_t swap_start_ns;
+    int64_t swap_end_ns;
     GLenum err;
 
     if (!app->gl.viewport || !app->gl.clear_color || !app->gl.clear ||
@@ -1397,11 +1434,15 @@ draw_glx_fps_frame(struct app *app, int frame)
         return -1;
     }
 
+    draw_start_ns = monotonic_ns();
     app->gl.viewport(0, 0, WIN_W, WIN_H);
     app->gl.clear_color(0.05f + 0.20f * t, 0.18f + 0.50f * (1.0f - t),
                         0.32f + 0.36f * t, 1.0f);
     app->gl.clear(GL_COLOR_BUFFER_BIT);
     err = app->gl.get_error();
+    draw_end_ns = monotonic_ns();
+    add_timing_sample(&timing->draw_total_ns, &timing->max_draw_ns,
+                      elapsed_ns(draw_start_ns, draw_end_ns));
     if (err != GL_NO_ERROR) {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL frame=%d gl_error=0x%x error_name=%s\n",
@@ -1409,9 +1450,33 @@ draw_glx_fps_frame(struct app *app, int frame)
         fflush(stderr);
         return -1;
     }
+
+    swap_start_ns = monotonic_ns();
     glXSwapBuffers(app->dpy, app->win);
+    swap_end_ns = monotonic_ns();
+    add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
+                      elapsed_ns(swap_start_ns, swap_end_ns));
     app->frame++;
     return 0;
+}
+
+static void
+log_glx_fps_timing(const char *status, const char *result_status,
+                   const struct glx_fps_timing *timing, int frames)
+{
+    double avg_swap_ms = 0.0;
+
+    if (frames > 0)
+        avg_swap_ms = ns_to_ms(timing->swap_total_ns) / (double)frames;
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f\n",
+            status, result_status, frames, ns_to_ms(timing->event_total_ns),
+            ns_to_ms(timing->draw_total_ns),
+            ns_to_ms(timing->swap_total_ns), ns_to_ms(timing->final_xsync_ns),
+            ns_to_ms(timing->max_swap_ns), ns_to_ms(timing->max_draw_ns),
+            ns_to_ms(timing->max_event_ns), avg_swap_ms);
+    fflush(stderr);
 }
 
 static void
@@ -1448,8 +1513,10 @@ run_glx_fps(struct app *app)
     const GLubyte *version = NULL;
     int64_t start_ns;
     int64_t now_ns;
+    struct glx_fps_timing timing;
     int rc = 1;
 
+    memset(&timing, 0, sizeof(timing));
     if (setup_x11(app) != 0) {
         log_glx_fps_result(app, "FAIL", "x11_setup", NULL, NULL, NULL, 0,
                            0.0);
@@ -1479,25 +1546,44 @@ run_glx_fps(struct app *app)
     now_ns = start_ns;
     while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&
            now_ns - start_ns < GLX_FPS_TARGET_NS) {
-        if (drain_x11_events_for_fps(app) != 0)
+        int event_rc;
+        int64_t event_start_ns;
+        int64_t event_end_ns;
+
+        event_start_ns = monotonic_ns();
+        event_rc = drain_x11_events_for_fps(app);
+        event_end_ns = monotonic_ns();
+        add_timing_sample(&timing.event_total_ns, &timing.max_event_ns,
+                          elapsed_ns(event_start_ns, event_end_ns));
+        if (event_rc != 0)
             break;
-        if (draw_glx_fps_frame(app, app->frame + 1) != 0)
+        if (draw_glx_fps_frame(app, app->frame + 1, &timing) != 0)
             break;
         now_ns = monotonic_ns();
         if (now_ns == 0)
             break;
     }
-    XSync(app->dpy, False);
-    now_ns = monotonic_ns();
+    {
+        int64_t xsync_start_ns;
+        int64_t xsync_end_ns;
+
+        xsync_start_ns = monotonic_ns();
+        XSync(app->dpy, False);
+        xsync_end_ns = monotonic_ns();
+        timing.final_xsync_ns = elapsed_ns(xsync_start_ns, xsync_end_ns);
+        now_ns = xsync_end_ns;
+    }
     if (now_ns <= start_ns)
         now_ns = start_ns + 1;
 
     if (app->frame > 0 && app->running && version) {
         rc = 0;
+        log_glx_fps_timing("PASS", "PASS", &timing, app->frame);
         log_glx_fps_result(app, "PASS", "complete", vendor, renderer,
                            version, app->frame,
                            (double)(now_ns - start_ns) / 1000000000.0);
     } else {
+        log_glx_fps_timing("INFO", "FAIL", &timing, app->frame);
         log_glx_fps_result(app, "FAIL",
                            app->running ? "no_frames_or_gl_version"
                                         : "window_closed",

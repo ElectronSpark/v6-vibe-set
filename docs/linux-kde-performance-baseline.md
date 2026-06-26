@@ -11,7 +11,7 @@ changes are in staging, launch guardrails, probes, and rootfs construction.
 - Linux control: `scripts/gpu/linux-kde-virgl-baseline.sh`
 - xv6 KDE smoke: `scripts/gpu/kde-plasma-desktop-smoke.expect`
 - Linux artifact: `build-x86_64/linux-kde-virgl-baseline/20260621-123954`
-- xv6 artifact: `build-x86_64/kde-plasma-desktop-smoke`
+- xv6 artifact: `build-x86_64/kde-plasma-desktop-smoke-history/20260626-061223-x11-glx-fps-timing-pass`
 
 The Linux control boots Alpine 3.23.4 with QEMU 9.0.2, KVM, `virtio-vga-gl`,
 `gtk,gl=on`, 8192 MiB RAM, and installs KDE/Plasma, KWin, Xwayland, Mesa, and
@@ -39,7 +39,7 @@ Dependency-ordered control inventory used for this baseline:
 | Xwayland visible | 0.43 s | 7.22 s guest uptime |
 | Renderer | `virgl (D3D12 (Intel(R) UHD Graphics))` | `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` |
 | GL exposed to KWin | GL 4.1 compat via Linux userspace | OpenGL ES 3.1 via xv6 Mesa path |
-| X11/GL smoke | `glxgears` 55.638 FPS | GLX context/draw pass with `kde_xwayland_glamor=auto` mapped to effective `-glamor es`; FPS reducer launch wait began, then timed out before `phase=start` |
+| X11/GL smoke | `glxgears` 55.638 FPS | GLX context/draw/FPS pass with `kde_xwayland_glamor=auto` mapped to effective `-glamor es`; 31 frames in 5.362771 seconds, 5.781 FPS |
 | KWin/desktop visual proof | QEMU screendump unavailable (`Error: no surface`) | default smoke preserves host screenshots/input diff; raw KWin readback warns `low-color-detail` in the current default artifact |
 | Input proof | not captured | 347353 changed pixels; Konsole launched |
 
@@ -47,12 +47,12 @@ QEMU trace counts:
 
 | Event | Linux | xv6 |
 | --- | ---: | ---: |
-| `virtio_gpu_cmd_ctx_submit` | 2427 | 110 |
-| `virtio_gpu_cmd_set_scanout` | 384 | 40 |
-| `virtio_gpu_cmd_res_flush` | 607 | 40 |
-| `virtio_gpu_fence_ctrl` | 2431 | 110 |
-| `virtio_gpu_fence_resp` | 2431 | 110 |
-| `virtio_gpu_cmd_res_create_3d` | 54 | 353 |
+| `virtio_gpu_cmd_ctx_submit` | 2427 | 207 |
+| `virtio_gpu_cmd_set_scanout` | 384 | 53 |
+| `virtio_gpu_cmd_res_flush` | 607 | 53 |
+| `virtio_gpu_fence_ctrl` | 2431 | 207 |
+| `virtio_gpu_fence_resp` | 2431 | 207 |
+| `virtio_gpu_cmd_res_create_3d` | 54 | 275 |
 | `virtio_gpu_cmd_res_xfer_toh_3d` | 0 | 2 |
 
 ## Current Fix
@@ -95,22 +95,22 @@ KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xw
 ```
 
 ```text
-build-x86_64/kde-plasma-desktop-smoke-history/20260626-043022-x11-glx-fps-probe-start-timeout/
-KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-timeout
-host-x11-egl-smoke: phase=x11_preflight_candidate status=PASS display=:0 exit_status=0
-host-x11-egl-smoke: phase=launch_status_wait status=BEGIN display=:0 mode=glx-fps
-host-x11-egl-smoke: phase=launch_status_wait status=FAIL reason=timeout
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-061223-x11-glx-fps-timing-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+host-x11-egl-smoke: phase=glx_fps_timing status=PASS result_status=PASS frames=31 event_total_ms=2.962 draw_total_ms=2979.471 swap_total_ms=2140.386 final_xsync_ms=237.682 max_swap_ms=94.047 max_draw_ms=411.108 max_event_ms=1.112 avg_swap_ms=69.045
+host-x11-egl-smoke: phase=glx_fps_result status=PASS mode=glx-fps reason=complete renderer="virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))" vendor="Mesa" gl_version="4.2 (Compatibility Profile) Mesa 25.2.8-0ubuntu0.24.04.2" direct_available=1 direct=1 frames=31 elapsed_seconds=5.362771 fps=5.781 target_seconds=5.000 max_frames=300
 Xwayland KDE wrapper: ... glamor=auto effective_glamor=es ... enable_glx=1
 chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=Xwayland.real ... capset=2 ... ret=0
+chrome-drm-ioctl: exit ... proc=Xwayland.real ... cmd=DRM_IOCTL_SYNCOBJ_EVENTFD ... ret=-22
 ```
 
-This verifies the harness improvement: the old
-`x11-glx-fps-display-env-timeout` is gone, and preflight plus launch evidence is
-durable. The remaining timeout occurs after the one-shot probe command is issued
-and the launch wait begins, with no
-`host-x11-egl-smoke: phase=start mode=glx-fps` observed; keep the next
-investigation on probe startup, loader/stdio, or guest command execution around
-GLX mode rather than overclaiming a Mesa/kernel root cause.
+This verifies the harness improvement beyond startup: the session-launched
+reducer now reaches GLX, draws, swaps, records timing, and exits cleanly. The
+timing evidence makes event drain an unlikely explanation for the remaining
+gap; the low frame rate is split across pre-swap GL work and
+`glXSwapBuffers`. The next reducer should inspect Xwayland/DRI3 Present and
+syncobj notification semantics, including the current `SYNCOBJ_EVENTFD`
+`EINVAL`, before changing kernel behavior.
 
 ## Validation
 
@@ -140,7 +140,7 @@ Rejected Linux capture attempts before the baseline:
 
 ## Next Gap
 
-To match the Linux baseline more closely, get the KDE/no-Weston X11 GLX FPS
-reducer past the launch-status wait to `phase=start mode=glx-fps` and
-`phase=glx_fps_result`, then compare its renderer, GL version, frame count,
-elapsed time, FPS, and QEMU trace counts against the Linux `glxgears` control.
+To match the Linux baseline more closely, explain or reduce the
+Xwayland/DRI3/Present timing gap. The current xv6 run proves direct GLX/virgl
+startup and finite FPS measurement, but the QEMU submit/flush rate and measured
+FPS remain well below Linux.
