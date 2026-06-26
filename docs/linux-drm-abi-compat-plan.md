@@ -563,6 +563,27 @@ not literally include the env assignment, `cmdline` has
 `kde_smoke_require_chromium=1` followed by the later `=0` override, no Weston
 matches were present, PNGs are nonzero, and some sidecar logs are zero-byte.
 
+Swap-interval-0 plain GLX swap-only reducer artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-095514-x11-glx-fps-swap-interval0-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_swap_interval status=PASS requested=0 set_api=EXT before=1 after=0 ext_present=1 mesa_present=1 sgi_present=0
+phase=glx_fps_result status=PASS frames=232 elapsed_seconds=5.046647 fps=45.971 swap_only_skipped_draw_frames=231 variant=swap-interval0-swap-only swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0 plain_swap_issue_total_ms=4965.974 plain_swap_avg_ms=21.405 plain_swap_max_ms=80.011
+QEMU trace: ctx_submit=643 set_scanout=81 res_flush=81 fence_ctrl/fence_resp=643/643 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+This is a diagnostic xv6-owned probe/harness change, not a KDE, Mesa, or
+Xwayland source patch. Xwayland GLX accepted swap interval 0 through EXT, and
+the MESA getter observed the interval move from 1 before the call to 0 after
+it. Even with drawing skipped after the first frame and swap interval set to
+0, ordinary `glXSwapBuffers` spent almost the entire run in swap
+(`plain_swap_issue_total_ms=4965.974`) and produced 45.971 FPS. That is close
+to, but still below, the Linux GLX baseline of 55.638 FPS and the raw Present
+depth-8 result of 54.980 FPS. This narrows the remaining gap to plain
+GLX/Xwayland swap path behavior above raw Present, not pre-swap draw work,
+OML-only throttling, or missing DRI3/fd passing.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
@@ -678,10 +699,14 @@ its two extra `glXGetSyncValuesOML` calls per issue were intrusive enough to
 drop the run to 26.444 FPS. Sparse issue-state sampling at interval 16 then
 recorded 216 frames at 42.552 FPS with 14/216 samples, only 1 sampled
 post-issue SBC already complete, max lag 4 SBC, and MSC delta 5 total / 1 max.
-That keeps the evidence on GLX/Mesa/Xwayland swap/MSC pacing rather than fd
-passing/DRI3, pre-swap `glFlush`, or a speculative kernel patch. The current
-virtgpu fence trace still shows submitted and responded fences matching 1:1, so
-raw virtgpu fence starvation remains unproven. The
+The later `swap-interval0-swap-only` plain GLX run accepted swap interval 0 via
+EXT, observed the MESA getter move from 1 to 0, and reached 232 frames at
+45.971 FPS while ordinary `glXSwapBuffers` still consumed 4965.974 ms of the
+run. That keeps the evidence on GLX/Mesa/Xwayland swap-path pacing above raw
+Present rather than fd passing/DRI3, pre-swap draw work, OML-only throttling,
+or a speculative kernel patch. The current virtgpu fence trace still shows
+submitted and responded fences matching 1:1, so raw virtgpu fence starvation
+remains unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 

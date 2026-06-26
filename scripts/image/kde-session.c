@@ -160,6 +160,7 @@ static int valid_x11_egl_glx_fps_variant(const char *value)
            (strcmp(value, "baseline") == 0 ||
             strcmp(value, "finish-before-swap") == 0 ||
             strcmp(value, "swap-only") == 0 ||
+            strcmp(value, "swap-interval0-swap-only") == 0 ||
             strcmp(value, "oml-queue3-swap-only") == 0 ||
             strcmp(value, "oml-queue-depth-swap-only") == 0 ||
             strcmp(value, "oml-queue-depth-flush-swap-timing") == 0 ||
