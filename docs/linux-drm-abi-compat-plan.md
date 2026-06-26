@@ -1291,6 +1291,39 @@ Chromium work should focus on:
   paths, especially when investigating `GetVSyncParametersIfAvailable()` or
   Xwayland/Present behavior.
 
+Current local-video reducer evidence:
+
+```text
+Manual KDE/Chromium inspection artifact:
+build-x86_64/manual-vm-history/manual-kde-youtube-inspection-20260626-165821/
+
+Observed: YouTube playback still jittered and stopped. Serial inspection found
+no live Chromium process and no /host-gui-wayland-chromium.log, while fbstat
+showed virtio async make-room backpressure even with Chromium absent
+max_wait_us=592264.
+
+Failed serial-delivery artifacts while making the reducer durable:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T220633Z-chromium-video-launch-timeout/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T220909Z-chromium-video-script-stage-timeout/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T221156Z-chromium-video-heredoc-unsupported/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T221548Z-chromium-video-direct-launch-timeout/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T222146Z-chromium-video-split-launch-timeout/
+
+Passing local fixture artifact:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T222906Z-chromium-video-local-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video chromium_video=local-video samples=4 url=file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=15000&hud=1
+```
+
+Interpretation: the reducer now uses xv6-owned short probe launch metadata
+(`--chromium-local-video`) instead of sending the long media URL through the
+busy KDE serial console. The passing artifact preserves root-level Chromium
+launcher logs, exact final argv URL proof, role-derived Chromium process
+evidence, QEMU virtio-gpu trace counts, and four captured 1280x800 PPM frames.
+The first three frame samples captured the black startup interval; sample 03 is
+nonblack (`mean=0.630504`, `std=0.254788`). The next optimization target is
+playback smoothness/readback timing rather than command delivery or missing
+Chromium launch evidence.
+
 Success criteria:
 
 - Current harness artifacts include host HTTP evidence when relevant,

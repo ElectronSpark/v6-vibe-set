@@ -22,12 +22,20 @@ set guest_final_ppm "/kde-plasma-final.ppm"
 set guest_agent_log "/tmp/kde-smoke-agent.log"
 set guest_agent_status "/tmp/kde-smoke-agent.status"
 set guest_host_x11_egl_log "/host-gui-host-x11-egl-smoke.log"
+set guest_wayland_chromium_log "/host-gui-wayland-chromium.log"
+set guest_wayland_chromium_compat_log "/tmp/host-gui-wayland-chromium.log"
+set guest_chrome_debug_log "/chrome_debug.log"
+set guest_chrome_debug_compat_log "/tmp/chrome_debug.log"
+set guest_chromium_process_evidence_log "/kde-chromium-process-evidence.log"
 set before_ppm "$outdir/kde-plasma-before.ppm"
 set after_ppm "$outdir/kde-plasma-after.ppm"
 set final_ppm "$outdir/kde-plasma-final.ppm"
 set agent_log "$outdir/kde-smoke-agent.log"
 set agent_status "$outdir/kde-smoke-agent.status"
 set host_x11_egl_log "$outdir/host-gui-host-x11-egl-smoke.log"
+set wayland_chromium_log "$outdir/host-gui-wayland-chromium.log"
+set chrome_debug_log "$outdir/chrome_debug.log"
+set chromium_process_evidence_log "$outdir/kde-chromium-process-evidence.log"
 set before_png "$outdir/kde-plasma-before.png"
 set after_png "$outdir/kde-plasma-after.png"
 set final_png "$outdir/kde-plasma-final.png"
@@ -41,6 +49,34 @@ set host_final_png "$outdir/kde-plasma-host-final.png"
 set input_diff_min 10000
 set visual_warnings ""
 set x11_egl_artifact_prefix ""
+set chromium_video_warmup_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS) : "8"}]
+set chromium_video_sample_count [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES) : "4"}]
+set chromium_video_sample_interval_ms [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLE_INTERVAL_MS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLE_INTERVAL_MS) : "1000"}]
+set chromium_video_url ""
+set chromium_video_proof_mode "video"
+set chromium_video_limitation ""
+
+if {![string is integer -strict $chromium_video_warmup_seconds] ||
+    $chromium_video_warmup_seconds < 1} {
+    set chromium_video_warmup_seconds 8
+}
+if {$chromium_video_warmup_seconds > 120} {
+    set chromium_video_warmup_seconds 120
+}
+if {![string is integer -strict $chromium_video_sample_count] ||
+    $chromium_video_sample_count < 1} {
+    set chromium_video_sample_count 4
+}
+if {$chromium_video_sample_count > 12} {
+    set chromium_video_sample_count 12
+}
+if {![string is integer -strict $chromium_video_sample_interval_ms] ||
+    $chromium_video_sample_interval_ms < 250} {
+    set chromium_video_sample_interval_ms 1000
+}
+if {$chromium_video_sample_interval_ms > 5000} {
+    set chromium_video_sample_interval_ms 5000
+}
 
 proc assert_default_launch_contract {} {
     global root
@@ -62,7 +98,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$wayland_chromium_log' '$chrome_debug_log' '$chromium_process_evidence_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/chromium-video-*.ppm '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -71,6 +107,15 @@ set x11_dri3_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x1
 catch { exec sh -c "debugfs -w -R 'rm $guest_before_ppm' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_after_ppm' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_final_ppm' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_wayland_chromium_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_wayland_chromium_compat_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_compat_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_process_evidence_log' '$tmpimg' >/dev/null 2>&1" }
+for {set i 0} {$i < $chromium_video_sample_count} {incr i} {
+    set guest_chromium_video_ppm [format "/chromium-video-%02d.ppm" $i]
+    catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_ppm' '$tmpimg' >/dev/null 2>&1" }
+}
 
 set env(DISPLAY_MODE) "gtk"
 set env(USE_KVM) [expr {[info exists env(USE_KVM)] ? $env(USE_KVM) : "1"}]
@@ -86,7 +131,8 @@ if {[info exists env(KDE_SMOKE_AGENT)]} {
 } elseif {$kde_smoke_reducer eq "x11-egl" ||
           $kde_smoke_reducer eq "x11-dri3" ||
           $kde_smoke_reducer eq "x11-glx-fps" ||
-          $kde_smoke_reducer eq "x11-present-fps"} {
+          $kde_smoke_reducer eq "x11-present-fps" ||
+          $kde_smoke_reducer eq "chromium-video"} {
     set kde_smoke_agent "0"
 } else {
     set kde_smoke_agent "1"
@@ -180,6 +226,99 @@ proc read_text_file {path} {
     return $text
 }
 
+proc chromium_guest_artifact_clear_command {} {
+    global guest_wayland_chromium_log guest_chrome_debug_log
+    global guest_wayland_chromium_compat_log guest_chrome_debug_compat_log
+    global guest_chromium_process_evidence_log
+
+    return "rm -f $guest_wayland_chromium_log $guest_wayland_chromium_compat_log $guest_chrome_debug_log $guest_chrome_debug_compat_log $guest_chromium_process_evidence_log"
+}
+
+proc dump_optional_guest_artifact {guest_path host_path} {
+    global tmpimg
+
+    set tmp "$host_path.debugfs.[pid]"
+    catch { file delete -force $tmp }
+    set dumped [expr {![catch {
+        exec sh -c "debugfs -R 'dump $guest_path $tmp' '$tmpimg' >/dev/null 2>&1"
+    }]}]
+    if {$dumped && [file exists $tmp]} {
+        file rename -force $tmp $host_path
+        return 1
+    }
+    catch { file delete -force $tmp }
+    set fh [open $host_path w]
+    puts $fh "missing guest_path=$guest_path"
+    close $fh
+    return 0
+}
+
+proc debugfs_path_exists {path} {
+    global tmpimg
+
+    return [expr {![catch {
+        exec sh -c "debugfs -R 'stat $path' '$tmpimg' 2>&1 | grep -q '^Inode:'"
+    }]}]
+}
+
+proc shell_quote {text} {
+    return "'[string map [list ' '\\''] $text]'"
+}
+
+proc marker_re {marker} {
+    return [format {(^|\r|\n)%s(\r|\n)} $marker]
+}
+
+proc chromium_video_url_has_verified_asset {url} {
+    if {[string first "file:///share/webkit/perf-video.html" $url] == 0} {
+        return [expr {[debugfs_path_exists "/share/webkit/perf-video.html"] &&
+                      [debugfs_path_exists "/share/webkit/perf-1280x800-60fps.mp4"]}]
+    }
+    if {[string first "file:///share/webkit/video-direct.html" $url] == 0} {
+        return [expr {[debugfs_path_exists "/share/webkit/video-direct.html"] &&
+                      [debugfs_path_exists "/share/webkit/long-test.mp4"]}]
+    }
+    return 0
+}
+
+proc chromium_video_select_url {} {
+    global chromium_video_url chromium_video_proof_mode
+    global chromium_video_limitation
+
+    if {[info exists ::env(KDE_CHROMIUM_URL)] &&
+        $::env(KDE_CHROMIUM_URL) ne ""} {
+        set chromium_video_url $::env(KDE_CHROMIUM_URL)
+        if {[chromium_video_url_has_verified_asset $chromium_video_url]} {
+            set chromium_video_proof_mode "custom-url"
+            set chromium_video_limitation ""
+        } else {
+            set chromium_video_proof_mode "launch-log-only"
+            set chromium_video_limitation "custom-url-without-verified-local-video-asset"
+        }
+        return
+    }
+
+    if {[debugfs_path_exists "/share/webkit/perf-video.html"] &&
+        [debugfs_path_exists "/share/webkit/perf-1280x800-60fps.mp4"]} {
+        set chromium_video_url "file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=15000&hud=1"
+        set chromium_video_proof_mode "local-video"
+        set chromium_video_limitation ""
+        return
+    }
+
+    if {[debugfs_path_exists "/share/webkit/video-direct.html"] &&
+        [debugfs_path_exists "/share/webkit/long-test.mp4"]} {
+        set chromium_video_url "file:///share/webkit/video-direct.html?asset=long-test.mp4"
+        set chromium_video_proof_mode "video"
+        set chromium_video_limitation ""
+        return
+    }
+
+    set chromium_video_url "file:///share/webkit/video-direct.html"
+    set chromium_video_proof_mode "launch-log-only"
+    set chromium_video_limitation "no-local-video-asset"
+}
+
 proc x11_egl_refresh_host_artifact_log {} {
     global tmpimg guest_host_x11_egl_log host_x11_egl_log
 
@@ -245,6 +384,10 @@ proc finish {code label} {
     global qemu_trace qemu_trace_summary
     global host_final_png
     global guest_host_x11_egl_log host_x11_egl_log x11_egl_artifact_prefix
+    global guest_wayland_chromium_log guest_chrome_debug_log
+    global guest_chromium_process_evidence_log
+    global wayland_chromium_log chrome_debug_log chromium_process_evidence_log
+    global chromium_video_sample_count kde_smoke_reducer outdir
 
     write_final_status $code $label "finish-entry"
     host_screenshot "final" $host_final_png
@@ -262,6 +405,16 @@ proc finish {code label} {
     catch { exec sh -c "debugfs -R 'dump $guest_agent_log $agent_log' '$tmpimg' >/dev/null 2>&1" }
     catch { exec sh -c "debugfs -R 'dump $guest_agent_status $agent_status' '$tmpimg' >/dev/null 2>&1" }
     catch { exec sh -c "debugfs -R 'dump $guest_host_x11_egl_log $host_x11_egl_log' '$tmpimg' >/dev/null 2>&1" }
+    dump_optional_guest_artifact $guest_wayland_chromium_log $wayland_chromium_log
+    dump_optional_guest_artifact $guest_chrome_debug_log $chrome_debug_log
+    dump_optional_guest_artifact $guest_chromium_process_evidence_log $chromium_process_evidence_log
+    if {$kde_smoke_reducer eq "chromium-video"} {
+        for {set i 0} {$i < $chromium_video_sample_count} {incr i} {
+            set guest_chromium_video_ppm [format "/chromium-video-%02d.ppm" $i]
+            set host_chromium_video_ppm [format "%s/chromium-video-%02d.ppm" $outdir $i]
+            dump_optional_guest_artifact $guest_chromium_video_ppm $host_chromium_video_ppm
+        }
+    }
     if {$x11_egl_artifact_prefix ne ""} {
         set dumped_text ""
         if {[file exists $host_x11_egl_log]} {
@@ -404,7 +557,8 @@ proc launch_guest_smoke_agent {} {
     if {$chromium_available} {
         append args " --require-chromium"
     }
-    send "rm -f /tmp/kde-smoke-agent.log /tmp/kde-smoke-agent.status /tmp/kde-smoke-agent.done /kde-plasma-before.ppm /kde-plasma-after.ppm; /bin/kde-smoke-agent$args & echo KDE_SMOKE_AGENT_LAUNCHED\r"
+    set clear_chromium [chromium_guest_artifact_clear_command]
+    send "rm -f /tmp/kde-smoke-agent.log /tmp/kde-smoke-agent.status /tmp/kde-smoke-agent.done /kde-plasma-before.ppm /kde-plasma-after.ppm; $clear_chromium; /bin/kde-smoke-agent$args & echo KDE_SMOKE_AGENT_LAUNCHED\r"
     expect {
         -re {KDE_SMOKE_AGENT_LAUNCHED} {
             set timeout $old_timeout
@@ -814,7 +968,8 @@ proc run_optional_chromium_probe {} {
     set timeout 90
     set label "kde-chromium-app-launch-probe"
 
-    send "/bin/kde-app-launch-probe --require-chromium\r"
+    set clear_chromium [chromium_guest_artifact_clear_command]
+    send "$clear_chromium; /bin/kde-app-launch-probe --require-chromium\r"
     expect {
         -re {kde_app_launch_probe[^\r\n]*chromium=1[^\r\n]*status=PASS} {
             set timeout $old_timeout
@@ -831,6 +986,121 @@ proc run_optional_chromium_probe {} {
     }
     set timeout $old_timeout
     optional_prompt
+}
+
+proc capture_chromium_video_frame {index} {
+    global timeout chromium_video_sample_interval_ms
+
+    set guest_path [format "/chromium-video-%02d.ppm" $index]
+    set marker [format "KDE_CHROMIUM_VIDEO_CAPTURE_%02d" $index]
+    set saw_size 0
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 25
+    send "fbstat ppm-current $guest_path 0 0 1280 800; wc $guest_path; sync; echo $marker\r"
+    expect {
+        -re [format {(^|\r|\n)[0-9]+[ \t]+[0-9]+[ \t]+[1-9][0-9]*[ \t]+%s(\r|\n)} $guest_path] {
+            set saw_size 1
+            exp_continue
+        }
+        -re [marker_re $marker] {
+            set timeout $old_timeout
+            if {!$saw_size} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-capture-empty"
+            }
+            optional_prompt
+            after $chromium_video_sample_interval_ms
+            return
+        }
+        -re {fbstat: [^\r\n]+} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-fbstat"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-capture-crash"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-capture-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-capture-eof" }
+    }
+}
+
+proc run_chromium_video_reducer {} {
+    global timeout chromium_available chromium_video_url
+    global chromium_video_warmup_seconds chromium_video_sample_count
+    global chromium_video_proof_mode chromium_video_limitation
+
+    if {!$chromium_available} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-chromium-missing"
+    }
+
+    chromium_video_select_url
+    if {$chromium_video_proof_mode eq "launch-log-only"} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-no-local-video-asset"
+    }
+    set old_timeout $timeout
+    set quoted_url [shell_quote $chromium_video_url]
+    set clear_chromium [chromium_guest_artifact_clear_command]
+
+    sync_prompt
+    set timeout 30
+    send "echo KDE_CHROMIUM_VIDEO_LAUNCH_BEGIN\r"
+    expect {
+        -re [marker_re "KDE_CHROMIUM_VIDEO_LAUNCH_BEGIN"] {
+            set timeout $old_timeout
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-marker-crash"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-marker-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-marker-eof" }
+    }
+    optional_prompt
+    sync_prompt
+    send "$clear_chromium\r"
+    optional_prompt
+    sync_prompt
+    send "rm -f /chromium-video-*.ppm\r"
+    optional_prompt
+    sync_prompt
+    set timeout 180
+    if {$chromium_video_proof_mode eq "local-video"} {
+        send "/bin/kde-app-launch-probe --chromium-only --require-chromium --chromium-local-video\r"
+    } else {
+        send "KDE_CHROMIUM_URL=$quoted_url /bin/kde-app-launch-probe --chromium-only --require-chromium\r"
+    }
+    expect {
+        -re {kde_app_launch_probe[^\r\n]*chromium_only=1[^\r\n]*chromium=1[^\r\n]*launcher_log=1[^\r\n]*launcher_marker=1[^\r\n]*launcher_child_exec=1[^\r\n]*launcher_url=1[^\r\n]*status=PASS} {
+            set timeout $old_timeout
+            optional_prompt
+        }
+        -re {kde_app_launch_probe[^\r\n]*status=FAIL} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-fail"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-crash"
+        }
+        timeout {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-timeout"
+        }
+        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-eof" }
+    }
+    set timeout $old_timeout
+    sleep $chromium_video_warmup_seconds
+    for {set i 0} {$i < $chromium_video_sample_count} {incr i} {
+        capture_chromium_video_frame $i
+    }
+    sync_prompt
+    send "sync\r"
+    optional_prompt
+
+    set label "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video chromium_video=$chromium_video_proof_mode samples=$chromium_video_sample_count url=$chromium_video_url"
+    if {$chromium_video_limitation ne ""} {
+        append label " limitation=$chromium_video_limitation"
+    }
+    finish 0 $label
 }
 
 proc run_optional_direct_app_launch_probe {} {
@@ -3972,10 +4242,15 @@ proc double_click_abs {x y done_prefix fail_label} {
 }
 
 proc click_desktop_app_icons {} {
+    global chromium_available
+
     # Seeded KDE desktop icons in a 1280x800 guest. Coordinates are xv6
     # absolute mouse coordinates, not pixels. The current desktop:/ KIO
     # activation path is tracked as a gap; these clicks still prove pointer
     # targeting and selection on each KDE launcher.
+    if {$chromium_available} {
+        run_guest_check [chromium_guest_artifact_clear_command] "kde-chromium-artifact-clear" 10
+    }
     click_abs 3000 3300 "KDE_DESKTOP_CHROMIUM_DONE" "desktop-chromium"
     click_abs 8900 3300 "KDE_DESKTOP_DOLPHIN_DONE" "desktop-dolphin"
     click_abs 14850 3300 "KDE_DESKTOP_KWRITE_DONE" "desktop-kwrite"
@@ -4026,7 +4301,7 @@ proc run_direct_app_launch_probe {} {
     global chromium_available
 
     if {$chromium_available} {
-        run_guest_check "/bin/kde-app-launch-probe --require-chromium" "kde-app-launch-probe" 120
+        run_guest_check "[chromium_guest_artifact_clear_command]; /bin/kde-app-launch-probe --require-chromium" "kde-app-launch-probe" 120
     } else {
         run_guest_check "/bin/kde-app-launch-probe" "kde-app-launch-probe" 90
     }
@@ -4090,6 +4365,11 @@ if {[kde_smoke_reducer] eq "x11-present-fps"} {
     wait_for_kde_session_ready
     run_kde_x11_present_fps_session_probe
     finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS"
+}
+
+if {[kde_smoke_reducer] eq "chromium-video"} {
+    wait_for_kde_session_ready
+    run_chromium_video_reducer
 }
 
 if {![legacy_serial_validation_enabled] && [guest_smoke_agent_enabled]} {
