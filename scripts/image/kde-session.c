@@ -166,7 +166,8 @@ static int valid_x11_present_fps_variant(const char *value)
 {
     return value &&
            (strcmp(value, "baseline") == 0 ||
-            strcmp(value, "unchecked") == 0);
+            strcmp(value, "unchecked") == 0 ||
+            strcmp(value, "queue3-unchecked") == 0);
 }
 
 static void write_config_file(const char *path, const char *contents)

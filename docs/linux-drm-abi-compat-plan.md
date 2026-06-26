@@ -324,6 +324,48 @@ Present completion pacing or the X11 event-wait path than at checked-request
 round trips. All 107 completions used Present complete mode copy, which is a
 new useful split for the next pacing reducer.
 
+Queue-depth Present request variant artifact:
+
+```sh
+KDE_SMOKE_REDUCER=x11-present-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_present_fps_variant=queue3-unchecked kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-064628-x11-present-fps-queue3-unchecked-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS
+frames=211 elapsed_seconds=5.061021 fps=41.691 present_only=1 gl_context=0
+issued=211 completed=211 outstanding=0
+queue_depth=3 max_outstanding=3 drain_wait_total_ms=1.166 drain_waits=2
+variant=queue3-unchecked request_check_enabled=0
+complete_copy=211 complete_flip=0 complete_skip=0 complete_suboptimal_copy=0 last_complete_mode=0
+present_request_total_ms=5.092 request_check_total_ms=0.000 flush_total_ms=15.941
+event_wait_total_ms=5019.538 completion_total_ms=15170.651 avg_completion_ms=71.899 max_completion_ms=299.129
+dri3_drm_name=virtio_gpu dri3_drm_version=0.1.0
+QEMU trace: ctx_submit=414 set_scanout=86 res_flush=86 fence_ctrl/fence_resp=414/414 res_create_3d=65
+```
+
+Interpretation: allowing up to three unchecked Present requests in flight
+raised the Present-only loop from ~21 FPS to 41.691 FPS while still draining to
+`outstanding=0`. This weakens the theory that kernel event-wait latency alone
+is the limiter: `event_wait_total_ms` still spans the finite run, but more
+Present completions are amortized across the same wait budget. The remaining
+gap to the Linux GLX baseline now looks more like single-outstanding
+swap/Present pacing or queue-depth policy than raw GL draw issue overhead.
+All completions were still Present complete mode copy; no skip/flip mode was
+observed.
+
+Two non-passing attempts before the final queue-depth pass were preserved:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-063946-x11-present-fps-queue3-unchecked-kwin-startup-crash/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-064057-x11-present-fps-queue3-unchecked-outstanding-fail/
+```
+
+The first failed before the reducer due to the known KWin startup crash class.
+The second contained a valid host probe result with `outstanding=0`, but the
+Expect parser misread `max_outstanding=3` as the primary outstanding field; the
+parser now matches the adjacent `issued completed outstanding` fields.
+
 Default KDE regression artifact after the Present FPS harness:
 
 ```text
