@@ -764,6 +764,38 @@ Present calls and about 4120.627 ms above Present. That keeps the next fix
 target in GLX/Mesa/Xwayland swap pacing above raw Present, not in kernel
 DRI3/fd-passing/fence behavior.
 
+Runtime `vblank_mode=1` plain GLX swap-only artifact:
+
+```text
+Temporary startup overlay:
+LD_BIND_NOW=1 XV6_DESKTOP_DEFAULT=kde vblank_mode=1 /bin/xv6-desktop-session
+
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-only kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-135133-x11-glx-fps-vblank-mode1-swap-only-pass/
+Verification: direct make-rootfs with standard generated overlays plus the
+temporary startup overlay, debugfs proof of `/etc/startup` before boot, focused
+no-Weston reducer PASS, artifact preserved with `runtime-overlay/etc/startup`
+and `startup-from-smoke-image`, then clean `rootfs-refresh` restored default
+`/etc/startup`
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+run.log: ATTENTION: default value of option vblank_mode overridden by environment.
+probe_glx_fps_variant=swap-only
+phase=glx_fps_result status=PASS frames=221 elapsed_seconds=5.048027 fps=43.779 variant=swap-only
+swap_interval_requested=0 swap_interval_set_api=none swap_interval_set_status=UNAVAILABLE swap_interval_before=-1 swap_interval_after=-1
+plain_swap_issue_total_ms=4969.275 plain_swap_avg_ms=22.485 plain_swap_max_ms=160.755
+QEMU trace: ctx_submit=618 set_scanout=80 res_flush=80 fence_ctrl/fence_resp=618/618 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+This runtime-only test confirms that applying Mesa `vblank_mode=1` from process
+start is not the missing acceleration lever. Mesa observed the environment, but
+plain `swap-only` reached only 43.779 FPS: below the earlier explicit
+`swap-interval0-swap-only` result at 47.631 FPS with GLX swap tracing, below
+raw Present depth8 at 54.980 FPS, and below the Linux GLX baseline at 55.638
+FPS. Do not make `vblank_mode=1` a persistent KDE default from this evidence.
+Continue with GLX swap-path attribution, such as splitting generic XCB
+wait/reply time inside `glXSwapBuffers`, before choosing a kernel/libc/sysroot
+fix.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
