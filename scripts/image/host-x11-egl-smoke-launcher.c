@@ -35,11 +35,14 @@ bounded_probe_requested(int argc, char **argv)
     const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
 
     if (mode &&
-        (strcmp(mode, "x11-connect") == 0 || strcmp(mode, "glx-probe") == 0))
+        (strcmp(mode, "x11-connect") == 0 ||
+         strcmp(mode, "glx-probe") == 0 ||
+         strcmp(mode, "glx-fps") == 0))
         return 1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--x11-connect-only") == 0 ||
-            strcmp(argv[i], "--glx-probe-only") == 0)
+            strcmp(argv[i], "--glx-probe-only") == 0 ||
+            strcmp(argv[i], "--glx-fps") == 0)
             return 1;
     }
     return 0;

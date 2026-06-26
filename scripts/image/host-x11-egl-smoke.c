@@ -20,10 +20,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define WIN_W 640
 #define WIN_H 320
+#define GLX_FPS_TARGET_NS 5000000000LL
+#define GLX_FPS_MAX_FRAMES 300
 
 typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
 typedef void (GLAPIENTRY *gl_viewport_proc_t)(GLint x, GLint y,
@@ -57,6 +60,8 @@ struct app {
     GLXContext glx_context;
     struct gl_api gl;
     int use_glx;
+    int glx_direct;
+    int glx_direct_available;
     int color_index;
     int frame;
     int running;
@@ -81,6 +86,35 @@ static const char *
 safe_str(const char *s)
 {
     return s ? s : "(null)";
+}
+
+static void
+copy_log_value(char *dst, size_t dst_size, const char *src)
+{
+    size_t out = 0;
+
+    if (!dst_size)
+        return;
+    if (!src)
+        src = "(null)";
+    while (*src && out + 1 < dst_size) {
+        char c = *src++;
+
+        if (c == '"' || c == '\n' || c == '\r' || c == '\t')
+            c = '_';
+        dst[out++] = c;
+    }
+    dst[out] = '\0';
+}
+
+static int64_t
+monotonic_ns(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
 static const GLubyte *
@@ -1158,6 +1192,8 @@ setup_glx(struct app *app)
     }
     log_line("host-x11-egl-smoke: phase=glx_is_direct status=BEGIN");
     direct = glXIsDirect(app->dpy, app->glx_context);
+    app->glx_direct = direct;
+    app->glx_direct_available = 1;
     fprintf(stderr,
             "host-x11-egl-smoke: phase=glx_is_direct status=PASS direct=%d\n",
             direct);
@@ -1298,6 +1334,21 @@ glx_probe_only_requested(int argc, char **argv)
 }
 
 static int
+glx_fps_requested(int argc, char **argv)
+{
+    const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
+    int i;
+
+    if (mode && strcmp(mode, "glx-fps") == 0)
+        return 1;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--glx-fps") == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int
 x11_connect_only_requested(int argc, char **argv)
 {
     const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
@@ -1310,6 +1361,158 @@ x11_connect_only_requested(int argc, char **argv)
             return 1;
     }
     return 0;
+}
+
+static int
+drain_x11_events_for_fps(struct app *app)
+{
+    while (XPending(app->dpy) > 0) {
+        XEvent ev;
+
+        XNextEvent(app->dpy, &ev);
+        if (ev.type == ClientMessage &&
+            (Atom)ev.xclient.data.l[0] == app->wm_delete) {
+            log_line("host-x11-egl-smoke: wm_delete_received");
+            app->running = 0;
+            return -1;
+        }
+        if (ev.type == MapNotify)
+            log_line("host-x11-egl-smoke: phase=glx_fps_map status=PASS");
+    }
+    return 0;
+}
+
+static int
+draw_glx_fps_frame(struct app *app, int frame)
+{
+    const float t = (float)(frame % 120) / 119.0f;
+    GLenum err;
+
+    if (!app->gl.viewport || !app->gl.clear_color || !app->gl.clear ||
+        !app->gl.get_error) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL reason=missing-gl-dispatch source=%s\n",
+                safe_str(app->gl.source));
+        fflush(stderr);
+        return -1;
+    }
+
+    app->gl.viewport(0, 0, WIN_W, WIN_H);
+    app->gl.clear_color(0.05f + 0.20f * t, 0.18f + 0.50f * (1.0f - t),
+                        0.32f + 0.36f * t, 1.0f);
+    app->gl.clear(GL_COLOR_BUFFER_BIT);
+    err = app->gl.get_error();
+    if (err != GL_NO_ERROR) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL frame=%d gl_error=0x%x error_name=%s\n",
+                frame, err, gl_error_name(err));
+        fflush(stderr);
+        return -1;
+    }
+    glXSwapBuffers(app->dpy, app->win);
+    app->frame++;
+    return 0;
+}
+
+static void
+log_glx_fps_result(struct app *app, const char *status, const char *reason,
+                   const GLubyte *vendor, const GLubyte *renderer,
+                   const GLubyte *version, int frames,
+                   double elapsed_seconds)
+{
+    char vendor_buf[256];
+    char renderer_buf[256];
+    char version_buf[256];
+    double fps = 0.0;
+
+    if (elapsed_seconds > 0.0)
+        fps = (double)frames / elapsed_seconds;
+    copy_log_value(vendor_buf, sizeof(vendor_buf), (const char *)vendor);
+    copy_log_value(renderer_buf, sizeof(renderer_buf), (const char *)renderer);
+    copy_log_value(version_buf, sizeof(version_buf), (const char *)version);
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d\n",
+            status, safe_str(reason), renderer_buf, vendor_buf, version_buf,
+            app->glx_direct_available, app->glx_direct, frames,
+            elapsed_seconds, fps, (double)GLX_FPS_TARGET_NS / 1000000000.0,
+            GLX_FPS_MAX_FRAMES);
+    fflush(stderr);
+}
+
+static int
+run_glx_fps(struct app *app)
+{
+    const GLubyte *vendor = NULL;
+    const GLubyte *renderer = NULL;
+    const GLubyte *version = NULL;
+    int64_t start_ns;
+    int64_t now_ns;
+    int rc = 1;
+
+    if (setup_x11(app) != 0) {
+        log_glx_fps_result(app, "FAIL", "x11_setup", NULL, NULL, NULL, 0,
+                           0.0);
+        goto out;
+    }
+    probe_egl_initialize_for_glx_fallback(app);
+    if (setup_glx(app) != 0) {
+        log_glx_fps_result(app, "FAIL", "glx_setup", NULL, NULL, NULL,
+                           app->frame, 0.0);
+        goto out;
+    }
+
+    vendor = app->gl.get_string(GL_VENDOR);
+    renderer = app->gl.get_string(GL_RENDERER);
+    version = app->gl.get_string(GL_VERSION);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps target_seconds=%.3f max_frames=%d renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d\n",
+            (double)GLX_FPS_TARGET_NS / 1000000000.0, GLX_FPS_MAX_FRAMES,
+            safe_str((const char *)renderer), safe_str((const char *)vendor),
+            safe_str((const char *)version), app->glx_direct_available,
+            app->glx_direct);
+    fflush(stderr);
+
+    XSync(app->dpy, False);
+    app->running = 1;
+    start_ns = monotonic_ns();
+    now_ns = start_ns;
+    while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&
+           now_ns - start_ns < GLX_FPS_TARGET_NS) {
+        if (drain_x11_events_for_fps(app) != 0)
+            break;
+        if (draw_glx_fps_frame(app, app->frame + 1) != 0)
+            break;
+        now_ns = monotonic_ns();
+        if (now_ns == 0)
+            break;
+    }
+    XSync(app->dpy, False);
+    now_ns = monotonic_ns();
+    if (now_ns <= start_ns)
+        now_ns = start_ns + 1;
+
+    if (app->frame > 0 && app->running && version) {
+        rc = 0;
+        log_glx_fps_result(app, "PASS", "complete", vendor, renderer,
+                           version, app->frame,
+                           (double)(now_ns - start_ns) / 1000000000.0);
+    } else {
+        log_glx_fps_result(app, "FAIL",
+                           app->running ? "no_frames_or_gl_version"
+                                        : "window_closed",
+                           vendor, renderer, version, app->frame,
+                           (double)(now_ns - start_ns) / 1000000000.0);
+    }
+
+out:
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=result status=%s mode=glx-fps frame=%d use_glx=%d\n",
+            rc == 0 ? "PASS" : "FAIL", app->frame, app->use_glx);
+    fflush(stderr);
+    cleanup(app);
+    log_line("host-x11-egl-smoke: exited mode=glx-fps");
+    return rc;
 }
 
 static int
@@ -1361,6 +1564,7 @@ main(int argc, char **argv)
     struct app app;
     int x11_connect_only;
     int glx_probe_only;
+    int glx_fps;
 
     memset(&app, 0, sizeof(app));
     app.egl_display = EGL_NO_DISPLAY;
@@ -1370,13 +1574,17 @@ main(int argc, char **argv)
     set_linked_gl_api(&app);
     x11_connect_only = x11_connect_only_requested(argc, argv);
     glx_probe_only = glx_probe_only_requested(argc, argv);
+    glx_fps = glx_fps_requested(argc, argv);
 
     if (x11_connect_only) {
         log_start("x11-connect");
         return run_x11_connect_only(&app);
     }
 
-    log_start(glx_probe_only ? "glx-probe" : "interactive");
+    log_start(glx_fps ? "glx-fps" :
+              (glx_probe_only ? "glx-probe" : "interactive"));
+    if (glx_fps)
+        return run_glx_fps(&app);
     if (glx_probe_only)
         return run_glx_probe_only(&app);
 

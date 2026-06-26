@@ -1,6 +1,6 @@
 # Linux GUI File Inventory
 
-Last updated: 2026-06-25.
+Last updated: 2026-06-26.
 
 This is an inventory-only milestone for the active GUI/kernel cleanup goal. It
 records the current files in the checkout that are in scope for KDE/Qt,
@@ -30,13 +30,17 @@ Evidence used for this refresh: current-tree `find`, `rg --files`, and
 `git status --short` checks across the root repo plus `kernel`, `user`, and
 `ports`. No builds or VM launches are required by this inventory.
 
-Current highest-priority kernel-first bottleneck from the available evidence:
-Xwayland GLAMOR/GLX acceleration is still likely blocked in virtgpu context
-semantics, not in Weston or KDE/Qt/Plasma source. Keep the relevant evidence
-paths attached to this inventory context:
-`build-x86_64/kde-plasma-desktop-smoke/verified-x11-egl-20260625-091709` and
-`build-x86_64/kde-plasma-desktop-smoke/verified-default-20260625-091615`.
-This is a current prioritization note, not a solution plan.
+Current highest-priority evidence path from the available runs:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260626-043022-x11-glx-fps-probe-start-timeout/`.
+The old unqualified Xwayland automatic GLAMOR startup failure is closed by the
+xv6-owned wrapper policy that maps `kde_xwayland_glamor=auto` to effective
+`-glamor es` for focused runs, and the old `x11-glx-fps-display-env-timeout`
+harness failure is gone. The remaining KDE/Xwayland gap is now after the
+one-shot GLX FPS probe command is issued: preflight selects `DISPLAY=:0`, the
+launch-status wait begins in `glx-fps` mode, then times out before
+`phase=start`. Prioritize probe process startup, loader/stdio behavior, or
+guest command execution around GLX mode before making Mesa/kernel root-cause
+claims. This is a current prioritization note, not a solution plan.
 
 ## Work Ownership Split
 

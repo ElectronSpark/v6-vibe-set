@@ -1,6 +1,6 @@
 # Linux DRM / GUI ABI Compatibility Plan
 
-Last updated: 2026-06-21.
+Last updated: 2026-06-26.
 
 This is the active handoff plan for Linux GUI/DRM ABI work in
 `/home/es/xv6-os`. It intentionally keeps only current gaps and guardrails.
@@ -21,8 +21,10 @@ The current KVM/virgl DRM baseline is healthy enough to run KDE:
 - `/dev/dri/card0` and `/dev/dri/renderD128` exist.
 - KWin starts on DRM with virgl and reports OpenGL ES 3.1.
 - Plasma, Xwayland, kactivitymanagerd, kded, and Konsole can run together.
-- The KDE smoke proves a nonblack colorful desktop, visible input response, and
-  Konsole launch.
+- The KDE smoke proves Plasma/KWin/Xwayland/app process health, visible host
+  screenshots, input response, Konsole launch, and Chromium launch. The raw
+  KWin screenshot readback probe can still warn on low color detail even when
+  the overall smoke passes.
 - Linux KDE KVM+virgl baseline and xv6 comparison are recorded in
   `docs/linux-kde-performance-baseline.md`.
 
@@ -67,8 +69,10 @@ Key passing evidence:
 
 ```text
 Xwayland KDE wrapper: EGL_PLATFORM=wayland GALLIUM_DRIVER=virgl MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu glamor=off
-kde_kwin_screenshot_probe result=PASS
-kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... konsole=1 ... status=PASS
+kde_app_launch_probe ... konsole=1 ... dolphin=1 ... chromium=1 ... status=PASS
+kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... konsole=1 ... chromium=1 ... status=PASS
+kde_kwin_screenshot_probe result=FAIL detail=low-color-detail
+KDE_SMOKE_AGENT_DONE status=PASS
 KDE-PLASMA-DESKTOP-SMOKE-DONE
 ```
 
@@ -97,70 +101,117 @@ See `docs/linux-kde-performance-baseline.md` for the full comparison table.
 
 ### 1. Xwayland GLAMOR / GLX Acceleration
 
-Status: open.
+Status: startup and harness preflight gaps closed; FPS probe startup open.
 
-The KDE default now guards Xwayland with `XV6_XWAYLAND_GLAMOR=off` to avoid the
-broken accelerated path. With automatic GLAMOR enabled, Xwayland reports:
+The KDE default still guards Xwayland with `XV6_XWAYLAND_GLAMOR=off` for the
+stable desktop smoke path. Focused acceleration runs now keep the requested
+`kde_xwayland_glamor=auto` policy at the harness boundary while the xv6-owned
+Xwayland wrapper maps that automatic policy to `-glamor es`, because the
+unqualified Xwayland auto path chose no GLAMOR mode and disabled GLX before the
+GL probe could create a context.
 
-```text
-Supported GL version is not sufficient (required 21, found 0)
-glGetString() returned NULL, your GL is broken
-XWAYLAND: Disabling GLAMOR support
-EGL setup failed, disabling glamor
-```
-
-This is the main KDE performance gap versus Linux. KWin can create a virgl
-OpenGL ES 3.1 context, but Xwayland GLAMOR cannot get the GL 2.1+ context it
-expects.
-
-New no-Weston KDE X11/EGL reducer evidence:
+Historical no-Weston KDE X11/EGL failure evidence for unqualified auto:
 
 ```sh
 KDE_SMOKE_REDUCER=x11-egl QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
 ```
 
-Artifact directory:
+Failure artifact directory:
 
 ```text
-build-x86_64/kde-plasma-desktop-smoke/
+build-x86_64/kde-plasma-desktop-smoke-history/20260625-230206-x11-egl-glamor-auto-glx-absent/
 ```
 
 Result marker:
 
 ```text
-KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-glx_choose_visual-missing-status-FAIL start=1 connect=1 gl=0 frame=0
+KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-session-probe-FAIL exit_status=1
+x11-egl-glx_query_extension-status-FAIL start=1 connect=1 gl=0 frame=0
 ```
 
-Interpretation: KWin Wayland virgl reaches OpenGL ES 3.1, Xwayland GLAMOR
-still reports GL version 0/null, and direct X11 EGL falls back with
-`EGL_NOT_INITIALIZED` before GLX visual selection is missing.
+Interpretation: KWin Wayland virgl reached OpenGL ES 3.1, but Xwayland's
+unqualified auto path did not enable a usable GLX/GLAMOR mode. Xwayland logged
+GL version 0/null and disabled GLAMOR before the direct X11 GLX probe could
+select a visual; the host log also contained `glx_choose_visual missing`.
 
-Next reducer:
+Current no-Weston KDE X11/GLX reducer evidence:
 
-- Boot with `XV6_XWAYLAND_GLAMOR=auto` in the Xwayland wrapper environment.
-- Run the smallest X11/GLX probe available under the KDE session, preferably
-  `host-x11-egl-smoke` or a focused GLX reducer.
-- Compare Linux versus xv6 for GL/EGL loader choice, `glGetString(GL_VERSION)`,
-  GLX context creation, DRI3/Present fd passing, render-node ioctls, and QEMU
-  `virtio_gpu_cmd_ctx_create` names.
+```sh
+KDE_SMOKE_REDUCER=x11-egl QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 chrome_drm_ioctl_trace=1 chrome_drm_fence_trace=1 kde_smoke_require_chromium=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
 
-Success criteria:
+Artifact directory:
 
-- Xwayland starts without the GL version 0/null `glGetString` failure.
-- An X11 GL client creates a virgl context under Xwayland.
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260625-231025-x11-egl-auto-effective-es-pass/
+```
+
+Key evidence:
+
+```text
+Xwayland KDE wrapper: ... glamor=auto effective_glamor=es ... enable_glx=1
+Xwayland KDE wrapper: final argv argc=17 glamor=es ... +extension_GLX=yes
+host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl ... gl_version=4.2 (Compatibility Profile) Mesa 25.2.8-0ubuntu0.24.04.2
+host-x11-egl-smoke: phase=draw status=PASS frame=1 mode=glx-probe color=0
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-egl session_probe=PASS
+```
+
+Latest no-Weston KDE X11/GLX FPS reducer outcome:
+
+```sh
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 chrome_drm_ioctl_trace=1 chrome_drm_fence_trace=1 kde_smoke_require_chromium=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
+
+Artifact directory:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-043022-x11-glx-fps-probe-start-timeout/
+```
+
+Result marker:
+
+```text
+KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-timeout
+```
+
+Key evidence:
+
+```text
+host-x11-egl-smoke: phase=x11_preflight status=BEGIN
+host-x11-egl-smoke: phase=x11_preflight_candidate status=PASS display=:0 exit_status=0
+host-x11-egl-smoke: phase=x11_preflight status=PASS selected_display=:0
+host-x11-egl-smoke: phase=launch_status_wait status=BEGIN display=:0 mode=glx-fps
+host-x11-egl-smoke: phase=launch_status_wait status=FAIL reason=timeout
+Xwayland KDE wrapper: ... glamor=auto effective_glamor=es ... enable_glx=1
+chrome-drm-detail: virtgpu-context-create ... proc=Xwayland.real ... capset=2 ... ret=0
+chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=Xwayland.real ... capset=2 ... ret=0
+```
+
+Interpretation: the old `x11-glx-fps-display-env-timeout` harness failure is
+gone. The remaining timeout is after the one-shot probe command was issued and
+the launch wait began; no
+`host-x11-egl-smoke: phase=start mode=glx-fps` appears before timeout. Next
+investigation should stay on probe process startup, loader/stdio behavior, or
+guest command execution around GLX FPS mode. Do not claim a Mesa or kernel root
+cause from this artifact alone.
+
+Remaining success criteria:
+
+- FPS reducer reaches `phase=start mode=glx-fps` and records
+  `phase=glx_fps_result`.
 - QEMU trace shows Xwayland/client 3D submission comparable in shape to the
   Linux baseline.
 - Default KDE smoke still passes and remains nonblack/responsive.
 
 ### 2. KDE Performance Parity
 
-Status: open after Xwayland acceleration.
+Status: open after GLX FPS probe startup.
 
-The current xv6 KDE desktop is visually correct and responsive, but it does not
-yet match the Linux KDE baseline because Xwayland GLAMOR is disabled. After
-closing the GLAMOR/GLX gap, add a deterministic KDE/X11 FPS probe comparable to
-the Linux `glxgears` control and record it beside
-`docs/linux-kde-performance-baseline.md`.
+The current xv6 KDE desktop is visually correct and responsive, and focused
+Xwayland GLX context/draw proof now works with automatic policy mapped to
+effective `-glamor es`. It does not yet match the Linux KDE baseline because the
+deterministic KDE/X11 FPS reducer times out before the GLX FPS probe prints its
+start marker or result.
 
 Success criteria:
 
