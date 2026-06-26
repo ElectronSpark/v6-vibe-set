@@ -90,6 +90,18 @@ struct present_trace_stats {
     uint64_t glx_swap_nested_wait_special_total_ns;
     uint64_t glx_swap_nested_poll_special_total_ns;
     uint64_t glx_swap_nested_complete_events;
+    uint64_t glx_swap_nested_xcb_flush_calls;
+    uint64_t glx_swap_nested_xcb_flush_total_ns;
+    uint64_t glx_swap_nested_xcb_request_check_calls;
+    uint64_t glx_swap_nested_xcb_request_check_total_ns;
+    uint64_t glx_swap_nested_xcb_wait_reply_calls;
+    uint64_t glx_swap_nested_xcb_wait_reply_total_ns;
+    uint64_t glx_swap_nested_xcb_poll_reply_calls;
+    uint64_t glx_swap_nested_xcb_poll_reply_total_ns;
+    uint64_t glx_swap_nested_xcb_wait_event_calls;
+    uint64_t glx_swap_nested_xcb_wait_event_total_ns;
+    uint64_t glx_swap_nested_xcb_poll_event_calls;
+    uint64_t glx_swap_nested_xcb_poll_event_total_ns;
     uint64_t glx_swap_missing_symbols;
     uint64_t glx_swap_recursion_skips;
     uint32_t last_serial;
@@ -108,6 +120,12 @@ static void *glx_swap_buffers_sym;
 static void *glx_swap_buffers_msc_oml_sym;
 static void *glx_get_proc_address_sym;
 static void *glx_get_proc_address_arb_sym;
+static void *xcb_flush_sym;
+static void *xcb_request_check_sym;
+static void *xcb_wait_for_reply_sym;
+static void *xcb_poll_for_reply_sym;
+static void *xcb_wait_for_event_sym;
+static void *xcb_poll_for_event_sym;
 static void *present_lib_handle;
 static int present_pixmap_resolved;
 static int present_pixmap_checked_resolved;
@@ -119,11 +137,18 @@ static int glx_swap_buffers_resolved;
 static int glx_swap_buffers_msc_oml_resolved;
 static int glx_get_proc_address_resolved;
 static int glx_get_proc_address_arb_resolved;
+static int xcb_flush_resolved;
+static int xcb_request_check_resolved;
+static int xcb_wait_for_reply_resolved;
+static int xcb_poll_for_reply_resolved;
+static int xcb_wait_for_event_resolved;
+static int xcb_poll_for_event_resolved;
 static int present_id_missing_recorded;
 static int present_lib_handle_resolved;
 static xcb_special_event_t *present_special_events[MAX_PRESENT_SPECIAL_EVENTS];
 static volatile int present_special_events_lock;
 static __thread int glx_swap_depth;
+static __thread int present_special_wait_depth;
 
 typedef xcb_void_cookie_t (*present_pixmap_fn)(
     xcb_connection_t *, xcb_window_t, xcb_pixmap_t, uint32_t, xcb_xfixes_region_t,
@@ -148,6 +173,15 @@ typedef int64_t (*glx_swap_buffers_msc_oml_fn)(Display *, GLXDrawable,
 typedef void (*glx_proc_address_result_fn)(void);
 typedef glx_proc_address_result_fn (*glx_get_proc_address_fn)(
     const unsigned char *);
+typedef int (*xcb_flush_fn)(xcb_connection_t *);
+typedef xcb_generic_error_t *(*xcb_request_check_fn)(xcb_connection_t *,
+                                                     xcb_void_cookie_t);
+typedef void *(*xcb_wait_for_reply_fn)(xcb_connection_t *, unsigned int,
+                                       xcb_generic_error_t **);
+typedef int (*xcb_poll_for_reply_fn)(xcb_connection_t *, unsigned int,
+                                     void **, xcb_generic_error_t **);
+typedef xcb_generic_event_t *(*xcb_wait_for_event_fn)(xcb_connection_t *);
+typedef xcb_generic_event_t *(*xcb_poll_for_event_fn)(xcb_connection_t *);
 
 void glXSwapBuffers(Display *dpy, GLXDrawable drawable);
 int64_t glXSwapBuffersMscOML(Display *dpy, GLXDrawable drawable,
@@ -290,7 +324,7 @@ static void trace_progress(const char *where, const char *event)
 
 static void trace_vlogf(const char *fmt, va_list ap)
 {
-    char buf[1024];
+    char buf[4096];
     int len;
 
     len = vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -590,7 +624,7 @@ __attribute__((constructor)) static void present_trace_begin(void)
     } else {
         snprintf(exe, sizeof(exe), "(unknown)");
     }
-    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 exe=%s\n",
+    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 glx_swap_xcb_trace=1 exe=%s\n",
                (long)getpid(), exe);
 }
 
@@ -645,11 +679,24 @@ __attribute__((destructor)) static void present_trace_end(void)
             load_u64(&stats.glx_swap_nested_pixmap_total_ns) +
             load_u64(&stats.glx_swap_nested_wait_special_total_ns) +
             load_u64(&stats.glx_swap_nested_poll_special_total_ns);
+        uint64_t glx_swap_accounted_xcb_ns =
+            load_u64(&stats.glx_swap_nested_xcb_flush_total_ns) +
+            load_u64(&stats.glx_swap_nested_xcb_request_check_total_ns) +
+            load_u64(&stats.glx_swap_nested_xcb_wait_reply_total_ns) +
+            load_u64(&stats.glx_swap_nested_xcb_poll_reply_total_ns) +
+            load_u64(&stats.glx_swap_nested_xcb_wait_event_total_ns) +
+            load_u64(&stats.glx_swap_nested_xcb_poll_event_total_ns);
         uint64_t glx_swap_above_present_ns = 0;
+        uint64_t glx_swap_above_xcb_ns = 0;
 
         if (glx_swap_total_ns > glx_swap_accounted_present_ns)
             glx_swap_above_present_ns =
                 glx_swap_total_ns - glx_swap_accounted_present_ns;
+        if (glx_swap_total_ns >
+            glx_swap_accounted_present_ns + glx_swap_accounted_xcb_ns)
+            glx_swap_above_xcb_ns =
+                glx_swap_total_ns - glx_swap_accounted_present_ns -
+                glx_swap_accounted_xcb_ns;
         trace_logf(
             "host-x11-present-trace: phase=glx_swap_trace_result status=PASS "
             "pid=%ld glx_swap_buffers_calls=%" PRIu64 " "
@@ -663,8 +710,22 @@ __attribute__((destructor)) static void present_trace_end(void)
             "glx_swap_nested_wait_special_total_ms=%.3f "
             "glx_swap_nested_poll_special_total_ms=%.3f "
             "glx_swap_nested_complete_events=%" PRIu64 " "
+            "glx_swap_nested_xcb_flush_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_flush_total_ms=%.3f "
+            "glx_swap_nested_xcb_request_check_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_request_check_total_ms=%.3f "
+            "glx_swap_nested_xcb_wait_reply_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_wait_reply_total_ms=%.3f "
+            "glx_swap_nested_xcb_poll_reply_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_poll_reply_total_ms=%.3f "
+            "glx_swap_nested_xcb_wait_event_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_wait_event_total_ms=%.3f "
+            "glx_swap_nested_xcb_poll_event_calls=%" PRIu64 " "
+            "glx_swap_nested_xcb_poll_event_total_ms=%.3f "
             "glx_swap_accounted_present_ms=%.3f "
             "glx_swap_above_present_ms=%.3f "
+            "glx_swap_accounted_xcb_ms=%.3f "
+            "glx_swap_above_xcb_ms=%.3f "
             "glx_swap_missing_symbols=%" PRIu64 " "
             "glx_swap_recursion_skips=%" PRIu64 "\n",
             (long)getpid(),
@@ -683,8 +744,33 @@ __attribute__((destructor)) static void present_trace_end(void)
             (double)load_u64(&stats.glx_swap_nested_poll_special_total_ns) /
                 1000000.0,
             load_u64(&stats.glx_swap_nested_complete_events),
+            load_u64(&stats.glx_swap_nested_xcb_flush_calls),
+            (double)load_u64(&stats.glx_swap_nested_xcb_flush_total_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_nested_xcb_request_check_calls),
+            (double)load_u64(
+                &stats.glx_swap_nested_xcb_request_check_total_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_nested_xcb_wait_reply_calls),
+            (double)load_u64(
+                &stats.glx_swap_nested_xcb_wait_reply_total_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_nested_xcb_poll_reply_calls),
+            (double)load_u64(
+                &stats.glx_swap_nested_xcb_poll_reply_total_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_nested_xcb_wait_event_calls),
+            (double)load_u64(
+                &stats.glx_swap_nested_xcb_wait_event_total_ns) /
+                1000000.0,
+            load_u64(&stats.glx_swap_nested_xcb_poll_event_calls),
+            (double)load_u64(
+                &stats.glx_swap_nested_xcb_poll_event_total_ns) /
+                1000000.0,
             (double)glx_swap_accounted_present_ns / 1000000.0,
             (double)glx_swap_above_present_ns / 1000000.0,
+            (double)glx_swap_accounted_xcb_ns / 1000000.0,
+            (double)glx_swap_above_xcb_ns / 1000000.0,
             load_u64(&stats.glx_swap_missing_symbols),
             load_u64(&stats.glx_swap_recursion_skips));
     }
@@ -804,6 +890,152 @@ glx_proc_address_result_fn glXGetProcAddress(const unsigned char *proc_name)
     return glx_get_proc_address_common(
         proc_name, "glXGetProcAddress", &glx_get_proc_address_sym,
         &glx_get_proc_address_resolved);
+}
+
+int xcb_flush(xcb_connection_t *c)
+{
+    xcb_flush_fn real_fn;
+    uint64_t start;
+    int in_glx_swap;
+    int result;
+
+    in_glx_swap = glx_swap_depth > 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_flush_calls, 1);
+    real_fn = (xcb_flush_fn)resolve_glx_next_symbol(
+        "xcb_flush", &xcb_flush_sym, &xcb_flush_resolved, in_glx_swap);
+    if (!real_fn)
+        return 0;
+
+    start = in_glx_swap ? now_ns() : 0;
+    result = real_fn(c);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_flush_total_ns,
+                elapsed_ns(start, now_ns()));
+    return result;
+}
+
+xcb_generic_error_t *xcb_request_check(xcb_connection_t *c,
+                                       xcb_void_cookie_t cookie)
+{
+    xcb_request_check_fn real_fn;
+    xcb_generic_error_t *error;
+    uint64_t start;
+    int in_glx_swap;
+
+    in_glx_swap = glx_swap_depth > 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_request_check_calls, 1);
+    real_fn = (xcb_request_check_fn)resolve_glx_next_symbol(
+        "xcb_request_check", &xcb_request_check_sym,
+        &xcb_request_check_resolved, in_glx_swap);
+    if (!real_fn)
+        return NULL;
+
+    start = in_glx_swap ? now_ns() : 0;
+    error = real_fn(c, cookie);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_request_check_total_ns,
+                elapsed_ns(start, now_ns()));
+    return error;
+}
+
+void *xcb_wait_for_reply(xcb_connection_t *c, unsigned int request,
+                         xcb_generic_error_t **e)
+{
+    xcb_wait_for_reply_fn real_fn;
+    void *reply;
+    uint64_t start;
+    int in_glx_swap;
+
+    in_glx_swap = glx_swap_depth > 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_wait_reply_calls, 1);
+    real_fn = (xcb_wait_for_reply_fn)resolve_glx_next_symbol(
+        "xcb_wait_for_reply", &xcb_wait_for_reply_sym,
+        &xcb_wait_for_reply_resolved, in_glx_swap);
+    if (!real_fn)
+        return NULL;
+
+    start = in_glx_swap ? now_ns() : 0;
+    reply = real_fn(c, request, e);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_wait_reply_total_ns,
+                elapsed_ns(start, now_ns()));
+    return reply;
+}
+
+int xcb_poll_for_reply(xcb_connection_t *c, unsigned int request,
+                       void **reply, xcb_generic_error_t **error)
+{
+    xcb_poll_for_reply_fn real_fn;
+    uint64_t start;
+    int in_glx_swap;
+    int result;
+
+    in_glx_swap = glx_swap_depth > 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_poll_reply_calls, 1);
+    real_fn = (xcb_poll_for_reply_fn)resolve_glx_next_symbol(
+        "xcb_poll_for_reply", &xcb_poll_for_reply_sym,
+        &xcb_poll_for_reply_resolved, in_glx_swap);
+    if (!real_fn)
+        return 0;
+
+    start = in_glx_swap ? now_ns() : 0;
+    result = real_fn(c, request, reply, error);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_poll_reply_total_ns,
+                elapsed_ns(start, now_ns()));
+    return result;
+}
+
+xcb_generic_event_t *xcb_wait_for_event(xcb_connection_t *c)
+{
+    xcb_wait_for_event_fn real_fn;
+    xcb_generic_event_t *event;
+    uint64_t start;
+    int in_glx_swap;
+
+    in_glx_swap = glx_swap_depth > 0 && present_special_wait_depth == 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_wait_event_calls, 1);
+    real_fn = (xcb_wait_for_event_fn)resolve_glx_next_symbol(
+        "xcb_wait_for_event", &xcb_wait_for_event_sym,
+        &xcb_wait_for_event_resolved, in_glx_swap);
+    if (!real_fn)
+        return NULL;
+
+    start = in_glx_swap ? now_ns() : 0;
+    event = real_fn(c);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_wait_event_total_ns,
+                elapsed_ns(start, now_ns()));
+    return event;
+}
+
+xcb_generic_event_t *xcb_poll_for_event(xcb_connection_t *c)
+{
+    xcb_poll_for_event_fn real_fn;
+    xcb_generic_event_t *event;
+    uint64_t start;
+    int in_glx_swap;
+
+    in_glx_swap = glx_swap_depth > 0 && present_special_wait_depth == 0;
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_poll_event_calls, 1);
+    real_fn = (xcb_poll_for_event_fn)resolve_glx_next_symbol(
+        "xcb_poll_for_event", &xcb_poll_for_event_sym,
+        &xcb_poll_for_event_resolved, in_glx_swap);
+    if (!real_fn)
+        return NULL;
+
+    start = in_glx_swap ? now_ns() : 0;
+    event = real_fn(c);
+    if (in_glx_swap)
+        add_u64(&stats.glx_swap_nested_xcb_poll_event_total_ns,
+                elapsed_ns(start, now_ns()));
+    return event;
 }
 
 xcb_special_event_t *xcb_register_for_special_xge(
@@ -952,7 +1184,9 @@ xcb_generic_event_t *xcb_wait_for_special_event(xcb_connection_t *c,
             trace_progress("xcb_wait_for_special_event", "return");
         return NULL;
     }
+    present_special_wait_depth++;
     event = real_fn(c, se);
+    present_special_wait_depth--;
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 
@@ -990,7 +1224,9 @@ xcb_generic_event_t *xcb_poll_for_special_event(xcb_connection_t *c,
             trace_progress("xcb_poll_for_special_event", "return");
         return NULL;
     }
+    present_special_wait_depth++;
     event = real_fn(c, se);
+    present_special_wait_depth--;
     {
         uint64_t elapsed = elapsed_ns(start, now_ns());
 

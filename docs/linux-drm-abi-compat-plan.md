@@ -796,6 +796,38 @@ Continue with GLX swap-path attribution, such as splitting generic XCB
 wait/reply time inside `glXSwapBuffers`, before choosing a kernel/libc/sysroot
 fix.
 
+Swap-interval-0 plain GLX swap-only GLX-swap generic-XCB split artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+Initial trace-line truncation failure:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-140957-x11-glx-fps-glx-swap-xcb-trace-counter-invalid/
+Pre-probe KWin startup failure:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-141657-x11-glx-fps-glx-swap-xcb-trace-kwin-startup-fail/
+Passing retry:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-141813-x11-glx-fps-glx-swap-xcb-trace-pass/
+Verification: git diff --check, kernel diff check, C syntax check for the
+preload, Expect completeness check, two independent audit PASS rounds,
+host-gui-runtime, rootfs-refresh, focused no-Weston reducer PASS
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+present_trace_result status=PASS pixmap_calls=217 wait_special_calls=132 poll_special_calls=737 complete_events=213 complete_copy=212 complete_suboptimal_copy=1 present_fallback_symbols=2 missing_symbols=0
+glx_swap_trace_result status=PASS glx_swap_buffers_calls=217 glx_swap_buffers_msc_oml_calls=0 glx_swap_total_ms=4972.181 glx_swap_max_ms=66.226 glx_swap_nested_pixmap_calls=217 glx_swap_nested_wait_special_calls=132 glx_swap_nested_poll_special_calls=731 glx_swap_nested_complete_events=213 glx_swap_nested_xcb_flush_calls=349 glx_swap_nested_xcb_flush_total_ms=26.802 glx_swap_nested_xcb_request_check_calls=2 glx_swap_nested_xcb_request_check_total_ms=20.519 glx_swap_nested_xcb_wait_reply_calls=0 glx_swap_nested_xcb_wait_reply_total_ms=0.000 glx_swap_nested_xcb_poll_reply_calls=0 glx_swap_nested_xcb_poll_reply_total_ms=0.000 glx_swap_nested_xcb_wait_event_calls=0 glx_swap_nested_xcb_wait_event_total_ms=0.000 glx_swap_nested_xcb_poll_event_calls=0 glx_swap_nested_xcb_poll_event_total_ms=0.000 glx_swap_accounted_present_ms=976.674 glx_swap_above_present_ms=3995.506 glx_swap_accounted_xcb_ms=47.320 glx_swap_above_xcb_ms=3948.186 glx_swap_missing_symbols=0 glx_swap_recursion_skips=0
+frames=217 elapsed_seconds=5.050286 fps=42.968 variant=swap-interval0-swap-only
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4977.956 plain_swap_avg_ms=22.940 plain_swap_max_ms=66.248
+```
+
+This extends the child-only GLX swap trace with generic XCB flush,
+request-check, reply, and event attribution. The first run proved the added
+line exceeded the old preload log buffer; the audited fix increased the
+xv6-owned diagnostic logger buffer and preserved the failed artifact. The
+passing retry shows generic XCB accounts for only 47.320 ms of the 4972.181 ms
+GLX swap time, while nested Present accounts for 976.674 ms and about 3948.186
+ms remains above both nested Present and generic XCB calls. Continue from
+GLX/Mesa/Xwayland swap-path or loader/profile attribution above these nested
+X11 calls; do not spend the next step on speculative kernel fd/fence/DRI3
+changes from this evidence.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
