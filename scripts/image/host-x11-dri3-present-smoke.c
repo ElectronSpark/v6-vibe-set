@@ -14,10 +14,26 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
-#include <drm/drm.h>
+
+#define DRM_IOCTL_BASE 'd'
+
+struct drm_version {
+    int version_major;
+    int version_minor;
+    int version_patchlevel;
+    size_t name_len;
+    char *name;
+    size_t date_len;
+    char *date;
+    size_t desc_len;
+    char *desc;
+};
+
+#define DRM_IOCTL_VERSION _IOWR(DRM_IOCTL_BASE, 0x00, struct drm_version)
 
 typedef uint32_t xcb_present_event_t;
 typedef uint32_t xcb_xfixes_region_t;
@@ -93,7 +109,6 @@ typedef struct {
     xcb_window_t window;
     uint32_t serial;
     uint64_t ust;
-    uint32_t full_sequence;
     uint64_t msc;
 } xcb_present_complete_notify_event_t;
 
@@ -132,8 +147,37 @@ enum {
     WIN_W = 640,
     WIN_H = 320,
     MAX_HELD_PIXMAPS = 8,
+    PRESENT_FPS_PIXMAPS = 3,
+    PRESENT_FPS_MAX_FRAMES = 300,
+    PRESENT_FPS_TARGET_SECONDS = 5,
     PRESENT_EVENT_MASK_COMPLETE_NOTIFY = 2,
     PRESENT_COMPLETE_KIND_PIXMAP = 0,
+    PRESENT_COMPLETE_NOTIFY_EXTRA_WORDS = 2,
+};
+
+struct dri3_fd_info {
+    int valid;
+    unsigned int mode;
+    unsigned long long rdev;
+    char drm_name[64];
+    int version_major;
+    int version_minor;
+    int version_patchlevel;
+};
+
+struct present_fps_stats {
+    uint32_t serial_first;
+    uint32_t serial_last;
+    int issued;
+    int completed;
+    double present_request_total_ms;
+    double request_check_total_ms;
+    double flush_total_ms;
+    double event_wait_total_ms;
+    double completion_total_ms;
+    double max_completion_ms;
+    uint64_t first_msc;
+    uint64_t last_msc;
 };
 
 struct app {
@@ -160,6 +204,21 @@ log_line(const char *line)
 {
     fprintf(stderr, "%s\n", line);
     fflush(stderr);
+}
+
+static double
+now_seconds(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+}
+
+static double
+elapsed_ms(double start)
+{
+    return (now_seconds() - start) * 1000.0;
 }
 
 static xcb_atom_t
@@ -263,7 +322,7 @@ query_protocol_versions(struct app *app)
 }
 
 static int
-validate_dri3_fd(struct app *app)
+validate_dri3_fd(struct app *app, struct dri3_fd_info *info)
 {
     xcb_generic_error_t *err = NULL;
     xcb_dri3_open_reply_t *reply;
@@ -327,6 +386,17 @@ validate_dri3_fd(struct app *app)
         close(fd);
         free(reply);
         return -1;
+    }
+
+    if (info) {
+        memset(info, 0, sizeof(*info));
+        info->valid = 1;
+        info->mode = (unsigned int)st.st_mode;
+        info->rdev = (unsigned long long)st.st_rdev;
+        snprintf(info->drm_name, sizeof(info->drm_name), "%s", name);
+        info->version_major = ver.version_major;
+        info->version_minor = ver.version_minor;
+        info->version_patchlevel = ver.version_patchlevel;
     }
 
     fprintf(stderr,
@@ -558,6 +628,13 @@ handle_present_event(struct app *app, xcb_ge_generic_event_t *ge)
     if (ge->extension != app->present_major_opcode ||
         ge->event_type != 1)
         return;
+    if (ge->length < PRESENT_COMPLETE_NOTIFY_EXTRA_WORDS) {
+        fprintf(stderr,
+                "host-x11-dri3-present-smoke: present_complete status=FAIL reason=short-event length=%u\n",
+                ge->length);
+        fflush(stderr);
+        return;
+    }
 
     xcb_present_complete_notify_event_t *ev =
         (xcb_present_complete_notify_event_t *)ge;
@@ -585,7 +662,7 @@ handle_event(struct app *app, xcb_generic_event_t *event)
     case XCB_MAP_NOTIFY:
         app->mapped = 1;
         log_line("host-x11-dri3-present-smoke: map_notify");
-        if (validate_dri3_fd(app) == 0)
+        if (validate_dri3_fd(app, NULL) == 0)
             present_scene(app, 0);
         break;
     case XCB_CONFIGURE_NOTIFY: {
@@ -633,11 +710,304 @@ handle_event(struct app *app, xcb_generic_event_t *event)
     }
 }
 
+static int
+present_fps_wait_initial_window(struct app *app)
+{
+    double deadline = now_seconds() + 5.0;
+
+    while ((!app->mapped || !app->configured) && now_seconds() < deadline) {
+        xcb_generic_event_t *event = xcb_poll_for_event(app->c);
+
+        if (!event) {
+            usleep(10000);
+            continue;
+        }
+        handle_event(app, event);
+        free(event);
+    }
+
+    if (!app->mapped || !app->configured) {
+        fprintf(stderr,
+                "host-x11-dri3-present-smoke: phase=present_fps_setup status=FAIL mapped=%d configured=%d reason=window-not-ready\n",
+                app->mapped, app->configured);
+        fflush(stderr);
+        return -1;
+    }
+    fprintf(stderr,
+            "host-x11-dri3-present-smoke: phase=present_fps_setup status=PASS mapped=%d configured=%d\n",
+            app->mapped, app->configured);
+    fflush(stderr);
+    return 0;
+}
+
+static void
+draw_present_fps_frame(struct app *app, xcb_pixmap_t pixmap, int frame)
+{
+    xcb_rectangle_t rect;
+    uint32_t bg = 0x17212b + (uint32_t)((frame & 7) * 0x00050301);
+    uint32_t a = 0x2dd4bf + (uint32_t)((frame & 15) * 0x00010100);
+    uint32_t b = 0xf59e0b + (uint32_t)((frame & 31) * 0x00000102);
+
+    set_fg(app, bg);
+    rect.x = 0;
+    rect.y = 0;
+    rect.width = WIN_W;
+    rect.height = WIN_H;
+    xcb_poly_fill_rectangle(app->c, pixmap, app->gc, 1, &rect);
+
+    set_fg(app, a);
+    rect.x = 24 + (int16_t)((frame * 11) % 160);
+    rect.y = 34;
+    rect.width = 140;
+    rect.height = 92;
+    xcb_poly_fill_rectangle(app->c, pixmap, app->gc, 1, &rect);
+
+    set_fg(app, b);
+    rect.x = 64;
+    rect.y = 158 + (int16_t)((frame * 7) % 72);
+    rect.width = 420;
+    rect.height = 52;
+    xcb_poly_fill_rectangle(app->c, pixmap, app->gc, 1, &rect);
+
+    set_fg(app, 0xffffff);
+    xcb_image_text_8(app->c, 16, pixmap, app->gc, 36, 292,
+                     "PRESENT FPS ONLY");
+}
+
+static int
+present_fps_wait_complete(struct app *app, uint32_t serial,
+                          struct present_fps_stats *stats,
+                          uint64_t *msc_out)
+{
+    double wait_start = now_seconds();
+
+    for (;;) {
+        xcb_generic_event_t *event = xcb_wait_for_event(app->c);
+        uint8_t type;
+
+        if (!event) {
+            log_line("host-x11-dri3-present-smoke: phase=present_fps_event status=FAIL reason=eof");
+            return -1;
+        }
+
+        type = event->response_type & ~0x80;
+        if (type == XCB_GE_GENERIC) {
+            xcb_ge_generic_event_t *ge = (xcb_ge_generic_event_t *)event;
+
+            if (ge->extension == app->present_major_opcode &&
+                ge->event_type == 1) {
+                xcb_present_complete_notify_event_t *ev =
+                    (xcb_present_complete_notify_event_t *)ge;
+
+                if (ge->length < PRESENT_COMPLETE_NOTIFY_EXTRA_WORDS) {
+                    fprintf(stderr,
+                            "host-x11-dri3-present-smoke: phase=present_fps_event status=FAIL reason=short-present-complete length=%u\n",
+                            ge->length);
+                    fflush(stderr);
+                    free(event);
+                    return -1;
+                }
+                if (ev->kind == PRESENT_COMPLETE_KIND_PIXMAP &&
+                    ev->event == app->present_eid) {
+                    app->completed_serial = ev->serial;
+                    if (ev->serial >= serial) {
+                        stats->event_wait_total_ms += elapsed_ms(wait_start);
+                        if (msc_out)
+                            *msc_out = ev->msc;
+                        free(event);
+                        return 0;
+                    }
+                }
+            }
+        } else if (type == XCB_CONFIGURE_NOTIFY) {
+            xcb_configure_notify_event_t *ev =
+                (xcb_configure_notify_event_t *)event;
+            app->configured = 1;
+            (void)ev;
+        } else if (type == XCB_MAP_NOTIFY) {
+            app->mapped = 1;
+        }
+        free(event);
+    }
+}
+
+static void
+present_fps_log_result(const char *status, const char *reason,
+                       const struct app *app,
+                       const struct present_fps_stats *stats,
+                       const struct dri3_fd_info *fd_info,
+                       double elapsed_seconds)
+{
+    int outstanding = stats->issued - stats->completed;
+    double fps = elapsed_seconds > 0.0
+        ? (double)stats->completed / elapsed_seconds
+        : 0.0;
+    double avg_completion = stats->completed > 0
+        ? stats->completion_total_ms / (double)stats->completed
+        : 0.0;
+    uint64_t msc_delta = stats->last_msc >= stats->first_msc
+        ? stats->last_msc - stats->first_msc
+        : 0;
+
+    fprintf(stderr,
+            "host-x11-dri3-present-smoke: phase=present_fps_result status=%s%s%s "
+            "present_only=1 gl_context=0 gl_draw_total_ms=0 gl_swap_total_ms=0 "
+            "frames=%d elapsed_seconds=%.6f fps=%.3f serial_first=%u serial_last=%u "
+            "issued=%d completed=%d outstanding=%d "
+            "present_request_total_ms=%.3f request_check_total_ms=%.3f flush_total_ms=%.3f "
+            "event_wait_total_ms=%.3f completion_total_ms=%.3f max_completion_ms=%.3f "
+            "avg_completion_ms=%.3f first_msc=%llu last_msc=%llu msc_delta=%llu "
+            "present_major_opcode=%u dri3_fd_valid=%d dri3_fd_mode=%o dri3_fd_rdev=%llu "
+            "dri3_drm_name=%s dri3_drm_version=%d.%d.%d\n",
+            status, reason ? " reason=" : "", reason ? reason : "",
+            stats->completed, elapsed_seconds, fps, stats->serial_first,
+            stats->serial_last, stats->issued, stats->completed, outstanding,
+            stats->present_request_total_ms, stats->request_check_total_ms,
+            stats->flush_total_ms, stats->event_wait_total_ms,
+            stats->completion_total_ms, stats->max_completion_ms,
+            avg_completion, (unsigned long long)stats->first_msc,
+            (unsigned long long)stats->last_msc, (unsigned long long)msc_delta,
+            app->present_major_opcode, fd_info->valid, fd_info->mode,
+            fd_info->rdev, fd_info->valid ? fd_info->drm_name : "(none)",
+            fd_info->version_major, fd_info->version_minor,
+            fd_info->version_patchlevel);
+    fflush(stderr);
+}
+
+static int
+run_present_fps(void)
+{
+    struct app app;
+    struct dri3_fd_info fd_info;
+    struct present_fps_stats stats;
+    xcb_pixmap_t pixmaps[PRESENT_FPS_PIXMAPS];
+    double start;
+    int rc = 1;
+
+    memset(&fd_info, 0, sizeof(fd_info));
+    memset(&stats, 0, sizeof(stats));
+    memset(pixmaps, 0, sizeof(pixmaps));
+
+    log_line("host-x11-dri3-present-smoke: start");
+    log_line("host-x11-dri3-present-smoke: phase=start status=BEGIN mode=present-fps");
+    fprintf(stderr,
+            "host-x11-dri3-present-smoke: phase=present_fps status=BEGIN target_seconds=%d max_frames=%d pixmaps=%d\n",
+            PRESENT_FPS_TARGET_SECONDS, PRESENT_FPS_MAX_FRAMES,
+            PRESENT_FPS_PIXMAPS);
+    fflush(stderr);
+    if (setup(&app) < 0) {
+        present_fps_log_result("FAIL", "setup", &app, &stats, &fd_info, 0.0);
+        cleanup(&app);
+        return 2;
+    }
+
+    if (present_fps_wait_initial_window(&app) < 0) {
+        present_fps_log_result("FAIL", "window-not-ready", &app, &stats,
+                               &fd_info, 0.0);
+        cleanup(&app);
+        return 3;
+    }
+    if (validate_dri3_fd(&app, &fd_info) < 0) {
+        present_fps_log_result("FAIL", "dri3-fd", &app, &stats, &fd_info,
+                               0.0);
+        cleanup(&app);
+        return 4;
+    }
+
+    for (int i = 0; i < PRESENT_FPS_PIXMAPS; i++) {
+        pixmaps[i] = xcb_generate_id(app.c);
+        xcb_create_pixmap(app.c, app.screen->root_depth, pixmaps[i],
+                          app.win, WIN_W, WIN_H);
+        hold_pixmap(&app, pixmaps[i]);
+    }
+
+    start = now_seconds();
+    while (stats.issued < PRESENT_FPS_MAX_FRAMES &&
+           now_seconds() - start < (double)PRESENT_FPS_TARGET_SECONDS) {
+        xcb_generic_error_t *err;
+        xcb_void_cookie_t cookie;
+        xcb_pixmap_t pixmap = pixmaps[stats.issued % PRESENT_FPS_PIXMAPS];
+        uint64_t msc = 0;
+        double frame_start;
+        double t;
+
+        draw_present_fps_frame(&app, pixmap, stats.issued);
+        app.serial++;
+        if (stats.serial_first == 0)
+            stats.serial_first = app.serial;
+        stats.serial_last = app.serial;
+
+        frame_start = now_seconds();
+        t = now_seconds();
+        cookie = xcb_present_pixmap_checked(app.c, app.win, pixmap,
+                                            app.serial, 0, 0, 0, 0, 0,
+                                            0, 0, 0, 0, 0, 0, 0, NULL);
+        stats.present_request_total_ms += elapsed_ms(t);
+        stats.issued++;
+
+        t = now_seconds();
+        xcb_flush(app.c);
+        stats.flush_total_ms += elapsed_ms(t);
+
+        t = now_seconds();
+        err = xcb_request_check(app.c, cookie);
+        stats.request_check_total_ms += elapsed_ms(t);
+        if (err) {
+            fprintf(stderr,
+                    "host-x11-dri3-present-smoke: phase=present_fps_request status=FAIL serial=%u error=%u\n",
+                    app.serial, err->error_code);
+            fflush(stderr);
+            free(err);
+            present_fps_log_result("FAIL", "present-request", &app,
+                                   &stats, &fd_info,
+                                   now_seconds() - start);
+            rc = 5;
+            goto out;
+        }
+
+        if (present_fps_wait_complete(&app, app.serial, &stats, &msc) < 0) {
+            present_fps_log_result("FAIL", "present-complete", &app,
+                                   &stats, &fd_info,
+                                   now_seconds() - start);
+            rc = 6;
+            goto out;
+        }
+
+        stats.completed++;
+        stats.completion_total_ms += elapsed_ms(frame_start);
+        if (elapsed_ms(frame_start) > stats.max_completion_ms)
+            stats.max_completion_ms = elapsed_ms(frame_start);
+        if (stats.completed == 1)
+            stats.first_msc = msc;
+        stats.last_msc = msc;
+    }
+
+    present_fps_log_result(stats.completed > 0 ? "PASS" : "FAIL",
+                           stats.completed > 0 ? NULL : "zero-frames",
+                           &app, &stats, &fd_info, now_seconds() - start);
+    rc = stats.completed > 0 ? 0 : 7;
+
+out:
+    cleanup(&app);
+    log_line("host-x11-dri3-present-smoke: exited");
+    return rc;
+}
+
 int
-main(void)
+main(int argc, char **argv)
 {
     struct app app;
     xcb_generic_event_t *event;
+
+    if (argc > 1) {
+        if (argc == 2 && strcmp(argv[1], "--present-fps") == 0)
+            return run_present_fps();
+        fprintf(stderr,
+                "host-x11-dri3-present-smoke: phase=argv status=FAIL arg=%s\n",
+                argv[1] ? argv[1] : "(null)");
+        fflush(stderr);
+        return 2;
+    }
 
     log_line("host-x11-dri3-present-smoke: start");
     if (setup(&app) < 0) {

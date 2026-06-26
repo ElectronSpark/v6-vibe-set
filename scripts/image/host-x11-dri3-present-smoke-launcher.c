@@ -28,8 +28,13 @@ set_default_env(const char *name, const char *value)
 static void
 redirect_log(void)
 {
-    int fd = open("/tmp/host-gui-host-x11-dri3-present-smoke.log",
-                  O_WRONLY | O_CREAT | O_APPEND, 0644);
+    const char *path = getenv("HOST_X11_EGL_SMOKE_LOG");
+    int fd;
+
+    if (!path || !path[0])
+        path = "/tmp/host-gui-host-x11-dri3-present-smoke.log";
+
+    fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
 
     if (fd < 0)
         return;

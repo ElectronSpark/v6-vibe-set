@@ -1327,20 +1327,28 @@ static int wait_host_x11_egl_smoke(pid_t pid, const char *display,
     return 124;
 }
 
+static const char *base_name(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+
+    return slash ? slash + 1 : path;
+}
+
 static int run_host_x11_egl_smoke(const char *display, const char *mode,
-                                  const char *arg, const char *auth_path,
+                                  const char *program, const char *arg,
+                                  const char *auth_path,
                                   const char *glx_fps_variant)
 {
     pid_t pid;
 
     if (glx_fps_variant && glx_fps_variant[0]) {
-        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s display=%s xauthority=%s glx_fps_variant=%s\n",
-                     mode, display,
+        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s glx_fps_variant=%s\n",
+                     mode, program, display,
                      auth_path && auth_path[0] ? auth_path : "(preserve)",
                      glx_fps_variant);
     } else {
-        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s display=%s xauthority=%s\n",
-                     mode, display,
+        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s\n",
+                     mode, program, display,
                      auth_path && auth_path[0] ? auth_path : "(preserve)");
     }
     pid = fork();
@@ -1371,8 +1379,7 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
             unsetenv("HOST_X11_EGL_GLX_FPS_VARIANT");
         unsetenv("WAYLAND_DISPLAY");
         unsetenv("LD_PRELOAD");
-        execl("/bin/host-x11-egl-smoke", "host-x11-egl-smoke", arg,
-              (char *)NULL);
+        execl(program, base_name(program), arg, (char *)NULL);
         _exit(127);
     }
     setpgid(pid, pid);
@@ -1385,6 +1392,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     const char *selected = NULL;
     const char *run_mode = "glx-probe";
     const char *run_arg = "--glx-probe-only";
+    const char *run_program = "/bin/host-x11-egl-smoke";
     char glx_fps_variant[64];
     char glx_fps_variant_raw[64];
     int glx_fps_variant_status = 0;
@@ -1414,6 +1422,10 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                 glx_fps_variant_status = -2;
             }
         }
+    } else if (probe_mode && strcmp(probe_mode, "present-fps") == 0) {
+        run_mode = "present-fps";
+        run_arg = "--present-fps";
+        run_program = "/bin/host-x11-dri3-present-smoke";
     }
 
     fp = fopen(X11_EGL_SESSION_LOG, "w");
@@ -1498,6 +1510,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                      displays[i]);
         auth_path = x11_egl_auth_for_display(&xwayland_auth, displays[i]);
         rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
+                                    "/bin/host-x11-egl-smoke",
                                     "--x11-connect-only",
                                     auth_path, NULL);
         if (rc != 0 && !auth_path) {
@@ -1511,6 +1524,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                 x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=BEGIN display=%s reason=auth-discovered\n",
                              displays[i]);
                 rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
+                                            "/bin/host-x11-egl-smoke",
                                             "--x11-connect-only",
                                             auth_path, NULL);
                 x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=%s display=%s exit_status=%d\n",
@@ -1535,7 +1549,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                  selected);
     x11_egl_logf("host-x11-egl-smoke: phase=%s status=BEGIN mode=session display=%s\n",
                  run_mode, selected);
-    glx_rc = run_host_x11_egl_smoke(selected, run_mode, run_arg,
+    glx_rc = run_host_x11_egl_smoke(selected, run_mode, run_program, run_arg,
                                     x11_egl_auth_for_display(&xwayland_auth,
                                                              selected),
                                     glx_fps_variant_env_set
@@ -1569,6 +1583,10 @@ static int x11_egl_session_probe_mode(char *mode, size_t mode_size)
         snprintf(mode, mode_size, "%s", "glx-fps");
         return 1;
     }
+    if (strcmp(value, "present-fps") == 0) {
+        snprintf(mode, mode_size, "%s", "present-fps");
+        return 1;
+    }
 
     x11_egl_session_terminal("invalid", "FAIL", 2, "invalid-mode");
     return -1;
@@ -1586,7 +1604,16 @@ static pid_t maybe_spawn_x11_egl_session_probe(void)
     snprintf(x11_egl_active_session_probe_mode,
              sizeof(x11_egl_active_session_probe_mode), "%s", probe_mode);
     if (!is_executable("/bin/host-x11-egl-smoke")) {
-        x11_egl_session_terminal(probe_mode, "FAIL", 127, "missing-binary");
+        x11_egl_session_terminal(probe_mode, "FAIL", 127,
+                                 strcmp(probe_mode, "present-fps") == 0
+                                     ? "missing-preflight-binary"
+                                     : "missing-binary");
+        return -1;
+    }
+    if (strcmp(probe_mode, "present-fps") == 0 &&
+        !is_executable("/bin/host-x11-dri3-present-smoke")) {
+        x11_egl_session_terminal(probe_mode, "FAIL", 127,
+                                 "missing-binary");
         return -1;
     }
 

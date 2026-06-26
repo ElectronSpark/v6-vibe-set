@@ -19,6 +19,23 @@ has_pkg_config() {
     pkg-config --exists "$@" >/dev/null 2>&1
 }
 
+can_link_xcb_dri3_present() {
+    local out="${BUILD_DIR}/.check-xcb-dri3-present"
+
+    has_pkg_config xcb || return 1
+    # shellcheck disable=SC2046
+    if printf 'int main(void){return 0;}\n' |
+        "${CC_BIN}" -x c - -o "${out}" \
+            $(pkg-config --cflags --libs xcb) \
+            -Wl,-l:libxcb-dri3.so.0 -Wl,-l:libxcb-present.so.0 \
+            >/dev/null 2>&1; then
+        rm -f "${out}"
+        return 0
+    fi
+    rm -f "${out}"
+    return 1
+}
+
 stage_host_file() {
     local src="$1"
     local dst="$2"
@@ -123,14 +140,15 @@ stage_c_probes() {
         note "warning: xcb development files not found; X11 XCB probe not staged"
     fi
 
-    if has_pkg_config xcb xcb-dri3 xcb-present libdrm; then
+    if can_link_xcb_dri3_present; then
         # shellcheck disable=SC2046
         build_simple host-x11-dri3-present-smoke \
             "${REPO_ROOT}/scripts/image/host-x11-dri3-present-smoke.c" \
             "${REPO_ROOT}/scripts/image/host-x11-dri3-present-smoke-launcher.c" \
-            $(pkg-config --cflags --libs xcb xcb-dri3 xcb-present libdrm)
+            $(pkg-config --cflags --libs xcb) \
+            -Wl,-l:libxcb-dri3.so.0 -Wl,-l:libxcb-present.so.0
     else
-        note "warning: xcb-dri3/xcb-present/libdrm development files not found; X11 DRI3/Present probe not staged"
+        note "warning: xcb development files or linkable libxcb-dri3.so.0/libxcb-present.so.0 runtime libraries not found; X11 DRI3/Present probe not staged"
     fi
 
     if has_pkg_config x11 xext; then

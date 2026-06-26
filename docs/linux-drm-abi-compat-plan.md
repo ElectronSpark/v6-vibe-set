@@ -259,6 +259,59 @@ The last run reached the session probe and selected
 `spin_lock reentry`. Treat these as KDE/session stability artifacts, not GLX
 timing evidence.
 
+Present-only pacing reducer update:
+
+```text
+scripts/image/host-x11-dri3-present-smoke.c
+scripts/image/host-x11-dri3-present-smoke-launcher.c
+scripts/image/kde-session.c
+scripts/gpu/kde-plasma-desktop-smoke.expect
+scripts/image/stage-host-gui-runtime.sh
+```
+
+The xv6-owned DRI3/Present probe now has a KDE session-launched
+`--present-fps` mode and `KDE_SMOKE_REDUCER=x11-present-fps`. The host GUI
+staging path links the probe against versioned `libxcb-dri3.so.0` and
+`libxcb-present.so.0`, avoiding missing development pkg-config files while
+keeping imported packages clean. The DRI3 launcher honors the session log
+environment for durable `host-gui-host-x11-egl-smoke.log` capture and retains
+the standalone DRI3 log fallback.
+
+Successful no-Weston Present-only artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-055522-x11-present-fps-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS
+frames=105 elapsed_seconds=5.003096 fps=20.987 present_only=1 gl_context=0
+issued=105 completed=105 outstanding=0
+present_request_total_ms=1.533 request_check_total_ms=1793.989 flush_total_ms=16.994
+event_wait_total_ms=3182.260 completion_total_ms=5000.230 avg_completion_ms=47.621 max_completion_ms=334.250
+first_msc=8589934671 last_msc=455266534495 msc_delta=446676599824
+dri3_drm_name=virtio_gpu dri3_drm_version=0.1.0
+```
+
+Interpretation: the raw X11 Present-only loop under KDE/Xwayland reaches nearly
+the same rate as the GLX `swap-only` result (20.987 FPS vs. 20.914 FPS), with
+no GL context or draw work and zero outstanding presents. This strengthens the
+case that the remaining acceleration gap is in Xwayland/Present pacing or the
+xv6-facing wait/check path around Present completions rather than GL draw issue
+overhead alone.
+
+Default KDE regression artifact after the Present FPS harness:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-055748-default-kde-smoke-pass-after-present-fps-harness/
+KDE-PLASMA-DESKTOP-SMOKE-DONE
+KDE_SMOKE_AGENT_DONE status=PASS
+Xwayland KDE wrapper: ... glamor=off effective_glamor=off ... enable_glx=0
+kde_app_launch_probe ... konsole=1 ... dolphin=1 ... chromium=1 ... status=PASS
+kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... chromium=1 ... pipewire=1 ... status=PASS
+```
+
+The known raw KWin screenshot readback warning remained
+`kde_kwin_screenshot_probe result=FAIL detail=low-color-detail`; the overall
+default smoke still passed.
+
 A same-command retry before the timing pass hit a known pre-probe KWin startup
 crash signature and was preserved separately at:
 

@@ -85,7 +85,8 @@ if {[info exists env(KDE_SMOKE_AGENT)]} {
     set kde_smoke_agent $env(KDE_SMOKE_AGENT)
 } elseif {$kde_smoke_reducer eq "x11-egl" ||
           $kde_smoke_reducer eq "x11-dri3" ||
-          $kde_smoke_reducer eq "x11-glx-fps"} {
+          $kde_smoke_reducer eq "x11-glx-fps" ||
+          $kde_smoke_reducer eq "x11-present-fps"} {
     set kde_smoke_agent "0"
 } else {
     set kde_smoke_agent "1"
@@ -103,6 +104,9 @@ if {$kde_smoke_reducer eq "x11-egl"} {
 }
 if {$kde_smoke_reducer eq "x11-glx-fps"} {
     append qemu_append " kde_x11_egl_session_probe=glx-fps"
+}
+if {$kde_smoke_reducer eq "x11-present-fps"} {
+    append qemu_append " kde_x11_egl_session_probe=present-fps"
 }
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
@@ -900,12 +904,37 @@ proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext 
     return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value exit_status=$exit_status"
 }
 
+proc x11_present_fps_failure_suffix {saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding exit_status} {
+    return "start=$saw_start connect=$saw_connect dri3=$saw_dri3 present=$saw_present select=$saw_select fd=$saw_fd fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value completed=$completed outstanding=$outstanding exit_status=$exit_status"
+}
+
 proc x11_glx_fps_failure_label_from_line {line} {
     set label [x11_egl_failure_label_from_line $line]
     if {$label ne ""} {
         regsub {^x11-egl-} $label {x11-glx-fps-} label
     }
     return $label
+}
+
+proc x11_present_fps_failure_label_from_line {line} {
+    set line [string trim $line]
+    if {[regexp {host-x11-dri3-present-smoke: phase=present_fps_result status=FAIL} $line]} {
+        if {[regexp {reason=([^ \r\n]+)} $line -> reason]} {
+            return "x11-present-fps-result-FAIL-$reason"
+        }
+        return "x11-present-fps-result-FAIL"
+    }
+    if {[regexp {host-x11-dri3-present-smoke: phase=([A-Za-z0-9_]+)[^\r\n]*status=FAIL} $line -> phase]} {
+        return "x11-present-fps-${phase}-status-FAIL"
+    }
+    if {[regexp {host-x11-dri3-present-smoke: (connect|atom setup|event) (failed|eof)} $line -> phase reason]} {
+        regsub -all { } $phase {_} phase
+        return "x11-present-fps-${phase}-${reason}"
+    }
+    if {[regexp {No such file|cannot execute|not found} $line]} {
+        return "x11-present-fps-exec-missing"
+    }
+    return ""
 }
 
 proc x11_egl_scan_glx_probe_log {text start_var connect_var egl_init_var glx_ext_var glx_version_var fbconfigs_var visual_var context_var current_var strings_var draw_var result_var failure_var} {
@@ -1048,6 +1077,81 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
             }
         }
     }
+}
+
+proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var select_var fd_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var completed_var outstanding_var failure_var} {
+    upvar 1 $start_var saw_start
+    upvar 1 $connect_var saw_connect
+    upvar 1 $dri3_var saw_dri3
+    upvar 1 $present_var saw_present
+    upvar 1 $select_var saw_select
+    upvar 1 $fd_var saw_fd
+    upvar 1 $fps_begin_var saw_fps_begin
+    upvar 1 $fps_result_var saw_fps_result
+    upvar 1 $fps_status_var fps_status
+    upvar 1 $fps_frames_var fps_frames
+    upvar 1 $fps_elapsed_var fps_elapsed
+    upvar 1 $fps_value_var fps_value
+    upvar 1 $completed_var completed
+    upvar 1 $outstanding_var outstanding
+    upvar 1 $failure_var failure_label
+
+    set in_present_fps 0
+    set saw_dri3_ext 0
+    set saw_dri3_version 0
+    set saw_present_ext 0
+    set saw_present_version 0
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-dri3-present-smoke: phase=start status=BEGIN mode=present-fps} $line]} {
+            set in_present_fps 1
+            set saw_start 1
+        }
+        if {!$in_present_fps} {
+            continue
+        }
+        if {[regexp {host-x11-dri3-present-smoke: connected root=} $line]} {
+            set saw_connect 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: extension name=DRI3 present=1} $line]} {
+            set saw_dri3_ext 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: dri3_version major=} $line]} {
+            set saw_dri3_version 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: extension name=Present present=1} $line]} {
+            set saw_present_ext 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_version major=} $line]} {
+            set saw_present_version 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: present_select_input status=PASS} $line]} {
+            set saw_select 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: dri3_open_fd status=PASS} $line]} {
+            set saw_fd 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: phase=present_fps status=BEGIN} $line]} {
+            set saw_fps_begin 1
+        }
+        if {[regexp {host-x11-dri3-present-smoke: phase=present_fps_result status=(PASS|FAIL)[^\r\n]*present_only=1[^\r\n]*gl_context=0[^\r\n]*gl_draw_total_ms=0[^\r\n]*gl_swap_total_ms=0[^\r\n]*frames=([0-9]+)[^\r\n]*elapsed_seconds=([0-9]+(\.[0-9]+)?)[^\r\n]*fps=([0-9]+(\.[0-9]+)?)[^\r\n]*issued=([0-9]+)[^\r\n]*completed=([0-9]+)[^\r\n]*outstanding=([0-9]+)} $line -> found_status found_frames found_elapsed _ found_fps _ issued found_completed found_outstanding]} {
+            set saw_fps_result 1
+            set fps_status $found_status
+            set fps_frames $found_frames
+            set fps_elapsed $found_elapsed
+            set fps_value $found_fps
+            set completed $found_completed
+            set outstanding $found_outstanding
+        }
+        if {$failure_label eq ""} {
+            set label [x11_present_fps_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+    set saw_dri3 [expr {$saw_dri3_ext && $saw_dri3_version}]
+    set saw_present [expr {$saw_present_ext && $saw_present_version}]
 }
 
 proc x11_egl_glx_probe_prelaunch_marker {log_path} {
@@ -1267,6 +1371,9 @@ proc read_x11_egl_session_log {label} {
             -re {host-x11-egl-smoke: [^\r\n]+} {
                 append log_text $expect_out(buffer)
             }
+            -re {host-x11-dri3-present-smoke: [^\r\n]+} {
+                append log_text $expect_out(buffer)
+            }
             -re {cat: [^\r\n]+} {
                 append log_text $expect_out(buffer)
             }
@@ -1341,6 +1448,61 @@ proc run_kde_x11_glx_fps_session_probe {} {
     }
     if {$fps_frames eq "" || $fps_frames <= 0} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-no-frames $suffix"
+    }
+}
+
+proc run_kde_x11_present_fps_session_probe {} {
+    global x11_dri3_available host_x11_dri3_png
+
+    if {!$x11_dri3_available} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-missing"
+    }
+
+    set session_result [wait_for_x11_egl_session_probe_terminal]
+    set session_status [lindex $session_result 0]
+    set exit_status [lindex $session_result 1]
+    set log_text [read_x11_egl_session_log "x11-present-fps-session-probe"]
+    write_x11_egl_artifact_log $log_text
+
+    set saw_start 0
+    set saw_connect 0
+    set saw_dri3 0
+    set saw_present 0
+    set saw_select 0
+    set saw_fd 0
+    set saw_fps_begin 0
+    set saw_fps_result 0
+    set fps_status ""
+    set fps_frames ""
+    set fps_elapsed ""
+    set fps_value ""
+    set completed ""
+    set outstanding ""
+    set failure_label ""
+    x11_present_fps_scan_log $log_text saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding failure_label
+    set suffix [x11_present_fps_failure_suffix $saw_start $saw_connect $saw_dri3 $saw_present $saw_select $saw_fd $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $completed $outstanding $exit_status]
+    host_screenshot "x11-dri3" $host_x11_dri3_png
+
+    if {$failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $failure_label $suffix"
+    }
+    if {$session_status ne "PASS"} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-session-probe-$session_status exit_status=$exit_status $suffix"
+    }
+    if {$exit_status ne "0"} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-status-$exit_status $suffix"
+    }
+    if {!($saw_start && $saw_connect && $saw_dri3 && $saw_present && $saw_select && $saw_fd && $saw_fps_begin && $saw_fps_result)} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-incomplete $suffix"
+    }
+    if {$fps_status ne "PASS"} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-result-$fps_status $suffix"
+    }
+    if {$fps_frames eq "" || $completed eq "" || $fps_frames <= 0 || $completed <= 0} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-no-frames $suffix"
+    }
+    if {$outstanding eq "" || $outstanding != 0} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-present-fps-outstanding $suffix"
     }
 }
 
@@ -2186,6 +2348,12 @@ if {[kde_smoke_reducer] eq "x11-glx-fps"} {
     wait_for_kde_session_ready
     run_kde_x11_glx_fps_session_probe
     finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS"
+}
+
+if {[kde_smoke_reducer] eq "x11-present-fps"} {
+    wait_for_kde_session_ready
+    run_kde_x11_present_fps_session_probe
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS"
 }
 
 if {![legacy_serial_validation_enabled] && [guest_smoke_agent_enabled]} {
