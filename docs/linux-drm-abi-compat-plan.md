@@ -247,6 +247,25 @@ syncobj notification path, especially the current
 behavior change. The current virtgpu fence trace still shows submitted and
 responded fences matching 1:1, so raw virtgpu fence starvation is not proven.
 
+Follow-up diagnostic artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-061409-x11-glx-fps-syncobj-eventfd-diag-pass/
+```
+
+Key diagnostic line:
+
+```text
+chrome-drm-detail: syncobj-eventfd owner=3:68 ret=-22 handle=0 flags=0x0 point=0 fd=-1 pad=0 fd_is_eventfd=-1 syncobj_exists=-1 state_has_fence=-1 reject_reason=invalid_args
+```
+
+Interpretation: the first Xwayland `DRM_IOCTL_SYNCOBJ_EVENTFD` call in this
+run is an invalid/feature-probe-shaped request, not a real eventfd arm:
+`handle=0` and `fd=-1`. The diagnostic patch intentionally preserves current
+errno behavior. The next semantic step should be a small local reducer for
+Linux-vs-xv6 validation ordering and errno on invalid `SYNCOBJ_EVENTFD`
+argument combinations before changing kernel behavior.
+
 Success criteria:
 
 - KDE smoke passes.
