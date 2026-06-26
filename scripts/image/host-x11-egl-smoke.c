@@ -36,6 +36,13 @@ typedef void (GLAPIENTRY *gl_clear_color_proc_t)(GLfloat red, GLfloat green,
                                                  GLfloat blue, GLfloat alpha);
 typedef void (GLAPIENTRY *gl_clear_proc_t)(GLbitfield mask);
 typedef GLenum (GLAPIENTRY *gl_get_error_proc_t)(void);
+typedef void (GLAPIENTRY *gl_finish_proc_t)(void);
+
+enum glx_fps_variant_kind {
+    GLX_FPS_VARIANT_BASELINE,
+    GLX_FPS_VARIANT_FINISH_BEFORE_SWAP,
+    GLX_FPS_VARIANT_SWAP_ONLY,
+};
 
 struct gl_api {
     const char *source;
@@ -44,20 +51,32 @@ struct gl_api {
     gl_clear_color_proc_t clear_color;
     gl_clear_proc_t clear;
     gl_get_error_proc_t get_error;
+    gl_finish_proc_t finish;
 };
 
 struct glx_fps_timing {
     int64_t event_total_ns;
     int64_t gl_issue_total_ns;
     int64_t gl_error_total_ns;
+    int64_t gl_finish_before_swap_total_ns;
     int64_t draw_total_ns;
     int64_t swap_total_ns;
     int64_t final_xsync_ns;
     int64_t max_event_ns;
     int64_t max_gl_issue_ns;
     int64_t max_gl_error_ns;
+    int64_t max_gl_finish_before_swap_ns;
     int64_t max_draw_ns;
     int64_t max_swap_ns;
+    int swap_only_skipped_draw_frames;
+};
+
+struct glx_fps_variant {
+    enum glx_fps_variant_kind kind;
+    const char *name;
+    int requested;
+    int invalid;
+    char raw[64];
 };
 
 struct app {
@@ -184,6 +203,12 @@ linked_gl_get_error(void)
 }
 
 static void
+linked_gl_finish(void)
+{
+    glFinish();
+}
+
+static void
 set_linked_gl_api(struct app *app)
 {
     app->gl.source = "linked";
@@ -192,6 +217,7 @@ set_linked_gl_api(struct app *app)
     app->gl.clear_color = linked_gl_clear_color;
     app->gl.clear = linked_gl_clear;
     app->gl.get_error = linked_gl_get_error;
+    app->gl.finish = linked_gl_finish;
 }
 
 static int
@@ -406,6 +432,18 @@ glx_get_gl_get_error_proc(void)
     return conv.typed;
 }
 
+static gl_finish_proc_t
+glx_get_gl_finish_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_finish_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glFinish");
+    return conv.typed;
+}
+
 static int
 set_glx_gl_api(struct app *app)
 {
@@ -415,23 +453,24 @@ set_glx_gl_api(struct app *app)
     app->gl.clear_color = glx_get_gl_clear_color_proc();
     app->gl.clear = glx_get_gl_clear_proc();
     app->gl.get_error = glx_get_gl_get_error_proc();
+    app->gl.finish = glx_get_gl_finish_proc();
 
     if (!app->gl.get_string || !app->gl.viewport || !app->gl.clear_color ||
         !app->gl.clear || !app->gl.get_error) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_gl_dispatch status=FAIL get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p\n",
+                "host-x11-egl-smoke: phase=glx_gl_dispatch status=FAIL get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p finish=%p\n",
                 (void *)app->gl.get_string, (void *)app->gl.viewport,
                 (void *)app->gl.clear_color, (void *)app->gl.clear,
-                (void *)app->gl.get_error);
+                (void *)app->gl.get_error, (void *)app->gl.finish);
         fflush(stderr);
         return -1;
     }
 
     fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_gl_dispatch status=PASS get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p\n",
+            "host-x11-egl-smoke: phase=glx_gl_dispatch status=PASS get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p finish=%p finish_required=0\n",
             (void *)app->gl.get_string, (void *)app->gl.viewport,
             (void *)app->gl.clear_color, (void *)app->gl.clear,
-            (void *)app->gl.get_error);
+            (void *)app->gl.get_error, (void *)app->gl.finish);
     fflush(stderr);
     return 0;
 }
@@ -1384,6 +1423,57 @@ glx_fps_requested(int argc, char **argv)
     return 0;
 }
 
+static const char *
+glx_fps_variant_kind_name(enum glx_fps_variant_kind kind)
+{
+    switch (kind) {
+    case GLX_FPS_VARIANT_FINISH_BEFORE_SWAP:
+        return "finish-before-swap";
+    case GLX_FPS_VARIANT_SWAP_ONLY:
+        return "swap-only";
+    case GLX_FPS_VARIANT_BASELINE:
+    default:
+        return "baseline";
+    }
+}
+
+static void
+read_glx_fps_variant(struct glx_fps_variant *variant)
+{
+    const char *raw = getenv("HOST_X11_EGL_GLX_FPS_VARIANT");
+
+    memset(variant, 0, sizeof(*variant));
+    variant->kind = GLX_FPS_VARIANT_BASELINE;
+    variant->name = glx_fps_variant_kind_name(variant->kind);
+    if (!raw || raw[0] == '\0')
+        return;
+
+    variant->requested = 1;
+    copy_log_value(variant->raw, sizeof(variant->raw), raw);
+    if (strcmp(raw, "baseline") == 0) {
+        variant->kind = GLX_FPS_VARIANT_BASELINE;
+    } else if (strcmp(raw, "finish-before-swap") == 0) {
+        variant->kind = GLX_FPS_VARIANT_FINISH_BEFORE_SWAP;
+    } else if (strcmp(raw, "swap-only") == 0) {
+        variant->kind = GLX_FPS_VARIANT_SWAP_ONLY;
+    } else {
+        variant->invalid = 1;
+        fprintf(stderr,
+                "host-x11-egl-smoke: diag glx_fps_variant status=FAIL raw=\"%s\" reason=invalid-value\n",
+                variant->raw);
+        fflush(stderr);
+        variant->kind = GLX_FPS_VARIANT_BASELINE;
+    }
+    variant->name = variant->invalid ? "invalid" :
+                    glx_fps_variant_kind_name(variant->kind);
+}
+
+static int
+glx_fps_variant_active(const struct glx_fps_variant *variant)
+{
+    return variant->requested || variant->kind != GLX_FPS_VARIANT_BASELINE;
+}
+
 static int
 x11_connect_only_requested(int argc, char **argv)
 {
@@ -1419,16 +1509,45 @@ drain_x11_events_for_fps(struct app *app)
 }
 
 static int
+ensure_glx_fps_finish(struct app *app)
+{
+    if (app->gl.source && strcmp(app->gl.source, "glx-proc") == 0)
+        app->gl.finish = glx_get_gl_finish_proc();
+    else if (!app->gl.finish)
+        app->gl.finish = glx_get_gl_finish_proc();
+    if (app->gl.finish) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_gl_finish_dispatch status=PASS source=%s finish=%p\n",
+                safe_str(app->gl.source), (void *)app->gl.finish);
+        fflush(stderr);
+        return 0;
+    }
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_gl_finish_dispatch status=FAIL reason=missing-gl-finish-dispatch source=%s finish=%p\n",
+            safe_str(app->gl.source), (void *)app->gl.finish);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL reason=missing-gl-finish-dispatch source=%s\n",
+            safe_str(app->gl.source));
+    fflush(stderr);
+    return -1;
+}
+
+static int
 draw_glx_fps_frame(struct app *app, int frame,
+                   const struct glx_fps_variant *variant,
                    struct glx_fps_timing *timing)
 {
     const float t = (float)(frame % 120) / 119.0f;
+    int issue_gl = 1;
     int64_t gl_issue_start_ns;
     int64_t gl_issue_end_ns;
     int64_t gl_error_start_ns;
     int64_t gl_error_end_ns;
     int64_t gl_issue_ns;
     int64_t gl_error_ns;
+    int64_t gl_finish_start_ns;
+    int64_t gl_finish_end_ns;
     int64_t swap_start_ns;
     int64_t swap_end_ns;
     GLenum err;
@@ -1442,29 +1561,52 @@ draw_glx_fps_frame(struct app *app, int frame,
         return -1;
     }
 
-    gl_issue_start_ns = monotonic_ns();
-    app->gl.viewport(0, 0, WIN_W, WIN_H);
-    app->gl.clear_color(0.05f + 0.20f * t, 0.18f + 0.50f * (1.0f - t),
-                        0.32f + 0.36f * t, 1.0f);
-    app->gl.clear(GL_COLOR_BUFFER_BIT);
-    gl_issue_end_ns = monotonic_ns();
-    gl_error_start_ns = monotonic_ns();
-    err = app->gl.get_error();
-    gl_error_end_ns = monotonic_ns();
-    gl_issue_ns = elapsed_ns(gl_issue_start_ns, gl_issue_end_ns);
-    gl_error_ns = elapsed_ns(gl_error_start_ns, gl_error_end_ns);
-    add_timing_sample(&timing->gl_issue_total_ns,
-                      &timing->max_gl_issue_ns, gl_issue_ns);
-    add_timing_sample(&timing->gl_error_total_ns,
-                      &timing->max_gl_error_ns, gl_error_ns);
-    add_timing_sample(&timing->draw_total_ns, &timing->max_draw_ns,
-                      gl_issue_ns + gl_error_ns);
-    if (err != GL_NO_ERROR) {
-        fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL frame=%d gl_error=0x%x error_name=%s\n",
-                frame, err, gl_error_name(err));
-        fflush(stderr);
-        return -1;
+    if (variant->kind == GLX_FPS_VARIANT_SWAP_ONLY && frame > 1)
+        issue_gl = 0;
+
+    if (issue_gl) {
+        gl_issue_start_ns = monotonic_ns();
+        app->gl.viewport(0, 0, WIN_W, WIN_H);
+        app->gl.clear_color(0.05f + 0.20f * t, 0.18f + 0.50f * (1.0f - t),
+                            0.32f + 0.36f * t, 1.0f);
+        app->gl.clear(GL_COLOR_BUFFER_BIT);
+        gl_issue_end_ns = monotonic_ns();
+        gl_error_start_ns = monotonic_ns();
+        err = app->gl.get_error();
+        gl_error_end_ns = monotonic_ns();
+        gl_issue_ns = elapsed_ns(gl_issue_start_ns, gl_issue_end_ns);
+        gl_error_ns = elapsed_ns(gl_error_start_ns, gl_error_end_ns);
+        add_timing_sample(&timing->gl_issue_total_ns,
+                          &timing->max_gl_issue_ns, gl_issue_ns);
+        add_timing_sample(&timing->gl_error_total_ns,
+                          &timing->max_gl_error_ns, gl_error_ns);
+        add_timing_sample(&timing->draw_total_ns, &timing->max_draw_ns,
+                          gl_issue_ns + gl_error_ns);
+        if (err != GL_NO_ERROR) {
+            fprintf(stderr,
+                    "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL frame=%d gl_error=0x%x error_name=%s\n",
+                    frame, err, gl_error_name(err));
+            fflush(stderr);
+            return -1;
+        }
+    } else {
+        timing->swap_only_skipped_draw_frames++;
+    }
+
+    if (variant->kind == GLX_FPS_VARIANT_FINISH_BEFORE_SWAP) {
+        if (!app->gl.finish) {
+            fprintf(stderr,
+                    "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL reason=missing-gl-finish-dispatch source=%s\n",
+                    safe_str(app->gl.source));
+            fflush(stderr);
+            return -1;
+        }
+        gl_finish_start_ns = monotonic_ns();
+        app->gl.finish();
+        gl_finish_end_ns = monotonic_ns();
+        add_timing_sample(&timing->gl_finish_before_swap_total_ns,
+                          &timing->max_gl_finish_before_swap_ns,
+                          elapsed_ns(gl_finish_start_ns, gl_finish_end_ns));
     }
 
     swap_start_ns = monotonic_ns();
@@ -1478,43 +1620,86 @@ draw_glx_fps_frame(struct app *app, int frame,
 
 static void
 log_glx_fps_timing(const char *status, const char *result_status,
+                   const struct glx_fps_variant *variant,
                    const struct glx_fps_timing *timing, int frames)
 {
     double avg_swap_ms = 0.0;
+    const int variant_active = glx_fps_variant_active(variant);
 
     if (frames > 0)
         avg_swap_ms = ns_to_ms(timing->swap_total_ns) / (double)frames;
 
-    fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f\n",
-            status, result_status, frames, ns_to_ms(timing->event_total_ns),
-            ns_to_ms(timing->draw_total_ns),
-            ns_to_ms(timing->swap_total_ns), ns_to_ms(timing->final_xsync_ns),
-            ns_to_ms(timing->max_swap_ns), ns_to_ms(timing->max_draw_ns),
-            ns_to_ms(timing->max_event_ns), avg_swap_ms);
-    fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f\n",
-            status, result_status, frames, ns_to_ms(timing->event_total_ns),
-            ns_to_ms(timing->gl_issue_total_ns),
-            ns_to_ms(timing->gl_error_total_ns),
-            ns_to_ms(timing->draw_total_ns),
-            ns_to_ms(timing->swap_total_ns), ns_to_ms(timing->final_xsync_ns),
-            ns_to_ms(timing->max_gl_issue_ns),
-            ns_to_ms(timing->max_gl_error_ns), ns_to_ms(timing->max_swap_ns),
-            ns_to_ms(timing->max_event_ns));
+    if (variant_active) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d\n",
+                status, result_status, frames,
+                ns_to_ms(timing->event_total_ns),
+                ns_to_ms(timing->draw_total_ns),
+                ns_to_ms(timing->swap_total_ns),
+                ns_to_ms(timing->final_xsync_ns),
+                ns_to_ms(timing->max_swap_ns),
+                ns_to_ms(timing->max_draw_ns),
+                ns_to_ms(timing->max_event_ns), avg_swap_ms,
+                variant->name,
+                ns_to_ms(timing->gl_finish_before_swap_total_ns),
+                ns_to_ms(timing->max_gl_finish_before_swap_ns),
+                timing->swap_only_skipped_draw_frames, variant->invalid);
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d\n",
+                status, result_status, frames,
+                ns_to_ms(timing->event_total_ns),
+                ns_to_ms(timing->gl_issue_total_ns),
+                ns_to_ms(timing->gl_error_total_ns),
+                ns_to_ms(timing->draw_total_ns),
+                ns_to_ms(timing->swap_total_ns),
+                ns_to_ms(timing->final_xsync_ns),
+                ns_to_ms(timing->max_gl_issue_ns),
+                ns_to_ms(timing->max_gl_error_ns),
+                ns_to_ms(timing->max_swap_ns),
+                ns_to_ms(timing->max_event_ns), variant->name,
+                ns_to_ms(timing->gl_finish_before_swap_total_ns),
+                ns_to_ms(timing->max_gl_finish_before_swap_ns),
+                timing->swap_only_skipped_draw_frames, variant->invalid);
+    } else {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f\n",
+                status, result_status, frames,
+                ns_to_ms(timing->event_total_ns),
+                ns_to_ms(timing->draw_total_ns),
+                ns_to_ms(timing->swap_total_ns),
+                ns_to_ms(timing->final_xsync_ns),
+                ns_to_ms(timing->max_swap_ns),
+                ns_to_ms(timing->max_draw_ns),
+                ns_to_ms(timing->max_event_ns), avg_swap_ms);
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f\n",
+                status, result_status, frames,
+                ns_to_ms(timing->event_total_ns),
+                ns_to_ms(timing->gl_issue_total_ns),
+                ns_to_ms(timing->gl_error_total_ns),
+                ns_to_ms(timing->draw_total_ns),
+                ns_to_ms(timing->swap_total_ns),
+                ns_to_ms(timing->final_xsync_ns),
+                ns_to_ms(timing->max_gl_issue_ns),
+                ns_to_ms(timing->max_gl_error_ns),
+                ns_to_ms(timing->max_swap_ns),
+                ns_to_ms(timing->max_event_ns));
+    }
     fflush(stderr);
 }
 
 static void
 log_glx_fps_result(struct app *app, const char *status, const char *reason,
                    const GLubyte *vendor, const GLubyte *renderer,
-                   const GLubyte *version, int frames,
+                   const GLubyte *version,
+                   const struct glx_fps_variant *variant, int frames,
                    double elapsed_seconds)
 {
     char vendor_buf[256];
     char renderer_buf[256];
     char version_buf[256];
     double fps = 0.0;
+    const int variant_active = glx_fps_variant_active(variant);
 
     if (elapsed_seconds > 0.0)
         fps = (double)frames / elapsed_seconds;
@@ -1522,12 +1707,23 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
     copy_log_value(renderer_buf, sizeof(renderer_buf), (const char *)renderer);
     copy_log_value(version_buf, sizeof(version_buf), (const char *)version);
 
-    fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d\n",
-            status, safe_str(reason), renderer_buf, vendor_buf, version_buf,
-            app->glx_direct_available, app->glx_direct, frames,
-            elapsed_seconds, fps, (double)GLX_FPS_TARGET_NS / 1000000000.0,
-            GLX_FPS_MAX_FRAMES);
+    if (variant_active) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d variant=%s invalid_variant=%d\n",
+                status, safe_str(reason), renderer_buf, vendor_buf,
+                version_buf, app->glx_direct_available, app->glx_direct,
+                frames, elapsed_seconds, fps,
+                (double)GLX_FPS_TARGET_NS / 1000000000.0,
+                GLX_FPS_MAX_FRAMES, variant->name, variant->invalid);
+    } else {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d\n",
+                status, safe_str(reason), renderer_buf, vendor_buf,
+                version_buf, app->glx_direct_available, app->glx_direct,
+                frames, elapsed_seconds, fps,
+                (double)GLX_FPS_TARGET_NS / 1000000000.0,
+                GLX_FPS_MAX_FRAMES);
+    }
     fflush(stderr);
 }
 
@@ -1540,30 +1736,54 @@ run_glx_fps(struct app *app)
     int64_t start_ns;
     int64_t now_ns;
     struct glx_fps_timing timing;
+    struct glx_fps_variant variant;
     int rc = 1;
 
     memset(&timing, 0, sizeof(timing));
+    read_glx_fps_variant(&variant);
+    if (variant.invalid) {
+        log_glx_fps_result(app, "FAIL", "invalid_variant", NULL, NULL, NULL,
+                           &variant, 0, 0.0);
+        goto out;
+    }
     if (setup_x11(app) != 0) {
-        log_glx_fps_result(app, "FAIL", "x11_setup", NULL, NULL, NULL, 0,
-                           0.0);
+        log_glx_fps_result(app, "FAIL", "x11_setup", NULL, NULL, NULL,
+                           &variant, 0, 0.0);
         goto out;
     }
     probe_egl_initialize_for_glx_fallback(app);
     if (setup_glx(app) != 0) {
         log_glx_fps_result(app, "FAIL", "glx_setup", NULL, NULL, NULL,
-                           app->frame, 0.0);
+                           &variant, app->frame, 0.0);
+        goto out;
+    }
+    if (variant.kind == GLX_FPS_VARIANT_FINISH_BEFORE_SWAP &&
+        ensure_glx_fps_finish(app) != 0) {
+        log_glx_fps_result(app, "FAIL", "gl_finish_dispatch", NULL, NULL,
+                           NULL, &variant, app->frame, 0.0);
         goto out;
     }
 
     vendor = app->gl.get_string(GL_VENDOR);
     renderer = app->gl.get_string(GL_RENDERER);
     version = app->gl.get_string(GL_VERSION);
-    fprintf(stderr,
-            "host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps target_seconds=%.3f max_frames=%d renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d\n",
-            (double)GLX_FPS_TARGET_NS / 1000000000.0, GLX_FPS_MAX_FRAMES,
-            safe_str((const char *)renderer), safe_str((const char *)vendor),
-            safe_str((const char *)version), app->glx_direct_available,
-            app->glx_direct);
+    if (glx_fps_variant_active(&variant)) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps target_seconds=%.3f max_frames=%d renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d variant=%s invalid_variant=%d\n",
+                (double)GLX_FPS_TARGET_NS / 1000000000.0,
+                GLX_FPS_MAX_FRAMES, safe_str((const char *)renderer),
+                safe_str((const char *)vendor),
+                safe_str((const char *)version), app->glx_direct_available,
+                app->glx_direct, variant.name, variant.invalid);
+    } else {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps target_seconds=%.3f max_frames=%d renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d\n",
+                (double)GLX_FPS_TARGET_NS / 1000000000.0,
+                GLX_FPS_MAX_FRAMES, safe_str((const char *)renderer),
+                safe_str((const char *)vendor),
+                safe_str((const char *)version), app->glx_direct_available,
+                app->glx_direct);
+    }
     fflush(stderr);
 
     XSync(app->dpy, False);
@@ -1583,7 +1803,7 @@ run_glx_fps(struct app *app)
                           elapsed_ns(event_start_ns, event_end_ns));
         if (event_rc != 0)
             break;
-        if (draw_glx_fps_frame(app, app->frame + 1, &timing) != 0)
+        if (draw_glx_fps_frame(app, app->frame + 1, &variant, &timing) != 0)
             break;
         now_ns = monotonic_ns();
         if (now_ns == 0)
@@ -1604,16 +1824,16 @@ run_glx_fps(struct app *app)
 
     if (app->frame > 0 && app->running && version) {
         rc = 0;
-        log_glx_fps_timing("PASS", "PASS", &timing, app->frame);
+        log_glx_fps_timing("PASS", "PASS", &variant, &timing, app->frame);
         log_glx_fps_result(app, "PASS", "complete", vendor, renderer,
-                           version, app->frame,
+                           version, &variant, app->frame,
                            (double)(now_ns - start_ns) / 1000000000.0);
     } else {
-        log_glx_fps_timing("INFO", "FAIL", &timing, app->frame);
+        log_glx_fps_timing("INFO", "FAIL", &variant, &timing, app->frame);
         log_glx_fps_result(app, "FAIL",
                            app->running ? "no_frames_or_gl_version"
                                         : "window_closed",
-                           vendor, renderer, version, app->frame,
+                           vendor, renderer, version, &variant, app->frame,
                            (double)(now_ns - start_ns) / 1000000000.0);
     }
 

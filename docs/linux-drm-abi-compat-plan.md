@@ -200,6 +200,65 @@ draw bucket is not `glGetError`; it is dominated by existing GL issue calls
 diagnostic, such as `finish-before-swap`, `swap-only`, or a Present-only pacing
 burst, before making behavior changes.
 
+GLX FPS variant harness update:
+
+```text
+scripts/image/host-x11-egl-smoke.c
+scripts/image/kde-session.c
+```
+
+The xv6-owned GLX FPS reducer now accepts
+`kde_x11_egl_glx_fps_variant=baseline|finish-before-swap|swap-only`. Invalid
+variants fail before a misleading baseline PASS. `finish-before-swap` resolves
+and validates `glFinish` through the GLX proc-address path, and variant runs
+append explicit diagnostic fields without changing the default no-variant log
+shape.
+
+Build and staging checks after the harness update:
+
+```text
+git diff --check && git -C kernel diff --check
+PKG_CONFIG_PATH=/tmp/xv6-host-devpkgs/root/usr/lib/x86_64-linux-gnu/pkgconfig PKG_CONFIG_SYSROOT_DIR=/tmp/xv6-host-devpkgs/root cmake --build build-x86_64 --target host-gui-runtime -j2
+cmake --build build-x86_64 --target rootfs-refresh -j2
+```
+
+`host-gui-runtime` passed with the known optional probe staging warnings, and
+`rootfs-refresh` passed with the known unrelated format-truncation warnings in
+other probes. A Tcl-only completeness check could not run because `tclsh` was
+not installed; an attempted `expect -n` fallback launched the smoke script, was
+interrupted, and is not counted as verification evidence.
+
+Successful `swap-only` variant artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-051923-x11-glx-fps-swap-only-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=105 elapsed_seconds=5.020442 fps=20.914 variant=swap-only
+draw_total_ms=23.988 swap_total_ms=4969.928 final_xsync_ms=15.734 avg_swap_ms=47.333
+gl_issue_total_ms=23.979 gl_error_total_ms=0.009 swap_only_skipped_draw_frames=104
+QEMU trace: ctx_submit=467 set_scanout=119 res_flush=119 fence_ctrl/fence_resp=467/467 res_create_3d=53
+```
+
+Interpretation: skipping the per-frame draw work after frame 1 raised FPS only
+from the best baseline 18.455 to 20.914, while nearly all elapsed time moved
+into `glXSwapBuffers`. This argues against `glViewport`/`glClearColor`/
+`glClear` issue overhead as the sole remaining limiter and makes GLX
+swap/Present pacing the stronger next suspect.
+
+`finish-before-swap` did not produce a timing result in this cycle. Three
+attempts were preserved:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-051641-x11-glx-fps-finish-before-swap-kwin-startup-crash/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-051815-x11-glx-fps-finish-before-swap-session-probe-crash/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-052032-x11-glx-fps-finish-before-swap-spinlock-session-crash/
+```
+
+The last run reached the session probe and selected
+`glx_fps_variant=finish-before-swap`, but failed before `glx_fps_result` with
+`spin_lock reentry`. Treat these as KDE/session stability artifacts, not GLX
+timing evidence.
+
 A same-command retry before the timing pass hit a known pre-probe KWin startup
 crash signature and was preserved separately at:
 
@@ -215,6 +274,18 @@ KDE-PLASMA-DESKTOP-SMOKE-DONE
 Xwayland KDE wrapper: ... glamor=off effective_glamor=off ... enable_glx=0
 kde_app_launch_probe ... konsole=1 ... dolphin=1 ... chromium=1 ... status=PASS
 kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... chromium=1 ... status=PASS
+KDE_SMOKE_AGENT_DONE status=PASS
+```
+
+Default KDE regression artifact after the GLX FPS variant harness update:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-052229-default-kde-smoke-pass-after-glx-variant-harness/
+KDE-PLASMA-DESKTOP-SMOKE-DONE
+Xwayland KDE wrapper: ... glamor=off effective_glamor=off ... enable_glx=0
+kde_app_launch_probe ... konsole=1 ... dolphin=1 ... chromium=1 ... status=PASS
+kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... chromium=1 ... status=PASS
+kde_kwin_screenshot_probe result=FAIL detail=low-color-detail
 KDE_SMOKE_AGENT_DONE status=PASS
 ```
 
@@ -242,9 +313,12 @@ match the Linux KDE GLX baseline of 55.638 FPS.
 The latest phase-detail pass records `draw_total_ms=3539.314`,
 `swap_total_ms=1475.927`, `avg_swap_ms=15.870`,
 `gl_issue_total_ms=3537.151`, and `gl_error_total_ms=2.163`, so the draw bucket
-is not `glGetError`; it is dominated by the existing GL issue calls. Next
-evidence target: diagnostic variants such as `finish-before-swap`,
-`swap-only`, or a Present-only pacing burst before behavior changes. The
+is not `glGetError`; it is dominated by the existing GL issue calls. The
+`swap-only` variant then reduced draw time to 23.988 ms over the run but still
+recorded only 20.914 FPS with `swap_total_ms=4969.928`, strengthening the case
+that GLX swap/Present pacing rather than clear-call issue overhead dominates
+the remaining FPS gap. Next evidence target: a Present-only pacing burst or a
+smaller non-KDE `finish-before-swap` control before behavior changes. The
 current virtgpu fence trace still shows submitted and responded fences matching
 1:1, so raw virtgpu fence starvation remains unproven. The remaining
 `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for `handle=0`.
