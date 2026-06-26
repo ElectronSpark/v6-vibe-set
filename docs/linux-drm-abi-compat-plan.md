@@ -358,6 +358,38 @@ probe now returns Linux-shaped `ENOENT`, but this run failed before GLX/FPS
 measurement because the session probe could not open an authorized X display.
 It should not be used as FPS evidence.
 
+Session-probe auth diagnostic harness update:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-040250-x11-egl-auth-fix-glamor-auto-kwin-startup-crash/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-040447-x11-egl-auth-diagnostics-glamor-off-glx-server-fail/
+```
+
+Results:
+
+```text
+KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry
+pid 49 kwin_wayland: exception 13 (#GP General Protection) rip=0x7ffffcc2cd9d
+
+host-x11-egl-smoke: diag xwayland_auth label=best pid=71 display=:0 auth_path=(unset) argv=/bin/Xwayland.real -glamor off ... :0 ...
+host-x11-egl-smoke: phase=x11_preflight_candidate status=PASS display=:0 exit_status=0
+host-x11-egl-smoke: phase=egl_initialize status=FALLBACK reason=eglInitialize egl_error=0x3001 error_name=EGL_NOT_INITIALIZED fallback=glx
+host-x11-egl-smoke: diag glx_query_extension result=FAIL present=0 error_base=0 event_base=0
+host-x11-egl-smoke: diag glx_client_strings result=PASS vendor=Mesa Project and SGI version=1.4
+host-x11-egl-smoke: diag glx_server_strings result=FAIL vendor=(null) version=(null)
+host-x11-egl-smoke: diag glx_fbconfigs result=FAIL count=0 ptr=(nil)
+host-x11-egl-smoke: phase=session_probe status=FAIL mode=session probe_mode=glx-probe exit_status=1
+```
+
+Interpretation: the xv6-owned KDE session probe now records Xwayland auth
+discovery, display-specific auth candidates, launch-time `XAUTHORITY`
+selection, and GLX fallback phases in `host-gui-host-x11-egl-smoke.log`.
+The glamor-auto run still failed before the probe because KWin crashed during
+startup, so it is a startup artifact rather than GLX evidence. The glamor-off
+control reached Xwayland and proves the current failing surface: no auth file is
+present for `-glamor off`, X11 connect succeeds, EGL-on-X11 fails to initialize,
+and GLX has client strings but no server extension/version/fbconfigs.
+
 Success criteria:
 
 - KDE smoke passes.

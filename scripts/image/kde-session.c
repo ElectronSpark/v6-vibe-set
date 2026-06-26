@@ -16,8 +16,24 @@
 #define X11_EGL_SESSION_LOG "/host-gui-host-x11-egl-smoke.log"
 #define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
 #define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
+#define X11_EGL_AUTH_PATH_MAX 512
+#define X11_EGL_XWAYLAND_ARGV_MAX 1024
 
 static char x11_egl_active_session_probe_mode[64];
+
+struct x11_egl_xwayland_auth {
+    int found;
+    pid_t pid;
+    char argv[X11_EGL_XWAYLAND_ARGV_MAX];
+    char auth_path[X11_EGL_AUTH_PATH_MAX];
+    char display[64];
+};
+
+struct x11_egl_xwayland_auth_discovery {
+    struct x11_egl_xwayland_auth best;
+    struct x11_egl_xwayland_auth display0;
+    struct x11_egl_xwayland_auth display1;
+};
 
 static void mkdir_one(const char *path, mode_t mode)
 {
@@ -871,6 +887,333 @@ static void x11_egl_logf(const char *fmt, ...)
     close(fd);
 }
 
+static int proc_name_all_digits(const char *name)
+{
+    if (!name || name[0] == '\0')
+        return 0;
+    for (const char *p = name; *p; p++) {
+        if (!isdigit((unsigned char)*p))
+            return 0;
+    }
+    return 1;
+}
+
+static void x11_egl_copy_token(char *dst, size_t dst_size, const char *tok)
+{
+    size_t len;
+
+    if (dst_size == 0)
+        return;
+    if (!tok)
+        tok = "";
+
+    len = strnlen(tok, dst_size - 1);
+    memcpy(dst, tok, len);
+    dst[len] = '\0';
+}
+
+static void x11_egl_append_token(char *dst, size_t dst_size, const char *tok)
+{
+    size_t len;
+    size_t tok_len;
+
+    if (dst_size == 0 || !tok || tok[0] == '\0')
+        return;
+
+    len = strnlen(dst, dst_size);
+    if (len >= dst_size)
+        return;
+
+    tok_len = strnlen(tok, dst_size - len - 1);
+    memcpy(dst + len, tok, tok_len);
+    dst[len + tok_len] = '\0';
+}
+
+static void x11_egl_append_argv_token(char *argv, size_t argv_size,
+                                      const char *tok)
+{
+    size_t len;
+
+    if (argv_size == 0 || !tok || tok[0] == '\0')
+        return;
+    len = strlen(argv);
+    if (len > 0 && len + 1 < argv_size) {
+        argv[len++] = ' ';
+        argv[len] = '\0';
+    }
+    if (len + 1 < argv_size)
+        x11_egl_append_token(argv + len, argv_size - len, tok);
+}
+
+static int x11_egl_parse_xwayland_cmdline(char *buf, ssize_t n,
+                                          struct x11_egl_xwayland_auth *info)
+{
+    int matched = 0;
+    int want_auth_value = 0;
+    char *p = buf;
+    char *end = buf + n;
+
+    while (p < end) {
+        char *tok;
+        char saved = '\0';
+
+        while (p < end &&
+               (*p == '\0' || isspace((unsigned char)*p)))
+            p++;
+        if (p >= end)
+            continue;
+
+        tok = p;
+        while (p < end && *p != '\0' && !isspace((unsigned char)*p))
+            p++;
+        if (p < end) {
+            saved = *p;
+            *p = '\0';
+        }
+
+        x11_egl_append_argv_token(info->argv, sizeof(info->argv), tok);
+        if (strstr(tok, "Xwayland") || strstr(tok, "xwayland-kde-wrapper"))
+            matched = 1;
+
+        if (want_auth_value) {
+            if (info->auth_path[0] == '\0')
+                x11_egl_copy_token(info->auth_path, sizeof(info->auth_path),
+                                   tok);
+            want_auth_value = 0;
+        } else if (strcmp(tok, "-auth") == 0) {
+            want_auth_value = 1;
+        } else if (strncmp(tok, "-auth=", 6) == 0 && tok[6] != '\0') {
+            x11_egl_copy_token(info->auth_path, sizeof(info->auth_path),
+                               tok + 6);
+        }
+
+        if (tok[0] == ':' && info->display[0] == '\0')
+            x11_egl_copy_token(info->display, sizeof(info->display), tok);
+
+        if (p < end) {
+            *p = saved;
+            p++;
+        }
+    }
+
+    return matched;
+}
+
+static void x11_egl_copy_auth_info(struct x11_egl_xwayland_auth *dst,
+                                   const struct x11_egl_xwayland_auth *src)
+{
+    dst->found = src->found;
+    dst->pid = src->pid;
+    x11_egl_copy_token(dst->argv, sizeof(dst->argv), src->argv);
+    x11_egl_copy_token(dst->auth_path, sizeof(dst->auth_path),
+                       src->auth_path);
+    x11_egl_copy_token(dst->display, sizeof(dst->display), src->display);
+}
+
+static int x11_egl_display_is_preflight_candidate(const char *display)
+{
+    return strcmp(display, ":0") == 0 || strcmp(display, ":1") == 0;
+}
+
+static int x11_egl_xwayland_auth_rank(
+    const struct x11_egl_xwayland_auth *info)
+{
+    int readable;
+
+    if (!info->found)
+        return -1;
+    if (info->auth_path[0] == '\0')
+        return 0;
+
+    readable = access(info->auth_path, R_OK) == 0;
+    if (readable && x11_egl_display_is_preflight_candidate(info->display))
+        return 4;
+    if (readable && info->display[0] != '\0')
+        return 3;
+    if (readable)
+        return 2;
+    return 1;
+}
+
+static void x11_egl_consider_auth_candidate(
+    struct x11_egl_xwayland_auth *best, int *best_rank,
+    const struct x11_egl_xwayland_auth *cand)
+{
+    int cand_rank = x11_egl_xwayland_auth_rank(cand);
+
+    if (!best->found || cand_rank > *best_rank) {
+        x11_egl_copy_auth_info(best, cand);
+        *best_rank = cand_rank;
+    }
+}
+
+static void discover_xwayland_auth(
+    struct x11_egl_xwayland_auth_discovery *discovery)
+{
+    DIR *dir;
+    struct dirent *de;
+    int best_rank = -1;
+    int display0_rank = -1;
+    int display1_rank = -1;
+
+    memset(discovery, 0, sizeof(*discovery));
+    dir = opendir("/proc");
+    if (!dir) {
+        x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth proc_open_failed errno=%d %s\n",
+                     errno, strerror(errno));
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        struct x11_egl_xwayland_auth cand;
+        char path[320];
+        char buf[4096];
+        int fd;
+        ssize_t n;
+
+        if (!proc_name_all_digits(de->d_name))
+            continue;
+
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", de->d_name);
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        n = read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n <= 0)
+            continue;
+        buf[n] = '\0';
+
+        memset(&cand, 0, sizeof(cand));
+        cand.pid = (pid_t)atoi(de->d_name);
+        if (!x11_egl_parse_xwayland_cmdline(buf, n, &cand))
+            continue;
+        cand.found = 1;
+
+        x11_egl_consider_auth_candidate(&discovery->best, &best_rank, &cand);
+        if (strcmp(cand.display, ":0") == 0)
+            x11_egl_consider_auth_candidate(&discovery->display0,
+                                            &display0_rank, &cand);
+        else if (strcmp(cand.display, ":1") == 0)
+            x11_egl_consider_auth_candidate(&discovery->display1,
+                                            &display1_rank, &cand);
+    }
+
+    closedir(dir);
+}
+
+static void log_x11_egl_auth_candidate(const char *label, const char *path)
+{
+    struct stat st;
+    int stat_errno = 0;
+    int access_errno = 0;
+    int stat_ok = 0;
+    int readable = 0;
+
+    if (!path || path[0] == '\0') {
+        x11_egl_logf("host-x11-egl-smoke: diag auth_candidate label=%s path=(unset) stat=SKIP readable=SKIP\n",
+                     label);
+        return;
+    }
+
+    if (stat(path, &st) == 0) {
+        stat_ok = 1;
+    } else {
+        stat_errno = errno;
+    }
+    if (access(path, R_OK) == 0) {
+        readable = 1;
+    } else {
+        access_errno = errno;
+    }
+
+    x11_egl_logf("host-x11-egl-smoke: diag auth_candidate label=%s path=%s stat=%s stat_errno=%d %s readable=%s access_errno=%d %s\n",
+                 label, path, stat_ok ? "OK" : "FAIL", stat_errno,
+                 stat_ok ? "ok" : strerror(stat_errno),
+                 readable ? "YES" : "NO", access_errno,
+                 readable ? "ok" : strerror(access_errno));
+}
+
+static void log_x11_egl_auth_discovery(
+    const struct x11_egl_xwayland_auth_discovery *discovery)
+{
+    const char *home = getenv("HOME");
+    char home_xauthority[X11_EGL_AUTH_PATH_MAX];
+
+    x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth label=best pid=%d display=%s auth_path=%s argv=%s\n",
+                 discovery->best.found ? (int)discovery->best.pid : -1,
+                 discovery->best.display[0] ? discovery->best.display : "(unset)",
+                 discovery->best.auth_path[0] ? discovery->best.auth_path : "(unset)",
+                 discovery->best.argv[0] ? discovery->best.argv : "(not-found)");
+    x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth label=display0 pid=%d display=%s auth_path=%s argv=%s\n",
+                 discovery->display0.found ? (int)discovery->display0.pid : -1,
+                 discovery->display0.display[0] ? discovery->display0.display : "(unset)",
+                 discovery->display0.auth_path[0] ? discovery->display0.auth_path : "(unset)",
+                 discovery->display0.argv[0] ? discovery->display0.argv : "(not-found)");
+    x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth label=display1 pid=%d display=%s auth_path=%s argv=%s\n",
+                 discovery->display1.found ? (int)discovery->display1.pid : -1,
+                 discovery->display1.display[0] ? discovery->display1.display : "(unset)",
+                 discovery->display1.auth_path[0] ? discovery->display1.auth_path : "(unset)",
+                 discovery->display1.argv[0] ? discovery->display1.argv : "(not-found)");
+    log_x11_egl_auth_candidate("env_XAUTHORITY", getenv("XAUTHORITY"));
+    log_x11_egl_auth_candidate("xwayland_auth", discovery->best.auth_path);
+    log_x11_egl_auth_candidate("xwayland_auth_best",
+                               discovery->best.auth_path);
+    log_x11_egl_auth_candidate("xwayland_auth_display0",
+                               discovery->display0.auth_path);
+    log_x11_egl_auth_candidate("xwayland_auth_display1",
+                               discovery->display1.auth_path);
+    if (home && home[0] != '\0') {
+        snprintf(home_xauthority, sizeof(home_xauthority), "%s/.Xauthority",
+                 home);
+        log_x11_egl_auth_candidate("home_Xauthority", home_xauthority);
+    } else {
+        log_x11_egl_auth_candidate("home_Xauthority", NULL);
+    }
+}
+
+static int x11_egl_auth_path_readable(const char *path)
+{
+    return path && path[0] != '\0' && access(path, R_OK) == 0;
+}
+
+static const struct x11_egl_xwayland_auth *x11_egl_auth_info_for_display(
+    const struct x11_egl_xwayland_auth_discovery *discovery,
+    const char *display)
+{
+    if (strcmp(display, ":0") == 0 && discovery->display0.found)
+        return &discovery->display0;
+    if (strcmp(display, ":1") == 0 && discovery->display1.found)
+        return &discovery->display1;
+    if (discovery->best.found)
+        return &discovery->best;
+    return NULL;
+}
+
+static const char *x11_egl_auth_for_display(
+    const struct x11_egl_xwayland_auth_discovery *discovery,
+    const char *display)
+{
+    const struct x11_egl_xwayland_auth *info =
+        x11_egl_auth_info_for_display(discovery, display);
+
+    if (!info)
+        return NULL;
+    if (!x11_egl_auth_path_readable(info->auth_path))
+        return NULL;
+    if (info->display[0] == '\0') {
+        x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth auth_without_display requested_display=%s auth_path=%s action=preserve-env\n",
+                     display, info->auth_path);
+        return NULL;
+    }
+    if (strcmp(info->display, display) != 0) {
+        x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth display_mismatch requested_display=%s xwayland_display=%s auth_path=%s action=preserve-env\n",
+                     display, info->display, info->auth_path);
+        return NULL;
+    }
+    return info->auth_path;
+}
+
 static int run_logged_shell(const char *label, const char *cmd)
 {
     pid_t pid;
@@ -977,10 +1320,13 @@ static int wait_host_x11_egl_smoke(pid_t pid, const char *display,
 }
 
 static int run_host_x11_egl_smoke(const char *display, const char *mode,
-                                  const char *arg)
+                                  const char *arg, const char *auth_path)
 {
     pid_t pid;
 
+    x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s display=%s xauthority=%s\n",
+                 mode, display,
+                 auth_path && auth_path[0] ? auth_path : "(preserve)");
     pid = fork();
     if (pid < 0) {
         x11_egl_logf("host-x11-egl-smoke: phase=%s status=FAIL mode=%s display=%s exit_status=127 reason=fork errno=%d %s\n",
@@ -999,6 +1345,8 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
                 close(fd);
         }
         setenv("DISPLAY", display, 1);
+        if (auth_path && auth_path[0])
+            setenv("XAUTHORITY", auth_path, 1);
         setenv("HOST_X11_EGL_SMOKE_MODE", mode, 1);
         setenv("HOST_X11_EGL_SMOKE_LOG", X11_EGL_SESSION_LOG, 1);
         unsetenv("WAYLAND_DISPLAY");
@@ -1017,6 +1365,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     const char *selected = NULL;
     const char *run_mode = "glx-probe";
     const char *run_arg = "--glx-probe-only";
+    struct x11_egl_xwayland_auth_discovery xwayland_auth;
     int glx_rc;
     FILE *fp;
 
@@ -1033,6 +1382,8 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                 run_mode);
         fprintf(fp, "host-x11-egl-smoke: diag preflight_env\n");
         fprintf(fp, "DISPLAY=%s\n", getenv("DISPLAY") ? getenv("DISPLAY") : "(unset)");
+        fprintf(fp, "XAUTHORITY=%s\n", getenv("XAUTHORITY") ? getenv("XAUTHORITY") : "(unset)");
+        fprintf(fp, "HOME=%s\n", getenv("HOME") ? getenv("HOME") : "(unset)");
         fprintf(fp, "XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
         fprintf(fp, "probe_XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
         fprintf(fp, "probe_LD_PRELOAD=(unset)\n");
@@ -1046,16 +1397,38 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     run_logged_shell("preflight_ps", "ps || true");
     run_logged_shell("preflight_kde_process_probe",
                      "/bin/kde-process-probe || true");
+    discover_xwayland_auth(&xwayland_auth);
+    log_x11_egl_auth_discovery(&xwayland_auth);
     x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_diag status=PASS mode=session probe_mode=%s\n",
                  run_mode);
 
     for (size_t i = 0; i < sizeof(displays) / sizeof(displays[0]); i++) {
+        const char *auth_path;
         int rc;
 
         x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate status=BEGIN display=%s\n",
                      displays[i]);
+        auth_path = x11_egl_auth_for_display(&xwayland_auth, displays[i]);
         rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
-                                    "--x11-connect-only");
+                                    "--x11-connect-only",
+                                    auth_path);
+        if (rc != 0 && !auth_path) {
+            x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth rediscover_after_candidate_fail display=%s exit_status=%d\n",
+                         displays[i], rc);
+            discover_xwayland_auth(&xwayland_auth);
+            log_x11_egl_auth_discovery(&xwayland_auth);
+            auth_path = x11_egl_auth_for_display(&xwayland_auth,
+                                                 displays[i]);
+            if (auth_path) {
+                x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=BEGIN display=%s reason=auth-discovered\n",
+                             displays[i]);
+                rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
+                                            "--x11-connect-only",
+                                            auth_path);
+                x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=%s display=%s exit_status=%d\n",
+                             rc == 0 ? "PASS" : "FAIL", displays[i], rc);
+            }
+        }
         x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate status=%s display=%s exit_status=%d\n",
                      rc == 0 ? "PASS" : "FAIL", displays[i], rc);
         if (rc == 0) {
@@ -1074,7 +1447,9 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                  selected);
     x11_egl_logf("host-x11-egl-smoke: phase=%s status=BEGIN mode=session display=%s\n",
                  run_mode, selected);
-    glx_rc = run_host_x11_egl_smoke(selected, run_mode, run_arg);
+    glx_rc = run_host_x11_egl_smoke(selected, run_mode, run_arg,
+                                    x11_egl_auth_for_display(&xwayland_auth,
+                                                             selected));
     x11_egl_session_terminal(run_mode, glx_rc == 0 ? "PASS" : "FAIL",
                              glx_rc, NULL);
     sync();
