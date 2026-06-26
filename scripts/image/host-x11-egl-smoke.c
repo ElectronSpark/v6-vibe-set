@@ -11,6 +11,7 @@
 #include <GLES2/gl2.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
+#include <GL/glxext.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <dlfcn.h>
@@ -27,6 +28,7 @@
 #define WIN_H 320
 #define GLX_FPS_TARGET_NS 5000000000LL
 #define GLX_FPS_MAX_FRAMES 300
+#define GLX_FPS_OML_QUEUE_DEPTH 3
 
 typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
 typedef void (GLAPIENTRY *gl_viewport_proc_t)(GLint x, GLint y,
@@ -36,12 +38,14 @@ typedef void (GLAPIENTRY *gl_clear_color_proc_t)(GLfloat red, GLfloat green,
                                                  GLfloat blue, GLfloat alpha);
 typedef void (GLAPIENTRY *gl_clear_proc_t)(GLbitfield mask);
 typedef GLenum (GLAPIENTRY *gl_get_error_proc_t)(void);
+typedef void (GLAPIENTRY *gl_flush_proc_t)(void);
 typedef void (GLAPIENTRY *gl_finish_proc_t)(void);
 
 enum glx_fps_variant_kind {
     GLX_FPS_VARIANT_BASELINE,
     GLX_FPS_VARIANT_FINISH_BEFORE_SWAP,
     GLX_FPS_VARIANT_SWAP_ONLY,
+    GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY,
 };
 
 struct gl_api {
@@ -51,6 +55,7 @@ struct gl_api {
     gl_clear_color_proc_t clear_color;
     gl_clear_proc_t clear;
     gl_get_error_proc_t get_error;
+    gl_flush_proc_t flush;
     gl_finish_proc_t finish;
 };
 
@@ -69,6 +74,18 @@ struct glx_fps_timing {
     int64_t max_draw_ns;
     int64_t max_swap_ns;
     int swap_only_skipped_draw_frames;
+    int oml_available;
+    int oml_queue_depth;
+    int oml_max_pending_sbc;
+    int oml_gl_flush_before_swap;
+    int64_t oml_sbc_issued;
+    int64_t oml_sbc_completed;
+    int64_t oml_issue_total_ns;
+    int64_t oml_wait_total_ns;
+    int64_t oml_drain_wait_total_ns;
+    int64_t oml_last_ust;
+    int64_t oml_last_msc;
+    int64_t oml_last_sbc;
 };
 
 struct glx_fps_variant {
@@ -119,6 +136,24 @@ static const char *
 safe_str(const char *s)
 {
     return s ? s : "(null)";
+}
+
+static int
+extension_list_has_token(const char *extensions, const char *token)
+{
+    size_t token_len;
+    const char *p;
+
+    if (!extensions || !token || token[0] == '\0')
+        return 0;
+    token_len = strlen(token);
+    for (p = extensions; *p; p++) {
+        if ((p == extensions || p[-1] == ' ') &&
+            strncmp(p, token, token_len) == 0 &&
+            (p[token_len] == '\0' || p[token_len] == ' '))
+            return 1;
+    }
+    return 0;
 }
 
 static void
@@ -203,6 +238,12 @@ linked_gl_get_error(void)
 }
 
 static void
+linked_gl_flush(void)
+{
+    glFlush();
+}
+
+static void
 linked_gl_finish(void)
 {
     glFinish();
@@ -217,6 +258,7 @@ set_linked_gl_api(struct app *app)
     app->gl.clear_color = linked_gl_clear_color;
     app->gl.clear = linked_gl_clear;
     app->gl.get_error = linked_gl_get_error;
+    app->gl.flush = linked_gl_flush;
     app->gl.finish = linked_gl_finish;
 }
 
@@ -432,6 +474,18 @@ glx_get_gl_get_error_proc(void)
     return conv.typed;
 }
 
+static gl_flush_proc_t
+glx_get_gl_flush_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_flush_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glFlush");
+    return conv.typed;
+}
+
 static gl_finish_proc_t
 glx_get_gl_finish_proc(void)
 {
@@ -441,6 +495,48 @@ glx_get_gl_finish_proc(void)
     } conv;
 
     conv.raw = glx_get_raw_proc("glFinish");
+    return conv.typed;
+}
+
+struct glx_oml_api {
+    PFNGLXGETSYNCVALUESOMLPROC get_sync_values;
+    PFNGLXSWAPBUFFERSMSCOMLPROC swap_buffers_msc;
+    PFNGLXWAITFORSBCOMLPROC wait_for_sbc;
+};
+
+static PFNGLXGETSYNCVALUESOMLPROC
+glx_get_sync_values_oml_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        PFNGLXGETSYNCVALUESOMLPROC typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glXGetSyncValuesOML");
+    return conv.typed;
+}
+
+static PFNGLXSWAPBUFFERSMSCOMLPROC
+glx_get_swap_buffers_msc_oml_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        PFNGLXSWAPBUFFERSMSCOMLPROC typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glXSwapBuffersMscOML");
+    return conv.typed;
+}
+
+static PFNGLXWAITFORSBCOMLPROC
+glx_get_wait_for_sbc_oml_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        PFNGLXWAITFORSBCOMLPROC typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glXWaitForSbcOML");
     return conv.typed;
 }
 
@@ -1431,6 +1527,8 @@ glx_fps_variant_kind_name(enum glx_fps_variant_kind kind)
         return "finish-before-swap";
     case GLX_FPS_VARIANT_SWAP_ONLY:
         return "swap-only";
+    case GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY:
+        return "oml-queue3-swap-only";
     case GLX_FPS_VARIANT_BASELINE:
     default:
         return "baseline";
@@ -1456,6 +1554,8 @@ read_glx_fps_variant(struct glx_fps_variant *variant)
         variant->kind = GLX_FPS_VARIANT_FINISH_BEFORE_SWAP;
     } else if (strcmp(raw, "swap-only") == 0) {
         variant->kind = GLX_FPS_VARIANT_SWAP_ONLY;
+    } else if (strcmp(raw, "oml-queue3-swap-only") == 0) {
+        variant->kind = GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY;
     } else {
         variant->invalid = 1;
         fprintf(stderr,
@@ -1534,9 +1634,9 @@ ensure_glx_fps_finish(struct app *app)
 }
 
 static int
-draw_glx_fps_frame(struct app *app, int frame,
-                   const struct glx_fps_variant *variant,
-                   struct glx_fps_timing *timing)
+issue_glx_fps_draw_work(struct app *app, int frame,
+                        const struct glx_fps_variant *variant,
+                        struct glx_fps_timing *timing)
 {
     const float t = (float)(frame % 120) / 119.0f;
     int issue_gl = 1;
@@ -1548,8 +1648,6 @@ draw_glx_fps_frame(struct app *app, int frame,
     int64_t gl_error_ns;
     int64_t gl_finish_start_ns;
     int64_t gl_finish_end_ns;
-    int64_t swap_start_ns;
-    int64_t swap_end_ns;
     GLenum err;
 
     if (!app->gl.viewport || !app->gl.clear_color || !app->gl.clear ||
@@ -1561,7 +1659,9 @@ draw_glx_fps_frame(struct app *app, int frame,
         return -1;
     }
 
-    if (variant->kind == GLX_FPS_VARIANT_SWAP_ONLY && frame > 1)
+    if ((variant->kind == GLX_FPS_VARIANT_SWAP_ONLY ||
+         variant->kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY) &&
+        frame > 1)
         issue_gl = 0;
 
     if (issue_gl) {
@@ -1609,12 +1709,244 @@ draw_glx_fps_frame(struct app *app, int frame,
                           elapsed_ns(gl_finish_start_ns, gl_finish_end_ns));
     }
 
+    return 0;
+}
+
+static void
+issue_glx_fps_swap(struct app *app, struct glx_fps_timing *timing)
+{
+    int64_t swap_start_ns;
+    int64_t swap_end_ns;
+
     swap_start_ns = monotonic_ns();
     glXSwapBuffers(app->dpy, app->win);
     swap_end_ns = monotonic_ns();
     add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
                       elapsed_ns(swap_start_ns, swap_end_ns));
     app->frame++;
+}
+
+static int
+draw_glx_fps_frame(struct app *app, int frame,
+                   const struct glx_fps_variant *variant,
+                   struct glx_fps_timing *timing)
+{
+    if (issue_glx_fps_draw_work(app, frame, variant, timing) != 0)
+        return -1;
+    issue_glx_fps_swap(app, timing);
+    return 0;
+}
+
+static int
+setup_glx_oml_queue3(struct app *app, struct glx_oml_api *oml,
+                     struct glx_fps_timing *timing)
+{
+    const char *extensions;
+    int extension_present;
+    int64_t ust = 0;
+    int64_t msc = 0;
+    int64_t sbc = 0;
+
+    memset(oml, 0, sizeof(*oml));
+    timing->oml_queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
+    extensions = glXQueryExtensionsString(app->dpy, app->screen);
+    extension_present = extension_list_has_token(extensions,
+                                                 "GLX_OML_sync_control");
+    if (!app->gl.flush)
+        app->gl.flush = glx_get_gl_flush_proc();
+    oml->get_sync_values = glx_get_sync_values_oml_proc();
+    oml->swap_buffers_msc = glx_get_swap_buffers_msc_oml_proc();
+    oml->wait_for_sbc = glx_get_wait_for_sbc_oml_proc();
+    if (!extension_present || !oml->get_sync_values ||
+        !oml->swap_buffers_msc || !oml->wait_for_sbc || !app->gl.flush) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_oml_setup status=FAIL reason=missing-oml oml_available=0 extension_present=%d get_sync=%p swap_msc=%p wait_sbc=%p gl_flush=%p\n",
+                extension_present, (void *)oml->get_sync_values,
+                (void *)oml->swap_buffers_msc, (void *)oml->wait_for_sbc,
+                (void *)app->gl.flush);
+        fflush(stderr);
+        return -1;
+    }
+
+    if (!oml->get_sync_values(app->dpy, app->win, &ust, &msc, &sbc)) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_oml_setup status=FAIL reason=oml-setup oml_available=1 get_sync_values=0\n");
+        fflush(stderr);
+        return -2;
+    }
+
+    timing->oml_available = 1;
+    timing->oml_last_ust = ust;
+    timing->oml_last_msc = msc;
+    timing->oml_last_sbc = sbc;
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_oml_setup status=PASS oml_available=1 oml_queue_depth=%d initial_ust=%" PRId64 " initial_msc=%" PRId64 " initial_sbc=%" PRId64 " gl_flush_before_swap=1\n",
+            GLX_FPS_OML_QUEUE_DEPTH, ust, msc, sbc);
+    fflush(stderr);
+    return 0;
+}
+
+static int
+complete_glx_oml_sbc(struct app *app, const struct glx_oml_api *oml,
+                     struct glx_fps_timing *timing, int draining,
+                     int64_t *pending_sbc, int *pending_count)
+{
+    int64_t target_sbc;
+    int64_t ust = 0;
+    int64_t msc = 0;
+    int64_t completed_sbc = 0;
+    int64_t wait_start_ns;
+    int64_t wait_end_ns;
+    int completed_count = 0;
+    int i;
+
+    if (*pending_count <= 0)
+        return 0;
+
+    target_sbc = pending_sbc[0];
+    wait_start_ns = monotonic_ns();
+    if (!oml->wait_for_sbc(app->dpy, app->win, target_sbc, &ust, &msc,
+                           &completed_sbc)) {
+        wait_end_ns = monotonic_ns();
+        if (draining)
+            timing->oml_drain_wait_total_ns +=
+                elapsed_ns(wait_start_ns, wait_end_ns);
+        else
+            timing->oml_wait_total_ns += elapsed_ns(wait_start_ns,
+                                                   wait_end_ns);
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_oml_wait status=FAIL reason=oml-wait target_sbc=%" PRId64 " completed_sbc=%" PRId64 " draining=%d\n",
+                target_sbc, completed_sbc, draining);
+        fflush(stderr);
+        return -1;
+    }
+    wait_end_ns = monotonic_ns();
+    if (draining)
+        timing->oml_drain_wait_total_ns +=
+            elapsed_ns(wait_start_ns, wait_end_ns);
+    else
+        timing->oml_wait_total_ns += elapsed_ns(wait_start_ns, wait_end_ns);
+
+    if (completed_sbc < target_sbc) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_oml_wait status=FAIL reason=oml-sbc-before-target target_sbc=%" PRId64 " completed_sbc=%" PRId64 " draining=%d\n",
+                target_sbc, completed_sbc, draining);
+        fflush(stderr);
+        return -1;
+    }
+
+    while (completed_count < *pending_count &&
+           pending_sbc[completed_count] <= completed_sbc) {
+        completed_count++;
+    }
+    if (completed_count <= 0) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_oml_wait status=FAIL reason=oml-completion-unmatched target_sbc=%" PRId64 " completed_sbc=%" PRId64 " pending=%d draining=%d\n",
+                target_sbc, completed_sbc, *pending_count, draining);
+        fflush(stderr);
+        return -1;
+    }
+    for (i = completed_count; i < *pending_count; i++)
+        pending_sbc[i - completed_count] = pending_sbc[i];
+    *pending_count -= completed_count;
+
+    timing->oml_sbc_completed += completed_count;
+    timing->oml_last_ust = ust;
+    timing->oml_last_msc = msc;
+    timing->oml_last_sbc = completed_sbc;
+    return 0;
+}
+
+static int
+run_glx_fps_oml_queue3_loop(struct app *app,
+                            const struct glx_fps_variant *variant,
+                            struct glx_fps_timing *timing,
+                            int64_t start_ns, int64_t *now_ns,
+                            const char **failure_reason)
+{
+    struct glx_oml_api oml;
+    int64_t pending_sbc[GLX_FPS_OML_QUEUE_DEPTH];
+    int pending_count = 0;
+    int setup_rc;
+
+    memset(pending_sbc, 0, sizeof(pending_sbc));
+    setup_rc = setup_glx_oml_queue3(app, &oml, timing);
+    if (setup_rc != 0) {
+        *failure_reason = setup_rc == -1 ? "missing-oml" : "oml-setup";
+        return -1;
+    }
+
+    while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&
+           *now_ns - start_ns < GLX_FPS_TARGET_NS) {
+        int event_rc;
+        int64_t event_start_ns;
+        int64_t event_end_ns;
+
+        event_start_ns = monotonic_ns();
+        event_rc = drain_x11_events_for_fps(app);
+        event_end_ns = monotonic_ns();
+        add_timing_sample(&timing->event_total_ns, &timing->max_event_ns,
+                          elapsed_ns(event_start_ns, event_end_ns));
+        if (event_rc != 0)
+            break;
+
+        while (pending_count < GLX_FPS_OML_QUEUE_DEPTH &&
+               app->frame < GLX_FPS_MAX_FRAMES &&
+               *now_ns - start_ns < GLX_FPS_TARGET_NS) {
+            int frame = app->frame + 1;
+            int64_t issue_start_ns;
+            int64_t issue_end_ns;
+            int64_t issued_sbc;
+
+            if (issue_glx_fps_draw_work(app, frame, variant, timing) != 0) {
+                *failure_reason = "draw";
+                return -1;
+            }
+            app->gl.flush();
+            timing->oml_gl_flush_before_swap = 1;
+            issue_start_ns = monotonic_ns();
+            issued_sbc = oml.swap_buffers_msc(app->dpy, app->win, 0, 0, 0);
+            issue_end_ns = monotonic_ns();
+            add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
+                              elapsed_ns(issue_start_ns, issue_end_ns));
+            timing->oml_issue_total_ns +=
+                elapsed_ns(issue_start_ns, issue_end_ns);
+            if (issued_sbc <= 0) {
+                fprintf(stderr,
+                        "host-x11-egl-smoke: phase=glx_fps_oml_issue status=FAIL reason=oml-issue frame=%d issued_sbc=%" PRId64 " pending=%d\n",
+                        frame, issued_sbc, pending_count);
+                fflush(stderr);
+                *failure_reason = "oml-issue";
+                return -1;
+            }
+            pending_sbc[pending_count++] = issued_sbc;
+            timing->oml_sbc_issued++;
+            timing->oml_last_sbc = issued_sbc;
+            if (pending_count > timing->oml_max_pending_sbc)
+                timing->oml_max_pending_sbc = pending_count;
+            app->frame++;
+            *now_ns = monotonic_ns();
+        }
+
+        if (pending_count > 0 &&
+            complete_glx_oml_sbc(app, &oml, timing, 0, pending_sbc,
+                                 &pending_count) != 0) {
+            *failure_reason = "oml-wait";
+            return -1;
+        }
+        *now_ns = monotonic_ns();
+        if (*now_ns == 0)
+            break;
+    }
+
+    while (pending_count > 0) {
+        if (complete_glx_oml_sbc(app, &oml, timing, 1, pending_sbc,
+                                 &pending_count) != 0) {
+            *failure_reason = "oml-drain";
+            return -1;
+        }
+    }
+    *now_ns = monotonic_ns();
     return 0;
 }
 
@@ -1631,7 +1963,7 @@ log_glx_fps_timing(const char *status, const char *result_status,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d\n",
+                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->draw_total_ns),
@@ -1643,9 +1975,18 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 variant->name,
                 ns_to_ms(timing->gl_finish_before_swap_total_ns),
                 ns_to_ms(timing->max_gl_finish_before_swap_ns),
-                timing->swap_only_skipped_draw_frames, variant->invalid);
+                timing->swap_only_skipped_draw_frames, variant->invalid,
+                timing->oml_available, timing->oml_queue_depth,
+                timing->oml_sbc_issued, timing->oml_sbc_completed,
+                timing->oml_max_pending_sbc,
+                ns_to_ms(timing->oml_issue_total_ns),
+                ns_to_ms(timing->oml_wait_total_ns),
+                ns_to_ms(timing->oml_drain_wait_total_ns),
+                timing->oml_gl_flush_before_swap,
+                timing->oml_last_ust, timing->oml_last_msc,
+                timing->oml_last_sbc);
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d\n",
+                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->gl_issue_total_ns),
@@ -1659,7 +2000,16 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 ns_to_ms(timing->max_event_ns), variant->name,
                 ns_to_ms(timing->gl_finish_before_swap_total_ns),
                 ns_to_ms(timing->max_gl_finish_before_swap_ns),
-                timing->swap_only_skipped_draw_frames, variant->invalid);
+                timing->swap_only_skipped_draw_frames, variant->invalid,
+                timing->oml_available, timing->oml_queue_depth,
+                timing->oml_sbc_issued, timing->oml_sbc_completed,
+                timing->oml_max_pending_sbc,
+                ns_to_ms(timing->oml_issue_total_ns),
+                ns_to_ms(timing->oml_wait_total_ns),
+                ns_to_ms(timing->oml_drain_wait_total_ns),
+                timing->oml_gl_flush_before_swap,
+                timing->oml_last_ust, timing->oml_last_msc,
+                timing->oml_last_sbc);
     } else {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f\n",
@@ -1693,7 +2043,8 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
                    const GLubyte *vendor, const GLubyte *renderer,
                    const GLubyte *version,
                    const struct glx_fps_variant *variant, int frames,
-                   double elapsed_seconds)
+                   double elapsed_seconds,
+                   const struct glx_fps_timing *timing)
 {
     char vendor_buf[256];
     char renderer_buf[256];
@@ -1709,12 +2060,24 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d variant=%s invalid_variant=%d\n",
+                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d variant=%s invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
                 status, safe_str(reason), renderer_buf, vendor_buf,
                 version_buf, app->glx_direct_available, app->glx_direct,
                 frames, elapsed_seconds, fps,
                 (double)GLX_FPS_TARGET_NS / 1000000000.0,
-                GLX_FPS_MAX_FRAMES, variant->name, variant->invalid);
+                GLX_FPS_MAX_FRAMES, variant->name, variant->invalid,
+                timing ? timing->oml_available : 0,
+                timing ? timing->oml_queue_depth : 0,
+                timing ? timing->oml_sbc_issued : 0,
+                timing ? timing->oml_sbc_completed : 0,
+                timing ? timing->oml_max_pending_sbc : 0,
+                timing ? ns_to_ms(timing->oml_issue_total_ns) : 0.0,
+                timing ? ns_to_ms(timing->oml_wait_total_ns) : 0.0,
+                timing ? ns_to_ms(timing->oml_drain_wait_total_ns) : 0.0,
+                timing ? timing->oml_gl_flush_before_swap : 0,
+                timing ? timing->oml_last_ust : 0,
+                timing ? timing->oml_last_msc : 0,
+                timing ? timing->oml_last_sbc : 0);
     } else {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d\n",
@@ -1737,30 +2100,32 @@ run_glx_fps(struct app *app)
     int64_t now_ns;
     struct glx_fps_timing timing;
     struct glx_fps_variant variant;
+    const char *loop_failure_reason = NULL;
+    int loop_failed = 0;
     int rc = 1;
 
     memset(&timing, 0, sizeof(timing));
     read_glx_fps_variant(&variant);
     if (variant.invalid) {
         log_glx_fps_result(app, "FAIL", "invalid_variant", NULL, NULL, NULL,
-                           &variant, 0, 0.0);
+                           &variant, 0, 0.0, &timing);
         goto out;
     }
     if (setup_x11(app) != 0) {
         log_glx_fps_result(app, "FAIL", "x11_setup", NULL, NULL, NULL,
-                           &variant, 0, 0.0);
+                           &variant, 0, 0.0, &timing);
         goto out;
     }
     probe_egl_initialize_for_glx_fallback(app);
     if (setup_glx(app) != 0) {
         log_glx_fps_result(app, "FAIL", "glx_setup", NULL, NULL, NULL,
-                           &variant, app->frame, 0.0);
+                           &variant, app->frame, 0.0, &timing);
         goto out;
     }
     if (variant.kind == GLX_FPS_VARIANT_FINISH_BEFORE_SWAP &&
         ensure_glx_fps_finish(app) != 0) {
         log_glx_fps_result(app, "FAIL", "gl_finish_dispatch", NULL, NULL,
-                           NULL, &variant, app->frame, 0.0);
+                           NULL, &variant, app->frame, 0.0, &timing);
         goto out;
     }
 
@@ -1790,24 +2155,31 @@ run_glx_fps(struct app *app)
     app->running = 1;
     start_ns = monotonic_ns();
     now_ns = start_ns;
-    while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&
-           now_ns - start_ns < GLX_FPS_TARGET_NS) {
-        int event_rc;
-        int64_t event_start_ns;
-        int64_t event_end_ns;
+    if (variant.kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY) {
+        if (run_glx_fps_oml_queue3_loop(app, &variant, &timing, start_ns,
+                                        &now_ns, &loop_failure_reason) != 0)
+            loop_failed = 1;
+    } else {
+        while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&
+               now_ns - start_ns < GLX_FPS_TARGET_NS) {
+            int event_rc;
+            int64_t event_start_ns;
+            int64_t event_end_ns;
 
-        event_start_ns = monotonic_ns();
-        event_rc = drain_x11_events_for_fps(app);
-        event_end_ns = monotonic_ns();
-        add_timing_sample(&timing.event_total_ns, &timing.max_event_ns,
-                          elapsed_ns(event_start_ns, event_end_ns));
-        if (event_rc != 0)
-            break;
-        if (draw_glx_fps_frame(app, app->frame + 1, &variant, &timing) != 0)
-            break;
-        now_ns = monotonic_ns();
-        if (now_ns == 0)
-            break;
+            event_start_ns = monotonic_ns();
+            event_rc = drain_x11_events_for_fps(app);
+            event_end_ns = monotonic_ns();
+            add_timing_sample(&timing.event_total_ns, &timing.max_event_ns,
+                              elapsed_ns(event_start_ns, event_end_ns));
+            if (event_rc != 0)
+                break;
+            if (draw_glx_fps_frame(app, app->frame + 1, &variant,
+                                   &timing) != 0)
+                break;
+            now_ns = monotonic_ns();
+            if (now_ns == 0)
+                break;
+        }
     }
     {
         int64_t xsync_start_ns;
@@ -1822,19 +2194,22 @@ run_glx_fps(struct app *app)
     if (now_ns <= start_ns)
         now_ns = start_ns + 1;
 
-    if (app->frame > 0 && app->running && version) {
+    if (app->frame > 0 && app->running && version && !loop_failed) {
         rc = 0;
         log_glx_fps_timing("PASS", "PASS", &variant, &timing, app->frame);
         log_glx_fps_result(app, "PASS", "complete", vendor, renderer,
                            version, &variant, app->frame,
-                           (double)(now_ns - start_ns) / 1000000000.0);
+                           (double)(now_ns - start_ns) / 1000000000.0,
+                           &timing);
     } else {
         log_glx_fps_timing("INFO", "FAIL", &variant, &timing, app->frame);
         log_glx_fps_result(app, "FAIL",
-                           app->running ? "no_frames_or_gl_version"
-                                        : "window_closed",
+                           loop_failure_reason ? loop_failure_reason :
+                           (app->running ? "no_frames_or_gl_version"
+                                         : "window_closed"),
                            vendor, renderer, version, &variant, app->frame,
-                           (double)(now_ns - start_ns) / 1000000000.0);
+                           (double)(now_ns - start_ns) / 1000000000.0,
+                           &timing);
     }
 
 out:
