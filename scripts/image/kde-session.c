@@ -162,7 +162,8 @@ static int valid_x11_egl_glx_fps_variant(const char *value)
             strcmp(value, "swap-only") == 0 ||
             strcmp(value, "oml-queue3-swap-only") == 0 ||
             strcmp(value, "oml-queue-depth-swap-only") == 0 ||
-            strcmp(value, "oml-queue-depth-flush-swap-timing") == 0);
+            strcmp(value, "oml-queue-depth-flush-swap-timing") == 0 ||
+            strcmp(value, "oml-queue-depth-issue-state-timing") == 0);
 }
 
 static int valid_x11_present_fps_variant(const char *value)

@@ -491,6 +491,36 @@ starvation patch. Next evidence should compare the GLX/Xwayland/Mesa swap
 request path or add a GLX non-OML/present-backed split, not alter kernel
 behavior.
 
+GLX OML issue-state timing reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=oml-queue-depth-issue-state-timing kde_x11_egl_glx_fps_oml_queue_depth=8 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-083821-x11-glx-fps-oml-issue-state-depth8-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=134 elapsed_seconds=5.067326 fps=26.444
+variant=oml-queue-depth-issue-state-timing
+oml_available=1 oml_queue_depth=8 oml_sbc_issued=134 oml_sbc_completed=134 oml_max_pending_sbc=8
+oml_issue_total_ms=2184.040 oml_wait_total_ms=1.413 oml_drain_wait_total_ms=29.694 oml_gl_flush_before_swap=1
+oml_gl_flush_total_ms=3.287 oml_swap_msc_issue_total_ms=2184.040
+oml_get_sync_before_total_ms=485.399 oml_get_sync_after_total_ms=2283.982
+oml_issue_state_samples=134 oml_post_issue_sbc_completed_count=33 oml_post_issue_sbc_lag_max=5
+oml_post_issue_msc_delta_total=80 oml_post_issue_msc_delta_max=2
+draw_total_ms=9.882 swap_total_ms=2184.040 final_xsync_ms=1.746 avg_swap_ms=16.299
+QEMU trace: ctx_submit=518 set_scanout=116 res_flush=116 fence_ctrl/fence_resp=518/518 res_create_3d=52 res_xfer_toh_3d=2
+```
+
+This probe is intentionally intrusive: two extra `glXGetSyncValuesOML` calls
+per issued swap lowered FPS to 26.444, so do not compare its FPS directly to
+the earlier depth8 performance runs. It still proves the state sampling path:
+134 samples for 134 issued SBCs, 33 post-issue samples already had
+`sbc >= issued_sbc`, max post-issue lag was 5 SBC, and total MSC delta around
+issue was 80 with max 2. `glXGetSyncValuesOML` itself is expensive here
+(`before=485.399 ms`, `after=2283.982 ms`), so the next reducer should be less
+intrusive, such as sparse state sampling or sampling only after every Nth
+issue, before drawing kernel conclusions. Still no speculative kernel patch:
+fences remain 1:1 and raw Present depth8 remains the performance control.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
@@ -599,11 +629,16 @@ rose to 44.611 FPS and spent about 4.82s in OML issue/swap MSC time. Queue
 depth now explains raw Present pacing; the residual gap sits above raw Present
 in GLX/Mesa/Xwayland OML swap issue or throttling. The flush/swap split
 variant recorded only 7.406 ms in pre-swap `glFlush` but 4762.982 ms in
-`glXSwapBuffersMscOML` issue at depth 8, so the next evidence should compare
-the GLX/Xwayland/Mesa swap request path or add a GLX non-OML/present-backed
-split rather than starting from a speculative kernel patch. The current virtgpu
-fence trace still shows submitted and responded fences matching 1:1, so raw
-virtgpu fence starvation remains unproven. The
+`glXSwapBuffersMscOML` issue at depth 8. The issue-state timing variant proved
+the sampling path with 134 samples for 134 issued SBCs, 33 post-issue samples
+already complete, max post-issue lag 5 SBC, and MSC delta 80 total / 2 max, but
+its two extra `glXGetSyncValuesOML` calls per issue were intrusive enough to
+drop the run to 26.444 FPS. Next evidence should use sparse state sampling or
+sample only every Nth issue, then compare the GLX/Xwayland/Mesa swap request
+path or add a GLX non-OML/present-backed split rather than starting from a
+speculative kernel patch. The current virtgpu fence trace still shows submitted
+and responded fences matching 1:1, so raw virtgpu fence starvation remains
+unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 
