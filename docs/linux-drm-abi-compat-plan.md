@@ -678,6 +678,37 @@ reason for speculative kernel/DRI3/fd-passing patches. The log does not emit
 max values for OML get-sync before/after, nor first/last MSC fields for plain
 after-swap samples.
 
+Sparse swap-interval-0 plain GLX swap-only post-swap-only OML-state interval64 reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-oml-state-sampled-after-swap-only kde_x11_egl_glx_fps_oml_issue_state_sample_interval=64 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+Pre-reducer KWin startup crash: build-x86_64/kde-plasma-desktop-smoke-history/20260626-114317-x11-glx-fps-swap-interval0-oml-state-sampled-after64-fail/
+Passing retry: build-x86_64/kde-plasma-desktop-smoke-history/20260626-114435-x11-glx-fps-swap-interval0-oml-state-sampled-after64-pass/
+Verification: runtime-only; no source/docs edits before run, no build needed; static diff checks across top/kernel/user/ports passed; one pre-reducer KWin startup crash preserved; one retry PASS; no QEMU/smoke process remained afterward
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+probe_glx_fps_variant=swap-interval0-oml-state-sampled-after-swap-only
+probe_glx_fps_oml_issue_state_sample_interval=64
+frames=218 elapsed_seconds=5.046774 fps=43.196 variant=swap-interval0-oml-state-sampled-after-swap-only
+swap_only_skipped_draw_frames=217
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4718.298 plain_swap_avg_ms=21.644 plain_swap_max_ms=61.096
+plain_oml_available=1 plain_oml_samples=4 plain_oml_sample_interval=64 plain_oml_sampled_ratio=4/218 plain_oml_first_sample_frame=1 plain_oml_last_sample_frame=193
+plain_oml_get_sync_before_total_ms=0.000 plain_oml_get_sync_after_total_ms=209.927
+plain_post_swap_xsync_total_ms=0.000 plain_post_swap_xsync_max_ms=0.000
+plain_oml_after_first_sbc=1 plain_oml_after_last_sbc=192
+plain_oml_after_sbc_delta_total=191 max=66 plain_oml_after_msc_delta_total=55 max=19
+QEMU trace: ctx_submit=617 set_scanout=82 res_flush=82 fence_ctrl/fence_resp=617/617 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+This was a runtime-only use of the committed xv6-owned reducer, not a
+KDE/Mesa/Xwayland source patch. Interval64 lowered after-swap OML samples to
+4 and kept pre-swap get-sync plus post-swap XSync at zero, but FPS fell to
+43.196: below interval16 after-only at 48.090, non-sampling interval0 at
+45.971, raw Present depth8 at 54.980, and Linux GLX at 55.638. The remaining
+gap therefore did not disappear with lower OML observer frequency. Continue
+with GLX/Xwayland/Mesa swap-path attribution above raw Present; do not infer a
+kernel DRI3/fd-passing/fence issue from this run.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
