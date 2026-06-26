@@ -98,6 +98,7 @@ main(int argc, char **argv)
     const char *real = "/bin/Xwayland.real";
     const char *glamor_env = getenv("XV6_XWAYLAND_GLAMOR");
     const char *glamor = (glamor_env && glamor_env[0] != '\0') ? glamor_env : "off";
+    const char *argv_glamor = strcmp(glamor, "auto") == 0 ? "es" : glamor;
     const char *virgl_debug = getenv("XV6_XWAYLAND_VIRGL_DEBUG");
     const char *verbose_env = getenv("XV6_XWAYLAND_VERBOSE");
     const char *audit_env = getenv("XV6_XWAYLAND_AUDIT");
@@ -133,7 +134,7 @@ main(int argc, char **argv)
         fprintf(stderr,
                 "Xwayland KDE wrapper: ignoring invalid XV6_XWAYLAND_AUDIT\n");
 
-    if (strcmp(glamor, "auto") != 0)
+    if (strcmp(argv_glamor, "auto") != 0)
         extra += 2;
     if (verbose)
         extra += 2;
@@ -149,9 +150,9 @@ main(int argc, char **argv)
     }
 
     child[pos++] = (char *)real;
-    if (strcmp(glamor, "auto") != 0) {
+    if (strcmp(argv_glamor, "auto") != 0) {
         child[pos++] = "-glamor";
-        child[pos++] = (char *)glamor;
+        child[pos++] = (char *)argv_glamor;
     }
     if (verbose) {
         child[pos++] = "-verbose";
@@ -172,7 +173,8 @@ main(int argc, char **argv)
 
     fprintf(stderr,
             "Xwayland KDE wrapper: EGL_PLATFORM=%s GALLIUM_DRIVER=%s "
-            "MESA_LOADER_DRIVER_OVERRIDE=%s glamor=%s loader_debug=%s "
+            "MESA_LOADER_DRIVER_OVERRIDE=%s glamor=%s "
+            "effective_glamor=%s loader_debug=%s "
             "enable_glx=%s XV6_XWAYLAND_VERBOSE=%s XV6_XWAYLAND_AUDIT=%s "
             "VIRGL_DEBUG=%s LIBGL_DRIVERS_PATH=%s GBM_BACKENDS_PATH=%s "
             "LD_LIBRARY_PATH=%s\n",
@@ -180,6 +182,7 @@ main(int argc, char **argv)
             env_value("GALLIUM_DRIVER"),
             env_value("MESA_LOADER_DRIVER_OVERRIDE"),
             glamor,
+            argv_glamor,
             loader_debug ? "1" : "0",
             enable_glx_env ? enable_glx_env : "0",
             diagnostic_decimal_env("XV6_XWAYLAND_VERBOSE", verbose),
