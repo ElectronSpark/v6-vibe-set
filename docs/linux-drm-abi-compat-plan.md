@@ -264,7 +264,7 @@ run is an invalid/feature-probe-shaped request, not a real eventfd arm:
 `handle=0` and `fd=-1`. The diagnostic patch intentionally preserves current
 errno behavior.
 
-Current focused reducer artifact:
+Pre-fix focused reducer artifact:
 
 ```text
 build-x86_64/drmabitest-syncobj-eventfd-validation-virgl-20260626-030504/
@@ -303,11 +303,41 @@ renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_non_eventfd: handle
 renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_eventfd: handle=2 fd=5 ret=0 errno=0 linux_errno=0 status=PASS
 ```
 
-Interpretation: xv6 currently validates some eventfd arguments before matching
-Linux's syncobj-handle ordering. The next semantic step is kernel-side
-`DRM_IOCTL_SYNCOBJ_EVENTFD` validation ordering: invalid syncobj handles should
-return `ENOENT` before fd validation, and a valid syncobj with `fd=-1` should
-return `EBADF` rather than the current `EINVAL`.
+Interpretation: xv6 validated some eventfd arguments before matching Linux's
+syncobj-handle ordering.
+
+Post-fix focused reducer artifact:
+
+```text
+build-x86_64/drmabitest-syncobj-eventfd-validation-virgl-20260626-032843-kernel-order-pass/
+```
+
+Result summary:
+
+```text
+expect_status=0
+rows=12
+pass=12
+fail=0
+skip=0
+```
+
+Key rows:
+
+```text
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd_minus1: handle=0 fd=-1 ret=-2 errno=2 linux_errno=2 status=PASS
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd0: handle=0 fd=0 ret=-2 errno=2 linux_errno=2 status=PASS
+card0:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_fd_minus1: handle=1 fd=-1 ret=-9 errno=9 linux_errno=9 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd_minus1: handle=0 fd=-1 ret=-2 errno=2 linux_errno=2 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_invalid_handle_fd0: handle=0 fd=0 ret=-2 errno=2 linux_errno=2 status=PASS
+renderD128:DRM_IOCTL_SYNCOBJ_EVENTFD.validation_valid_handle_fd_minus1: handle=2 fd=-1 ret=-9 errno=9 linux_errno=9 status=PASS
+```
+
+Interpretation: kernel-side `DRM_IOCTL_SYNCOBJ_EVENTFD` validation ordering now
+matches the reducer: invalid syncobj handles return `ENOENT` before fd
+validation, and a valid syncobj with `fd=-1` returns `EBADF`. The broader
+queued eventfd waiter lifetime concern remains a separate follow-up that needs
+its own reducer before behavior-changing cleanup.
 
 Success criteria:
 
