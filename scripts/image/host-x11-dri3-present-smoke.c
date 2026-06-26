@@ -140,6 +140,13 @@ extern xcb_void_cookie_t xcb_present_pixmap_checked(
     xcb_sync_fence_t wait_fence, xcb_sync_fence_t idle_fence,
     uint32_t options, uint64_t target_msc, uint64_t divisor,
     uint64_t remainder, uint32_t notifies_len, const void *notifies);
+extern xcb_void_cookie_t xcb_present_pixmap(
+    xcb_connection_t *c, xcb_window_t window, xcb_pixmap_t pixmap,
+    uint32_t serial, xcb_xfixes_region_t valid, xcb_xfixes_region_t update,
+    int16_t x_off, int16_t y_off, xcb_randr_crtc_t target_crtc,
+    xcb_sync_fence_t wait_fence, xcb_sync_fence_t idle_fence,
+    uint32_t options, uint64_t target_msc, uint64_t divisor,
+    uint64_t remainder, uint32_t notifies_len, const void *notifies);
 
 enum {
     WIN_X = 250,
@@ -152,7 +159,16 @@ enum {
     PRESENT_FPS_TARGET_SECONDS = 5,
     PRESENT_EVENT_MASK_COMPLETE_NOTIFY = 2,
     PRESENT_COMPLETE_KIND_PIXMAP = 0,
+    PRESENT_COMPLETE_MODE_COPY = 0,
+    PRESENT_COMPLETE_MODE_FLIP = 1,
+    PRESENT_COMPLETE_MODE_SKIP = 2,
+    PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY = 3,
     PRESENT_COMPLETE_NOTIFY_EXTRA_WORDS = 2,
+};
+
+enum present_fps_variant {
+    PRESENT_FPS_VARIANT_BASELINE,
+    PRESENT_FPS_VARIANT_UNCHECKED,
 };
 
 struct dri3_fd_info {
@@ -178,6 +194,17 @@ struct present_fps_stats {
     double max_completion_ms;
     uint64_t first_msc;
     uint64_t last_msc;
+    int complete_copy;
+    int complete_flip;
+    int complete_skip;
+    int complete_suboptimal_copy;
+    int last_complete_mode;
+};
+
+struct present_fps_config {
+    enum present_fps_variant variant;
+    const char *variant_name;
+    int request_check_enabled;
 };
 
 struct app {
@@ -219,6 +246,50 @@ static double
 elapsed_ms(double start)
 {
     return (now_seconds() - start) * 1000.0;
+}
+
+static void
+copy_log_token(char *dst, size_t dst_size, const char *src)
+{
+    size_t i;
+
+    if (dst_size == 0)
+        return;
+    if (!src)
+        src = "";
+    for (i = 0; i + 1 < dst_size && src[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char)src[i];
+
+        dst[i] = (ch <= ' ' || ch == 0x7f) ? '_' : (char)ch;
+    }
+    dst[i] = '\0';
+}
+
+static int
+present_fps_variant_from_env(struct present_fps_config *config)
+{
+    const char *value = getenv("HOST_X11_PRESENT_FPS_VARIANT");
+    char token[64];
+
+    config->variant = PRESENT_FPS_VARIANT_BASELINE;
+    config->variant_name = "baseline";
+    config->request_check_enabled = 1;
+
+    if (!value || value[0] == '\0' || strcmp(value, "baseline") == 0)
+        return 0;
+    if (strcmp(value, "unchecked") == 0) {
+        config->variant = PRESENT_FPS_VARIANT_UNCHECKED;
+        config->variant_name = "unchecked";
+        config->request_check_enabled = 0;
+        return 0;
+    }
+
+    copy_log_token(token, sizeof(token), value);
+    fprintf(stderr,
+            "host-x11-dri3-present-smoke: phase=present_fps_variant status=FAIL source=env env=HOST_X11_PRESENT_FPS_VARIANT requested=%s reason=invalid-value\n",
+            token[0] ? token : "(empty)");
+    fflush(stderr);
+    return -1;
 }
 
 static xcb_atom_t
@@ -811,6 +882,23 @@ present_fps_wait_complete(struct app *app, uint32_t serial,
                     ev->event == app->present_eid) {
                     app->completed_serial = ev->serial;
                     if (ev->serial >= serial) {
+                        switch (ev->mode) {
+                        case PRESENT_COMPLETE_MODE_COPY:
+                            stats->complete_copy++;
+                            break;
+                        case PRESENT_COMPLETE_MODE_FLIP:
+                            stats->complete_flip++;
+                            break;
+                        case PRESENT_COMPLETE_MODE_SKIP:
+                            stats->complete_skip++;
+                            break;
+                        case PRESENT_COMPLETE_MODE_SUBOPTIMAL_COPY:
+                            stats->complete_suboptimal_copy++;
+                            break;
+                        default:
+                            break;
+                        }
+                        stats->last_complete_mode = ev->mode;
                         stats->event_wait_total_ms += elapsed_ms(wait_start);
                         if (msc_out)
                             *msc_out = ev->msc;
@@ -836,6 +924,7 @@ present_fps_log_result(const char *status, const char *reason,
                        const struct app *app,
                        const struct present_fps_stats *stats,
                        const struct dri3_fd_info *fd_info,
+                       const struct present_fps_config *config,
                        double elapsed_seconds)
 {
     int outstanding = stats->issued - stats->completed;
@@ -854,6 +943,9 @@ present_fps_log_result(const char *status, const char *reason,
             "present_only=1 gl_context=0 gl_draw_total_ms=0 gl_swap_total_ms=0 "
             "frames=%d elapsed_seconds=%.6f fps=%.3f serial_first=%u serial_last=%u "
             "issued=%d completed=%d outstanding=%d "
+            "variant=%s request_check_enabled=%d "
+            "complete_copy=%d complete_flip=%d complete_skip=%d "
+            "complete_suboptimal_copy=%d last_complete_mode=%d "
             "present_request_total_ms=%.3f request_check_total_ms=%.3f flush_total_ms=%.3f "
             "event_wait_total_ms=%.3f completion_total_ms=%.3f max_completion_ms=%.3f "
             "avg_completion_ms=%.3f first_msc=%llu last_msc=%llu msc_delta=%llu "
@@ -862,6 +954,9 @@ present_fps_log_result(const char *status, const char *reason,
             status, reason ? " reason=" : "", reason ? reason : "",
             stats->completed, elapsed_seconds, fps, stats->serial_first,
             stats->serial_last, stats->issued, stats->completed, outstanding,
+            config->variant_name, config->request_check_enabled,
+            stats->complete_copy, stats->complete_flip, stats->complete_skip,
+            stats->complete_suboptimal_copy, stats->last_complete_mode,
             stats->present_request_total_ms, stats->request_check_total_ms,
             stats->flush_total_ms, stats->event_wait_total_ms,
             stats->completion_total_ms, stats->max_completion_ms,
@@ -880,36 +975,44 @@ run_present_fps(void)
     struct app app;
     struct dri3_fd_info fd_info;
     struct present_fps_stats stats;
+    struct present_fps_config config;
     xcb_pixmap_t pixmaps[PRESENT_FPS_PIXMAPS];
     double start;
     int rc = 1;
 
     memset(&fd_info, 0, sizeof(fd_info));
     memset(&stats, 0, sizeof(stats));
+    memset(&config, 0, sizeof(config));
     memset(pixmaps, 0, sizeof(pixmaps));
+    stats.last_complete_mode = -1;
+
+    if (present_fps_variant_from_env(&config) < 0)
+        return 2;
 
     log_line("host-x11-dri3-present-smoke: start");
     log_line("host-x11-dri3-present-smoke: phase=start status=BEGIN mode=present-fps");
     fprintf(stderr,
-            "host-x11-dri3-present-smoke: phase=present_fps status=BEGIN target_seconds=%d max_frames=%d pixmaps=%d\n",
+            "host-x11-dri3-present-smoke: phase=present_fps status=BEGIN target_seconds=%d max_frames=%d pixmaps=%d variant=%s request_check_enabled=%d\n",
             PRESENT_FPS_TARGET_SECONDS, PRESENT_FPS_MAX_FRAMES,
-            PRESENT_FPS_PIXMAPS);
+            PRESENT_FPS_PIXMAPS, config.variant_name,
+            config.request_check_enabled);
     fflush(stderr);
     if (setup(&app) < 0) {
-        present_fps_log_result("FAIL", "setup", &app, &stats, &fd_info, 0.0);
+        present_fps_log_result("FAIL", "setup", &app, &stats, &fd_info,
+                               &config, 0.0);
         cleanup(&app);
         return 2;
     }
 
     if (present_fps_wait_initial_window(&app) < 0) {
         present_fps_log_result("FAIL", "window-not-ready", &app, &stats,
-                               &fd_info, 0.0);
+                               &fd_info, &config, 0.0);
         cleanup(&app);
         return 3;
     }
     if (validate_dri3_fd(&app, &fd_info) < 0) {
         present_fps_log_result("FAIL", "dri3-fd", &app, &stats, &fd_info,
-                               0.0);
+                               &config, 0.0);
         cleanup(&app);
         return 4;
     }
@@ -939,9 +1042,14 @@ run_present_fps(void)
 
         frame_start = now_seconds();
         t = now_seconds();
-        cookie = xcb_present_pixmap_checked(app.c, app.win, pixmap,
-                                            app.serial, 0, 0, 0, 0, 0,
-                                            0, 0, 0, 0, 0, 0, 0, NULL);
+        if (config.variant == PRESENT_FPS_VARIANT_UNCHECKED)
+            cookie = xcb_present_pixmap(app.c, app.win, pixmap,
+                                        app.serial, 0, 0, 0, 0, 0,
+                                        0, 0, 0, 0, 0, 0, 0, NULL);
+        else
+            cookie = xcb_present_pixmap_checked(app.c, app.win, pixmap,
+                                                app.serial, 0, 0, 0, 0, 0,
+                                                0, 0, 0, 0, 0, 0, 0, NULL);
         stats.present_request_total_ms += elapsed_ms(t);
         stats.issued++;
 
@@ -949,25 +1057,27 @@ run_present_fps(void)
         xcb_flush(app.c);
         stats.flush_total_ms += elapsed_ms(t);
 
-        t = now_seconds();
-        err = xcb_request_check(app.c, cookie);
-        stats.request_check_total_ms += elapsed_ms(t);
-        if (err) {
-            fprintf(stderr,
-                    "host-x11-dri3-present-smoke: phase=present_fps_request status=FAIL serial=%u error=%u\n",
-                    app.serial, err->error_code);
-            fflush(stderr);
-            free(err);
-            present_fps_log_result("FAIL", "present-request", &app,
-                                   &stats, &fd_info,
-                                   now_seconds() - start);
-            rc = 5;
-            goto out;
+        if (config.request_check_enabled) {
+            t = now_seconds();
+            err = xcb_request_check(app.c, cookie);
+            stats.request_check_total_ms += elapsed_ms(t);
+            if (err) {
+                fprintf(stderr,
+                        "host-x11-dri3-present-smoke: phase=present_fps_request status=FAIL serial=%u error=%u\n",
+                        app.serial, err->error_code);
+                fflush(stderr);
+                free(err);
+                present_fps_log_result("FAIL", "present-request", &app,
+                                       &stats, &fd_info, &config,
+                                       now_seconds() - start);
+                rc = 5;
+                goto out;
+            }
         }
 
         if (present_fps_wait_complete(&app, app.serial, &stats, &msc) < 0) {
             present_fps_log_result("FAIL", "present-complete", &app,
-                                   &stats, &fd_info,
+                                   &stats, &fd_info, &config,
                                    now_seconds() - start);
             rc = 6;
             goto out;
@@ -984,7 +1094,8 @@ run_present_fps(void)
 
     present_fps_log_result(stats.completed > 0 ? "PASS" : "FAIL",
                            stats.completed > 0 ? NULL : "zero-frames",
-                           &app, &stats, &fd_info, now_seconds() - start);
+                           &app, &stats, &fd_info, &config,
+                           now_seconds() - start);
     rc = stats.completed > 0 ? 0 : 7;
 
 out:

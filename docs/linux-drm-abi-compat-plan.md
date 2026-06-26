@@ -297,6 +297,33 @@ case that the remaining acceleration gap is in Xwayland/Present pacing or the
 xv6-facing wait/check path around Present completions rather than GL draw issue
 overhead alone.
 
+Unchecked Present request variant artifact:
+
+```sh
+KDE_SMOKE_REDUCER=x11-present-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_present_fps_variant=unchecked kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-061902-x11-present-fps-unchecked-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS
+frames=107 elapsed_seconds=5.005733 fps=21.375 present_only=1 gl_context=0
+issued=107 completed=107 outstanding=0
+variant=unchecked request_check_enabled=0
+complete_copy=107 complete_flip=0 complete_skip=0 complete_suboptimal_copy=0 last_complete_mode=0
+present_request_total_ms=1.676 request_check_total_ms=0.000 flush_total_ms=14.854
+event_wait_total_ms=4979.203 completion_total_ms=5002.195 avg_completion_ms=46.749 max_completion_ms=311.131
+dri3_drm_name=virtio_gpu dri3_drm_version=0.1.0
+QEMU trace: ctx_submit=378 set_scanout=124 res_flush=124 fence_ctrl/fence_resp=378/378 res_create_3d=65
+```
+
+Interpretation: removing the per-frame `xcb_request_check()` eliminated the
+1.79s request-check bucket from the baseline run, but did not materially raise
+throughput: FPS moved only from 20.987 to 21.375 while nearly all elapsed time
+moved into `event_wait_total_ms`. The reducer now points more strongly at
+Present completion pacing or the X11 event-wait path than at checked-request
+round trips. All 107 completions used Present complete mode copy, which is a
+new useful split for the next pacing reducer.
+
 Default KDE regression artifact after the Present FPS harness:
 
 ```text

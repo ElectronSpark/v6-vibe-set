@@ -904,8 +904,8 @@ proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext 
     return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value exit_status=$exit_status"
 }
 
-proc x11_present_fps_failure_suffix {saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding exit_status} {
-    return "start=$saw_start connect=$saw_connect dri3=$saw_dri3 present=$saw_present select=$saw_select fd=$saw_fd fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value completed=$completed outstanding=$outstanding exit_status=$exit_status"
+proc x11_present_fps_failure_suffix {saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding variant exit_status} {
+    return "start=$saw_start connect=$saw_connect dri3=$saw_dri3 present=$saw_present select=$saw_select fd=$saw_fd fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value completed=$completed outstanding=$outstanding variant=$variant exit_status=$exit_status"
 }
 
 proc x11_glx_fps_failure_label_from_line {line} {
@@ -926,6 +926,9 @@ proc x11_present_fps_failure_label_from_line {line} {
     }
     if {[regexp {host-x11-dri3-present-smoke: phase=([A-Za-z0-9_]+)[^\r\n]*status=FAIL} $line -> phase]} {
         return "x11-present-fps-${phase}-status-FAIL"
+    }
+    if {[regexp {host-x11-egl-smoke: phase=present_fps_variant[^\r\n]*status=FAIL[^\r\n]*reason=([^ \r\n]+)} $line -> reason]} {
+        return "x11-present-fps-variant-$reason"
     }
     if {[regexp {host-x11-dri3-present-smoke: (connect|atom setup|event) (failed|eof)} $line -> phase reason]} {
         regsub -all { } $phase {_} phase
@@ -1079,7 +1082,7 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
     }
 }
 
-proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var select_var fd_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var completed_var outstanding_var failure_var} {
+proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var select_var fd_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var completed_var outstanding_var variant_var failure_var} {
     upvar 1 $start_var saw_start
     upvar 1 $connect_var saw_connect
     upvar 1 $dri3_var saw_dri3
@@ -1094,6 +1097,7 @@ proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var s
     upvar 1 $fps_value_var fps_value
     upvar 1 $completed_var completed
     upvar 1 $outstanding_var outstanding
+    upvar 1 $variant_var variant
     upvar 1 $failure_var failure_label
 
     set in_present_fps 0
@@ -1108,6 +1112,15 @@ proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var s
             set saw_start 1
         }
         if {!$in_present_fps} {
+            if {[regexp {^probe_present_fps_variant=([^ \r\n]+)} $line -> found_variant]} {
+                set variant $found_variant
+            }
+            if {$failure_label eq ""} {
+                set label [x11_present_fps_failure_label_from_line $line]
+                if {$label ne ""} {
+                    set failure_label $label
+                }
+            }
             continue
         }
         if {[regexp {host-x11-dri3-present-smoke: connected root=} $line]} {
@@ -1142,6 +1155,9 @@ proc x11_present_fps_scan_log {text start_var connect_var dri3_var present_var s
             set fps_value $found_fps
             set completed $found_completed
             set outstanding $found_outstanding
+            if {[regexp {variant=([^ \r\n]+)} $line -> found_variant]} {
+                set variant $found_variant
+            }
         }
         if {$failure_label eq ""} {
             set label [x11_present_fps_failure_label_from_line $line]
@@ -1478,9 +1494,10 @@ proc run_kde_x11_present_fps_session_probe {} {
     set fps_value ""
     set completed ""
     set outstanding ""
+    set variant ""
     set failure_label ""
-    x11_present_fps_scan_log $log_text saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding failure_label
-    set suffix [x11_present_fps_failure_suffix $saw_start $saw_connect $saw_dri3 $saw_present $saw_select $saw_fd $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $completed $outstanding $exit_status]
+    x11_present_fps_scan_log $log_text saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value completed outstanding variant failure_label
+    set suffix [x11_present_fps_failure_suffix $saw_start $saw_connect $saw_dri3 $saw_present $saw_select $saw_fd $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $completed $outstanding $variant $exit_status]
     host_screenshot "x11-dri3" $host_x11_dri3_png
 
     if {$failure_label ne ""} {
