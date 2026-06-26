@@ -166,30 +166,25 @@ KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xw
 Artifact directory:
 
 ```text
-build-x86_64/kde-plasma-desktop-smoke-history/20260626-061223-x11-glx-fps-timing-pass/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-044514-x11-glx-fps-trace-disabled-confirmation-pass/
 ```
-
-Result marker:
 
 ```text
 KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=85 elapsed_seconds=5.024329 fps=16.918
+event_total_ms=8.345 draw_total_ms=3469.444 swap_total_ms=1528.249 final_xsync_ms=12.367 avg_swap_ms=17.979
+QEMU trace: ctx_submit=387 set_scanout=100 res_flush=100 fence_ctrl/fence_resp=387/387 res_create_3d=53
 ```
 
-Key evidence:
+Phase-detail artifact after probe refinement:
 
 ```text
-Xwayland KDE wrapper: ... glamor=auto effective_glamor=es ... enable_glx=1
-host-x11-egl-smoke: phase=glx-fps status=BEGIN mode=session display=:0
-host-x11-egl-smoke: phase=start status=BEGIN mode=glx-fps
-host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)) gl_version=4.2 (Compatibility Profile) Mesa 25.2.8-0ubuntu0.24.04.2
-host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps ... direct_available=1 direct=1
-host-x11-egl-smoke: phase=glx_fps_timing status=PASS result_status=PASS frames=31 event_total_ms=2.962 draw_total_ms=2979.471 swap_total_ms=2140.386 final_xsync_ms=237.682 max_swap_ms=94.047 max_draw_ms=411.108 max_event_ms=1.112 avg_swap_ms=69.045
-host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=31 elapsed_seconds=5.362771 fps=5.781 ... direct=1
-host-x11-egl-smoke: phase=session_probe status=PASS mode=session probe_mode=glx-fps exit_status=0
-chrome-drm-detail: virtgpu-context-create ... proc=Xwayland.real ... capset=2 ... ret=0
-chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=Xwayland.real ... capset=2 ... ret=0
-chrome-drm-detail: virtgpu-context-create ... proc=ld-linux-x86-64 ... capset=2 ... ret=0
-chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=ld-linux-x86-64 ... capset=2 ... ret=0
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-045322-x11-glx-fps-phase-detail-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=93 elapsed_seconds=5.039396 fps=18.455
+draw_total_ms=3539.314 swap_total_ms=1475.927 final_xsync_ms=13.364 avg_swap_ms=15.870
+gl_issue_total_ms=3537.151 gl_error_total_ms=2.163 max_gl_issue_ms=130.051 max_gl_error_ms=0.396
+QEMU trace: ctx_submit=414 set_scanout=106 res_flush=106 fence_ctrl/fence_resp=414/414 res_create_3d=54
 ```
 
 Interpretation: the interactive serial-shell launch path was the reducer
@@ -197,51 +192,13 @@ blocker, not the GLX probe itself. The active FPS reducer now uses the
 xv6-owned KDE session process to launch `/bin/host-x11-egl-smoke --glx-fps`,
 which avoids KDE log noise corrupting typed shell commands. GLX starts, binds a
 direct virgl context, records renderer strings, submits 3D work, and completes
-the finite FPS loop. The added phase timing shows the low FPS is not event
-drain (`2.962 ms` total); most time is split between pre-swap GL work
-(`2979.471 ms`) and `glXSwapBuffers` (`2140.386 ms`, `69.045 ms` average).
-The measured FPS is still far below the Linux baseline, so this closes the
-GLX/FPS startup evidence gap but not performance parity.
-
-Latest DRM timing diagnostic pass:
-
-```text
-build-x86_64/kde-plasma-desktop-smoke-history/20260626-043754-x11-glx-fps-drm-timing-pass/
-KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
-```
-
-Key host-log evidence from the clean `host-gui-host-x11-egl-smoke.log`
-artifact:
-
-```text
-host-x11-egl-smoke: phase=glx_create_context status=PASS direct=1
-host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)) ...
-host-x11-egl-smoke: phase=glx_fps_timing status=PASS ... frames=17 event_total_ms=0.953 draw_total_ms=2976.020 swap_total_ms=2366.149 final_xsync_ms=141.029 avg_swap_ms=139.185
-host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=17 elapsed_seconds=5.485264 fps=3.099 ...
-host-x11-egl-smoke: phase=session_probe status=PASS mode=session probe_mode=glx-fps exit_status=0
-```
-
-Kernel/QEMU timing evidence:
-
-```text
-Xwayland execbuffer-time: count=42 avg_total_us=1469.2 max_total_us=50246 avg_submit_us=167.1 avg_trace_log_us=22397.9
-Xwayland total_us percentiles: p50=249 p90=334 max=50246
-Xwayland submit_us percentiles: p50=138 p90=227 max=729
-Xwayland trace_log_us percentiles: p50=15198 p90=46970
-no virtgpu-wait-time or execbuffer-fence-fd-wait-time lines observed
-chrome-drm-detail: syncobj-eventfd ... ret=-2 ... reject_reason=syncobj_missing
-QEMU trace: ctx_submit=119 set_scanout=34 res_flush=34 fence_ctrl/fence_resp=119/119 res_create_3d=62
-```
-
-Interpretation: the reducer completeness/status decision now uses the clean
-host artifact log rather than serial-noisy `run.log` markers. The parseable
-Xwayland timing rows show raw `virtio_gpu_user_submit` and total execbuffer
-work are usually sub-millisecond and are not the multi-ms bottleneck in this
-traced run. The lower FPS in this artifact is diagnostic overhead, not a
-performance regression: `trace_log_us` is large enough to perturb the loop.
-The remaining target moves toward user/host GL draw plus swap/present pacing,
-DRI3/Present sync behavior, or a trace-disabled confirmation run after the
-next reducer is chosen.
+the finite FPS loop. Trace-disabled confirmation shows diagnostic trace logging
+was materially depressing FPS, but the best recorded xv6 result is still far
+below the Linux GLX baseline of 55.638 FPS. The refined phase timing shows the
+draw bucket is not `glGetError`; it is dominated by existing GL issue calls
+(`glViewport`/`glClearColor`/`glClear`). The next reducer should stay
+diagnostic, such as `finish-before-swap`, `swap-only`, or a Present-only pacing
+burst, before making behavior changes.
 
 A same-command retry before the timing pass hit a known pre-probe KWin startup
 crash signature and was preserved separately at:
@@ -276,27 +233,21 @@ Status: open after GLX FPS and DRM timing proof; FPS is recorded but low.
 The current xv6 KDE desktop is visually correct and responsive, and focused
 Xwayland GLX context/draw proof now works with automatic policy mapped to
 effective `-glamor es`. The deterministic KDE/X11 FPS reducer now records a
-direct GLX/virgl result of 31 frames over 5.362771 seconds, or 5.781 FPS. Its
-timing reducer records negligible event-drain overhead and concentrates the
-remaining delay in pre-swap GL dispatch plus `glXSwapBuffers`. It does not yet
-match the Linux KDE baseline of 55.638 FPS.
+direct GLX/virgl result of 93 frames over 5.039396 seconds, or 18.455 FPS, in
+the phase-detail pass. The trace-disabled confirmation pass recorded 85 frames
+over 5.024329 seconds, or 16.918 FPS, confirming the older trace-heavy FPS
+numbers were materially depressed by diagnostic logging. xv6 still does not
+match the Linux KDE GLX baseline of 55.638 FPS.
 
-The latest DRM timing diagnostic pass records a clean host-artifact
-`x11-glx-fps` pass at 17 frames over 5.485264 seconds, or 3.099 FPS, with
-`draw_total_ms=2976.020`, `swap_total_ms=2366.149`, and
-`avg_swap_ms=139.185`. Its kernel timing shows Xwayland execbuffer submission
-itself is not the multi-ms bottleneck (`submit_us` p50=138, p90=227,
-max=729), while diagnostic print cost is high (`trace_log_us` p50=15198,
-p90=46970). Treat that run as attribution evidence, not a performance number.
-
-Next evidence target: user/host GL draw plus swap/present pacing,
-Xwayland/DRI3 Present sync behavior, or a trace-disabled confirmation after
-selecting the next reducer. The current virtgpu fence trace still shows
-submitted and responded fences matching 1:1, and no `virtgpu-wait-time` or
-`execbuffer-fence-fd-wait-time` lines appeared in the timing run, so raw
-virtgpu fence starvation remains unproven. The remaining
-`DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
-`handle=0`.
+The latest phase-detail pass records `draw_total_ms=3539.314`,
+`swap_total_ms=1475.927`, `avg_swap_ms=15.870`,
+`gl_issue_total_ms=3537.151`, and `gl_error_total_ms=2.163`, so the draw bucket
+is not `glGetError`; it is dominated by the existing GL issue calls. Next
+evidence target: diagnostic variants such as `finish-before-swap`,
+`swap-only`, or a Present-only pacing burst before behavior changes. The
+current virtgpu fence trace still shows submitted and responded fences matching
+1:1, so raw virtgpu fence starvation remains unproven. The remaining
+`DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for `handle=0`.
 
 Follow-up diagnostic artifact:
 

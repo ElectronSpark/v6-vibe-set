@@ -48,10 +48,14 @@ struct gl_api {
 
 struct glx_fps_timing {
     int64_t event_total_ns;
+    int64_t gl_issue_total_ns;
+    int64_t gl_error_total_ns;
     int64_t draw_total_ns;
     int64_t swap_total_ns;
     int64_t final_xsync_ns;
     int64_t max_event_ns;
+    int64_t max_gl_issue_ns;
+    int64_t max_gl_error_ns;
     int64_t max_draw_ns;
     int64_t max_swap_ns;
 };
@@ -1419,8 +1423,12 @@ draw_glx_fps_frame(struct app *app, int frame,
                    struct glx_fps_timing *timing)
 {
     const float t = (float)(frame % 120) / 119.0f;
-    int64_t draw_start_ns;
-    int64_t draw_end_ns;
+    int64_t gl_issue_start_ns;
+    int64_t gl_issue_end_ns;
+    int64_t gl_error_start_ns;
+    int64_t gl_error_end_ns;
+    int64_t gl_issue_ns;
+    int64_t gl_error_ns;
     int64_t swap_start_ns;
     int64_t swap_end_ns;
     GLenum err;
@@ -1434,15 +1442,23 @@ draw_glx_fps_frame(struct app *app, int frame,
         return -1;
     }
 
-    draw_start_ns = monotonic_ns();
+    gl_issue_start_ns = monotonic_ns();
     app->gl.viewport(0, 0, WIN_W, WIN_H);
     app->gl.clear_color(0.05f + 0.20f * t, 0.18f + 0.50f * (1.0f - t),
                         0.32f + 0.36f * t, 1.0f);
     app->gl.clear(GL_COLOR_BUFFER_BIT);
+    gl_issue_end_ns = monotonic_ns();
+    gl_error_start_ns = monotonic_ns();
     err = app->gl.get_error();
-    draw_end_ns = monotonic_ns();
+    gl_error_end_ns = monotonic_ns();
+    gl_issue_ns = elapsed_ns(gl_issue_start_ns, gl_issue_end_ns);
+    gl_error_ns = elapsed_ns(gl_error_start_ns, gl_error_end_ns);
+    add_timing_sample(&timing->gl_issue_total_ns,
+                      &timing->max_gl_issue_ns, gl_issue_ns);
+    add_timing_sample(&timing->gl_error_total_ns,
+                      &timing->max_gl_error_ns, gl_error_ns);
     add_timing_sample(&timing->draw_total_ns, &timing->max_draw_ns,
-                      elapsed_ns(draw_start_ns, draw_end_ns));
+                      gl_issue_ns + gl_error_ns);
     if (err != GL_NO_ERROR) {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_draw status=FAIL frame=%d gl_error=0x%x error_name=%s\n",
@@ -1476,6 +1492,16 @@ log_glx_fps_timing(const char *status, const char *result_status,
             ns_to_ms(timing->swap_total_ns), ns_to_ms(timing->final_xsync_ns),
             ns_to_ms(timing->max_swap_ns), ns_to_ms(timing->max_draw_ns),
             ns_to_ms(timing->max_event_ns), avg_swap_ms);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f\n",
+            status, result_status, frames, ns_to_ms(timing->event_total_ns),
+            ns_to_ms(timing->gl_issue_total_ns),
+            ns_to_ms(timing->gl_error_total_ns),
+            ns_to_ms(timing->draw_total_ns),
+            ns_to_ms(timing->swap_total_ns), ns_to_ms(timing->final_xsync_ns),
+            ns_to_ms(timing->max_gl_issue_ns),
+            ns_to_ms(timing->max_gl_error_ns), ns_to_ms(timing->max_swap_ns),
+            ns_to_ms(timing->max_event_ns));
     fflush(stderr);
 }
 
