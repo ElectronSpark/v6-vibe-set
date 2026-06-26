@@ -101,7 +101,8 @@ See `docs/linux-kde-performance-baseline.md` for the full comparison table.
 
 ### 1. Xwayland GLAMOR / GLX Acceleration
 
-Status: startup and harness preflight gaps closed; FPS probe startup open.
+Status: GLX context, draw, and FPS reducer evidence captured; performance
+parity remains open.
 
 The KDE default still guards Xwayland with `XV6_XWAYLAND_GLAMOR=off` for the
 stable desktop smoke path. Focused acceleration runs now keep the requested
@@ -156,7 +157,7 @@ host-x11-egl-smoke: phase=draw status=PASS frame=1 mode=glx-probe color=0
 KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-egl session_probe=PASS
 ```
 
-Latest no-Weston KDE X11/GLX FPS reducer outcome:
+Current no-Weston KDE X11/GLX FPS reducer outcome:
 
 ```sh
 KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 chrome_drm_ioctl_trace=1 chrome_drm_fence_trace=1 kde_smoke_require_chromium=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
@@ -165,53 +166,67 @@ KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xw
 Artifact directory:
 
 ```text
-build-x86_64/kde-plasma-desktop-smoke-history/20260626-043022-x11-glx-fps-probe-start-timeout/
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-053055-x11-glx-fps-session-probe-pass/
 ```
 
 Result marker:
 
 ```text
-KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-timeout
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
 ```
 
 Key evidence:
 
 ```text
-host-x11-egl-smoke: phase=x11_preflight status=BEGIN
-host-x11-egl-smoke: phase=x11_preflight_candidate status=PASS display=:0 exit_status=0
-host-x11-egl-smoke: phase=x11_preflight status=PASS selected_display=:0
-host-x11-egl-smoke: phase=launch_status_wait status=BEGIN display=:0 mode=glx-fps
-host-x11-egl-smoke: phase=launch_status_wait status=FAIL reason=timeout
 Xwayland KDE wrapper: ... glamor=auto effective_glamor=es ... enable_glx=1
+host-x11-egl-smoke: phase=glx-fps status=BEGIN mode=session display=:0
+host-x11-egl-smoke: phase=start status=BEGIN mode=glx-fps
+host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)) gl_version=4.2 (Compatibility Profile) Mesa 25.2.8-0ubuntu0.24.04.2
+host-x11-egl-smoke: phase=glx_fps status=BEGIN mode=glx-fps ... direct_available=1 direct=1
+host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=32 elapsed_seconds=5.260654 fps=6.083 ... direct=1
+host-x11-egl-smoke: phase=session_probe status=PASS mode=session probe_mode=glx-fps exit_status=0
 chrome-drm-detail: virtgpu-context-create ... proc=Xwayland.real ... capset=2 ... ret=0
 chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=Xwayland.real ... capset=2 ... ret=0
+chrome-drm-detail: virtgpu-context-create ... proc=ld-linux-x86-64 ... capset=2 ... ret=0
+chrome-drm-detail: virtgpu-context-first-submit-execbuffer ... proc=ld-linux-x86-64 ... capset=2 ... ret=0
 ```
 
-Interpretation: the old `x11-glx-fps-display-env-timeout` harness failure is
-gone. The remaining timeout is after the one-shot probe command was issued and
-the launch wait began; no
-`host-x11-egl-smoke: phase=start mode=glx-fps` appears before timeout. Next
-investigation should stay on probe process startup, loader/stdio behavior, or
-guest command execution around GLX FPS mode. Do not claim a Mesa or kernel root
-cause from this artifact alone.
+Interpretation: the interactive serial-shell launch path was the reducer
+blocker, not the GLX probe itself. The active FPS reducer now uses the
+xv6-owned KDE session process to launch `/bin/host-x11-egl-smoke --glx-fps`,
+which avoids KDE log noise corrupting typed shell commands. GLX starts, binds a
+direct virgl context, records renderer strings, submits 3D work, and completes
+the finite FPS loop. The measured FPS is still far below the Linux baseline, so
+this closes the GLX/FPS startup evidence gap but not performance parity.
+
+Default KDE regression artifact after the session-probe change:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-053252-default-kde-smoke-pass-after-session-glx-fps/
+KDE-PLASMA-DESKTOP-SMOKE-DONE
+Xwayland KDE wrapper: ... glamor=off effective_glamor=off ... enable_glx=0
+kde_app_launch_probe ... konsole=1 ... dolphin=1 ... chromium=1 ... status=PASS
+kde_process_probe ... kwin=1 plasmashell=1 ... xwayland=1 ... chromium=1 ... status=PASS
+KDE_SMOKE_AGENT_DONE status=PASS
+```
 
 Remaining success criteria:
 
-- FPS reducer reaches `phase=start mode=glx-fps` and records
-  `phase=glx_fps_result`.
-- QEMU trace shows Xwayland/client 3D submission comparable in shape to the
-  Linux baseline.
-- Default KDE smoke still passes and remains nonblack/responsive.
+- Improve GLX FPS toward the Linux baseline or explain the remaining delta with
+  reduced evidence.
+- QEMU trace shows Xwayland/client 3D submission comparable in shape and rate
+  to the Linux baseline.
+- Default KDE smoke stays green and remains nonblack/responsive.
 
 ### 2. KDE Performance Parity
 
-Status: open after GLX FPS probe startup.
+Status: open after GLX FPS probe startup; FPS is recorded but low.
 
 The current xv6 KDE desktop is visually correct and responsive, and focused
 Xwayland GLX context/draw proof now works with automatic policy mapped to
-effective `-glamor es`. It does not yet match the Linux KDE baseline because the
-deterministic KDE/X11 FPS reducer times out before the GLX FPS probe prints its
-start marker or result.
+effective `-glamor es`. The deterministic KDE/X11 FPS reducer now records a
+direct GLX/virgl result of 32 frames over 5.260654 seconds, or 6.083 FPS. It
+does not yet match the Linux KDE baseline of 55.638 FPS.
 
 Success criteria:
 

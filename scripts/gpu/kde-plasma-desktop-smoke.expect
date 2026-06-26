@@ -101,6 +101,9 @@ if {$kde_smoke_agent ne "0"} {
 if {$kde_smoke_reducer eq "x11-egl"} {
     append qemu_append " kde_x11_egl_session_probe=1"
 }
+if {$kde_smoke_reducer eq "x11-glx-fps"} {
+    append qemu_append " kde_x11_egl_session_probe=glx-fps"
+}
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
 }
@@ -1182,100 +1185,60 @@ proc x11_egl_glx_probe_xopen_preflight {log_path {skip_diag 0}} {
     finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-XOpenDisplay-preflight-failed displays=:0,:1"
 }
 
-proc run_kde_x11_glx_fps_probe {} {
-    global timeout x11_egl_available host_x11_egl_png x11_egl_artifact_prefix
+proc read_x11_egl_session_log {label} {
+    global timeout guest_host_x11_egl_log
+
+    sync_prompt 60
+    set old_timeout $timeout
+    set timeout 60
+    set done_marker "__KDE_X11_EGL_SESSION_LOG_DONE__[pid]"
+    set log_text ""
+    send "cat $guest_host_x11_egl_log; echo $done_marker\r"
+    while {1} {
+        expect {
+            -re [format {(^|[\r\n])%s[\r\n]} $done_marker] {
+                append log_text $expect_out(buffer)
+                set timeout $old_timeout
+                optional_prompt
+                return $log_text
+            }
+            -re {host-x11-egl-smoke: [^\r\n]+} {
+                append log_text $expect_out(buffer)
+            }
+            -re {cat: [^\r\n]+} {
+                append log_text $expect_out(buffer)
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                append log_text $expect_out(buffer)
+                set timeout $old_timeout
+                write_x11_egl_artifact_log $log_text
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-log-crash"
+            }
+            timeout {
+                set timeout $old_timeout
+                write_x11_egl_artifact_log $log_text
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-log-timeout"
+            }
+            eof {
+                set timeout $old_timeout
+                write_x11_egl_artifact_log $log_text
+                finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-log-eof"
+            }
+        }
+    }
+}
+
+proc run_kde_x11_glx_fps_session_probe {} {
+    global x11_egl_available host_x11_egl_png
 
     if {!$x11_egl_available} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-missing"
     }
 
-    set old_timeout $timeout
-    set log_path "/tmp/host-gui-host-x11-egl-smoke.log"
-    set exit_status ""
-    set preflight_display ""
-
-    x11_egl_glx_probe_prelaunch_marker $log_path
-    set timeout 150
-
-    sync_prompt 60
-    send "rm -f $log_path; echo GLXFPSRM:\$?\r"
-    expect {
-        -re {GLXFPSRM:0} {}
-        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
-            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-rm-crash"
-        }
-        timeout { finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-rm-timeout" }
-        eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-rm-eof" }
-    }
-    optional_prompt
-
-    set preflight_display [x11_egl_glx_probe_xopen_preflight $log_path 1]
-
-    append x11_egl_artifact_prefix "host-x11-egl-smoke: phase=launch_status_wait status=BEGIN display=$preflight_display mode=glx-fps\n"
-    write_x11_egl_artifact_log ""
-    send "DISPLAY=$preflight_display HOST_X11_EGL_SMOKE_MODE=glx-fps /bin/host-x11-egl-smoke --glx-fps; echo GLXFPS:\$?\r"
-    expect {
-        -re {GLXFPS:([0-9]+)} {
-            set exit_status [string trim $expect_out(1,string)]
-            set launch_buffer ""
-            catch { set launch_buffer $expect_out(buffer) }
-            if {[regexp {exec .*failed|not found|cannot execute} $launch_buffer]} {
-                x11_egl_glx_probe_launch_diag $log_path "exec_failed" 0 $launch_buffer
-                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-launch"
-            }
-            append x11_egl_artifact_prefix "host-x11-egl-smoke: phase=launch_status_wait status=EXIT exit_status=$exit_status\n"
-            write_x11_egl_artifact_log ""
-        }
-        -re {exec .*failed|not found|cannot execute} {
-            x11_egl_glx_probe_launch_diag $log_path "exec_failed" 0 $expect_out(buffer)
-            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-launch"
-        }
-        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
-            x11_egl_glx_probe_launch_diag $log_path "crash" 0 $expect_out(buffer)
-            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-crash"
-        }
-        timeout {
-            set launch_buffer ""
-            catch { set launch_buffer $expect_out(buffer) }
-            x11_egl_glx_probe_launch_diag $log_path "timeout" 1 $launch_buffer
-            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-timeout"
-        }
-        eof {
-            set launch_buffer ""
-            catch { set launch_buffer $expect_out(buffer) }
-            x11_egl_glx_probe_launch_diag $log_path "eof" 0 $launch_buffer
-            finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-eof"
-        }
-    }
-    optional_prompt
-
-    send "cat $log_path; echo __KDE_X11_GLX_FPS_LOG_DONE__\r"
-    set saw_done 0
-    set log_text ""
-    while {!$saw_done} {
-        expect {
-            -re {(^|[\r\n])__KDE_X11_GLX_FPS_LOG_DONE__[\r\n]} {
-                append log_text $expect_out(buffer)
-                set saw_done 1
-            }
-            -re {host-x11-egl-smoke: [^\r\n]+} {
-                append log_text $expect_out(buffer)
-            }
-            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
-                append log_text $expect_out(buffer)
-                write_x11_egl_artifact_log $log_text
-                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-log-crash"
-            }
-            timeout {
-                write_x11_egl_artifact_log $log_text
-                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-log-timeout"
-            }
-            eof {
-                write_x11_egl_artifact_log $log_text
-                finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-log-eof"
-            }
-        }
-    }
+    set session_result [wait_for_x11_egl_session_probe_terminal]
+    set session_status [lindex $session_result 0]
+    set exit_status [lindex $session_result 1]
+    set log_text [read_x11_egl_session_log "x11-glx-fps-session-probe"]
     write_x11_egl_artifact_log $log_text
 
     set saw_start 0
@@ -1297,11 +1260,13 @@ proc run_kde_x11_glx_fps_probe {} {
     set failure_label ""
     x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value failure_label
     set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $exit_status]
-    set timeout $old_timeout
-    optional_prompt
     host_screenshot "x11-egl" $host_x11_egl_png
+
     if {$failure_label ne ""} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $failure_label $suffix"
+    }
+    if {$session_status ne "PASS"} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-session-probe-$session_status exit_status=$exit_status $suffix"
     }
     if {$exit_status ne "0"} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-status-$exit_status $suffix"
@@ -1318,10 +1283,10 @@ proc run_kde_x11_glx_fps_probe {} {
 }
 
 proc run_kde_x11_egl_glx_probe_only {} {
-    global timeout host_x11_egl_png
+    global timeout host_x11_egl_png guest_host_x11_egl_log
 
     set old_timeout $timeout
-    set log_path "/tmp/host-gui-host-x11-egl-smoke.log"
+    set log_path $guest_host_x11_egl_log
     set exit_status ""
     set preflight_display ""
 
@@ -1421,7 +1386,7 @@ proc run_kde_x11_egl_glx_probe_only {} {
 }
 
 proc run_kde_x11_egl_probe {} {
-    global timeout x11_egl_available host_x11_egl_png
+    global timeout x11_egl_available host_x11_egl_png guest_host_x11_egl_log
 
     set reducer [expr {[kde_smoke_reducer] eq "x11-egl"}]
     if {[info exists ::env(KDE_SMOKE_X11_EGL)] && $::env(KDE_SMOKE_X11_EGL) eq "0"} {
@@ -1445,7 +1410,7 @@ proc run_kde_x11_egl_probe {} {
     set old_timeout $timeout
     sync_prompt
     set timeout 90
-    set log_path "/tmp/host-gui-host-x11-egl-smoke.log"
+    set log_path $guest_host_x11_egl_log
 
     send "rm -f $log_path; /bin/host-x11-egl-smoke & echo KDE_X11_EGL_LAUNCHED\r"
     expect {
@@ -2157,8 +2122,8 @@ if {[kde_smoke_reducer] eq "x11-dri3"} {
 
 if {[kde_smoke_reducer] eq "x11-glx-fps"} {
     wait_for_kde_session_ready
-    run_kde_x11_glx_fps_probe
-    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps"
+    run_kde_x11_glx_fps_session_probe
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS"
 }
 
 if {![legacy_serial_validation_enabled] && [guest_smoke_agent_enabled]} {

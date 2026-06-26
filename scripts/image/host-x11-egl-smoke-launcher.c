@@ -17,7 +17,7 @@ static const char *library_path =
     "/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib64";
 static const char *program =
     "/opt/host-gui/host-x11-egl-smoke/bin/host-x11-egl-smoke";
-static const char *default_log_path = "/tmp/host-gui-host-x11-egl-smoke.log";
+static const char *default_log_path = "/host-gui-host-x11-egl-smoke.log";
 #define PROBE_CHILD_TIMEOUT_MS 30000
 
 static void

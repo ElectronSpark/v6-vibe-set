@@ -9,7 +9,7 @@ set outdir "$build/host-x11-egl-smoke-proof"
 exec mkdir -p $outdir
 set runlog "$outdir/run.log"
 set tmpimg "$outdir/host-x11-egl-smoke.fs.img"
-set app_log "/tmp/host-gui-host-x11-egl-smoke.log"
+set app_log "/host-gui-host-x11-egl-smoke.log"
 
 array set guest {
     before /host-x11-egl-smoke-before.ppm

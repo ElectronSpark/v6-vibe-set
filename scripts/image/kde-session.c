@@ -17,6 +17,8 @@
 #define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
 #define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
 
+static char x11_egl_active_session_probe_mode[64];
+
 static void mkdir_one(const char *path, mode_t mode)
 {
     if (mkdir(path, mode) < 0 && errno != EEXIST)
@@ -913,21 +915,24 @@ static int x11_egl_smoke_status_code(int status)
     return 128;
 }
 
-static void x11_egl_session_terminal(const char *status, int exit_status,
+static void x11_egl_session_terminal(const char *probe_mode,
+                                     const char *status, int exit_status,
                                      const char *reason)
 {
+    const char *mode = probe_mode ? probe_mode : "glx-probe";
+
     if (reason && reason[0]) {
-        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session exit_status=%d reason=%s\n",
-                     status, exit_status, reason);
+        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session probe_mode=%s exit_status=%d reason=%s\n",
+                     status, mode, exit_status, reason);
         fprintf(stderr,
-                "kde-session: x11-egl-session-probe status=%s exit_status=%d reason=%s\n",
-                status, exit_status, reason);
+                "kde-session: x11-egl-session-probe status=%s exit_status=%d probe_mode=%s reason=%s\n",
+                status, exit_status, mode, reason);
     } else {
-        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session exit_status=%d\n",
-                     status, exit_status);
+        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session probe_mode=%s exit_status=%d\n",
+                     status, mode, exit_status);
         fprintf(stderr,
-                "kde-session: x11-egl-session-probe status=%s exit_status=%d\n",
-                status, exit_status);
+                "kde-session: x11-egl-session-probe status=%s exit_status=%d probe_mode=%s\n",
+                status, exit_status, mode);
     }
     fflush(stderr);
 }
@@ -1006,17 +1011,26 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
     return wait_host_x11_egl_smoke(pid, display, mode);
 }
 
-static void run_x11_egl_session_probe(void)
+static void run_x11_egl_session_probe(const char *probe_mode)
 {
     static const char *displays[] = { ":0", ":1" };
     const char *selected = NULL;
+    const char *run_mode = "glx-probe";
+    const char *run_arg = "--glx-probe-only";
     int glx_rc;
     FILE *fp;
 
+    if (probe_mode && strcmp(probe_mode, "glx-fps") == 0) {
+        run_mode = "glx-fps";
+        run_arg = "--glx-fps";
+    }
+
     fp = fopen(X11_EGL_SESSION_LOG, "w");
     if (fp) {
-        fprintf(fp, "host-x11-egl-smoke: phase=prelaunch_prompt_sync status=PASS mode=session\n");
-        fprintf(fp, "host-x11-egl-smoke: phase=x11_preflight status=BEGIN mode=session\n");
+        fprintf(fp, "host-x11-egl-smoke: phase=prelaunch_prompt_sync status=PASS mode=session probe_mode=%s\n",
+                run_mode);
+        fprintf(fp, "host-x11-egl-smoke: phase=x11_preflight status=BEGIN mode=session probe_mode=%s\n",
+                run_mode);
         fprintf(fp, "host-x11-egl-smoke: diag preflight_env\n");
         fprintf(fp, "DISPLAY=%s\n", getenv("DISPLAY") ? getenv("DISPLAY") : "(unset)");
         fprintf(fp, "XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
@@ -1032,7 +1046,8 @@ static void run_x11_egl_session_probe(void)
     run_logged_shell("preflight_ps", "ps || true");
     run_logged_shell("preflight_kde_process_probe",
                      "/bin/kde-process-probe || true");
-    x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_diag status=PASS mode=session\n");
+    x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_diag status=PASS mode=session probe_mode=%s\n",
+                 run_mode);
 
     for (size_t i = 0; i < sizeof(displays) / sizeof(displays[0]); i++) {
         int rc;
@@ -1051,28 +1066,61 @@ static void run_x11_egl_session_probe(void)
 
     if (!selected) {
         x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight status=FAIL reason=no-display-candidate label=x11-egl-XOpenDisplay-preflight-failed displays=:0,:1\n");
-        x11_egl_session_terminal("FAIL", 1, "no-display-candidate");
+        x11_egl_session_terminal(run_mode, "FAIL", 1, "no-display-candidate");
         return;
     }
 
     x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight status=PASS selected_display=%s\n",
                  selected);
-    x11_egl_logf("host-x11-egl-smoke: phase=glx-probe status=BEGIN mode=session display=%s\n",
-                 selected);
-    glx_rc = run_host_x11_egl_smoke(selected, "glx-probe",
-                                    "--glx-probe-only");
-    x11_egl_session_terminal(glx_rc == 0 ? "PASS" : "FAIL", glx_rc, NULL);
+    x11_egl_logf("host-x11-egl-smoke: phase=%s status=BEGIN mode=session display=%s\n",
+                 run_mode, selected);
+    glx_rc = run_host_x11_egl_smoke(selected, run_mode, run_arg);
+    x11_egl_session_terminal(run_mode, glx_rc == 0 ? "PASS" : "FAIL",
+                             glx_rc, NULL);
     sync();
+}
+
+static int x11_egl_session_probe_mode(char *mode, size_t mode_size)
+{
+    char value[64];
+    int rc;
+
+    if (mode_size == 0)
+        return 0;
+    mode[0] = '\0';
+
+    rc = cmdline_get_value_status("kde_x11_egl_session_probe", value,
+                                  sizeof(value));
+    if (rc <= 0)
+        return rc;
+    if (strcmp(value, "0") == 0 || strcmp(value, "off") == 0)
+        return 0;
+    if (strcmp(value, "1") == 0 || strcmp(value, "glx-probe") == 0) {
+        snprintf(mode, mode_size, "%s", "glx-probe");
+        return 1;
+    }
+    if (strcmp(value, "glx-fps") == 0) {
+        snprintf(mode, mode_size, "%s", "glx-fps");
+        return 1;
+    }
+
+    x11_egl_session_terminal("invalid", "FAIL", 2, "invalid-mode");
+    return -1;
 }
 
 static pid_t maybe_spawn_x11_egl_session_probe(void)
 {
+    char probe_mode[64];
     pid_t pid;
+    int mode_rc;
 
-    if (!cmdline_has_flag("kde_x11_egl_session_probe=1"))
+    mode_rc = x11_egl_session_probe_mode(probe_mode, sizeof(probe_mode));
+    if (mode_rc <= 0)
         return -1;
+    snprintf(x11_egl_active_session_probe_mode,
+             sizeof(x11_egl_active_session_probe_mode), "%s", probe_mode);
     if (!is_executable("/bin/host-x11-egl-smoke")) {
-        x11_egl_session_terminal("FAIL", 127, "missing-binary");
+        x11_egl_session_terminal(probe_mode, "FAIL", 127, "missing-binary");
         return -1;
     }
 
@@ -1080,13 +1128,13 @@ static pid_t maybe_spawn_x11_egl_session_probe(void)
     if (pid < 0) {
         x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=FAIL reason=fork errno=%d %s\n",
                      errno, strerror(errno));
-        x11_egl_session_terminal("FAIL", 127, "fork");
+        x11_egl_session_terminal(probe_mode, "FAIL", 127, "fork");
         return -1;
     }
     if (pid == 0) {
         setpgid(0, 0);
         sleep(3);
-        run_x11_egl_session_probe();
+        run_x11_egl_session_probe(probe_mode);
         _exit(0);
     }
     setpgid(pid, pid);
@@ -1105,7 +1153,10 @@ static void reap_x11_egl_session_probe(pid_t pid)
             return;
         usleep(100000);
     }
-    x11_egl_session_terminal("TIMEOUT", 124, "session-watchdog");
+    x11_egl_session_terminal(x11_egl_active_session_probe_mode[0]
+                                 ? x11_egl_active_session_probe_mode
+                                 : "unknown",
+                             "TIMEOUT", 124, "session-watchdog");
     kill(-pid, SIGKILL);
     kill(pid, SIGKILL);
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
