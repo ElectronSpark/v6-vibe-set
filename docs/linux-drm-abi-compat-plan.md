@@ -427,6 +427,52 @@ still trails Present depth 6 at 52.323 FPS and the Linux GLX baseline of
 GLX/Mesa/Xwayland throttling above raw Present, not an obvious kernel fence
 starvation bug.
 
+Depth-8 Present queue-depth artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-075019-x11-present-fps-queue-depth8-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS
+frames=280 elapsed_seconds=5.092740 fps=54.980
+variant=queue-unchecked issued=280 completed=280 outstanding=0
+queue_depth=8 max_outstanding=8
+complete_copy=280 complete_flip=0 complete_skip=0 complete_suboptimal_copy=0
+present_request_total_ms=3.033 flush_total_ms=26.943 event_wait_total_ms=5040.579
+completion_total_ms=40567.763
+QEMU trace: ctx_submit=438 set_scanout=66 res_flush=66 fence_ctrl/fence_resp=438/438 res_create_3d=60
+```
+
+Depth-8 GLX OML queue-depth artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-075214-x11-glx-fps-oml-queue-depth8-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=226 elapsed_seconds=5.066070 fps=44.611
+variant=oml-queue-depth-swap-only
+oml_available=1 oml_queue_depth=8 oml_sbc_issued=226 oml_sbc_completed=226 oml_max_pending_sbc=8
+oml_issue_total_ms=4820.616 oml_wait_total_ms=151.675 oml_drain_wait_total_ms=55.420 oml_gl_flush_before_swap=1
+draw_total_ms=19.518 swap_total_ms=4820.616 final_xsync_ms=0.250 avg_swap_ms=21.330
+QEMU trace: ctx_submit=630 set_scanout=80 res_flush=80 fence_ctrl/fence_resp=630/630 res_create_3d=53
+```
+
+Interpretation: Present depth 8 reaches 54.980 FPS, essentially matching the
+Linux GLX control at 55.638 FPS with raw Present copy completions. GLX depth 8
+only improves slightly over depth 6, 44.611 FPS versus 43.815 FPS, while OML
+wait shrinks further and issue/swap MSC remains about 4.82s of the 5s run.
+Queue depth explains raw Present pacing, but the residual GLX gap is now above
+raw Present and likely in GLX/Mesa/Xwayland OML swap issue, flush, or
+throttling. The next reducer should split OML `glFlush` versus `swap_msc`
+issue timing, not start from a speculative kernel patch.
+
+The first GLX depth-8 attempt failed before the reducer due to the known KWin
+startup crash class and is preserved separately:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-075110-x11-glx-fps-oml-depth8-kwin-startup-crash/
+KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash
+```
+
+Treat this as a pre-probe/session stability artifact, not GLX timing evidence.
+
 Two non-passing attempts before the final queue-depth pass were preserved:
 
 ```text
@@ -519,8 +565,15 @@ requests in flight, while the GLX OML queue3 swap-only reducer reached
 `oml_max_pending_sbc=3`. Parameterized depth-6 queueing moved Present to
 52.323 FPS and GLX OML swap-only to 43.815 FPS; GLX depth 6 now exceeds the
 prior Present queue3 result but still trails Present depth 6 and the Linux GLX
-baseline. The current virtgpu fence trace still shows submitted and responded
-fences matching 1:1, so raw virtgpu fence starvation remains unproven. The
+baseline. Depth-8 queueing then moved raw Present to 54.980 FPS, essentially
+matching the Linux GLX control at 55.638 FPS, while GLX OML swap-only only
+rose to 44.611 FPS and spent about 4.82s in OML issue/swap MSC time. Queue
+depth now explains raw Present pacing; the residual gap sits above raw Present
+in GLX/Mesa/Xwayland OML swap issue, flush, or throttling. The next reducer
+should split OML `glFlush` versus `swap_msc` issue timing rather than starting
+from a speculative kernel patch. The current virtgpu fence trace still shows
+submitted and responded fences matching 1:1, so raw virtgpu fence starvation
+remains unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 
