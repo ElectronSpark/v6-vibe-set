@@ -709,6 +709,33 @@ gap therefore did not disappear with lower OML observer frequency. Continue
 with GLX/Xwayland/Mesa swap-path attribution above raw Present; do not infer a
 kernel DRI3/fd-passing/fence issue from this run.
 
+Swap-interval-0 plain GLX swap-only Present trace reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-131105-x11-glx-fps-present-trace-resolver-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+present_trace_result status=PASS pixmap_calls=229 register_special_xge_calls=1 present_special_registrations=1 wait_special_calls=133 poll_special_calls=783 complete_events=224 complete_copy=223 complete_flip=0 complete_suboptimal_copy=1 present_fallback_symbols=2 missing_symbols=0
+frames=229 elapsed_seconds=5.070606 fps=45.162 variant=swap-interval0-swap-only
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4998.262 plain_swap_avg_ms=21.826 plain_swap_max_ms=110.755
+QEMU trace: ctx_submit=635 set_scanout=80 res_flush=80 fence_ctrl/fence_resp=635/635 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+The trace preload is xv6-owned harness code and is injected child-only through
+`HOST_X11_EGL_CHILD_LD_PRELOAD`; KDE, Qt, KWin, Xwayland, Mesa, and Chromium
+sources remain upstream-clean. The first traced attempt proved that preloading
+the launcher was wrong. A later trace attempt showed `RTLD_NEXT` did not expose
+the Present entry points to the interposer, so the preload now falls back to
+`dlopen("libxcb-present.so.0")` for `xcb_present_pixmap`,
+`xcb_present_pixmap_checked`, and `xcb_present_id`. The passing artifact shows
+the fallback resolved two symbols, no missing symbols, one Present special-event
+registration, and hundreds of Present complete events. This closes the
+diagnostic gap: the GLX swap path really reaches X11 Present and receives
+completions under KDE/Xwayland. Remaining performance work should stay above
+kernel fd passing, DRI3, and fence attribution unless a new reducer contradicts
+this proof.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 

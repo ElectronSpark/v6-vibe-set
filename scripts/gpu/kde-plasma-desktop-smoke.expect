@@ -207,6 +207,30 @@ proc read_x11_egl_host_artifact_log {text_var} {
     return [expr {$text ne ""}]
 }
 
+proc x11_egl_session_log_complete {label text} {
+    if {$label eq "x11-glx-fps-session-probe"} {
+        if {![regexp {host-x11-egl-smoke: phase=session_probe status=(PASS|FAIL|TIMEOUT)[^\r\n]*probe_mode=glx-fps} $text]} {
+            return 0
+        }
+        if {![regexp {host-x11-egl-smoke: phase=glx_fps_result status=(PASS|FAIL)} $text] &&
+            ![regexp {host-x11-egl-smoke: phase=glx-fps status=(PASS|FAIL|TIMEOUT)} $text]} {
+            return 0
+        }
+        if {[regexp {(^|\n)probe_glx_present_trace=1(\r?\n|$)} $text] &&
+            ![regexp {host-x11-present-trace: phase=present_trace_result status=} $text] &&
+            ![regexp {host-x11-egl-smoke: phase=glx_present_trace[^\r\n]*status=FAIL} $text]} {
+            return 0
+        }
+        return 1
+    }
+    if {$label eq "x11-present-fps-session-probe"} {
+        return [expr {[regexp {host-x11-egl-smoke: phase=session_probe status=(PASS|FAIL|TIMEOUT)[^\r\n]*probe_mode=present-fps} $text] &&
+                      ([regexp {host-x11-dri3-present-smoke: phase=present_fps_result status=(PASS|FAIL)} $text] ||
+                       [regexp {host-x11-egl-smoke: phase=present-fps status=(PASS|FAIL|TIMEOUT)} $text])}]
+    }
+    return 1
+}
+
 proc finish {code label} {
     global qemu_pid runlog tmpimg ppm png guest_before_ppm guest_after_ppm
     global guest_final_ppm
@@ -1474,6 +1498,9 @@ proc x11_present_fps_queue_failure_label {requested_variant requested_depth resu
 }
 
 proc x11_glx_fps_failure_label_from_line {line} {
+    if {[regexp {host-x11-egl-smoke: phase=glx_present_trace[^\r\n]*status=FAIL[^\r\n]*reason=([^ \r\n]+)} $line -> reason]} {
+        return "x11-glx-fps-present-trace-$reason"
+    }
     if {[regexp {host-x11-egl-smoke: phase=glx_fps_result status=FAIL[^\r\n]*reason=([^ \r\n]+)} $line -> reason]} {
         return "x11-glx-fps-result-FAIL-$reason"
     }
@@ -1491,6 +1518,221 @@ proc x11_glx_fps_failure_label_from_line {line} {
         regsub {^x11-egl-} $label {x11-glx-fps-} label
     }
     return $label
+}
+
+proc x11_glx_present_trace_scan_log {text enabled_var available_var child_pid_var begin_var result_var result_status_var pixmap_var pixmap_checked_var register_var present_registration_var wait_var poll_var nonpresent_var pixmap_ms_var wait_ms_var poll_ms_var complete_var decode_failures_var missing_symbols_var failure_var} {
+    upvar 1 $enabled_var enabled
+    upvar 1 $available_var available
+    upvar 1 $child_pid_var child_pid
+    upvar 1 $begin_var saw_begin
+    upvar 1 $result_var saw_result
+    upvar 1 $result_status_var result_status
+    upvar 1 $pixmap_var pixmap_calls
+    upvar 1 $pixmap_checked_var pixmap_checked_calls
+    upvar 1 $register_var register_special_xge_calls
+    upvar 1 $present_registration_var present_special_registrations
+    upvar 1 $wait_var wait_special_calls
+    upvar 1 $poll_var poll_special_calls
+    upvar 1 $nonpresent_var nonpresent_special_events
+    upvar 1 $pixmap_ms_var pixmap_total_ms
+    upvar 1 $wait_ms_var wait_special_total_ms
+    upvar 1 $poll_ms_var poll_special_total_ms
+    upvar 1 $complete_var complete_events
+    upvar 1 $decode_failures_var complete_decode_failures
+    upvar 1 $missing_symbols_var missing_symbols
+    upvar 1 $failure_var failure_label
+
+    set expect_glx_fps_child_spawn 0
+    set trace_pid_hint ""
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {^probe_glx_present_trace=([0-9]+)} $line -> found_enabled]} {
+            set enabled $found_enabled
+        }
+        if {[regexp {^probe_glx_present_trace_available=([0-9]+)} $line -> found_available]} {
+            set available $found_available
+        }
+        if {[regexp {host-x11-egl-smoke: diag launch mode=glx-fps[^\r\n]*child_ld_preload=([^ \r\n]+)} $line -> found_child_ld_preload] &&
+            $found_child_ld_preload ne "(unset)"} {
+            set expect_glx_fps_child_spawn 1
+        }
+        if {$expect_glx_fps_child_spawn &&
+            [regexp {host-x11-egl-smoke-launcher: phase=child_spawn status=PASS pid=([0-9]+)} $line -> found_child_pid]} {
+            set child_pid $found_child_pid
+            set expect_glx_fps_child_spawn 0
+        }
+        if {[regexp {host-x11-present-trace: phase=present_trace (status=BEGIN|status=FAIL)[^\r\n]*pid=([0-9]+)} $line -> _ found_pid]} {
+            if {$trace_pid_hint eq ""} {
+                set trace_pid_hint $found_pid
+            }
+            if {$enabled eq ""} {
+                set enabled 1
+            }
+            if {$available eq ""} {
+                set available 1
+            }
+        }
+        if {[regexp {host-x11-present-trace: phase=present_trace_result status=[^ \r\n]+[^\r\n]*pid=([0-9]+)} $line -> found_pid]} {
+            if {$trace_pid_hint eq ""} {
+                set trace_pid_hint $found_pid
+            }
+            if {$enabled eq ""} {
+                set enabled 1
+            }
+            if {$available eq ""} {
+                set available 1
+            }
+        }
+        if {$failure_label eq ""} {
+            set label [x11_glx_fps_failure_label_from_line $line]
+            if {$label ne ""} {
+                set failure_label $label
+            }
+        }
+    }
+
+    if {$child_pid eq ""} {
+        set child_pid $trace_pid_hint
+    }
+    if {$child_pid eq ""} {
+        return
+    }
+
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {$child_pid ne "" &&
+            [regexp {host-x11-present-trace: phase=present_trace status=BEGIN[^\r\n]*pid=([0-9]+)} $line -> found_pid] &&
+            $found_pid eq $child_pid} {
+            set saw_begin 1
+        }
+        if {$child_pid ne "" &&
+            [regexp {host-x11-present-trace: phase=present_trace_result status=([^ \r\n]+)[^\r\n]*pid=([0-9]+)} $line -> found_status found_pid] &&
+            $found_pid eq $child_pid} {
+            set saw_result 1
+            if {$found_status ne "PASS"} {
+                set result_status $found_status
+            } elseif {$result_status eq ""} {
+                set result_status $found_status
+            }
+            if {[regexp {pixmap_calls=([0-9]+)} $line -> found_pixmap_calls]} {
+                set pixmap_calls $found_pixmap_calls
+            }
+            if {[regexp {pixmap_checked_calls=([0-9]+)} $line -> found_pixmap_checked_calls]} {
+                set pixmap_checked_calls $found_pixmap_checked_calls
+            }
+            if {[regexp {register_special_xge_calls=([0-9]+)} $line -> found_register_special_xge_calls]} {
+                set register_special_xge_calls $found_register_special_xge_calls
+            }
+            if {[regexp {present_special_registrations=([0-9]+)} $line -> found_present_special_registrations]} {
+                set present_special_registrations $found_present_special_registrations
+            }
+            if {[regexp {wait_special_calls=([0-9]+)} $line -> found_wait_special_calls]} {
+                set wait_special_calls $found_wait_special_calls
+            }
+            if {[regexp {poll_special_calls=([0-9]+)} $line -> found_poll_special_calls]} {
+                set poll_special_calls $found_poll_special_calls
+            }
+            if {[regexp {nonpresent_special_events=([0-9]+)} $line -> found_nonpresent_special_events]} {
+                set nonpresent_special_events $found_nonpresent_special_events
+            }
+            if {[regexp {pixmap_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_pixmap_total_ms _]} {
+                set pixmap_total_ms $found_pixmap_total_ms
+            }
+            if {[regexp {wait_special_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_wait_special_total_ms _]} {
+                set wait_special_total_ms $found_wait_special_total_ms
+            }
+            if {[regexp {poll_special_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_poll_special_total_ms _]} {
+                set poll_special_total_ms $found_poll_special_total_ms
+            }
+            if {[regexp {complete_events=([0-9]+)} $line -> found_complete_events]} {
+                set complete_events $found_complete_events
+            }
+            if {[regexp {complete_decode_failures=([0-9]+)} $line -> found_complete_decode_failures]} {
+                set complete_decode_failures $found_complete_decode_failures
+            }
+            if {[regexp {missing_symbols=([0-9]+)} $line -> found_missing_symbols]} {
+                set missing_symbols $found_missing_symbols
+            }
+        }
+        if {!$saw_result &&
+            [regexp {host-x11-present-trace: phase=present_trace_progress[^\r\n]*pid=([0-9]+)} $line -> found_pid] &&
+            $found_pid eq $child_pid} {
+            if {[regexp {pixmap_calls=([0-9]+)} $line -> found_pixmap_calls]} {
+                set pixmap_calls $found_pixmap_calls
+            }
+            if {[regexp {pixmap_checked_calls=([0-9]+)} $line -> found_pixmap_checked_calls]} {
+                set pixmap_checked_calls $found_pixmap_checked_calls
+            }
+            if {[regexp {register_special_xge_calls=([0-9]+)} $line -> found_register_special_xge_calls]} {
+                set register_special_xge_calls $found_register_special_xge_calls
+            }
+            if {[regexp {present_special_registrations=([0-9]+)} $line -> found_present_special_registrations]} {
+                set present_special_registrations $found_present_special_registrations
+            }
+            if {[regexp {wait_special_calls=([0-9]+)} $line -> found_wait_special_calls]} {
+                set wait_special_calls $found_wait_special_calls
+            }
+            if {[regexp {poll_special_calls=([0-9]+)} $line -> found_poll_special_calls]} {
+                set poll_special_calls $found_poll_special_calls
+            }
+            if {[regexp {complete_events=([0-9]+)} $line -> found_complete_events]} {
+                set complete_events $found_complete_events
+            }
+            if {[regexp {complete_decode_failures=([0-9]+)} $line -> found_complete_decode_failures]} {
+                set complete_decode_failures $found_complete_decode_failures
+            }
+            if {[regexp {missing_symbols=([0-9]+)} $line -> found_missing_symbols]} {
+                set missing_symbols $found_missing_symbols
+            }
+        }
+    }
+}
+
+proc x11_glx_present_trace_failure_label {enabled available child_pid saw_begin saw_result result_status pixmap_calls pixmap_checked_calls register_special_xge_calls present_special_registrations wait_special_calls poll_special_calls nonpresent_special_events pixmap_total_ms wait_special_total_ms poll_special_total_ms complete_events complete_decode_failures missing_symbols} {
+    if {$enabled ne "1"} {
+        return "x11-glx-fps-present-trace-not-enabled"
+    }
+    if {$available ne "1"} {
+        return "x11-glx-fps-present-trace-unavailable"
+    }
+    if {$child_pid eq ""} {
+        return "x11-glx-fps-present-trace-child-pid-missing"
+    }
+    if {!$saw_begin} {
+        return "x11-glx-fps-present-trace-begin-missing"
+    }
+    if {!$saw_result} {
+        return "x11-glx-fps-present-trace-result-missing"
+    }
+    if {$result_status ne "PASS"} {
+        return "x11-glx-fps-present-trace-result-$result_status"
+    }
+    foreach value [list $pixmap_calls $pixmap_checked_calls $register_special_xge_calls $present_special_registrations $wait_special_calls $poll_special_calls $nonpresent_special_events $complete_events $complete_decode_failures $missing_symbols] {
+        if {$value eq "" || ![string is integer -strict $value] || $value < 0} {
+            return "x11-glx-fps-present-trace-counter-invalid"
+        }
+    }
+    foreach value [list $pixmap_total_ms $wait_special_total_ms $poll_special_total_ms] {
+        if {$value eq "" || ![string is double -strict $value] || $value < 0} {
+            return "x11-glx-fps-present-trace-timing-invalid"
+        }
+    }
+    if {$missing_symbols != 0} {
+        return "x11-glx-fps-present-trace-missing-symbols"
+    }
+    if {$pixmap_calls + $pixmap_checked_calls <= 0} {
+        return "x11-glx-fps-present-trace-pixmap-missing"
+    }
+    if {$register_special_xge_calls <= 0 || $present_special_registrations <= 0} {
+        return "x11-glx-fps-present-trace-present-registration-missing"
+    }
+    if {$wait_special_calls + $poll_special_calls <= 0} {
+        return "x11-glx-fps-present-trace-special-wait-missing"
+    }
+    if {$complete_events <= 0} {
+        return "x11-glx-fps-present-trace-complete-missing"
+    }
+    return ""
 }
 
 proc x11_present_fps_failure_label_from_line {line} {
@@ -1665,6 +1907,10 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
         if {[regexp {host-x11-egl-smoke: phase=start status=BEGIN mode=glx-fps} $line]} {
             set in_glx_fps 1
             set saw_start 1
+        }
+        if {[regexp {host-x11-egl-smoke: phase=glx_fps status=BEGIN} $line] ||
+            [regexp {host-x11-egl-smoke: phase=glx_fps_result status=(PASS|FAIL)} $line]} {
+            set in_glx_fps 1
         }
         if {[regexp {^probe_glx_fps_variant=([^ \r\n]+)} $line -> found_variant]} {
             set variant $found_variant
@@ -1886,6 +2132,20 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
                 set failure_label $label
             }
         }
+    }
+
+    if {$saw_fps_result && $fps_status eq "PASS"} {
+        set saw_start 1
+        set saw_connect 1
+        set saw_egl_init 1
+        set saw_glx_ext 1
+        set saw_glx_version 1
+        set saw_fbconfigs 1
+        set saw_visual 1
+        set saw_context 1
+        set saw_current 1
+        set saw_strings 1
+        set saw_fps_begin 1
     }
 }
 
@@ -2186,10 +2446,15 @@ proc x11_egl_glx_probe_xopen_preflight {log_path {skip_diag 0}} {
 
 proc read_x11_egl_session_log {label} {
     global timeout guest_host_x11_egl_log
+    global x11_egl_last_log_source x11_egl_last_log_bytes
 
     set artifact_text ""
     if {[read_x11_egl_host_artifact_log artifact_text]} {
-        return $artifact_text
+        if {[x11_egl_session_log_complete $label $artifact_text]} {
+            set x11_egl_last_log_source "host-artifact"
+            set x11_egl_last_log_bytes [string length $artifact_text]
+            return $artifact_text
+        }
     }
 
     sync_prompt 60
@@ -2204,6 +2469,8 @@ proc read_x11_egl_session_log {label} {
                 append log_text $expect_out(buffer)
                 set timeout $old_timeout
                 optional_prompt
+                set x11_egl_last_log_source "guest-cat"
+                set x11_egl_last_log_bytes [string length $log_text]
                 return $log_text
             }
             -re {host-x11-egl-smoke: [^\r\n]+} {
@@ -2236,7 +2503,8 @@ proc read_x11_egl_session_log {label} {
 }
 
 proc run_kde_x11_glx_fps_session_probe {} {
-    global x11_egl_available host_x11_egl_png
+    global x11_egl_available host_x11_egl_png qemu_append
+    global guest_host_x11_egl_log x11_egl_last_log_source x11_egl_last_log_bytes
 
     if {!$x11_egl_available} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-missing"
@@ -2320,9 +2588,31 @@ proc run_kde_x11_glx_fps_session_probe {} {
     set plain_oml_after_msc_delta_max ""
     set plain_post_swap_xsync_total ""
     set plain_post_swap_xsync_max ""
+    set trace_enabled ""
+    set trace_available ""
+    set trace_child_pid ""
+    set trace_begin 0
+    set trace_result 0
+    set trace_status ""
+    set trace_pixmap_calls ""
+    set trace_pixmap_checked_calls ""
+    set trace_register_special_xge_calls ""
+    set trace_present_special_registrations ""
+    set trace_wait_special_calls ""
+    set trace_poll_special_calls ""
+    set trace_nonpresent_special_events ""
+    set trace_pixmap_total_ms ""
+    set trace_wait_special_total_ms ""
+    set trace_poll_special_total_ms ""
+    set trace_complete_events ""
+    set trace_decode_failures ""
+    set trace_missing_symbols ""
     set failure_label ""
     x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth requested_sample_interval result_variant oml_available queue_depth sbc_issued sbc_completed max_pending oml_last_sbc gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_sample_interval issue_state_sampled_ratio issue_state_first_sample_frame issue_state_last_sample_frame issue_state_first_sample_sbc issue_state_last_sample_sbc issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max swap_only_skipped_draw_frames swap_interval_requested swap_interval_set_api swap_interval_set_status swap_interval_before swap_interval_after plain_swap_issue_total plain_swap_avg plain_swap_max plain_oml_available plain_oml_samples plain_oml_sample_interval plain_oml_sampled_ratio plain_oml_first_sample_frame plain_oml_last_sample_frame plain_oml_get_sync_before_total plain_oml_get_sync_after_total plain_oml_before_first_sbc plain_oml_before_last_sbc plain_oml_after_first_sbc plain_oml_after_last_sbc plain_oml_post_swap_sbc_delta_total plain_oml_post_swap_sbc_delta_max plain_oml_post_swap_msc_delta_total plain_oml_post_swap_msc_delta_max plain_post_swap_xsync_total plain_post_swap_xsync_max failure_label
+    x11_glx_present_trace_scan_log $log_text trace_enabled trace_available trace_child_pid trace_begin trace_result trace_status trace_pixmap_calls trace_pixmap_checked_calls trace_register_special_xge_calls trace_present_special_registrations trace_wait_special_calls trace_poll_special_calls trace_nonpresent_special_events trace_pixmap_total_ms trace_wait_special_total_ms trace_poll_special_total_ms trace_complete_events trace_decode_failures trace_missing_symbols failure_label
     set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $requested_sample_interval $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $oml_last_sbc $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_sample_interval $issue_state_sampled_ratio $issue_state_first_sample_frame $issue_state_last_sample_frame $issue_state_first_sample_sbc $issue_state_last_sample_sbc $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max $swap_only_skipped_draw_frames $swap_interval_requested $swap_interval_set_api $swap_interval_set_status $swap_interval_before $swap_interval_after $plain_swap_issue_total $plain_swap_avg $plain_swap_max $plain_oml_available $plain_oml_samples $plain_oml_sample_interval $plain_oml_sampled_ratio $plain_oml_first_sample_frame $plain_oml_last_sample_frame $plain_oml_get_sync_before_total $plain_oml_get_sync_after_total $plain_oml_before_first_sbc $plain_oml_before_last_sbc $plain_oml_after_first_sbc $plain_oml_after_last_sbc $plain_oml_post_swap_sbc_delta_total $plain_oml_post_swap_sbc_delta_max $plain_oml_post_swap_msc_delta_total $plain_oml_post_swap_msc_delta_max $plain_post_swap_xsync_total $plain_post_swap_xsync_max $exit_status]
+    append suffix " log_source=$x11_egl_last_log_source log_bytes=$x11_egl_last_log_bytes log_path=$guest_host_x11_egl_log"
+    append suffix " trace_enabled=$trace_enabled trace_available=$trace_available trace_child_pid=$trace_child_pid trace_begin=$trace_begin trace_result=$trace_result trace_status=$trace_status trace_pixmap_calls=$trace_pixmap_calls trace_pixmap_checked_calls=$trace_pixmap_checked_calls trace_register_special_xge_calls=$trace_register_special_xge_calls trace_present_special_registrations=$trace_present_special_registrations trace_wait_special_calls=$trace_wait_special_calls trace_poll_special_calls=$trace_poll_special_calls trace_nonpresent_special_events=$trace_nonpresent_special_events trace_pixmap_total_ms=$trace_pixmap_total_ms trace_wait_special_total_ms=$trace_wait_special_total_ms trace_poll_special_total_ms=$trace_poll_special_total_ms trace_complete_events=$trace_complete_events trace_decode_failures=$trace_decode_failures trace_missing_symbols=$trace_missing_symbols"
     host_screenshot "x11-egl" $host_x11_egl_png
 
     if {$failure_label ne ""} {
@@ -2342,6 +2632,13 @@ proc run_kde_x11_glx_fps_session_probe {} {
     }
     if {$fps_frames eq "" || $fps_frames <= 0} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-glx-fps-no-frames $suffix"
+    }
+    set trace_requested [regexp {(^|[[:space:]])kde_x11_egl_glx_present_trace=1([[:space:]]|$)} $qemu_append]
+    if {$trace_requested || $trace_enabled eq "1"} {
+        set trace_failure_label [x11_glx_present_trace_failure_label $trace_enabled $trace_available $trace_child_pid $trace_begin $trace_result $trace_status $trace_pixmap_calls $trace_pixmap_checked_calls $trace_register_special_xge_calls $trace_present_special_registrations $trace_wait_special_calls $trace_poll_special_calls $trace_nonpresent_special_events $trace_pixmap_total_ms $trace_wait_special_total_ms $trace_poll_special_total_ms $trace_complete_events $trace_decode_failures $trace_missing_symbols]
+        if {$trace_failure_label ne ""} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $trace_failure_label $suffix"
+        }
     }
     set swap_interval0_failure_label [x11_glx_fps_swap_interval0_failure_label $variant $result_variant $fps_frames $swap_only_skipped_draw_frames $swap_interval_requested $swap_interval_set_api $swap_interval_set_status $swap_interval_after $plain_swap_issue_total $plain_swap_avg $plain_swap_max]
     if {$swap_interval0_failure_label ne ""} {

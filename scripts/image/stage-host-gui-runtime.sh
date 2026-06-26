@@ -36,6 +36,30 @@ can_link_xcb_dri3_present() {
     return 1
 }
 
+stage_x11_present_trace_preload() {
+    local out="${BUILD_DIR}/host-x11-present-trace-preload.so"
+    local dst="${OVERLAY}/opt/host-gui/host-x11-egl-smoke/lib/host-x11-present-trace-preload.so"
+
+    if ! has_pkg_config xcb; then
+        note "warning: xcb development files not found; host X11 Present trace preload not staged"
+        return 0
+    fi
+
+    # shellcheck disable=SC2046
+    if "${CC_BIN}" -O2 -Wall -Wextra -fPIC -shared \
+        $(pkg-config --cflags xcb) \
+        -o "${out}" \
+        "${REPO_ROOT}/scripts/image/host-x11-present-trace-preload.c" \
+        -ldl >/dev/null 2>&1; then
+        mkdir -p "$(dirname "${dst}")"
+        cp -aL "${out}" "${dst}"
+        chmod 0755 "${dst}" 2>/dev/null || true
+        note "staged host X11 Present trace preload at ${dst#${OVERLAY}}"
+    else
+        note "warning: failed to build host X11 Present trace preload; not staged"
+    fi
+}
+
 stage_host_file() {
     local src="$1"
     local dst="$2"
@@ -165,6 +189,7 @@ stage_c_probes() {
 			"${REPO_ROOT}/scripts/image/host-x11-egl-smoke.c" \
 			"${REPO_ROOT}/scripts/image/host-x11-egl-smoke-launcher.c" \
 			$(pkg-config --cflags --libs x11 egl glesv2 gl)
+		stage_x11_present_trace_preload
 	fi
 
 	local mesa_build_dir="${SYSROOT%/}/../ports/mesa-build"

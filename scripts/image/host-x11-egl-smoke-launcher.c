@@ -19,6 +19,8 @@ static const char *program =
     "/opt/host-gui/host-x11-egl-smoke/bin/host-x11-egl-smoke";
 static const char *default_log_path = "/host-gui-host-x11-egl-smoke.log";
 #define PROBE_CHILD_TIMEOUT_MS 30000
+#define TRACE_PROBE_CHILD_TIMEOUT_MS 80000
+#define CHILD_LD_PRELOAD_ENV "HOST_X11_EGL_CHILD_LD_PRELOAD"
 
 static void
 set_default_env(const char *name, const char *value)
@@ -43,6 +45,20 @@ bounded_probe_requested(int argc, char **argv)
         if (strcmp(argv[i], "--x11-connect-only") == 0 ||
             strcmp(argv[i], "--glx-probe-only") == 0 ||
             strcmp(argv[i], "--glx-fps") == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int
+glx_fps_requested(int argc, char **argv)
+{
+    const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
+
+    if (mode && strcmp(mode, "glx-fps") == 0)
+        return 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--glx-fps") == 0)
             return 1;
     }
     return 0;
@@ -75,12 +91,25 @@ main(int argc, char **argv)
     int status = 0;
     int rc;
     int bounded_probe;
+    int timeout_ms;
     int waited_ms = 0;
+    char child_ld_preload_buf[4096];
+    const char *env_child_ld_preload;
+    const char *child_ld_preload;
 
+    env_child_ld_preload = getenv(CHILD_LD_PRELOAD_ENV);
+    if (env_child_ld_preload && env_child_ld_preload[0]) {
+        snprintf(child_ld_preload_buf, sizeof(child_ld_preload_buf), "%s",
+                 env_child_ld_preload);
+        child_ld_preload = child_ld_preload_buf;
+    } else {
+        child_ld_preload = NULL;
+    }
     set_default_env("XDG_RUNTIME_DIR", "/tmp");
     set_default_env("DISPLAY", ":0");
     unsetenv("WAYLAND_DISPLAY");
     unsetenv("GDK_BACKEND");
+    unsetenv("LD_PRELOAD");
     setenv("EGL_PLATFORM", "x11", 1);
     setenv("LIBGL_ALWAYS_SOFTWARE", "0", 1);
     setenv("GALLIUM_DRIVER", "virgl", 1);
@@ -116,10 +145,17 @@ main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
         child_argv[i + 3] = argv[i];
     bounded_probe = bounded_probe_requested(argc, argv);
+    timeout_ms = bounded_probe ? PROBE_CHILD_TIMEOUT_MS : 0;
+    if (bounded_probe && glx_fps_requested(argc, argv) &&
+        child_ld_preload && child_ld_preload[0])
+        timeout_ms = TRACE_PROBE_CHILD_TIMEOUT_MS;
 
     fprintf(stderr,
-            "host-x11-egl-smoke-launcher: phase=child_spawn status=BEGIN bounded=%d timeout_ms=%d\n",
-            bounded_probe, bounded_probe ? PROBE_CHILD_TIMEOUT_MS : 0);
+            "host-x11-egl-smoke-launcher: phase=child_spawn status=BEGIN bounded=%d timeout_ms=%d child_ld_preload=%s\n",
+            bounded_probe, timeout_ms,
+            child_ld_preload && child_ld_preload[0]
+                ? child_ld_preload
+                : "(unset)");
     fflush(stderr);
     pid = fork();
     if (pid < 0) {
@@ -131,9 +167,16 @@ main(int argc, char **argv)
 
     if (pid == 0) {
         setpgid(0, 0);
+        if (child_ld_preload && child_ld_preload[0])
+            setenv("LD_PRELOAD", child_ld_preload, 1);
+        else
+            unsetenv("LD_PRELOAD");
         fprintf(stderr,
-                "host-x11-egl-smoke-launcher: phase=child_exec status=BEGIN path=%s\n",
-                loader);
+                "host-x11-egl-smoke-launcher: phase=child_exec status=BEGIN path=%s child_ld_preload=%s\n",
+                loader,
+                child_ld_preload && child_ld_preload[0]
+                    ? child_ld_preload
+                    : "(unset)");
         fflush(stderr);
         execv(loader, child_argv);
         fprintf(stderr,
@@ -163,11 +206,11 @@ main(int argc, char **argv)
         }
         if (!bounded_probe)
             continue;
-        if (waited_ms >= PROBE_CHILD_TIMEOUT_MS) {
+        if (waited_ms >= timeout_ms) {
             rc = 124;
             fprintf(stderr,
                     "host-x11-egl-smoke-launcher: phase=child_exit status=TIMEOUT pid=%ld exit_status=%d timeout_ms=%d\n",
-                    (long)pid, rc, PROBE_CHILD_TIMEOUT_MS);
+                    (long)pid, rc, timeout_ms);
             fflush(stderr);
             kill(-pid, SIGKILL);
             kill(pid, SIGKILL);

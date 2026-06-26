@@ -2006,10 +2006,21 @@ issue_glx_fps_swap(struct app *app, struct glx_fps_timing *timing)
 {
     int64_t swap_start_ns;
     int64_t swap_end_ns;
+    int first_frame = app->frame == 0;
 
+    if (first_frame) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_first_swap status=BEGIN frame=1 api=glXSwapBuffers\n");
+        fflush(stderr);
+    }
     swap_start_ns = monotonic_ns();
     glXSwapBuffers(app->dpy, app->win);
     swap_end_ns = monotonic_ns();
+    if (first_frame) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_fps_first_swap status=PASS frame=1 api=glXSwapBuffers\n");
+        fflush(stderr);
+    }
     add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
                       elapsed_ns(swap_start_ns, swap_end_ns));
     add_timing_sample(&timing->plain_swap_issue_total_ns,
@@ -2394,9 +2405,19 @@ run_glx_fps_plain_oml_loop(struct app *app,
                 elapsed_ns(sync_before_start_ns, sync_before_end_ns);
         }
 
+        if (app->frame == 0) {
+            fprintf(stderr,
+                    "host-x11-egl-smoke: phase=glx_fps_first_swap status=BEGIN frame=1 api=glXSwapBuffers\n");
+            fflush(stderr);
+        }
         swap_start_ns = monotonic_ns();
         glXSwapBuffers(app->dpy, app->win);
         swap_end_ns = monotonic_ns();
+        if (app->frame == 0) {
+            fprintf(stderr,
+                    "host-x11-egl-smoke: phase=glx_fps_first_swap status=PASS frame=1 api=glXSwapBuffers\n");
+            fflush(stderr);
+        }
         swap_ns = elapsed_ns(swap_start_ns, swap_end_ns);
         add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
                           swap_ns);
@@ -2600,9 +2621,19 @@ run_glx_fps_oml_queue_loop(struct app *app,
                 timing->oml_get_sync_before_total_ns +=
                     elapsed_ns(sync_before_start_ns, sync_before_end_ns);
             }
+            if (app->frame == 0) {
+                fprintf(stderr,
+                        "host-x11-egl-smoke: phase=glx_fps_first_swap status=BEGIN frame=1 api=glXSwapBuffersMscOML\n");
+                fflush(stderr);
+            }
             issue_start_ns = monotonic_ns();
             issued_sbc = oml.swap_buffers_msc(app->dpy, app->win, 0, 0, 0);
             issue_end_ns = monotonic_ns();
+            if (app->frame == 0 && issued_sbc > 0) {
+                fprintf(stderr,
+                        "host-x11-egl-smoke: phase=glx_fps_first_swap status=PASS frame=1 api=glXSwapBuffersMscOML\n");
+                fflush(stderr);
+            }
             if (sample_issue_state) {
                 int64_t sbc_lag;
                 int64_t msc_delta;

@@ -52,6 +52,7 @@ set(_host_gui_runtime_sources
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-dri3-present-smoke-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-egl-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-egl-smoke-launcher.c
+	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-present-trace-preload.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/import-host-gui.sh

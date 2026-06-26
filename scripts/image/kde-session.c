@@ -14,8 +14,11 @@
 #include <unistd.h>
 
 #define X11_EGL_SESSION_LOG "/host-gui-host-x11-egl-smoke.log"
+#define X11_EGL_PRESENT_TRACE_PRELOAD "/opt/host-gui/host-x11-egl-smoke/lib/host-x11-present-trace-preload.so"
 #define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
+#define X11_EGL_SMOKE_TRACE_CHILD_TIMEOUT_MS 85000
 #define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
+#define X11_EGL_CHILD_LD_PRELOAD_ENV "HOST_X11_EGL_CHILD_LD_PRELOAD"
 #define X11_EGL_AUTH_PATH_MAX 512
 #define X11_EGL_XWAYLAND_ARGV_MAX 1024
 
@@ -1204,6 +1207,11 @@ static int x11_egl_auth_path_readable(const char *path)
     return path && path[0] != '\0' && access(path, R_OK) == 0;
 }
 
+static int x11_egl_present_trace_preload_available(void)
+{
+    return access(X11_EGL_PRESENT_TRACE_PRELOAD, R_OK) == 0;
+}
+
 static const struct x11_egl_xwayland_auth *x11_egl_auth_info_for_display(
     const struct x11_egl_xwayland_auth_discovery *discovery,
     const char *display)
@@ -1308,7 +1316,7 @@ static void x11_egl_session_terminal(const char *probe_mode,
 }
 
 static int wait_host_x11_egl_smoke(pid_t pid, const char *display,
-                                   const char *mode)
+                                   const char *mode, int timeout_ms)
 {
     int status;
     int waited_ms = 0;
@@ -1331,14 +1339,14 @@ static int wait_host_x11_egl_smoke(pid_t pid, const char *display,
                          mode, mode, display, errno, strerror(errno));
             return 127;
         }
-        if (waited_ms >= X11_EGL_SMOKE_CHILD_TIMEOUT_MS)
+        if (waited_ms >= timeout_ms)
             break;
         usleep(100000);
         waited_ms += 100;
     }
 
     x11_egl_logf("host-x11-egl-smoke: phase=%s status=TIMEOUT mode=%s display=%s exit_status=124 timeout_ms=%d\n",
-                 mode, mode, display, X11_EGL_SMOKE_CHILD_TIMEOUT_MS);
+                 mode, mode, display, timeout_ms);
     kill(-pid, SIGKILL);
     kill(pid, SIGKILL);
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
@@ -1360,22 +1368,34 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
                                   const char *glx_fps_oml_queue_depth,
                                   const char *glx_fps_oml_issue_state_sample_interval,
                                   const char *present_fps_variant,
-                                  const char *present_fps_queue_depth)
+                                  const char *present_fps_queue_depth,
+                                  const char *child_ld_preload)
 {
     pid_t pid;
+    int timeout_ms = X11_EGL_SMOKE_CHILD_TIMEOUT_MS;
 
-    if (glx_fps_variant && glx_fps_variant[0]) {
-        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s glx_fps_variant=%s glx_fps_oml_queue_depth=%s glx_fps_oml_issue_state_sample_interval=%s\n",
+    if (strcmp(mode, "glx-fps") == 0 && child_ld_preload &&
+        child_ld_preload[0])
+        timeout_ms = X11_EGL_SMOKE_TRACE_CHILD_TIMEOUT_MS;
+
+    if (strcmp(mode, "glx-fps") == 0) {
+        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s glx_fps_variant=%s glx_fps_oml_queue_depth=%s glx_fps_oml_issue_state_sample_interval=%s process_ld_preload=(unset) child_ld_preload=%s timeout_ms=%d\n",
                      mode, program, display,
                      auth_path && auth_path[0] ? auth_path : "(preserve)",
-                     glx_fps_variant,
+                     glx_fps_variant && glx_fps_variant[0]
+                         ? glx_fps_variant
+                         : "(unset)",
                      glx_fps_oml_queue_depth && glx_fps_oml_queue_depth[0]
                          ? glx_fps_oml_queue_depth
                          : "(unset)",
                      glx_fps_oml_issue_state_sample_interval &&
                              glx_fps_oml_issue_state_sample_interval[0]
                          ? glx_fps_oml_issue_state_sample_interval
-                         : "(unset)");
+                         : "(unset)",
+                     child_ld_preload && child_ld_preload[0]
+                         ? child_ld_preload
+                         : "(unset)",
+                     timeout_ms);
     } else if (present_fps_variant && present_fps_variant[0]) {
         x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s present_fps_variant=%s present_fps_queue_depth=%s\n",
                      mode, program, display,
@@ -1437,11 +1457,15 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
             unsetenv("HOST_X11_PRESENT_FPS_QUEUE_DEPTH");
         unsetenv("WAYLAND_DISPLAY");
         unsetenv("LD_PRELOAD");
+        if (child_ld_preload && child_ld_preload[0])
+            setenv(X11_EGL_CHILD_LD_PRELOAD_ENV, child_ld_preload, 1);
+        else
+            unsetenv(X11_EGL_CHILD_LD_PRELOAD_ENV);
         execl(program, base_name(program), arg, (char *)NULL);
         _exit(127);
     }
     setpgid(pid, pid);
-    return wait_host_x11_egl_smoke(pid, display, mode);
+    return wait_host_x11_egl_smoke(pid, display, mode, timeout_ms);
 }
 
 static void run_x11_egl_session_probe(const char *probe_mode)
@@ -1471,6 +1495,8 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     int present_fps_variant_env_set = 0;
     int present_fps_queue_depth_status = 0;
     int present_fps_queue_depth_env_set = 0;
+    int glx_present_trace_requested = 0;
+    int glx_present_trace_available = 0;
     struct x11_egl_xwayland_auth_discovery xwayland_auth;
     int glx_rc;
     FILE *fp;
@@ -1540,6 +1566,11 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                 glx_fps_oml_issue_state_sample_interval_status = -2;
             }
         }
+        glx_present_trace_requested =
+            cmdline_has_flag("kde_x11_egl_glx_present_trace=1");
+        glx_present_trace_available =
+            glx_present_trace_requested &&
+            x11_egl_present_trace_preload_available();
     } else if (probe_mode && strcmp(probe_mode, "present-fps") == 0) {
         run_mode = "present-fps";
         run_arg = "--present-fps";
@@ -1592,6 +1623,19 @@ static void run_x11_egl_session_probe(const char *probe_mode)
         fprintf(fp, "probe_XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
         fprintf(fp, "probe_LD_PRELOAD=(unset)\n");
         if (strcmp(run_mode, "glx-fps") == 0) {
+            fprintf(fp, "probe_glx_present_trace=%d\n",
+                    glx_present_trace_requested);
+            fprintf(fp, "probe_glx_present_trace_preload=%s\n",
+                    X11_EGL_PRESENT_TRACE_PRELOAD);
+            fprintf(fp, "probe_glx_present_trace_child_ld_preload=%s\n",
+                    glx_present_trace_available
+                        ? X11_EGL_PRESENT_TRACE_PRELOAD
+                        : "(unset)");
+            fprintf(fp, "probe_glx_present_trace_available=%d\n",
+                    glx_present_trace_available);
+            fprintf(fp, "probe_glx_present_trace_invalid=%d\n",
+                    glx_present_trace_requested &&
+                    !glx_present_trace_available);
             fprintf(fp, "probe_glx_fps_variant=%s\n",
                     glx_fps_variant_env_set ? glx_fps_variant :
                     (glx_fps_variant_status < 0 ? "invalid" : "baseline"));
@@ -1766,6 +1810,14 @@ static void run_x11_egl_session_probe(const char *probe_mode)
             sync();
             return;
         }
+        if (glx_present_trace_requested && !glx_present_trace_available) {
+            x11_egl_logf("host-x11-egl-smoke: phase=glx_present_trace status=FAIL mode=session reason=preload-unavailable path=%s\n",
+                         X11_EGL_PRESENT_TRACE_PRELOAD);
+            x11_egl_session_terminal(run_mode, "FAIL", 2,
+                                     "glx-present-trace-preload-unavailable");
+            sync();
+            return;
+        }
     }
     if (strcmp(run_mode, "present-fps") == 0) {
         if (present_fps_variant_env_set) {
@@ -1850,7 +1902,8 @@ static void run_x11_egl_session_probe(const char *probe_mode)
         rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
                                     "/bin/host-x11-egl-smoke",
                                     "--x11-connect-only",
-                                    auth_path, NULL, NULL, NULL, NULL, NULL);
+                                    auth_path, NULL, NULL, NULL, NULL, NULL,
+                                    NULL);
         if (rc != 0 && !auth_path) {
             x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth rediscover_after_candidate_fail display=%s exit_status=%d\n",
                          displays[i], rc);
@@ -1865,7 +1918,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                                             "/bin/host-x11-egl-smoke",
                                             "--x11-connect-only",
                                             auth_path, NULL, NULL, NULL, NULL,
-                                            NULL);
+                                            NULL, NULL);
                 x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=%s display=%s exit_status=%d\n",
                              rc == 0 ? "PASS" : "FAIL", displays[i], rc);
             }
@@ -1905,6 +1958,9 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                                         : NULL,
                                     present_fps_queue_depth_env_set
                                         ? present_fps_queue_depth
+                                        : NULL,
+                                    glx_present_trace_available
+                                        ? X11_EGL_PRESENT_TRACE_PRELOAD
                                         : NULL);
     x11_egl_session_terminal(run_mode, glx_rc == 0 ? "PASS" : "FAIL",
                              glx_rc, NULL);
