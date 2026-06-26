@@ -14,6 +14,7 @@
 #include <GL/glxext.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -29,6 +30,7 @@
 #define GLX_FPS_TARGET_NS 5000000000LL
 #define GLX_FPS_MAX_FRAMES 300
 #define GLX_FPS_OML_QUEUE_DEPTH 3
+#define GLX_FPS_OML_QUEUE_DEPTH_MAX 8
 
 typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
 typedef void (GLAPIENTRY *gl_viewport_proc_t)(GLint x, GLint y,
@@ -46,6 +48,7 @@ enum glx_fps_variant_kind {
     GLX_FPS_VARIANT_FINISH_BEFORE_SWAP,
     GLX_FPS_VARIANT_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY,
+    GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY,
 };
 
 struct gl_api {
@@ -93,6 +96,7 @@ struct glx_fps_variant {
     const char *name;
     int requested;
     int invalid;
+    int queue_depth;
     char raw[64];
 };
 
@@ -1529,10 +1533,59 @@ glx_fps_variant_kind_name(enum glx_fps_variant_kind kind)
         return "swap-only";
     case GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY:
         return "oml-queue3-swap-only";
+    case GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY:
+        return "oml-queue-depth-swap-only";
     case GLX_FPS_VARIANT_BASELINE:
     default:
         return "baseline";
     }
+}
+
+static int
+parse_decimal_range(const char *value, int min, int max, int *out)
+{
+    int n = 0;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    if (value[0] == '0' && value[1] != '\0')
+        return 0;
+    for (size_t i = 0; value[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char)value[i];
+
+        if (!isdigit(ch))
+            return 0;
+        n = n * 10 + (int)(ch - '0');
+        if (n > max)
+            return 0;
+    }
+    if (n < min)
+        return 0;
+    if (out)
+        *out = n;
+    return 1;
+}
+
+static int
+read_glx_fps_oml_queue_depth(struct glx_fps_variant *variant)
+{
+    const char *raw = getenv("HOST_X11_EGL_GLX_FPS_OML_QUEUE_DEPTH");
+    char token[64];
+    int depth = 0;
+
+    if (parse_decimal_range(raw, 1, GLX_FPS_OML_QUEUE_DEPTH_MAX,
+                            &depth)) {
+        variant->queue_depth = depth;
+        return 0;
+    }
+
+    copy_log_value(token, sizeof(token), raw);
+    variant->invalid = 1;
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fps_variant status=FAIL source=env env=HOST_X11_EGL_GLX_FPS_OML_QUEUE_DEPTH requested=%s reason=invalid-oml-queue-depth min=1 max=%d\n",
+            token[0] ? token : "(empty)", GLX_FPS_OML_QUEUE_DEPTH_MAX);
+    fflush(stderr);
+    return -1;
 }
 
 static void
@@ -1542,6 +1595,7 @@ read_glx_fps_variant(struct glx_fps_variant *variant)
 
     memset(variant, 0, sizeof(*variant));
     variant->kind = GLX_FPS_VARIANT_BASELINE;
+    variant->queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
     variant->name = glx_fps_variant_kind_name(variant->kind);
     if (!raw || raw[0] == '\0')
         return;
@@ -1556,6 +1610,12 @@ read_glx_fps_variant(struct glx_fps_variant *variant)
         variant->kind = GLX_FPS_VARIANT_SWAP_ONLY;
     } else if (strcmp(raw, "oml-queue3-swap-only") == 0) {
         variant->kind = GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY;
+        variant->queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
+    } else if (strcmp(raw, "oml-queue-depth-swap-only") == 0) {
+        variant->kind = GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY;
+        if (read_glx_fps_oml_queue_depth(variant) != 0) {
+            variant->kind = GLX_FPS_VARIANT_BASELINE;
+        }
     } else {
         variant->invalid = 1;
         fprintf(stderr,
@@ -1660,7 +1720,8 @@ issue_glx_fps_draw_work(struct app *app, int frame,
     }
 
     if ((variant->kind == GLX_FPS_VARIANT_SWAP_ONLY ||
-         variant->kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY) &&
+         variant->kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY ||
+         variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY) &&
         frame > 1)
         issue_gl = 0;
 
@@ -1738,8 +1799,8 @@ draw_glx_fps_frame(struct app *app, int frame,
 }
 
 static int
-setup_glx_oml_queue3(struct app *app, struct glx_oml_api *oml,
-                     struct glx_fps_timing *timing)
+setup_glx_oml_queue(struct app *app, struct glx_oml_api *oml,
+                    struct glx_fps_timing *timing, int queue_depth)
 {
     const char *extensions;
     int extension_present;
@@ -1748,7 +1809,7 @@ setup_glx_oml_queue3(struct app *app, struct glx_oml_api *oml,
     int64_t sbc = 0;
 
     memset(oml, 0, sizeof(*oml));
-    timing->oml_queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
+    timing->oml_queue_depth = queue_depth;
     extensions = glXQueryExtensionsString(app->dpy, app->screen);
     extension_present = extension_list_has_token(extensions,
                                                  "GLX_OML_sync_control");
@@ -1781,7 +1842,7 @@ setup_glx_oml_queue3(struct app *app, struct glx_oml_api *oml,
     timing->oml_last_sbc = sbc;
     fprintf(stderr,
             "host-x11-egl-smoke: phase=glx_fps_oml_setup status=PASS oml_available=1 oml_queue_depth=%d initial_ust=%" PRId64 " initial_msc=%" PRId64 " initial_sbc=%" PRId64 " gl_flush_before_swap=1\n",
-            GLX_FPS_OML_QUEUE_DEPTH, ust, msc, sbc);
+            queue_depth, ust, msc, sbc);
     fflush(stderr);
     return 0;
 }
@@ -1858,19 +1919,20 @@ complete_glx_oml_sbc(struct app *app, const struct glx_oml_api *oml,
 }
 
 static int
-run_glx_fps_oml_queue3_loop(struct app *app,
-                            const struct glx_fps_variant *variant,
-                            struct glx_fps_timing *timing,
-                            int64_t start_ns, int64_t *now_ns,
-                            const char **failure_reason)
+run_glx_fps_oml_queue_loop(struct app *app,
+                           const struct glx_fps_variant *variant,
+                           struct glx_fps_timing *timing,
+                           int64_t start_ns, int64_t *now_ns,
+                           const char **failure_reason)
 {
     struct glx_oml_api oml;
-    int64_t pending_sbc[GLX_FPS_OML_QUEUE_DEPTH];
+    int64_t pending_sbc[GLX_FPS_OML_QUEUE_DEPTH_MAX];
     int pending_count = 0;
     int setup_rc;
 
     memset(pending_sbc, 0, sizeof(pending_sbc));
-    setup_rc = setup_glx_oml_queue3(app, &oml, timing);
+    setup_rc = setup_glx_oml_queue(app, &oml, timing,
+                                   variant->queue_depth);
     if (setup_rc != 0) {
         *failure_reason = setup_rc == -1 ? "missing-oml" : "oml-setup";
         return -1;
@@ -1890,7 +1952,7 @@ run_glx_fps_oml_queue3_loop(struct app *app,
         if (event_rc != 0)
             break;
 
-        while (pending_count < GLX_FPS_OML_QUEUE_DEPTH &&
+        while (pending_count < variant->queue_depth &&
                app->frame < GLX_FPS_MAX_FRAMES &&
                *now_ns - start_ns < GLX_FPS_TARGET_NS) {
             int frame = app->frame + 1;
@@ -2155,9 +2217,10 @@ run_glx_fps(struct app *app)
     app->running = 1;
     start_ns = monotonic_ns();
     now_ns = start_ns;
-    if (variant.kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY) {
-        if (run_glx_fps_oml_queue3_loop(app, &variant, &timing, start_ns,
-                                        &now_ns, &loop_failure_reason) != 0)
+    if (variant.kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY ||
+        variant.kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY) {
+        if (run_glx_fps_oml_queue_loop(app, &variant, &timing, start_ns,
+                                       &now_ns, &loop_failure_reason) != 0)
             loop_failed = 1;
     } else {
         while (app->running && app->frame < GLX_FPS_MAX_FRAMES &&

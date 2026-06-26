@@ -209,13 +209,16 @@ scripts/gpu/kde-plasma-desktop-smoke.expect
 ```
 
 The xv6-owned GLX FPS reducer now accepts
-`kde_x11_egl_glx_fps_variant=baseline|finish-before-swap|swap-only|oml-queue3-swap-only`.
+`kde_x11_egl_glx_fps_variant=baseline|finish-before-swap|swap-only|oml-queue3-swap-only|oml-queue-depth-swap-only`.
 Invalid variants fail before a misleading baseline PASS.
 `finish-before-swap` resolves and validates `glFinish` through the GLX
-proc-address path. The OML queue variant resolves `GLX_OML_sync_control`,
-requires a queue depth of three completed swap-buffer counters in the Expect
+proc-address path. The legacy OML queue variant,
+`oml-queue3-swap-only`, resolves `GLX_OML_sync_control`, preserves the default
+queue depth 3, requires three completed swap-buffer counters in the Expect
 success path, and records OML issued/completed/pending timing fields without
-changing the default no-variant log shape.
+changing the default no-variant log shape. The dynamic OML variant,
+`oml-queue-depth-swap-only`, accepts
+`kde_x11_egl_glx_fps_oml_queue_depth=N` for validated depths 1..8.
 
 Build and staging checks after the harness update:
 
@@ -357,6 +360,27 @@ swap/Present pacing or queue-depth policy than raw GL draw issue overhead.
 All completions were still Present complete mode copy; no skip/flip mode was
 observed.
 
+Dynamic Present queue-depth harness update and depth-6 artifact:
+
+```text
+The xv6-owned Present FPS reducer now accepts
+kde_x11_present_fps_variant=queue-unchecked with
+kde_x11_present_fps_queue_depth=N for validated depths 1..8, while preserving
+queue3-unchecked as the default depth-3 queue variant.
+```
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-074258-x11-present-fps-queue-depth6-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-present-fps session_probe=PASS
+frames=265 elapsed_seconds=5.064653 fps=52.323 present_only=1 gl_context=0
+variant=queue-unchecked issued=265 completed=265 outstanding=0
+queue_depth=6 max_outstanding=6
+complete_copy=265 complete_flip=0 complete_skip=0 complete_suboptimal_copy=0
+present_request_total_ms=2.951 flush_total_ms=22.341 event_wait_total_ms=5013.991
+completion_total_ms=30273.964
+QEMU trace: ctx_submit=434 set_scanout=70 res_flush=70 fence_ctrl/fence_resp=434/434 res_create_3d=69
+```
+
 GLX OML queue-depth swap-only artifact after the stricter Expect success gate:
 
 ```sh
@@ -383,6 +407,25 @@ and the Linux KDE GLX baseline of 55.638 FPS. The remaining delta is now
 reduced to GLX/Mesa/Xwayland swap pacing or throttling above the xv6 kernel's
 raw Present queue-depth behavior, not to a missing GLX context or a single
 kernel fd-passing/DRI3 failure.
+
+Dynamic GLX OML queue-depth depth-6 artifact:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-074136-x11-glx-fps-oml-queue-depth6-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=222 elapsed_seconds=5.066718 fps=43.815 variant=oml-queue-depth-swap-only
+oml_available=1 oml_queue_depth=6 oml_sbc_issued=222 oml_sbc_completed=222 oml_max_pending_sbc=6
+oml_issue_total_ms=4683.573 oml_wait_total_ms=275.204 oml_drain_wait_total_ms=62.137
+draw_total_ms=14.298 swap_total_ms=4683.573
+QEMU trace: ctx_submit=627 set_scanout=83 res_flush=83 fence_ctrl/fence_resp=627/627 res_create_3d=54
+```
+
+Interpretation: deeper queueing moves both reducers substantially. GLX depth 6
+exceeds the prior Present queue3 result, 43.815 FPS versus 41.691 FPS, but
+still trails Present depth 6 at 52.323 FPS and the Linux GLX baseline of
+55.638 FPS. This points at queue-depth policy plus residual
+GLX/Mesa/Xwayland throttling above raw Present, not an obvious kernel fence
+starvation bug.
 
 Two non-passing attempts before the final queue-depth pass were preserved:
 
@@ -473,10 +516,13 @@ that GLX swap/Present pacing rather than clear-call issue overhead dominates
 the remaining FPS gap. The Present queue3 reducer reached 41.691 FPS with three
 requests in flight, while the GLX OML queue3 swap-only reducer reached
 34.437 FPS with `oml_sbc_issued=173`, `oml_sbc_completed=173`, and
-`oml_max_pending_sbc=3`. The current virtgpu fence trace still shows submitted
-and responded fences matching 1:1, so raw virtgpu fence starvation remains
-unproven. The remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped
-`ENOENT` for `handle=0`.
+`oml_max_pending_sbc=3`. Parameterized depth-6 queueing moved Present to
+52.323 FPS and GLX OML swap-only to 43.815 FPS; GLX depth 6 now exceeds the
+prior Present queue3 result but still trails Present depth 6 and the Linux GLX
+baseline. The current virtgpu fence trace still shows submitted and responded
+fences matching 1:1, so raw virtgpu fence starvation remains unproven. The
+remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
+`handle=0`.
 
 Follow-up diagnostic artifact:
 

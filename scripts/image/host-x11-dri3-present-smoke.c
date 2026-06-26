@@ -7,6 +7,7 @@
 
 #define _GNU_SOURCE
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -156,6 +157,7 @@ enum {
     MAX_HELD_PIXMAPS = 8,
     PRESENT_FPS_PIXMAPS = 3,
     PRESENT_FPS_QUEUE3_DEPTH = 3,
+    PRESENT_FPS_QUEUE_DEPTH_MAX = 8,
     PRESENT_FPS_MAX_FRAMES = 300,
     PRESENT_FPS_TARGET_SECONDS = 5,
     PRESENT_EVENT_MASK_COMPLETE_NOTIFY = 2,
@@ -171,6 +173,7 @@ enum present_fps_variant {
     PRESENT_FPS_VARIANT_BASELINE,
     PRESENT_FPS_VARIANT_UNCHECKED,
     PRESENT_FPS_VARIANT_QUEUE3_UNCHECKED,
+    PRESENT_FPS_VARIANT_QUEUE_UNCHECKED,
 };
 
 struct dri3_fd_info {
@@ -273,6 +276,52 @@ copy_log_token(char *dst, size_t dst_size, const char *src)
 }
 
 static int
+parse_decimal_range(const char *value, int min, int max, int *out)
+{
+    int n = 0;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    if (value[0] == '0' && value[1] != '\0')
+        return 0;
+    for (size_t i = 0; value[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char)value[i];
+
+        if (!isdigit(ch))
+            return 0;
+        n = n * 10 + (int)(ch - '0');
+        if (n > max)
+            return 0;
+    }
+    if (n < min)
+        return 0;
+    if (out)
+        *out = n;
+    return 1;
+}
+
+static int
+read_present_fps_queue_depth(struct present_fps_config *config)
+{
+    const char *raw = getenv("HOST_X11_PRESENT_FPS_QUEUE_DEPTH");
+    char token[64];
+    int depth = 0;
+
+    if (parse_decimal_range(raw, 1, PRESENT_FPS_QUEUE_DEPTH_MAX,
+                            &depth)) {
+        config->queue_depth = depth;
+        return 0;
+    }
+
+    copy_log_token(token, sizeof(token), raw);
+    fprintf(stderr,
+            "host-x11-dri3-present-smoke: phase=present_fps_variant status=FAIL source=env env=HOST_X11_PRESENT_FPS_QUEUE_DEPTH requested=%s reason=invalid-queue-depth min=1 max=%d\n",
+            token[0] ? token : "(empty)", PRESENT_FPS_QUEUE_DEPTH_MAX);
+    fflush(stderr);
+    return -1;
+}
+
+static int
 present_fps_variant_from_env(struct present_fps_config *config)
 {
     const char *value = getenv("HOST_X11_PRESENT_FPS_VARIANT");
@@ -297,6 +346,12 @@ present_fps_variant_from_env(struct present_fps_config *config)
         config->request_check_enabled = 0;
         config->queue_depth = PRESENT_FPS_QUEUE3_DEPTH;
         return 0;
+    }
+    if (strcmp(value, "queue-unchecked") == 0) {
+        config->variant = PRESENT_FPS_VARIANT_QUEUE_UNCHECKED;
+        config->variant_name = "queue-unchecked";
+        config->request_check_enabled = 0;
+        return read_present_fps_queue_depth(config);
     }
 
     copy_log_token(token, sizeof(token), value);
@@ -1106,7 +1161,8 @@ run_present_fps(void)
     struct dri3_fd_info fd_info;
     struct present_fps_stats stats;
     struct present_fps_config config;
-    xcb_pixmap_t pixmaps[PRESENT_FPS_PIXMAPS];
+    xcb_pixmap_t pixmaps[PRESENT_FPS_QUEUE_DEPTH_MAX];
+    int pixmap_count = PRESENT_FPS_PIXMAPS;
     double start;
     int rc = 1;
 
@@ -1119,13 +1175,15 @@ run_present_fps(void)
     if (present_fps_variant_from_env(&config) < 0)
         return 2;
     stats.queue_depth = config.queue_depth;
+    if (config.queue_depth > pixmap_count)
+        pixmap_count = config.queue_depth;
 
     log_line("host-x11-dri3-present-smoke: start");
     log_line("host-x11-dri3-present-smoke: phase=start status=BEGIN mode=present-fps");
     fprintf(stderr,
             "host-x11-dri3-present-smoke: phase=present_fps status=BEGIN target_seconds=%d max_frames=%d pixmaps=%d variant=%s request_check_enabled=%d queue_depth=%d\n",
             PRESENT_FPS_TARGET_SECONDS, PRESENT_FPS_MAX_FRAMES,
-            PRESENT_FPS_PIXMAPS, config.variant_name,
+            pixmap_count, config.variant_name,
             config.request_check_enabled, config.queue_depth);
     fflush(stderr);
     if (setup(&app) < 0) {
@@ -1148,7 +1206,7 @@ run_present_fps(void)
         return 4;
     }
 
-    for (int i = 0; i < PRESENT_FPS_PIXMAPS; i++) {
+    for (int i = 0; i < pixmap_count; i++) {
         pixmaps[i] = xcb_generate_id(app.c);
         xcb_create_pixmap(app.c, app.screen->root_depth, pixmaps[i],
                           app.win, WIN_W, WIN_H);
@@ -1156,9 +1214,10 @@ run_present_fps(void)
     }
 
     start = now_seconds();
-    if (config.variant == PRESENT_FPS_VARIANT_QUEUE3_UNCHECKED) {
-        uint32_t slot_serials[PRESENT_FPS_PIXMAPS];
-        double slot_starts[PRESENT_FPS_PIXMAPS];
+    if (config.variant == PRESENT_FPS_VARIANT_QUEUE3_UNCHECKED ||
+        config.variant == PRESENT_FPS_VARIANT_QUEUE_UNCHECKED) {
+        uint32_t slot_serials[PRESENT_FPS_QUEUE_DEPTH_MAX];
+        double slot_starts[PRESENT_FPS_QUEUE_DEPTH_MAX];
         int outstanding = 0;
 
         memset(slot_serials, 0, sizeof(slot_serials));
@@ -1271,7 +1330,7 @@ run_present_fps(void)
     } else {
         while (stats.issued < PRESENT_FPS_MAX_FRAMES &&
                now_seconds() - start < (double)PRESENT_FPS_TARGET_SECONDS) {
-            xcb_pixmap_t pixmap = pixmaps[stats.issued % PRESENT_FPS_PIXMAPS];
+            xcb_pixmap_t pixmap = pixmaps[stats.issued % pixmap_count];
             uint64_t msc = 0;
             uint32_t serial = 0;
             double frame_start = 0.0;
