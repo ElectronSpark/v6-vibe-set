@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,10 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#define X11_EGL_SESSION_LOG "/host-gui-host-x11-egl-smoke.log"
+#define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
+#define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
 
 static void mkdir_one(const char *path, mode_t mode)
 {
@@ -43,7 +48,8 @@ static int cmdline_has_flag(const char *flag)
     return 0;
 }
 
-static int cmdline_get_value(const char *key, char *value, size_t value_size)
+static int cmdline_get_value_status(const char *key, char *value,
+                                    size_t value_size)
 {
     FILE *fp;
     char buf[4096];
@@ -66,10 +72,17 @@ static int cmdline_get_value(const char *key, char *value, size_t value_size)
     for (tok = strtok_r(buf, " \t\r\n", &save); tok; tok = strtok_r(NULL, " \t\r\n", &save)) {
         if (strncmp(tok, key, key_len) != 0 || tok[key_len] != '=')
             continue;
+        if (strlen(tok + key_len + 1) >= value_size)
+            return -1;
         snprintf(value, value_size, "%s", tok + key_len + 1);
         return 1;
     }
     return 0;
+}
+
+static int cmdline_get_value(const char *key, char *value, size_t value_size)
+{
+    return cmdline_get_value_status(key, value, value_size) > 0;
 }
 
 static int valid_xwayland_glamor_mode(const char *mode)
@@ -78,6 +91,49 @@ static int valid_xwayland_glamor_mode(const char *mode)
            strcmp(mode, "auto") == 0 ||
            strcmp(mode, "gl") == 0 ||
            strcmp(mode, "es") == 0;
+}
+
+static int valid_decimal_range(const char *value, int min, int max)
+{
+    int n = 0;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    if (value[0] == '0' && value[1] != '\0')
+        return 0;
+
+    for (size_t i = 0; value[i] != '\0'; i++) {
+        unsigned char ch = (unsigned char)value[i];
+
+        if (!isdigit(ch))
+            return 0;
+        n = n * 10 + (int)(ch - '0');
+        if (n > max)
+            return 0;
+    }
+
+    return n >= min;
+}
+
+static int valid_xwayland_virgl_debug(const char *value)
+{
+    size_t len;
+
+    if (!value || value[0] == '\0')
+        return 0;
+
+    len = strlen(value);
+    if (len > 127)
+        return 0;
+
+    for (size_t i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)value[i];
+
+        if (isalnum(ch) || ch == ',' || ch == '_' || ch == '-')
+            continue;
+        return 0;
+    }
+    return 1;
 }
 
 static void write_config_file(const char *path, const char *contents)
@@ -459,6 +515,14 @@ static void set_kde_env(void)
         setenv("XV6_LIBINPUT_TRACE", "1", 1);
     if (cmdline_has_flag("kde_wayland_debug=1"))
         setenv("WAYLAND_DEBUG", "1", 1);
+    if (cmdline_has_flag("kde_xwayland_loader_debug=1")) {
+        setenv("XV6_XWAYLAND_LOADER_DEBUG", "1", 1);
+        fprintf(stderr, "kde-session: Xwayland loader debug enabled\n");
+    }
+    if (cmdline_has_flag("kde_xwayland_enable_glx=1")) {
+        setenv("XV6_XWAYLAND_ENABLE_GLX", "1", 1);
+        fprintf(stderr, "kde-session: Xwayland GLX extension enable requested\n");
+    }
     {
         char glamor[16];
 
@@ -466,6 +530,54 @@ static void set_kde_env(void)
             valid_xwayland_glamor_mode(glamor)) {
             setenv("XV6_XWAYLAND_GLAMOR", glamor, 1);
             fprintf(stderr, "kde-session: Xwayland glamor mode=%s\n", glamor);
+        }
+    }
+    {
+        char virgl_debug[128];
+
+        if (cmdline_get_value("kde_xwayland_virgl_debug", virgl_debug,
+                              sizeof(virgl_debug))) {
+            if (valid_xwayland_virgl_debug(virgl_debug)) {
+                setenv("XV6_XWAYLAND_VIRGL_DEBUG", virgl_debug, 1);
+                fprintf(stderr, "kde-session: Xwayland VIRGL_DEBUG=%s\n",
+                        virgl_debug);
+            } else {
+                fprintf(stderr,
+                        "kde-session: ignoring invalid Xwayland VIRGL_DEBUG value\n");
+            }
+        }
+    }
+    {
+        char verbose[16];
+
+        int verbose_status = cmdline_get_value_status("kde_xwayland_verbose",
+                                                      verbose,
+                                                      sizeof(verbose));
+
+        if (verbose_status != 0) {
+            if (verbose_status > 0 && valid_decimal_range(verbose, 0, 9)) {
+                setenv("XV6_XWAYLAND_VERBOSE", verbose, 1);
+                fprintf(stderr, "kde-session: Xwayland verbose=%s\n",
+                        verbose);
+            } else {
+                fprintf(stderr,
+                        "kde-session: ignoring invalid Xwayland verbose value\n");
+            }
+        }
+    }
+    {
+        char audit[16];
+        int audit_status = cmdline_get_value_status("kde_xwayland_audit",
+                                                    audit, sizeof(audit));
+
+        if (audit_status != 0) {
+            if (audit_status > 0 && valid_decimal_range(audit, 0, 9)) {
+                setenv("XV6_XWAYLAND_AUDIT", audit, 1);
+                fprintf(stderr, "kde-session: Xwayland audit=%s\n", audit);
+            } else {
+                fprintf(stderr,
+                        "kde-session: ignoring invalid Xwayland audit value\n");
+            }
         }
     }
     seed_pulse_cookie();
@@ -654,7 +766,8 @@ static int wait_for_wayland_socket(pid_t kwin_pid, int attempt)
 
     fprintf(stderr, "kde-session: %s not visible after compositor grace\n",
             socket_path);
-    (void)attempt;
+    snapshot_kwin_maps(kwin_pid, attempt);
+    print_kwin_maps_snapshot(attempt, "wayland-socket-timeout");
     return -1;
 }
 
@@ -739,6 +852,266 @@ static pid_t maybe_spawn_smoke_agent(void)
     return spawn_child(agent_plain);
 }
 
+static void x11_egl_logf(const char *fmt, ...)
+{
+    int fd;
+    va_list ap;
+
+    fd = open(X11_EGL_SESSION_LOG,
+              O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0)
+        return;
+    (void)lseek(fd, 0, SEEK_END);
+    va_start(ap, fmt);
+    vdprintf(fd, fmt, ap);
+    va_end(ap);
+    fsync(fd);
+    close(fd);
+}
+
+static int run_logged_shell(const char *label, const char *cmd)
+{
+    pid_t pid;
+    int status;
+
+    x11_egl_logf("host-x11-egl-smoke: diag %s\n", label);
+    pid = fork();
+    if (pid < 0) {
+        x11_egl_logf("host-x11-egl-smoke: diag %s fork_failed errno=%d %s\n",
+                     label, errno, strerror(errno));
+        return 127;
+    }
+    if (pid == 0) {
+        int fd = open(X11_EGL_SESSION_LOG,
+                      O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (fd >= 0) {
+            (void)lseek(fd, 0, SEEK_END);
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO)
+                close(fd);
+        }
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    if (waitpid(pid, &status, 0) < 0) {
+        x11_egl_logf("host-x11-egl-smoke: diag %s wait_failed errno=%d %s\n",
+                     label, errno, strerror(errno));
+        return 127;
+    }
+    x11_egl_logf("host-x11-egl-smoke: diag %s exit_status=%d\n",
+                 label, WIFEXITED(status) ? WEXITSTATUS(status) : 128);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+}
+
+static int x11_egl_smoke_status_code(int status)
+{
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+    if (WIFSIGNALED(status))
+        return 128 + WTERMSIG(status);
+    return 128;
+}
+
+static void x11_egl_session_terminal(const char *status, int exit_status,
+                                     const char *reason)
+{
+    if (reason && reason[0]) {
+        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session exit_status=%d reason=%s\n",
+                     status, exit_status, reason);
+        fprintf(stderr,
+                "kde-session: x11-egl-session-probe status=%s exit_status=%d reason=%s\n",
+                status, exit_status, reason);
+    } else {
+        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=%s mode=session exit_status=%d\n",
+                     status, exit_status);
+        fprintf(stderr,
+                "kde-session: x11-egl-session-probe status=%s exit_status=%d\n",
+                status, exit_status);
+    }
+    fflush(stderr);
+}
+
+static int wait_host_x11_egl_smoke(pid_t pid, const char *display,
+                                   const char *mode)
+{
+    int status;
+    int waited_ms = 0;
+
+    for (;;) {
+        pid_t got = waitpid(pid, &status, WNOHANG);
+
+        if (got == pid) {
+            int exit_status = x11_egl_smoke_status_code(status);
+
+            x11_egl_logf("host-x11-egl-smoke: phase=%s status=%s mode=%s display=%s exit_status=%d\n",
+                         mode, exit_status == 0 ? "PASS" : "FAIL", mode,
+                         display, exit_status);
+            return exit_status;
+        }
+        if (got < 0) {
+            if (errno == EINTR)
+                continue;
+            x11_egl_logf("host-x11-egl-smoke: phase=%s status=FAIL mode=%s display=%s exit_status=127 reason=wait errno=%d %s\n",
+                         mode, mode, display, errno, strerror(errno));
+            return 127;
+        }
+        if (waited_ms >= X11_EGL_SMOKE_CHILD_TIMEOUT_MS)
+            break;
+        usleep(100000);
+        waited_ms += 100;
+    }
+
+    x11_egl_logf("host-x11-egl-smoke: phase=%s status=TIMEOUT mode=%s display=%s exit_status=124 timeout_ms=%d\n",
+                 mode, mode, display, X11_EGL_SMOKE_CHILD_TIMEOUT_MS);
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        ;
+    return 124;
+}
+
+static int run_host_x11_egl_smoke(const char *display, const char *mode,
+                                  const char *arg)
+{
+    pid_t pid;
+
+    pid = fork();
+    if (pid < 0) {
+        x11_egl_logf("host-x11-egl-smoke: phase=%s status=FAIL mode=%s display=%s exit_status=127 reason=fork errno=%d %s\n",
+                     mode, mode, display, errno, strerror(errno));
+        return 127;
+    }
+    if (pid == 0) {
+        int fd = open(X11_EGL_SESSION_LOG,
+                      O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        setpgid(0, 0);
+        if (fd >= 0) {
+            (void)lseek(fd, 0, SEEK_END);
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO)
+                close(fd);
+        }
+        setenv("DISPLAY", display, 1);
+        setenv("HOST_X11_EGL_SMOKE_MODE", mode, 1);
+        setenv("HOST_X11_EGL_SMOKE_LOG", X11_EGL_SESSION_LOG, 1);
+        unsetenv("WAYLAND_DISPLAY");
+        unsetenv("LD_PRELOAD");
+        execl("/bin/host-x11-egl-smoke", "host-x11-egl-smoke", arg,
+              (char *)NULL);
+        _exit(127);
+    }
+    setpgid(pid, pid);
+    return wait_host_x11_egl_smoke(pid, display, mode);
+}
+
+static void run_x11_egl_session_probe(void)
+{
+    static const char *displays[] = { ":0", ":1" };
+    const char *selected = NULL;
+    int glx_rc;
+    FILE *fp;
+
+    fp = fopen(X11_EGL_SESSION_LOG, "w");
+    if (fp) {
+        fprintf(fp, "host-x11-egl-smoke: phase=prelaunch_prompt_sync status=PASS mode=session\n");
+        fprintf(fp, "host-x11-egl-smoke: phase=x11_preflight status=BEGIN mode=session\n");
+        fprintf(fp, "host-x11-egl-smoke: diag preflight_env\n");
+        fprintf(fp, "DISPLAY=%s\n", getenv("DISPLAY") ? getenv("DISPLAY") : "(unset)");
+        fprintf(fp, "XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
+        fprintf(fp, "probe_XDG_RUNTIME_DIR=%s\n", getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "(unset)");
+        fprintf(fp, "probe_LD_PRELOAD=(unset)\n");
+        fflush(fp);
+        fsync(fileno(fp));
+        fclose(fp);
+    }
+
+    run_logged_shell("preflight_x11_unix",
+                     "ls -ld /tmp/.X11-unix /tmp/.X11-unix/* || true");
+    run_logged_shell("preflight_ps", "ps || true");
+    run_logged_shell("preflight_kde_process_probe",
+                     "/bin/kde-process-probe || true");
+    x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_diag status=PASS mode=session\n");
+
+    for (size_t i = 0; i < sizeof(displays) / sizeof(displays[0]); i++) {
+        int rc;
+
+        x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate status=BEGIN display=%s\n",
+                     displays[i]);
+        rc = run_host_x11_egl_smoke(displays[i], "x11-connect",
+                                    "--x11-connect-only");
+        x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate status=%s display=%s exit_status=%d\n",
+                     rc == 0 ? "PASS" : "FAIL", displays[i], rc);
+        if (rc == 0) {
+            selected = displays[i];
+            break;
+        }
+    }
+
+    if (!selected) {
+        x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight status=FAIL reason=no-display-candidate label=x11-egl-XOpenDisplay-preflight-failed displays=:0,:1\n");
+        x11_egl_session_terminal("FAIL", 1, "no-display-candidate");
+        return;
+    }
+
+    x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight status=PASS selected_display=%s\n",
+                 selected);
+    x11_egl_logf("host-x11-egl-smoke: phase=glx-probe status=BEGIN mode=session display=%s\n",
+                 selected);
+    glx_rc = run_host_x11_egl_smoke(selected, "glx-probe",
+                                    "--glx-probe-only");
+    x11_egl_session_terminal(glx_rc == 0 ? "PASS" : "FAIL", glx_rc, NULL);
+    sync();
+}
+
+static pid_t maybe_spawn_x11_egl_session_probe(void)
+{
+    pid_t pid;
+
+    if (!cmdline_has_flag("kde_x11_egl_session_probe=1"))
+        return -1;
+    if (!is_executable("/bin/host-x11-egl-smoke")) {
+        x11_egl_session_terminal("FAIL", 127, "missing-binary");
+        return -1;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        x11_egl_logf("host-x11-egl-smoke: phase=session_probe status=FAIL reason=fork errno=%d %s\n",
+                     errno, strerror(errno));
+        x11_egl_session_terminal("FAIL", 127, "fork");
+        return -1;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        sleep(3);
+        run_x11_egl_session_probe();
+        _exit(0);
+    }
+    setpgid(pid, pid);
+    return pid;
+}
+
+static void reap_x11_egl_session_probe(pid_t pid)
+{
+    int status;
+
+    if (pid <= 0)
+        return;
+    for (int waited_ms = 0; waited_ms < X11_EGL_SESSION_PROBE_TIMEOUT_MS;
+         waited_ms += 100) {
+        if (waitpid(pid, &status, WNOHANG) == pid)
+            return;
+        usleep(100000);
+    }
+    x11_egl_session_terminal("TIMEOUT", 124, "session-watchdog");
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        ;
+}
+
 static int wait_for_wayland_roundtrip(pid_t kwin_pid, int attempt)
 {
     (void)kwin_pid;
@@ -788,6 +1161,7 @@ int main(void)
     int status;
     pid_t kwin_pid;
     pid_t plasma_pid;
+    pid_t x11_egl_probe_pid = -1;
     char *kwin[] = {
         "/usr/bin/kwin_wayland",
         "--xwayland",
@@ -848,7 +1222,9 @@ retry:
 
 running:
     fprintf(stderr, "kde-session: KWin and plasmashell are running\n");
+    x11_egl_probe_pid = maybe_spawn_x11_egl_session_probe();
     maybe_spawn_smoke_agent();
+    reap_x11_egl_session_probe(x11_egl_probe_pid);
     if (waitpid(plasma_pid, &status, 0) < 0) {
         fprintf(stderr, "kde-session: wait Plasma child: %s\n", strerror(errno));
         terminate_child(kwin_pid);

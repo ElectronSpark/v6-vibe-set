@@ -36,9 +36,13 @@ set(_gameboy_rom_stamp "${XV6_BUILD_ROOT}/gameboy-roms.stamp")
 set(_gpup_umd_overlay "${XV6_BUILD_ROOT}/gpup-umd-overlay")
 set(_gpup_umd_overlay_stamp "${XV6_BUILD_ROOT}/gpup-umd-overlay.stamp")
 set(_rootfs_extra_overlays "${_host_gui_overlay}:${_webkit_media_overlay}:${_kde_runtime_overlay}:${_gameboy_rom_overlay}:${_gpup_umd_overlay}")
+set(_xwayland_stage_script "${CMAKE_SOURCE_DIR}/scripts/image/stage-xwayland-runtime.sh")
+set(_xwayland_kde_wrapper_source "${CMAKE_SOURCE_DIR}/scripts/image/xwayland-kde-wrapper.c")
 set(_host_gui_runtime_sources
 	${CMAKE_SOURCE_DIR}/scripts/image/host-gtk-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-gtk-smoke-launcher.c
+	${CMAKE_SOURCE_DIR}/scripts/image/host-egl-gbm-gl-smoke.c
+	${CMAKE_SOURCE_DIR}/scripts/image/host-egl-gbm-gl-smoke-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-idle-x11-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-wlegl-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-wlegl-smoke-launcher.c
@@ -54,7 +58,17 @@ set(_host_gui_runtime_sources
 	${CMAKE_SOURCE_DIR}/scripts/image/stage-host-gui-runtime.sh
 	${CMAKE_SOURCE_DIR}/scripts/image/wayland-chromium-launcher.c)
 set(_rootfs_deps user ports host-gui-runtime webkit-media kde-runtime gameboy-roms gpup-umd-overlay
-	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh)
+	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+	${_xwayland_stage_script}
+	${_xwayland_kde_wrapper_source})
+set(_rootfs_refresh_deps host-gui-runtime webkit-media kde-runtime gameboy-roms gpup-umd-overlay
+	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+	${_xwayland_stage_script}
+	${_xwayland_kde_wrapper_source})
+set(_xwayland_stage_command
+	${CMAKE_COMMAND} -E env
+		${_xwayland_stage_script}
+			${XV6_SYSROOT} ${XV6_SYSROOT}/bin/Xwayland)
 set(_rootfs_command
 	${CMAKE_COMMAND} -E env
 		ROOTFS_EXTRA_OVERLAYS=${_rootfs_extra_overlays}
@@ -138,6 +152,7 @@ add_custom_target(gpup-umd-overlay DEPENDS ${_gpup_umd_overlay_stamp})
 # session demo (Python + Flask) depends on.
 # ---------------------------------------------------------------------
 add_custom_target(rootfs
+	COMMAND ${_xwayland_stage_command}
 	COMMAND ${_rootfs_command}
 	DEPENDS ${_rootfs_deps}
 	BYPRODUCTS ${_fsimg}
@@ -147,9 +162,9 @@ add_custom_target(rootfs
 # overlay without making CMake walk user or ports first. Use this when a GUI
 # ABI loop only needs a fresh rootfs copy, not rebuilt payloads.
 add_custom_target(rootfs-refresh
+	COMMAND ${_xwayland_stage_command}
 	COMMAND ${_rootfs_command}
-	DEPENDS host-gui-runtime webkit-media kde-runtime gameboy-roms gpup-umd-overlay
-		${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+	DEPENDS ${_rootfs_refresh_deps}
 	COMMENT "Refreshing ext4 rootfs ${_fsimg} from existing ${XV6_SYSROOT}")
 
 # ---------------------------------------------------------------------

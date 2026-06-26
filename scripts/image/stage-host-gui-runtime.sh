@@ -141,13 +141,44 @@ stage_c_probes() {
             $(pkg-config --cflags --libs x11 xext)
     fi
 
-    if has_pkg_config x11 egl glesv2 gl; then
-        # shellcheck disable=SC2046
-        build_simple host-x11-egl-smoke \
-            "${REPO_ROOT}/scripts/image/host-x11-egl-smoke.c" \
-            "${REPO_ROOT}/scripts/image/host-x11-egl-smoke-launcher.c" \
-            $(pkg-config --cflags --libs x11 egl glesv2 gl)
-    fi
+	if has_pkg_config x11 egl glesv2 gl; then
+		# shellcheck disable=SC2046
+		build_simple host-x11-egl-smoke \
+			"${REPO_ROOT}/scripts/image/host-x11-egl-smoke.c" \
+			"${REPO_ROOT}/scripts/image/host-x11-egl-smoke-launcher.c" \
+			$(pkg-config --cflags --libs x11 egl glesv2 gl)
+	fi
+
+	local mesa_build_dir="${SYSROOT%/}/../ports/mesa-build"
+	local gbm_pc="${SYSROOT}/lib/pkgconfig/gbm.pc"
+	local gbm_lib="${mesa_build_dir}/src/gbm/libgbm.so.1.0.0"
+	local egl_lib="${mesa_build_dir}/src/egl/libEGL.so.1.0.0"
+	local gles_lib="${SYSROOT}/lib/libGLESv2.so.2.0.0"
+	if PKG_CONFIG_PATH= \
+	   PKG_CONFIG_LIBDIR="${SYSROOT}/lib/pkgconfig" \
+	   PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+	   pkg-config --exists egl glesv2 gbm gl >/dev/null 2>&1; then
+		if [[ -e "${gbm_pc}" && -e "${gbm_lib}" && -e "${egl_lib}" &&
+		      -e "${gles_lib}" ]]; then
+			if [[ ! -e "${SYSROOT}/lib/libEGL.so.1.0.0" ]]; then
+				cp -aL "${egl_lib}" "${SYSROOT}/lib/libEGL.so.1.0.0"
+				ln -sfn libEGL.so.1.0.0 "${SYSROOT}/lib/libEGL.so.1"
+				ln -sfn libEGL.so.1 "${SYSROOT}/lib/libEGL.so"
+			fi
+			# shellcheck disable=SC2046
+			build_simple host-egl-gbm-gl-smoke \
+				"${REPO_ROOT}/scripts/image/host-egl-gbm-gl-smoke.c" \
+				"${REPO_ROOT}/scripts/image/host-egl-gbm-gl-smoke-launcher.c" \
+				$(PKG_CONFIG_PATH= \
+				  PKG_CONFIG_LIBDIR="${SYSROOT}/lib/pkgconfig" \
+				  PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+				  pkg-config --cflags --libs egl glesv2 gbm gl)
+		else
+			note "warning: Mesa EGL/GLES/GBM runtime files incomplete; host EGL/GBM reducer not staged"
+		fi
+	else
+		note "warning: EGL/GLES/GBM development files not found; host EGL/GBM reducer not staged"
+	fi
 }
 
 stage_wayland_probes() {

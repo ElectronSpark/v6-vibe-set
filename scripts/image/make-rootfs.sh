@@ -412,6 +412,8 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kde-abi-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-dlopen-probe.c" \
         "${STAGE}/bin/kde-dlopen-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/icu-elf-tail-probe.c" \
+        "${STAGE}/bin/icu-elf-tail-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
         "${STAGE}/bin/kde-unix-socket-probe"
     stage_kde_wayland_seat_probe
@@ -878,21 +880,86 @@ stage_ldd_dependencies_force() {
     )
 }
 
+stage_local_mesa_file() {
+    local dst="$1"
+    shift
+    local src
+
+    for src in "$@"; do
+        [[ -e "${src}" ]] || continue
+        mkdir -p "$(dirname "${dst}")"
+        cp -L "${src}" "${dst}"
+        chmod 0755 "${dst}" 2>/dev/null || true
+        return 0
+    done
+
+    echo "make-rootfs: error: local Mesa runtime artifact missing: ${dst#${STAGE}}" >&2
+    return 1
+}
+
+prune_host_egl_gbm_runtime() {
+    local dir
+
+    for dir in \
+        "${STAGE}/lib/x86_64-linux-gnu" \
+        "${STAGE}/usr/lib" \
+        "${STAGE}/usr/lib/x86_64-linux-gnu"; do
+        [[ -d "${dir}" ]] || continue
+        find "${dir}" -maxdepth 1 \( -type f -o -type l \) \
+            \( -name 'libEGL.so*' -o -name 'libEGL_mesa.so*' -o \
+               -name 'libgbm.so*' -o -name 'libdrm.so*' \) -delete
+    done
+
+    rm -f "${STAGE}/usr/share/glvnd/egl_vendor.d/"*.json 2>/dev/null || true
+}
+
+restore_local_mesa_runtime() {
+    local mesa_build_dir="${SYSROOT%/}/../ports/mesa-build"
+    local dri
+
+    stage_local_mesa_file "${STAGE}/lib/libEGL.so.1.0.0" \
+        "${SYSROOT}/lib/libEGL.so.1.0.0" \
+        "${mesa_build_dir}/src/egl/libEGL.so.1.0.0"
+    stage_local_mesa_file "${STAGE}/lib/libGLESv2.so.2.0.0" \
+        "${SYSROOT}/lib/libGLESv2.so.2.0.0" \
+        "${mesa_build_dir}/src/mesa/glapi/es2api/libGLESv2.so.2.0.0"
+    stage_local_mesa_file "${STAGE}/lib/libgbm.so.1.0.0" \
+        "${SYSROOT}/lib/libgbm.so.1.0.0" \
+        "${mesa_build_dir}/src/gbm/libgbm.so.1.0.0"
+    stage_local_mesa_file "${STAGE}/lib/gbm/dri_gbm.so" \
+        "${SYSROOT}/lib/gbm/dri_gbm.so" \
+        "${mesa_build_dir}/src/gbm/backends/dri/dri_gbm.so"
+    stage_local_mesa_file "${STAGE}/lib/libgallium-26.2.0-devel.so" \
+        "${SYSROOT}/lib/libgallium-26.2.0-devel.so" \
+        "${mesa_build_dir}/src/gallium/targets/dri/libgallium-26.2.0-devel.so"
+
+    ln -sfn libEGL.so.1.0.0 "${STAGE}/lib/libEGL.so.1"
+    ln -sfn libEGL.so.1 "${STAGE}/lib/libEGL.so"
+    ln -sfn libGLESv2.so.2.0.0 "${STAGE}/lib/libGLESv2.so.2"
+    ln -sfn libGLESv2.so.2 "${STAGE}/lib/libGLESv2.so"
+    ln -sfn libgbm.so.1.0.0 "${STAGE}/lib/libgbm.so.1"
+    ln -sfn libgbm.so.1 "${STAGE}/lib/libgbm.so"
+
+    mkdir -p "${STAGE}/lib/dri"
+    for dri in virtio_gpu_dri d3d12_dri swrast_dri kms_swrast_dri; do
+        ln -sfn ../libgallium-26.2.0-devel.so "${STAGE}/lib/dri/${dri}.so"
+    done
+}
+
 stage_mesa_runtime() {
     local path
     shopt -s nullglob
 
+    # Keep the EGL/GBM frontend and Gallium DRI drivers from the same Mesa build;
+    # mixing Ubuntu libEGL_mesa with local libgallium breaks Mesa's private ABI.
+    prune_host_egl_gbm_runtime
+    restore_local_mesa_runtime
+
     for path in \
         /usr/lib/x86_64-linux-gnu/libOpenGL.so* \
-        /usr/lib/x86_64-linux-gnu/libEGL_mesa.so* \
-        /usr/lib/x86_64-linux-gnu/dri/swrast_dri.so \
-        /usr/lib/x86_64-linux-gnu/dri/kms_swrast_dri.so; do
+        /usr/lib/x86_64-linux-gnu/libGLdispatch.so*; do
         stage_host_path "${path}"
         stage_ldd_dependencies "${path}"
-    done
-
-    for path in /usr/share/glvnd/egl_vendor.d/*.json; do
-        stage_host_path "${path}"
     done
 
     # Host Chromium's X11/GLX path asks GLVND for libGLX_mesa.so.0.  The
@@ -912,6 +979,8 @@ stage_mesa_runtime() {
         stage_ldd_dependencies_force "${path}"
     done
 
+    prune_host_egl_gbm_runtime
+    restore_local_mesa_runtime
     shopt -u nullglob
 }
 

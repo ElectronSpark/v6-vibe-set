@@ -59,6 +59,16 @@ safe_str(const char *s)
     return s ? s : "(null)";
 }
 
+static void
+log_start(const char *mode)
+{
+    fprintf(stderr,
+            "host-x11-egl-smoke: start mode=%s\n"
+            "host-x11-egl-smoke: phase=start status=BEGIN mode=%s\n",
+            mode, mode);
+    fflush(stderr);
+}
+
 static int
 egl_config_attr_or_neg1(EGLDisplay dpy, EGLConfig config, EGLint attr)
 {
@@ -148,36 +158,112 @@ log_glx_diagnostics(Display *dpy, int screen)
     int version_ok = 0;
     int fbconfig_count = 0;
     GLXFBConfig *configs = NULL;
+    const char *client_vendor;
+    const char *client_version;
+    const char *client_extensions;
+    const char *server_vendor;
+    const char *server_version;
+    const char *server_extensions;
 
     if (!dpy) {
         log_line("host-x11-egl-smoke: diag glx display=NULL");
         return;
     }
 
+    log_line("host-x11-egl-smoke: phase=glx_query_extension status=BEGIN");
     extension_present = glXQueryExtension(dpy, &error_base, &event_base);
     fprintf(stderr,
             "host-x11-egl-smoke: diag glx_query_extension present=%d error_base=%d event_base=%d\n",
             extension_present, error_base, event_base);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_query_extension status=%s present=%d error_base=%d event_base=%d\n",
+            extension_present ? "PASS" : "FAIL", extension_present,
+            error_base, event_base);
+    fflush(stderr);
 
+    log_line("host-x11-egl-smoke: phase=glx_query_version status=BEGIN");
     version_ok = glXQueryVersion(dpy, &major, &minor);
     fprintf(stderr,
             "host-x11-egl-smoke: diag glx_query_version ok=%d major=%d minor=%d\n",
             version_ok, major, minor);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_query_version status=%s ok=%d major=%d minor=%d\n",
+            version_ok ? "PASS" : "FAIL", version_ok, major, minor);
+    fflush(stderr);
 
+    log_line("host-x11-egl-smoke: phase=glx_client_vendor status=BEGIN");
+    client_vendor = glXGetClientString(dpy, GLX_VENDOR);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_client_vendor status=%s vendor=%s\n",
+            client_vendor ? "PASS" : "FAIL", safe_str(client_vendor));
+    fflush(stderr);
+
+    log_line("host-x11-egl-smoke: phase=glx_client_version status=BEGIN");
+    client_version = glXGetClientString(dpy, GLX_VERSION);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_client_version status=%s version=%s\n",
+            client_version ? "PASS" : "FAIL", safe_str(client_version));
+    fflush(stderr);
+
+    log_line("host-x11-egl-smoke: phase=glx_client_extensions status=BEGIN");
+    client_extensions = glXGetClientString(dpy, GLX_EXTENSIONS);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_client_extensions status=%s extensions=%s\n",
+            client_extensions ? "PASS" : "FAIL",
+            safe_str(client_extensions));
     fprintf(stderr,
             "host-x11-egl-smoke: diag glx_client vendor=%s version=%s extensions=%s\n",
-            safe_str(glXGetClientString(dpy, GLX_VENDOR)),
-            safe_str(glXGetClientString(dpy, GLX_VERSION)),
-            safe_str(glXGetClientString(dpy, GLX_EXTENSIONS)));
+            safe_str(client_vendor),
+            safe_str(client_version),
+            safe_str(client_extensions));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_client_strings status=%s vendor=%s version=%s\n",
+            client_version ? "PASS" : "FAIL", safe_str(client_vendor),
+            safe_str(client_version));
+    fflush(stderr);
+
+    log_line("host-x11-egl-smoke: phase=glx_server_vendor status=BEGIN");
+    server_vendor = glXQueryServerString(dpy, screen, GLX_VENDOR);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_server_vendor status=%s vendor=%s\n",
+            server_vendor ? "PASS" : "FAIL", safe_str(server_vendor));
+    fflush(stderr);
+
+    log_line("host-x11-egl-smoke: phase=glx_server_version status=BEGIN");
+    server_version = glXQueryServerString(dpy, screen, GLX_VERSION);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_server_version status=%s version=%s\n",
+            server_version ? "PASS" : "FAIL", safe_str(server_version));
+    fflush(stderr);
+
+    log_line("host-x11-egl-smoke: phase=glx_server_extensions status=BEGIN");
+    server_extensions = glXQueryServerString(dpy, screen, GLX_EXTENSIONS);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_server_extensions status=%s extensions=%s\n",
+            server_extensions ? "PASS" : "FAIL",
+            safe_str(server_extensions));
     fprintf(stderr,
             "host-x11-egl-smoke: diag glx_server vendor=%s version=%s extensions=%s\n",
-            safe_str(glXQueryServerString(dpy, screen, GLX_VENDOR)),
-            safe_str(glXQueryServerString(dpy, screen, GLX_VERSION)),
-            safe_str(glXQueryServerString(dpy, screen, GLX_EXTENSIONS)));
+            safe_str(server_vendor),
+            safe_str(server_version),
+            safe_str(server_extensions));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_server_strings status=%s vendor=%s version=%s\n",
+            server_version ? "PASS" : "FAIL", safe_str(server_vendor),
+            safe_str(server_version));
+    fflush(stderr);
 
+    log_line("host-x11-egl-smoke: phase=glx_fbconfigs_query status=BEGIN");
     configs = glXGetFBConfigs(dpy, screen, &fbconfig_count);
     fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fbconfigs_query status=PASS count=%d ptr=%p\n",
+            fbconfig_count, (void *)configs);
+    fprintf(stderr,
             "host-x11-egl-smoke: diag glx_fbconfigs count=%d ptr=%p\n",
+            fbconfig_count, (void *)configs);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_fbconfigs status=%s count=%d ptr=%p\n",
+            fbconfig_count > 0 && configs ? "PASS" : "FAIL",
             fbconfig_count, (void *)configs);
     if (configs) {
         int i;
@@ -249,10 +335,14 @@ egl_error_name(EGLint err)
 }
 
 static void
-log_egl_unavailable(const char *what)
+log_egl_fallback(const char *what)
 {
     EGLint err = eglGetError();
-    fprintf(stderr, "host-x11-egl-smoke: %s unavailable egl_error=0x%x %s fallback=glx\n",
+    fprintf(stderr,
+            "host-x11-egl-smoke: %s status=FALLBACK egl_error=0x%x %s fallback=glx\n",
+            what, err, egl_error_name(err));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=%s status=FALLBACK egl_error=0x%x error_name=%s fallback=glx\n",
             what, err, egl_error_name(err));
     fflush(stderr);
 }
@@ -267,10 +357,16 @@ draw(struct app *app, const char *mode)
     glClearColor(c[0], c[1], c[2], 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     if (app->use_glx) {
+        log_line("host-x11-egl-smoke: phase=glx_swap_buffers status=BEGIN");
         glXSwapBuffers(app->dpy, app->win);
+        log_line("host-x11-egl-smoke: phase=glx_swap_buffers status=PASS");
     } else {
         if (!eglSwapBuffers(app->egl_display, app->egl_surface)) {
-            log_egl_unavailable("eglSwapBuffers");
+            log_egl_fallback("eglSwapBuffers");
+            fprintf(stderr,
+                    "host-x11-egl-smoke: phase=draw status=FAIL mode=%s reason=eglSwapBuffers\n",
+                    mode);
+            fflush(stderr);
             app->running = 0;
             return;
         }
@@ -279,6 +375,9 @@ draw(struct app *app, const char *mode)
     fprintf(stderr,
             "host-x11-egl-smoke: frame=%d mode=%s color=%d rgb=%.2f,%.2f,%.2f\n",
             app->frame, mode, app->color_index, c[0], c[1], c[2]);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=draw status=PASS frame=%d mode=%s color=%d\n",
+            app->frame, mode, app->color_index);
     fflush(stderr);
 }
 
@@ -297,6 +396,7 @@ create_default_window(struct app *app)
                              CWEventMask, &attrs);
     if (!app->win) {
         log_line("host-x11-egl-smoke: XCreateWindow failed status=FAIL");
+        log_line("host-x11-egl-smoke: phase=x11_connect status=FAIL reason=XCreateWindow");
         return -1;
     }
 
@@ -320,6 +420,9 @@ create_default_window(struct app *app)
     fprintf(stderr,
             "host-x11-egl-smoke: connected display=%s screen=%d window=0x%lx size=%dx%d\n",
             DisplayString(app->dpy), app->screen, app->win, WIN_W, WIN_H);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=x11_connect status=PASS display=%s screen=%d window=0x%lx width=%d height=%d\n",
+            DisplayString(app->dpy), app->screen, app->win, WIN_W, WIN_H);
     fflush(stderr);
     return 0;
 }
@@ -330,6 +433,7 @@ setup_x11(struct app *app)
     app->dpy = XOpenDisplay(NULL);
     if (!app->dpy) {
         log_line("host-x11-egl-smoke: XOpenDisplay failed status=FAIL");
+        log_line("host-x11-egl-smoke: phase=x11_connect status=FAIL reason=XOpenDisplay");
         return -1;
     }
     app->screen = DefaultScreen(app->dpy);
@@ -379,39 +483,42 @@ setup_egl(struct app *app)
     log_egl_no_display_extensions();
     app->egl_display = eglGetDisplay((EGLNativeDisplayType)app->dpy);
     if (app->egl_display == EGL_NO_DISPLAY) {
-        log_egl_unavailable("eglGetDisplay");
+        log_egl_fallback("eglGetDisplay");
         return -1;
     }
     if (!eglInitialize(app->egl_display, &major, &minor)) {
-        log_egl_unavailable("eglInitialize");
+        log_egl_fallback("eglInitialize");
         return -1;
     }
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=egl_initialize status=PASS major=%d minor=%d fallback=0\n",
+            major, minor);
     log_egl_display_strings(app->egl_display);
     if (!eglBindAPI(EGL_OPENGL_ES_API)) {
-        log_egl_unavailable("eglBindAPI");
+        log_egl_fallback("eglBindAPI");
         return -1;
     }
     if (!eglChooseConfig(app->egl_display, config_attrs, &config, 1,
                          &num_configs) || num_configs < 1) {
-        log_egl_unavailable("eglChooseConfig");
+        log_egl_fallback("eglChooseConfig");
         return -1;
     }
     log_egl_config(app->egl_display, config);
     app->egl_context = eglCreateContext(app->egl_display, config,
                                         EGL_NO_CONTEXT, context_attrs);
     if (app->egl_context == EGL_NO_CONTEXT) {
-        log_egl_unavailable("eglCreateContext");
+        log_egl_fallback("eglCreateContext");
         return -1;
     }
     app->egl_surface = eglCreateWindowSurface(
         app->egl_display, config, (EGLNativeWindowType)app->win, NULL);
     if (app->egl_surface == EGL_NO_SURFACE) {
-        log_egl_unavailable("eglCreateWindowSurface");
+        log_egl_fallback("eglCreateWindowSurface");
         return -1;
     }
     if (!eglMakeCurrent(app->egl_display, app->egl_surface, app->egl_surface,
                         app->egl_context)) {
-        log_egl_unavailable("eglMakeCurrent");
+        log_egl_fallback("eglMakeCurrent");
         return -1;
     }
 
@@ -421,8 +528,49 @@ setup_egl(struct app *app)
             safe_str(eglQueryString(app->egl_display, EGL_VENDOR)),
             safe_str((const char *)glGetString(GL_RENDERER)),
             safe_str((const char *)glGetString(GL_VERSION)));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=gl_strings status=%s api=egl vendor=%s renderer=%s gl_version=%s\n",
+            glGetString(GL_VERSION) ? "PASS" : "FAIL",
+            safe_str((const char *)glGetString(GL_VENDOR)),
+            safe_str((const char *)glGetString(GL_RENDERER)),
+            safe_str((const char *)glGetString(GL_VERSION)));
     fflush(stderr);
     return 0;
+}
+
+static void
+probe_egl_initialize_for_glx_fallback(struct app *app)
+{
+    EGLDisplay egl_display;
+    EGLint major = 0;
+    EGLint minor = 0;
+
+    log_egl_no_display_extensions();
+    egl_display = eglGetDisplay((EGLNativeDisplayType)app->dpy);
+    if (egl_display == EGL_NO_DISPLAY) {
+        EGLint err = eglGetError();
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=egl_initialize status=FALLBACK reason=eglGetDisplay egl_error=0x%x error_name=%s fallback=glx\n",
+                err, egl_error_name(err));
+        fflush(stderr);
+        return;
+    }
+
+    if (!eglInitialize(egl_display, &major, &minor)) {
+        EGLint err = eglGetError();
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=egl_initialize status=FALLBACK reason=eglInitialize egl_error=0x%x error_name=%s fallback=glx\n",
+                err, egl_error_name(err));
+        fflush(stderr);
+        return;
+    }
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=egl_initialize status=PASS major=%d minor=%d fallback=glx\n",
+            major, minor);
+    log_egl_display_strings(egl_display);
+    eglTerminate(egl_display);
+    fflush(stderr);
 }
 
 static int
@@ -440,22 +588,35 @@ setup_glx(struct app *app)
     };
     int major = 0;
     int minor = 0;
+    int direct = 0;
 
     destroy_window_only(app);
     log_glx_diagnostics(app->dpy, app->screen);
+    log_line("host-x11-egl-smoke: phase=glx_choose_visual status=BEGIN");
     app->visual = glXChooseVisual(app->dpy, app->screen, glx_attrs);
     if (!app->visual) {
         log_line("host-x11-egl-smoke: glx_choose_visual missing status=FAIL");
+        log_line("host-x11-egl-smoke: phase=glx_choose_visual status=FAIL reason=not_reported");
         return -1;
     }
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_choose_visual status=PASS visual_id=0x%lx depth=%d class=%d\n",
+            app->visual->visualid, app->visual->depth, app->visual->class);
 
     memset(&attrs, 0, sizeof(attrs));
+    log_line("host-x11-egl-smoke: phase=glx_colormap_create status=BEGIN");
     app->colormap = XCreateColormap(app->dpy,
                                     RootWindow(app->dpy, app->screen),
                                     app->visual->visual, AllocNone);
+    if (!app->colormap) {
+        log_line("host-x11-egl-smoke: phase=glx_colormap_create status=FAIL reason=not_reported");
+        return -1;
+    }
+    log_line("host-x11-egl-smoke: phase=glx_colormap_create status=PASS");
     attrs.colormap = app->colormap;
     attrs.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask |
                        ButtonPressMask;
+    log_line("host-x11-egl-smoke: phase=glx_window_create status=BEGIN");
     app->win = XCreateWindow(app->dpy, RootWindow(app->dpy, app->screen),
                              250, 160, WIN_W, WIN_H, 0,
                              app->visual->depth, InputOutput,
@@ -463,8 +624,13 @@ setup_glx(struct app *app)
                              &attrs);
     if (!app->win) {
         log_line("host-x11-egl-smoke: glx_window_create missing status=FAIL");
+        log_line("host-x11-egl-smoke: phase=glx_window_create status=FAIL reason=not_reported");
         return -1;
     }
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_window_create status=PASS window=0x%lx depth=%d\n",
+            app->win, app->visual->depth);
+    fflush(stderr);
     XStoreName(app->dpy, app->win, "XV6-X11-EGL-GLX-PROOF");
     memset(&hints, 0, sizeof(hints));
     hints.flags = PPosition | PSize | PMinSize;
@@ -476,33 +642,70 @@ setup_glx(struct app *app)
     hints.min_height = WIN_H;
     XSetWMNormalHints(app->dpy, app->win, &hints);
     XSetWMProtocols(app->dpy, app->win, &app->wm_delete, 1);
+    log_line("host-x11-egl-smoke: phase=glx_window_map status=BEGIN");
     XMapWindow(app->dpy, app->win);
+    log_line("host-x11-egl-smoke: phase=glx_window_map status=PASS");
+    log_line("host-x11-egl-smoke: phase=glx_window_flush status=BEGIN");
     XFlush(app->dpy);
+    log_line("host-x11-egl-smoke: phase=glx_window_flush status=PASS");
     fprintf(stderr,
             "host-x11-egl-smoke: glx_window display=%s screen=%d window=0x%lx size=%dx%d\n",
             DisplayString(app->dpy), app->screen, app->win, WIN_W, WIN_H);
     fflush(stderr);
 
+    log_line("host-x11-egl-smoke: phase=glx_context_query_version status=BEGIN");
     if (!glXQueryVersion(app->dpy, &major, &minor)) {
         log_line("host-x11-egl-smoke: glx_query_version missing status=FAIL");
+        log_line("host-x11-egl-smoke: phase=glx_context_query_version status=FAIL reason=query_failed");
         return -1;
     }
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_context_query_version status=PASS major=%d minor=%d\n",
+            major, minor);
+    fflush(stderr);
+    log_line("host-x11-egl-smoke: phase=glx_create_context status=BEGIN");
     app->glx_context = glXCreateContext(app->dpy, app->visual, NULL, True);
     if (!app->glx_context) {
         log_line("host-x11-egl-smoke: glx_create_context missing status=FAIL");
+        log_line("host-x11-egl-smoke: phase=glx_create_context status=FAIL reason=not_reported");
         return -1;
     }
+    log_line("host-x11-egl-smoke: phase=glx_is_direct status=BEGIN");
+    direct = glXIsDirect(app->dpy, app->glx_context);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_is_direct status=PASS direct=%d\n",
+            direct);
+    fflush(stderr);
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=glx_create_context status=PASS direct=%d\n",
+            direct);
+    fflush(stderr);
+    log_line("host-x11-egl-smoke: phase=glx_make_current status=BEGIN");
     if (!glXMakeCurrent(app->dpy, app->win, app->glx_context)) {
         log_line("host-x11-egl-smoke: glx_make_current missing status=FAIL");
+        log_line("host-x11-egl-smoke: phase=glx_make_current status=FAIL reason=not_reported");
         return -1;
     }
+    log_line("host-x11-egl-smoke: phase=glx_make_current status=PASS");
     app->use_glx = 1;
+    const GLubyte *gl_vendor = glGetString(GL_VENDOR);
+    const GLubyte *gl_renderer = glGetString(GL_RENDERER);
+    const GLubyte *gl_version = glGetString(GL_VERSION);
+
     fprintf(stderr,
             "host-x11-egl-smoke: glx ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
-            major, minor, safe_str((const char *)glGetString(GL_VENDOR)),
-            safe_str((const char *)glGetString(GL_RENDERER)),
-            safe_str((const char *)glGetString(GL_VERSION)));
+            major, minor, safe_str((const char *)gl_vendor),
+            safe_str((const char *)gl_renderer),
+            safe_str((const char *)gl_version));
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=gl_strings status=%s api=glx vendor=%s renderer=%s gl_version=%s\n",
+            gl_version ? "PASS" : "FAIL",
+            safe_str((const char *)gl_vendor),
+            safe_str((const char *)gl_renderer),
+            safe_str((const char *)gl_version));
     fflush(stderr);
+    if (!gl_version)
+        return -1;
     return 0;
 }
 
@@ -586,24 +789,111 @@ cleanup(struct app *app)
         XCloseDisplay(app->dpy);
 }
 
+static int
+glx_probe_only_requested(int argc, char **argv)
+{
+    const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
+    int i;
+
+    if (mode && strcmp(mode, "glx-probe") == 0)
+        return 1;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--glx-probe-only") == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int
+x11_connect_only_requested(int argc, char **argv)
+{
+    const char *mode = getenv("HOST_X11_EGL_SMOKE_MODE");
+    int i;
+
+    if (mode && strcmp(mode, "x11-connect") == 0)
+        return 1;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--x11-connect-only") == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int
+run_x11_connect_only(struct app *app)
+{
+    int rc = 0;
+
+    if (setup_x11(app) != 0)
+        rc = 1;
+
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=result status=%s mode=x11-connect\n",
+            rc == 0 ? "PASS" : "FAIL");
+    fflush(stderr);
+    cleanup(app);
+    log_line("host-x11-egl-smoke: exited mode=x11-connect");
+    return rc;
+}
+
+static int
+run_glx_probe_only(struct app *app)
+{
+    int rc = 0;
+
+    if (setup_x11(app) != 0) {
+        rc = 1;
+        goto out;
+    }
+    probe_egl_initialize_for_glx_fallback(app);
+    if (setup_glx(app) != 0) {
+        rc = 1;
+        goto out;
+    }
+    draw(app, "glx-probe");
+
+out:
+    fprintf(stderr,
+            "host-x11-egl-smoke: phase=result status=%s mode=glx-probe frame=%d use_glx=%d\n",
+            rc == 0 ? "PASS" : "FAIL", app->frame, app->use_glx);
+    fflush(stderr);
+    cleanup(app);
+    log_line("host-x11-egl-smoke: exited mode=glx-probe");
+    return rc;
+}
+
 int
-main(void)
+main(int argc, char **argv)
 {
     struct app app;
+    int x11_connect_only;
+    int glx_probe_only;
 
     memset(&app, 0, sizeof(app));
     app.egl_display = EGL_NO_DISPLAY;
     app.egl_context = EGL_NO_CONTEXT;
     app.egl_surface = EGL_NO_SURFACE;
     app.running = 1;
+    x11_connect_only = x11_connect_only_requested(argc, argv);
+    glx_probe_only = glx_probe_only_requested(argc, argv);
 
-    log_line("host-x11-egl-smoke: start");
+    if (x11_connect_only) {
+        log_start("x11-connect");
+        return run_x11_connect_only(&app);
+    }
+
+    log_start(glx_probe_only ? "glx-probe" : "interactive");
+    if (glx_probe_only)
+        return run_glx_probe_only(&app);
+
     if (setup_x11(&app) != 0) {
         cleanup(&app);
+        log_line("host-x11-egl-smoke: phase=result status=FAIL mode=interactive");
         return 1;
     }
     if (setup_egl(&app) != 0 && setup_glx(&app) != 0) {
         cleanup(&app);
+        log_line("host-x11-egl-smoke: phase=result status=FAIL mode=interactive");
         return 1;
     }
     draw(&app, "launch");
@@ -615,6 +905,7 @@ main(void)
     }
 
     cleanup(&app);
+    log_line("host-x11-egl-smoke: phase=result status=PASS mode=interactive");
     log_line("host-x11-egl-smoke: exited");
     return 0;
 }
