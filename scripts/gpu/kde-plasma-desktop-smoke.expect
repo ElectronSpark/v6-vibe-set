@@ -462,17 +462,52 @@ proc x11_egl_session_probe_wait_seconds {} {
     return 120
 }
 
+proc x11_egl_session_probe_result_from_text {text status_var exit_status_var} {
+    upvar 1 $status_var status
+    upvar 1 $exit_status_var exit_status
+
+    if {[regexp {kde-session: x11-egl-session-probe status=(PASS|FAIL|TIMEOUT) exit_status=([0-9]+)} $text -> found_status found_exit_status]} {
+        set status $found_status
+        set exit_status $found_exit_status
+        return 1
+    }
+    return 0
+}
+
+proc x11_egl_session_probe_result_from_runlog {status_var exit_status_var} {
+    global runlog
+    upvar 1 $status_var status
+    upvar 1 $exit_status_var exit_status
+
+    if {![file exists $runlog]} {
+        return 0
+    }
+
+    set fh [open $runlog r]
+    set text [read $fh]
+    close $fh
+    return [x11_egl_session_probe_result_from_text $text status exit_status]
+}
+
 proc wait_for_x11_egl_session_probe_terminal {} {
     global timeout
 
     set wait_seconds [x11_egl_session_probe_wait_seconds]
     set old_timeout $timeout
+    set status ""
+    set exit_status ""
+
+    if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
+        return [list $status $exit_status]
+    }
 
     set timeout $wait_seconds
     expect {
         -re {kde-session: x11-egl-session-probe status=(PASS|FAIL|TIMEOUT) exit_status=([0-9]+)} {
+            set status [string trim $expect_out(1,string)]
+            set exit_status [string trim $expect_out(2,string)]
             set timeout $old_timeout
-            return
+            return [list $status $exit_status]
         }
         -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
             set timeout $old_timeout
@@ -480,15 +515,22 @@ proc wait_for_x11_egl_session_probe_terminal {} {
         }
         timeout {
             set timeout $old_timeout
+            if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
+                return [list $status $exit_status]
+            }
             finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-session-probe-terminal-timeout"
         }
         eof {
             set timeout $old_timeout
+            if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
+                return [list $status $exit_status]
+            }
             finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-session-probe-eof"
         }
     }
     set timeout $old_timeout
     optional_prompt
+    return [list $status $exit_status]
 }
 
 proc run_guest_check {command label timeout_seconds} {
@@ -1857,8 +1899,13 @@ expect {
 
 if {[kde_smoke_reducer] eq "x11-egl"} {
     wait_for_kde_session_ready
-    wait_for_x11_egl_session_probe_terminal
-    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-session-probe-collected"
+    set x11_egl_session_result [wait_for_x11_egl_session_probe_terminal]
+    set x11_egl_session_status [lindex $x11_egl_session_result 0]
+    set x11_egl_session_exit_status [lindex $x11_egl_session_result 1]
+    if {$x11_egl_session_status eq "PASS" && $x11_egl_session_exit_status eq "0"} {
+        finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-egl session_probe=PASS"
+    }
+    finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL x11-egl-session-probe-$x11_egl_session_status exit_status=$x11_egl_session_exit_status"
 }
 
 if {[kde_smoke_reducer] eq "x11-dri3"} {

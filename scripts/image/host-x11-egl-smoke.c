@@ -25,6 +25,24 @@
 #define WIN_W 640
 #define WIN_H 320
 
+typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
+typedef void (GLAPIENTRY *gl_viewport_proc_t)(GLint x, GLint y,
+                                              GLsizei width,
+                                              GLsizei height);
+typedef void (GLAPIENTRY *gl_clear_color_proc_t)(GLfloat red, GLfloat green,
+                                                 GLfloat blue, GLfloat alpha);
+typedef void (GLAPIENTRY *gl_clear_proc_t)(GLbitfield mask);
+typedef GLenum (GLAPIENTRY *gl_get_error_proc_t)(void);
+
+struct gl_api {
+    const char *source;
+    gl_get_string_proc_t get_string;
+    gl_viewport_proc_t viewport;
+    gl_clear_color_proc_t clear_color;
+    gl_clear_proc_t clear;
+    gl_get_error_proc_t get_error;
+};
+
 struct app {
     Display *dpy;
     int screen;
@@ -37,6 +55,7 @@ struct app {
     EGLContext egl_context;
     EGLSurface egl_surface;
     GLXContext glx_context;
+    struct gl_api gl;
     int use_glx;
     int color_index;
     int frame;
@@ -62,6 +81,47 @@ static const char *
 safe_str(const char *s)
 {
     return s ? s : "(null)";
+}
+
+static const GLubyte *
+linked_gl_get_string(GLenum name)
+{
+    return glGetString(name);
+}
+
+static void
+linked_gl_viewport(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    glViewport(x, y, width, height);
+}
+
+static void
+linked_gl_clear_color(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
+{
+    glClearColor(red, green, blue, alpha);
+}
+
+static void
+linked_gl_clear(GLbitfield mask)
+{
+    glClear(mask);
+}
+
+static GLenum
+linked_gl_get_error(void)
+{
+    return glGetError();
+}
+
+static void
+set_linked_gl_api(struct app *app)
+{
+    app->gl.source = "linked";
+    app->gl.get_string = linked_gl_get_string;
+    app->gl.viewport = linked_gl_viewport;
+    app->gl.clear_color = linked_gl_clear_color;
+    app->gl.clear = linked_gl_clear;
+    app->gl.get_error = linked_gl_get_error;
 }
 
 static int
@@ -195,32 +255,115 @@ gl_string_enum_name(GLenum name)
     }
 }
 
-typedef const GLubyte *(GLAPIENTRY *gl_get_string_proc_t)(GLenum name);
+static __GLXextFuncPtr
+glx_get_raw_proc(const char *name)
+{
+#ifdef GLX_ARB_get_proc_address
+    __GLXextFuncPtr raw_proc;
+
+    raw_proc = glXGetProcAddressARB((const GLubyte *)name);
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_get_proc_address name=%s result=%s ptr=%p\n",
+            name, raw_proc ? "PASS" : "FAIL", (void *)raw_proc);
+    fflush(stderr);
+    return raw_proc;
+#else
+    fprintf(stderr,
+            "host-x11-egl-smoke: diag glx_get_proc_address name=%s result=FAIL reason=not_available_in_headers\n",
+            name);
+    fflush(stderr);
+    return NULL;
+#endif
+}
 
 static gl_get_string_proc_t
 glx_get_gl_get_string_proc(void)
 {
-    gl_get_string_proc_t proc = NULL;
-
-#ifdef GLX_ARB_get_proc_address
     union {
         __GLXextFuncPtr raw;
         gl_get_string_proc_t typed;
     } conv;
-    __GLXextFuncPtr raw_proc;
 
-    raw_proc = glXGetProcAddressARB((const GLubyte *)"glGetString");
-    conv.raw = raw_proc;
-    proc = conv.typed;
+    conv.raw = glx_get_raw_proc("glGetString");
+    return conv.typed;
+}
+
+static gl_viewport_proc_t
+glx_get_gl_viewport_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_viewport_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glViewport");
+    return conv.typed;
+}
+
+static gl_clear_color_proc_t
+glx_get_gl_clear_color_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_clear_color_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glClearColor");
+    return conv.typed;
+}
+
+static gl_clear_proc_t
+glx_get_gl_clear_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_clear_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glClear");
+    return conv.typed;
+}
+
+static gl_get_error_proc_t
+glx_get_gl_get_error_proc(void)
+{
+    union {
+        __GLXextFuncPtr raw;
+        gl_get_error_proc_t typed;
+    } conv;
+
+    conv.raw = glx_get_raw_proc("glGetError");
+    return conv.typed;
+}
+
+static int
+set_glx_gl_api(struct app *app)
+{
+    app->gl.source = "glx-proc";
+    app->gl.get_string = glx_get_gl_get_string_proc();
+    app->gl.viewport = glx_get_gl_viewport_proc();
+    app->gl.clear_color = glx_get_gl_clear_color_proc();
+    app->gl.clear = glx_get_gl_clear_proc();
+    app->gl.get_error = glx_get_gl_get_error_proc();
+
+    if (!app->gl.get_string || !app->gl.viewport || !app->gl.clear_color ||
+        !app->gl.clear || !app->gl.get_error) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=glx_gl_dispatch status=FAIL get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p\n",
+                (void *)app->gl.get_string, (void *)app->gl.viewport,
+                (void *)app->gl.clear_color, (void *)app->gl.clear,
+                (void *)app->gl.get_error);
+        fflush(stderr);
+        return -1;
+    }
+
     fprintf(stderr,
-            "host-x11-egl-smoke: diag glx_get_proc_address name=glGetString result=%s ptr=%p\n",
-            proc ? "PASS" : "FAIL", (void *)raw_proc);
-#else
-    fprintf(stderr,
-            "host-x11-egl-smoke: diag glx_get_proc_address name=glGetString result=FAIL reason=not_available_in_headers\n");
-#endif
+            "host-x11-egl-smoke: phase=glx_gl_dispatch status=PASS get_string=%p viewport=%p clear_color=%p clear=%p get_error=%p\n",
+            (void *)app->gl.get_string, (void *)app->gl.viewport,
+            (void *)app->gl.clear_color, (void *)app->gl.clear,
+            (void *)app->gl.get_error);
     fflush(stderr);
-    return proc;
+    return 0;
 }
 
 static const GLubyte *
@@ -246,34 +389,39 @@ log_gl_get_string_linked(GLenum name, const char *tag)
     return value;
 }
 
-static void
-log_gl_get_string_proc(GLenum name, gl_get_string_proc_t proc)
+static const GLubyte *
+log_gl_get_string_proc(struct app *app, GLenum name)
 {
     GLenum clear_err;
     GLenum after_err;
     const GLubyte *value;
+    gl_get_string_proc_t proc = app->gl.get_string;
+    gl_get_error_proc_t get_error = app->gl.get_error;
 
-    if (!proc) {
+    if (!proc || !get_error) {
         fprintf(stderr,
-                "host-x11-egl-smoke: diag gl_get_string_proc name=%s proc=%p result=FAIL reason=unavailable\n",
-                gl_string_enum_name(name), (void *)proc);
+                "host-x11-egl-smoke: diag gl_get_string_proc tag=%s name=%s proc=%p get_error=%p result=FAIL reason=unavailable\n",
+                safe_str(app->gl.source), gl_string_enum_name(name),
+                (void *)proc, (void *)get_error);
         fflush(stderr);
-        return;
+        return NULL;
     }
 
-    clear_err = glGetError();
+    clear_err = get_error();
     fprintf(stderr,
             "host-x11-egl-smoke: diag gl_get_error where=before_proc_glGetString name=%s error=0x%x %s\n",
             gl_string_enum_name(name), clear_err, gl_error_name(clear_err));
     value = proc(name);
-    after_err = glGetError();
+    after_err = get_error();
     fprintf(stderr,
-            "host-x11-egl-smoke: diag gl_get_string_proc name=%s result=%s proc=%p value=%s ptr=%p before_error=0x%x before_name=%s after_error=0x%x after_name=%s\n",
-            gl_string_enum_name(name), value ? "PASS" : "FAIL",
+            "host-x11-egl-smoke: diag gl_get_string_proc tag=%s name=%s result=%s proc=%p value=%s ptr=%p before_error=0x%x before_name=%s after_error=0x%x after_name=%s\n",
+            safe_str(app->gl.source), gl_string_enum_name(name),
+            value ? "PASS" : "FAIL",
             (void *)proc, safe_str((const char *)value),
             (const void *)value, clear_err, gl_error_name(clear_err),
             after_err, gl_error_name(after_err));
     fflush(stderr);
+    return value;
 }
 
 struct gl_string_results {
@@ -283,20 +431,17 @@ struct gl_string_results {
 };
 
 static void
-log_gl_get_string_diagnostics(struct gl_string_results *results)
+log_gl_get_string_diagnostics(struct app *app, struct gl_string_results *results)
 {
-    gl_get_string_proc_t proc;
-
     memset(results, 0, sizeof(*results));
 
-    results->vendor = log_gl_get_string_linked(GL_VENDOR, "canonical");
-    results->renderer = log_gl_get_string_linked(GL_RENDERER, "canonical");
-    results->version = log_gl_get_string_linked(GL_VERSION, "canonical");
+    results->vendor = log_gl_get_string_proc(app, GL_VENDOR);
+    results->renderer = log_gl_get_string_proc(app, GL_RENDERER);
+    results->version = log_gl_get_string_proc(app, GL_VERSION);
 
-    proc = glx_get_gl_get_string_proc();
-    log_gl_get_string_proc(GL_VENDOR, proc);
-    log_gl_get_string_proc(GL_RENDERER, proc);
-    log_gl_get_string_proc(GL_VERSION, proc);
+    log_gl_get_string_linked(GL_VENDOR, "linked");
+    log_gl_get_string_linked(GL_RENDERER, "linked");
+    log_gl_get_string_linked(GL_VERSION, "linked");
 }
 
 static int
@@ -683,9 +828,18 @@ draw(struct app *app, const char *mode)
     const float *c = colors[app->color_index %
                             (int)(sizeof(colors) / sizeof(colors[0]))];
 
-    glViewport(0, 0, WIN_W, WIN_H);
-    glClearColor(c[0], c[1], c[2], 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (!app->gl.viewport || !app->gl.clear_color || !app->gl.clear) {
+        fprintf(stderr,
+                "host-x11-egl-smoke: phase=draw status=FAIL mode=%s reason=missing-gl-dispatch source=%s\n",
+                mode, safe_str(app->gl.source));
+        fflush(stderr);
+        app->running = 0;
+        return;
+    }
+
+    app->gl.viewport(0, 0, WIN_W, WIN_H);
+    app->gl.clear_color(c[0], c[1], c[2], 1.0f);
+    app->gl.clear(GL_COLOR_BUFFER_BIT);
     if (app->use_glx) {
         log_line("host-x11-egl-smoke: phase=glx_swap_buffers status=BEGIN");
         glXSwapBuffers(app->dpy, app->win);
@@ -851,6 +1005,7 @@ setup_egl(struct app *app)
         log_egl_fallback("eglMakeCurrent");
         return -1;
     }
+    set_linked_gl_api(app);
 
     fprintf(stderr,
             "host-x11-egl-smoke: egl ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
@@ -1020,12 +1175,15 @@ setup_glx(struct app *app)
     }
     log_line("host-x11-egl-smoke: phase=glx_make_current status=PASS");
     app->use_glx = 1;
+    if (set_glx_gl_api(app) != 0)
+        return -1;
     log_dladdr_symbol("glXMakeCurrent", (const void *)glXMakeCurrent);
     log_dladdr_symbol("glGetString", (const void *)glGetString);
+    log_dladdr_symbol("glGetString_glx", (const void *)app->gl.get_string);
     log_glx_current_bindings(app->dpy);
     log_glx_query_context_attrs(app->dpy, app->glx_context, direct);
     dump_gl_loader_maps("glx_after_make_current");
-    log_gl_get_string_diagnostics(&gl_strings);
+    log_gl_get_string_diagnostics(app, &gl_strings);
 
     fprintf(stderr,
             "host-x11-egl-smoke: glx ready version=%d.%d vendor=%s renderer=%s gl_version=%s\n",
@@ -1209,6 +1367,7 @@ main(int argc, char **argv)
     app.egl_context = EGL_NO_CONTEXT;
     app.egl_surface = EGL_NO_SURFACE;
     app.running = 1;
+    set_linked_gl_api(&app);
     x11_connect_only = x11_connect_only_requested(argc, argv);
     glx_probe_only = glx_probe_only_requested(argc, argv);
 
