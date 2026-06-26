@@ -900,11 +900,11 @@ proc x11_egl_glx_probe_failure_suffix {saw_start saw_connect saw_egl_init saw_gl
     return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings draw=$saw_draw result=$saw_result exit_status=$exit_status"
 }
 
-proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending exit_status} {
-    return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value variant=$variant requested_depth=$requested_depth result_variant=$result_variant oml_available=$oml_available queue_depth=$queue_depth sbc_issued=$sbc_issued sbc_completed=$sbc_completed max_pending=$max_pending exit_status=$exit_status"
+proc x11_glx_fps_failure_suffix {saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total exit_status} {
+    return "start=$saw_start x11_connect=$saw_connect egl_initialize=$saw_egl_init glx_query_extension=$saw_glx_ext glx_query_version=$saw_glx_version glx_fbconfigs=$saw_fbconfigs glx_choose_visual=$saw_visual glx_create_context=$saw_context glx_make_current=$saw_current gl_strings=$saw_strings fps_begin=$saw_fps_begin fps_result=$saw_fps_result fps_status=$fps_status frames=$fps_frames elapsed_seconds=$fps_elapsed fps=$fps_value variant=$variant requested_depth=$requested_depth result_variant=$result_variant oml_available=$oml_available queue_depth=$queue_depth sbc_issued=$sbc_issued sbc_completed=$sbc_completed max_pending=$max_pending oml_gl_flush_total_ms=$gl_flush_total oml_swap_msc_issue_total_ms=$swap_msc_issue_total exit_status=$exit_status"
 }
 
-proc x11_glx_fps_oml_queue_failure_label {variant expected_variant expected_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending label_prefix} {
+proc x11_glx_fps_oml_queue_failure_label {variant expected_variant expected_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending label_prefix {gl_flush_total ""} {swap_msc_issue_total ""} {require_split_timing 0}} {
     if {$variant ne $expected_variant} {
         return ""
     }
@@ -947,11 +947,29 @@ proc x11_glx_fps_oml_queue_failure_label {variant expected_variant expected_dept
     if {$max_pending != $expected_depth} {
         return "${label_prefix}-max-pending-mismatch"
     }
+    if {$require_split_timing} {
+        if {$gl_flush_total eq ""} {
+            return "${label_prefix}-gl-flush-total-missing"
+        }
+        if {![string is double -strict $gl_flush_total] || $gl_flush_total < 0} {
+            return "${label_prefix}-gl-flush-total-invalid"
+        }
+        if {$swap_msc_issue_total eq ""} {
+            return "${label_prefix}-swap-msc-issue-total-missing"
+        }
+        if {![string is double -strict $swap_msc_issue_total] || $swap_msc_issue_total < 0} {
+            return "${label_prefix}-swap-msc-issue-total-invalid"
+        }
+    }
     return ""
 }
 
 proc x11_glx_fps_oml_queue3_failure_label {variant result_variant oml_available queue_depth sbc_issued sbc_completed max_pending} {
     return [x11_glx_fps_oml_queue_failure_label $variant "oml-queue3-swap-only" 3 $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending "x11-glx-fps-oml"]
+}
+
+proc x11_glx_fps_oml_flush_swap_failure_label {variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total} {
+    return [x11_glx_fps_oml_queue_failure_label $variant "oml-queue-depth-flush-swap-timing" $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending "x11-glx-fps-oml-flush-swap" $gl_flush_total $swap_msc_issue_total 1]
 }
 
 proc x11_present_fps_failure_suffix {saw_start saw_connect saw_dri3 saw_present saw_select saw_fd saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value issued completed outstanding requested_variant requested_depth result_variant queue_depth max_outstanding exit_status} {
@@ -1109,7 +1127,7 @@ proc x11_egl_scan_glx_probe_log {text start_var connect_var egl_init_var glx_ext
     }
 }
 
-proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var glx_version_var fbconfigs_var visual_var context_var current_var strings_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var variant_var requested_depth_var result_variant_var oml_available_var queue_depth_var sbc_issued_var sbc_completed_var max_pending_var failure_var} {
+proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var glx_version_var fbconfigs_var visual_var context_var current_var strings_var fps_begin_var fps_result_var fps_status_var fps_frames_var fps_elapsed_var fps_value_var variant_var requested_depth_var result_variant_var oml_available_var queue_depth_var sbc_issued_var sbc_completed_var max_pending_var gl_flush_total_var swap_msc_issue_total_var failure_var} {
     upvar 1 $start_var saw_start
     upvar 1 $connect_var saw_connect
     upvar 1 $egl_init_var saw_egl_init
@@ -1134,6 +1152,8 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
     upvar 1 $sbc_issued_var sbc_issued
     upvar 1 $sbc_completed_var sbc_completed
     upvar 1 $max_pending_var max_pending
+    upvar 1 $gl_flush_total_var gl_flush_total
+    upvar 1 $swap_msc_issue_total_var swap_msc_issue_total
     upvar 1 $failure_var failure_label
 
     set in_glx_fps 0
@@ -1211,6 +1231,12 @@ proc x11_glx_fps_scan_log {text start_var connect_var egl_init_var glx_ext_var g
             }
             if {[regexp {oml_max_pending_sbc=([0-9]+)} $line -> found_max_pending]} {
                 set max_pending $found_max_pending
+            }
+            if {[regexp {oml_gl_flush_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_gl_flush_total _]} {
+                set gl_flush_total $found_gl_flush_total
+            }
+            if {[regexp {oml_swap_msc_issue_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found_swap_msc_issue_total _]} {
+                set swap_msc_issue_total $found_swap_msc_issue_total
             }
         }
         if {$failure_label eq ""} {
@@ -1605,9 +1631,11 @@ proc run_kde_x11_glx_fps_session_probe {} {
     set sbc_issued ""
     set sbc_completed ""
     set max_pending ""
+    set gl_flush_total ""
+    set swap_msc_issue_total ""
     set failure_label ""
-    x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending failure_label
-    set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $exit_status]
+    x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth result_variant oml_available queue_depth sbc_issued sbc_completed max_pending gl_flush_total swap_msc_issue_total failure_label
+    set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $gl_flush_total $swap_msc_issue_total $exit_status]
     host_screenshot "x11-egl" $host_x11_egl_png
 
     if {$failure_label ne ""} {
@@ -1633,6 +1661,10 @@ proc run_kde_x11_glx_fps_session_probe {} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $oml_failure_label $suffix"
     }
     set oml_failure_label [x11_glx_fps_oml_queue_failure_label $variant "oml-queue-depth-swap-only" $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending "x11-glx-fps-oml-queue-depth"]
+    if {$oml_failure_label ne ""} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $oml_failure_label $suffix"
+    }
+    set oml_failure_label [x11_glx_fps_oml_flush_swap_failure_label $variant $requested_depth $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $gl_flush_total $swap_msc_issue_total]
     if {$oml_failure_label ne ""} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $oml_failure_label $suffix"
     }

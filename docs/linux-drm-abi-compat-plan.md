@@ -463,6 +463,34 @@ raw Present and likely in GLX/Mesa/Xwayland OML swap issue, flush, or
 throttling. The next reducer should split OML `glFlush` versus `swap_msc`
 issue timing, not start from a speculative kernel patch.
 
+GLX OML flush/swap split reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=oml-queue-depth-flush-swap-timing kde_x11_egl_glx_fps_oml_queue_depth=8 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-081854-x11-glx-fps-oml-flush-swap-depth8-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+frames=213 elapsed_seconds=5.085129 fps=41.887
+variant=oml-queue-depth-flush-swap-timing
+oml_available=1 oml_queue_depth=8 oml_sbc_issued=213 oml_sbc_completed=213 oml_max_pending_sbc=8
+oml_issue_total_ms=4770.389 oml_wait_total_ms=202.580 oml_drain_wait_total_ms=65.749 oml_gl_flush_before_swap=1
+oml_gl_flush_total_ms=7.406 oml_swap_msc_issue_total_ms=4762.982
+draw_total_ms=19.464 swap_total_ms=4762.982 final_xsync_ms=3.898 avg_swap_ms=22.361
+QEMU trace: ctx_submit=609 set_scanout=82 res_flush=82 fence_ctrl/fence_resp=609/609 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+The new xv6-owned reducer variant exists in uncommitted code as
+`oml-queue-depth-flush-swap-timing` and must be requested explicitly through
+`QEMU_APPEND_EXTRA`; plain `KDE_SMOKE_REDUCER=x11-glx-fps` remains
+backward-compatible after the audit adjustment. The residual GLX gap is not
+explained by pre-swap `glFlush` cost: `glFlush` accounts for only 7.406 ms,
+while `glXSwapBuffersMscOML` issue accounts for 4762.982 ms of the 4770.389 ms
+OML issue bucket. This points at the GLX/Mesa/Xwayland swap/MSC
+issue/throttling path above raw Present, not at a speculative kernel fence
+starvation patch. Next evidence should compare the GLX/Xwayland/Mesa swap
+request path or add a GLX non-OML/present-backed split, not alter kernel
+behavior.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
@@ -569,11 +597,13 @@ baseline. Depth-8 queueing then moved raw Present to 54.980 FPS, essentially
 matching the Linux GLX control at 55.638 FPS, while GLX OML swap-only only
 rose to 44.611 FPS and spent about 4.82s in OML issue/swap MSC time. Queue
 depth now explains raw Present pacing; the residual gap sits above raw Present
-in GLX/Mesa/Xwayland OML swap issue, flush, or throttling. The next reducer
-should split OML `glFlush` versus `swap_msc` issue timing rather than starting
-from a speculative kernel patch. The current virtgpu fence trace still shows
-submitted and responded fences matching 1:1, so raw virtgpu fence starvation
-remains unproven. The
+in GLX/Mesa/Xwayland OML swap issue or throttling. The flush/swap split
+variant recorded only 7.406 ms in pre-swap `glFlush` but 4762.982 ms in
+`glXSwapBuffersMscOML` issue at depth 8, so the next evidence should compare
+the GLX/Xwayland/Mesa swap request path or add a GLX non-OML/present-backed
+split rather than starting from a speculative kernel patch. The current virtgpu
+fence trace still shows submitted and responded fences matching 1:1, so raw
+virtgpu fence starvation remains unproven. The
 remaining `DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
 `handle=0`.
 

@@ -49,6 +49,7 @@ enum glx_fps_variant_kind {
     GLX_FPS_VARIANT_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY,
     GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY,
+    GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING,
 };
 
 struct gl_api {
@@ -84,6 +85,8 @@ struct glx_fps_timing {
     int64_t oml_sbc_issued;
     int64_t oml_sbc_completed;
     int64_t oml_issue_total_ns;
+    int64_t oml_gl_flush_total_ns;
+    int64_t oml_swap_msc_issue_total_ns;
     int64_t oml_wait_total_ns;
     int64_t oml_drain_wait_total_ns;
     int64_t oml_last_ust;
@@ -1535,6 +1538,8 @@ glx_fps_variant_kind_name(enum glx_fps_variant_kind kind)
         return "oml-queue3-swap-only";
     case GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY:
         return "oml-queue-depth-swap-only";
+    case GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING:
+        return "oml-queue-depth-flush-swap-timing";
     case GLX_FPS_VARIANT_BASELINE:
     default:
         return "baseline";
@@ -1613,6 +1618,11 @@ read_glx_fps_variant(struct glx_fps_variant *variant)
         variant->queue_depth = GLX_FPS_OML_QUEUE_DEPTH;
     } else if (strcmp(raw, "oml-queue-depth-swap-only") == 0) {
         variant->kind = GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY;
+        if (read_glx_fps_oml_queue_depth(variant) != 0) {
+            variant->kind = GLX_FPS_VARIANT_BASELINE;
+        }
+    } else if (strcmp(raw, "oml-queue-depth-flush-swap-timing") == 0) {
+        variant->kind = GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING;
         if (read_glx_fps_oml_queue_depth(variant) != 0) {
             variant->kind = GLX_FPS_VARIANT_BASELINE;
         }
@@ -1721,7 +1731,8 @@ issue_glx_fps_draw_work(struct app *app, int frame,
 
     if ((variant->kind == GLX_FPS_VARIANT_SWAP_ONLY ||
          variant->kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY ||
-         variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY) &&
+         variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY ||
+         variant->kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING) &&
         frame > 1)
         issue_gl = 0;
 
@@ -1956,23 +1967,36 @@ run_glx_fps_oml_queue_loop(struct app *app,
                app->frame < GLX_FPS_MAX_FRAMES &&
                *now_ns - start_ns < GLX_FPS_TARGET_NS) {
             int frame = app->frame + 1;
+            int64_t flush_start_ns;
+            int64_t flush_end_ns;
             int64_t issue_start_ns;
             int64_t issue_end_ns;
+            int64_t flush_ns;
+            int64_t swap_msc_ns;
             int64_t issued_sbc;
 
             if (issue_glx_fps_draw_work(app, frame, variant, timing) != 0) {
                 *failure_reason = "draw";
                 return -1;
             }
+            flush_start_ns = monotonic_ns();
             app->gl.flush();
+            flush_end_ns = monotonic_ns();
             timing->oml_gl_flush_before_swap = 1;
             issue_start_ns = monotonic_ns();
             issued_sbc = oml.swap_buffers_msc(app->dpy, app->win, 0, 0, 0);
             issue_end_ns = monotonic_ns();
+            flush_ns = elapsed_ns(flush_start_ns, flush_end_ns);
+            swap_msc_ns = elapsed_ns(issue_start_ns, issue_end_ns);
             add_timing_sample(&timing->swap_total_ns, &timing->max_swap_ns,
-                              elapsed_ns(issue_start_ns, issue_end_ns));
-            timing->oml_issue_total_ns +=
-                elapsed_ns(issue_start_ns, issue_end_ns);
+                              swap_msc_ns);
+            timing->oml_gl_flush_total_ns += flush_ns;
+            timing->oml_swap_msc_issue_total_ns += swap_msc_ns;
+            if (variant->kind ==
+                GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING)
+                timing->oml_issue_total_ns += flush_ns + swap_msc_ns;
+            else
+                timing->oml_issue_total_ns += swap_msc_ns;
             if (issued_sbc <= 0) {
                 fprintf(stderr,
                         "host-x11-egl-smoke: phase=glx_fps_oml_issue status=FAIL reason=oml-issue frame=%d issued_sbc=%" PRId64 " pending=%d\n",
@@ -2025,7 +2049,7 @@ log_glx_fps_timing(const char *status, const char *result_status,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
+                "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->draw_total_ns),
@@ -2046,9 +2070,11 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 ns_to_ms(timing->oml_drain_wait_total_ns),
                 timing->oml_gl_flush_before_swap,
                 timing->oml_last_ust, timing->oml_last_msc,
-                timing->oml_last_sbc);
+                timing->oml_last_sbc,
+                ns_to_ms(timing->oml_gl_flush_total_ns),
+                ns_to_ms(timing->oml_swap_msc_issue_total_ns));
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
+                "host-x11-egl-smoke: phase=glx_fps_phase_timing status=%s result_status=%s frames=%d event_total_ms=%.3f gl_issue_total_ms=%.3f gl_error_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_gl_issue_ms=%.3f max_gl_error_ms=%.3f max_swap_ms=%.3f max_event_ms=%.3f variant=%s gl_finish_before_swap_total_ms=%.3f max_gl_finish_before_swap_ms=%.3f swap_only_skipped_draw_frames=%d invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f\n",
                 status, result_status, frames,
                 ns_to_ms(timing->event_total_ns),
                 ns_to_ms(timing->gl_issue_total_ns),
@@ -2071,7 +2097,9 @@ log_glx_fps_timing(const char *status, const char *result_status,
                 ns_to_ms(timing->oml_drain_wait_total_ns),
                 timing->oml_gl_flush_before_swap,
                 timing->oml_last_ust, timing->oml_last_msc,
-                timing->oml_last_sbc);
+                timing->oml_last_sbc,
+                ns_to_ms(timing->oml_gl_flush_total_ns),
+                ns_to_ms(timing->oml_swap_msc_issue_total_ns));
     } else {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_timing status=%s result_status=%s frames=%d event_total_ms=%.3f draw_total_ms=%.3f swap_total_ms=%.3f final_xsync_ms=%.3f max_swap_ms=%.3f max_draw_ms=%.3f max_event_ms=%.3f avg_swap_ms=%.3f\n",
@@ -2122,7 +2150,7 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
 
     if (variant_active) {
         fprintf(stderr,
-                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d variant=%s invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 "\n",
+                "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d variant=%s invalid_variant=%d oml_available=%d oml_queue_depth=%d oml_sbc_issued=%" PRId64 " oml_sbc_completed=%" PRId64 " oml_max_pending_sbc=%d oml_issue_total_ms=%.3f oml_wait_total_ms=%.3f oml_drain_wait_total_ms=%.3f oml_gl_flush_before_swap=%d oml_last_ust=%" PRId64 " oml_last_msc=%" PRId64 " oml_last_sbc=%" PRId64 " oml_gl_flush_total_ms=%.3f oml_swap_msc_issue_total_ms=%.3f\n",
                 status, safe_str(reason), renderer_buf, vendor_buf,
                 version_buf, app->glx_direct_available, app->glx_direct,
                 frames, elapsed_seconds, fps,
@@ -2139,7 +2167,9 @@ log_glx_fps_result(struct app *app, const char *status, const char *reason,
                 timing ? timing->oml_gl_flush_before_swap : 0,
                 timing ? timing->oml_last_ust : 0,
                 timing ? timing->oml_last_msc : 0,
-                timing ? timing->oml_last_sbc : 0);
+                timing ? timing->oml_last_sbc : 0,
+                timing ? ns_to_ms(timing->oml_gl_flush_total_ns) : 0.0,
+                timing ? ns_to_ms(timing->oml_swap_msc_issue_total_ns) : 0.0);
     } else {
         fprintf(stderr,
                 "host-x11-egl-smoke: phase=glx_fps_result status=%s mode=glx-fps reason=%s renderer=\"%s\" vendor=\"%s\" gl_version=\"%s\" direct_available=%d direct=%d frames=%d elapsed_seconds=%.6f fps=%.3f target_seconds=%.3f max_frames=%d\n",
@@ -2218,7 +2248,8 @@ run_glx_fps(struct app *app)
     start_ns = monotonic_ns();
     now_ns = start_ns;
     if (variant.kind == GLX_FPS_VARIANT_OML_QUEUE3_SWAP_ONLY ||
-        variant.kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY) {
+        variant.kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_SWAP_ONLY ||
+        variant.kind == GLX_FPS_VARIANT_OML_QUEUE_DEPTH_FLUSH_SWAP_TIMING) {
         if (run_glx_fps_oml_queue_loop(app, &variant, &timing, start_ns,
                                        &now_ns, &loop_failure_reason) != 0)
             loop_failed = 1;
