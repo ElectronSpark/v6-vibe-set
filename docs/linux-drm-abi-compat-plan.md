@@ -890,6 +890,37 @@ timing are still durable. The next reducer/fix should target virtgpu execbuffer
 wait or completion semantics in the GLX swap path, with kernel-side reducer
 evidence before any behavior-changing patch.
 
+No-code kernel DRM trace rerun for the same plain GLX swap path:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=1 chrome_drm_fence_trace=1' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-152439-x11-glx-fps-glx-swap-kernel-drm-trace-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_result status=PASS frames=22 elapsed_seconds=5.455607 fps=4.033 variant=swap-interval0-swap-only
+glx_swap_trace_result status=PASS glx_swap_buffers_calls=22 glx_swap_total_ms=4984.597 glx_swap_syscall_ioctl_calls=24 glx_swap_syscall_ioctl_total_ms=2972.696 glx_swap_syscall_poll_ppoll_total_ms=1889.895
+glx_swap_ioctl_trace_result status=PASS ioctl_bucket_count=3 ioctl_bucket_drops=0 top_count=3 top0_name=DRM_IOCTL_VIRTGPU_EXECBUFFER top0_role=drm-render top0_calls=22 top0_total_ms=2836.083 top0_ret_ok=22 top0_ret_fail=0
+Kernel `execbuffer-time` aggregate for the GLX probe process (`pid=122`, owner `14:58`):
+count=22 kernel_work_total_us=11710 submit_us=8993 trace_log_us=531539 max_work_us=2709 max_submit_us=2584 max_trace_log_us=77370
+All traced execbuffers in the run:
+count=68 kernel_work_total_us=71835 submit_us=26025 trace_log_us=1713469
+QEMU trace: ctx_submit=110 set_scanout=26 res_flush=26 fence_ctrl/fence_resp=110/110 res_create_3d=43 res_xfer_toh_3d=2
+```
+
+This run used only existing kernel trace flags; no source changed. It is
+intentionally not a performance comparison because per-call kernel `printf`
+tracing is highly intrusive: FPS fell to 4.033 and kernel-side
+`trace_log_us` alone reached 531.539 ms for the 22 GLX-probe execbuffers,
+while all traced execbuffers spent 1.713469 seconds in trace logging. Still,
+the existing phase split is useful: the measured GLX-probe execbuffer work
+body was only 11.710 ms total, with 8.993 ms in `submit_us`, zero
+`in_fence_us`, 1.073 ms in command copy, 0.042 ms in BO resolve, and 1.026 ms
+in out-fence export. That contradicts a theory that the several seconds of
+user-visible `ioctl()` time are simply spent inside the already-instrumented
+execbuffer work body. The next diagnostic should therefore be a low-noise,
+aggregate kernel trace around `virtio_gpu_user_submit()`,
+`virtio_gpu_async_make_room()`, virtqueue notify/wait, and fence drain paths,
+rather than more per-call console logging or a behavior-changing patch.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
