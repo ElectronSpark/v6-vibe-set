@@ -858,6 +858,38 @@ write/send 14.086 ms. The next reducer should identify the dominant DRM ioctl
 request(s), fd roles, and wait semantics inside this GLX swap path before any
 kernel behavior patch.
 
+Swap-interval-0 plain GLX swap-only GLX-swap ioctl bucket artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-150229-x11-glx-fps-glx-swap-ioctl-trace-pass/
+Verification: git diff --check, kernel diff check, C syntax check for the
+preload, Expect completeness check, prior independent audit after the unsafe
+argument-probing rollback, host-gui-runtime/rootfs-refresh from the same
+diagnostic payload, focused no-Weston reducer PASS on first VM run, screenshots
+and QEMU trace sidecars preserved.
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+present_trace_result status=PASS pixmap_calls=248 wait_special_calls=55 poll_special_calls=942 complete_events=247 complete_copy=246 complete_suboptimal_copy=1
+glx_swap_trace_result status=PASS pid=122 glx_swap_buffers_calls=248 glx_swap_total_ms=4911.838 glx_swap_accounted_present_ms=435.933 glx_swap_accounted_xcb_ms=131.684 glx_swap_syscall_total_ms=4554.907 glx_swap_syscall_above_x11_ms=4053.719 glx_swap_syscall_ioctl_calls=250 glx_swap_syscall_ioctl_total_ms=4031.183 glx_swap_syscall_poll_ppoll_total_ms=452.705
+glx_swap_ioctl_trace_result status=PASS ioctl_bucket_count=3 ioctl_bucket_drops=0 top_count=3 top0_name=DRM_IOCTL_VIRTGPU_EXECBUFFER top0_role=drm-render top0_calls=248 top0_total_ms=4025.443 top0_max_ms=35.309 top0_ret_ok=248 top0_ret_fail=0 top0_shape=none top1_name=DRM_IOCTL_VIRTGPU_RESOURCE_CREATE top1_role=drm-render top1_calls=1 top1_total_ms=5.656 top2_name=DRM_IOCTL_PRIME_HANDLE_TO_FD top2_role=drm-render top2_calls=1 top2_total_ms=0.084
+frames=248 elapsed_seconds=5.028198 fps=49.322 variant=swap-interval0-swap-only
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4921.914 plain_swap_avg_ms=19.846 plain_swap_max_ms=109.130
+QEMU trace: ctx_submit=677 set_scanout=84 res_flush=84 fence_ctrl/fence_resp=677/677 res_create_3d=43 res_xfer_toh_3d=2
+```
+
+This reducer identifies the dominant kernel-facing request without changing
+KDE, Qt, KWin, Xwayland, Mesa, or Chromium source. The residual GLX swap time
+is not spread across DRI3 fd passing, generic XCB, or a mixed ioctl set:
+`DRM_IOCTL_VIRTGPU_EXECBUFFER` on the render node accounts for 4025.443 ms of
+4031.183 ms traced ioctl time and succeeds on every per-frame call. The
+artifact records `top*_shape=none`; the current tracer reads ioctl arguments
+through a fail-closed self `process_vm_readv` path, but this run does not log
+the read errno. Request identity, fd role, call count, return status, and
+timing are still durable. The next reducer/fix should target virtgpu execbuffer
+wait or completion semantics in the GLX swap path, with kernel-side reducer
+evidence before any behavior-changing patch.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 

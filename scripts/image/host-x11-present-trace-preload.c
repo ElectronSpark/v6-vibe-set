@@ -11,9 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
@@ -66,11 +66,137 @@ typedef struct {
 } xcb_present_complete_notify_event_t;
 
 #define MAX_PRESENT_SPECIAL_EVENTS 64
+#define MAX_IOCTL_BUCKETS 12
+#define MAX_FD_ROLE_CACHE 16
+#define DRM_IOCTL_TYPE 'd'
+#define DRM_COMMAND_BASE 0x40
+#define DRM_IOCTL_NR_PRIME_HANDLE_TO_FD 0x2d
+#define DRM_IOCTL_NR_PRIME_FD_TO_HANDLE 0x2e
+#define DRM_IOCTL_NR_WAIT_VBLANK 0x3a
+#define DRM_IOCTL_NR_MODE_ATOMIC 0xbc
+#define DRM_IOCTL_NR_SYNCOBJ_WAIT 0xc3
+#define DRM_IOCTL_NR_SYNCOBJ_RESET 0xc4
+#define DRM_IOCTL_NR_SYNCOBJ_SIGNAL 0xc5
+#define DRM_IOCTL_NR_SYNCOBJ_TIMELINE_WAIT 0xca
+#define DRM_IOCTL_NR_SYNCOBJ_TRANSFER 0xcc
+#define DRM_IOCTL_NR_SYNCOBJ_EVENTFD 0xcf
+#define DRM_IOCTL_NR_VIRTGPU_EXECBUFFER (DRM_COMMAND_BASE + 0x02)
+#define DRM_IOCTL_NR_VIRTGPU_GETPARAM (DRM_COMMAND_BASE + 0x03)
+#define DRM_IOCTL_NR_VIRTGPU_RESOURCE_CREATE (DRM_COMMAND_BASE + 0x04)
+#define DRM_IOCTL_NR_VIRTGPU_RESOURCE_INFO (DRM_COMMAND_BASE + 0x05)
+#define DRM_IOCTL_NR_VIRTGPU_TRANSFER_FROM_HOST (DRM_COMMAND_BASE + 0x06)
+#define DRM_IOCTL_NR_VIRTGPU_TRANSFER_TO_HOST (DRM_COMMAND_BASE + 0x07)
+#define DRM_IOCTL_NR_VIRTGPU_WAIT (DRM_COMMAND_BASE + 0x08)
+#define DRM_IOCTL_NR_VIRTGPU_GET_CAPS (DRM_COMMAND_BASE + 0x09)
+#define DRM_IOCTL_NR_VIRTGPU_CONTEXT_INIT (DRM_COMMAND_BASE + 0x0b)
 
 struct syscall_family_stats {
     uint64_t calls;
     uint64_t total_ns;
     uint64_t max_ns;
+};
+
+enum ioctl_fd_role {
+    IOCTL_FD_ROLE_DRM_RENDER,
+    IOCTL_FD_ROLE_DRM_CARD,
+    IOCTL_FD_ROLE_SYNC_FILE,
+    IOCTL_FD_ROLE_SYNCOBJ,
+    IOCTL_FD_ROLE_DMABUF,
+    IOCTL_FD_ROLE_EVENTFD,
+    IOCTL_FD_ROLE_SOCKET,
+    IOCTL_FD_ROLE_OTHER,
+    IOCTL_FD_ROLE_UNKNOWN,
+};
+
+enum ioctl_shape_kind {
+    IOCTL_SHAPE_NONE,
+    IOCTL_SHAPE_VIRTGPU_WAIT,
+    IOCTL_SHAPE_VIRTGPU_EXECBUFFER,
+    IOCTL_SHAPE_SYNCOBJ_WAIT,
+    IOCTL_SHAPE_SYNCOBJ_TIMELINE_WAIT,
+    IOCTL_SHAPE_MODE_ATOMIC,
+};
+
+struct ioctl_shape {
+    enum ioctl_shape_kind kind;
+    uint64_t a;
+    uint64_t b;
+    uint64_t c;
+    uint64_t d;
+    int64_t s;
+};
+
+struct ioctl_bucket {
+    int used;
+    unsigned long request;
+    enum ioctl_fd_role role;
+    uint64_t calls;
+    uint64_t total_ns;
+    uint64_t max_ns;
+    uint64_t nested_x11_ns;
+    uint64_t ret_ok;
+    uint64_t ret_fail;
+    int last_errno;
+    struct ioctl_shape last_shape;
+};
+
+struct fd_role_cache_entry {
+    int used;
+    int fd;
+    char target[160];
+    enum ioctl_fd_role role;
+};
+
+struct drm_virtgpu_3d_wait_trace {
+    uint32_t handle;
+    uint32_t flags;
+};
+
+struct drm_virtgpu_execbuffer_trace {
+    uint32_t flags;
+    uint32_t size;
+    uint64_t command;
+    uint64_t bo_handles;
+    uint32_t num_bo_handles;
+    int32_t fence_fd;
+    uint32_t ring_idx;
+    uint32_t syncobj_stride;
+    uint32_t num_in_syncobjs;
+    uint32_t num_out_syncobjs;
+    uint64_t in_syncobjs;
+    uint64_t out_syncobjs;
+};
+
+struct drm_syncobj_wait_trace {
+    uint64_t handles;
+    int64_t timeout_nsec;
+    uint32_t count_handles;
+    uint32_t flags;
+    uint32_t first_signaled;
+    uint32_t pad;
+    uint64_t deadline_nsec;
+};
+
+struct drm_syncobj_timeline_wait_trace {
+    uint64_t handles;
+    uint64_t points;
+    int64_t timeout_nsec;
+    uint32_t count_handles;
+    uint32_t flags;
+    uint32_t first_signaled;
+    uint32_t pad;
+    uint64_t deadline_nsec;
+};
+
+struct drm_mode_atomic_trace {
+    uint32_t flags;
+    uint32_t count_objs;
+    uint64_t objs_ptr;
+    uint64_t count_props_ptr;
+    uint64_t props_ptr;
+    uint64_t prop_values_ptr;
+    uint64_t reserved;
+    uint64_t user_data;
 };
 
 struct present_trace_stats {
@@ -187,11 +313,17 @@ static int sendmsg_resolved;
 static int present_id_missing_recorded;
 static int present_lib_handle_resolved;
 static xcb_special_event_t *present_special_events[MAX_PRESENT_SPECIAL_EVENTS];
+static struct ioctl_bucket ioctl_buckets[MAX_IOCTL_BUCKETS];
+static struct fd_role_cache_entry fd_role_cache[MAX_FD_ROLE_CACHE];
 static volatile int present_special_events_lock;
+static volatile int ioctl_bucket_lock;
+static volatile int fd_role_cache_lock;
+static uint64_t ioctl_bucket_drops;
 static __thread int glx_swap_depth;
 static __thread int glx_swap_x11_real_call_depth;
 static __thread int present_special_wait_depth;
 static __thread int syscall_trace_suppressed;
+static __thread int fd_role_lookup_depth;
 
 typedef xcb_void_cookie_t (*present_pixmap_fn)(
     xcb_connection_t *, xcb_window_t, xcb_pixmap_t, uint32_t, xcb_xfixes_region_t,
@@ -293,6 +425,386 @@ static uint64_t load_u64(uint64_t *ptr)
 static uint32_t load_u32(uint32_t *ptr)
 {
     return __atomic_load_n(ptr, __ATOMIC_RELAXED);
+}
+
+static void ioctl_bucket_lock_acquire(void)
+{
+    while (__sync_lock_test_and_set(&ioctl_bucket_lock, 1))
+        ;
+}
+
+static void ioctl_bucket_lock_release(void)
+{
+    __sync_lock_release(&ioctl_bucket_lock);
+}
+
+static void fd_role_cache_lock_acquire(void)
+{
+    while (__sync_lock_test_and_set(&fd_role_cache_lock, 1))
+        ;
+}
+
+static void fd_role_cache_lock_release(void)
+{
+    __sync_lock_release(&fd_role_cache_lock);
+}
+
+static const char *ioctl_fd_role_name(enum ioctl_fd_role role)
+{
+    switch (role) {
+    case IOCTL_FD_ROLE_DRM_RENDER:
+        return "drm-render";
+    case IOCTL_FD_ROLE_DRM_CARD:
+        return "drm-card";
+    case IOCTL_FD_ROLE_SYNC_FILE:
+        return "sync-file";
+    case IOCTL_FD_ROLE_SYNCOBJ:
+        return "syncobj";
+    case IOCTL_FD_ROLE_DMABUF:
+        return "dmabuf";
+    case IOCTL_FD_ROLE_EVENTFD:
+        return "eventfd";
+    case IOCTL_FD_ROLE_SOCKET:
+        return "socket";
+    case IOCTL_FD_ROLE_OTHER:
+        return "other";
+    case IOCTL_FD_ROLE_UNKNOWN:
+    default:
+        return "unknown";
+    }
+}
+
+static enum ioctl_fd_role classify_fd_target(const char *target)
+{
+    if (!target || !target[0])
+        return IOCTL_FD_ROLE_UNKNOWN;
+    if (strncmp(target, "/dev/dri/renderD", 16) == 0)
+        return IOCTL_FD_ROLE_DRM_RENDER;
+    if (strncmp(target, "/dev/dri/card", 13) == 0)
+        return IOCTL_FD_ROLE_DRM_CARD;
+    if (strncmp(target, "socket:", 7) == 0)
+        return IOCTL_FD_ROLE_SOCKET;
+    if (strstr(target, "sync_file") || strstr(target, "sync-file"))
+        return IOCTL_FD_ROLE_SYNC_FILE;
+    if (strstr(target, "syncobj"))
+        return IOCTL_FD_ROLE_SYNCOBJ;
+    if (strstr(target, "dmabuf") || strstr(target, "dma-buf"))
+        return IOCTL_FD_ROLE_DMABUF;
+    if (strstr(target, "eventfd"))
+        return IOCTL_FD_ROLE_EVENTFD;
+    return IOCTL_FD_ROLE_OTHER;
+}
+
+static enum ioctl_fd_role classify_ioctl_fd_role(int fd)
+{
+    char proc_path[64];
+    char target[160];
+    ssize_t len;
+    enum ioctl_fd_role role;
+    size_t i;
+    size_t slot;
+
+    if (fd < 0 || fd_role_lookup_depth > 0)
+        return IOCTL_FD_ROLE_UNKNOWN;
+
+    fd_role_lookup_depth++;
+    syscall_trace_suppressed++;
+    snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%d", fd);
+    len = readlink(proc_path, target, sizeof(target) - 1);
+    syscall_trace_suppressed--;
+    fd_role_lookup_depth--;
+
+    if (len < 0) {
+        target[0] = '\0';
+        role = IOCTL_FD_ROLE_UNKNOWN;
+    } else {
+        target[len] = '\0';
+        role = classify_fd_target(target);
+    }
+
+    fd_role_cache_lock_acquire();
+    for (i = 0; i < MAX_FD_ROLE_CACHE; i++) {
+        if (fd_role_cache[i].used && fd_role_cache[i].fd == fd &&
+            strcmp(fd_role_cache[i].target, target) == 0) {
+            role = fd_role_cache[i].role;
+            fd_role_cache_lock_release();
+            return role;
+        }
+    }
+
+    slot = (size_t)fd % MAX_FD_ROLE_CACHE;
+    for (i = 0; i < MAX_FD_ROLE_CACHE; i++) {
+        if (!fd_role_cache[i].used ||
+            (fd_role_cache[i].fd == fd &&
+             fd_role_cache[i].role == IOCTL_FD_ROLE_UNKNOWN)) {
+            slot = i;
+            break;
+        }
+    }
+    fd_role_cache[slot].used = 1;
+    fd_role_cache[slot].fd = fd;
+    snprintf(fd_role_cache[slot].target, sizeof(fd_role_cache[slot].target),
+             "%s", target);
+    fd_role_cache[slot].role = role;
+    fd_role_cache_lock_release();
+    return role;
+}
+
+static int ioctl_fd_role_is_drm(enum ioctl_fd_role role)
+{
+    return role == IOCTL_FD_ROLE_DRM_RENDER ||
+           role == IOCTL_FD_ROLE_DRM_CARD;
+}
+
+static int read_ioctl_arg(const void *arg, void *dst, size_t size)
+{
+    struct iovec local_iov;
+    struct iovec remote_iov;
+    ssize_t nread;
+    int saved_errno = errno;
+
+    if (!arg || !dst || size == 0)
+        return 0;
+
+    local_iov.iov_base = dst;
+    local_iov.iov_len = size;
+    remote_iov.iov_base = (void *)arg;
+    remote_iov.iov_len = size;
+    syscall_trace_suppressed++;
+    nread = process_vm_readv(getpid(), &local_iov, 1, &remote_iov, 1, 0);
+    syscall_trace_suppressed--;
+    errno = saved_errno;
+    return nread == (ssize_t)size;
+}
+
+static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
+                                const void *arg, struct ioctl_shape *shape)
+{
+    unsigned int type = _IOC_TYPE(request);
+    unsigned int nr = _IOC_NR(request);
+
+    memset(shape, 0, sizeof(*shape));
+    if (!arg || type != DRM_IOCTL_TYPE || !ioctl_fd_role_is_drm(role))
+        return;
+
+    switch (nr) {
+    case DRM_IOCTL_NR_VIRTGPU_WAIT: {
+        struct drm_virtgpu_3d_wait_trace wait;
+
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+            return;
+        shape->kind = IOCTL_SHAPE_VIRTGPU_WAIT;
+        shape->a = wait.handle;
+        shape->b = wait.flags;
+        break;
+    }
+    case DRM_IOCTL_NR_VIRTGPU_EXECBUFFER: {
+        struct drm_virtgpu_execbuffer_trace execbuf;
+
+        if (!read_ioctl_arg(arg, &execbuf, sizeof(execbuf)))
+            return;
+        shape->kind = IOCTL_SHAPE_VIRTGPU_EXECBUFFER;
+        shape->a = execbuf.flags;
+        shape->b = execbuf.size;
+        shape->c = execbuf.num_bo_handles;
+        shape->s = execbuf.fence_fd;
+        break;
+    }
+    case DRM_IOCTL_NR_SYNCOBJ_WAIT: {
+        struct drm_syncobj_wait_trace wait;
+
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+            return;
+        shape->kind = IOCTL_SHAPE_SYNCOBJ_WAIT;
+        shape->a = wait.count_handles;
+        shape->b = wait.flags;
+        shape->s = wait.timeout_nsec;
+        break;
+    }
+    case DRM_IOCTL_NR_SYNCOBJ_TIMELINE_WAIT: {
+        struct drm_syncobj_timeline_wait_trace wait;
+
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+            return;
+        shape->kind = IOCTL_SHAPE_SYNCOBJ_TIMELINE_WAIT;
+        shape->a = wait.count_handles;
+        shape->b = wait.flags;
+        shape->s = wait.timeout_nsec;
+        break;
+    }
+    case DRM_IOCTL_NR_MODE_ATOMIC: {
+        struct drm_mode_atomic_trace atomic;
+
+        if (!read_ioctl_arg(arg, &atomic, sizeof(atomic)))
+            return;
+        shape->kind = IOCTL_SHAPE_MODE_ATOMIC;
+        shape->a = atomic.flags;
+        shape->b = atomic.count_objs;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void ioctl_request_name(unsigned long request, char *buf, size_t size)
+{
+    unsigned int type = _IOC_TYPE(request);
+    unsigned int nr = _IOC_NR(request);
+
+    if (type == DRM_IOCTL_TYPE) {
+        switch (nr) {
+        case DRM_IOCTL_NR_VIRTGPU_WAIT:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_WAIT");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_EXECBUFFER:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_EXECBUFFER");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_RESOURCE_CREATE:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_RESOURCE_CREATE");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_RESOURCE_INFO:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_RESOURCE_INFO");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_TRANSFER_TO_HOST:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_TRANSFER_FROM_HOST:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_GETPARAM:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_GETPARAM");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_GET_CAPS:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_GET_CAPS");
+            return;
+        case DRM_IOCTL_NR_VIRTGPU_CONTEXT_INIT:
+            snprintf(buf, size, "DRM_IOCTL_VIRTGPU_CONTEXT_INIT");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_WAIT:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_WAIT");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_TIMELINE_WAIT:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_EVENTFD:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_EVENTFD");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_SIGNAL:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_SIGNAL");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_RESET:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_RESET");
+            return;
+        case DRM_IOCTL_NR_SYNCOBJ_TRANSFER:
+            snprintf(buf, size, "DRM_IOCTL_SYNCOBJ_TRANSFER");
+            return;
+        case DRM_IOCTL_NR_MODE_ATOMIC:
+            snprintf(buf, size, "DRM_IOCTL_MODE_ATOMIC");
+            return;
+        case DRM_IOCTL_NR_WAIT_VBLANK:
+            snprintf(buf, size, "DRM_IOCTL_WAIT_VBLANK");
+            return;
+        case DRM_IOCTL_NR_PRIME_HANDLE_TO_FD:
+            snprintf(buf, size, "DRM_IOCTL_PRIME_HANDLE_TO_FD");
+            return;
+        case DRM_IOCTL_NR_PRIME_FD_TO_HANDLE:
+            snprintf(buf, size, "DRM_IOCTL_PRIME_FD_TO_HANDLE");
+            return;
+        default:
+            snprintf(buf, size, "DRM_IOCTL_NR_%u", nr);
+            return;
+        }
+    }
+
+    snprintf(buf, size, "IOCTL_0x%lx", request);
+}
+
+static void ioctl_shape_string(const struct ioctl_shape *shape, char *buf,
+                               size_t size)
+{
+    switch (shape->kind) {
+    case IOCTL_SHAPE_VIRTGPU_WAIT:
+        snprintf(buf, size, "vw:h=%" PRIu64 ",f=0x%" PRIx64, shape->a,
+                 shape->b);
+        break;
+    case IOCTL_SHAPE_VIRTGPU_EXECBUFFER:
+        snprintf(buf, size,
+                 "ve:f=0x%" PRIx64 ",sz=%" PRIu64 ",bo=%" PRIu64
+                 ",ffd=%" PRId64,
+                 shape->a, shape->b, shape->c, shape->s);
+        break;
+    case IOCTL_SHAPE_SYNCOBJ_WAIT:
+        snprintf(buf, size, "sw:n=%" PRIu64 ",to=%" PRId64 ",f=0x%" PRIx64,
+                 shape->a, shape->s, shape->b);
+        break;
+    case IOCTL_SHAPE_SYNCOBJ_TIMELINE_WAIT:
+        snprintf(buf, size, "stw:n=%" PRIu64 ",to=%" PRId64 ",f=0x%" PRIx64,
+                 shape->a, shape->s, shape->b);
+        break;
+    case IOCTL_SHAPE_MODE_ATOMIC:
+        snprintf(buf, size, "ma:f=0x%" PRIx64 ",objs=%" PRIu64, shape->a,
+                 shape->b);
+        break;
+    case IOCTL_SHAPE_NONE:
+    default:
+        snprintf(buf, size, "none");
+        break;
+    }
+}
+
+static void record_glx_swap_ioctl_detail(int fd, unsigned long request,
+                                         const void *arg, uint64_t elapsed,
+                                         int nested_x11, int result,
+                                         int saved_errno)
+{
+    enum ioctl_fd_role role = classify_ioctl_fd_role(fd);
+    struct ioctl_shape shape;
+    size_t i;
+    size_t slot = MAX_IOCTL_BUCKETS;
+
+    capture_ioctl_shape(request, role, arg, &shape);
+
+    ioctl_bucket_lock_acquire();
+    for (i = 0; i < MAX_IOCTL_BUCKETS; i++) {
+        if (ioctl_buckets[i].used && ioctl_buckets[i].request == request &&
+            ioctl_buckets[i].role == role) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == MAX_IOCTL_BUCKETS) {
+        for (i = 0; i < MAX_IOCTL_BUCKETS; i++) {
+            if (!ioctl_buckets[i].used) {
+                slot = i;
+                ioctl_buckets[i].used = 1;
+                ioctl_buckets[i].request = request;
+                ioctl_buckets[i].role = role;
+                break;
+            }
+        }
+    }
+    if (slot == MAX_IOCTL_BUCKETS) {
+        ioctl_bucket_drops++;
+        ioctl_bucket_lock_release();
+        return;
+    }
+
+    ioctl_buckets[slot].calls++;
+    ioctl_buckets[slot].total_ns += elapsed;
+    if (ioctl_buckets[slot].max_ns < elapsed)
+        ioctl_buckets[slot].max_ns = elapsed;
+    if (nested_x11)
+        ioctl_buckets[slot].nested_x11_ns += elapsed;
+    if (result < 0) {
+        ioctl_buckets[slot].ret_fail++;
+        ioctl_buckets[slot].last_errno = saved_errno;
+    } else {
+        ioctl_buckets[slot].ret_ok++;
+        ioctl_buckets[slot].last_errno = 0;
+    }
+    ioctl_buckets[slot].last_shape = shape;
+    ioctl_bucket_lock_release();
 }
 
 static void record_glx_swap_syscall(struct syscall_family_stats *family,
@@ -444,6 +956,98 @@ static void trace_logf(const char *fmt, ...)
     va_start(ap, fmt);
     trace_vlogf(fmt, ap);
     va_end(ap);
+}
+
+static void append_format(char *buf, size_t size, size_t *pos,
+                          const char *fmt, ...)
+{
+    va_list ap;
+    int len;
+
+    if (*pos >= size)
+        return;
+    va_start(ap, fmt);
+    len = vsnprintf(buf + *pos, size - *pos, fmt, ap);
+    va_end(ap);
+    if (len <= 0)
+        return;
+    if ((size_t)len >= size - *pos)
+        *pos = size - 1;
+    else
+        *pos += (size_t)len;
+}
+
+static void emit_glx_swap_ioctl_trace_result(void)
+{
+    struct ioctl_bucket buckets[MAX_IOCTL_BUCKETS];
+    char line[4096];
+    size_t count = 0;
+    size_t top_count;
+    size_t pos = 0;
+    uint64_t drops;
+    size_t i;
+    size_t j;
+
+    memset(buckets, 0, sizeof(buckets));
+    ioctl_bucket_lock_acquire();
+    for (i = 0; i < MAX_IOCTL_BUCKETS; i++) {
+        if (ioctl_buckets[i].used && count < MAX_IOCTL_BUCKETS)
+            buckets[count++] = ioctl_buckets[i];
+    }
+    drops = ioctl_bucket_drops;
+    ioctl_bucket_lock_release();
+
+    for (i = 0; i < count; i++) {
+        for (j = i + 1; j < count; j++) {
+            if (buckets[j].total_ns > buckets[i].total_ns) {
+                struct ioctl_bucket tmp = buckets[i];
+
+                buckets[i] = buckets[j];
+                buckets[j] = tmp;
+            }
+        }
+    }
+
+    top_count = count < 5 ? count : 5;
+    append_format(line, sizeof(line), &pos,
+                  "host-x11-present-trace: "
+                  "phase=glx_swap_ioctl_trace_result status=PASS pid=%ld "
+                  "glx_swap_ioctl_trace=1 ioctl_bucket_cap=%u "
+                  "ioctl_bucket_count=%zu ioctl_bucket_drops=%" PRIu64
+                  " top_count=%zu",
+                  (long)getpid(), (unsigned)MAX_IOCTL_BUCKETS, count, drops,
+                  top_count);
+
+    for (i = 0; i < top_count; i++) {
+        char name[96];
+        char shape[128];
+        uint64_t above_x11_ns = 0;
+
+        ioctl_request_name(buckets[i].request, name, sizeof(name));
+        ioctl_shape_string(&buckets[i].last_shape, shape, sizeof(shape));
+        if (buckets[i].total_ns > buckets[i].nested_x11_ns)
+            above_x11_ns = buckets[i].total_ns - buckets[i].nested_x11_ns;
+        append_format(line, sizeof(line), &pos,
+                      " top%zu_req=0x%lx top%zu_name=%s "
+                      "top%zu_role=%s top%zu_calls=%" PRIu64 " "
+                      "top%zu_total_ms=%.3f top%zu_max_ms=%.3f "
+                      "top%zu_nested_x11_ms=%.3f "
+                      "top%zu_above_x11_ms=%.3f "
+                      "top%zu_ret_ok=%" PRIu64 " "
+                      "top%zu_ret_fail=%" PRIu64 " "
+                      "top%zu_last_errno=%d top%zu_shape=%s",
+                      i, buckets[i].request, i, name, i,
+                      ioctl_fd_role_name(buckets[i].role), i,
+                      buckets[i].calls, i,
+                      (double)buckets[i].total_ns / 1000000.0, i,
+                      (double)buckets[i].max_ns / 1000000.0, i,
+                      (double)buckets[i].nested_x11_ns / 1000000.0, i,
+                      (double)above_x11_ns / 1000000.0, i,
+                      buckets[i].ret_ok, i, buckets[i].ret_fail, i,
+                      buckets[i].last_errno, i, shape);
+    }
+    append_format(line, sizeof(line), &pos, "\n");
+    trace_logf("%s", line);
 }
 
 static void *resolve_symbol(const char *name, void **slot, int *resolved)
@@ -731,7 +1335,7 @@ __attribute__((constructor)) static void present_trace_begin(void)
     } else {
         snprintf(exe, sizeof(exe), "(unknown)");
     }
-    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 glx_swap_xcb_trace=1 glx_swap_syscall_trace=1 exe=%s\n",
+    trace_logf("host-x11-present-trace: phase=present_trace status=BEGIN pid=%ld glx_swap_trace=1 glx_swap_xcb_trace=1 glx_swap_syscall_trace=1 glx_swap_ioctl_trace=1 exe=%s\n",
                (long)getpid(), exe);
 }
 
@@ -937,6 +1541,7 @@ __attribute__((destructor)) static void present_trace_end(void)
             load_u64(&stats.glx_swap_missing_symbols),
             load_u64(&stats.glx_swap_recursion_skips));
     }
+    emit_glx_swap_ioctl_trace_result();
     if (log_fd >= 0)
         close(log_fd);
 }
@@ -1471,9 +2076,12 @@ int ioctl(int fd, unsigned long request, ...)
     result = real_fn(fd, request, arg);
     saved_errno = errno;
     elapsed = trace ? elapsed_ns(start, now_ns()) : 0;
-    if (trace)
+    if (trace) {
         record_glx_swap_syscall(&stats.glx_swap_syscall_ioctl, elapsed,
                                 nested_x11);
+        record_glx_swap_ioctl_detail(fd, request, arg, elapsed, nested_x11,
+                                     result, saved_errno);
+    }
     errno = saved_errno;
     return result;
 }
