@@ -736,6 +736,34 @@ completions under KDE/Xwayland. Remaining performance work should stay above
 kernel fd passing, DRI3, and fence attribution unless a new reducer contradicts
 this proof.
 
+Swap-interval-0 plain GLX swap-only GLX-swap trace artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-swap-only kde_x11_egl_glx_present_trace=1 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-133827-x11-glx-fps-glx-swap-trace-pass/
+Verification: git diff --check, C syntax check for the preload, Expect
+completeness check, independent audit PASS, host-gui-runtime, rootfs-refresh,
+focused no-Weston reducer PASS on first VM run
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+present_trace_result status=PASS pixmap_calls=241 register_special_xge_calls=1 present_special_registrations=1 wait_special_calls=138 poll_special_calls=827 complete_events=237 complete_copy=236 complete_flip=0 complete_suboptimal_copy=1 present_fallback_symbols=2 missing_symbols=0
+glx_swap_trace_result status=PASS glx_swap_buffers_calls=241 glx_swap_buffers_msc_oml_calls=0 glx_swap_total_ms=4970.392 glx_swap_max_ms=62.572 glx_swap_nested_pixmap_calls=241 glx_swap_nested_wait_special_calls=138 glx_swap_nested_poll_special_calls=821 glx_swap_nested_complete_events=237 glx_swap_accounted_present_ms=849.765 glx_swap_above_present_ms=4120.627 glx_swap_missing_symbols=0 glx_swap_recursion_skips=0
+frames=241 elapsed_seconds=5.059753 fps=47.631 variant=swap-interval0-swap-only
+swap_interval_requested=0 swap_interval_set_api=EXT swap_interval_set_status=PASS swap_interval_before=1 swap_interval_after=0
+plain_swap_issue_total_ms=4984.843 plain_swap_avg_ms=20.684 plain_swap_max_ms=62.591
+QEMU trace: ctx_submit=668 set_scanout=84 res_flush=84 fence_ctrl/fence_resp=668/668 res_create_3d=54 res_xfer_toh_3d=2
+```
+
+This extends the child-only Present preload with passive GLX swap wrappers and
+`glXGetProcAddress*` interposition. The independent audit caught and the final
+patch fixed an availability hazard: the wrapper only returns local GLX swap
+entry points after the real GLX loader or `RTLD_NEXT` proves the target exists.
+The passing artifact shows all 241 ordinary `glXSwapBuffers` calls reached
+Present, no GLX symbols were missing, and no recursion fallback was used. The
+new split attributes about 849.765 ms of the 4970.392 ms GLX swap time to nested
+Present calls and about 4120.627 ms above Present. That keeps the next fix
+target in GLX/Mesa/Xwayland swap pacing above raw Present, not in kernel
+DRI3/fd-passing/fence behavior.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 

@@ -1735,6 +1735,127 @@ proc x11_glx_present_trace_failure_label {enabled available child_pid saw_begin 
     return ""
 }
 
+proc x11_glx_swap_trace_scan_log {text child_pid capable_var result_var result_status_var buffers_var buffers_msc_oml_var total_ms_var max_ms_var nested_pixmap_var nested_pixmap_checked_var nested_pixmap_ms_var nested_wait_var nested_poll_var nested_wait_ms_var nested_poll_ms_var nested_complete_var accounted_ms_var above_ms_var missing_symbols_var recursion_skips_var} {
+    upvar 1 $capable_var glx_swap_trace_capable
+    upvar 1 $result_var saw_result
+    upvar 1 $result_status_var result_status
+    upvar 1 $buffers_var glx_swap_buffers_calls
+    upvar 1 $buffers_msc_oml_var glx_swap_buffers_msc_oml_calls
+    upvar 1 $total_ms_var glx_swap_total_ms
+    upvar 1 $max_ms_var glx_swap_max_ms
+    upvar 1 $nested_pixmap_var glx_swap_nested_pixmap_calls
+    upvar 1 $nested_pixmap_checked_var glx_swap_nested_pixmap_checked_calls
+    upvar 1 $nested_pixmap_ms_var glx_swap_nested_pixmap_total_ms
+    upvar 1 $nested_wait_var glx_swap_nested_wait_special_calls
+    upvar 1 $nested_poll_var glx_swap_nested_poll_special_calls
+    upvar 1 $nested_wait_ms_var glx_swap_nested_wait_special_total_ms
+    upvar 1 $nested_poll_ms_var glx_swap_nested_poll_special_total_ms
+    upvar 1 $nested_complete_var glx_swap_nested_complete_events
+    upvar 1 $accounted_ms_var glx_swap_accounted_present_ms
+    upvar 1 $above_ms_var glx_swap_above_present_ms
+    upvar 1 $missing_symbols_var glx_swap_missing_symbols
+    upvar 1 $recursion_skips_var glx_swap_recursion_skips
+
+    if {$child_pid eq ""} {
+        return
+    }
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {host-x11-present-trace: phase=present_trace status=BEGIN[^\r\n]*pid=([0-9]+)[^\r\n]*glx_swap_trace=1} $line -> found_pid] &&
+            $found_pid eq $child_pid} {
+            set glx_swap_trace_capable 1
+        }
+        if {![regexp {host-x11-present-trace: phase=glx_swap_trace_result status=([^ \r\n]+)[^\r\n]*pid=([0-9]+)} $line -> found_status found_pid] ||
+            $found_pid ne $child_pid} {
+            continue
+        }
+        set glx_swap_trace_capable 1
+        set saw_result 1
+        if {$found_status ne "PASS"} {
+            set result_status $found_status
+        } elseif {$result_status eq ""} {
+            set result_status $found_status
+        }
+        if {[regexp {glx_swap_buffers_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_buffers_calls $found
+        }
+        if {[regexp {glx_swap_buffers_msc_oml_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_buffers_msc_oml_calls $found
+        }
+        if {[regexp {glx_swap_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_total_ms $found
+        }
+        if {[regexp {glx_swap_max_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_max_ms $found
+        }
+        if {[regexp {glx_swap_nested_pixmap_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_nested_pixmap_calls $found
+        }
+        if {[regexp {glx_swap_nested_pixmap_checked_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_nested_pixmap_checked_calls $found
+        }
+        if {[regexp {glx_swap_nested_pixmap_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_nested_pixmap_total_ms $found
+        }
+        if {[regexp {glx_swap_nested_wait_special_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_nested_wait_special_calls $found
+        }
+        if {[regexp {glx_swap_nested_poll_special_calls=([0-9]+)} $line -> found]} {
+            set glx_swap_nested_poll_special_calls $found
+        }
+        if {[regexp {glx_swap_nested_wait_special_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_nested_wait_special_total_ms $found
+        }
+        if {[regexp {glx_swap_nested_poll_special_total_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_nested_poll_special_total_ms $found
+        }
+        if {[regexp {glx_swap_nested_complete_events=([0-9]+)} $line -> found]} {
+            set glx_swap_nested_complete_events $found
+        }
+        if {[regexp {glx_swap_accounted_present_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_accounted_present_ms $found
+        }
+        if {[regexp {glx_swap_above_present_ms=([0-9]+(\.[0-9]+)?)} $line -> found _]} {
+            set glx_swap_above_present_ms $found
+        }
+        if {[regexp {glx_swap_missing_symbols=([0-9]+)} $line -> found]} {
+            set glx_swap_missing_symbols $found
+        }
+        if {[regexp {glx_swap_recursion_skips=([0-9]+)} $line -> found]} {
+            set glx_swap_recursion_skips $found
+        }
+    }
+}
+
+proc x11_glx_swap_trace_failure_label {child_pid saw_result result_status glx_swap_buffers_calls glx_swap_buffers_msc_oml_calls glx_swap_total_ms glx_swap_max_ms glx_swap_nested_pixmap_calls glx_swap_nested_pixmap_checked_calls glx_swap_nested_pixmap_total_ms glx_swap_nested_wait_special_calls glx_swap_nested_poll_special_calls glx_swap_nested_wait_special_total_ms glx_swap_nested_poll_special_total_ms glx_swap_nested_complete_events glx_swap_accounted_present_ms glx_swap_above_present_ms glx_swap_missing_symbols glx_swap_recursion_skips} {
+    if {$child_pid eq ""} {
+        return "x11-glx-fps-glx-swap-trace-child-pid-missing"
+    }
+    if {!$saw_result} {
+        return "x11-glx-fps-glx-swap-trace-result-missing"
+    }
+    if {$result_status ne "PASS"} {
+        return "x11-glx-fps-glx-swap-trace-result-$result_status"
+    }
+    foreach value [list $glx_swap_buffers_calls $glx_swap_buffers_msc_oml_calls $glx_swap_nested_pixmap_calls $glx_swap_nested_pixmap_checked_calls $glx_swap_nested_wait_special_calls $glx_swap_nested_poll_special_calls $glx_swap_nested_complete_events $glx_swap_missing_symbols $glx_swap_recursion_skips] {
+        if {$value eq "" || ![string is integer -strict $value] || $value < 0} {
+            return "x11-glx-fps-glx-swap-trace-counter-invalid"
+        }
+    }
+    foreach value [list $glx_swap_total_ms $glx_swap_max_ms $glx_swap_nested_pixmap_total_ms $glx_swap_nested_wait_special_total_ms $glx_swap_nested_poll_special_total_ms $glx_swap_accounted_present_ms $glx_swap_above_present_ms] {
+        if {$value eq "" || ![string is double -strict $value] || $value < 0} {
+            return "x11-glx-fps-glx-swap-trace-timing-invalid"
+        }
+    }
+    if {$glx_swap_missing_symbols != 0} {
+        return "x11-glx-fps-glx-swap-trace-missing-symbols"
+    }
+    if {$glx_swap_buffers_calls + $glx_swap_buffers_msc_oml_calls <= 0} {
+        return "x11-glx-fps-glx-swap-trace-swap-missing"
+    }
+    return ""
+}
+
 proc x11_present_fps_failure_label_from_line {line} {
     set line [string trim $line]
     if {[regexp {host-x11-dri3-present-smoke: phase=present_fps_result status=FAIL} $line]} {
@@ -2607,12 +2728,33 @@ proc run_kde_x11_glx_fps_session_probe {} {
     set trace_complete_events ""
     set trace_decode_failures ""
     set trace_missing_symbols ""
+    set glx_swap_trace_capable 0
+    set glx_swap_trace_result 0
+    set glx_swap_trace_status ""
+    set glx_swap_buffers_calls ""
+    set glx_swap_buffers_msc_oml_calls ""
+    set glx_swap_total_ms ""
+    set glx_swap_max_ms ""
+    set glx_swap_nested_pixmap_calls ""
+    set glx_swap_nested_pixmap_checked_calls ""
+    set glx_swap_nested_pixmap_total_ms ""
+    set glx_swap_nested_wait_special_calls ""
+    set glx_swap_nested_poll_special_calls ""
+    set glx_swap_nested_wait_special_total_ms ""
+    set glx_swap_nested_poll_special_total_ms ""
+    set glx_swap_nested_complete_events ""
+    set glx_swap_accounted_present_ms ""
+    set glx_swap_above_present_ms ""
+    set glx_swap_missing_symbols ""
+    set glx_swap_recursion_skips ""
     set failure_label ""
     x11_glx_fps_scan_log $log_text saw_start saw_connect saw_egl_init saw_glx_ext saw_glx_version saw_fbconfigs saw_visual saw_context saw_current saw_strings saw_fps_begin saw_fps_result fps_status fps_frames fps_elapsed fps_value variant requested_depth requested_sample_interval result_variant oml_available queue_depth sbc_issued sbc_completed max_pending oml_last_sbc gl_flush_total swap_msc_issue_total get_sync_before_total get_sync_after_total issue_state_sample_interval issue_state_sampled_ratio issue_state_first_sample_frame issue_state_last_sample_frame issue_state_first_sample_sbc issue_state_last_sample_sbc issue_state_samples post_issue_sbc_completed_count post_issue_sbc_lag_max post_issue_msc_delta_total post_issue_msc_delta_max swap_only_skipped_draw_frames swap_interval_requested swap_interval_set_api swap_interval_set_status swap_interval_before swap_interval_after plain_swap_issue_total plain_swap_avg plain_swap_max plain_oml_available plain_oml_samples plain_oml_sample_interval plain_oml_sampled_ratio plain_oml_first_sample_frame plain_oml_last_sample_frame plain_oml_get_sync_before_total plain_oml_get_sync_after_total plain_oml_before_first_sbc plain_oml_before_last_sbc plain_oml_after_first_sbc plain_oml_after_last_sbc plain_oml_post_swap_sbc_delta_total plain_oml_post_swap_sbc_delta_max plain_oml_post_swap_msc_delta_total plain_oml_post_swap_msc_delta_max plain_post_swap_xsync_total plain_post_swap_xsync_max failure_label
     x11_glx_present_trace_scan_log $log_text trace_enabled trace_available trace_child_pid trace_begin trace_result trace_status trace_pixmap_calls trace_pixmap_checked_calls trace_register_special_xge_calls trace_present_special_registrations trace_wait_special_calls trace_poll_special_calls trace_nonpresent_special_events trace_pixmap_total_ms trace_wait_special_total_ms trace_poll_special_total_ms trace_complete_events trace_decode_failures trace_missing_symbols failure_label
+    x11_glx_swap_trace_scan_log $log_text $trace_child_pid glx_swap_trace_capable glx_swap_trace_result glx_swap_trace_status glx_swap_buffers_calls glx_swap_buffers_msc_oml_calls glx_swap_total_ms glx_swap_max_ms glx_swap_nested_pixmap_calls glx_swap_nested_pixmap_checked_calls glx_swap_nested_pixmap_total_ms glx_swap_nested_wait_special_calls glx_swap_nested_poll_special_calls glx_swap_nested_wait_special_total_ms glx_swap_nested_poll_special_total_ms glx_swap_nested_complete_events glx_swap_accounted_present_ms glx_swap_above_present_ms glx_swap_missing_symbols glx_swap_recursion_skips
     set suffix [x11_glx_fps_failure_suffix $saw_start $saw_connect $saw_egl_init $saw_glx_ext $saw_glx_version $saw_fbconfigs $saw_visual $saw_context $saw_current $saw_strings $saw_fps_begin $saw_fps_result $fps_status $fps_frames $fps_elapsed $fps_value $variant $requested_depth $requested_sample_interval $result_variant $oml_available $queue_depth $sbc_issued $sbc_completed $max_pending $oml_last_sbc $gl_flush_total $swap_msc_issue_total $get_sync_before_total $get_sync_after_total $issue_state_sample_interval $issue_state_sampled_ratio $issue_state_first_sample_frame $issue_state_last_sample_frame $issue_state_first_sample_sbc $issue_state_last_sample_sbc $issue_state_samples $post_issue_sbc_completed_count $post_issue_sbc_lag_max $post_issue_msc_delta_total $post_issue_msc_delta_max $swap_only_skipped_draw_frames $swap_interval_requested $swap_interval_set_api $swap_interval_set_status $swap_interval_before $swap_interval_after $plain_swap_issue_total $plain_swap_avg $plain_swap_max $plain_oml_available $plain_oml_samples $plain_oml_sample_interval $plain_oml_sampled_ratio $plain_oml_first_sample_frame $plain_oml_last_sample_frame $plain_oml_get_sync_before_total $plain_oml_get_sync_after_total $plain_oml_before_first_sbc $plain_oml_before_last_sbc $plain_oml_after_first_sbc $plain_oml_after_last_sbc $plain_oml_post_swap_sbc_delta_total $plain_oml_post_swap_sbc_delta_max $plain_oml_post_swap_msc_delta_total $plain_oml_post_swap_msc_delta_max $plain_post_swap_xsync_total $plain_post_swap_xsync_max $exit_status]
     append suffix " log_source=$x11_egl_last_log_source log_bytes=$x11_egl_last_log_bytes log_path=$guest_host_x11_egl_log"
     append suffix " trace_enabled=$trace_enabled trace_available=$trace_available trace_child_pid=$trace_child_pid trace_begin=$trace_begin trace_result=$trace_result trace_status=$trace_status trace_pixmap_calls=$trace_pixmap_calls trace_pixmap_checked_calls=$trace_pixmap_checked_calls trace_register_special_xge_calls=$trace_register_special_xge_calls trace_present_special_registrations=$trace_present_special_registrations trace_wait_special_calls=$trace_wait_special_calls trace_poll_special_calls=$trace_poll_special_calls trace_nonpresent_special_events=$trace_nonpresent_special_events trace_pixmap_total_ms=$trace_pixmap_total_ms trace_wait_special_total_ms=$trace_wait_special_total_ms trace_poll_special_total_ms=$trace_poll_special_total_ms trace_complete_events=$trace_complete_events trace_decode_failures=$trace_decode_failures trace_missing_symbols=$trace_missing_symbols"
+    append suffix " glx_swap_trace_capable=$glx_swap_trace_capable glx_swap_trace_result=$glx_swap_trace_result glx_swap_trace_status=$glx_swap_trace_status glx_swap_buffers_calls=$glx_swap_buffers_calls glx_swap_buffers_msc_oml_calls=$glx_swap_buffers_msc_oml_calls glx_swap_total_ms=$glx_swap_total_ms glx_swap_max_ms=$glx_swap_max_ms glx_swap_nested_pixmap_calls=$glx_swap_nested_pixmap_calls glx_swap_nested_pixmap_checked_calls=$glx_swap_nested_pixmap_checked_calls glx_swap_nested_pixmap_total_ms=$glx_swap_nested_pixmap_total_ms glx_swap_nested_wait_special_calls=$glx_swap_nested_wait_special_calls glx_swap_nested_poll_special_calls=$glx_swap_nested_poll_special_calls glx_swap_nested_wait_special_total_ms=$glx_swap_nested_wait_special_total_ms glx_swap_nested_poll_special_total_ms=$glx_swap_nested_poll_special_total_ms glx_swap_nested_complete_events=$glx_swap_nested_complete_events glx_swap_accounted_present_ms=$glx_swap_accounted_present_ms glx_swap_above_present_ms=$glx_swap_above_present_ms glx_swap_missing_symbols=$glx_swap_missing_symbols glx_swap_recursion_skips=$glx_swap_recursion_skips"
     host_screenshot "x11-egl" $host_x11_egl_png
 
     if {$failure_label ne ""} {
@@ -2638,6 +2780,12 @@ proc run_kde_x11_glx_fps_session_probe {} {
         set trace_failure_label [x11_glx_present_trace_failure_label $trace_enabled $trace_available $trace_child_pid $trace_begin $trace_result $trace_status $trace_pixmap_calls $trace_pixmap_checked_calls $trace_register_special_xge_calls $trace_present_special_registrations $trace_wait_special_calls $trace_poll_special_calls $trace_nonpresent_special_events $trace_pixmap_total_ms $trace_wait_special_total_ms $trace_poll_special_total_ms $trace_complete_events $trace_decode_failures $trace_missing_symbols]
         if {$trace_failure_label ne ""} {
             finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $trace_failure_label $suffix"
+        }
+        if {$glx_swap_trace_capable || $glx_swap_trace_result} {
+            set glx_swap_trace_failure_label [x11_glx_swap_trace_failure_label $trace_child_pid $glx_swap_trace_result $glx_swap_trace_status $glx_swap_buffers_calls $glx_swap_buffers_msc_oml_calls $glx_swap_total_ms $glx_swap_max_ms $glx_swap_nested_pixmap_calls $glx_swap_nested_pixmap_checked_calls $glx_swap_nested_pixmap_total_ms $glx_swap_nested_wait_special_calls $glx_swap_nested_poll_special_calls $glx_swap_nested_wait_special_total_ms $glx_swap_nested_poll_special_total_ms $glx_swap_nested_complete_events $glx_swap_accounted_present_ms $glx_swap_above_present_ms $glx_swap_missing_symbols $glx_swap_recursion_skips]
+            if {$glx_swap_trace_failure_label ne ""} {
+                finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $glx_swap_trace_failure_label $suffix"
+            }
         }
     }
     set swap_interval0_failure_label [x11_glx_fps_swap_interval0_failure_label $variant $result_variant $fps_frames $swap_only_skipped_draw_frames $swap_interval_requested $swap_interval_set_api $swap_interval_set_status $swap_interval_after $plain_swap_issue_total $plain_swap_avg $plain_swap_max]
