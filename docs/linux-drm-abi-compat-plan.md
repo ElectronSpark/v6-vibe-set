@@ -203,6 +203,46 @@ drain (`2.962 ms` total); most time is split between pre-swap GL work
 The measured FPS is still far below the Linux baseline, so this closes the
 GLX/FPS startup evidence gap but not performance parity.
 
+Latest DRM timing diagnostic pass:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-043754-x11-glx-fps-drm-timing-pass/
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+```
+
+Key host-log evidence from the clean `host-gui-host-x11-egl-smoke.log`
+artifact:
+
+```text
+host-x11-egl-smoke: phase=glx_create_context status=PASS direct=1
+host-x11-egl-smoke: phase=gl_strings status=PASS api=glx vendor=Mesa renderer=virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)) ...
+host-x11-egl-smoke: phase=glx_fps_timing status=PASS ... frames=17 event_total_ms=0.953 draw_total_ms=2976.020 swap_total_ms=2366.149 final_xsync_ms=141.029 avg_swap_ms=139.185
+host-x11-egl-smoke: phase=glx_fps_result status=PASS ... frames=17 elapsed_seconds=5.485264 fps=3.099 ...
+host-x11-egl-smoke: phase=session_probe status=PASS mode=session probe_mode=glx-fps exit_status=0
+```
+
+Kernel/QEMU timing evidence:
+
+```text
+Xwayland execbuffer-time: count=42 avg_total_us=1469.2 max_total_us=50246 avg_submit_us=167.1 avg_trace_log_us=22397.9
+Xwayland total_us percentiles: p50=249 p90=334 max=50246
+Xwayland submit_us percentiles: p50=138 p90=227 max=729
+Xwayland trace_log_us percentiles: p50=15198 p90=46970
+no virtgpu-wait-time or execbuffer-fence-fd-wait-time lines observed
+chrome-drm-detail: syncobj-eventfd ... ret=-2 ... reject_reason=syncobj_missing
+QEMU trace: ctx_submit=119 set_scanout=34 res_flush=34 fence_ctrl/fence_resp=119/119 res_create_3d=62
+```
+
+Interpretation: the reducer completeness/status decision now uses the clean
+host artifact log rather than serial-noisy `run.log` markers. The parseable
+Xwayland timing rows show raw `virtio_gpu_user_submit` and total execbuffer
+work are usually sub-millisecond and are not the multi-ms bottleneck in this
+traced run. The lower FPS in this artifact is diagnostic overhead, not a
+performance regression: `trace_log_us` is large enough to perturb the loop.
+The remaining target moves toward user/host GL draw plus swap/present pacing,
+DRI3/Present sync behavior, or a trace-disabled confirmation run after the
+next reducer is chosen.
+
 A same-command retry before the timing pass hit a known pre-probe KWin startup
 crash signature and was preserved separately at:
 
@@ -231,7 +271,7 @@ Remaining success criteria:
 
 ### 2. KDE Performance Parity
 
-Status: open after GLX FPS timing proof; FPS is recorded but low.
+Status: open after GLX FPS and DRM timing proof; FPS is recorded but low.
 
 The current xv6 KDE desktop is visually correct and responsive, and focused
 Xwayland GLX context/draw proof now works with automatic policy mapped to
@@ -241,11 +281,22 @@ timing reducer records negligible event-drain overhead and concentrates the
 remaining delay in pre-swap GL dispatch plus `glXSwapBuffers`. It does not yet
 match the Linux KDE baseline of 55.638 FPS.
 
-Next evidence target: reduce or instrument the Xwayland/DRI3 Present and
-syncobj notification path, especially the current
-`DRM_IOCTL_SYNCOBJ_EVENTFD` `-EINVAL` from Xwayland, before making any kernel
-behavior change. The current virtgpu fence trace still shows submitted and
-responded fences matching 1:1, so raw virtgpu fence starvation is not proven.
+The latest DRM timing diagnostic pass records a clean host-artifact
+`x11-glx-fps` pass at 17 frames over 5.485264 seconds, or 3.099 FPS, with
+`draw_total_ms=2976.020`, `swap_total_ms=2366.149`, and
+`avg_swap_ms=139.185`. Its kernel timing shows Xwayland execbuffer submission
+itself is not the multi-ms bottleneck (`submit_us` p50=138, p90=227,
+max=729), while diagnostic print cost is high (`trace_log_us` p50=15198,
+p90=46970). Treat that run as attribution evidence, not a performance number.
+
+Next evidence target: user/host GL draw plus swap/present pacing,
+Xwayland/DRI3 Present sync behavior, or a trace-disabled confirmation after
+selecting the next reducer. The current virtgpu fence trace still shows
+submitted and responded fences matching 1:1, and no `virtgpu-wait-time` or
+`execbuffer-fence-fd-wait-time` lines appeared in the timing run, so raw
+virtgpu fence starvation remains unproven. The remaining
+`DRM_IOCTL_SYNCOBJ_EVENTFD` probe returns Linux-shaped `ENOENT` for
+`handle=0`.
 
 Follow-up diagnostic artifact:
 

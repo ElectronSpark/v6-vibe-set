@@ -169,6 +169,40 @@ proc write_x11_egl_artifact_log {text} {
     close $fh
 }
 
+proc read_text_file {path} {
+    set fh [open $path r]
+    set text [read $fh]
+    close $fh
+    return $text
+}
+
+proc x11_egl_refresh_host_artifact_log {} {
+    global tmpimg guest_host_x11_egl_log host_x11_egl_log
+
+    set tmp "$host_x11_egl_log.debugfs.[pid]"
+    catch { file delete -force $tmp }
+    set dumped [expr {![catch {
+        exec sh -c "debugfs -R 'dump $guest_host_x11_egl_log $tmp' '$tmpimg' >/dev/null 2>&1"
+    }]}]
+    if {$dumped && [file exists $tmp] && [file size $tmp] > 0} {
+        file rename -force $tmp $host_x11_egl_log
+        return 1
+    }
+    catch { file delete -force $tmp }
+    return [expr {[file exists $host_x11_egl_log] && [file size $host_x11_egl_log] > 0}]
+}
+
+proc read_x11_egl_host_artifact_log {text_var} {
+    global host_x11_egl_log
+    upvar 1 $text_var text
+
+    if {![x11_egl_refresh_host_artifact_log]} {
+        return 0
+    }
+    set text [read_text_file $host_x11_egl_log]
+    return [expr {$text ne ""}]
+}
+
 proc finish {code label} {
     global qemu_pid runlog tmpimg ppm png guest_before_ppm guest_after_ppm
     global guest_final_ppm
@@ -198,9 +232,7 @@ proc finish {code label} {
     if {$x11_egl_artifact_prefix ne ""} {
         set dumped_text ""
         if {[file exists $host_x11_egl_log]} {
-            set fh [open $host_x11_egl_log r]
-            set dumped_text [read $fh]
-            close $fh
+            set dumped_text [read_text_file $host_x11_egl_log]
         }
         if {[string first $x11_egl_artifact_prefix $dumped_text] != 0} {
             write_x11_egl_artifact_log $dumped_text
@@ -476,7 +508,23 @@ proc x11_egl_session_probe_result_from_text {text status_var exit_status_var} {
         set exit_status $found_exit_status
         return 1
     }
+    if {[regexp {host-x11-egl-smoke: phase=session_probe status=(PASS|FAIL|TIMEOUT)[^\r\n]*exit_status=([0-9]+)} $text -> found_status found_exit_status]} {
+        set status $found_status
+        set exit_status $found_exit_status
+        return 1
+    }
     return 0
+}
+
+proc x11_egl_session_probe_result_from_artifact {status_var exit_status_var} {
+    upvar 1 $status_var status
+    upvar 1 $exit_status_var exit_status
+
+    set text ""
+    if {![read_x11_egl_host_artifact_log text]} {
+        return 0
+    }
+    return [x11_egl_session_probe_result_from_text $text status exit_status]
 }
 
 proc x11_egl_session_probe_result_from_runlog {status_var exit_status_var} {
@@ -502,6 +550,9 @@ proc wait_for_x11_egl_session_probe_terminal {} {
     set status ""
     set exit_status ""
 
+    if {[x11_egl_session_probe_result_from_artifact status exit_status]} {
+        return [list $status $exit_status]
+    }
     if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
         return [list $status $exit_status]
     }
@@ -520,6 +571,9 @@ proc wait_for_x11_egl_session_probe_terminal {} {
         }
         timeout {
             set timeout $old_timeout
+            if {[x11_egl_session_probe_result_from_artifact status exit_status]} {
+                return [list $status $exit_status]
+            }
             if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
                 return [list $status $exit_status]
             }
@@ -527,6 +581,9 @@ proc wait_for_x11_egl_session_probe_terminal {} {
         }
         eof {
             set timeout $old_timeout
+            if {[x11_egl_session_probe_result_from_artifact status exit_status]} {
+                return [list $status $exit_status]
+            }
             if {[x11_egl_session_probe_result_from_runlog status exit_status]} {
                 return [list $status $exit_status]
             }
@@ -1187,6 +1244,11 @@ proc x11_egl_glx_probe_xopen_preflight {log_path {skip_diag 0}} {
 
 proc read_x11_egl_session_log {label} {
     global timeout guest_host_x11_egl_log
+
+    set artifact_text ""
+    if {[read_x11_egl_host_artifact_log artifact_text]} {
+        return $artifact_text
+    }
 
     sync_prompt 60
     set old_timeout $timeout
