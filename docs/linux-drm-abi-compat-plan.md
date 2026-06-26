@@ -616,6 +616,36 @@ drop from the prior 45.971 FPS run. Continue with sparse/plain-swap state
 sampling or GLX/Xwayland/Mesa swap-path attribution, not speculative
 kernel/DRI3/fd-passing patches.
 
+Sparse swap-interval-0 plain GLX swap-only OML-state reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-oml-state-sampled-swap-only kde_x11_egl_glx_fps_oml_issue_state_sample_interval=16 kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-110829-x11-glx-fps-swap-interval0-oml-state-sampled16-pass/
+Verification: static diff checks across root/kernel/user/ports, host-gui-runtime, rootfs-refresh, focused no-Weston reducer PASS on first run with no retry
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_swap_interval status=PASS requested=0 set_api=EXT before=1 after=0
+phase=glx_fps_result status=PASS frames=210 elapsed_seconds=5.026245 fps=41.781 variant=swap-interval0-oml-state-sampled-swap-only
+swap_only_skipped_draw_frames=209
+plain_oml_available=1 plain_oml_samples=14 plain_oml_sample_interval=16 plain_oml_sampled_ratio=14/210 plain_oml_first_sample_frame=1 plain_oml_last_sample_frame=209
+plain_swap_issue_total_ms=4224.962 plain_swap_avg_ms=20.119 plain_swap_max_ms=134.957
+plain_oml_get_sync_before_total_ms=517.952 plain_oml_get_sync_after_total_ms=217.762
+plain_oml_post_swap_sbc_delta_total=17 max=3
+plain_oml_post_swap_msc_delta_total=7 max=1
+plain_post_swap_xsync_total_ms=0.000 max=0.000
+QEMU trace: ctx_submit=667 set_scanout=102 res_flush=102 fence_ctrl/fence_resp=667/667 res_create_3d=279 res_xfer_toh_3d=2
+```
+
+Sparse sampling avoids the dense sampler's per-frame post-swap XSync and
+reduces observer cost: FPS returned to 41.781, much closer to the non-sampling
+interval0 run at 45.971 than the dense sampler at 24.767, but still below
+Linux GLX at 55.638 and raw Present depth8 at 54.980. The 14 samples match
+`ceil(210/16)=14`, OML state advanced without regression, and virtgpu fences
+remained 1:1. This keeps attribution above raw DRI3/Present/fd passing/fence
+starvation; the remaining gap is ordinary GLX/Mesa/Xwayland swap pacing plus
+sampled `glXGetSyncValuesOML` overhead. Next evidence should compare sparse
+interval choices or GLX/Xwayland/Mesa swap-path attribution, not a speculative
+kernel patch.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
