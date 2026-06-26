@@ -1312,6 +1312,16 @@ build-x86_64/kde-plasma-desktop-smoke-history/20260626T222146Z-chromium-video-sp
 Passing local fixture artifact:
 build-x86_64/kde-plasma-desktop-smoke-history/20260626T222906Z-chromium-video-local-pass/
 KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video chromium_video=local-video samples=4 url=file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=15000&hud=1
+
+Opt-in multiprocess/GPU-enabled stress artifacts:
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T223426Z-chromium-video-multiprocess-kwin-crash-misclassified-pass/
+  run.log: kwin_wayland exception 13 (#GP), all four frames black
+  harness follow-up: success-path KWin crash signatures are now classified as
+  KDE-PLASMA-DESKTOP-SMOKE-FAIL kwin-crash-regression.
+build-x86_64/kde-plasma-desktop-smoke-history/20260626T223748Z-chromium-video-multiprocess-pass/
+  KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video ... chromium_multiprocess=1
+  launcher: multiprocess=1, no --disable-gpu, no --in-process-gpu, no --single-process
+  frames: samples 00-02 black, sample 03 nonblack mean=0.630504 std=0.254788
 ```
 
 Interpretation: the reducer now uses xv6-owned short probe launch metadata
@@ -1322,7 +1332,12 @@ evidence, QEMU virtio-gpu trace counts, and four captured 1280x800 PPM frames.
 The first three frame samples captured the black startup interval; sample 03 is
 nonblack (`mean=0.630504`, `std=0.254788`). The next optimization target is
 playback smoothness/readback timing rather than command delivery or missing
-Chromium launch evidence.
+Chromium launch evidence. The opt-in `KDE_SMOKE_CHROMIUM_MULTIPROCESS=1` lane
+now proves the same local fixture can run without Chromium's default
+single-process/software fallback flags, but the KWin crash artifact shows that
+GPU-enabled stress must remain a separate reducer until repeated runs and
+additional timing counters explain the black interval and any compositor crash
+surface.
 
 Success criteria:
 

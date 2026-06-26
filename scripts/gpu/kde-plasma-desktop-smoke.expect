@@ -52,6 +52,7 @@ set x11_egl_artifact_prefix ""
 set chromium_video_warmup_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS) : "8"}]
 set chromium_video_sample_count [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES) : "4"}]
 set chromium_video_sample_interval_ms [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLE_INTERVAL_MS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_SAMPLE_INTERVAL_MS) : "1000"}]
+set chromium_video_multiprocess [expr {[info exists env(KDE_SMOKE_CHROMIUM_MULTIPROCESS)] && $env(KDE_SMOKE_CHROMIUM_MULTIPROCESS) ne "0" ? "1" : "0"}]
 set chromium_video_url ""
 set chromium_video_proof_mode "video"
 set chromium_video_limitation ""
@@ -463,6 +464,14 @@ proc finish {code label} {
         if {[file exists $startup_regression] && [file size $startup_regression] > 0} {
             set code 8
             set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL startup-retry-regression"
+        }
+    }
+    if {$code == 0} {
+        set kwin_crash_regression "$outdir/kde-plasma-kwin-crash-regression.txt"
+        catch { exec sh -c "grep -En 'kwin_wayland: exception|coredump: .*kwin_wayland' '$runlog' > '$kwin_crash_regression' || true" }
+        if {[file exists $kwin_crash_regression] && [file size $kwin_crash_regression] > 0} {
+            set code 8
+            set label "KDE-PLASMA-DESKTOP-SMOKE-FAIL kwin-crash-regression"
         }
     }
     if {$code == 0} {
@@ -1029,6 +1038,7 @@ proc run_chromium_video_reducer {} {
     global timeout chromium_available chromium_video_url
     global chromium_video_warmup_seconds chromium_video_sample_count
     global chromium_video_proof_mode chromium_video_limitation
+    global chromium_video_multiprocess
 
     if {!$chromium_available} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-chromium-missing"
@@ -1041,6 +1051,10 @@ proc run_chromium_video_reducer {} {
     set old_timeout $timeout
     set quoted_url [shell_quote $chromium_video_url]
     set clear_chromium [chromium_guest_artifact_clear_command]
+    set chromium_probe_env ""
+    if {$chromium_video_multiprocess eq "1"} {
+        set chromium_probe_env "WAYLAND_CHROMIUM_MULTIPROCESS=1 "
+    }
 
     sync_prompt
     set timeout 30
@@ -1067,9 +1081,9 @@ proc run_chromium_video_reducer {} {
     sync_prompt
     set timeout 180
     if {$chromium_video_proof_mode eq "local-video"} {
-        send "/bin/kde-app-launch-probe --chromium-only --require-chromium --chromium-local-video\r"
+        send "${chromium_probe_env}/bin/kde-app-launch-probe --chromium-only --require-chromium --chromium-local-video\r"
     } else {
-        send "KDE_CHROMIUM_URL=$quoted_url /bin/kde-app-launch-probe --chromium-only --require-chromium\r"
+        send "${chromium_probe_env}KDE_CHROMIUM_URL=$quoted_url /bin/kde-app-launch-probe --chromium-only --require-chromium\r"
     }
     expect {
         -re {kde_app_launch_probe[^\r\n]*chromium_only=1[^\r\n]*chromium=1[^\r\n]*launcher_log=1[^\r\n]*launcher_marker=1[^\r\n]*launcher_child_exec=1[^\r\n]*launcher_url=1[^\r\n]*status=PASS} {
@@ -1097,6 +1111,9 @@ proc run_chromium_video_reducer {} {
     optional_prompt
 
     set label "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video chromium_video=$chromium_video_proof_mode samples=$chromium_video_sample_count url=$chromium_video_url"
+    if {$chromium_video_multiprocess eq "1"} {
+        append label " chromium_multiprocess=1"
+    }
     if {$chromium_video_limitation ne ""} {
         append label " limitation=$chromium_video_limitation"
     }
