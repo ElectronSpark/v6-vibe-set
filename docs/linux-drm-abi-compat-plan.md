@@ -584,6 +584,38 @@ depth-8 result of 54.980 FPS. This narrows the remaining gap to plain
 GLX/Xwayland swap path behavior above raw Present, not pre-swap draw work,
 OML-only throttling, or missing DRI3/fd passing.
 
+Swap-interval-0 plain GLX swap-only OML-state reducer artifact:
+
+```text
+KDE_SMOKE_REDUCER=x11-glx-fps QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto kde_xwayland_enable_glx=1 kde_x11_egl_glx_fps_variant=swap-interval0-oml-state-swap-only kde_smoke_require_chromium=0 chrome_drm_ioctl_trace=0 chrome_drm_fence_trace=0' timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+build-x86_64/kde-plasma-desktop-smoke-history/20260626-103840-x11-glx-fps-swap-interval0-oml-state-strict-pass/
+Verification: git diff --check, focused reducer PASS with stricter after=0 Expect gate
+Earlier same C/rootfs payload before the gate-only Expect fix: static diff checks, host-gui-runtime, rootfs-refresh, reducer PASS
+KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=x11-glx-fps session_probe=PASS
+phase=glx_fps_swap_interval status=PASS requested=0 set_api=EXT before=1 after=0
+phase=glx_fps_result status=PASS frames=124 elapsed_seconds=5.006683 fps=24.767 variant=swap-interval0-oml-state-swap-only
+swap_only_skipped_draw_frames=123
+plain_oml_available=1 plain_oml_samples=124
+plain_swap_issue_total_ms=2291.021 plain_swap_avg_ms=18.476 plain_swap_max_ms=86.867
+plain_oml_get_sync_before_total_ms=275.566 plain_oml_get_sync_after_total_ms=1890.125
+plain_oml_post_swap_sbc_delta_total=84 max=5
+plain_oml_post_swap_msc_delta_total=58 max=2
+plain_post_swap_xsync_total_ms=448.629 max=15.300
+QEMU trace: ctx_submit=480 set_scanout=107 res_flush=107 fence_ctrl/fence_resp=480/480 res_create_3d=52 res_xfer_toh_3d=2
+```
+
+This variant is intentionally intrusive: it samples OML state before and after
+every ordinary `glXSwapBuffers` and performs post-swap XSync, so its FPS should
+not be compared directly to the prior non-sampling plain interval0 run. It
+is now anchored by the final strict-pass artifact above, proving the durable
+evidence path for ordinary swaps: swap interval 0 remained accepted with exact
+after=0 verification, samples matched frames, post-swap OML state advanced
+across the run, and virtgpu fences remained 1:1. The heavy after-swap
+`glXGetSyncValuesOML` cost plus post-swap XSync cost explain much of the FPS
+drop from the prior 45.971 FPS run. Continue with sparse/plain-swap state
+sampling or GLX/Xwayland/Mesa swap-path attribution, not speculative
+kernel/DRI3/fd-passing patches.
+
 The first GLX depth-8 attempt failed before the reducer due to the known KWin
 startup crash class and is preserved separately:
 
