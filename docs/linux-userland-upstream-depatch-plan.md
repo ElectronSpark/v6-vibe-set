@@ -48,6 +48,18 @@ Disallowed adaptation in imported source:
 - Application-specific sleeps, polling shortcuts, or retry loops masking kernel
   readiness, futex, poll, epoll, VFS, socket, DRM, Wayland, X11, or procfs bugs.
 
+## Current Cleanups
+
+- 2026-06-27 to 2026-06-28: `wayland-src/src` source and audit refs were
+  realigned with the original ElectronSpark fork. The imported source checkout
+  matches `origin/main` and `audit-original/wayland-src/main` at `25da99a` with
+  no local ahead/behind drift; freedesktop `upstream/main` remains a separate
+  version-freshness ref. Detailed proof is archived in
+  `docs/linux-userland-upstream-depatch-evidence-2026-06-27-28.md`.
+- The parent `ports` gitlink and `.gitmodules` metadata still need to be
+  committed with matching source-state proof before Wayland TSV/ref claims are
+  treated as completed.
+
 ## Inventory Scope
 
 Every item below is in scope. The initial audit must classify each item as one
@@ -106,6 +118,7 @@ libraries they use.
 - [ ] `dumppcache`
 - [ ] `dumprq`
 - [ ] `bigfile`
+- [ ] `alsapcmpoll`
 - [ ] `devtest`
 - [ ] `dh`
 - [ ] `wallclock`
@@ -133,6 +146,7 @@ libraries they use.
 - [ ] `timerfdstress`
 - [ ] `syscalltest`
 - [ ] `linuxsyscallabitest`
+- [ ] `regpreservetest`
 - [ ] `testsig`
 - [ ] `usertests`
 - [ ] `grind`
