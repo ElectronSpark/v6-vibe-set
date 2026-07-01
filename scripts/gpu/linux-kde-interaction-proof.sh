@@ -26,6 +26,7 @@ SERIAL_LOG="${CAPTURE_DIR}/serial.expect.log"
 HOST_LOG="${CAPTURE_DIR}/host.log"
 MONITOR_SOCK="${LINUX_KDE_MONITOR_SOCK:-${WORK_DIR}/qemu-monitor-${STAMP}.sock}"
 INTERACTION_LOG="${CAPTURE_DIR}/linux-kde-interaction-latency.log"
+WAYLAND_DEBUG_SUMMARY="${CAPTURE_DIR}/linux-wayland-debug-gap-summary.log"
 SUMMARY="${CAPTURE_DIR}/summary.txt"
 STATUS="${CAPTURE_DIR}/status.txt"
 DISPLAY_BACKEND="${LINUX_KDE_QEMU_DISPLAY:-gtk,gl=on,show-cursor=on}"
@@ -46,6 +47,7 @@ VISIBLE_ATTEMPTS="${LINUX_KDE_VISIBLE_ATTEMPTS:-120}"
 VISIBLE_INTERVAL_MS="${LINUX_KDE_VISIBLE_INTERVAL_MS:-500}"
 VISIBLE_MIN_NONBLACK="${LINUX_KDE_VISIBLE_MIN_NONBLACK:-1}"
 REQUIRE_VISUAL="${LINUX_KDE_REQUIRE_VISUAL:-1}"
+WAYLAND_DEBUG_DIRECT="${LINUX_KDE_WAYLAND_DEBUG:-0}"
 
 mkdir -p "${CAPTURE_DIR}" "${WORK_DIR}" "${BOOT_DIR}"
 
@@ -448,6 +450,7 @@ cat > /root/konsole-direct-launch.sh <<'SH'
 #!/bin/sh
 set -u
 rm -f /tmp/linux-konsole-ready /tmp/linux-konsole.log
+rm -f /tmp/linux-konsole.wayland.fifo
 
 now_ms()
 {
@@ -505,10 +508,25 @@ export QT_QPA_PLATFORM=wayland
 export GALLIUM_DRIVER=virgl
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus
 export WAYLAND_DISPLAY=wayland-0
+export LINUX_KDE_WAYLAND_DEBUG=${WAYLAND_DEBUG_DIRECT}
 
 launch_start_ms=\$(now_ms)
-konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 &
-kp=\$!
+wayland_reader_pid=
+if [ "\$LINUX_KDE_WAYLAND_DEBUG" = 1 ]; then
+    mkfifo /tmp/linux-konsole.wayland.fifo
+    (
+        while IFS= read -r line || [ -n "\$line" ]; do
+            printf '%s\n' "\$line" >> /tmp/linux-konsole.log
+            printf 'linux_kde_wayland_debug wayland-debug-ms=%s line=%s\n' "\$(now_ms)" "\$line"
+        done < /tmp/linux-konsole.wayland.fifo
+    ) &
+    wayland_reader_pid=\$!
+    WAYLAND_DEBUG=client konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.wayland.fifo 2>&1 &
+    kp=\$!
+else
+    konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 &
+    kp=\$!
+fi
 launch_done_ms=\$(now_ms)
 printf 'LINUX_KDE_DIRECT_DETAIL phase=launch-call pid=%s launch_start_ms=%s launch_done_ms=%s konsole_launch_call_ms=%s\n' \
     "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((launch_done_ms - launch_start_ms))"
@@ -563,6 +581,18 @@ else
         "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((ready_ms - launch_start_ms))" "\$ptmx_seen" "\$ptmx_ms" "\$ptmx_target" "\$pts_seen" "\$pts_ms" "\$pts_target"
 fi
 cat /tmp/linux-konsole-ready 2>/dev/null || true
+if [ -n "\$wayland_reader_pid" ]; then
+    i=0
+    while kill -0 "\$wayland_reader_pid" 2>/dev/null && [ "\$i" -lt 20 ]; do
+        i=\$((i + 1))
+        sleep 0.05
+    done
+    if kill -0 "\$wayland_reader_pid" 2>/dev/null; then
+        kill "\$wayland_reader_pid" 2>/dev/null || true
+    fi
+    wait "\$wayland_reader_pid" 2>/dev/null || true
+fi
+rm -f /tmp/linux-konsole.wayland.fifo
 echo LINUX_KDE_DIRECT_DONE
 SH
 chmod +x /root/konsole-direct-launch.sh
@@ -910,6 +940,22 @@ set +e
 rc=$?
 set -e
 
+if grep -q 'wayland-debug-ms=' "${SERIAL_LOG}" 2>/dev/null; then
+    if "${ROOT}/scripts/gpu/wayland-debug-gap-summary.py" \
+        --top 20 --min-gap-ms 50 "${SERIAL_LOG}" >"${WAYLAND_DEBUG_SUMMARY}" 2>&1; then
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+            [[ -n "${line}" ]] || continue
+            printf 'phase=wayland-debug-summary action=konsole status=PASS summary=%q\n' "${line}" >>"${INTERACTION_LOG}"
+        done <"${WAYLAND_DEBUG_SUMMARY}"
+    else
+        printf 'phase=wayland-debug-summary action=konsole status=FAIL summary_log=%s\n' "${WAYLAND_DEBUG_SUMMARY}" >>"${INTERACTION_LOG}"
+    fi
+else
+    {
+        echo "wayland_debug_summary status=SKIP reason=no-wayland-debug-lines path=\"${SERIAL_LOG}\""
+    } >"${WAYLAND_DEBUG_SUMMARY}"
+fi
+
 {
     echo "Linux KDE interaction proof"
     echo "capture_dir=${CAPTURE_DIR}"
@@ -920,13 +966,22 @@ set -e
     echo "display=${DISPLAY_BACKEND}"
     echo "sample_source=${SAMPLE_SOURCE}"
     echo "require_visual=${REQUIRE_VISUAL}"
+    echo "wayland_debug=${WAYLAND_DEBUG_DIRECT}"
     echo "interaction_log=${INTERACTION_LOG}"
+    echo "wayland_debug_summary=${WAYLAND_DEBUG_SUMMARY}"
     echo
     echo "[interaction metrics]"
     [[ -f "${INTERACTION_LOG}" ]] && cat "${INTERACTION_LOG}" || true
     echo
     echo "[guest KDE metrics]"
     grep -E 'LINUX_KDE_(METRIC|WARN|FAIL|READY|DIRECT|INTERACTION)' "${SERIAL_LOG}" || true
+    echo
+    echo "[wayland debug summary]"
+    if [[ -f "${WAYLAND_DEBUG_SUMMARY}" ]]; then
+        cat "${WAYLAND_DEBUG_SUMMARY}"
+    else
+        echo "status=SKIP reason=no-wayland-debug-summary"
+    fi
     echo
     echo "[qemu virtio-gpu trace counts]"
     for event in virtio_gpu_cmd_ctx_submit virtio_gpu_cmd_set_scanout \

@@ -437,6 +437,24 @@ because their current action items are summarized here.
      argues against a silent no-notify gap and keeps the next behavior target
      on Qt/Wayland protocol/admission ordering or a narrower AF_UNIX proof,
      not a broad global poll policy flip.
+   - 2026-07-01 Linux KVM+virgl direct-launch Wayland-debug control is
+     archived at
+     `build-x86_64/linux-kde-interaction-proof/20260701T175942Z-wayland-debug-gap/`.
+     The Linux harness now has `LINUX_KDE_WAYLAND_DEBUG=1` and writes
+     `linux-wayland-debug-gap-summary.log` using the same
+     `scripts/gpu/wayland-debug-gap-summary.py` parser as xv6. Visual capture
+     is still phase-only on this WSL2 host, but direct-launch proof is
+     serial/log based and passed. With Wayland debug enabled, Linux Konsole
+     launched with `konsole_launch_call_ms=0`, PTY/wrapper at `480ms`,
+     shell at `510ms`, and `konsole_wait_ms=1640`. The protocol summary had
+     `gap_count=6`, `max_proto_gap_ms=894.334`, and `max_host_gap_ms=400`.
+     The latest xv6 Wayland-debug timeout remains much worse
+     (`max_proto_gap_ms=2666.350`, `max_host_gap_ms=24660`) and should be
+     followed by a quiet xv6 run joining `WAYLAND_DEBUG=client`, kprofile
+     pre-PTY counters, `konsole_ready_trace=1`,
+     `konsole_prepty_wake_source_trace=1`, `kde_wayland_unix_trace=1`, and
+     `kde_ipc_trace=1`, while keeping `poll_notify_full_wait` and
+     `af_unix_poll_notify_full_wait` off.
 
 3. Plan consolidation:
    - This file is the entry point.

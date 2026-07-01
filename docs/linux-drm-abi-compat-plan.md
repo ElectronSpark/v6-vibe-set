@@ -216,6 +216,14 @@ Current direction:
 - Keep screenshots/logs for every GUI proof.
 - Prefer kernel/libc/rootfs/harness fixes when evidence points below imported
   KDE/Qt/KWin/Xwayland/Mesa packages.
+- The Linux direct-launch Wayland-debug control is archived at
+  `build-x86_64/linux-kde-interaction-proof/20260701T175942Z-wayland-debug-gap/`.
+  It uses the new `LINUX_KDE_WAYLAND_DEBUG=1` harness path and the same
+  `scripts/gpu/wayland-debug-gap-summary.py` parser as xv6. It passed
+  phase-only with Linux PTY/wrapper at `480ms`, shell at `510ms`,
+  `konsole_wait_ms=1640`, `max_proto_gap_ms=894.334`, and
+  `max_host_gap_ms=400`. This is the current comparison point for xv6
+  Wayland-debug Konsole admission traces.
 - For Plasma responsiveness, spot the bottleneck in metrics before changing
   behavior. The 2026-07-01 boundary-safe `vm_copy_present_skip_validate`
   recheck is archived at
