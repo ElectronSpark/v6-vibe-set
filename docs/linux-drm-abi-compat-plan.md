@@ -377,6 +377,33 @@ Current direction:
   that the unconditional 10ms `poll` rescan creates artificial wake churn for
   KDE's Wayland/DBus/eventfd paths; keep the knob default-off until more
   regression proof and a Chromium-video pass validate the broader policy.
+- A follow-up audit found that using `.poll != NULL` as the notify-backed
+  predicate was too broad: PTY/TTY fds can answer readiness queries without
+  notifying every readiness transition. The kernel now uses an explicit
+  `VFS_FILE_OPS_F_POLL_NOTIFY_BACKED` capability for audited fd families
+  (AF_UNIX, eventfd, pipe, timerfd, kqueue, lwIP sockets, netlink, pidfd, and
+  inotify) and leaves PTY/TTY, procfs, devices, and unknown `.poll` users on
+  the periodic rescan path.
+- The safer capability-gated proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T070514Z-desktop-interaction-poll-notify-flagged-pass/`.
+  It passed the desktop interaction reducer with `poll_notify_full_wait=1`.
+  Metrics: desktop visible `18413ms`; desktop hover Chromium/Dolphin/KWrite/
+  Konsole `1158/2604/919/1075ms`; panel hover `984-1389ms`; start menu
+  open/close `2044/948ms`; tray open/close `1652/998ms`; direct Konsole
+  launch `6180ms` with `konsole_wait_ms=4980`. Kprofile recorded
+  `sys_poll_ms=18510`, `sys_poll_blocking_ms=13636`,
+  `sys_ppoll_ms=4979`, `sys_futex_wait_ms=6225`, and
+  `sys_openat_ms=1176`. GPU nodes, NetworkManager SNI, and PipeWire/Pulse
+  sink+monitor evidence remained intact, and the Konsole/Wayland/DBus poll
+  summaries still show real event wakes on AF_UNIX/eventfd paths.
+- The first Chromium-video stress attempt with `poll_notify_full_wait=1` did
+  not reach Chromium and is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T065932Z-chromium-video-poll-full-wait-wireplumber-gp-fail/`.
+  It failed as `kde-session-ready-crash` after `wireplumber` hit a user `#GP`
+  at `rip=0x7fffff61bfb1`; GPU nodes and PipeWire/Pulse readiness appeared
+  before the failure, but Chromium post-evidence correctly reported
+  `status=FAIL reason=not-launched`. Treat this as another startup
+  memory-corruption/stability lead, not Chromium FPS evidence.
 
 ### 3. Chromium As Regression / Stress Probe
 
