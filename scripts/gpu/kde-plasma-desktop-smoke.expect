@@ -6089,12 +6089,25 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG" = 1 ]; then}
     puts $fh {        export WAYLAND_DEBUG=client}
     puts $fh {      fi}
-    puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_KPROFILE" = 1 ]; then}
+    puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG" = 1 ]; then}
+    puts $fh {        if [ "$KDE_APP_LAUNCH_PROBE_KPROFILE" = 1 ]; then}
+    puts $fh {          /bin/kprofile /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line; do}
+    puts $fh {            printf 'kde_interaction_helper wayland-debug-ms=%s line=%s\n' "$(now_ms)" "$line"}
+    puts $fh {          done}
+    puts $fh {          probe_rc=${PIPESTATUS[0]}}
+    puts $fh {        else}
+    puts $fh {          /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line; do}
+    puts $fh {            printf 'kde_interaction_helper wayland-debug-ms=%s line=%s\n' "$(now_ms)" "$line"}
+    puts $fh {          done}
+    puts $fh {          probe_rc=${PIPESTATUS[0]}}
+    puts $fh {        fi}
+    puts $fh {      elif [ "$KDE_APP_LAUNCH_PROBE_KPROFILE" = 1 ]; then}
     puts $fh "        /bin/kprofile /bin/kde-app-launch-probe"
+    puts $fh {        probe_rc=$?}
     puts $fh "      else"
     puts $fh "        /bin/kde-app-launch-probe"
+    puts $fh {        probe_rc=$?}
     puts $fh "      fi"
-    puts $fh {      probe_rc=$?}
     puts $fh {      if [ -n "$semantic_pids" ]; then}
     puts $fh {        for pid in $semantic_pids; do}
     puts $fh {          kill "$pid" 2>/dev/null || true}
