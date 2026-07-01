@@ -269,6 +269,21 @@ because their current action items are summarized here.
      no panic/exception evidence was found. Continue with a focused
      AF_UNIX/pipe/eventfd notification reducer for the actual Qt/Wayland/DBus
      endpoint mixes before changing global `poll()` or AF_UNIX rescan policy.
+   - 2026-07-01 focused AF_UNIX/pipe/eventfd notify-mix reducer evidence is
+     archived at
+     `build-x86_64/unix-notify-mix-proof/20260701T135557Z-nogpu/`. The new
+     opt-in `/bin/kde-unix-socket-probe --notify-mix` mode passed on Linux
+     host (`linux-host-notify-mix.log`) and in an xv6 nographic guest booted
+     with
+     `poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 desktop=0`.
+     All three variants (`socket-with-pipe-eventfd`,
+     `pipe-with-socket-eventfd`, and `eventfd-with-socket-pipe`) woke at about
+     `99-101ms`, matching the child writer delay, and the guest log contains
+     `notify-mix result=PASS` with no panic/exception. This rules out the
+     simple mixed-fd `poll()` notification shape as the KDE pre-PTY blocker;
+     the next reducer needs to mimic the richer Qt/Wayland/DBus state machine,
+     such as Wayland request/response ordering, DBus activation, nested event
+     dispatch, or fd ownership transitions.
 
 3. Plan consolidation:
    - This file is the entry point.

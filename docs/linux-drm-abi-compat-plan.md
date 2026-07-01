@@ -407,6 +407,17 @@ Current direction:
   notification edge, not exec, PTY setup, TTY ioctl, or futex behavior. Keep
   AF_UNIX on the rescan safety net until a focused reducer proves which
   readiness transitions are notify-complete.
+- 2026-07-01 focused AF_UNIX/pipe/eventfd notify-mix reducer evidence is
+  archived at
+  `build-x86_64/unix-notify-mix-proof/20260701T135557Z-nogpu/`. The new
+  opt-in `/bin/kde-unix-socket-probe --notify-mix` mode passed on Linux host
+  and in an xv6 nographic guest booted with
+  `poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 desktop=0`. Socket,
+  pipe, and eventfd wake variants each returned at about `99-101ms`, matching
+  the delayed writer. This means the simple mixed endpoint shape is
+  notify-complete under the risky full-wait knobs; keep chasing the richer
+  Qt/Wayland/DBus protocol or activation edge before promoting AF_UNIX full
+  waits globally.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.

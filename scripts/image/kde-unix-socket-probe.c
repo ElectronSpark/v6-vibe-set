@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/eventfd.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -1678,6 +1679,165 @@ static int scm_zero_readiness(void)
     return failed;
 }
 
+static long monotonic_ms(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+        return -1;
+    return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+static int notify_mix_one(const char *label, int signal_fd)
+{
+    struct pollfd pfds[3];
+    char byte = 0;
+    int sv[2] = {-1, -1};
+    int pipefd[2] = {-1, -1};
+    int efd = -1;
+    int failed = 0;
+    int status = 0;
+    pid_t pid;
+    long start_ms;
+    long end_ms;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
+        print_errno("notify-mix-socketpair");
+        return 1;
+    }
+    if (pipe(pipefd) < 0) {
+        print_errno("notify-mix-pipe");
+        failed = 1;
+        goto out_nokill;
+    }
+    efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (efd < 0) {
+        print_errno("notify-mix-eventfd");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        print_errno("notify-mix-fork");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    if (pid == 0) {
+        unsigned long long one = 1;
+
+        close(sv[0]);
+        close(pipefd[0]);
+        usleep(100000);
+        errno = 0;
+        if (signal_fd == 0) {
+            ssize_t n = write(sv[1], "S", 1);
+            printf("kde_unix_socket_probe notify-mix-%s child-socket-write ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            fflush(stdout);
+            _exit(n == 1 ? 0 : 20);
+        }
+        if (signal_fd == 1) {
+            ssize_t n = write(pipefd[1], "P", 1);
+            printf("kde_unix_socket_probe notify-mix-%s child-pipe-write ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            fflush(stdout);
+            _exit(n == 1 ? 0 : 21);
+        }
+
+        ssize_t n = write(efd, &one, sizeof(one));
+        printf("kde_unix_socket_probe notify-mix-%s child-eventfd-write ret=%zd errno=%d %s\n",
+               label, n, errno, strerror(errno));
+        fflush(stdout);
+        _exit(n == (ssize_t)sizeof(one) ? 0 : 22);
+    }
+
+    close(sv[1]);
+    sv[1] = -1;
+    close(pipefd[1]);
+    pipefd[1] = -1;
+
+    pfds[0].fd = sv[0];
+    pfds[0].events = POLLIN;
+    pfds[0].revents = 0;
+    pfds[1].fd = pipefd[0];
+    pfds[1].events = POLLIN;
+    pfds[1].revents = 0;
+    pfds[2].fd = efd;
+    pfds[2].events = POLLIN;
+    pfds[2].revents = 0;
+
+    start_ms = monotonic_ms();
+    errno = 0;
+    int pret = poll(pfds, 3, 3000);
+    end_ms = monotonic_ms();
+    printf("kde_unix_socket_probe notify-mix-%s poll ret=%d elapsed_ms=%ld "
+           "sock=0x%x pipe=0x%x eventfd=0x%x errno=%d %s\n",
+           label, pret, (start_ms >= 0 && end_ms >= start_ms) ?
+           end_ms - start_ms : -1, pfds[0].revents, pfds[1].revents,
+           pfds[2].revents, errno, strerror(errno));
+    if (pret < 1)
+        failed = 1;
+    if (signal_fd == 0 && !(pfds[0].revents & POLLIN))
+        failed = 1;
+    if (signal_fd == 1 && !(pfds[1].revents & POLLIN))
+        failed = 1;
+    if (signal_fd == 2 && !(pfds[2].revents & POLLIN))
+        failed = 1;
+
+    if (!failed) {
+        if (signal_fd == 0)
+            failed |= read(sv[0], &byte, 1) != 1 || byte != 'S';
+        else if (signal_fd == 1)
+            failed |= read(pipefd[0], &byte, 1) != 1 || byte != 'P';
+        else {
+            unsigned long long val = 0;
+            failed |= read(efd, &val, sizeof(val)) != (ssize_t)sizeof(val) ||
+                      val != 1;
+        }
+    }
+
+    if (waitpid(pid, &status, 0) < 0) {
+        print_errno("notify-mix-waitpid");
+        failed = 1;
+    } else {
+        printf("kde_unix_socket_probe notify-mix-%s child-status=0x%x exited=%d code=%d\n",
+               label, status, WIFEXITED(status) ? 1 : 0,
+               WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            failed = 1;
+    }
+    goto out_nokill;
+
+out_nokill:
+    if (sv[0] >= 0)
+        close(sv[0]);
+    if (sv[1] >= 0)
+        close(sv[1]);
+    if (pipefd[0] >= 0)
+        close(pipefd[0]);
+    if (pipefd[1] >= 0)
+        close(pipefd[1]);
+    if (efd >= 0)
+        close(efd);
+    printf("kde_unix_socket_probe notify-mix-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int notify_mix(void)
+{
+    int failed = 0;
+
+    failed |= notify_mix_one("socket-with-pipe-eventfd", 0);
+    failed |= notify_mix_one("pipe-with-socket-eventfd", 1);
+    failed |= notify_mix_one("eventfd-with-socket-pipe", 2);
+    printf("kde_unix_socket_probe notify-mix result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
 int main(int argc, char **argv)
 {
     const char *path = "/tmp/kde-unix-socket-probe.sock";
@@ -1692,6 +1852,8 @@ int main(int argc, char **argv)
 
     if (argc == 2 && strcmp(argv[1], "--scm-zero-readiness") == 0)
         return scm_zero_readiness() ? 1 : 0;
+    if (argc == 2 && strcmp(argv[1], "--notify-mix") == 0)
+        return notify_mix() ? 1 : 0;
     if (argc != 1) {
         printf("kde_unix_socket_probe unknown-argument=%s\n", argv[1]);
         return 2;
