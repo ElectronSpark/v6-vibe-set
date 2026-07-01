@@ -250,6 +250,25 @@ because their current action items are summarized here.
      and PipeWire/Pulse sink+monitor guards stayed intact. Next reducer should
      classify the unclassified AF_UNIX/pipe endpoint roles and test why
      Wayland-poll progress still depends on timeout/rescan before PTY.
+   - 2026-07-01 opt-in Konsole pre-PTY endpoint-combo `kstats` v6 proof is
+     archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T134834Z-desktop-interaction-endpoint-combo-kprofile-pass/`.
+     The reducer passed with desktop visible at `19109ms`
+     (`first_nonzero_ms=12064`), hover changes Chromium/Dolphin/KWrite/
+     Konsole `1759/2469/1086/1020ms`, panel hover `1115-1540ms`,
+     start-menu open/close `2161/1140ms`, tray open/close `1687/1162ms`,
+     and direct launch `5780ms` (`konsole_wait_ms=3975`). Konsole exec was
+     still cheap (`launch_call_ms=54`); PTY fds appeared at `3097-3099ms`,
+     wrapper at `4023ms`, marker at `4035ms`, and bash at `4169ms`.
+     The new combo counters split the prior unclassified pre-PTY wait:
+     total poll exposure `2771ms`, timeout `2661ms`, ready only `110ms`,
+     `wayland_pipe_ms=1581`, `qdbus_eventfd_ms=1073`, `wayland_only_ms=112`,
+     `qdbus_only_ms=3`, and no remaining `unix_other` combo exposure.
+     Pre-PTY futex wait was only `37ms`. GPU nodes, virgl trace activity,
+     NetworkManager/SNI, and PipeWire/Pulse sink+monitor guards stayed intact;
+     no panic/exception evidence was found. Continue with a focused
+     AF_UNIX/pipe/eventfd notification reducer for the actual Qt/Wayland/DBus
+     endpoint mixes before changing global `poll()` or AF_UNIX rescan policy.
 
 3. Plan consolidation:
    - This file is the entry point.

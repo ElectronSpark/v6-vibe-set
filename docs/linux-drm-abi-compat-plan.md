@@ -391,6 +391,22 @@ Current direction:
   main pre-PTY bottleneck in this run. Keep global poll/AF_UNIX behavior
   unchanged; the next evidence target is endpoint-level classification and a
   focused Wayland/Qt pipe/eventfd wake reducer.
+- 2026-07-01 opt-in Konsole pre-PTY endpoint-combo `kstats` v6 proof is
+  archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T134834Z-desktop-interaction-endpoint-combo-kprofile-pass/`.
+  It passed with desktop visible at `19109ms`, hover changes at
+  `1020-2469ms`, panel hover at `1115-1540ms`, start-menu open/close
+  `2161/1140ms`, tray open/close `1687/1162ms`, and direct launch
+  `5780ms` (`konsole_wait_ms=3975`). Konsole launch remained cheap
+  (`launch_call_ms=54`), while PTY fds appeared at `3097-3099ms`, wrapper
+  start at `4023ms`, marker at `4035ms`, and bash at `4169ms`. The v6
+  counters cleanly split the pre-PTY poll exposure into `wayland_pipe_ms=1581`
+  and `qdbus_eventfd_ms=1073`, with total `2771ms`, timeout `2661ms`, ready
+  only `110ms`, and no remaining unclassified AF_UNIX combo exposure. This
+  keeps the next fix target on the Qt/Wayland/DBus AF_UNIX plus pipe/eventfd
+  notification edge, not exec, PTY setup, TTY ioctl, or futex behavior. Keep
+  AF_UNIX on the rescan safety net until a focused reducer proves which
+  readiness transitions are notify-complete.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
