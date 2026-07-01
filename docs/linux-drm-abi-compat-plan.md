@@ -305,6 +305,19 @@ Current direction:
   black flip-resource copies from the actually displayed persistent scanout,
   then choose a fallback that does not add per-frame copy cost to the normal
   FPS path.
+- The readback-only black guard is now implemented in the kernel and archived
+  at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T055023Z-desktop-interaction-readback-black-guard-pass/`.
+  In the forced KMS resource-copy proof, `FB_GPU_SCANOUT_READ` first observed
+  nonblack persistent scanout pixels, skipped an all-black diagnostic present
+  overlay (`present-overlay-skip ... dst_nonblack=5 present_nonblack=0`), then
+  preserved those pixels when the current KMS framebuffer readback was black
+  (`preserve_virtio=1`). The interaction reducer passed with
+  `first_visible_ms=1821`, network SNI registration, PipeWire/Pulse sink and
+  monitor readiness, and `/dev/dri/card0` plus `/dev/dri/renderD128`
+  registered. This fixes the screenshot/`fbstat sample-current` oracle for
+  this stale-readback lane; it does not claim that the compositor's normal
+  per-frame present path or Chromium video FPS is fixed.
 - Linux VM interaction comparison is not yet a valid visual baseline on this
   host. `build-x86_64/linux-kde-interaction-proof/20260701T051942Z/` showed
   QEMU monitor `screendump` failing with `Error: no surface`, and
