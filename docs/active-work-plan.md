@@ -314,6 +314,24 @@ because their current action items are summarized here.
      without justifying a kernel behavior change: keep AF_UNIX off the global
      notify-backed default and continue with richer DBus/Wayland activation
      or producer-origin wake attribution.
+   - 2026-07-01 timestamped Konsole kqueue-event trace proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T151001Z-desktop-interaction-kqueue-event-ms-pass/`.
+     The desktop interaction reducer passed with `status_code=0`, virgl DRM
+     nodes `/dev/dri/card0` and `/dev/dri/renderD128`, NetworkManager SNI,
+     PipeWire/Pulse sink+monitor readiness, QEMU virgl activity
+     (`ctx_submit=382`, `res_flush=144`, `fence_resp=382`), and no panic,
+     fatal page fault, coredump, or exception. Trace volume inflated direct
+     launch to `12180ms`, with Konsole shell readiness `9368ms`, PTY at
+     `7081-7083ms`, wrapper at `9264ms`, and bash at `9781ms`, so use timing
+     only for attribution. The new `ms=` field shows delivered kqueue events
+     by target: eventfd `32`, Wayland socket `22`, QDBus socket `7`, pipe `2`,
+     and `/dev/ptmx` `1`. After Konsole exec-done, the first Wayland socket
+     kqueue event appears at `+1495ms`, QDBus/eventfd activity starts around
+     `+2654ms`, PTY ioctls appear around `+6971ms`, and `/dev/ptmx` readiness
+     arrives at `+9365ms`. This again argues against a raw missed-kqueue-wake
+     fix; next work should add semantic DBus/Wayland capture around direct
+     Konsole launch to identify which protocol message or activation step
+     delays PTY creation.
    - 2026-07-01 opt-in Konsole pre-PTY wake/readiness `kstats` v7 proof is
      archived at
      `build-x86_64/kde-plasma-desktop-smoke-history/20260701T144316Z-desktop-interaction-kqueue-ready-v7-pass/`.
