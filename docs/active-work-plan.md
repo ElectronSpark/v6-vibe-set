@@ -183,6 +183,28 @@ because their current action items are summarized here.
      Wayland `socket:[146]`, QDBus `socket:[148]`, and `eventfd`/pipe waits,
      so keep the next branch on Qt/Wayland/DBus admission and wake propagation
      before patching PTY behavior.
+   - 2026-07-01 filtered Konsole IPC trace proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T121342Z-desktop-interaction-konsole-ipc-filtered-trace-pass/`.
+     The reducer passed with desktop visible at `18057ms`, start-menu
+     open/close `2203/1028ms`, tray open/close `1854/1213ms`, virgl DRM
+     nodes, NetworkManager SNI, and PipeWire/Pulse sink+monitor evidence
+     intact. The trace confirms Konsole connects to
+     `/dev/shm/xdg-runtime-root/wayland-0`, then cycles through Wayland
+     `socket:[146]`, QDBus `socket:[148]`, eventfd, and futex wake paths
+     before PTY creation. Its direct-launch timing is not a performance
+     baseline because trace volume stretched PTY readiness to `17140ms` and
+     shell readiness to `24592ms`.
+   - 2026-07-01 Linux KVM+virgl interaction harness now covers the same
+     lower-left panel hover and start-menu phases as the xv6 reducer and is
+     executable for direct invocation. Phase-only proof on this WSL2 host is
+     archived at
+     `build-x86_64/linux-kde-interaction-proof/20260701T121710Z-panel-start-menu-phase-only/`.
+     It records `status_code=0` with
+     `LINUX-KDE-INTERACTION-PHASE-ONLY visual-baseline-missing`, proving the
+     Linux Konsole direct-launch reference is still fast (`konsole_wait_ms=338`)
+     while all visual samples are invalid due QEMU monitor `screendump`
+     unavailability. Continue treating Linux visual hover/start/tray parity as
+     unproven until a supported Linux screenshot backend is added.
 
 3. Plan consolidation:
    - This file is the entry point.

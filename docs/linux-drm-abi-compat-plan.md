@@ -354,6 +354,16 @@ Current direction:
   eventfd, and pipe waits. Do not patch PTY behavior from this run; use the
   next reducer to isolate the Qt/DBus/Wayland admission edge before changing
   poll or AF_UNIX policy.
+- 2026-07-01 filtered Konsole IPC trace proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T121342Z-desktop-interaction-konsole-ipc-filtered-trace-pass/`.
+  It passed with desktop visible at `18057ms`, start-menu open/close
+  `2203/1028ms`, tray open/close `1854/1213ms`, virgl DRM nodes,
+  NetworkManager SNI, and PipeWire/Pulse sink+monitor evidence intact. The
+  trace confirms Konsole reaches the Wayland socket quickly and then spends the
+  pre-PTY window in Wayland `socket:[146]`, QDBus `socket:[148]`, eventfd, and
+  futex wake paths. Because trace volume inflated PTY readiness to `17140ms`
+  and shell readiness to `24592ms`, use it for attribution only, not as a
+  performance baseline.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
@@ -411,6 +421,16 @@ Current direction:
   launch to the shell-wrapper marker. The Linux proof harness now treats a
   missing visual baseline as a failure instead of reporting a green
   `LINUX-KDE-INTERACTION-DONE` from direct launch alone.
+- The Linux KVM+virgl interaction harness now mirrors xv6's lower-left panel
+  hover and start-menu phases and can be invoked directly. The phase-only run
+  archived at
+  `build-x86_64/linux-kde-interaction-proof/20260701T121710Z-panel-start-menu-phase-only/`
+  completed with `status_code=0` and
+  `LINUX-KDE-INTERACTION-PHASE-ONLY visual-baseline-missing`; it proves the
+  current Linux Konsole direct-launch reference is `338ms`, but all visual
+  hover, panel, start-menu, and tray timings remain invalid because
+  `screendump` produced no surface. Use this as a shell-readiness baseline
+  only until a supported Linux screenshot backend is added.
 - The current Konsole-readiness profiler proof is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T061204Z-desktop-interaction-kprofile-poll-futex-proof/`.
   Kernel `kstats` ABI version 3 appends opt-in counters for `poll`, `ppoll`,

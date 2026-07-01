@@ -38,10 +38,12 @@ WIDTH="${LINUX_KDE_WIDTH:-1280}"
 HEIGHT="${LINUX_KDE_HEIGHT:-800}"
 HOVER_TIMEOUT_MS="${LINUX_KDE_HOVER_TIMEOUT_MS:-2500}"
 TRAY_TIMEOUT_MS="${LINUX_KDE_TRAY_TIMEOUT_MS:-5000}"
+START_MENU_TIMEOUT_MS="${LINUX_KDE_START_MENU_TIMEOUT_MS:-5000}"
 INTERVAL_MS="${LINUX_KDE_SAMPLE_INTERVAL_MS:-100}"
 VISIBLE_ATTEMPTS="${LINUX_KDE_VISIBLE_ATTEMPTS:-120}"
 VISIBLE_INTERVAL_MS="${LINUX_KDE_VISIBLE_INTERVAL_MS:-500}"
 VISIBLE_MIN_NONBLACK="${LINUX_KDE_VISIBLE_MIN_NONBLACK:-1}"
+REQUIRE_VISUAL="${LINUX_KDE_REQUIRE_VISUAL:-1}"
 
 mkdir -p "${CAPTURE_DIR}" "${WORK_DIR}" "${BOOT_DIR}"
 
@@ -521,7 +523,7 @@ expect {
 }
 expect -re "LINUX_KDE_CTRL# "
 
-ilog "phase=meta reducer=linux-kde-interaction-latency hover_timeout_ms=${HOVER_TIMEOUT_MS} tray_timeout_ms=${TRAY_TIMEOUT_MS} interval_ms=${INTERVAL_MS} visible_min_nonblack=${VISIBLE_MIN_NONBLACK} visible_attempts=${VISIBLE_ATTEMPTS} visible_interval_ms=${VISIBLE_INTERVAL_MS} input_source=qemu-monitor"
+ilog "phase=meta reducer=linux-kde-interaction-latency hover_timeout_ms=${HOVER_TIMEOUT_MS} tray_timeout_ms=${TRAY_TIMEOUT_MS} start_menu_timeout_ms=${START_MENU_TIMEOUT_MS} interval_ms=${INTERVAL_MS} visible_min_nonblack=${VISIBLE_MIN_NONBLACK} visible_attempts=${VISIBLE_ATTEMPTS} visible_interval_ms=${VISIBLE_INTERVAL_MS} require_visual=${REQUIRE_VISUAL} input_source=qemu-monitor"
 set visual_ok [measure_visible "desktop-interaction-visible" ${VISIBLE_ATTEMPTS} ${VISIBLE_INTERVAL_MS} ${VISIBLE_MIN_NONBLACK}]
 after 1500
 sample_once "desktop-interaction-before"
@@ -530,6 +532,15 @@ measure_action hover chromium 3000 3300 move \$hover_timeout_ms \$interval_ms
 measure_action hover dolphin 8900 3300 move \$hover_timeout_ms \$interval_ms
 measure_action hover kwrite 14850 3300 move \$hover_timeout_ms \$interval_ms
 measure_action hover konsole 20800 3300 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover launcher 1200 64200 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover terminal 2600 64200 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover settings 4300 64200 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover dolphin 7000 64200 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover konsole 9000 64200 move \$hover_timeout_ms \$interval_ms
+measure_action panel-hover chromium 11200 64200 move \$hover_timeout_ms \$interval_ms
+measure_action start-menu open 1200 64200 click ${START_MENU_TIMEOUT_MS} \$interval_ms
+after 500
+measure_action start-menu close 1200 64200 esc ${START_MENU_TIMEOUT_MS} \$interval_ms
 measure_action tray open 60000 64400 click \$tray_timeout_ms \$interval_ms
 after 500
 measure_action tray close 60000 64400 esc \$tray_timeout_ms \$interval_ms
@@ -553,6 +564,10 @@ set fh [open "${STATUS}" w]
 if {\$direct_status eq "PASS" && \$visual_ok} {
     puts \$fh "status_code=0"
     puts \$fh "label=LINUX-KDE-INTERACTION-DONE"
+    close \$fh
+} elseif {\$direct_status eq "PASS" && "${REQUIRE_VISUAL}" eq "0"} {
+    puts \$fh "status_code=0"
+    puts \$fh "label=LINUX-KDE-INTERACTION-PHASE-ONLY visual-baseline-missing"
     close \$fh
 } elseif {\$direct_status eq "PASS"} {
     puts \$fh "status_code=7"
@@ -594,6 +609,7 @@ set -e
     echo "qemu_memory=${QEMU_MEMORY}"
     echo "display=${DISPLAY_BACKEND}"
     echo "sample_source=${SAMPLE_SOURCE}"
+    echo "require_visual=${REQUIRE_VISUAL}"
     echo "interaction_log=${INTERACTION_LOG}"
     echo
     echo "[interaction metrics]"
