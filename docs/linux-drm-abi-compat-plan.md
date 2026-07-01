@@ -517,6 +517,34 @@ Current direction:
   DBus activation to timestamped Wayland protocol/configure/ack/frame capture
   or producer-origin tagging for the already-delivered Wayland/eventfd kqueue
   events before behavior-changing kernel patches.
+- 2026-07-01 cursor/input and latest Konsole responsiveness evidence:
+  qemu-monitor injected input now defaults to a single visible QEMU/host
+  cursor and leaves explicit guest hardware cursor testing opt-in. The cursor
+  proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171300Z-desktop-interaction-host-cursor-sync-pass/`;
+  measurement runs can disable sync with
+  `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0`. The clean kprofile pass at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T172108Z-desktop-interaction-kprofile-cursor-sync-off-pass/`
+  kept GPU virgl, NetworkManager SNI, and PipeWire/Pulse guards intact and
+  measured desktop visible `19367ms`, start-menu open/close `1038/646ms`,
+  tray open/close `860/684ms`, and direct Konsole launch `6450ms`
+  (`konsole_wait_ms=4894`). PTY creation was still late (`3207-3209ms`) but
+  quick once reached; pre-PTY wait remained dominated by Wayland/QDBus
+  poll exposure and timeout waits, with only `43ms` of pre-PTY futex time.
+- 2026-07-01 producer-origin wake tracing is now available under the existing
+  `konsole_prepty_wake_source_trace=1` gate. The first high-detail run is
+  archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T172737Z-desktop-interaction-wake-source-dolphin-segv-fail/`;
+  it captured useful evidence but failed late on a Dolphin null SIGSEGV, so
+  it is not a clean baseline. The quiet validation pass is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T173311Z-desktop-interaction-wake-origin-trace-pass/`.
+  It passed with virgl activity (`ctx_submit=215`, `res_flush=71`,
+  `fence_resp=215`), NetworkManager SNI, and PipeWire/Pulse sink+monitor
+  evidence. The new trace fields tied Wayland/QDBus wake delivery to
+  producers including `sys_sendmsg`, `unix_file_read_common.isra.0`, and
+  `eventfd_read`, while Konsole still reached PTY only after `2650-2653ms`.
+  Continue with Wayland/Qt protocol/admission proof before changing global
+  poll or AF_UNIX rescan policy.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.

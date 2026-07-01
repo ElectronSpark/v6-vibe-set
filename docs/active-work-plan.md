@@ -392,6 +392,44 @@ because their current action items are summarized here.
      timestamped Wayland protocol/configure/ack/frame capture, or
      producer-origin tagging for the already-delivered Wayland/eventfd kqueue
      events, before behavior-changing kernel patches.
+   - 2026-07-01 host-cursor and latest Plasma responsiveness proof:
+     the qemu-monitor input harness now keeps a single visible cursor by
+     defaulting to the QEMU/host cursor and syncing it to injected guest
+     coordinates, while `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0` preserves
+     measurement runs without PowerShell cursor-sync overhead. The positive
+     cursor proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171300Z-desktop-interaction-host-cursor-sync-pass/`;
+     the WSLg/GTK guest-cursor negative control is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171006Z-desktop-interaction-guest-cursor-black-fail/`.
+     The clean kprofile run with host cursor sync disabled is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T172108Z-desktop-interaction-kprofile-cursor-sync-off-pass/`.
+     It passed with desktop visible `19367ms`, start-menu open/close
+     `1038/646ms`, tray open/close `860/684ms`, and direct Konsole launch
+     `6450ms` (`konsole_wait_ms=4894`). PTY fds appeared at
+     `3207-3209ms`, wrapper at `4847ms`, and bash at `5075ms`; the pre-PTY
+     kstats remained wait-dominated (`konsole_prepty_poll_total_ms=2972`,
+     `timeout_ms=2861`, Wayland/QDBus `1775/1197ms`, futex only `43ms`).
+     GPU virgl, NetworkManager SNI, and PipeWire/Pulse sink+monitor guards
+     stayed intact.
+   - 2026-07-01 producer-origin wake trace: the first bounded
+     `konsole_prepty_wake_source_trace=1` run with `konsole_ready_trace=1`
+     captured useful Wayland/QDBus evidence but failed late with a Dolphin
+     null SIGSEGV during serial drain; it is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T172737Z-desktop-interaction-wake-source-dolphin-segv-fail/`
+     and should not be used as a clean performance baseline. The successful
+     quiet validation is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T173311Z-desktop-interaction-wake-origin-trace-pass/`.
+     Kernel tracing now preserves the original `vfs_file_knote_notify()`
+     producer across kqueue propagation and prints `origin_sym`,
+     `origin_file`, and `origin_line` under the existing opt-in trace gate.
+     The pass showed Wayland socket wake producers such as `sys_sendmsg`
+     from `kernel/lwip_port/sys_socket.c`, peer-read wake attempts from
+     `unix_file_read_common.isra.0`, and eventfd wakes from `eventfd_read`,
+     while direct launch remained delayed before PTY (`pty=2650-2653ms`,
+     wrapper `3542ms`, bash `3666ms`, `konsole_wait_ms=3542`). This further
+     argues against a silent no-notify gap and keeps the next behavior target
+     on Qt/Wayland protocol/admission ordering or a narrower AF_UNIX proof,
+     not a broad global poll policy flip.
 
 3. Plan consolidation:
    - This file is the entry point.
