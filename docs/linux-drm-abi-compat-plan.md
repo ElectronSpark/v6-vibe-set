@@ -308,6 +308,17 @@ Current direction:
   alloc/readback/stats/total timing plus input-injection overhead fields. Static
   Tcl completeness, `git diff --check`, and C syntax checks passed, and
   `rootfs-refresh` rebuilt `build-x86_64/fs.img`.
+- The durable Konsole phase proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T111406Z-desktop-interaction-konsole-phase-selfexec-pass/`.
+  It passed with `status_code=0`, virgl DRM nodes, network SNI registration,
+  and PipeWire Pulse sink/monitor evidence intact. The direct Konsole launch
+  call stayed cheap (`launch_call_ms=13`), but PTY readiness appeared only after
+  `5360-5361ms`, the shell wrapper started at `6453ms`, and the bash handoff
+  was at `6645ms` from launch. The marker/write/open path itself is small
+  (`wrapper_open_delta_ms=2`, `wrapper_before_exec_delta_ms=2`,
+  `wrapper_marker_found_since_wrapper_ms=98`), so the current Plasma launch
+  bottleneck is before the shell payload and should stay focused on
+  Konsole/Qt/Wayland/PTY/session wakeup and admission timing.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.

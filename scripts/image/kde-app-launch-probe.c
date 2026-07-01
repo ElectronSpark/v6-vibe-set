@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,17 @@ static const char *chromium_launcher_log_path =
 static const char *chromium_local_video_url =
     "file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=15000&hud=1";
 static FILE *chromium_evidence;
+static const char *konsole_phase_log_path = "/dev/shm/xv6-konsole-phase.log";
+static const char *konsole_phase_mirror_path = "/xv6-konsole-phase.log";
+
+struct konsole_phase_state {
+    int ptmx_seen;
+    int pts_seen;
+    int fd_opendir_failed;
+    long long ptmx_seen_ms;
+    long long pts_seen_ms;
+    char pts_target[128];
+};
 
 static long long monotonic_ms(void)
 {
@@ -41,6 +53,30 @@ static long long monotonic_ms(void)
     if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
         return 0;
     return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void konsole_phase_log(const char *fmt, ...)
+{
+    const char *paths[] = { konsole_phase_log_path, konsole_phase_mirror_path };
+    va_list ap;
+
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        int fd = open(paths[i], O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                      0644);
+
+        if (fd < 0)
+            continue;
+        va_start(ap, fmt);
+        vdprintf(fd, fmt, ap);
+        va_end(ap);
+        close(fd);
+    }
+}
+
+static void konsole_phase_log_reset(void)
+{
+    unlink(konsole_phase_log_path);
+    unlink(konsole_phase_mirror_path);
 }
 
 static void maybe_redirect_stderr_to_stdout(void)
@@ -1875,12 +1911,112 @@ static long long marker_payload_ll(const char *payload, const char *key)
     return -1;
 }
 
+static long long wait_for_bash_start_ms(long long wrapper_pid, int timeout_ms)
+{
+    long long start_ms = monotonic_ms();
+    char buf[4096];
+    char pid_needle[64];
+
+    if (wrapper_pid <= 0)
+        return -1;
+    snprintf(pid_needle, sizeof(pid_needle), "pid=%lld", wrapper_pid);
+    while (monotonic_ms() - start_ms <= timeout_ms) {
+        const char *paths[] = { konsole_phase_log_path,
+                                konsole_phase_mirror_path };
+
+        for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+            char *line;
+            char *save = NULL;
+
+            if (read_text_file(paths[i], buf, sizeof(buf)) <= 0)
+                continue;
+            for (line = strtok_r(buf, "\n", &save); line;
+                 line = strtok_r(NULL, "\n", &save)) {
+                if (!strstr(line, "phase=bash-start") ||
+                    !strstr(line, pid_needle)) {
+                    continue;
+                }
+                return marker_payload_ll(line, "shell_start_ms");
+            }
+        }
+        usleep(50000);
+    }
+
+    return -1;
+}
+
+static void sample_konsole_pty_fds(pid_t child_pid, long long base_ms,
+                                   struct konsole_phase_state *state)
+{
+    char fd_dir[320];
+    DIR *dir;
+    struct dirent *de;
+
+    if (child_pid <= 0 || !state || (state->ptmx_seen && state->pts_seen))
+        return;
+
+    snprintf(fd_dir, sizeof(fd_dir), "/proc/%ld/fd", (long)child_pid);
+    dir = opendir(fd_dir);
+    if (!dir) {
+        if (!state->fd_opendir_failed) {
+            konsole_phase_log("kde_app_launch_probe konsole_phase_detail "
+                              "phase=pty-fd status=opendir-fail pid=%ld "
+                              "since_launch_ms=%lld errno=%d error=\"%s\"\n",
+                              (long)child_pid, monotonic_ms() - base_ms,
+                              errno, strerror(errno));
+            state->fd_opendir_failed = 1;
+        }
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char link_path[768];
+        char target[512];
+        ssize_t n;
+
+        if (de->d_name[0] == '.')
+            continue;
+        if (snprintf(link_path, sizeof(link_path), "%s/%s", fd_dir,
+                     de->d_name) >= (int)sizeof(link_path)) {
+            continue;
+        }
+        n = readlink(link_path, target, sizeof(target) - 1);
+        if (n < 0)
+            continue;
+        target[n] = '\0';
+
+        if (!state->ptmx_seen && strcmp(target, "/dev/ptmx") == 0) {
+            state->ptmx_seen = 1;
+            state->ptmx_seen_ms = monotonic_ms();
+            konsole_phase_log("kde_app_launch_probe konsole_phase_detail "
+                              "phase=pty-fd kind=ptmx status=seen pid=%ld "
+                              "fd=%s since_launch_ms=%lld target=\"%s\"\n",
+                              (long)child_pid, de->d_name,
+                              state->ptmx_seen_ms - base_ms, target);
+        }
+        if (!state->pts_seen && strncmp(target, "/dev/pts/", 9) == 0) {
+            state->pts_seen = 1;
+            state->pts_seen_ms = monotonic_ms();
+            strncpy(state->pts_target, target, sizeof(state->pts_target) - 1);
+            state->pts_target[sizeof(state->pts_target) - 1] = '\0';
+            konsole_phase_log("kde_app_launch_probe konsole_phase_detail "
+                              "phase=pty-fd kind=pts status=seen pid=%ld "
+                              "fd=%s since_launch_ms=%lld target=\"%s\"\n",
+                              (long)child_pid, de->d_name,
+                              state->pts_seen_ms - base_ms, target);
+        }
+    }
+
+    closedir(dir);
+}
+
 static int wait_for_path_traced(const char *path, int timeout_ms,
                                 const char *phase, pid_t child_pid,
                                 int sample_ms, long long base_ms,
                                 char *found_payload,
                                 size_t found_payload_size,
-                                long long *found_ms_out)
+                                long long *found_ms_out,
+                                struct konsole_phase_state *phase_state)
 {
     long long start_ms = monotonic_ms();
     long long next_sample_ms = start_ms;
@@ -1892,6 +2028,8 @@ static int wait_for_path_traced(const char *path, int timeout_ms,
     for (;;) {
         long long now = monotonic_ms();
         long long elapsed_ms = now - start_ms;
+
+        sample_konsole_pty_fds(child_pid, base_ms, phase_state);
 
         if (access(path, F_OK) == 0) {
             char payload[512];
@@ -1906,6 +2044,11 @@ static int wait_for_path_traced(const char *path, int timeout_ms,
                 }
                 if (found_ms_out)
                     *found_ms_out = found_ms;
+                konsole_phase_log("kde_app_launch_probe marker phase=%s "
+                                  "status=found elapsed_ms=%lld "
+                                  "since_launch_ms=%lld path=%s payload=\"%s\"\n",
+                                  phase, elapsed_ms, found_ms - base_ms, path,
+                                  payload);
                 fprintf(stderr,
                         "kde_app_launch_probe marker phase=%s status=found "
                         "elapsed_ms=%lld since_launch_ms=%lld path=%s payload=\"%s\"\n",
@@ -1943,6 +2086,9 @@ static int wait_for_path_traced(const char *path, int timeout_ms,
             "kde_app_launch_probe marker phase=%s status=timeout "
             "elapsed_ms=%lld path=%s child_pid=%ld\n",
             phase, monotonic_ms() - start_ms, path, (long)child_pid);
+    konsole_phase_log("kde_app_launch_probe marker phase=%s status=timeout "
+                      "elapsed_ms=%lld path=%s child_pid=%ld\n",
+                      phase, monotonic_ms() - start_ms, path, (long)child_pid);
     return 0;
 }
 
@@ -2324,6 +2470,7 @@ int main(int argc, char **argv)
                                  0, 0, 5000);
     size_t probe_count = require_chromium ? 6 : 5;
     int konsole_marker_ok = 1;
+    struct konsole_phase_state konsole_phase_state = { 0 };
     int shells_before;
     int shells_after;
     int ok = 1;
@@ -2332,6 +2479,7 @@ int main(int argc, char **argv)
     long long konsole_wait_start_ms;
     long long konsole_marker_found_ms = -1;
     long long konsole_wait_elapsed_ms;
+    long long konsole_bash_start_ms = -1;
     char konsole_marker_payload[512] = "";
 
     maybe_redirect_stderr_to_stdout();
@@ -2361,6 +2509,7 @@ int main(int argc, char **argv)
     if (require_chromium)
         chromium_evidence_open();
     set_kde_env();
+    konsole_phase_log_reset();
     unlink(konsole_marker);
     shells_before = count_shell_processes();
     dump_interesting_processes("before", 0);
@@ -2374,6 +2523,12 @@ int main(int argc, char **argv)
     konsole_launch_start_ms = monotonic_ms();
     probes[0].ok = launch_app(&probes[0]);
     konsole_launch_done_ms = monotonic_ms();
+    konsole_phase_log("kde_app_launch_probe launch app=konsole pid=%ld "
+                      "fork_elapsed_ms=%lld exec_elapsed_ms=%lld "
+                      "elapsed_ms=%lld launch_start_ms=%lld launch_done_ms=%lld\n",
+                      (long)probes[0].pid, probes[0].fork_elapsed_ms,
+                      probes[0].exec_elapsed_ms, probes[0].launch_elapsed_ms,
+                      konsole_launch_start_ms, konsole_launch_done_ms);
     if (!probes[0].ok)
         ok = 0;
 
@@ -2384,7 +2539,8 @@ int main(int argc, char **argv)
                                              konsole_launch_start_ms,
                                              konsole_marker_payload,
                                              sizeof(konsole_marker_payload),
-                                             &konsole_marker_found_ms);
+                                             &konsole_marker_found_ms,
+                                             &konsole_phase_state);
     konsole_wait_elapsed_ms = monotonic_ms() - konsole_wait_start_ms;
     shells_after = count_shell_processes();
     fprintf(stderr,
@@ -2399,33 +2555,67 @@ int main(int argc, char **argv)
             marker_payload_ll(konsole_marker_payload, "open_ms");
         long long wrapper_before_exec_ms =
             marker_payload_ll(konsole_marker_payload, "before_exec_ms");
+        long long wrapper_pid =
+            marker_payload_ll(konsole_marker_payload, "pid");
+        long long wrapper_session_id =
+            marker_payload_ll(konsole_marker_payload, "getsid");
+        long long wrapper_pgrp =
+            marker_payload_ll(konsole_marker_payload, "getpgrp");
+        long long wrapper_tty_pgrp =
+            marker_payload_ll(konsole_marker_payload, "tcgetpgrp");
 
-        fprintf(stderr,
-                "kde_app_launch_probe konsole_phase status=PASS "
-                "launch_start_ms=%lld launch_done_ms=%lld "
-                "launch_call_ms=%lld wait_start_ms=%lld "
-                "wait_elapsed_ms=%lld marker_found_ms=%lld "
-                "marker_found_since_launch_ms=%lld "
-                "wrapper_start_ms=%lld wrapper_start_since_launch_ms=%lld "
-                "wrapper_start_since_wait_ms=%lld wrapper_open_delta_ms=%lld "
-                "wrapper_before_exec_delta_ms=%lld "
-                "wrapper_marker_found_since_wrapper_ms=%lld\n",
-                konsole_launch_start_ms, konsole_launch_done_ms,
-                konsole_launch_done_ms - konsole_launch_start_ms,
-                konsole_wait_start_ms, konsole_wait_elapsed_ms,
-                konsole_marker_found_ms,
-                konsole_marker_found_ms - konsole_launch_start_ms,
-                wrapper_start_ms,
-                wrapper_start_ms >= 0 ?
-                    wrapper_start_ms - konsole_launch_start_ms : -1,
-                wrapper_start_ms >= 0 ?
-                    wrapper_start_ms - konsole_wait_start_ms : -1,
-                wrapper_start_ms >= 0 && wrapper_open_ms >= 0 ?
-                    wrapper_open_ms - wrapper_start_ms : -1,
-                wrapper_start_ms >= 0 && wrapper_before_exec_ms >= 0 ?
-                    wrapper_before_exec_ms - wrapper_start_ms : -1,
-                wrapper_start_ms >= 0 && konsole_marker_found_ms >= 0 ?
-                    konsole_marker_found_ms - wrapper_start_ms : -1);
+        konsole_bash_start_ms = wait_for_bash_start_ms(wrapper_pid, 1500);
+
+#define KONSOLE_PHASE_SUMMARY_FMT                                             \
+        "kde_app_launch_probe konsole_phase status=PASS "                    \
+        "launch_start_ms=%lld launch_done_ms=%lld launch_call_ms=%lld "      \
+        "wait_start_ms=%lld wait_elapsed_ms=%lld marker_found_ms=%lld "      \
+        "marker_found_since_launch_ms=%lld wrapper_pid=%lld "                \
+        "wrapper_start_ms=%lld wrapper_start_since_launch_ms=%lld "          \
+        "wrapper_start_since_wait_ms=%lld wrapper_open_delta_ms=%lld "       \
+        "wrapper_before_exec_delta_ms=%lld "                                 \
+        "wrapper_marker_found_since_wrapper_ms=%lld "                        \
+        "pty_ptmx_seen=%d pty_ptmx_since_launch_ms=%lld "                    \
+        "pty_pts_seen=%d pty_pts_since_launch_ms=%lld pty_pts_target=\"%s\" " \
+        "wrapper_getsid=%lld wrapper_getpgrp=%lld wrapper_tcgetpgrp=%lld "   \
+        "bash_start_ms=%lld bash_start_since_launch_ms=%lld "                \
+        "bash_start_since_wrapper_ms=%lld\n"
+#define KONSOLE_PHASE_SUMMARY_ARGS                                            \
+        konsole_launch_start_ms, konsole_launch_done_ms,                      \
+        konsole_launch_done_ms - konsole_launch_start_ms,                     \
+        konsole_wait_start_ms, konsole_wait_elapsed_ms,                       \
+        konsole_marker_found_ms,                                              \
+        konsole_marker_found_ms - konsole_launch_start_ms, wrapper_pid,       \
+        wrapper_start_ms,                                                     \
+        wrapper_start_ms >= 0 ? wrapper_start_ms - konsole_launch_start_ms    \
+                              : -1,                                           \
+        wrapper_start_ms >= 0 ? wrapper_start_ms - konsole_wait_start_ms      \
+                              : -1,                                           \
+        wrapper_start_ms >= 0 && wrapper_open_ms >= 0 ?                       \
+            wrapper_open_ms - wrapper_start_ms : -1,                          \
+        wrapper_start_ms >= 0 && wrapper_before_exec_ms >= 0 ?                \
+            wrapper_before_exec_ms - wrapper_start_ms : -1,                   \
+        wrapper_start_ms >= 0 && konsole_marker_found_ms >= 0 ?               \
+            konsole_marker_found_ms - wrapper_start_ms : -1,                  \
+        konsole_phase_state.ptmx_seen,                                        \
+        konsole_phase_state.ptmx_seen ?                                       \
+            konsole_phase_state.ptmx_seen_ms - konsole_launch_start_ms : -1,  \
+        konsole_phase_state.pts_seen,                                         \
+        konsole_phase_state.pts_seen ?                                        \
+            konsole_phase_state.pts_seen_ms - konsole_launch_start_ms : -1,   \
+        konsole_phase_state.pts_target[0] ? konsole_phase_state.pts_target    \
+                                          : "missing",                       \
+        wrapper_session_id, wrapper_pgrp, wrapper_tty_pgrp,                  \
+        konsole_bash_start_ms,                                                \
+        konsole_bash_start_ms >= 0 ?                                          \
+            konsole_bash_start_ms - konsole_launch_start_ms : -1,             \
+        konsole_bash_start_ms >= 0 && wrapper_start_ms >= 0 ?                 \
+            konsole_bash_start_ms - wrapper_start_ms : -1
+
+        fprintf(stderr, KONSOLE_PHASE_SUMMARY_FMT, KONSOLE_PHASE_SUMMARY_ARGS);
+        konsole_phase_log(KONSOLE_PHASE_SUMMARY_FMT, KONSOLE_PHASE_SUMMARY_ARGS);
+#undef KONSOLE_PHASE_SUMMARY_FMT
+#undef KONSOLE_PHASE_SUMMARY_ARGS
     } else {
         fprintf(stderr,
                 "kde_app_launch_probe konsole_phase status=FAIL "
@@ -2436,6 +2626,14 @@ int main(int argc, char **argv)
                 konsole_launch_done_ms - konsole_launch_start_ms,
                 konsole_wait_start_ms, konsole_wait_elapsed_ms,
                 konsole_marker_found_ms);
+        konsole_phase_log("kde_app_launch_probe konsole_phase status=FAIL "
+                          "launch_start_ms=%lld launch_done_ms=%lld "
+                          "launch_call_ms=%lld wait_start_ms=%lld "
+                          "wait_elapsed_ms=%lld marker_found_ms=%lld\n",
+                          konsole_launch_start_ms, konsole_launch_done_ms,
+                          konsole_launch_done_ms - konsole_launch_start_ms,
+                          konsole_wait_start_ms, konsole_wait_elapsed_ms,
+                          konsole_marker_found_ms);
     }
     if (!konsole_marker_ok)
         ok = 0;

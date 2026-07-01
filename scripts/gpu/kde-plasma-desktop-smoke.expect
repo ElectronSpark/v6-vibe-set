@@ -62,6 +62,7 @@ set guest_chromium_video_rela_preprobe_log "/kde-chromium-rela-preprobe.log"
 set guest_chromium_video_rela_preprobe_status "/kde-chromium-rela-preprobe.status"
 set guest_role_probe_log "/kde-role-probe.log"
 set guest_desktop_interaction_script "/kdi.sh"
+set guest_konsole_phase_log "/xv6-konsole-phase.log"
 set before_ppm "$outdir/kde-plasma-before.ppm"
 set after_ppm "$outdir/kde-plasma-after.ppm"
 set final_ppm "$outdir/kde-plasma-final.ppm"
@@ -98,6 +99,7 @@ set chromium_video_rela_preprobe_log "$outdir/kde-chromium-rela-preprobe.log"
 set chromium_video_rela_preprobe_status "$outdir/kde-chromium-rela-preprobe.status"
 set role_probe_log "$outdir/kde-role-probe.log"
 set desktop_interaction_log "$outdir/kde-desktop-interaction-latency.log"
+set konsole_phase_log "$outdir/xv6-konsole-phase.log"
 set prompt_sync_log "$outdir/kde-prompt-sync.log"
 set before_png "$outdir/kde-plasma-before.png"
 set after_png "$outdir/kde-plasma-after.png"
@@ -297,7 +299,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$prompt_sync_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-fbstat-*.log '$outdir'/chromium-video-*.ppm '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$prompt_sync_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-fbstat-*.log '$outdir'/chromium-video-*.ppm '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -342,6 +344,7 @@ catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_capture_status' '$tm
 catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_rela_preprobe_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_rela_preprobe_status' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_role_probe_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_konsole_phase_log' '$tmpimg' >/dev/null 2>&1" }
 for {set i 0} {$i < $chromium_video_sample_count} {incr i} {
     set guest_chromium_video_ppm [format "/chromium-video-%02d.ppm" $i]
     catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_ppm' '$tmpimg' >/dev/null 2>&1" }
@@ -6842,6 +6845,7 @@ proc finish {code label} {
     global chromium_video_sample_count kde_smoke_reducer outdir
     global chromium_video_post_strict
     global guest_role_probe_log role_probe_log
+    global guest_konsole_phase_log konsole_phase_log
 
     write_final_status $code $label "finish-entry"
     host_screenshot "final" $host_final_png
@@ -6880,6 +6884,7 @@ proc finish {code label} {
     if {![file exists $role_probe_log] || [file size $role_probe_log] == 0} {
         dump_optional_guest_artifact $guest_role_probe_log $role_probe_log
     }
+    dump_optional_guest_artifact $guest_konsole_phase_log $konsole_phase_log
     if {$kde_smoke_reducer eq "chromium-video"} {
         if {$chromium_egl_trace eq "1"} {
             dump_chromium_egl_trace_artifacts
@@ -11779,6 +11784,8 @@ proc measure_visual_action {phase action_label x y helper_args timeout_ms interv
 }
 
 proc measure_direct_app_launch_latency {} {
+    global guest_konsole_phase_log konsole_phase_log
+
     set start_ms [clock milliseconds]
     desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=start start_ms=$start_ms"
     set result [run_desktop_interaction_helper_command direct-launch kde-app-launch-probe "" 120000]
@@ -11787,6 +11794,17 @@ proc measure_direct_app_launch_latency {} {
     set log_text [lindex $result 3]
     set helper_elapsed_ms [lindex $result 4]
     set host_log_path [lindex $result 5]
+    set phase_text ""
+    set phase_parse_text $log_text
+    set phase_host_path "missing"
+    if {[read_guest_artifact_text $guest_konsole_phase_log phase_text] &&
+        [regexp {kde_app_launch_probe konsole_phase} $phase_text]} {
+        set phase_parse_text $phase_text
+        set phase_host_path $konsole_phase_log
+        set fh [open $phase_host_path w]
+        puts -nonewline $fh $phase_text
+        close $fh
+    }
     if {[regexp {kde_app_launch_probe[^\r\n]*status=FAIL} $log_text]} {
         desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=FAIL status_path=$status_path log_path=$log_path host_log=$host_log_path"
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-app-launch-latency-probe-output-fail"
@@ -11802,36 +11820,54 @@ proc measure_direct_app_launch_latency {} {
     set konsole_wrapper_start_since_launch_ms "missing"
     set konsole_wrapper_marker_found_since_wrapper_ms "missing"
     set konsole_wrapper_before_exec_delta_ms "missing"
+    set konsole_pty_ptmx_since_launch_ms "missing"
+    set konsole_pty_pts_since_launch_ms "missing"
+    set konsole_bash_start_since_launch_ms "missing"
+    set konsole_bash_start_since_wrapper_ms "missing"
     if {[regexp {konsole_wait_ms=([0-9]+)} $log_text -> kw]} {
         set konsole_wait_ms $kw
     }
-    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*launch_call_ms=([-0-9]+)} $log_text -> klc]} {
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*launch_call_ms=([-0-9]+)} $phase_parse_text -> klc]} {
         set konsole_launch_call_ms $klc
     }
-    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_start_since_launch_ms=([-0-9]+)} $log_text -> ksl]} {
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_start_since_launch_ms=([-0-9]+)} $phase_parse_text -> ksl]} {
         set konsole_wrapper_start_since_launch_ms $ksl
     }
-    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_marker_found_since_wrapper_ms=([-0-9]+)} $log_text -> kmw]} {
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_marker_found_since_wrapper_ms=([-0-9]+)} $phase_parse_text -> kmw]} {
         set konsole_wrapper_marker_found_since_wrapper_ms $kmw
     }
-    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_before_exec_delta_ms=([-0-9]+)} $log_text -> kbe]} {
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_before_exec_delta_ms=([-0-9]+)} $phase_parse_text -> kbe]} {
         set konsole_wrapper_before_exec_delta_ms $kbe
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*pty_ptmx_since_launch_ms=([-0-9]+)} $phase_parse_text -> kptmx]} {
+        set konsole_pty_ptmx_since_launch_ms $kptmx
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*pty_pts_since_launch_ms=([-0-9]+)} $phase_parse_text -> kpts]} {
+        set konsole_pty_pts_since_launch_ms $kpts
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*bash_start_since_launch_ms=([-0-9]+)} $phase_parse_text -> kbs]} {
+        set konsole_bash_start_since_launch_ms $kbs
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*bash_start_since_wrapper_ms=([-0-9]+)} $phase_parse_text -> kbw]} {
+        set konsole_bash_start_since_wrapper_ms $kbw
     }
     if {[regexp {KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS=([0-9]+)} $log_text -> ksm]} {
         set konsole_sample_ms $ksm
-    } elseif {[regexp {marker phase=konsole-ready status=waiting} $log_text]} {
+    } elseif {[regexp {marker phase=konsole-ready status=waiting} $phase_parse_text]} {
         set konsole_sample_ms "logged"
     }
-    foreach raw_line [split $log_text "\n"] {
+    foreach raw_line [split $phase_parse_text "\n"] {
         set line [string trimright $raw_line "\r"]
         if {[regexp {kde_app_launch_probe launch app=konsole[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe marker phase=konsole-ready status=found[^\r\n]*} $line match] ||
+            [regexp {kde_app_launch_probe konsole_phase_detail[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe konsole_phase[^\r\n]*} $line match] ||
+            [regexp {xv6-konsole-shell phase=[^\r\n]*} $line match] ||
             [regexp {xv6-konsole-shell-ready[^\r\n]*} $line match]} {
             desktop_interaction_log_line "phase=direct-launch-detail action=kde-app-launch-probe detail=[evidence_quote [string map {"\t" " " "\r" "" "\n" " "} $match]]"
         }
     }
-    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms status_path=$status_path log_path=$log_path host_log=$host_log_path"
+    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms konsole_pty_ptmx_since_launch_ms=$konsole_pty_ptmx_since_launch_ms konsole_pty_pts_since_launch_ms=$konsole_pty_pts_since_launch_ms konsole_bash_start_since_launch_ms=$konsole_bash_start_since_launch_ms konsole_bash_start_since_wrapper_ms=$konsole_bash_start_since_wrapper_ms status_path=$status_path log_path=$log_path host_log=$host_log_path phase_log=$phase_host_path"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms"
 }
 
