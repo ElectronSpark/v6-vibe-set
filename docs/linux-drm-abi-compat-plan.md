@@ -291,6 +291,17 @@ Current direction:
   cheap (`fork_elapsed_ms=8`, `exec_elapsed_ms=15`) while shell readiness still
   dominated (`konsole_wait_ms=5048`), so the next Plasma bottleneck remains
   readiness/wakeup after exec rather than process creation.
+- A focused AF_UNIX SCM-only readiness reducer now exists in
+  `/bin/kde-unix-socket-probe --scm-zero-readiness`. Linux host reference and
+  xv6 guest proof both show the same ABI shape for stream socketpairs with
+  `SO_PASSCRED` and zero-length `write(2)`/`sendmsg(2)`: send returns `0`,
+  `poll(POLLIN)` returns `0`, and nonblocking `read(2)` returns `-1/EAGAIN`.
+  The xv6 artifact is
+  `build-x86_64/unix-socket-scm-zero-readiness/20260701T104416Z-xv6/`.
+  This rules out the suspected stale zero-length SCM mark as the source of
+  Konsole's repeated `poll-ready/read/read-eagain` cycles; continue looking at
+  ordinary byte readiness, eventfd/Qt wake propagation, PTY/session readiness,
+  or userspace futex waits.
 - 2026-07-01 phase instrumentation is now staged in xv6-owned probes/harness:
   `kde-app-launch-probe` emits Konsole launch/marker/wrapper timing, and the
   desktop interaction reducer preserves `fbstat sample-current` open/info/

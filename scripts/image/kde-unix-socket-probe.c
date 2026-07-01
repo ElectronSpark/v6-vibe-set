@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -1594,7 +1595,90 @@ out:
     return failed;
 }
 
-int main(void)
+static int scm_zero_readiness_one(const char *label, int use_sendmsg)
+{
+    struct pollfd pfd;
+    char byte = 0;
+    int sv[2] = {-1, -1};
+    int failed = 0;
+    int one = 1;
+
+    errno = 0;
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
+        print_errno("scm-zero-readiness-socketpair");
+        return 1;
+    }
+
+    errno = 0;
+    if (setsockopt(sv[1], SOL_SOCKET, SO_PASSCRED, &one, sizeof(one)) < 0) {
+        print_errno("scm-zero-readiness-so-passcred");
+        failed = 1;
+        goto out;
+    }
+
+    errno = 0;
+    ssize_t n;
+    if (use_sendmsg) {
+        struct msghdr msg;
+
+        memset(&msg, 0, sizeof(msg));
+        n = sendmsg(sv[0], &msg, MSG_NOSIGNAL | MSG_DONTWAIT);
+    } else {
+        n = write(sv[0], "", 0);
+    }
+    printf("kde_unix_socket_probe scm-zero-readiness-%s send ret=%zd errno=%d %s\n",
+           label, n, errno, strerror(errno));
+    if (n != 0) {
+        failed = 1;
+        goto out;
+    }
+
+    pfd.fd = sv[1];
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    errno = 0;
+    int pret = poll(&pfd, 1, 100);
+    printf("kde_unix_socket_probe scm-zero-readiness-%s poll ret=%d revents=0x%x errno=%d %s\n",
+           label, pret, pfd.revents, errno, strerror(errno));
+    if (pret != 0 || pfd.revents != 0)
+        failed = 1;
+
+    int flags = fcntl(sv[1], F_GETFL, 0);
+    if (flags < 0 || fcntl(sv[1], F_SETFL, flags | O_NONBLOCK) < 0) {
+        print_errno("scm-zero-readiness-nonblock");
+        failed = 1;
+        goto out;
+    }
+
+    errno = 0;
+    ssize_t r = read(sv[1], &byte, 1);
+    printf("kde_unix_socket_probe scm-zero-readiness-%s read ret=%zd errno=%d %s\n",
+           label, r, errno, strerror(errno));
+    if (r != -1 || (errno != EAGAIN && errno != EWOULDBLOCK))
+        failed = 1;
+
+out:
+    if (sv[0] >= 0)
+        close(sv[0]);
+    if (sv[1] >= 0)
+        close(sv[1]);
+    printf("kde_unix_socket_probe scm-zero-readiness-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int scm_zero_readiness(void)
+{
+    int failed = 0;
+
+    failed |= scm_zero_readiness_one("write", 0);
+    failed |= scm_zero_readiness_one("sendmsg", 1);
+    printf("kde_unix_socket_probe scm-zero-readiness result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+int main(int argc, char **argv)
 {
     const char *path = "/tmp/kde-unix-socket-probe.sock";
     struct sockaddr_un sa;
@@ -1605,6 +1689,14 @@ int main(void)
     int failed = 0;
 
     setvbuf(stdout, NULL, _IONBF, 0);
+
+    if (argc == 2 && strcmp(argv[1], "--scm-zero-readiness") == 0)
+        return scm_zero_readiness() ? 1 : 0;
+    if (argc != 1) {
+        printf("kde_unix_socket_probe unknown-argument=%s\n", argv[1]);
+        return 2;
+    }
+
     unlink(path);
 
     server = socket(AF_UNIX, SOCK_STREAM, 0);
