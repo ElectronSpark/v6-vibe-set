@@ -265,6 +265,18 @@ Current direction:
 - Next evidence should split Konsole readiness into pty/session, Wayland
   surface, and shell-marker phases, and split hover delay into input injection,
   Plasma paint, and framebuffer readback timing.
+- 2026-07-01 Konsole readiness tracing proved an unsafe poll full-wait
+  admission path for AF_UNIX Wayland sockets. The failed trace at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T084230Z-desktop-interaction-konsole-ready-trace-parser-fail/`
+  showed Konsole and its Wayland event thread entering infinite kqueue waits on
+  `/dev/shm/xdg-runtime-root/wayland-0` and timing out after `45127ms`.
+  Kernel AF_UNIX sockets are therefore kept on the 10ms poll rescan safety net
+  while `poll_notify_full_wait=1` is enabled, until all AF_UNIX readiness
+  transitions are proven notify-backed. The low-noise proof at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T085400Z-desktop-interaction-af-unix-rescan-low-noise-pass/`
+  passed with `direct-launch=4847ms`, `konsole_wait_ms=3588`, tray
+  open/close `1598/1111ms`, start-menu open/close `2108/1031ms`, network SNI
+  registration, PipeWire sink/monitor readiness, and virgl DRM nodes registered.
 - 2026-07-01 phase instrumentation is now staged in xv6-owned probes/harness:
   `kde-app-launch-probe` emits Konsole launch/marker/wrapper timing, and the
   desktop interaction reducer preserves `fbstat sample-current` open/info/
