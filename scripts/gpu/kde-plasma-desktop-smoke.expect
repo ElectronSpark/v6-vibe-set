@@ -5937,6 +5937,22 @@ proc stage_desktop_interaction_helper_script {} {
             set kprofile_default 1
         }
     }
+    set semantic_capture_default 0
+    if {[info exists ::env(KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE)]} {
+        set semantic_value [string tolower $::env(KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE)]
+        if {$semantic_value eq "1" || $semantic_value eq "true" ||
+            $semantic_value eq "yes" || $semantic_value eq "on"} {
+            set semantic_capture_default 1
+        }
+    }
+    set wayland_debug_default 0
+    if {[info exists ::env(KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG)]} {
+        set wayland_debug_value [string tolower $::env(KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG)]
+        if {$wayland_debug_value eq "1" || $wayland_debug_value eq "true" ||
+            $wayland_debug_value eq "yes" || $wayland_debug_value eq "on"} {
+            set wayland_debug_default 1
+        }
+    }
 
     set host_script "$outdir/kde-desktop-interaction-helper.sh.host"
     set fh [open $host_script w]
@@ -6012,15 +6028,61 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS:=$interlaunch_delay_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS:=$konsole_wait_sample_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_KPROFILE:=$kprofile_default}\""
+    puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE:=$semantic_capture_default}\""
+    puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG:=$wayland_debug_default}\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS=\$KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS=\$KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_KPROFILE=\$KDE_APP_LAUNCH_PROBE_KPROFILE\""
+    puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE=\$KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE\""
+    puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG=\$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG\""
     puts $fh "      export KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS"
+    puts $fh {      semantic_pids=""}
+    puts $fh {      semantic_logs=""}
+    puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE" = 1 ]; then}
+    puts $fh {        export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root}
+    puts $fh {        export DBUS_SYSTEM_BUS_ADDRESS=unix:abstract=xv6_system_bus}
+    puts $fh {        export DBUS_SESSION_BUS_ADDRESS=unix:abstract=xv6_session_bus}
+    puts $fh {        export LD_LIBRARY_PATH=/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib:/lib}
+    puts $fh {        for dest in org.kde.klauncher5 org.kde.KWin org.kde.ActivityManager org.freedesktop.DBus; do}
+    puts $fh {          safe_dest="${dest//[^A-Za-z0-9_.-]/_}"}
+    puts $fh {          mon_log="/kde-interaction-${kind}-${serial}-${label}.dbus-${safe_dest}.log"}
+    puts $fh {          rm -f "$mon_log"}
+    puts $fh {          if command -v gdbus >/dev/null 2>&1; then}
+    puts $fh {            (gdbus monitor --session --dest "$dest" >"$mon_log" 2>&1) &}
+    puts $fh {            mon_pid=$!}
+    puts $fh {            semantic_pids="$semantic_pids $mon_pid"}
+    puts $fh {            semantic_logs="$semantic_logs $mon_log"}
+    puts $fh {            echo "kde_interaction_helper semantic-monitor dest=$dest pid=$mon_pid log=$mon_log"}
+    puts $fh {          else}
+    puts $fh {            echo "kde_interaction_helper semantic-monitor dest=$dest status=missing-gdbus"}
+    puts $fh {          fi}
+    puts $fh {        done}
+    puts $fh {        sleep 1}
+    puts $fh {      fi}
+    puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG" = 1 ]; then}
+    puts $fh {        export WAYLAND_DEBUG=client}
+    puts $fh {      fi}
     puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_KPROFILE" = 1 ]; then}
     puts $fh "        /bin/kprofile /bin/kde-app-launch-probe"
     puts $fh "      else"
     puts $fh "        /bin/kde-app-launch-probe"
     puts $fh "      fi"
+    puts $fh {      probe_rc=$?}
+    puts $fh {      if [ -n "$semantic_pids" ]; then}
+    puts $fh {        for pid in $semantic_pids; do}
+    puts $fh {          kill "$pid" 2>/dev/null || true}
+    puts $fh {        done}
+    puts $fh {        sleep 1}
+    puts $fh {        for pid in $semantic_pids; do}
+    puts $fh {          wait "$pid" 2>/dev/null || true}
+    puts $fh {        done}
+    puts $fh {        for mon_log in $semantic_logs; do}
+    puts $fh {          echo "kde_interaction_helper semantic-log path=$mon_log begin"}
+    puts $fh {          sed -n '1,240p' "$mon_log" 2>/dev/null || true}
+    puts $fh {          echo "kde_interaction_helper semantic-log path=$mon_log end"}
+    puts $fh {        done}
+    puts $fh {      fi}
+    puts $fh {      echo "kde_interaction_helper direct-launch probe_rc=$probe_rc"}
     puts $fh "      ;;"
     puts $fh "    fbstat)"
     puts $fh "      fbstat"
