@@ -328,6 +328,21 @@ Current direction:
   launch to the shell-wrapper marker. The Linux proof harness now treats a
   missing visual baseline as a failure instead of reporting a green
   `LINUX-KDE-INTERACTION-DONE` from direct launch alone.
+- The current Konsole-readiness profiler proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T061204Z-desktop-interaction-kprofile-poll-futex-proof/`.
+  Kernel `kstats` ABI version 3 appends opt-in counters for `poll`, `ppoll`,
+  blocking poll wait time, tty/pty ioctl buckets, and futex wait/wake time;
+  `kprofile` prints them from `kstats2(2)`. The run passed the desktop
+  interaction reducer with GPU nodes, PipeWire/Pulse sink+monitor, NetworkManager
+  shim, and network SNI evidence intact. Konsole launch itself took only `10ms`,
+  but the wrapper marker appeared after `3169ms` (`wrapper_start_since_launch_ms=3154`).
+  The profiled window recorded `sys_poll_blocking_ms=10818` across `126`
+  blocking waits and `sys_futex_wait_ms=3521`, while tty/pty ioctl buckets were
+  effectively `0ms`. Treat the next Plasma responsiveness root-cause branch as
+  Konsole/Qt/Wayland poll-futex scheduling or wakeup behavior around sockets,
+  eventfds, and Wayland/DBus peers, not PTY setup or process creation. Add
+  peer identity/queue detail for the sampled `socket:[146]` and `socket:[148]`
+  waits before behavior-changing scheduler, poll, or futex patches.
 
 ### 3. Chromium As Regression / Stress Probe
 
