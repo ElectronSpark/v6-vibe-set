@@ -1998,6 +1998,7 @@ proc chromium_no_connection_child_summary {} {
 
     array set wanted {}
     array set roles_hex {}
+    array set role_source {}
     array set pid_seq {}
     array set type_arg {}
     array set utility_subtype {}
@@ -2036,6 +2037,7 @@ proc chromium_no_connection_child_summary {} {
     array set fdtable_clone {}
     array set fdtable_initial_candidate {}
     array set payload_count {}
+    array set payload_roles_hex {}
     array set payload_type {}
     array set payload_initial_client_fd {}
     array set payload_utility {}
@@ -2046,6 +2048,7 @@ proc chromium_no_connection_child_summary {} {
     foreach pid $no_connection_pids {
         set wanted($pid) 1
         set roles_hex($pid) "missing"
+        set role_source($pid) "missing"
         set pid_seq($pid) "missing"
         set type_arg($pid) "missing"
         set utility_subtype($pid) "missing"
@@ -2084,6 +2087,7 @@ proc chromium_no_connection_child_summary {} {
         set fdtable_clone($pid) "missing"
         set fdtable_initial_candidate($pid) "missing"
         set payload_count($pid) 0
+        set payload_roles_hex($pid) "missing"
         set payload_type($pid) "missing"
         set payload_initial_client_fd($pid) "missing"
         set payload_utility($pid) "missing"
@@ -2094,9 +2098,14 @@ proc chromium_no_connection_child_summary {} {
 
     foreach raw_line [split [read_text_file $runlog] "\n"] {
         set line [string trimright $raw_line "\r"]
-        if {[regexp {chrome-unix-ipc-payload: .* pid=([0-9]+) tgid=([0-9]+).* fd=([0-9]+).* sample_len=([0-9]+) full_len=([0-9]+).* type=([^ ]+) initial_client_fd=([^ ]+) utility=([^ ]+) sandbox=([^ ]+).* ascii="([^"]*)"} $line -> pid tgid fd sample_len full_len ptype pfd putility psandbox pascii]} {
+        if {[regexp {chrome-unix-ipc-payload: .* pid=([0-9]+) tgid=([0-9]+).* fd=([0-9]+).* sample_len=([0-9]+) full_len=([0-9]+).* roles=0x([0-9a-fA-F]+) type=([^ ]+) initial_client_fd=([^ ]+) utility=([^ ]+) sandbox=([^ ]+).* ascii="([^"]*)"} $line -> pid tgid fd sample_len full_len proles ptype pfd putility psandbox pascii]} {
             if {[info exists wanted($tgid)]} {
                 incr payload_count($tgid)
+                set payload_roles_hex($tgid) $proles
+                if {$roles_hex($tgid) eq "missing"} {
+                    set roles_hex($tgid) $proles
+                    set role_source($tgid) "payload"
+                }
                 if {$payload_first($tgid) eq ""} {
                     set payload_first($tgid) [chromium_short_value $line 220]
                 }
@@ -2162,6 +2171,7 @@ proc chromium_no_connection_child_summary {} {
             if {[info exists wanted($pid)]} {
                 set pid_seq($pid) $seq
                 set roles_hex($pid) $roles
+                set role_source($pid) "lifecycle-exec"
                 set exec_line($pid) $line
             }
             continue
@@ -2195,6 +2205,7 @@ proc chromium_no_connection_child_summary {} {
             if {[info exists wanted($tgid)] && $pid eq $tgid} {
                 set exit_status($tgid) "$status:$killed"
                 set roles_hex($tgid) $roles
+                set role_source($tgid) "lifecycle-exit"
                 set exit_line($tgid) $line
             }
             continue
@@ -2203,6 +2214,7 @@ proc chromium_no_connection_child_summary {} {
             if {[info exists wanted($tgid)] && $pid eq $tgid} {
                 set reap_status($tgid) "$status:$killed"
                 set roles_hex($tgid) $roles
+                set role_source($tgid) "lifecycle-reap"
                 set reap_line($tgid) $line
             }
             continue
@@ -2304,7 +2316,7 @@ proc chromium_no_connection_child_summary {} {
         if {$scm_fds eq ""} {
             set scm_fds "missing"
         }
-        lappend contexts "pid=$pid,roles=0x$roles_hex($pid),role_text=$role_text,type=$type_arg($pid),utility=$utility_subtype($pid),sandbox=$service_sandbox($pid),initial_client_fd=$initial_client_fd($pid),payload_count=$payload_count($pid),payload_type=$payload_type($pid),payload_initial_client_fd=$payload_initial_client_fd($pid),payload_utility=$payload_utility($pid),payload_sandbox=$payload_sandbox($pid),payload_first=[evidence_quote $payload_first($pid)],payload_last=[evidence_quote $payload_last($pid)],shared_files=$shared_files($pid),render_node=$render_node($pid),metrics=$metrics_shmem($pid),field_trial=$field_trial($pid),trace_uuid=$trace_uuid($pid),fdtable_clone=$fdtable_clone($pid),fdtable_initial_candidate=[evidence_quote $fdtable_initial_candidate($pid)],scm_recv_fds=$scm_fds,scm_recv_last=[evidence_quote $scm_recv_last($pid)],ipc=$ipc_count($pid),ipc_recv=$ipc_recv_count($pid),ipc_send=$ipc_send_count($pid),ipc_scm=$ipc_scm_count($pid),ipc_cred=$ipc_cred_count($pid),ipc_bytes_in=$ipc_bytes_in($pid),ipc_bytes_out=$ipc_bytes_out($pid),epoll_ctl=$epoll_ctl_count($pid),epoll_wait=$epoll_wait_count($pid),epoll_ready=$epoll_ready_count($pid),exit=$exit_status($pid),reap=$reap_status($pid),tail_recorded=$syscall_tail_recorded($pid),tail_families=[evidence_quote $syscall_tail_families($pid)],tail_last=[evidence_quote $syscall_tail_last($pid)],tail_fd_last=[evidence_quote $syscall_tail_fd_last($pid)],first_ipc=[evidence_quote $first_ipc($pid)],last_ipc=[evidence_quote $last_ipc($pid)],first_epoll=[evidence_quote $first_epoll($pid)],last_epoll=[evidence_quote $last_epoll($pid)]"
+        lappend contexts "pid=$pid,roles=0x$roles_hex($pid),role_source=$role_source($pid),role_text=$role_text,type=$type_arg($pid),utility=$utility_subtype($pid),sandbox=$service_sandbox($pid),initial_client_fd=$initial_client_fd($pid),payload_count=$payload_count($pid),payload_roles=0x$payload_roles_hex($pid),payload_type=$payload_type($pid),payload_initial_client_fd=$payload_initial_client_fd($pid),payload_utility=$payload_utility($pid),payload_sandbox=$payload_sandbox($pid),payload_first=[evidence_quote $payload_first($pid)],payload_last=[evidence_quote $payload_last($pid)],shared_files=$shared_files($pid),render_node=$render_node($pid),metrics=$metrics_shmem($pid),field_trial=$field_trial($pid),trace_uuid=$trace_uuid($pid),fdtable_clone=$fdtable_clone($pid),fdtable_initial_candidate=[evidence_quote $fdtable_initial_candidate($pid)],scm_recv_fds=$scm_fds,scm_recv_last=[evidence_quote $scm_recv_last($pid)],ipc=$ipc_count($pid),ipc_recv=$ipc_recv_count($pid),ipc_send=$ipc_send_count($pid),ipc_scm=$ipc_scm_count($pid),ipc_cred=$ipc_cred_count($pid),ipc_bytes_in=$ipc_bytes_in($pid),ipc_bytes_out=$ipc_bytes_out($pid),epoll_ctl=$epoll_ctl_count($pid),epoll_wait=$epoll_wait_count($pid),epoll_ready=$epoll_ready_count($pid),exit=$exit_status($pid),reap=$reap_status($pid),tail_recorded=$syscall_tail_recorded($pid),tail_families=[evidence_quote $syscall_tail_families($pid)],tail_last=[evidence_quote $syscall_tail_last($pid)],tail_fd_last=[evidence_quote $syscall_tail_fd_last($pid)],first_ipc=[evidence_quote $first_ipc($pid)],last_ipc=[evidence_quote $last_ipc($pid)],first_epoll=[evidence_quote $first_epoll($pid)],last_epoll=[evidence_quote $last_epoll($pid)]"
     }
 
     return "available=1 no_connection_count=[llength $no_connection_pids] no_connection_pids=[join $no_connection_pids ,] network_restart_count=$network_restart_count runlog_present=1 first_no_connection=[evidence_quote $first_no_connection] last_no_connection=[evidence_quote $last_no_connection] contexts=[evidence_quote [join $contexts {;}]]"

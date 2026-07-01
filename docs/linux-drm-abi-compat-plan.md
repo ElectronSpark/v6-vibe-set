@@ -1290,6 +1290,34 @@ Current direction:
   not model: exact initial-client-fd selection, Mojo invitation acceptance,
   process role/proctitle transition, or task/thread scheduling after the
   zygote child receives its launch payload.
+- The current low-capture child-admission proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T100334Z-chromium-admission-fd3-ack-then-no-connection-crash/`.
+  It kept normal no-forced-GL policy, zero frame samples, RELA and GBM
+  preprobes, full process maps, lifecycle tracing, AF_UNIX IPC/payload/read-write
+  tracing, media-fd tracing, clone/exec fdtable snapshots, syscall tails, and
+  epoll tracing. It failed as
+  `status=FAIL reason=chrome-crash-regression`, not a kernel crash. RELA passed
+  (`checked=35 skipped=5 missing=2 failed=0`), GBM passed with virgl GLES on
+  `/dev/dri/renderD128`, and capture was intentionally skipped
+  (`samples=0`). The important new signal is that full Chromium's zygote fd3
+  bootstrap and 4-byte ACK now succeeded in-run: both zygotes received the
+  8-byte fd3 seqpacket payload, wrote the 4-byte ACK on fd 3, and the browser
+  read returned 4 bytes on its side. Therefore the old "browser waits forever
+  for fd3 ACK" branch is no longer the current blocker. Fast census reached
+  browser, one GPU process, one utility process, and zygotes, but still no
+  renderer processes; no MP4 open or media progress appeared. Two no-connection
+  children remained: a `network.mojom.NetworkService` utility with render-node
+  and shared-file arguments, and a zygote-shaped child with active ChildIOT/Mojo
+  traffic and SCM fd receipt. The next Chromium proof should move past fd3
+  bootstrap and trace exact child/Mojo connection admission: payload-derived
+  role/proctitle transition, initial-client-fd or Mojo endpoint selection,
+  thread scheduling after ChildIOT traffic, and the point where Linux creates
+  stable renderer roles and opens the MP4. Avoid DRM/FPS patches until this
+  path admits a stable renderer/media load.
+- Harness note: `chromium_no_connection_child_summary` now reports
+  `role_source` and `payload_roles` so a no-connection child whose lifecycle
+  lines are absent can still show same-run payload-derived role bits. Payload
+  roles are marked as `role_source=payload`, not as lifecycle evidence.
 
 ### 4. Audio ABI Completeness
 
