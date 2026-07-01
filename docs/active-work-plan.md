@@ -396,7 +396,14 @@ because their current action items are summarized here.
      the qemu-monitor input harness now keeps a single visible cursor by
      defaulting to the QEMU/host cursor and syncing it to injected guest
      coordinates, while `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0` preserves
-     measurement runs without PowerShell cursor-sync overhead. The positive
+     measurement runs without PowerShell cursor-sync overhead. Guest
+     `/bin/mouseinject` mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so
+     it uses the guest hardware cursor instead of a hidden host-only cursor.
+     The reusable host-side sync helper is
+     `scripts/gpu/qemu-host-cursor-sync.sh`; Chromium/YouTube and Linux KDE
+     reference probes use it in host-cursor mode with
+     `CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC` and `LINUX_KDE_HOST_CURSOR_SYNC`
+     opt-outs for timing-sensitive runs. The positive
      cursor proof is archived at
      `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171300Z-desktop-interaction-host-cursor-sync-pass/`;
      the WSLg/GTK guest-cursor negative control is archived at

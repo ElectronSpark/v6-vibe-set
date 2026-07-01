@@ -393,7 +393,17 @@ if {$kde_smoke_reducer eq "desktop-interaction-latency" ||
             set kde_interaction_cursor_owner "explicit-$env(QEMU_GTK_CURSOR_MODE)"
         }
     } else {
-        set kde_interaction_cursor_owner "guest-input-default"
+        if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+            set env(QEMU_GTK_CURSOR_MODE) "guest"
+        }
+        if {$env(QEMU_GTK_CURSOR_MODE) eq "guest"} {
+            if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+                set env(QEMU_GTK_SHOW_CURSOR) "off"
+            }
+            set kde_interaction_cursor_owner "guest-hardware-cursor"
+        } else {
+            set kde_interaction_cursor_owner "guest-input-explicit-$env(QEMU_GTK_CURSOR_MODE)"
+        }
     }
 }
 set qemu_timeout ""

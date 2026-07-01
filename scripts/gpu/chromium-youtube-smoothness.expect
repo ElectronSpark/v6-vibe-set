@@ -36,6 +36,7 @@ set chrome_poll_summary [expr {[info exists env(CHROMIUM_POLL_SUMMARY)] ? $env(C
 set chrome_drm_ioctl_trace [expr {[info exists env(CHROMIUM_DRM_IOCTL_TRACE)] ? $env(CHROMIUM_DRM_IOCTL_TRACE) : "0"}]
 set chrome_drm_fence_trace [expr {[info exists env(CHROMIUM_DRM_FENCE_TRACE)] ? $env(CHROMIUM_DRM_FENCE_TRACE) : "0"}]
 set chromium_surface_trace [expr {[info exists env(CHROMIUM_SURFACE_TRACE)] ? $env(CHROMIUM_SURFACE_TRACE) : "0"}]
+set host_cursor_sync [expr {[info exists env(CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC)] ? $env(CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC) : "1"}]
 set cursor_failure "none"
 
 if {![string is integer -strict $warmup_seconds] || $warmup_seconds < 5} { set warmup_seconds 75 }
@@ -71,6 +72,9 @@ foreach knob {chrome_poll_summary chrome_drm_ioctl_trace chrome_drm_fence_trace}
 if {$chromium_surface_trace ne "0" && $chromium_surface_trace ne "1"} {
     set chromium_surface_trace "0"
 }
+if {$host_cursor_sync ne "0" && $host_cursor_sync ne "1"} {
+    set host_cursor_sync "1"
+}
 set warmup_timer [expr {int(($warmup_seconds + 14) / 15)}]
 if {$warmup_timer < 1} { set warmup_timer 1 }
 if {$warmup_timer > 12} { set warmup_timer 12 }
@@ -101,6 +105,15 @@ set env(QEMU_NET)              $qemu_net
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
+if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+    set env(QEMU_GTK_CURSOR_MODE) "host"
+}
+if {$env(QEMU_GTK_CURSOR_MODE) eq "host" && ![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+    set env(QEMU_GTK_SHOW_CURSOR) "on"
+}
+if {$env(QEMU_GTK_CURSOR_MODE) ne "host"} {
+    set host_cursor_sync "0"
+}
 set surface_trace_token [expr {$chromium_surface_trace eq "1" ? " host_chromium_surface_trace=1" : " host_chromium_surface_trace=0"}]
 set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=$chromium_url host_chromium_backend=$backend$mp_token$extra_token host_chromium_evidence=1 host_chromium_evidence_lines=$evidence_lines host_chromium_evidence_timers=$warmup_timer$surface_trace_token chrome_poll_summary=$chrome_poll_summary chrome_drm_ioctl_trace=$chrome_drm_ioctl_trace chrome_drm_fence_trace=$chrome_drm_fence_trace$append_token"
 set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
@@ -115,6 +128,35 @@ proc screendump {sock dst} {
 
 proc marker_re {marker} {
     return [format {(^|\r|\n)%s(\r|\n)} $marker]
+}
+
+proc log_host_cursor_sync {line} {
+    global runlog
+
+    set fh [open $runlog a]
+    puts $fh $line
+    close $fh
+}
+
+proc sync_host_cursor {x y} {
+    global root host_cursor_sync
+
+    if {$host_cursor_sync ne "1"} {
+        return
+    }
+    set start_ms [clock milliseconds]
+    set rc [catch {
+        exec "$root/scripts/gpu/qemu-host-cursor-sync.sh" $x $y "xv6-os QEMU"
+    } out]
+    set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
+    set text [string map {"\t" " " "\r" "" "\n" " "} $out]
+    if {$rc == 0} {
+        log_host_cursor_sync "phase=host-cursor-sync status=PASS x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    } elseif {[regexp {status=SKIP} $out]} {
+        log_host_cursor_sync "phase=host-cursor-sync status=SKIP x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    } else {
+        log_host_cursor_sync "phase=host-cursor-sync status=FAIL x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    }
 }
 
 proc cursor_points {} {
@@ -199,6 +241,7 @@ proc prepare_fullscreen {} {
     # The default 1280x800 watch page places the player around x=140..785,
     # y=265..625; this absolute tablet coordinate lands near its center.
     send "mouseinject 24576 32768 0; echo $marker\r"
+    sync_host_cursor 24576 32768
     set old_timeout $timeout
     set timeout 20
     expect {
@@ -217,6 +260,7 @@ proc prepare_fullscreen {} {
 
     set marker "CHROMIUM_YOUTUBE_SHOW_CONTROLS_DONE"
     send "mouseinject $fullscreen_click_x $fullscreen_click_y 0; echo $marker\r"
+    sync_host_cursor $fullscreen_click_x $fullscreen_click_y
     set old_timeout $timeout
     set timeout 20
     expect {
@@ -238,6 +282,7 @@ proc prepare_fullscreen {} {
     # enter a browser/page fullscreen state without expanding the video element
     # on this imported Chromium build, which gives a false fullscreen proof.
     send "mouseinject $fullscreen_click_x $fullscreen_click_y 0; mouseinject $fullscreen_click_x $fullscreen_click_y 1; mouseinject $fullscreen_click_x $fullscreen_click_y 0; echo $marker\r"
+    sync_host_cursor $fullscreen_click_x $fullscreen_click_y
     set old_timeout $timeout
     set timeout 20
     expect {
@@ -280,8 +325,13 @@ proc capture_window {label} {
         set guest_path [format "/chromium-youtube-%s-%02d.ppm" $label $i]
         set marker [format "CHROMIUM_YOUTUBE_CAPTURE_%s_%02d" $label $i]
         if {$label eq "cursor"} {
+            set points [cursor_points]
+            set point [lindex $points [expr {$i % [llength $points]}]]
+            set x [lindex $point 0]
+            set y [lindex $point 1]
             set move_marker [format "CHROMIUM_YOUTUBE_MOVE_%s_%02d" $label $i]
             send "[cursor_move_prefix $i]echo $move_marker\r"
+            sync_host_cursor $x $y
             set old_timeout $timeout
             set timeout 20
             expect {
@@ -353,6 +403,7 @@ proc cursor_sweep {} {
         set y [lindex $point 1]
         set marker [format "CHROMIUM_YOUTUBE_CURSOR_STEP_%02d" $idx]
         send "mouseinject $x $y 0; echo $marker\r"
+        sync_host_cursor $x $y
         expect {
             -re [marker_re $marker] {}
             timeout {

@@ -523,7 +523,14 @@ Current direction:
   proof is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171300Z-desktop-interaction-host-cursor-sync-pass/`;
   measurement runs can disable sync with
-  `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0`. The clean kprofile pass at
+  `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0`. Guest `/bin/mouseinject`
+  interaction mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so it uses
+  the virtio-gpu hardware cursor path, while host-cursor mode keeps guest
+  cursor uploads suppressed and moves the QEMU frontend cursor through
+  `scripts/gpu/qemu-host-cursor-sync.sh`. Chromium/YouTube and Linux KDE
+  reference probes share that helper and can disable its host-side timing
+  overhead with `CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC=0` or
+  `LINUX_KDE_HOST_CURSOR_SYNC=0`. The clean kprofile pass at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T172108Z-desktop-interaction-kprofile-cursor-sync-off-pass/`
   kept GPU virgl, NetworkManager SNI, and PipeWire/Pulse guards intact and
   measured desktop visible `19367ms`, start-menu open/close `1038/646ms`,

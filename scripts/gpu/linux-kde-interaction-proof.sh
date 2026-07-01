@@ -29,9 +29,11 @@ INTERACTION_LOG="${CAPTURE_DIR}/linux-kde-interaction-latency.log"
 SUMMARY="${CAPTURE_DIR}/summary.txt"
 STATUS="${CAPTURE_DIR}/status.txt"
 DISPLAY_BACKEND="${LINUX_KDE_QEMU_DISPLAY:-gtk,gl=on,show-cursor=on}"
+QEMU_WINDOW_TITLE="${LINUX_KDE_QEMU_WINDOW_TITLE:-Linux KDE QEMU}"
 QEMU_DEVICE="${LINUX_KDE_QEMU_DEVICE:-virtio-vga-gl,xres=1280,yres=800}"
 QEMU_INPUT_DEVICE="${LINUX_KDE_QEMU_INPUT_DEVICE:-virtio-tablet-pci}"
 SAMPLE_SOURCE="${LINUX_KDE_SAMPLE_SOURCE:-screendump}"
+HOST_CURSOR_SYNC="${LINUX_KDE_HOST_CURSOR_SYNC:-1}"
 QEMU_MEMORY="${LINUX_KDE_QEMU_MEMORY:-8192}"
 QEMU_SMP="${LINUX_KDE_QEMU_SMP:-4}"
 WIDTH="${LINUX_KDE_WIDTH:-1280}"
@@ -186,6 +188,30 @@ proc monitor_cmd {cmd {out_path ""}} {
     }
 }
 
+set host_cursor_sync "${HOST_CURSOR_SYNC}"
+set host_cursor_title "${QEMU_WINDOW_TITLE}"
+
+proc sync_host_cursor {x y} {
+    global host_cursor_sync host_cursor_title capture_dir
+
+    if {\$host_cursor_sync ne "1"} {
+        return
+    }
+    set start_ms [clock milliseconds]
+    set rc [catch {
+        exec "${ROOT}/scripts/gpu/qemu-host-cursor-sync.sh" \$x \$y \$host_cursor_title
+    } out]
+    set elapsed_ms [expr {[clock milliseconds] - \$start_ms}]
+    set text [string map {\t { } \r {} \n { }} \$out]
+    if {\$rc == 0} {
+        ilog "phase=host-cursor-sync status=PASS x=\$x y=\$y elapsed_ms=\$elapsed_ms detail=\$text"
+    } elseif {[regexp {status=SKIP} \$out]} {
+        ilog "phase=host-cursor-sync status=SKIP x=\$x y=\$y elapsed_ms=\$elapsed_ms detail=\$text"
+    } else {
+        ilog "phase=host-cursor-sync status=FAIL x=\$x y=\$y elapsed_ms=\$elapsed_ms detail=\$text"
+    }
+}
+
 proc sample_once {label} {
     global sample_source
     if {\$sample_source eq "grim"} {
@@ -292,8 +318,10 @@ proc measure_visible {label attempts delay_ms min_nonblack} {
 proc do_action {kind x y} {
     if {\$kind eq "move"} {
         monitor_cmd "mouse_move \$x \$y"
+        sync_host_cursor \$x \$y
     } elseif {\$kind eq "click"} {
         monitor_cmd "mouse_move \$x \$y"
+        sync_host_cursor \$x \$y
         after 80
         monitor_cmd "mouse_button 1"
         after 80
@@ -358,6 +386,7 @@ spawn qemu-system-x86_64 \\
   -vga none -device "${QEMU_DEVICE}" \\
   -device "${QEMU_INPUT_DEVICE}" \\
   -display "${DISPLAY_BACKEND}" \\
+  -name "${QEMU_WINDOW_TITLE},process=linux-kde-qemu" \\
   -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \\
   -serial stdio -monitor "unix:${MONITOR_SOCK},server,nowait" -no-reboot \\
   -trace "events=${TRACE_EVENTS},file=${QEMU_TRACE}"
@@ -675,7 +704,7 @@ expect {
 }
 expect -re "LINUX_KDE_CTRL# "
 
-ilog "phase=meta reducer=linux-kde-interaction-latency hover_timeout_ms=${HOVER_TIMEOUT_MS} tray_timeout_ms=${TRAY_TIMEOUT_MS} start_menu_timeout_ms=${START_MENU_TIMEOUT_MS} interval_ms=${INTERVAL_MS} visible_min_nonblack=${VISIBLE_MIN_NONBLACK} visible_attempts=${VISIBLE_ATTEMPTS} visible_interval_ms=${VISIBLE_INTERVAL_MS} require_visual=${REQUIRE_VISUAL} input_source=qemu-monitor"
+ilog "phase=meta reducer=linux-kde-interaction-latency hover_timeout_ms=${HOVER_TIMEOUT_MS} tray_timeout_ms=${TRAY_TIMEOUT_MS} start_menu_timeout_ms=${START_MENU_TIMEOUT_MS} interval_ms=${INTERVAL_MS} visible_min_nonblack=${VISIBLE_MIN_NONBLACK} visible_attempts=${VISIBLE_ATTEMPTS} visible_interval_ms=${VISIBLE_INTERVAL_MS} require_visual=${REQUIRE_VISUAL} input_source=qemu-monitor host_cursor_sync=${HOST_CURSOR_SYNC} qemu_window_title=${QEMU_WINDOW_TITLE}"
 set visual_ok [measure_visible "desktop-interaction-visible" ${VISIBLE_ATTEMPTS} ${VISIBLE_INTERVAL_MS} ${VISIBLE_MIN_NONBLACK}]
 after 1500
 sample_once "desktop-interaction-before"

@@ -18,6 +18,7 @@ set click_y [expr {[info exists env(CHROMIUM_MENU_CLICK_Y)] ? $env(CHROMIUM_MENU
 set menu_diff_min [expr {[info exists env(CHROMIUM_MENU_DIFF_MIN)] ? $env(CHROMIUM_MENU_DIFF_MIN) : "50000"}]
 set chromium_url [expr {[info exists env(CHROMIUM_URL)] ? $env(CHROMIUM_URL) : "about:blank"}]
 set extra_flags [expr {[info exists env(CHROMIUM_EXTRA_FLAGS)] ? $env(CHROMIUM_EXTRA_FLAGS) : "--disable-quic"}]
+set host_cursor_sync [expr {[info exists env(CHROMIUM_MENU_HOST_CURSOR_SYNC)] ? $env(CHROMIUM_MENU_HOST_CURSOR_SYNC) : "1"}]
 
 regsub -all {[^A-Za-z0-9._-]} $artifact_prefix {_} artifact_prefix
 regsub -all {[^A-Za-z0-9._~:/?#@!$&'()*+,;=%-]} $chromium_url {_} chromium_url
@@ -45,8 +46,40 @@ set env(QEMU_AUDIO)            "none"
 set env(QEMU_ALLOW_WSL_SDL_GL) "1"
 set env(QEMU_VIRTIO_GPU_XRES)  "1280"
 set env(QEMU_VIRTIO_GPU_YRES)  "800"
+if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+    set env(QEMU_GTK_CURSOR_MODE) "host"
+}
+if {$env(QEMU_GTK_CURSOR_MODE) eq "host" && ![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+    set env(QEMU_GTK_SHOW_CURSOR) "on"
+}
+if {$env(QEMU_GTK_CURSOR_MODE) ne "host"} {
+    set host_cursor_sync "0"
+}
 set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=$chromium_url host_chromium_backend=$backend host_chromium_multiprocess=1 host_chromium_extra_flags=$extra_flags host_chromium_evidence=1 host_chromium_evidence_lines=240 host_chromium_evidence_timers=2 host_chromium_surface_trace=1 chrome_poll_summary=0 chrome_drm_ioctl_trace=0"
 set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+proc sync_host_cursor {x y} {
+    global root host_cursor_sync runlog
+
+    if {$host_cursor_sync ne "1"} {
+        return
+    }
+    set start_ms [clock milliseconds]
+    set rc [catch {
+        exec "$root/scripts/gpu/qemu-host-cursor-sync.sh" $x $y "xv6-os QEMU"
+    } out]
+    set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
+    set text [string map {"\t" " " "\r" "" "\n" " "} $out]
+    set fh [open $runlog a]
+    if {$rc == 0} {
+        puts $fh "phase=host-cursor-sync status=PASS x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    } elseif {[regexp {status=SKIP} $out]} {
+        puts $fh "phase=host-cursor-sync status=SKIP x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    } else {
+        puts $fh "phase=host-cursor-sync status=FAIL x=$x y=$y elapsed_ms=$elapsed_ms detail=$text"
+    }
+    close $fh
+}
 
 proc finish {code label} {
     global qemu_pid runlog artifact_runlog tmpimg ppm png before_ppm before_png
@@ -147,6 +180,7 @@ expect {
         wait_text "fbstat ppm-current $guest_before_ppm" "CHROMIUM-MENU-PROOF-FAIL before-capture-echo"
         wait_prompt "CHROMIUM-MENU-PROOF-FAIL before-capture"
         send "mouseinject $click_x $click_y 0; mouseinject $click_x $click_y 1; mouseinject $click_x $click_y 0\r"
+        sync_host_cursor $click_x $click_y
         wait_text "mouseinject: absolute x=$click_x y=$click_y" "CHROMIUM-MENU-PROOF-FAIL click-output"
         wait_prompt "CHROMIUM-MENU-PROOF-FAIL click"
         after 2500
