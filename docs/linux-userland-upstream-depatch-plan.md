@@ -5,6 +5,11 @@ programs. The goal is to remove ABI adaptation from user program/library source
 and leave only an explicit `xv6` marker where a source tree needs to identify
 the port boundary.
 
+Current priority note: Weston is intentionally skipped for the active
+KDE/Chromium GUI ABI work. Keep it listed as historical inventory only; do not
+audit, reconcile, run, or modify Weston unless the user explicitly reopens that
+lane.
+
 This is a source hygiene and ABI ownership plan. It does not replace
 `docs/linux-userland-abi-kernel-gap-plan.md`; it turns userland deltas found
 during that work into kernel, libc/sysroot, build-wrapper, or local-shim tasks.
@@ -224,7 +229,7 @@ libraries they use.
 - [ ] `libxkbcommon`
 - [ ] `xv6-gbm`
 - [ ] `mesa`
-- [ ] `weston`
+- [ ] `weston` (skipped for current KDE/Chromium priority)
 - [ ] `netsurf-buildsystem`
 - [ ] `netsurf-libwapcaplet`
 - [ ] `netsurf-libparserutils`
@@ -294,7 +299,7 @@ Rules:
 - Tests should move shared compatibility helpers into test-only files, not
   general-purpose headers.
 - User-visible commands should not carry app-specific workarounds for Chromium,
-  WebKit, Weston, NetSurf, Mesa, or X11 behavior.
+  WebKit, NetSurf, Mesa, or X11 behavior. Weston is skipped for current work.
 
 First pass targets:
 
@@ -461,14 +466,14 @@ Exit criteria:
 - [ ] `libxkbcommon`
 - [ ] `xv6-gbm`
 - [ ] `mesa`
-- [ ] `weston`
+- [ ] `weston` (skipped for current KDE/Chromium priority)
 
 Exit criteria:
 
 - no imported graphics/input source carries xv6 DRM, cursor, epoll, fd-passing,
   procfs, device-enumeration, or compositor workaround code.
 - local shims are marked and separately tested.
-- Chromium, WebKit, Weston, XWayland, and Wayland smoke runs remain probes of
+- Chromium, WebKit, XWayland, and Wayland smoke runs remain probes of
   kernel/user ABI, not patched applications.
 
 ### Phase 4: Browser, Networked App, And Desktop Program Stack

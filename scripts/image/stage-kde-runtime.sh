@@ -281,22 +281,25 @@ prune_guest_graphics_runtime() {
 }
 
 patch_xkb_for_xwayland() {
-    local keycodes="${OVERLAY}/usr/share/X11/xkb/keycodes/evdev"
-    local inet="${OVERLAY}/usr/share/X11/xkb/symbols/inet"
+    local root keycodes inet
 
     # This image's Xwayland path uses xkbcomp, whose X11 keycode model is
     # capped at 255 and whose keysym table can lag newer xkeyboard-config
     # multimedia/nav symbols.  xv6 currently feeds ordinary keyboard/tablet
     # events, so prune only the generated high-code evdev entries that trigger
     # those startup warnings.
-    if [[ -f "${keycodes}" ]]; then
-        perl -0pi -e 's/^[ \t]*<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9][0-9])>[^\n]*\n//mg' \
-            "${keycodes}"
-    fi
-    if [[ -f "${inet}" ]]; then
-        perl -0pi -e 's/^[ \t]*key[ \t]+<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9][0-9])>[^\n]*\n//mg' \
-            "${inet}"
-    fi
+    for root in "${OVERLAY}/usr/share/X11" "${OVERLAY}/share/X11"; do
+        keycodes="${root}/xkb/keycodes/evdev"
+        inet="${root}/xkb/symbols/inet"
+        if [[ -f "${keycodes}" ]]; then
+            perl -0pi -e 's/^[ \t]*<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9][0-9])>[^\n]*\n//mg' \
+                "${keycodes}"
+        fi
+        if [[ -f "${inet}" ]]; then
+            perl -0pi -e 's/^[ \t]*key[ \t]+<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9][0-9])>[^\n]*\n//mg' \
+                "${inet}"
+        fi
+    done
 }
 
 compile_mime_database() {
@@ -457,21 +460,82 @@ User=root
 EOF
 }
 
-disable_optional_modemmanager_activation() {
+configure_modemmanager_activation() {
     local service="${OVERLAY}/usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service"
 
-    # The xv6 KDE VM currently exposes no modem/radio kernel ABI.  Starting
-    # ModemManager during shell bring-up costs visible time and then can only
-    # discover that the hardware class is absent, so keep the package staged
-    # but make D-Bus activation return the package's disabled-path result.
+    # xv6 currently exposes no modem/radio kernel ABI.  Return a Linux-shaped
+    # empty ModemManager object tree so KDE can complete optional enumeration
+    # without a D-Bus activation failure.
     if [[ -f "${service}" ]]; then
         cat > "${service}" <<'EOF'
 [D-BUS Service]
 Name=org.freedesktop.ModemManager1
-Exec=/bin/false
+Exec=/bin/xv6-modemmanager-shim
 User=root
 EOF
     fi
+}
+
+configure_documents_portal_activation() {
+    local service="${OVERLAY}/usr/share/dbus-1/services/org.freedesktop.portal.Documents.service"
+
+    # xv6 does not expose the FUSE document-store filesystem yet, but Chromium
+    # and GLib probe this session service during portal startup.  Activate an
+    # xv6-owned no-export shim instead of /bin/false so the probe completes
+    # without a D-Bus activation failure.
+    if [[ -f "${service}" ]]; then
+        cat > "${service}" <<'EOF'
+[D-BUS Service]
+Name=org.freedesktop.portal.Documents
+Exec=/bin/xv6-document-portal-shim
+EOF
+    fi
+}
+
+disable_optional_tray_plasmoid() {
+    local id="$1"
+    local reason="$2"
+    local plasmoid="${OVERLAY}/usr/share/plasma/plasmoids/${id}"
+    local disabled="${OVERLAY}/usr/share/plasma/plasmoids/${id}.xv6-disabled"
+
+    if [[ -d "${plasmoid}" ]]; then
+        rm -rf "${disabled}"
+        mv "${plasmoid}" "${disabled}"
+        cat > "${disabled}/XV6_DISABLED.md" <<EOF
+Disabled by xv6 rootfs staging.
+
+The upstream package is kept source-clean, but this optional Plasma tray
+plasmoid is not staged under its discoverable plugin id for this image.
+
+Reason: ${reason}
+EOF
+    fi
+}
+
+disable_optional_tray_plasmoids() {
+    # Plasma's system tray auto-discovers optional plasmoids and instantiates
+    # their upstream QML in the hidden-items popup.  Several of those applets
+    # target hardware/services xv6 intentionally shims or disables, and the
+    # reduced tray startup path shows empty-dialog/layout churn before the
+    # popup becomes visible.  Keep the package payloads under marker paths so
+    # upstream sources remain clean, but hide unsupported optional tray applets
+    # from discovery.  Volume stays staged, and the xv6 StatusNotifier item
+    # provides the visible network indicator.
+    disable_optional_tray_plasmoid \
+        "org.kde.plasma.networkmanagement" \
+        "xv6 uses /bin/xv6-network-status-sni for panel network state"
+    disable_optional_tray_plasmoid \
+        "org.kde.plasma.clipboard" \
+        "klipper autostart is disabled in this image"
+    disable_optional_tray_plasmoid \
+        "org.kde.plasma.devicenotifier" \
+        "removable-storage/udisks enumeration is shimmed empty"
+    disable_optional_tray_plasmoid \
+        "org.kde.plasma.vault" \
+        "Plasma Vault backends are not part of the xv6 desktop target"
+    disable_optional_tray_plasmoid \
+        "org.kde.kscreen" \
+        "display configuration is fixed by the xv6/QEMU video mode"
 }
 
 write_portal_defaults() {
@@ -518,6 +582,30 @@ disable_conflicting_audio_autostart() {
     # autostart races the compatibility server and can make plasma-pa briefly
     # connect to a context that disappears.
     rm -f "${OVERLAY}/etc/xdg/autostart/pulseaudio.desktop"
+}
+
+gate_xsettingsd_without_x11() {
+    local binary="${OVERLAY}/usr/bin/xsettingsd"
+    local real="${OVERLAY}/usr/bin/xsettingsd.real"
+
+    [[ -x "${binary}" ]] || return 0
+    [[ -e "${real}" ]] || mv "${binary}" "${real}"
+    cat > "${binary}" <<'EOF'
+#!/bin/sh
+display="${DISPLAY:-}"
+case "${display}" in
+    :[0-9]*)
+        number="${display#:}"
+        number="${number%%.*}"
+        [ -S "/tmp/.X11-unix/X${number}" ] || exit 0
+        ;;
+    "")
+        exit 0
+        ;;
+esac
+exec /usr/bin/xsettingsd.real "$@"
+EOF
+    chmod 0755 "${binary}"
 }
 
 patch_optional_hardware_kde_defaults() {
@@ -781,10 +869,13 @@ disable_dead_ksplash_activation
 disable_dead_rtkit_activation
 write_false_compat
 configure_bluez_activation
-disable_optional_modemmanager_activation
+configure_modemmanager_activation
+configure_documents_portal_activation
+disable_optional_tray_plasmoids
 write_portal_defaults
 write_minimal_upower_config
 disable_conflicting_audio_autostart
+gate_xsettingsd_without_x11
 patch_optional_hardware_kde_defaults
 patch_pipewire_runtime_config
 

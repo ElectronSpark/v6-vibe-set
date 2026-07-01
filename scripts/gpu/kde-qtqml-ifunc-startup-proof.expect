@@ -1,0 +1,200 @@
+#!/usr/bin/env expect
+
+set timeout 300
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/kde-qtqml-ifunc-startup-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set statuslog "$outdir/status.txt"
+set tmpimg "$outdir/kde-qtqml-ifunc-startup-proof.fs.img"
+set empty_startup "$outdir/empty-startup"
+set empty_probe_log "$outdir/empty-probe-log"
+set empty_probe_status "$outdir/empty-probe-status"
+set host_script "$outdir/kde-qtqml-ifunc-startup-proof.sh.host"
+set host_probe_log "$outdir/kde-qtqml-ifunc-startup-probe.log"
+set host_probe_status "$outdir/kde-qtqml-ifunc-startup-probe.status"
+set host_probe_bin "$outdir/kde-qtqml-ifunc-startup-probe.bin"
+set host_probe_dynamic "$outdir/kde-qtqml-ifunc-startup-probe.dynamic"
+set guest_script "/kde-qtqml-ifunc-startup-proof.sh"
+set guest_probe_log "/kde-qtqml-ifunc-startup-probe.log"
+set guest_probe_status "/kde-qtqml-ifunc-startup-probe.status"
+set guest_probe_bin "/bin/kde-qtqml-ifunc-startup-probe"
+
+exec rm -f $runlog $statuslog $tmpimg $empty_startup $empty_probe_log $empty_probe_status $host_script $host_probe_log $host_probe_status $host_probe_bin $host_probe_dynamic
+exec cp $fsimg $tmpimg
+exec touch $empty_startup
+exec touch $empty_probe_log
+exec touch $empty_probe_status
+catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $empty_startup /etc/startup" $tmpimg >/dev/null 2>@1
+
+proc fail {code label} {
+    global qemu_pid runlog statuslog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    set fh [open $statuslog w]
+    puts $fh "status=FAIL reason=$label log=$runlog"
+    close $fh
+    puts "\nKDE-QTQML-IFUNC-STARTUP-PROOF-FAIL reason=$label log=$runlog"
+    exit $code
+}
+
+proc dump_guest_file {guest host label} {
+    global tmpimg
+
+    set tmp "$host.debugfs.[pid]"
+    catch { file delete -force $tmp }
+    if {[catch { exec sh -c "debugfs -R 'dump $guest $tmp' '$tmpimg' >/dev/null 2>&1" }]} {
+        catch { file delete -force $tmp }
+        fail 30 "dump-$label"
+    }
+    if {![file exists $tmp]} {
+        fail 31 "dump-$label-missing"
+    }
+    file rename -force $tmp $host
+}
+
+proc assert_probe_dynamic {} {
+    global host_probe_bin host_probe_dynamic guest_probe_bin
+
+    dump_guest_file $guest_probe_bin $host_probe_bin "probe-bin"
+    if {[catch { exec sh -c "readelf -d '$host_probe_bin' > '$host_probe_dynamic'" }]} {
+        fail 32 "readelf-probe-bin"
+    }
+    set fh [open $host_probe_dynamic r]
+    set dynamic [read $fh]
+    close $fh
+    if {![regexp {NEEDED[^\n]*libQt5Qml\.so\.5} $dynamic]} {
+        fail 33 "missing-qtqml-needed"
+    }
+}
+
+proc analyze_probe_log {} {
+    global host_probe_log host_probe_status statuslog runlog host_probe_dynamic
+
+    if {![file exists $host_probe_log] || [file size $host_probe_log] == 0} {
+        fail 40 "empty-probe-log"
+    }
+    if {![file exists $host_probe_status] || [file size $host_probe_status] == 0} {
+        fail 41 "empty-probe-status"
+    }
+
+    set fh [open $host_probe_log r]
+    set log [read $fh]
+    close $fh
+
+    set sfh [open $host_probe_status r]
+    set status [read $sfh]
+    close $sfh
+
+    set rfh [open $runlog r]
+    set runtext [read $rfh]
+    close $rfh
+
+    if {![regexp {status=DONE source=kde-qtqml-ifunc-startup-probe} $status]} {
+        fail 42 "missing-completion-status"
+    }
+    if {[regexp -nocase {Relink .*IFUNC|fatal page fault|segmentation fault|coredump: generating|kde-exception-fatal-summary} $log] ||
+        [regexp -nocase {Relink .*IFUNC|fatal page fault|segmentation fault|coredump: generating|kde-exception-fatal-summary} $runtext]} {
+        fail 43 "probe-crash-marker"
+    }
+    if {![regexp {KDE_QTQML_IFUNC_STARTUP_PROBE_START} $log]} {
+        fail 44 "missing-start"
+    }
+    if {![regexp {KDE_QTQML_IFUNC_STARTUP_PROBE_MAP status=PASS} $log]} {
+        fail 45 "missing-map-pass"
+    }
+    if {![regexp {KDE_QTQML_IFUNC_STARTUP_PROBE_RESULT status=PASS} $log]} {
+        fail 46 "missing-result-pass"
+    }
+    if {![regexp {KDE_QTQML_IFUNC_STARTUP_PROBE_SYMBOL status=PASS name=memmove lib=[^\n]*libxv6-ifunc-memcpy\.so} $log]} {
+        fail 47 "missing-memmove-override"
+    }
+    if {![regexp {__KDE_QTQML_IFUNC_PASS__} $log]} {
+        fail 48 "missing-probe-pass-marker"
+    }
+
+    set fh [open $statuslog w]
+    puts $fh "status=PASS source=kde-qtqml-ifunc-startup-probe log=$host_probe_log dynamic=$host_probe_dynamic runlog=$runlog"
+    close $fh
+    puts "\nKDE-QTQML-IFUNC-STARTUP-PROOF-PASS probe_log=$host_probe_log status=$host_probe_status dynamic=$host_probe_dynamic runlog=$runlog"
+}
+
+set fh [open $host_script w]
+puts $fh "#!/bin/sh"
+puts $fh "export LD_LIBRARY_PATH=/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib:/lib"
+puts $fh "export LD_PRELOAD=/opt/xv6-kde-abi-libs/libxv6-ifunc-memcpy.so:/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0"
+puts $fh "echo status=running source=kde-qtqml-ifunc-startup-probe > $guest_probe_status"
+puts $fh "sync"
+puts $fh "$guest_probe_bin > $guest_probe_log"
+puts $fh "echo status=DONE source=kde-qtqml-ifunc-startup-probe > $guest_probe_status"
+puts $fh "sync"
+puts $fh "cat $guest_probe_status"
+close $fh
+
+catch { exec debugfs -w -R "rm $guest_script" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_log" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_status" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $host_script $guest_script" $tmpimg >/dev/null 2>@1
+exec debugfs -w -R "write $empty_probe_log $guest_probe_log" $tmpimg >/dev/null 2>@1
+exec debugfs -w -R "write $empty_probe_status $guest_probe_status" $tmpimg >/dev/null 2>@1
+
+assert_probe_dynamic
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_NET) "0"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0"
+set send_slow {1 .01}
+
+log_file -a $runlog
+spawn timeout --foreground 300 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {root:/# ?} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 3 "crash-marker"
+    }
+    timeout {
+        fail 4 "no-prompt"
+    }
+    eof {
+        fail 5 "early-eof"
+    }
+}
+
+send "sh $guest_script; echo KDEQTQMLIFUNCDONE\r"
+expect {
+    -re {status=DONE source=kde-qtqml-ifunc-startup-probe} {
+        exp_continue
+    }
+    -re {KDEQTQMLIFUNCDONE} {}
+    -re {Relink .*IFUNC|panic|fatal page fault|coredump: generating|kde-exception-fatal-summary|virtio_gpu: async command} {
+        fail 6 "probe-crash-marker"
+    }
+    timeout {
+        fail 7 "probe-timeout"
+    }
+    eof {
+        fail 8 "probe-eof"
+    }
+}
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+set timeout 10
+expect {
+    eof {}
+    timeout {
+        catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    }
+}
+
+dump_guest_file $guest_probe_log $host_probe_log "probe-log"
+dump_guest_file $guest_probe_status $host_probe_status "probe-status"
+catch { file delete -force $tmpimg }
+analyze_probe_log
+exit 0

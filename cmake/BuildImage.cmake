@@ -36,9 +36,18 @@ set(_gameboy_rom_stamp "${XV6_BUILD_ROOT}/gameboy-roms.stamp")
 set(_gpup_umd_overlay "${XV6_BUILD_ROOT}/gpup-umd-overlay")
 set(_gpup_umd_overlay_stamp "${XV6_BUILD_ROOT}/gpup-umd-overlay.stamp")
 set(_rootfs_extra_overlays "${_host_gui_overlay}:${_webkit_media_overlay}:${_kde_runtime_overlay}:${_gameboy_rom_overlay}:${_gpup_umd_overlay}")
+file(GLOB_RECURSE _rootfs_overlay_sources CONFIGURE_DEPENDS
+	"${CMAKE_SOURCE_DIR}/rootfs-overlay/*")
+set(_rootfs_overlay_regular_sources)
+foreach(_rootfs_overlay_source IN LISTS _rootfs_overlay_sources)
+	if(NOT IS_SYMLINK "${_rootfs_overlay_source}")
+		list(APPEND _rootfs_overlay_regular_sources "${_rootfs_overlay_source}")
+	endif()
+endforeach()
 set(_xwayland_stage_script "${CMAKE_SOURCE_DIR}/scripts/image/stage-xwayland-runtime.sh")
 set(_xwayland_kde_wrapper_source "${CMAKE_SOURCE_DIR}/scripts/image/xwayland-kde-wrapper.c")
 set(_host_gui_runtime_sources
+	${CMAKE_SOURCE_DIR}/scripts/image/chromium-egl-trace-preload.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-gtk-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-gtk-smoke-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-egl-gbm-gl-smoke.c
@@ -52,20 +61,72 @@ set(_host_gui_runtime_sources
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-dri3-present-smoke-launcher.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-egl-smoke.c
 	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-egl-smoke-launcher.c
-	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-present-trace-preload.c
-	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke.c
-	${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke-launcher.c
-	${CMAKE_SOURCE_DIR}/scripts/image/import-host-gui.sh
+		${CMAKE_SOURCE_DIR}/scripts/image/host-x11-present-trace-preload.c
+		${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke.c
+		${CMAKE_SOURCE_DIR}/scripts/image/host-x11-shm-smoke-launcher.c
+		${CMAKE_SOURCE_DIR}/scripts/image/import-host-gui.sh
 	${CMAKE_SOURCE_DIR}/scripts/image/stage-host-gui-runtime.sh
 	${CMAKE_SOURCE_DIR}/scripts/image/wayland-chromium-launcher.c)
+set(_rootfs_image_sources
+			${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-ifunc-memcpy-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-qtqml-ifunc-startup-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kwin-alloc-trace-preload.c
+			${CMAKE_SOURCE_DIR}/scripts/image/wayland-chromium-launcher.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-login1-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-bluez-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-modemmanager-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-networkmanager-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-network-status-sni.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-document-portal-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-desktop-optional-services-shim.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-desktop-session.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-false.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-dmesg.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-ls.c
+			${CMAKE_SOURCE_DIR}/scripts/image/proc-cmdline-rewrite-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/xv6-xdg-settings.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-session.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-plasma-session-child.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-abi-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-dlopen-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-app-launch-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-smoke-agent.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-konsole-shell-wrapper.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-terminal-launcher.c
+			${CMAKE_SOURCE_DIR}/scripts/image/qt-wayland-smoke-launcher.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-config-atomic-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-pulse-cookie-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-proc-comm-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-proc-mountinfo-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-process-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-pgroup-kill-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-thread-group-stop-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-pty-shell-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-pty-openpty-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-pty-readiness-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-kwriteconfig-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-trash-stat-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-unix-socket-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-libinput-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-drm-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-wayland-seat-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-kwin-screenshot-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/icu-elf-tail-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kf5coreaddons-elf-tail-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/chrome-rela-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/chrome-zygote-fd3-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kwin-global-slot-probe.c)
 set(_rootfs_deps user ports host-gui-runtime webkit-media kde-runtime gameboy-roms gpup-umd-overlay
-	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
-	${_xwayland_stage_script}
-	${_xwayland_kde_wrapper_source})
+			${_rootfs_image_sources}
+			${_rootfs_overlay_regular_sources}
+			${_xwayland_stage_script}
+			${_xwayland_kde_wrapper_source})
 set(_rootfs_refresh_deps host-gui-runtime webkit-media kde-runtime gameboy-roms gpup-umd-overlay
-	${CMAKE_SOURCE_DIR}/scripts/image/make-rootfs.sh
-	${_xwayland_stage_script}
-	${_xwayland_kde_wrapper_source})
+			${_rootfs_image_sources}
+			${_rootfs_overlay_regular_sources}
+			${_xwayland_stage_script}
+			${_xwayland_kde_wrapper_source})
 set(_xwayland_stage_command
 	${CMAKE_COMMAND} -E env
 		${_xwayland_stage_script}

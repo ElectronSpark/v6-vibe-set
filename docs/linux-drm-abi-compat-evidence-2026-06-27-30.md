@@ -814,7 +814,10 @@ successfully. The preload no longer `fsync`s every trace line, preserves
 `close_range` fd lifetime changes so IPC/render metrics are less likely to be
 silently undercounted.
 
-## Active Gaps
+## Archived Gap Snapshot
+
+This section is preserved as dated evidence. Current GUI direction lives in
+`docs/linux-drm-abi-compat-plan.md`.
 
 ### 1. Xwayland GLAMOR / GLX Acceleration
 

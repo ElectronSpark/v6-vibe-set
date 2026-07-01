@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6-media-order:boot</title>
+<pre id="out">boot</pre>
+<script>
+(function () {
+  var out = document.getElementById("out");
+  var steps = [];
+  var probes = [
+    ["div", function () { return document.createElement("div").tagName; }],
+    ["canvas", function () { return document.createElement("canvas").tagName; }],
+    ["source", function () { return document.createElement("source").tagName; }],
+    ["audio", function () { return document.createElement("audio").tagName; }],
+    ["video", function () { return document.createElement("video").tagName; }],
+    ["audio-canplay", function () {
+      return document.createElement("audio").canPlayType("audio/webm; codecs=\"opus\"");
+    }],
+    ["video-canplay", function () {
+      return document.createElement("video").canPlayType("video/webm; codecs=\"vp9, opus\"");
+    }]
+  ];
+
+  function mark(step) {
+    steps.push(step);
+    document.title = "xv6-media-order:" + steps.join(",");
+    out.textContent = steps.join("\n");
+    console.log("XV6-MEDIA-ORDER " + steps.join(","));
+  }
+
+  function run(index) {
+    if (index >= probes.length) {
+      mark("RESULT pass count=" + steps.length);
+      return;
+    }
+    var probe = probes[index];
+    mark("before-" + probe[0]);
+    window.setTimeout(function () {
+      try {
+        mark("after-" + probe[0] + ":" + probe[1]());
+      } catch (e) {
+        mark("throw-" + probe[0] + ":" + e.name + ":" + e.message);
+      }
+      window.setTimeout(function () { run(index + 1); }, 0);
+    }, 0);
+  }
+
+  mark("script");
+  window.setTimeout(function () { run(0); }, 0);
+  window.setTimeout(function () { mark("WATCHDOG count=" + steps.length); }, 5000);
+})();
+</script>

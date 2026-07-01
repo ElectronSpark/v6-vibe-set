@@ -2,6 +2,10 @@
 
 Last updated: 2026-06-03
 
+Historical reference: this handoff describes the older Alpine/virgl parity
+lane. The current top-level source of truth is `docs/active-work-plan.md`, and
+the current KDE/Chromium GUI lane lives in `docs/linux-drm-abi-compat-plan.md`.
+
 ## Goal
 
 Make the xv6 GUI path behave like the known-good Alpine/Linux virgl desktop path:
@@ -1506,13 +1510,14 @@ and renderer class. A Linux desktop running on a different renderer, a pure
 software path, or a host-native compositor outside QEMU does not answer the xv6
 virgl desktop question.
 
-## Prompt For The Next Agent
+## Historical Prompt For The Next Agent
 
-Use this exact prompt to hand the task to another agent:
+This prompt is preserved for context only. Do not treat it as the current source
+of truth without first checking `docs/active-work-plan.md`.
 
 ```text
 You are working in /home/es/xv6-os. Continue the virgl desktop parity task using
-docs/alpine-virgl-desktop-handoff-plan.md as the source of truth.
+docs/alpine-virgl-desktop-handoff-plan.md as historical reference.
 
 Goal: make xv6's normal windowed GUI desktop behave like the known-good
 Alpine/Linux virgl desktop: the whole desktop remains GPU accelerated in a

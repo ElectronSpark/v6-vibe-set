@@ -7,6 +7,7 @@ dumpchan	user/programs/dumpchan	local-program	xv6-filesystem-tool	xv6-authored d
 dumppcache	user/programs/dumppcache	local-program	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 dumprq	user/programs/dumprq	local-program	xv6-filesystem-tool	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 bigfile	user/programs/bigfile	local-program	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+alsapcmpoll	user/programs/alsapcmpoll	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 devtest	user/programs/devtest	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 dh	user/programs/dh	local-program	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 wallclock	user/programs/wallclock	local-program	local-diagnostic	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
@@ -34,6 +35,7 @@ kqueuetest	user/programs/kqueuetest	local-program	abi-probe	xv6-authored diagnos
 timerfdstress	user/programs/timerfdstress	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 syscalltest	user/programs/syscalltest	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 linuxsyscallabitest	user/programs/linuxsyscallabitest	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
+regpreservetest	user/programs/regpreservetest	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 testsig	user/programs/testsig	local-program	abi-probe	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 usertests	user/programs/usertests	local-program	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only
 grind	user/programs/grind	local-program	stress-test	xv6-authored diagnostic/test/probe code; raw ABI checks must remain test-only

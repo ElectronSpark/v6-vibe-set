@@ -9,7 +9,7 @@ libffi	ports/libffi/src	imported-source	2263d60 2263d6037f8e master	https://gith
 libexpat	ports/libexpat/src	imported-source	R_2_7_5-110-g1870998e 1870998e114e master	https://github.com/libexpat/libexpat.git	0
 pcre2	ports/pcre2/src	imported-source	ac0eb71 ac0eb7122a0a main	https://github.com/PCRE2Project/pcre2.git	0
 json-c	ports/json-c/src	imported-source	json-c-0.18-20240915 41a55cfcedb5	https://github.com/json-c/json-c.git	0
-sqlite	ports/sqlite/src	imported-source	7539d2f 7539d2f1ba7d master	https://github.com/sqlite/sqlite.git	0
+sqlite	ports/sqlite/src	imported-source	7539d2f1b 7539d2f1ba7d master	https://github.com/sqlite/sqlite.git	0
 ncurses	ports/ncurses/src	imported-source	87c2c84 87c2c84cbd23 master	https://github.com/mirror/ncurses.git	0
 readline	ports/readline/src	imported-source	553d6bb 553d6bb272f2 master	https://git.savannah.gnu.org/git/readline.git	0
 openssl	ports/openssl/src	imported-source	1d21d077 1d21d0773b60 v6-port	https://github.com/openssl/openssl.git	0
@@ -25,7 +25,7 @@ fribidi	ports/fribidi/src	imported-source	5c85a17 5c85a174650a master	https://gi
 harfbuzz	ports/harfbuzz/src	imported-source	73db8cc 73db8cc1a5fe main	https://github.com/harfbuzz/harfbuzz.git	0
 glib	ports/glib/src	imported-source	eee20d547 eee20d54723c main	https://gitlab.gnome.org/GNOME/glib.git	0
 atk	ports/atk/src	imported-source	df8fb97 df8fb9750779 master	https://gitlab.gnome.org/Archive/atk.git	0
-cairo	ports/cairo/src	imported-source	4ca0d58 4ca0d581cbbb master	https://gitlab.freedesktop.org/cairo/cairo.git	0
+cairo	ports/cairo/src	imported-source	4ca0d581c 4ca0d581cbbb master	https://gitlab.freedesktop.org/cairo/cairo.git	0
 gdk-pixbuf	ports/gdk-pixbuf/src	imported-source	5e6796b 5e6796b2e4d0 master	https://gitlab.gnome.org/GNOME/gdk-pixbuf.git	0
 pango	ports/pango/src	imported-source	668cedc 668cedc2db6b main	https://gitlab.gnome.org/GNOME/pango.git	0
 gtk3	ports/gtk3/src	imported-source	3.24.52-16-g46fd315c73 46fd315c7381 v6-port	https://gitlab.gnome.org/GNOME/gtk.git	0
@@ -40,8 +40,8 @@ libepoxy	ports/libepoxy/src	imported-source	1.5.10-33-g05001ee 05001ee156ca xv6-
 wayland-protocols	ports/wayland-protocols/src	data-or-headers	911ab50 911ab509edf6 main	https://gitlab.freedesktop.org/wayland/wayland-protocols.git	0
 libxkbcommon	ports/libxkbcommon/src	imported-source	151c367 151c367afb21 master	https://github.com/xkbcommon/libxkbcommon.git	0
 xv6-gbm	ports/xv6-gbm	local-shim	local	local	0
-mesa	ports/mesa/src	imported-source	5ca5a64d 5ca5a64d5546 v6-port	https://gitlab.freedesktop.org/mesa/mesa.git	0
-weston	ports/weston/src	imported-source	15.0.1-12-g47630479 47630479175f v6-port	https://gitlab.freedesktop.org/wayland/weston.git	0
+mesa	ports/mesa/src	imported-source	5ca5a64d5 5ca5a64d5546 v6-port	https://gitlab.freedesktop.org/mesa/mesa.git	0
+weston	ports/weston/src	imported-source	15.0.1-13-g95724ee1 95724ee1cc4c v6-port	https://gitlab.freedesktop.org/wayland/weston.git	0
 netsurf-buildsystem	ports/netsurf-buildsystem/src	build-wrapper	771d7cb 771d7cb06918 master	git://git.netsurf-browser.org/buildsystem.git	0
 netsurf-libwapcaplet	ports/netsurf-libwapcaplet/src	imported-source	c7c128d c7c128d3eb32 master	git://git.netsurf-browser.org/libwapcaplet.git	0
 netsurf-libparserutils	ports/netsurf-libparserutils/src	imported-source	6b0cbf0 6b0cbf086ca8 master	git://git.netsurf-browser.org/libparserutils.git	0
@@ -59,6 +59,5 @@ netsurf	ports/netsurf/src	imported-source	e9578ac e9578ac53f05	git://git.netsurf
 cpython	ports/cpython/src	imported-source	v3.12.12-28-gb3247d8a053 b3247d8a0537 v6-3.12	https://github.com/python/cpython.git	0
 vim	ports/vim/src	imported-source	v9.2.0173 e21c4a649a83 master	https://github.com/vim/vim.git	0
 peanut-gb	ports/peanut-gb/src	imported-source	v1.3.0-25-g8e65698 8e656982f086 master	https://github.com/deltabeard/Peanut-GB.git	0
-wayland-src	ports/wayland-src/src	imported-source	2f7f04d 2f7f04d1e9fc v6-port	https://gitlab.freedesktop.org/wayland/wayland.git	0
+wayland-src	ports/wayland-src/src	imported-source	25da99a 25da99a7e545 main	https://github.com/ElectronSpark/v6-wayland.git	0
 wayland	ports/wayland/src	local-shim	local	local	0
-kde-qt-plasma-overlay	build-x86_64/kde-noble-plasma/kde-qt-package-inventory.tsv	generated-runtime-package-inventory	Ubuntu Noble generated package inventory	scripts/image/stage-kde-runtime.sh	0

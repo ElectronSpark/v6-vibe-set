@@ -13,24 +13,11 @@ BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
 QEMU_GPU="${QEMU_GPU:-virtio-vga-gl-primary}"
-QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0 desktop=kde netsurf=0 webkit=0}"
+# KDE is started from /etc/startup with the rootfs' loader guardrails
+# (notably LD_BIND_NOW=1).  Passing desktop=kde here bypasses that proven
+# startup path and can make KWin abort during Plasma startup.
+QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0}"
 AUTO_BUILD="${AUTO_BUILD:-0}"
-
-qemu_append_if_missing() {
-    local key="$1"
-    local value="$2"
-
-    if [[ " ${QEMU_APPEND} " != *" ${key}="* ]]; then
-        QEMU_APPEND="${QEMU_APPEND} ${key}=${value}"
-    fi
-}
-
-if [[ " ${QEMU_APPEND} " == *" desktop=kde "* ]]; then
-    qemu_append_if_missing virtio_gpu_disable_pageflip_copy 0
-    qemu_append_if_missing virtio_gpu_pageflip_copy 1
-    qemu_append_if_missing virtio_gpu_present_minimal_drain 1
-    qemu_append_if_missing virtio_gpu_present_no_drain 0
-fi
 
 export DISPLAY_MODE
 export QEMU_GPU

@@ -136,7 +136,12 @@ struct ioctl_bucket {
     uint64_t nested_x11_ns;
     uint64_t ret_ok;
     uint64_t ret_fail;
+    uint64_t arg_read_attempts;
+    uint64_t arg_read_ok;
+    uint64_t arg_read_fail;
+    uint64_t arg_read_fallback_ok;
     int last_errno;
+    int last_arg_errno;
     struct ioctl_shape last_shape;
 };
 
@@ -556,15 +561,70 @@ static int ioctl_fd_role_is_drm(enum ioctl_fd_role role)
            role == IOCTL_FD_ROLE_DRM_CARD;
 }
 
-static int read_ioctl_arg(const void *arg, void *dst, size_t size)
+struct ioctl_arg_read_status {
+    int attempted;
+    int ok;
+    int fallback_ok;
+    int err;
+};
+
+static int current_mapping_covers_readable_range(uintptr_t start, size_t size)
+{
+    FILE *fp;
+    char line[256];
+    uintptr_t end;
+    int found = 0;
+
+    if (size == 0 || start > UINTPTR_MAX - (uintptr_t)size)
+        return 0;
+    end = start + (uintptr_t)size;
+
+    syscall_trace_suppressed++;
+    fp = fopen("/proc/self/maps", "r");
+    if (!fp) {
+        syscall_trace_suppressed--;
+        return 0;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        unsigned long long map_start;
+        unsigned long long map_end;
+        char perms[5] = { 0 };
+
+        if (sscanf(line, "%llx-%llx %4s", &map_start, &map_end, perms) != 3)
+            continue;
+        if (perms[0] != 'r')
+            continue;
+        if ((uintptr_t)map_start <= start && end <= (uintptr_t)map_end) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(fp);
+    syscall_trace_suppressed--;
+    return found;
+}
+
+static int read_ioctl_arg(const void *arg, void *dst, size_t size,
+                          int allow_same_process_fallback,
+                          struct ioctl_arg_read_status *status)
 {
     struct iovec local_iov;
     struct iovec remote_iov;
     ssize_t nread;
     int saved_errno = errno;
+    int read_errno = 0;
 
-    if (!arg || !dst || size == 0)
+    if (status)
+        memset(status, 0, sizeof(*status));
+    if (!arg || !dst || size == 0) {
+        if (status) {
+            status->attempted = 1;
+            status->err = EINVAL;
+        }
         return 0;
+    }
+    if (status)
+        status->attempted = 1;
 
     local_iov.iov_base = dst;
     local_iov.iov_len = size;
@@ -572,18 +632,42 @@ static int read_ioctl_arg(const void *arg, void *dst, size_t size)
     remote_iov.iov_len = size;
     syscall_trace_suppressed++;
     nread = process_vm_readv(getpid(), &local_iov, 1, &remote_iov, 1, 0);
+    read_errno = errno;
     syscall_trace_suppressed--;
+    if (nread == (ssize_t)size) {
+        if (status)
+            status->ok = 1;
+        errno = saved_errno;
+        return 1;
+    }
+    if (allow_same_process_fallback && nread < 0 &&
+        (read_errno == ENOSYS || read_errno == EINVAL) &&
+        current_mapping_covers_readable_range((uintptr_t)arg, size)) {
+        memcpy(dst, arg, size);
+        if (status) {
+            status->ok = 1;
+            status->fallback_ok = 1;
+        }
+        errno = saved_errno;
+        return 1;
+    }
+    if (status)
+        status->err = read_errno ? read_errno : EFAULT;
     errno = saved_errno;
-    return nread == (ssize_t)size;
+    return 0;
 }
 
 static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
-                                const void *arg, struct ioctl_shape *shape)
+                                const void *arg, struct ioctl_shape *shape,
+                                int allow_same_process_fallback,
+                                struct ioctl_arg_read_status *status)
 {
     unsigned int type = _IOC_TYPE(request);
     unsigned int nr = _IOC_NR(request);
 
     memset(shape, 0, sizeof(*shape));
+    if (status)
+        memset(status, 0, sizeof(*status));
     if (!arg || type != DRM_IOCTL_TYPE || !ioctl_fd_role_is_drm(role))
         return;
 
@@ -591,7 +675,8 @@ static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
     case DRM_IOCTL_NR_VIRTGPU_WAIT: {
         struct drm_virtgpu_3d_wait_trace wait;
 
-        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait),
+                            allow_same_process_fallback, status))
             return;
         shape->kind = IOCTL_SHAPE_VIRTGPU_WAIT;
         shape->a = wait.handle;
@@ -601,7 +686,8 @@ static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
     case DRM_IOCTL_NR_VIRTGPU_EXECBUFFER: {
         struct drm_virtgpu_execbuffer_trace execbuf;
 
-        if (!read_ioctl_arg(arg, &execbuf, sizeof(execbuf)))
+        if (!read_ioctl_arg(arg, &execbuf, sizeof(execbuf),
+                            allow_same_process_fallback, status))
             return;
         shape->kind = IOCTL_SHAPE_VIRTGPU_EXECBUFFER;
         shape->a = execbuf.flags;
@@ -613,7 +699,8 @@ static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
     case DRM_IOCTL_NR_SYNCOBJ_WAIT: {
         struct drm_syncobj_wait_trace wait;
 
-        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait),
+                            allow_same_process_fallback, status))
             return;
         shape->kind = IOCTL_SHAPE_SYNCOBJ_WAIT;
         shape->a = wait.count_handles;
@@ -624,7 +711,8 @@ static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
     case DRM_IOCTL_NR_SYNCOBJ_TIMELINE_WAIT: {
         struct drm_syncobj_timeline_wait_trace wait;
 
-        if (!read_ioctl_arg(arg, &wait, sizeof(wait)))
+        if (!read_ioctl_arg(arg, &wait, sizeof(wait),
+                            allow_same_process_fallback, status))
             return;
         shape->kind = IOCTL_SHAPE_SYNCOBJ_TIMELINE_WAIT;
         shape->a = wait.count_handles;
@@ -635,7 +723,8 @@ static void capture_ioctl_shape(unsigned long request, enum ioctl_fd_role role,
     case DRM_IOCTL_NR_MODE_ATOMIC: {
         struct drm_mode_atomic_trace atomic;
 
-        if (!read_ioctl_arg(arg, &atomic, sizeof(atomic)))
+        if (!read_ioctl_arg(arg, &atomic, sizeof(atomic),
+                            allow_same_process_fallback, status))
             return;
         shape->kind = IOCTL_SHAPE_MODE_ATOMIC;
         shape->a = atomic.flags;
@@ -760,10 +849,13 @@ static void record_glx_swap_ioctl_detail(int fd, unsigned long request,
 {
     enum ioctl_fd_role role = classify_ioctl_fd_role(fd);
     struct ioctl_shape shape;
+    struct ioctl_arg_read_status arg_status;
+    int allow_same_process_fallback = result >= 0;
     size_t i;
     size_t slot = MAX_IOCTL_BUCKETS;
 
-    capture_ioctl_shape(request, role, arg, &shape);
+    capture_ioctl_shape(request, role, arg, &shape,
+                        allow_same_process_fallback, &arg_status);
 
     ioctl_bucket_lock_acquire();
     for (i = 0; i < MAX_IOCTL_BUCKETS; i++) {
@@ -802,6 +894,18 @@ static void record_glx_swap_ioctl_detail(int fd, unsigned long request,
     } else {
         ioctl_buckets[slot].ret_ok++;
         ioctl_buckets[slot].last_errno = 0;
+    }
+    if (arg_status.attempted) {
+        ioctl_buckets[slot].arg_read_attempts++;
+        if (arg_status.ok) {
+            ioctl_buckets[slot].arg_read_ok++;
+            if (arg_status.fallback_ok)
+                ioctl_buckets[slot].arg_read_fallback_ok++;
+            ioctl_buckets[slot].last_arg_errno = 0;
+        } else {
+            ioctl_buckets[slot].arg_read_fail++;
+            ioctl_buckets[slot].last_arg_errno = arg_status.err;
+        }
     }
     ioctl_buckets[slot].last_shape = shape;
     ioctl_bucket_lock_release();
@@ -1035,7 +1139,12 @@ static void emit_glx_swap_ioctl_trace_result(void)
                       "top%zu_above_x11_ms=%.3f "
                       "top%zu_ret_ok=%" PRIu64 " "
                       "top%zu_ret_fail=%" PRIu64 " "
-                      "top%zu_last_errno=%d top%zu_shape=%s",
+                      "top%zu_last_errno=%d "
+                      "top%zu_arg_read_attempts=%" PRIu64 " "
+                      "top%zu_arg_read_ok=%" PRIu64 " "
+                      "top%zu_arg_read_fail=%" PRIu64 " "
+                      "top%zu_arg_read_fallback_ok=%" PRIu64 " "
+                      "top%zu_last_arg_errno=%d top%zu_shape=%s",
                       i, buckets[i].request, i, name, i,
                       ioctl_fd_role_name(buckets[i].role), i,
                       buckets[i].calls, i,
@@ -1044,7 +1153,12 @@ static void emit_glx_swap_ioctl_trace_result(void)
                       (double)buckets[i].nested_x11_ns / 1000000.0, i,
                       (double)above_x11_ns / 1000000.0, i,
                       buckets[i].ret_ok, i, buckets[i].ret_fail, i,
-                      buckets[i].last_errno, i, shape);
+                      buckets[i].last_errno, i,
+                      buckets[i].arg_read_attempts, i,
+                      buckets[i].arg_read_ok, i,
+                      buckets[i].arg_read_fail, i,
+                      buckets[i].arg_read_fallback_ok, i,
+                      buckets[i].last_arg_errno, i, shape);
     }
     append_format(line, sizeof(line), &pos, "\n");
     trace_logf("%s", line);
@@ -1323,10 +1437,12 @@ static void decode_complete_event(xcb_special_event_t *se,
 
 __attribute__((constructor)) static void present_trace_begin(void)
 {
-    const char *path = getenv("HOST_X11_EGL_SMOKE_LOG");
+    const char *path = getenv("HOST_X11_PRESENT_TRACE_LOG");
     char exe[256];
     ssize_t exe_len;
 
+    if (!path || !path[0])
+        path = getenv("HOST_X11_EGL_SMOKE_LOG");
     if (path && path[0])
         log_fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     exe_len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);

@@ -3,12 +3,14 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 struct app_probe {
@@ -19,6 +21,7 @@ struct app_probe {
     int exited;
     int exit_code;
     int signal_code;
+    long long launch_elapsed_ms;
 };
 
 static const char *chromium_evidence_path =
@@ -29,12 +32,34 @@ static const char *chromium_local_video_url =
     "file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=15000&hud=1";
 static FILE *chromium_evidence;
 
+static long long monotonic_ms(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+        return 0;
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void maybe_redirect_stderr_to_stdout(void)
+{
+    const char *value = getenv("KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT");
+
+    if (!value || value[0] == '\0' || strcmp(value, "0") == 0)
+        return;
+    fflush(stderr);
+    if (dup2(STDOUT_FILENO, STDERR_FILENO) < 0)
+        fprintf(stderr,
+                "kde_app_launch_probe stderr_redirect_failed errno=%d %s\n",
+                errno, strerror(errno));
+}
+
 static void set_kde_env(void)
 {
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("LOGNAME", "root", 1);
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("XDG_RUNTIME_DIR", "/dev/shm/xdg-runtime-root", 1);
     setenv("XDG_CACHE_HOME", "/dev/shm/kde-cache", 1);
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
@@ -62,6 +87,7 @@ static void set_kde_env(void)
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
     setenv("LD_PRELOAD",
+           "/opt/xv6-kde-abi-libs/libxv6-ifunc-memcpy.so:"
            "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
            "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
            0);
@@ -149,6 +175,23 @@ static void chromium_evidence_open(void)
     fflush(chromium_evidence);
 }
 
+static void chromium_evidence_open_append(const char *phase)
+{
+    chromium_evidence = fopen(chromium_evidence_path, "a");
+    if (!chromium_evidence) {
+        fprintf(stderr,
+                "kde_app_launch_probe chromium_evidence append_open_failed "
+                "path=%s errno=%d %s\n",
+                chromium_evidence_path, errno, strerror(errno));
+        return;
+    }
+    fprintf(chromium_evidence,
+            "kde_chromium_process_evidence sampler phase=%s pid=%ld ppid=%ld "
+            "begin\n",
+            phase, (long)getpid(), (long)getppid());
+    fflush(chromium_evidence);
+}
+
 static void chromium_evidence_close(int ok)
 {
     if (!chromium_evidence)
@@ -156,6 +199,17 @@ static void chromium_evidence_close(int ok)
     fprintf(chromium_evidence,
             "kde_chromium_process_evidence end status=%s\n",
             ok ? "PASS" : "FAIL");
+    fclose(chromium_evidence);
+    chromium_evidence = NULL;
+}
+
+static void chromium_evidence_sampler_close(int ok, int samples)
+{
+    if (!chromium_evidence)
+        return;
+    fprintf(chromium_evidence,
+            "kde_chromium_process_evidence sampler end status=%s samples=%d\n",
+            ok ? "PASS" : "FAIL", samples);
     fclose(chromium_evidence);
     chromium_evidence = NULL;
 }
@@ -176,6 +230,7 @@ static void chromium_evidence_expected_url(pid_t launched_pid,
 
 static int launch_app(struct app_probe *probe)
 {
+    long long start_ms;
     pid_t pid;
 
     if (access(probe->argv[0], X_OK) < 0) {
@@ -184,6 +239,7 @@ static int launch_app(struct app_probe *probe)
         return 0;
     }
 
+    start_ms = monotonic_ms();
     pid = fork();
     if (pid < 0) {
         fprintf(stderr, "kde_app_launch_probe %s fork_failed errno=%d\n",
@@ -197,6 +253,10 @@ static int launch_app(struct app_probe *probe)
         _exit(127);
     }
     probe->pid = pid;
+    probe->launch_elapsed_ms = monotonic_ms() - start_ms;
+    fprintf(stderr,
+            "kde_app_launch_probe launch app=%s pid=%ld elapsed_ms=%lld\n",
+            probe->name, (long)pid, probe->launch_elapsed_ms);
     return 1;
 }
 
@@ -318,6 +378,40 @@ static int launcher_log_has_argv_url(const char *path, const char *url)
     return 0;
 }
 
+static int chromium_launcher_log_has_wayland_platform_failure(const char *path)
+{
+    return file_contains_string(path, "Failed to connect to Wayland display") ||
+           file_contains_string(path, "Failed to initialize Wayland platform") ||
+           file_contains_string(path, "The platform failed to initialize");
+}
+
+static void wait_for_chromium_launcher_log(const char *path, const char *url,
+                                           int *log_present, int *marker,
+                                           int *child_exec, int *url_present,
+                                           int *wayland_platform_fail)
+{
+    int i;
+
+    *log_present = 0;
+    *marker = 0;
+    *child_exec = 0;
+    *url_present = 0;
+    *wayland_platform_fail = 0;
+    for (i = 0; i < 30; i++) {
+        *log_present = access(path, F_OK) == 0;
+        if (*log_present) {
+            *marker = file_contains_string(path, "launch_marker");
+            *child_exec = file_contains_string(path, "child_exec");
+            *url_present = launcher_log_has_argv_url(path, url);
+            *wayland_platform_fail =
+                chromium_launcher_log_has_wayland_platform_failure(path);
+        }
+        if (*wayland_platform_fail)
+            return;
+        usleep(100000);
+    }
+}
+
 static void record_child_status(struct app_probe *probe)
 {
     int status;
@@ -365,6 +459,29 @@ static const char *arg_value(int argc, char **argv, const char *name)
         }
     }
     return NULL;
+}
+
+static int parse_int_arg_or_default(int argc, char **argv, const char *name,
+                                    int default_value, int min_value,
+                                    int max_value)
+{
+    const char *value = arg_value(argc, argv, name);
+    char *end = NULL;
+    long parsed;
+
+    if (!value || !value[0])
+        return default_value;
+    errno = 0;
+    parsed = strtol(value, &end, 10);
+    if (errno != 0 || !end || *end != '\0' ||
+        parsed < min_value || parsed > max_value) {
+        fprintf(stderr,
+                "kde_app_launch_probe invalid integer for %s value=%s "
+                "default=%d min=%d max=%d\n",
+                name, value, default_value, min_value, max_value);
+        return default_value;
+    }
+    return (int)parsed;
 }
 
 static int cmdline_is_shell(const char *buf, ssize_t n)
@@ -420,17 +537,24 @@ static int count_shell_processes(void)
     return count;
 }
 
-static int wait_for_path(const char *path, int timeout_ms)
+static int parse_env_int_or_default(const char *name, int fallback, int min,
+                                    int max)
 {
-    int waited = 0;
+    const char *value = getenv(name);
+    char *end = NULL;
+    long parsed;
 
-    while (waited <= timeout_ms) {
-        if (access(path, F_OK) == 0)
-            return 1;
-        usleep(100000);
-        waited += 100;
-    }
-    return 0;
+    if (!value || value[0] == '\0')
+        return fallback;
+    errno = 0;
+    parsed = strtol(value, &end, 10);
+    if (errno || end == value || *end != '\0')
+        return fallback;
+    if (parsed < min)
+        return min;
+    if (parsed > max)
+        return max;
+    return (int)parsed;
 }
 
 static int read_text_file(const char *path, char *buf, size_t size)
@@ -493,6 +617,40 @@ static void normalize_cmdline(char *buf, int n)
     buf[n] = '\0';
 }
 
+static int cmdline_option_value(const char *cmdline, const char *prefix,
+                                char *out, size_t out_size)
+{
+    const char *p;
+    size_t prefix_len;
+
+    if (out_size == 0 || !cmdline || !prefix)
+        return 0;
+    p = cmdline;
+    prefix_len = strlen(prefix);
+
+    while ((p = strstr(p, prefix)) != NULL) {
+        const char *start;
+        const char *end;
+        size_t len;
+
+        if (p != cmdline && p[-1] != ' ') {
+            p++;
+            continue;
+        }
+        start = p + prefix_len;
+        end = start;
+        while (*end && *end != ' ')
+            end++;
+        len = (size_t)(end - start);
+        if (len >= out_size)
+            len = out_size - 1;
+        memcpy(out, start, len);
+        out[len] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
 static int chromium_browser_name_matches(const char *name)
 {
     return name &&
@@ -524,6 +682,50 @@ static int cmdline_argv0_has_chromium_name(const char *cmdline, int n)
     return chromium_process_name_matches(path_basename(argv0));
 }
 
+static int cmdline_option_present(const char *cmdline, const char *option)
+{
+    const char *p;
+    size_t option_len;
+
+    if (!cmdline || !option)
+        return 0;
+    p = cmdline;
+    option_len = strlen(option);
+    while ((p = strstr(p, option)) != NULL) {
+        char next = p[option_len];
+
+        if ((p == cmdline || p[-1] == ' ') && (next == '\0' || next == ' '))
+            return 1;
+        p++;
+    }
+    return 0;
+}
+
+static void cmdline_argv0_basename(const char *cmdline, int n, char *out,
+                                   size_t out_size)
+{
+    char argv0[1024];
+    int len = 0;
+    const char *base;
+
+    if (out_size == 0)
+        return;
+    out[0] = '\0';
+    if (!cmdline || n <= 0)
+        return;
+    while (len < n && cmdline[len] != '\0' && len + 1 < (int)sizeof(argv0)) {
+        argv0[len] = cmdline[len];
+        len++;
+    }
+    argv0[len] = '\0';
+    base = path_basename(argv0);
+    len = (int)strlen(base);
+    if (len >= (int)out_size)
+        len = (int)out_size - 1;
+    memcpy(out, base, (size_t)len);
+    out[len] = '\0';
+}
+
 static int is_root_chrome_process(const char *cmdline, int n, const char *comm)
 {
     char argv0[1024];
@@ -545,13 +747,19 @@ static int is_root_chrome_process(const char *cmdline, int n, const char *comm)
 }
 
 static int derive_chromium_role(const char *cmdline, int n, const char *comm,
-                                char *role, size_t role_size)
+                                char *role, size_t role_size,
+                                char *role_source, size_t role_source_size,
+                                char *type_arg, size_t type_arg_size)
 {
     int start = 0;
 
     if (role_size == 0)
         return 0;
     role[0] = '\0';
+    if (role_source_size > 0)
+        role_source[0] = '\0';
+    if (type_arg_size > 0)
+        type_arg[0] = '\0';
     for (int i = 0; i <= n; i++) {
         if (i == n || cmdline[i] == '\0') {
             static const char prefix[] = "--type=";
@@ -565,6 +773,17 @@ static int derive_chromium_role(const char *cmdline, int n, const char *comm,
                     role_len = (int)role_size - 1;
                 memcpy(role, cmdline + start + sizeof(prefix) - 1, role_len);
                 role[role_len] = '\0';
+                if (type_arg_size > 0) {
+                    size_t copy_len = (size_t)role_len;
+
+                    if (copy_len >= type_arg_size)
+                        copy_len = type_arg_size - 1;
+                    memcpy(type_arg, role, copy_len);
+                    type_arg[copy_len] = '\0';
+                }
+                if (role_source_size > 0)
+                    snprintf(role_source, role_source_size, "%s",
+                             "type_arg");
                 return role[0] != '\0';
             }
             start = i + 1;
@@ -573,9 +792,17 @@ static int derive_chromium_role(const char *cmdline, int n, const char *comm,
 
     if (is_root_chrome_process(cmdline, n, comm)) {
         snprintf(role, role_size, "%s", "browser");
+        if (type_arg_size > 0)
+            snprintf(type_arg, type_arg_size, "%s", "missing");
+        if (role_source_size > 0)
+            snprintf(role_source, role_source_size, "%s", "root_chrome");
         return 1;
     }
     snprintf(role, role_size, "%s", "unknown");
+    if (type_arg_size > 0)
+        snprintf(type_arg, type_arg_size, "%s", "missing");
+    if (role_source_size > 0)
+        snprintf(role_source, role_source_size, "%s", "unknown");
     return 1;
 }
 
@@ -587,18 +814,460 @@ static int chromium_process_interesting(const char *cmdline, int n,
     return chromium_process_name_matches(comm);
 }
 
+static int chromium_env_name_interesting(const char *entry, int n)
+{
+    static const char *names[] = {
+        "WAYLAND_DISPLAY=",
+        "DISPLAY=",
+        "XDG_RUNTIME_DIR=",
+        "OZONE_PLATFORM=",
+        "EGL_PLATFORM=",
+        "GALLIUM_DRIVER=",
+        "MESA_LOADER_DRIVER_OVERRIDE=",
+        "LIBGL_DRIVERS_PATH=",
+        "GBM_BACKENDS_PATH=",
+        "LD_LIBRARY_PATH=",
+        "LD_PRELOAD=",
+        "WAYLAND_CHROMIUM_EGL_TRACE=",
+        "WAYLAND_CHROMIUM_SIMDUTF_FORCE_IMPLEMENTATION=",
+        "SIMDUTF_FORCE_IMPLEMENTATION=",
+        "CHROMIUM_EGL_TRACE=",
+        "CHROMIUM_EGL_TRACE_LOG=",
+        "LIBVA_DRIVERS_PATH=",
+        "LIBVA_DRIVER_NAME=",
+        "CHROME_LOG_FILE=",
+    };
+
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        size_t len = strlen(names[i]);
+
+        if (n >= (int)len && memcmp(entry, names[i], len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void chromium_evidence_env(const char *phase, const char *pid_name,
+                                  const char *role)
+{
+    char path[320];
+    char buf[8192];
+    int fd;
+    ssize_t n;
+    int start = 0;
+    int emitted = 0;
+    int truncated = 0;
+
+    if (!chromium_evidence)
+        return;
+
+    snprintf(path, sizeof(path), "/proc/%s/environ", pid_name);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence env phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fprintf(chromium_evidence, "\" open_errno=%d ", errno);
+        fprint_escaped(chromium_evidence, strerror(errno), -1);
+        fputc('\n', chromium_evidence);
+        return;
+    }
+
+    n = read(fd, buf, sizeof(buf) - 1);
+    int saved_errno = errno;
+    close(fd);
+    if (n < 0) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence env phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fprintf(chromium_evidence, "\" read_errno=%d ", saved_errno);
+        fprint_escaped(chromium_evidence, strerror(saved_errno), -1);
+        fputc('\n', chromium_evidence);
+        return;
+    }
+    truncated = n == (ssize_t)sizeof(buf) - 1;
+    buf[n] = '\0';
+
+    for (int i = 0; i <= n; i++) {
+        if (i != n && buf[i] != '\0')
+            continue;
+        if (i > start && chromium_env_name_interesting(buf + start,
+                                                       i - start)) {
+            fprintf(chromium_evidence,
+                    "kde_chromium_process_evidence env phase=%s pid=%s "
+                    "role=\"",
+                    phase, pid_name);
+            fprint_escaped(chromium_evidence, role, -1);
+            fputs("\" entry=\"", chromium_evidence);
+            fprint_escaped(chromium_evidence, buf + start, i - start);
+            fputs("\"\n", chromium_evidence);
+            emitted++;
+        }
+        start = i + 1;
+    }
+
+    if (truncated) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence env phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" truncated=1\n", chromium_evidence);
+    }
+    if (!emitted) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence env phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" entries=0\n", chromium_evidence);
+    }
+}
+
+static int chromium_map_line_interesting(const char *line)
+{
+    static const char *needles[] = {
+        "libEGL",
+        "libGLES",
+        "libGLX",
+        "libGLdispatch",
+        "libOpenGL",
+        "libgbm",
+        "libdrm",
+        "libgallium",
+        "chromium-egl-trace-preload",
+        "/chrome-linux64/chrome_crashpad_handler",
+        "/dri/",
+        "/gbm/",
+        "swiftshader",
+    };
+
+    const char *chrome_path = strstr(line, "/chrome-linux64/chrome");
+    if (chrome_path && strcmp(chrome_path, "/chrome-linux64/chrome") == 0)
+        return 1;
+    for (size_t i = 0; i < sizeof(needles) / sizeof(needles[0]); i++) {
+        if (strstr(line, needles[i]))
+            return 1;
+    }
+    return 0;
+}
+
+static int chromium_evidence_full_maps_enabled(void)
+{
+    const char *value = getenv("KDE_CHROMIUM_EVIDENCE_FULL_MAPS");
+    char lower[16];
+    size_t i;
+
+    if (!value || value[0] == '\0')
+        return 0;
+    for (i = 0; i + 1 < sizeof(lower) && value[i]; i++)
+        lower[i] = (char)tolower((unsigned char)value[i]);
+    lower[i] = '\0';
+    if (strcmp(lower, "0") == 0 || strcmp(lower, "off") == 0 ||
+        strcmp(lower, "false") == 0 || strcmp(lower, "no") == 0)
+        return 0;
+    return 1;
+}
+
+static void chromium_evidence_maps(const char *phase, const char *pid_name,
+                                   const char *role)
+{
+    char path[320];
+    FILE *fp;
+    char line[1024];
+    int emitted = 0;
+
+    if (!chromium_evidence)
+        return;
+
+    snprintf(path, sizeof(path), "/proc/%s/maps", pid_name);
+    fp = fopen(path, "r");
+    if (!fp) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence maps phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fprintf(chromium_evidence, "\" open_errno=%d ", errno);
+        fprint_escaped(chromium_evidence, strerror(errno), -1);
+        fputc('\n', chromium_evidence);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len = strlen(line);
+
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = '\0';
+        if (!chromium_evidence_full_maps_enabled() &&
+            !chromium_map_line_interesting(line))
+            continue;
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence maps phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" line=\"", chromium_evidence);
+        fprint_escaped(chromium_evidence, line, -1);
+        fputs("\"\n", chromium_evidence);
+        emitted++;
+    }
+    fclose(fp);
+
+    if (!emitted) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence maps phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" entries=0\n", chromium_evidence);
+    }
+}
+
+static int chromium_fd_target_interesting(const char *target)
+{
+    static const char *needles[] = {
+        "/dev/dri/",
+        "/dev/gpu",
+        "anon_inode:",
+        "renderD",
+        "card",
+        "drm",
+        "pipe:",
+        "socket:",
+        "virtio",
+    };
+
+    if (!target)
+        return 0;
+    for (size_t i = 0; i < sizeof(needles) / sizeof(needles[0]); i++) {
+        if (strstr(target, needles[i]))
+            return 1;
+    }
+    return 0;
+}
+
+static void chromium_evidence_fds(const char *phase, const char *pid_name,
+                                  const char *role)
+{
+    char fd_dir[320];
+    DIR *dir;
+    struct dirent *de;
+    int readlink_errors = 0;
+    int emitted = 0;
+    int scanned = 0;
+
+    if (!chromium_evidence)
+        return;
+
+    snprintf(fd_dir, sizeof(fd_dir), "/proc/%s/fd", pid_name);
+    dir = opendir(fd_dir);
+    if (!dir) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence fd phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fprintf(chromium_evidence, "\" opendir_errno=%d ", errno);
+        fprint_escaped(chromium_evidence, strerror(errno), -1);
+        fputc('\n', chromium_evidence);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char link_path[768];
+        char target[512];
+        ssize_t n;
+
+        if (de->d_name[0] == '.')
+            continue;
+        scanned++;
+        if (snprintf(link_path, sizeof(link_path), "%s/%s", fd_dir,
+                     de->d_name) >= (int)sizeof(link_path)) {
+            continue;
+        }
+        n = readlink(link_path, target, sizeof(target) - 1);
+        if (n < 0) {
+            readlink_errors++;
+            continue;
+        }
+        target[n] = '\0';
+        if (!chromium_fd_target_interesting(target))
+            continue;
+        if (emitted >= 32)
+            continue;
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence fd phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" fd=\"", chromium_evidence);
+        fprint_escaped(chromium_evidence, de->d_name, -1);
+        fputs("\" target=\"", chromium_evidence);
+        fprint_escaped(chromium_evidence, target, -1);
+        fputs("\"\n", chromium_evidence);
+        emitted++;
+    }
+    closedir(dir);
+
+    fprintf(chromium_evidence,
+            "kde_chromium_process_evidence fd_summary phase=%s pid=%s role=\"",
+            phase, pid_name);
+    fprint_escaped(chromium_evidence, role, -1);
+    fprintf(chromium_evidence,
+            "\" scanned=%d emitted=%d readlink_errors=%d cap=32\n",
+            scanned, emitted, readlink_errors);
+}
+
+static void trim_trailing_space(char *buf)
+{
+    size_t len;
+
+    if (!buf)
+        return;
+    len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' ||
+                       buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+        buf[--len] = '\0';
+    }
+}
+
+static void chromium_evidence_proc_text(const char *phase,
+                                        const char *pid_name,
+                                        const char *role, const char *kind,
+                                        const char *relpath,
+                                        size_t max_bytes)
+{
+    char path[384];
+    char buf[1024];
+    int n;
+
+    if (!chromium_evidence || max_bytes == 0)
+        return;
+    if (max_bytes > sizeof(buf))
+        max_bytes = sizeof(buf);
+    snprintf(path, sizeof(path), "/proc/%s/%s", pid_name, relpath);
+    n = read_text_file(path, buf, max_bytes);
+    if (n <= 0) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence wait phase=%s pid=%s role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" kind=\"", chromium_evidence);
+        fprint_escaped(chromium_evidence, kind, -1);
+        fputs("\" rel=\"", chromium_evidence);
+        fprint_escaped(chromium_evidence, relpath, -1);
+        fputs("\" bytes=0\n", chromium_evidence);
+        return;
+    }
+    trim_trailing_space(buf);
+    fprintf(chromium_evidence,
+            "kde_chromium_process_evidence wait phase=%s pid=%s role=\"",
+            phase, pid_name);
+    fprint_escaped(chromium_evidence, role, -1);
+    fputs("\" kind=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, kind, -1);
+    fputs("\" rel=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, relpath, -1);
+    fprintf(chromium_evidence, "\" bytes=%d text=\"", n);
+    fprint_escaped(chromium_evidence, buf, -1);
+    fputs("\"\n", chromium_evidence);
+}
+
+static void chromium_evidence_thread_waits(const char *phase,
+                                           const char *pid_name,
+                                           const char *role)
+{
+    char task_dir[320];
+    DIR *dir;
+    struct dirent *de;
+    int emitted = 0;
+
+    if (!chromium_evidence)
+        return;
+    snprintf(task_dir, sizeof(task_dir), "/proc/%s/task", pid_name);
+    dir = opendir(task_dir);
+    if (!dir) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence thread_wait phase=%s pid=%s "
+                "role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fprintf(chromium_evidence, "\" opendir_errno=%d ", errno);
+        fprint_escaped(chromium_evidence, strerror(errno), -1);
+        fputc('\n', chromium_evidence);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char rel[384];
+        int all_digits = 1;
+
+        if (de->d_name[0] == '.')
+            continue;
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+
+        snprintf(rel, sizeof(rel), "task/%s/comm", de->d_name);
+        chromium_evidence_proc_text(phase, pid_name, role, "thread-comm",
+                                    rel, 128);
+        snprintf(rel, sizeof(rel), "task/%s/status", de->d_name);
+        chromium_evidence_proc_text(phase, pid_name, role, "thread-status",
+                                    rel, 1024);
+        snprintf(rel, sizeof(rel), "task/%s/wchan", de->d_name);
+        chromium_evidence_proc_text(phase, pid_name, role, "thread-wchan",
+                                    rel, 128);
+        snprintf(rel, sizeof(rel), "task/%s/syscall", de->d_name);
+        chromium_evidence_proc_text(phase, pid_name, role, "thread-syscall",
+                                    rel, 256);
+        emitted++;
+    }
+    closedir(dir);
+
+    if (!emitted) {
+        fprintf(chromium_evidence,
+                "kde_chromium_process_evidence thread_wait phase=%s pid=%s "
+                "role=\"",
+                phase, pid_name);
+        fprint_escaped(chromium_evidence, role, -1);
+        fputs("\" entries=0\n", chromium_evidence);
+    }
+}
+
+static void chromium_evidence_wait_state(const char *phase,
+                                         const char *pid_name,
+                                         const char *role)
+{
+    chromium_evidence_proc_text(phase, pid_name, role, "stat", "stat", 512);
+    chromium_evidence_proc_text(phase, pid_name, role, "status", "status",
+                                1024);
+    chromium_evidence_proc_text(phase, pid_name, role, "wchan", "wchan", 128);
+    chromium_evidence_proc_text(phase, pid_name, role, "syscall", "syscall",
+                                256);
+    chromium_evidence_proc_text(phase, pid_name, role, "stack", "stack", 512);
+    chromium_evidence_thread_waits(phase, pid_name, role);
+}
+
 static void chromium_evidence_process(const char *phase, const char *pid_name,
                                       int ppid, const char *comm,
                                       const char *cmdline_raw, int cmd_n,
                                       const char *cmdline)
 {
     char role[128];
+    char role_source[32];
+    char type_arg[128];
+    char argv0_base[128];
 
     if (!chromium_evidence ||
         !chromium_process_interesting(cmdline_raw, cmd_n, comm))
         return;
 
-    derive_chromium_role(cmdline_raw, cmd_n, comm, role, sizeof(role));
+    derive_chromium_role(cmdline_raw, cmd_n, comm, role, sizeof(role),
+                         role_source, sizeof(role_source), type_arg,
+                         sizeof(type_arg));
+    cmdline_argv0_basename(cmdline_raw, cmd_n, argv0_base,
+                           sizeof(argv0_base));
     fprintf(chromium_evidence,
             "kde_chromium_process_evidence process phase=%s pid=%s ppid=%d "
             "comm=\"",
@@ -610,6 +1279,81 @@ static void chromium_evidence_process(const char *phase, const char *pid_name,
     fprint_escaped(chromium_evidence, cmdline ? cmdline : "", -1);
     fputs("\" argv=\"", chromium_evidence);
     fprint_escaped(chromium_evidence, cmdline_raw, cmd_n);
+    fputs("\" role_source=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, role_source, -1);
+    fputs("\" type_arg=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, type_arg, -1);
+    fputs("\" argv0=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, argv0_base, -1);
+    fprintf(chromium_evidence, "\" cmdline_bytes=%d cmdline_truncated=%d\n",
+            cmd_n, cmd_n >= 8191 ? 1 : 0);
+    chromium_evidence_env(phase, pid_name, role);
+    chromium_evidence_maps(phase, pid_name, role);
+    chromium_evidence_fds(phase, pid_name, role);
+    chromium_evidence_wait_state(phase, pid_name, role);
+    fflush(chromium_evidence);
+}
+
+static void chromium_evidence_process_fast(const char *phase,
+                                           const char *pid_name, int ppid,
+                                           const char *comm,
+                                           const char *cmdline_raw, int cmd_n,
+                                           const char *cmdline)
+{
+    char role[128];
+    char role_source[32];
+    char type_arg[128];
+    char argv0_base[128];
+    char use_gl[96] = "missing";
+    char use_angle[96] = "missing";
+    char gpu_preferences[512] = "";
+    int gpu_preferences_b64_len = 0;
+    int disable_gpu_early_init;
+
+    if (!chromium_evidence ||
+        !chromium_process_interesting(cmdline_raw, cmd_n, comm))
+        return;
+
+    derive_chromium_role(cmdline_raw, cmd_n, comm, role, sizeof(role),
+                         role_source, sizeof(role_source), type_arg,
+                         sizeof(type_arg));
+    cmdline_argv0_basename(cmdline_raw, cmd_n, argv0_base,
+                           sizeof(argv0_base));
+    cmdline_option_value(cmdline, "--use-gl=", use_gl, sizeof(use_gl));
+    cmdline_option_value(cmdline, "--use-angle=", use_angle,
+                         sizeof(use_angle));
+    if (cmdline_option_value(cmdline, "--gpu-preferences=",
+                             gpu_preferences, sizeof(gpu_preferences))) {
+        gpu_preferences_b64_len = (int)strlen(gpu_preferences);
+    }
+    disable_gpu_early_init =
+        cmdline_option_present(cmdline, "--disable-gpu-early-init");
+
+    fprintf(chromium_evidence,
+            "kde_chromium_process_evidence fast phase=%s pid=%s ppid=%d "
+            "comm=\"",
+            phase, pid_name, ppid);
+    fprint_escaped(chromium_evidence, comm ? comm : "", -1);
+    fputs("\" role=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, role, -1);
+    fputs("\" cmd=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, cmdline ? cmdline : "", -1);
+    fputs("\" role_source=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, role_source, -1);
+    fputs("\" type_arg=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, type_arg, -1);
+    fputs("\" argv0=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, argv0_base, -1);
+    fputs("\" use_gl=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, use_gl, -1);
+    fputs("\" use_angle=\"", chromium_evidence);
+    fprint_escaped(chromium_evidence, use_angle, -1);
+    fprintf(chromium_evidence,
+            "\" gpu_preferences_b64_len=%d disable_gpu_early_init=%d "
+            "cmdline_bytes=%d cmdline_truncated=%d gpu_preferences=\"",
+            gpu_preferences_b64_len, disable_gpu_early_init, cmd_n,
+            cmd_n >= 8191 ? 1 : 0);
+    fprint_escaped(chromium_evidence, gpu_preferences, -1);
     fputs("\"\n", chromium_evidence);
     fflush(chromium_evidence);
 }
@@ -648,7 +1392,7 @@ static void dump_process_fds(const char *phase, const char *pid_name)
     }
 
     while ((de = readdir(dir)) != NULL) {
-        char link_path[512];
+        char link_path[768];
         char target[512];
         ssize_t n;
         int path_len;
@@ -734,7 +1478,8 @@ static void dump_thread_file(const char *phase, const char *pid_name,
     dump_process_file(phase, pid_name, rel);
 }
 
-static void dump_poll_fd_target(const char *phase, const char *pid_name, int fd)
+static void dump_wait_fd_target(const char *phase, const char *pid_name,
+                                const char *kind, int fd)
 {
     char link_path[512];
     char target[512];
@@ -744,15 +1489,108 @@ static void dump_poll_fd_target(const char *phase, const char *pid_name, int fd)
     n = readlink(link_path, target, sizeof(target) - 1);
     if (n < 0) {
         fprintf(stderr,
-                "kde_app_launch_probe pollfd phase=%s pid=%s fd=%d "
+                "kde_app_launch_probe %s phase=%s pid=%s fd=%d "
                 "readlink_errno=%d %s\n",
-                phase, pid_name, fd, errno, strerror(errno));
+                kind, phase, pid_name, fd, errno, strerror(errno));
         return;
     }
     target[n] = '\0';
     fprintf(stderr,
-            "kde_app_launch_probe pollfd phase=%s pid=%s fd=%d target=%s\n",
-            phase, pid_name, fd, target);
+            "kde_app_launch_probe %s phase=%s pid=%s fd=%d target=%s\n",
+            kind, phase, pid_name, fd, target);
+}
+
+static void dump_fd_table(const char *phase, const char *pid_name, int max_fds)
+{
+    char dir_path[320];
+    DIR *dir;
+    struct dirent *de;
+    int count = 0;
+
+    snprintf(dir_path, sizeof(dir_path), "/proc/%s/fd", pid_name);
+    dir = opendir(dir_path);
+    if (!dir) {
+        fprintf(stderr,
+                "kde_app_launch_probe fdtable phase=%s pid=%s "
+                "opendir_errno=%d %s\n",
+                phase, pid_name, errno, strerror(errno));
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        int all_digits = 1;
+        char link_path[768];
+        char target[512];
+        ssize_t n;
+
+        if (de->d_name[0] == '.')
+            continue;
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+        if (count >= max_fds)
+            break;
+        count++;
+
+        snprintf(link_path, sizeof(link_path), "/proc/%s/fd/%s",
+                 pid_name, de->d_name);
+        n = readlink(link_path, target, sizeof(target) - 1);
+        if (n < 0) {
+            fprintf(stderr,
+                    "kde_app_launch_probe fdtable phase=%s pid=%s fd=%s "
+                    "readlink_errno=%d %s\n",
+                    phase, pid_name, de->d_name, errno, strerror(errno));
+            continue;
+        }
+        target[n] = '\0';
+        fprintf(stderr,
+                "kde_app_launch_probe fdtable phase=%s pid=%s fd=%s "
+                "target=%s\n",
+                phase, pid_name, de->d_name, target);
+    }
+
+    closedir(dir);
+}
+
+static void dump_poll_fd_target(const char *phase, const char *pid_name, int fd)
+{
+    dump_wait_fd_target(phase, pid_name, "pollfd", fd);
+}
+
+static void dump_pc_map(const char *phase, const char *pid_name,
+                        const char *tid_name, unsigned long long pc)
+{
+    char maps_path[384];
+    char line[1024];
+    FILE *fp;
+
+    snprintf(maps_path, sizeof(maps_path), "/proc/%s/maps", pid_name);
+    fp = fopen(maps_path, "r");
+    if (!fp)
+        return;
+    while (fgets(line, sizeof(line), fp)) {
+        unsigned long long start, end;
+
+        if (sscanf(line, "%llx-%llx", &start, &end) == 2 &&
+            pc >= start && pc < end) {
+            size_t len = strlen(line);
+
+            while (len > 0 && (line[len - 1] == '\n' ||
+                               line[len - 1] == '\r'))
+                line[--len] = '\0';
+            fprintf(stderr,
+                    "kde_app_launch_probe pcmap phase=%s pid=%s tid=%s "
+                    "pc=0x%llx map=\"%s\"\n",
+                    phase, pid_name, tid_name, pc, line);
+            break;
+        }
+    }
+    fclose(fp);
 }
 
 static void dump_thread_wait_detail(const char *phase, const char *pid_name,
@@ -771,6 +1609,7 @@ static void dump_thread_wait_detail(const char *phase, const char *pid_name,
     if (sscanf(syscall_buf, "%llu %llx %llx %llx %llx %llx %llx %llx %llx",
                &nr, &arg0, &arg1, &arg2, &arg3, &arg4, &arg5, &sp, &pc) != 9)
         return;
+    dump_pc_map(phase, pid_name, tid_name, pc);
 
     snprintf(mem_path, sizeof(mem_path), "/proc/%s/task/%s/mem", pid_name,
              tid_name);
@@ -820,6 +1659,13 @@ static void dump_thread_wait_detail(const char *phase, const char *pid_name,
                 "word_read=%ld word=0x%x errno=%d %s\n",
                 phase, pid_name, tid_name, arg0, arg1, arg2, (long)n, word,
                 errno, strerror(errno));
+    } else if (nr == 0) {
+        fprintf(stderr,
+                "kde_app_launch_probe waitdetail phase=%s pid=%s tid=%s "
+                "syscall=read fd=%llu buf=0x%llx count=%llu pc=0x%llx\n",
+                phase, pid_name, tid_name, arg0, arg1, arg2, pc);
+        if (arg0 <= INT_MAX)
+            dump_wait_fd_target(phase, pid_name, "readfd", (int)arg0);
     }
 
     close(memfd);
@@ -871,7 +1717,7 @@ static void dump_process_threads(const char *phase, const char *pid_name)
     closedir(dir);
 }
 
-static void dump_interesting_processes(const char *phase)
+static void dump_interesting_processes(const char *phase, int chromium_only)
 {
     DIR *dir = opendir("/proc");
     struct dirent *de;
@@ -920,7 +1766,9 @@ static void dump_interesting_processes(const char *phase)
                                   comm_n > 0 ? comm : "",
                                   cmd_n > 0 ? cmdline_raw : "", cmd_n,
                                   cmd_n > 0 ? cmdline : "");
-        if (cmdline_interesting(cmd_n > 0 ? cmdline : "", comm_n > 0 ? comm : "")) {
+        if (!chromium_only &&
+            cmdline_interesting(cmd_n > 0 ? cmdline : "",
+                                comm_n > 0 ? comm : "")) {
             fprintf(stderr,
                     "kde_app_launch_probe process phase=%s pid=%s ppid=%d comm=%s cmd=%s\n",
                     phase, de->d_name, ppid, comm_n > 0 ? comm : "",
@@ -936,24 +1784,245 @@ static void dump_interesting_processes(const char *phase)
     closedir(dir);
 }
 
+static int read_marker_payload(const char *path, char *buf, size_t size)
+{
+    int n;
+
+    n = read_text_file(path, buf, size);
+    if (n <= 0) {
+        if (size > 0)
+            buf[0] = '\0';
+        return 0;
+    }
+    normalize_cmdline(buf, n);
+    return 1;
+}
+
+static int wait_for_path_traced(const char *path, int timeout_ms,
+                                const char *phase, pid_t child_pid,
+                                int sample_ms, long long base_ms)
+{
+    long long start_ms = monotonic_ms();
+    long long next_sample_ms = start_ms;
+    int sample = 0;
+
+    if (sample_ms <= 0)
+        sample_ms = 0;
+
+    for (;;) {
+        long long now = monotonic_ms();
+        long long elapsed_ms = now - start_ms;
+
+        if (access(path, F_OK) == 0) {
+            char payload[512];
+
+            if (!read_marker_payload(path, payload, sizeof(payload)))
+                snprintf(payload, sizeof(payload), "missing");
+            fprintf(stderr,
+                    "kde_app_launch_probe marker phase=%s status=found "
+                    "elapsed_ms=%lld since_launch_ms=%lld path=%s payload=\"%s\"\n",
+                    phase, elapsed_ms, now - base_ms, path, payload);
+            return 1;
+        }
+
+        if (sample_ms > 0 && now >= next_sample_ms) {
+            char pid_name[32];
+            int alive = child_pid > 0 && kill(child_pid, 0) == 0;
+
+            fprintf(stderr,
+                    "kde_app_launch_probe marker phase=%s status=waiting "
+                    "sample=%d elapsed_ms=%lld since_launch_ms=%lld "
+                    "child_pid=%ld child_alive=%d shell_count=%d\n",
+                    phase, sample, elapsed_ms, now - base_ms,
+                    (long)child_pid, alive, count_shell_processes());
+            if (alive) {
+                snprintf(pid_name, sizeof(pid_name), "%ld", (long)child_pid);
+                dump_process_file(phase, pid_name, "stat");
+                dump_process_file(phase, pid_name, "syscall");
+                dump_process_threads(phase, pid_name);
+            }
+            sample++;
+            next_sample_ms = now + sample_ms;
+        }
+
+        if (elapsed_ms >= timeout_ms)
+            break;
+        usleep(100000);
+    }
+
+    fprintf(stderr,
+            "kde_app_launch_probe marker phase=%s status=timeout "
+            "elapsed_ms=%lld path=%s child_pid=%ld\n",
+            phase, monotonic_ms() - start_ms, path, (long)child_pid);
+    return 0;
+}
+
+static void dump_chromium_fast_census(const char *phase)
+{
+    DIR *dir = opendir("/proc");
+    struct dirent *de;
+
+    if (!dir) {
+        fprintf(stderr,
+                "kde_app_launch_probe chromium_fast_census phase=%s "
+                "opendir_errno=%d\n",
+                phase, errno);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char path[320];
+        char cmdline_raw[8192];
+        char cmdline[8192];
+        char comm[128];
+        int all_digits = 1;
+        int cmd_n;
+        int comm_n;
+        int ppid;
+
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", de->d_name);
+        cmd_n = read_text_file(path, cmdline_raw, sizeof(cmdline_raw));
+        if (cmd_n > 0)
+            memcpy(cmdline, cmdline_raw, (size_t)cmd_n + 1);
+        else
+            cmdline[0] = '\0';
+        normalize_cmdline(cmdline, cmd_n);
+        snprintf(path, sizeof(path), "/proc/%s/comm", de->d_name);
+        comm_n = read_text_file(path, comm, sizeof(comm));
+        if (comm_n > 0) {
+            size_t len = strlen(comm);
+
+            while (len > 0 && (comm[len - 1] == '\n' ||
+                               comm[len - 1] == '\r')) {
+                comm[--len] = '\0';
+            }
+        }
+        ppid = process_ppid(de->d_name);
+        chromium_evidence_process_fast(phase, de->d_name, ppid,
+                                       comm_n > 0 ? comm : "",
+                                       cmd_n > 0 ? cmdline_raw : "", cmd_n,
+                                       cmd_n > 0 ? cmdline : "");
+    }
+
+    closedir(dir);
+}
+
+static void dump_chromium_wait_census(const char *phase)
+{
+    DIR *dir = opendir("/proc");
+    struct dirent *de;
+
+    if (!dir) {
+        fprintf(stderr,
+                "kde_app_launch_probe chromium_wait_census phase=%s "
+                "opendir_errno=%d\n",
+                phase, errno);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char path[320];
+        char cmdline_raw[8192];
+        char cmdline[8192];
+        char comm[128];
+        char role[128];
+        char role_source[32];
+        char type_arg[128];
+        int all_digits = 1;
+        int cmd_n;
+        int comm_n;
+        int ppid;
+
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", de->d_name);
+        cmd_n = read_text_file(path, cmdline_raw, sizeof(cmdline_raw));
+        if (cmd_n > 0)
+            memcpy(cmdline, cmdline_raw, (size_t)cmd_n + 1);
+        else
+            cmdline[0] = '\0';
+        normalize_cmdline(cmdline, cmd_n);
+        snprintf(path, sizeof(path), "/proc/%s/comm", de->d_name);
+        comm_n = read_text_file(path, comm, sizeof(comm));
+        if (comm_n > 0) {
+            size_t len = strlen(comm);
+
+            while (len > 0 && (comm[len - 1] == '\n' ||
+                               comm[len - 1] == '\r')) {
+                comm[--len] = '\0';
+            }
+        }
+        if (!chromium_process_interesting(cmd_n > 0 ? cmdline_raw : "",
+                                          cmd_n, comm_n > 0 ? comm : ""))
+            continue;
+
+        derive_chromium_role(cmd_n > 0 ? cmdline_raw : "", cmd_n,
+                             comm_n > 0 ? comm : "", role, sizeof(role),
+                             role_source, sizeof(role_source), type_arg,
+                             sizeof(type_arg));
+        ppid = process_ppid(de->d_name);
+        fprintf(stderr,
+                "kde_app_launch_probe chromium_wait process phase=%s pid=%s "
+                "ppid=%d comm=\"",
+                phase, de->d_name, ppid);
+        fprint_escaped(stderr, comm_n > 0 ? comm : "", -1);
+        fputs("\" role=\"", stderr);
+        fprint_escaped(stderr, role, -1);
+        fputs("\" role_source=\"", stderr);
+        fprint_escaped(stderr, role_source, -1);
+        fputs("\" type_arg=\"", stderr);
+        fprint_escaped(stderr, type_arg, -1);
+        fputs("\" cmd=\"", stderr);
+        fprint_escaped(stderr, cmd_n > 0 ? cmdline : "", -1);
+        fputs("\"\n", stderr);
+
+        dump_process_file(phase, de->d_name, "stat");
+        dump_process_file(phase, de->d_name, "status");
+        dump_process_file(phase, de->d_name, "wchan");
+        dump_process_file(phase, de->d_name, "syscall");
+        dump_process_file(phase, de->d_name, "stack");
+        dump_fd_table(phase, de->d_name, 192);
+        dump_process_threads(phase, de->d_name);
+    }
+
+    closedir(dir);
+}
+
 static int run_chromium_only(const char *chromium_url)
 {
     char *chromium_argv[] = {
         "/bin/wayland-chromium", (char *)chromium_url, NULL
     };
     struct app_probe chromium = {
-        "chromium", chromium_argv, -1, 0, 0, -1, 0
+        "chromium", chromium_argv, -1, 0, 0, -1, 0, 0
     };
     int ok;
     int launcher_log = 0;
     int launcher_marker = 0;
     int launcher_child_exec = 0;
     int launcher_url = 0;
+    int launcher_wayland_platform_fail = 0;
 
     set_kde_env();
     unlink(chromium_launcher_log_path);
     chromium_evidence_open();
-    dump_interesting_processes("before");
+    dump_interesting_processes("before", 0);
     ok = launch_app(&chromium);
     if (chromium.pid > 0)
         chromium_evidence_expected_url(chromium.pid, chromium_url);
@@ -964,30 +2033,145 @@ static int run_chromium_only(const char *chromium_url)
             chromium.ok = 1;
         ok = chromium.ok;
     }
-    launcher_log = access(chromium_launcher_log_path, F_OK) == 0;
-    if (launcher_log) {
-        launcher_marker =
-            file_contains_string(chromium_launcher_log_path, "launch_marker");
-        launcher_child_exec =
-            file_contains_string(chromium_launcher_log_path, "child_exec");
-        launcher_url =
-            launcher_log_has_argv_url(chromium_launcher_log_path,
-                                      chromium_url);
-    }
+    wait_for_chromium_launcher_log(chromium_launcher_log_path, chromium_url,
+                                   &launcher_log, &launcher_marker,
+                                   &launcher_child_exec, &launcher_url,
+                                   &launcher_wayland_platform_fail);
     if (!launcher_log || !launcher_marker || !launcher_child_exec ||
-        !launcher_url)
+        !launcher_url || launcher_wayland_platform_fail)
         ok = 0;
-    dump_interesting_processes("after");
+    dump_interesting_processes("after", 0);
     printf("kde_app_launch_probe chromium_only=1 chromium=%d "
            "chromium_exited=%d chromium_exit=%d chromium_signal=%d "
            "launcher_log=%d launcher_marker=%d launcher_child_exec=%d "
-           "launcher_url=%d launcher_log_path=%s url=\"%s\" status=%s\n",
+           "launcher_url=%d launcher_wayland_platform_fail=%d "
+           "launcher_log_path=%s url=\"%s\" status=%s\n",
            chromium.ok, chromium.exited, chromium.exit_code,
            chromium.signal_code, launcher_log, launcher_marker,
-           launcher_child_exec, launcher_url, chromium_launcher_log_path,
-           chromium_url, ok ? "PASS" : "FAIL");
+           launcher_child_exec, launcher_url, launcher_wayland_platform_fail,
+           chromium_launcher_log_path, chromium_url, ok ? "PASS" : "FAIL");
     chromium_evidence_close(ok);
     return ok ? 0 : 2;
+}
+
+static int run_chromium_fast_census_only(int duration_ms, int interval_ms)
+{
+    int elapsed_ms = 0;
+    int sample = 0;
+    int count = 0;
+
+    if (duration_ms < 0)
+        duration_ms = 0;
+    if (interval_ms <= 0)
+        interval_ms = 50;
+
+    chromium_evidence_open_append("fast-census");
+    while (elapsed_ms <= duration_ms) {
+        char phase[64];
+
+        snprintf(phase, sizeof(phase), "fast-%03d", sample);
+        dump_chromium_fast_census(phase);
+        count++;
+        if (elapsed_ms == duration_ms)
+            break;
+        usleep((useconds_t)interval_ms * 1000);
+        elapsed_ms += interval_ms;
+        if (elapsed_ms > duration_ms)
+            elapsed_ms = duration_ms;
+        sample++;
+    }
+    if (chromium_evidence_full_maps_enabled())
+        dump_interesting_processes("fast-final-maps", 1);
+    chromium_evidence_sampler_close(1, count);
+    printf("kde_app_launch_probe chromium_fast_census_only=1 samples=%d "
+           "duration_ms=%d interval_ms=%d status=PASS\n",
+           count, duration_ms, interval_ms);
+    return 0;
+}
+
+static int run_chromium_wait_census_only(int duration_ms, int interval_ms)
+{
+    int elapsed_ms = 0;
+    int sample = 0;
+    int count = 0;
+
+    if (duration_ms < 0)
+        duration_ms = 0;
+    if (interval_ms <= 0)
+        interval_ms = 250;
+
+    while (elapsed_ms <= duration_ms) {
+        char phase[64];
+
+        snprintf(phase, sizeof(phase), "wait-%03d", sample);
+        dump_chromium_wait_census(phase);
+        count++;
+        if (elapsed_ms == duration_ms)
+            break;
+        usleep((useconds_t)interval_ms * 1000);
+        elapsed_ms += interval_ms;
+        if (elapsed_ms > duration_ms)
+            elapsed_ms = duration_ms;
+        sample++;
+    }
+    printf("kde_app_launch_probe chromium_wait_census_only=1 samples=%d "
+           "duration_ms=%d interval_ms=%d status=PASS\n",
+           count, duration_ms, interval_ms);
+    return 0;
+}
+
+static int run_chromium_sample_loop(const char *phase_prefix, int *sample,
+                                    int duration_ms, int interval_ms)
+{
+    int elapsed_ms = 0;
+    int count = 0;
+
+    while (elapsed_ms <= duration_ms) {
+        char phase[64];
+
+        snprintf(phase, sizeof(phase), "%s-%03d", phase_prefix, *sample);
+        dump_interesting_processes(phase, 1);
+        count++;
+        if (elapsed_ms == duration_ms)
+            break;
+        usleep((useconds_t)interval_ms * 1000);
+        elapsed_ms += interval_ms;
+        if (elapsed_ms > duration_ms)
+            elapsed_ms = duration_ms;
+        (*sample)++;
+    }
+    return count;
+}
+
+static int run_chromium_sample_only(int duration_ms, int interval_ms,
+                                    int burst_ms, int burst_interval_ms)
+{
+    int sample = 0;
+    int burst_samples = 0;
+    int regular_samples;
+
+    if (interval_ms <= 0)
+        interval_ms = 500;
+    if (burst_ms < 0)
+        burst_ms = 0;
+    if (burst_interval_ms <= 0)
+        burst_interval_ms = 100;
+
+    chromium_evidence_open_append("sample-only");
+    if (burst_ms > 0) {
+        burst_samples = run_chromium_sample_loop("burst", &sample, burst_ms,
+                                                burst_interval_ms);
+        sample++;
+    }
+    regular_samples = run_chromium_sample_loop("sample", &sample, duration_ms,
+                                               interval_ms);
+    chromium_evidence_sampler_close(1, burst_samples + regular_samples);
+    printf("kde_app_launch_probe chromium_sample_only=1 samples=%d "
+           "duration_ms=%d interval_ms=%d burst_samples=%d burst_ms=%d "
+           "burst_interval_ms=%d status=PASS\n",
+           burst_samples + regular_samples, duration_ms, interval_ms,
+           burst_samples, burst_ms, burst_interval_ms);
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -1007,22 +2191,55 @@ int main(int argc, char **argv)
                             "/tmp/xv6-kde-app-probe.txt", NULL };
     char *chromium_argv[] = { "/bin/wayland-chromium", "about:blank", NULL };
     struct app_probe probes[] = {
-        { "konsole", konsole_argv, -1, 0, 0, -1, 0 },
-        { "terminal", terminal_argv, -1, 0, 0, -1, 0 },
-        { "dolphin", dolphin_argv, -1, 0, 0, -1, 0 },
-        { "kate", kate_argv, -1, 0, 0, -1, 0 },
-        { "kwrite", kwrite_argv, -1, 0, 0, -1, 0 },
-        { "chromium", chromium_argv, -1, 0, 0, -1, 0 },
+        { "konsole", konsole_argv, -1, 0, 0, -1, 0, 0 },
+        { "terminal", terminal_argv, -1, 0, 0, -1, 0, 0 },
+        { "dolphin", dolphin_argv, -1, 0, 0, -1, 0, 0 },
+        { "kate", kate_argv, -1, 0, 0, -1, 0, 0 },
+        { "kwrite", kwrite_argv, -1, 0, 0, -1, 0, 0 },
+        { "chromium", chromium_argv, -1, 0, 0, -1, 0, 0 },
     };
     int require_chromium = has_arg(argc, argv, "--require-chromium");
     int chromium_only = has_arg(argc, argv, "--chromium-only");
+    int chromium_sample_only = has_arg(argc, argv, "--chromium-sample-only");
+    int chromium_fast_census_only =
+        has_arg(argc, argv, "--chromium-fast-census-only");
+    int chromium_wait_census_only =
+        has_arg(argc, argv, "--chromium-wait-census-only");
     int chromium_local_video = has_arg(argc, argv, "--chromium-local-video");
     const char *chromium_url = arg_value(argc, argv, "--chromium-url");
+    int chromium_sample_ms =
+        parse_int_arg_or_default(argc, argv, "--sample-ms", 20000, 500, 120000);
+    int chromium_sample_interval_ms =
+        parse_int_arg_or_default(argc, argv, "--sample-interval-ms", 500, 100,
+                                 5000);
+    int chromium_burst_ms =
+        parse_int_arg_or_default(argc, argv, "--burst-ms", 0, 0, 10000);
+    int chromium_burst_interval_ms =
+        parse_int_arg_or_default(argc, argv, "--burst-interval-ms", 100, 20,
+                                 1000);
+    int chromium_fast_census_ms =
+        parse_int_arg_or_default(argc, argv, "--fast-census-ms", 0, 0, 60000);
+    int chromium_fast_census_interval_ms =
+        parse_int_arg_or_default(argc, argv, "--fast-census-interval-ms", 50,
+                                 20, 1000);
+    int chromium_wait_census_ms =
+        parse_int_arg_or_default(argc, argv, "--wait-census-ms", 0, 0, 60000);
+    int chromium_wait_census_interval_ms =
+        parse_int_arg_or_default(argc, argv, "--wait-census-interval-ms", 250,
+                                 50, 5000);
+    int interlaunch_delay_ms =
+        parse_env_int_or_default("KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS",
+                                 500, 0, 5000);
+    int konsole_wait_sample_ms =
+        parse_env_int_or_default("KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS",
+                                 0, 0, 5000);
     size_t probe_count = require_chromium ? 6 : 5;
     int konsole_marker_ok = 1;
     int shells_before;
     int shells_after;
     int ok = 1;
+
+    maybe_redirect_stderr_to_stdout();
 
     if (!chromium_url || chromium_url[0] == '\0')
         chromium_url = getenv("KDE_CHROMIUM_URL");
@@ -1032,6 +2249,17 @@ int main(int argc, char **argv)
         chromium_url = "about:blank";
     chromium_argv[1] = (char *)chromium_url;
 
+    if (chromium_sample_only)
+        return run_chromium_sample_only(chromium_sample_ms,
+                                        chromium_sample_interval_ms,
+                                        chromium_burst_ms,
+                                        chromium_burst_interval_ms);
+    if (chromium_fast_census_only)
+        return run_chromium_fast_census_only(chromium_fast_census_ms,
+                                             chromium_fast_census_interval_ms);
+    if (chromium_wait_census_only)
+        return run_chromium_wait_census_only(chromium_wait_census_ms,
+                                             chromium_wait_census_interval_ms);
     if (chromium_only)
         return run_chromium_only(chromium_url);
 
@@ -1041,7 +2269,7 @@ int main(int argc, char **argv)
     if (!require_chromium || access(konsole_marker, F_OK) != 0)
         unlink(konsole_marker);
     shells_before = count_shell_processes();
-    dump_interesting_processes("before");
+    dump_interesting_processes("before", 0);
 
     FILE *f = fopen("/tmp/xv6-kde-app-probe.txt", "w");
     if (f) {
@@ -1053,24 +2281,34 @@ int main(int argc, char **argv)
     if (!probes[0].ok)
         ok = 0;
 
-    konsole_marker_ok = wait_for_path(konsole_marker, 45000);
+    long long konsole_wait_start_ms = monotonic_ms();
+    konsole_marker_ok = wait_for_path_traced(konsole_marker, 45000,
+                                             "konsole-ready", probes[0].pid,
+                                             konsole_wait_sample_ms,
+                                             konsole_wait_start_ms);
+    long long konsole_wait_elapsed_ms = monotonic_ms() - konsole_wait_start_ms;
     shells_after = count_shell_processes();
     fprintf(stderr,
             "kde_app_launch_probe konsole_ready marker=%d marker_path=%s "
-            "shell_count_before=%d shell_count_after=%d\n",
-            konsole_marker_ok, konsole_marker, shells_before, shells_after);
+            "shell_count_before=%d shell_count_after=%d elapsed_ms=%lld\n",
+            konsole_marker_ok, konsole_marker, shells_before, shells_after,
+            konsole_wait_elapsed_ms);
     if (!konsole_marker_ok)
         ok = 0;
 
+    fprintf(stderr,
+            "kde_app_launch_probe interlaunch_delay_ms=%d probe_count=%zu\n",
+            interlaunch_delay_ms, probe_count);
     for (size_t i = 1; i < probe_count; i++) {
         probes[i].ok = launch_app(&probes[i]);
         if (!probes[i].ok)
             ok = 0;
-        usleep(500000);
+        if (interlaunch_delay_ms > 0)
+            usleep((useconds_t)interlaunch_delay_ms * 1000);
     }
 
     shells_after = count_shell_processes();
-    dump_interesting_processes("after");
+    dump_interesting_processes("after", 0);
     fprintf(stderr,
             "kde_app_launch_probe konsole_marker=%d marker_path=%s "
             "shell_count_before=%d shell_count_after=%d\n",
@@ -1098,12 +2336,13 @@ int main(int argc, char **argv)
            "kate=%d kwrite=%d "
            "editor=%d chromium=%d konsole_shell=%d kate_exited=%d "
            "kate_exit=%d kate_signal=%d "
-           "status=%s\n",
+           "konsole_wait_ms=%lld interlaunch_delay_ms=%d status=%s\n",
            probes[0].ok, probes[1].ok, probes[2].ok, probes[3].ok,
            probes[4].ok,
            editor_ok, require_chromium ? probes[5].ok : -1,
            konsole_marker_ok,
            probes[3].exited, probes[3].exit_code, probes[3].signal_code,
+           konsole_wait_elapsed_ms, interlaunch_delay_ms,
            ok ? "PASS" : "FAIL");
     chromium_evidence_close(ok);
     return ok ? 0 : 2;

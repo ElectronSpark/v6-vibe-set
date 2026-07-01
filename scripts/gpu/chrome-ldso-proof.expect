@@ -1,0 +1,108 @@
+#!/usr/bin/env expect
+
+set timeout 240
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format "%Y%m%dT%H%M%SZ"]
+set outdir "$build/chrome-ldso-proof/$stamp"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set status "$outdir/status.txt"
+set tmpimg "$outdir/chrome-ldso-proof.fs.img"
+set guest_script_host "$outdir/chrome-ldso-proof.sh"
+set startup_host "$outdir/startup"
+
+set chrome "/opt/host-gui/wayland-chromium/chrome-linux64/chrome"
+set loader "/lib64/ld-linux-x86-64.so.2"
+set chrome_lib_path "/opt/host-gui/wayland-chromium/lib:/lib:/lib64:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib64:/opt/host-gui/wayland-chromium/chrome-linux64"
+
+exec sh -c "rm -f '$runlog' '$status' '$tmpimg' '$guest_script_host' '$startup_host'; cp '$fsimg' '$tmpimg'"
+
+set fh [open $guest_script_host w]
+puts $fh "#!/bin/sh"
+puts $fh "echo CHROME_LDSO_PROOF_BEGIN"
+for {set i 1} {$i <= 8} {incr i} {
+    puts $fh "echo CHROME_LDSO_VERIFY_BEGIN=$i"
+    puts $fh "$loader --library-path '$chrome_lib_path' --verify $chrome"
+    puts $fh "echo CHROME_LDSO_VERIFY_DONE=$i"
+}
+for {set i 1} {$i <= 2} {incr i} {
+    puts $fh "echo CHROME_LDSO_LIST_BEGIN=$i"
+    puts $fh "$loader --library-path '$chrome_lib_path' --list $chrome"
+    puts $fh "echo CHROME_LDSO_LIST_DONE=$i"
+}
+puts $fh "echo CHROME_LDSO_PROOF_DONE"
+puts $fh "/bin/shutdown"
+close $fh
+
+set fh [open $startup_host w]
+puts $fh "/bin/sh /chrome-ldso-proof.sh"
+close $fh
+
+catch { exec sh -c "debugfs -w -R 'rm /etc/startup' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $startup_host /etc/startup' '$tmpimg' >/dev/null 2>&1"
+catch { exec sh -c "debugfs -w -R 'rm /chrome-ldso-proof.sh' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $guest_script_host /chrome-ldso-proof.sh' '$tmpimg' >/dev/null 2>&1"
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 video=80x25"
+
+log_file -a $runlog
+
+set verify_done 0
+set list_done 0
+spawn timeout --foreground 230 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {Inconsistency detected by ld\.so|elf_machine_rela_relative|ld\.so:.*Assertion} {
+        set fh [open $status w]
+        puts $fh "status=FAIL reason=loader-assertion runlog=$runlog"
+        close $fh
+        puts "\nCHROME-LDSO-PROOF-FAIL loader-assertion log=$runlog"
+        exit 5
+    }
+    -re {CHROME_LDSO_VERIFY_DONE=[0-9]+} {
+        incr verify_done
+        exp_continue
+    }
+    -re {CHROME_LDSO_LIST_DONE=[0-9]+} {
+        incr list_done
+        exp_continue
+    }
+    -re {CHROME_LDSO_PROOF_DONE} {
+        set fh [open $status w]
+        puts $fh "status=PASS reason=ldso-clean verify_done=$verify_done list_done=$list_done runlog=$runlog"
+        close $fh
+        puts "\nCHROME-LDSO-PROOF-PASS verify_done=$verify_done list_done=$list_done log=$runlog"
+        catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+        exit 0
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        set fh [open $status w]
+        puts $fh "status=FAIL reason=crash verify_done=$verify_done list_done=$list_done runlog=$runlog"
+        close $fh
+        puts "\nCHROME-LDSO-PROOF-FAIL crash verify_done=$verify_done list_done=$list_done log=$runlog"
+        exit 9
+    }
+    timeout {
+        set fh [open $status w]
+        puts $fh "status=FAIL reason=timeout verify_done=$verify_done list_done=$list_done runlog=$runlog"
+        close $fh
+        puts "\nCHROME-LDSO-PROOF-FAIL timeout verify_done=$verify_done list_done=$list_done log=$runlog"
+        exit 10
+    }
+    eof {
+        set fh [open $status w]
+        puts $fh "status=FAIL reason=eof verify_done=$verify_done list_done=$list_done runlog=$runlog"
+        close $fh
+        puts "\nCHROME-LDSO-PROOF-FAIL eof verify_done=$verify_done list_done=$list_done log=$runlog"
+        exit 11
+    }
+}

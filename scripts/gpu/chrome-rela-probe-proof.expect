@@ -1,0 +1,90 @@
+#!/usr/bin/env expect
+
+set timeout 360
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format "%Y%m%dT%H%M%SZ"]
+set outdir "$build/chrome-rela-probe-proof/$stamp"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/chrome-rela-probe.fs.img"
+set guest_script_host "$outdir/chrome-rela-proof.sh"
+set startup_host "$outdir/startup"
+
+exec sh -c "rm -f '$runlog' '$tmpimg' '$guest_script_host' '$startup_host'; cp '$fsimg' '$tmpimg'"
+
+set fh [open $guest_script_host w]
+puts $fh "#!/bin/sh"
+puts $fh "echo CHROME_RELA_PROOF_BEGIN"
+for {set i 1} {$i <= 8} {incr i} {
+    puts $fh "echo CHROME_RELA_PROOF_ITER=$i"
+    puts $fh "/bin/chrome-rela-probe --chrome-chain"
+    puts $fh "echo CHROME_RELA_PROOF_ITER_DONE=$i"
+}
+puts $fh "echo CHROME_RELA_PROOF_DONE"
+puts $fh "/bin/shutdown"
+close $fh
+
+set fh [open $startup_host w]
+puts $fh "/bin/sh /chrome-rela-proof.sh"
+close $fh
+
+catch { exec sh -c "debugfs -w -R 'rm /etc/startup' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $startup_host /etc/startup' '$tmpimg' >/dev/null 2>&1"
+catch { exec sh -c "debugfs -w -R 'rm /chrome-rela-proof.sh' '$tmpimg' >/dev/null 2>&1" }
+exec sh -c "debugfs -w -R 'write $guest_script_host /chrome-rela-proof.sh' '$tmpimg' >/dev/null 2>&1"
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 video=80x25"
+
+log_file -a $runlog
+
+set chain_passes 0
+
+spawn timeout --foreground 350 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {CHROME_RELA_PROBE_FAIL[^\r\n]*} {
+        puts "\nCHROME-RELA-PROOF-FAIL probe-fail log=$runlog"
+        exit 5
+    }
+    -re {CHROME_RELA_PROBE_(READ|MMAP) status=FAIL[^\r\n]*} {
+        puts "\nCHROME-RELA-PROOF-FAIL rela-mismatch log=$runlog"
+        exit 6
+    }
+    -re {Inconsistency detected by ld\.so|elf_machine_rela_relative|ld\.so:.*Assertion} {
+        puts "\nCHROME-RELA-PROOF-FAIL loader-assertion log=$runlog"
+        exit 7
+    }
+    -re {CHROME_RELA_PROBE_CHAIN_PASS} {
+        incr chain_passes
+        exp_continue
+    }
+    -re {CHROME_RELA_PROOF_DONE} {
+        if {$chain_passes >= 8} {
+            puts "\nCHROME-RELA-PROOF-PASS chain_passes=$chain_passes log=$runlog"
+            exit 0
+        }
+        puts "\nCHROME-RELA-PROOF-FAIL incomplete chain_passes=$chain_passes log=$runlog"
+        exit 8
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        puts "\nCHROME-RELA-PROOF-FAIL crash chain_passes=$chain_passes log=$runlog"
+        exit 9
+    }
+    timeout {
+        puts "\nCHROME-RELA-PROOF-FAIL timeout chain_passes=$chain_passes log=$runlog"
+        exit 10
+    }
+    eof {
+        puts "\nCHROME-RELA-PROOF-FAIL eof chain_passes=$chain_passes log=$runlog"
+        exit 11
+    }
+}

@@ -30,15 +30,15 @@
 #                           default to leave Mesa selection alone.
 #   QEMU_WSL_D3D12_ADAPTER=auto
 #                           Preferred WSL D3D12 adapter for host GL. auto
-#                           selects NVIDIA when nvidia-smi is available;
-#                           set Intel, NVIDIA, or empty/default to override.
+#                           leaves Mesa/WSLg on its default adapter; set Intel,
+#                           NVIDIA, or empty/default to override.
 #   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
 #                           The default uses GTK with the virgl adapter as the
 #                           visible primary display.
 #   QEMU_ALLOW_WSL_SDL_GL=0 SDL GL presents a black QEMU window on WSLg/D3D12
 #                           on tested hosts, so virgl launches are switched
 #                           back to GTK unless this is set to 1.
-#   QEMU_WSL_SDL_VIDEODRIVER=wayland
+#   QEMU_WSL_SDL_VIDEODRIVER=x11
 #                           SDL backend to use on WSL when SDL is selected.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
@@ -61,8 +61,9 @@
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_WINDOW_PLACE=0     Set to 1 to move an interactive GTK QEMU window
 #                           to a monitor after launch. This uses X11 window
-#                           positioning, so GTK is launched with GDK_BACKEND=x11
-#                           unless QEMU_GTK_BACKEND is set explicitly.
+#                           positioning on non-WSL hosts; WSLg keeps its
+#                           native GTK backend because forced X11 scaling can
+#                           make the QEMU window unusably large.
 #   QEMU_WINDOW_MONITOR=pointer
 #                           Target monitor for QEMU_WINDOW_PLACE=1: pointer,
 #                           current/vscode, a monitor index, or a monitor name
@@ -388,11 +389,6 @@ host_wsl_d3d12_available() {
         return 0
 }
 
-host_wsl_has_nvidia_adapter() {
-        [[ -x /usr/lib/wsl/lib/nvidia-smi ]] || return 1
-        /usr/lib/wsl/lib/nvidia-smi >/dev/null 2>&1
-}
-
 print_host_gpu_hint() {
         echo "run-qemu: expose host GPU acceleration before expecting smooth WebKit video:" >&2
         echo "run-qemu:   bare host: ensure a hardware /dev/dri/renderD* is readable/writable" >&2
@@ -443,11 +439,7 @@ case "${ARCH}" in
                                 fi
                                 WSL_D3D12_ADAPTER="${QEMU_WSL_D3D12_ADAPTER}"
                                 if [[ "${WSL_D3D12_ADAPTER}" == "auto" ]]; then
-                                        if host_wsl_has_nvidia_adapter; then
-                                                WSL_D3D12_ADAPTER="NVIDIA"
-                                        else
-                                                WSL_D3D12_ADAPTER=""
-                                        fi
+                                        WSL_D3D12_ADAPTER=""
                                 fi
                                 QEMU_ENV_ARGS+=(
                                         MESA_LOADER_DRIVER_OVERRIDE=d3d12

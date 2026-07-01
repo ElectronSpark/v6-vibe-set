@@ -6,19 +6,19 @@
 
 int main(void)
 {
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("TERM", "xterm-256color", 0);
 
     if (access("/usr/bin/xterm", X_OK) == 0) {
         execl("/usr/bin/xterm", "/usr/bin/xterm",
-              "-e", "/bin/sh", "-i", NULL);
+              "-e", "/bin/bash", "-i", NULL);
         fprintf(stderr, "kde_terminal_launcher: exec xterm failed errno=%d %s\n",
                 errno, strerror(errno));
     }
 
     if (access("/usr/bin/qterminal", X_OK) == 0) {
         execl("/usr/bin/qterminal", "qterminal",
-              "-e", "/bin/sh", "-i",
+              "-e", "/bin/bash", "-i",
               NULL);
         fprintf(stderr,
                 "kde_terminal_launcher: exec qterminal failed errno=%d %s\n",

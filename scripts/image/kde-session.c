@@ -14,13 +14,24 @@
 #include <unistd.h>
 
 #define X11_EGL_SESSION_LOG "/host-gui-host-x11-egl-smoke.log"
+#define X11_EGL_PRESENT_TRACE_LOG "/host-gui-host-x11-present-trace.log"
 #define X11_EGL_PRESENT_TRACE_PRELOAD "/opt/host-gui/host-x11-egl-smoke/lib/host-x11-present-trace-preload.so"
+#define KWIN_ALLOC_TRACE_PRELOAD "/opt/xv6-kde-abi-libs/kwin-alloc-trace-preload.so"
+#define KWIN_COMPAT_PRELOAD \
+    "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:" \
+    "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0"
+#define KWIN_ALLOC_TRACE_LOG "/kde-kwin-alloc-trace.log"
+#define KWIN_SESSION_LOG "/kde-session-kwin.log"
+#define PLASMA_SESSION_LOG "/kde-session-plasma-child.log"
+#define NETWORK_SNI_LOG "/kde-network-status-sni.log"
 #define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
 #define X11_EGL_SMOKE_TRACE_CHILD_TIMEOUT_MS 85000
 #define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
 #define X11_EGL_CHILD_LD_PRELOAD_ENV "HOST_X11_EGL_CHILD_LD_PRELOAD"
 #define X11_EGL_AUTH_PATH_MAX 512
 #define X11_EGL_XWAYLAND_ARGV_MAX 1024
+#define KDE_DESKTOP_WAKE_DEFAULT_DELAY_MS 2500
+#define KDE_DESKTOP_WAKE_MAX_DELAY_MS 30000
 
 static char x11_egl_active_session_probe_mode[64];
 
@@ -252,6 +263,7 @@ static void seed_kde_config(void)
         "Backend=OpenGL\n"
         "Enabled=true\n"
         "GLPlatformInterface=egl\n"
+        "GLStrictBinding=false\n"
         "HiddenPreviews=4\n"
         "OpenGLIsUnsafe=false\n"
         "WindowsBlockCompositing=false\n"
@@ -393,7 +405,7 @@ static void seed_kde_config(void)
         "Font=DejaVu Sans Mono,12,-1,5,50,0,0,0,0,0\n"
         "\n"
         "[General]\n"
-        "Command=/bin/sh\n"
+        "Command=/bin/bash\n"
         "Name=Shell\n"
         "Parent=FALLBACK/\n";
     static const char plasma_appletsrc_fmt[] =
@@ -449,10 +461,10 @@ static void seed_kde_config(void)
         "plugin=org.kde.plasma.systemtray\n"
         "\n"
         "[Containments][2][Applets][7][Configuration][General]\n"
-        "extraItems=org.kde.plasma.volume\n"
+        "extraItems=\n"
         "hiddenItems=\n"
-        "knownItems=org.kde.plasma.volume\n"
-        "shownItems=org.kde.plasma.volume\n"
+        "knownItems=xv6-network-status\n"
+        "shownItems=xv6-network-status\n"
         "\n"
         "[Containments][2][Applets][8]\n"
         "immutability=1\n"
@@ -522,7 +534,7 @@ static void set_kde_env(void)
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("LOGNAME", "root", 1);
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("XDG_RUNTIME_DIR", "/dev/shm/xdg-runtime-root", 1);
     setenv("XDG_CACHE_HOME", "/dev/shm/kde-cache", 1);
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
@@ -551,6 +563,7 @@ static void set_kde_env(void)
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
     setenv("LD_PRELOAD",
+           "/opt/xv6-kde-abi-libs/libxv6-ifunc-memcpy.so:"
            "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
            "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
            0);
@@ -643,7 +656,28 @@ static int is_executable(const char *path)
     return access(path, X_OK) == 0;
 }
 
-static pid_t spawn_child(char *const argv[])
+static int child_console_logs_enabled(void)
+{
+    return cmdline_has_flag("kde_child_console_logs=1");
+}
+
+static void redirect_stdio_to_log(const char *path)
+{
+    int fd;
+
+    if (!path || child_console_logs_enabled())
+        return;
+
+    fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0)
+        return;
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO)
+        close(fd);
+}
+
+static pid_t spawn_child_logged(char *const argv[], const char *log_path)
 {
     pid_t pid = fork();
 
@@ -653,11 +687,118 @@ static pid_t spawn_child(char *const argv[])
     }
     if (pid == 0) {
         setpgid(0, 0);
+        redirect_stdio_to_log(log_path);
         execv(argv[0], argv);
         fprintf(stderr, "kde-session: exec %s failed: %s\n", argv[0], strerror(errno));
         _exit(127);
     }
     setpgid(pid, pid);
+    return pid;
+}
+
+static pid_t spawn_child(char *const argv[])
+{
+    return spawn_child_logged(argv, NULL);
+}
+
+static int kwin_alloc_trace_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = cmdline_has_flag("kde_kwin_alloc_trace=1") &&
+                  access(KWIN_ALLOC_TRACE_PRELOAD, R_OK) == 0;
+        initialized = 1;
+        if (cmdline_has_flag("kde_kwin_alloc_trace=1")) {
+            fprintf(stderr, "kde-session: KWin alloc trace %s path=%s log=%s\n",
+                    enabled ? "enabled" : "unavailable",
+                    KWIN_ALLOC_TRACE_PRELOAD, KWIN_ALLOC_TRACE_LOG);
+        }
+    }
+    return enabled;
+}
+
+static int kwin_ld_preload_mode(void)
+{
+    static int initialized;
+    static int mode;
+
+    if (!initialized) {
+        if (cmdline_has_flag("kde_kwin_inherit_ld_preload=1"))
+            mode = 0;
+        else if (cmdline_has_flag("kde_kwin_compat_ld_preload=1"))
+            mode = 1;
+        else
+            mode = 2;
+        initialized = 1;
+        if (mode == 0) {
+            fprintf(stderr,
+                    "kde-session: KWin inherited LD_PRELOAD enabled by cmdline\n");
+        } else if (mode == 1) {
+            fprintf(stderr,
+                    "kde-session: KWin inherited LD_PRELOAD compat enabled by cmdline compat=%s\n",
+                    KWIN_COMPAT_PRELOAD);
+        } else {
+            fprintf(stderr,
+                    "kde-session: KWin inherited LD_PRELOAD disabled by default\n");
+        }
+    }
+    return mode;
+}
+
+static pid_t spawn_kwin_child(char *const argv[], int attempt)
+{
+    const char *old_preload = getenv("LD_PRELOAD");
+    char old_preload_buf[1024];
+    char trace_preload[1280];
+    char attempt_buf[32];
+    int had_preload = old_preload != NULL;
+    int preload_mode = kwin_ld_preload_mode();
+    int alloc_trace = kwin_alloc_trace_enabled();
+    pid_t pid;
+
+    if (preload_mode == 0 && !alloc_trace)
+        return spawn_child_logged(argv, KWIN_SESSION_LOG);
+
+    if (old_preload)
+        snprintf(old_preload_buf, sizeof(old_preload_buf), "%s", old_preload);
+    else
+        old_preload_buf[0] = '\0';
+
+    if (alloc_trace && old_preload_buf[0] && preload_mode == 0) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s:%s",
+                 KWIN_ALLOC_TRACE_PRELOAD, old_preload_buf);
+    } else if (alloc_trace && preload_mode == 1) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s:%s",
+                 KWIN_ALLOC_TRACE_PRELOAD, KWIN_COMPAT_PRELOAD);
+    } else if (alloc_trace) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s",
+                 KWIN_ALLOC_TRACE_PRELOAD);
+    } else if (preload_mode == 1) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s",
+                 KWIN_COMPAT_PRELOAD);
+    } else {
+        trace_preload[0] = '\0';
+    }
+
+    if (trace_preload[0]) {
+        setenv("LD_PRELOAD", trace_preload, 1);
+    } else {
+        unsetenv("LD_PRELOAD");
+    }
+    snprintf(attempt_buf, sizeof(attempt_buf), "%d", attempt);
+    if (alloc_trace) {
+        setenv("KWIN_ALLOC_TRACE_LOG", KWIN_ALLOC_TRACE_LOG, 1);
+        setenv("KWIN_ALLOC_TRACE_ATTEMPT", attempt_buf, 1);
+    }
+    pid = spawn_child_logged(argv, KWIN_SESSION_LOG);
+    if (had_preload)
+        setenv("LD_PRELOAD", old_preload_buf, 1);
+    else
+        unsetenv("LD_PRELOAD");
+    unsetenv("KWIN_ALLOC_TRACE_LOG");
+    unsetenv("KWIN_ALLOC_TRACE_ATTEMPT");
     return pid;
 }
 
@@ -708,9 +849,25 @@ static int process_cmdline_contains(const char *needle)
     return 0;
 }
 
-static void kwin_maps_path(char *path, size_t size, int attempt)
+static void kwin_proc_snapshot_path(char *path, size_t size, int attempt,
+                                    const char *name)
 {
-    snprintf(path, size, "/dev/shm/kde-kwin-attempt-%d.maps", attempt);
+    snprintf(path, size, "/dev/shm/kde-kwin-attempt-%d.%s", attempt, name);
+}
+
+static int kwin_proc_snapshot_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = !cmdline_has_flag("kde_kwin_proc_snapshot=0");
+        initialized = 1;
+        if (!enabled)
+            fprintf(stderr, "kde-session: KWin proc snapshots disabled by cmdline\n");
+    }
+
+    return enabled;
 }
 
 static int write_all(int fd, const char *buf, size_t size)
@@ -732,7 +889,8 @@ static int write_all(int fd, const char *buf, size_t size)
     return 0;
 }
 
-static void snapshot_kwin_maps(pid_t kwin_pid, int attempt)
+static void snapshot_kwin_proc_file(pid_t kwin_pid, int attempt,
+                                    const char *name)
 {
     char proc_path[128];
     char out_path[128];
@@ -742,8 +900,8 @@ static void snapshot_kwin_maps(pid_t kwin_pid, int attempt)
     int out_fd;
     ssize_t n;
 
-    snprintf(proc_path, sizeof(proc_path), "/proc/%d/maps", (int)kwin_pid);
-    kwin_maps_path(out_path, sizeof(out_path), attempt);
+    snprintf(proc_path, sizeof(proc_path), "/proc/%d/%s", (int)kwin_pid, name);
+    kwin_proc_snapshot_path(out_path, sizeof(out_path), attempt, name);
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", out_path);
 
     in_fd = open(proc_path, O_RDONLY | O_CLOEXEC);
@@ -765,30 +923,356 @@ static void snapshot_kwin_maps(pid_t kwin_pid, int attempt)
     rename(tmp_path, out_path);
 }
 
-static void print_kwin_maps_snapshot(int attempt, const char *phase)
+static void snapshot_kwin_proc(pid_t kwin_pid, int attempt)
+{
+    if (!kwin_proc_snapshot_enabled())
+        return;
+
+    snapshot_kwin_proc_file(kwin_pid, attempt, "maps");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "status");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "stat");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "statm");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "wchan");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "syscall");
+    snapshot_kwin_proc_file(kwin_pid, attempt, "stack");
+}
+
+static void print_kwin_proc_snapshot_file(int attempt, const char *phase,
+                                          const char *name)
 {
     char path[128];
     char buf[1024];
     int fd;
     ssize_t n;
 
-    kwin_maps_path(path, sizeof(path), attempt);
+    kwin_proc_snapshot_path(path, sizeof(path), attempt, name);
     fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        fprintf(stderr, "kde-session: kwin maps unavailable attempt=%d phase=%s errno=%d %s\n",
-                attempt, phase, errno, strerror(errno));
+        fprintf(stderr, "kde-session: kwin %s unavailable attempt=%d phase=%s errno=%d %s\n",
+                name, attempt, phase, errno, strerror(errno));
         return;
     }
 
-    fprintf(stderr, "kde-session: kwin maps begin attempt=%d phase=%s\n",
-            attempt, phase);
+    fprintf(stderr, "kde-session: kwin %s begin attempt=%d phase=%s\n",
+            name, attempt, phase);
     while ((n = read(fd, buf, sizeof(buf))) > 0) {
         if (write_all(STDERR_FILENO, buf, (size_t)n) < 0)
             break;
     }
     close(fd);
-    fprintf(stderr, "kde-session: kwin maps end attempt=%d phase=%s\n",
-            attempt, phase);
+    fprintf(stderr, "kde-session: kwin %s end attempt=%d phase=%s\n",
+            name, attempt, phase);
+}
+
+static int read_small_text_file(const char *path, char *buf, size_t size)
+{
+    int fd;
+    ssize_t n;
+
+    if (size == 0)
+        return 0;
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        buf[0] = '\0';
+        return 0;
+    }
+    n = read(fd, buf, size - 1);
+    close(fd);
+    if (n <= 0) {
+        buf[0] = '\0';
+        return 0;
+    }
+    buf[n] = '\0';
+    return (int)n;
+}
+
+static void trim_newline(char *buf)
+{
+    if (buf == NULL)
+        return;
+    for (char *p = buf; *p; p++) {
+        if (*p == '\n' || *p == '\r') {
+            *p = '\0';
+            return;
+        }
+    }
+}
+
+static void print_kwin_wait_fd_target(pid_t kwin_pid, int fd)
+{
+    char path[128];
+    char target[512];
+    ssize_t n;
+
+    snprintf(path, sizeof(path), "/proc/%d/fd/%d", (int)kwin_pid, fd);
+    n = readlink(path, target, sizeof(target) - 1);
+    if (n < 0) {
+        fprintf(stderr,
+                "kde-session: kwin wait-fd pid=%d fd=%d readlink_errno=%d %s\n",
+                (int)kwin_pid, fd, errno, strerror(errno));
+        return;
+    }
+    target[n] = '\0';
+    fprintf(stderr, "kde-session: kwin wait-fd pid=%d fd=%d target=%s\n",
+            (int)kwin_pid, fd, target);
+}
+
+static void print_kwin_fd_summary(pid_t kwin_pid, int attempt,
+                                  const char *phase)
+{
+    char fd_dir[128];
+    DIR *dir;
+    struct dirent *de;
+    int total = 0;
+    int socket_count = 0;
+    int anon_count = 0;
+    int dri_count = 0;
+    int event_count = 0;
+    int emitted = 0;
+
+    snprintf(fd_dir, sizeof(fd_dir), "/proc/%d/fd", (int)kwin_pid);
+    dir = opendir(fd_dir);
+    if (dir == NULL) {
+        fprintf(stderr,
+                "kde-session: kwin fd-summary attempt=%d phase=%s pid=%d "
+                "opendir_errno=%d %s\n",
+                attempt, phase, (int)kwin_pid, errno, strerror(errno));
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char link_path[512];
+        char target[512];
+        ssize_t n;
+
+        if (de->d_name[0] == '.')
+            continue;
+        total++;
+        snprintf(link_path, sizeof(link_path), "%s/%s", fd_dir, de->d_name);
+        n = readlink(link_path, target, sizeof(target) - 1);
+        if (n < 0)
+            continue;
+        target[n] = '\0';
+        if (strstr(target, "socket:") != NULL)
+            socket_count++;
+        if (strstr(target, "anon_inode") != NULL)
+            anon_count++;
+        if (strstr(target, "/dev/dri") != NULL)
+            dri_count++;
+        if (strstr(target, "event") != NULL ||
+            strstr(target, "timerfd") != NULL ||
+            strstr(target, "signalfd") != NULL)
+            event_count++;
+        if (emitted < 64 &&
+            (strstr(target, "socket:") != NULL ||
+             strstr(target, "anon_inode") != NULL ||
+             strstr(target, "/dev/dri") != NULL ||
+             strstr(target, "/dev/input") != NULL ||
+             strstr(target, "pipe:") != NULL)) {
+            fprintf(stderr,
+                    "kde-session: kwin fd attempt=%d phase=%s pid=%d fd=%s "
+                    "target=%s\n",
+                    attempt, phase, (int)kwin_pid, de->d_name, target);
+            emitted++;
+        }
+    }
+    closedir(dir);
+
+    fprintf(stderr,
+            "kde-session: kwin fd-summary attempt=%d phase=%s pid=%d "
+            "total=%d sockets=%d anon_inode=%d dri=%d event_like=%d "
+            "emitted=%d\n",
+            attempt, phase, (int)kwin_pid, total, socket_count, anon_count,
+            dri_count, event_count, emitted);
+}
+
+static void print_kwin_thread_wait_detail(pid_t kwin_pid, const char *tid_name,
+                                          const char *syscall_buf)
+{
+    unsigned long long nr, arg0, arg1, arg2, arg3, arg4, arg5, sp, pc;
+    char mem_path[384];
+    int memfd;
+
+    if (sscanf(syscall_buf, "%llu %llx %llx %llx %llx %llx %llx %llx %llx",
+               &nr, &arg0, &arg1, &arg2, &arg3, &arg4, &arg5, &sp, &pc) != 9)
+        return;
+
+    if (nr == 7 || nr == 271) {
+        struct local_pollfd {
+            int fd;
+            short events;
+            short revents;
+        } fds[16];
+        unsigned long long nfds = arg1;
+
+        snprintf(mem_path, sizeof(mem_path), "/proc/%d/task/%s/mem",
+                 (int)kwin_pid, tid_name);
+        memfd = open(mem_path, O_RDONLY | O_CLOEXEC);
+        if (memfd < 0) {
+            fprintf(stderr,
+                    "kde-session: kwin wait-detail pid=%d tid=%s syscall=%s "
+                    "fds_addr=0x%llx nfds=%llu mem_open_errno=%d %s\n",
+                    (int)kwin_pid, tid_name, nr == 7 ? "poll" : "ppoll",
+                    arg0, arg1, errno, strerror(errno));
+            return;
+        }
+        if (nfds > 16)
+            nfds = 16;
+        errno = 0;
+        ssize_t n = pread(memfd, fds, nfds * sizeof(fds[0]), (off_t)arg0);
+        fprintf(stderr,
+                "kde-session: kwin wait-detail pid=%d tid=%s syscall=%s "
+                "fds_addr=0x%llx nfds=%llu read=%ld errno=%d %s\n",
+                (int)kwin_pid, tid_name, nr == 7 ? "poll" : "ppoll",
+                arg0, arg1, (long)n, errno, strerror(errno));
+        if (n > 0) {
+            int got = (int)(n / (ssize_t)sizeof(fds[0]));
+            for (int i = 0; i < got; i++) {
+                fprintf(stderr,
+                        "kde-session: kwin pollfd pid=%d tid=%s idx=%d fd=%d "
+                        "events=0x%x revents=0x%x\n",
+                        (int)kwin_pid, tid_name, i, fds[i].fd,
+                        (unsigned short)fds[i].events,
+                        (unsigned short)fds[i].revents);
+                if (fds[i].fd >= 0)
+                    print_kwin_wait_fd_target(kwin_pid, fds[i].fd);
+            }
+        }
+        close(memfd);
+    } else if (nr == 202) {
+        unsigned int word = 0;
+
+        snprintf(mem_path, sizeof(mem_path), "/proc/%d/task/%s/mem",
+                 (int)kwin_pid, tid_name);
+        memfd = open(mem_path, O_RDONLY | O_CLOEXEC);
+        if (memfd < 0) {
+            fprintf(stderr,
+                    "kde-session: kwin wait-detail pid=%d tid=%s syscall=futex "
+                    "uaddr=0x%llx op=0x%llx val=0x%llx mem_open_errno=%d %s\n",
+                    (int)kwin_pid, tid_name, arg0, arg1, arg2, errno,
+                    strerror(errno));
+            return;
+        }
+        errno = 0;
+        ssize_t n = pread(memfd, &word, sizeof(word), (off_t)arg0);
+        fprintf(stderr,
+                "kde-session: kwin wait-detail pid=%d tid=%s syscall=futex "
+                "uaddr=0x%llx op=0x%llx val=0x%llx word_read=%ld "
+                "word=0x%x errno=%d %s\n",
+                (int)kwin_pid, tid_name, arg0, arg1, arg2, (long)n, word,
+                errno, strerror(errno));
+        close(memfd);
+    } else if (nr == 232 || nr == 281) {
+        fprintf(stderr,
+                "kde-session: kwin wait-detail pid=%d tid=%s syscall=%s "
+                "epfd=%llu events=0x%llx maxevents=%llu timeout=0x%llx\n",
+                (int)kwin_pid, tid_name, nr == 232 ? "epoll_wait" : "epoll_pwait",
+                arg0, arg1, arg2, arg3);
+        print_kwin_wait_fd_target(kwin_pid, (int)arg0);
+    }
+}
+
+static void print_kwin_thread_snapshot(pid_t kwin_pid, int attempt,
+                                       const char *phase)
+{
+    char task_dir[128];
+    DIR *dir;
+    struct dirent *de;
+    int emitted = 0;
+
+    snprintf(task_dir, sizeof(task_dir), "/proc/%d/task", (int)kwin_pid);
+    dir = opendir(task_dir);
+    if (dir == NULL) {
+        fprintf(stderr,
+                "kde-session: kwin task-summary attempt=%d phase=%s pid=%d "
+                "opendir_errno=%d %s\n",
+                attempt, phase, (int)kwin_pid, errno, strerror(errno));
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char path[384];
+        char stat_buf[512];
+        char wchan_buf[128];
+        char syscall_buf[256];
+        char stack_buf[512];
+        int all_digits = 1;
+
+        if (de->d_name[0] == '.')
+            continue;
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+        if (emitted >= 64) {
+            fprintf(stderr,
+                    "kde-session: kwin task-summary attempt=%d phase=%s "
+                    "pid=%d truncated_after=%d\n",
+                    attempt, phase, (int)kwin_pid, emitted);
+            break;
+        }
+
+        snprintf(path, sizeof(path), "/proc/%d/task/%s/stat",
+                 (int)kwin_pid, de->d_name);
+        read_small_text_file(path, stat_buf, sizeof(stat_buf));
+        trim_newline(stat_buf);
+        snprintf(path, sizeof(path), "/proc/%d/task/%s/wchan",
+                 (int)kwin_pid, de->d_name);
+        read_small_text_file(path, wchan_buf, sizeof(wchan_buf));
+        trim_newline(wchan_buf);
+        snprintf(path, sizeof(path), "/proc/%d/task/%s/syscall",
+                 (int)kwin_pid, de->d_name);
+        read_small_text_file(path, syscall_buf, sizeof(syscall_buf));
+        trim_newline(syscall_buf);
+        snprintf(path, sizeof(path), "/proc/%d/task/%s/stack",
+                 (int)kwin_pid, de->d_name);
+        read_small_text_file(path, stack_buf, sizeof(stack_buf));
+        trim_newline(stack_buf);
+
+        fprintf(stderr,
+                "kde-session: kwin task attempt=%d phase=%s pid=%d tid=%s "
+                "stat=\"%s\" wchan=\"%s\" syscall=\"%s\" stack=\"%s\"\n",
+                attempt, phase, (int)kwin_pid, de->d_name, stat_buf,
+                wchan_buf, syscall_buf, stack_buf);
+        print_kwin_thread_wait_detail(kwin_pid, de->d_name, syscall_buf);
+        emitted++;
+    }
+    closedir(dir);
+
+    fprintf(stderr,
+            "kde-session: kwin task-summary attempt=%d phase=%s pid=%d "
+            "emitted=%d\n",
+            attempt, phase, (int)kwin_pid, emitted);
+}
+
+static void print_kwin_proc_snapshot(int attempt, const char *phase)
+{
+    if (!kwin_proc_snapshot_enabled()) {
+        fprintf(stderr,
+                "kde-session: kwin proc snapshot skipped attempt=%d phase=%s reason=disabled\n",
+                attempt, phase);
+        return;
+    }
+
+    print_kwin_proc_snapshot_file(attempt, phase, "status");
+    print_kwin_proc_snapshot_file(attempt, phase, "stat");
+    print_kwin_proc_snapshot_file(attempt, phase, "statm");
+    print_kwin_proc_snapshot_file(attempt, phase, "wchan");
+    print_kwin_proc_snapshot_file(attempt, phase, "syscall");
+    print_kwin_proc_snapshot_file(attempt, phase, "stack");
+    print_kwin_proc_snapshot_file(attempt, phase, "maps");
+}
+
+static void print_kwin_blocked_snapshot(pid_t kwin_pid, int attempt,
+                                        const char *phase)
+{
+    print_kwin_proc_snapshot(attempt, phase);
+    print_kwin_fd_summary(kwin_pid, attempt, phase);
+    print_kwin_thread_snapshot(kwin_pid, attempt, phase);
 }
 
 static int wait_for_wayland_socket(pid_t kwin_pid, int attempt)
@@ -800,13 +1284,13 @@ static int wait_for_wayland_socket(pid_t kwin_pid, int attempt)
         int status;
 
         if ((i % 10) == 0)
-            snapshot_kwin_maps(kwin_pid, attempt);
+            snapshot_kwin_proc(kwin_pid, attempt);
         if (stat(socket_path, &st) == 0)
             return 0;
 
         if (waitpid(kwin_pid, &status, WNOHANG) == kwin_pid) {
             fprintf(stderr, "kde-session: kwin exited before Wayland socket status=%d\n", status);
-            print_kwin_maps_snapshot(attempt, "wayland-socket");
+            print_kwin_blocked_snapshot(kwin_pid, attempt, "wayland-socket");
             return -1;
         }
         usleep(100000);
@@ -814,8 +1298,8 @@ static int wait_for_wayland_socket(pid_t kwin_pid, int attempt)
 
     fprintf(stderr, "kde-session: %s not visible after compositor grace\n",
             socket_path);
-    snapshot_kwin_maps(kwin_pid, attempt);
-    print_kwin_maps_snapshot(attempt, "wayland-socket-timeout");
+    snapshot_kwin_proc(kwin_pid, attempt);
+    print_kwin_blocked_snapshot(kwin_pid, attempt, "wayland-socket-timeout");
     return -1;
 }
 
@@ -836,25 +1320,26 @@ static int wait_for_plasmashell(pid_t kwin_pid, pid_t plasma_pid, int attempt)
         int status;
 
         if ((i % 10) == 0)
-            snapshot_kwin_maps(kwin_pid, attempt);
+            snapshot_kwin_proc(kwin_pid, attempt);
         if (process_cmdline_contains("plasmashell"))
             return 0;
 
         if (waitpid(kwin_pid, &status, WNOHANG) == kwin_pid) {
             fprintf(stderr, "kde-session: kwin exited before plasmashell status=%d\n", status);
-            print_kwin_maps_snapshot(attempt, "plasmashell");
+            print_kwin_proc_snapshot(attempt, "plasmashell");
             return -1;
         }
         if (waitpid(plasma_pid, &status, WNOHANG) == plasma_pid) {
             fprintf(stderr, "kde-session: Plasma child exited before plasmashell status=%d\n", status);
-            print_kwin_maps_snapshot(attempt, "plasma-child");
+            print_kwin_proc_snapshot(attempt, "plasma-child");
             return -1;
         }
         usleep(100000);
     }
 
     fprintf(stderr, "kde-session: plasmashell not visible after session grace\n");
-    (void)attempt;
+    snapshot_kwin_proc(kwin_pid, attempt);
+    print_kwin_proc_snapshot(attempt, "plasmashell-timeout");
     return -1;
 }
 
@@ -898,6 +1383,134 @@ static pid_t maybe_spawn_smoke_agent(void)
     if (cmdline_has_flag("kde_smoke_require_chromium=1"))
         return spawn_child(agent_chromium);
     return spawn_child(agent_plain);
+}
+
+static pid_t maybe_spawn_network_status_sni(void)
+{
+    char *argv[] = { "/bin/xv6-network-status-sni", NULL };
+
+    if (cmdline_has_flag("kde_network_status_sni=0"))
+        return -1;
+    if (!is_executable(argv[0])) {
+        fprintf(stderr, "kde-session: network status SNI unavailable\n");
+        return -1;
+    }
+
+    fprintf(stderr, "kde-session: launching network status SNI\n");
+    return spawn_child_logged(argv, NETWORK_SNI_LOG);
+}
+
+static int desktop_wake_delay_ms(void)
+{
+    char value[32];
+    int rc = cmdline_get_value_status("kde_desktop_wake_delay_ms", value,
+                                      sizeof(value));
+
+    if (rc > 0 && valid_decimal_range(value, 0,
+                                      KDE_DESKTOP_WAKE_MAX_DELAY_MS))
+        return atoi(value);
+    if (rc != 0)
+        fprintf(stderr,
+                "kde-session: ignoring invalid kde_desktop_wake_delay_ms\n");
+    return KDE_DESKTOP_WAKE_DEFAULT_DELAY_MS;
+}
+
+static int wait_for_exec_child(pid_t pid, const char *label)
+{
+    int status;
+
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR)
+            continue;
+        fprintf(stderr, "kde-session: wait %s: %s\n", label, strerror(errno));
+        return -1;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        return 0;
+    fprintf(stderr, "kde-session: %s exited status=%d\n", label, status);
+    return -1;
+}
+
+static int run_mouseinject_abs(int x, int y, int buttons)
+{
+    char xbuf[32];
+    char ybuf[32];
+    char buttonsbuf[32];
+    char *argv[] = { "/bin/mouseinject", xbuf, ybuf, buttonsbuf, NULL };
+    pid_t pid;
+
+    snprintf(xbuf, sizeof(xbuf), "%d", x);
+    snprintf(ybuf, sizeof(ybuf), "%d", y);
+    snprintf(buttonsbuf, sizeof(buttonsbuf), "%d", buttons);
+
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "kde-session: fork mouseinject: %s\n",
+                strerror(errno));
+        return -1;
+    }
+    if (pid == 0) {
+        execv(argv[0], argv);
+        fprintf(stderr, "kde-session: exec %s failed: %s\n", argv[0],
+                strerror(errno));
+        _exit(127);
+    }
+    return wait_for_exec_child(pid, "mouseinject");
+}
+
+static void run_desktop_wake_child(int delay_ms)
+{
+    if (!is_executable("/bin/mouseinject")) {
+        fprintf(stderr, "kde-session: desktop wake unavailable\n");
+        _exit(127);
+    }
+
+    usleep((useconds_t)delay_ms * 1000U);
+    fprintf(stderr, "kde-session: desktop wake click start delay_ms=%d\n",
+            delay_ms);
+    if (run_mouseinject_abs(32768, 32768, 0) != 0 ||
+        run_mouseinject_abs(32768, 32768, 1) != 0 ||
+        run_mouseinject_abs(32768, 32768, 0) != 0) {
+        fprintf(stderr, "kde-session: desktop wake click failed\n");
+        _exit(1);
+    }
+    fprintf(stderr, "kde-session: desktop wake click done\n");
+    _exit(0);
+}
+
+static pid_t maybe_spawn_desktop_wake(void)
+{
+    int delay_ms;
+    pid_t pid;
+
+    if (!cmdline_has_flag("kde_desktop_wake=1"))
+        return -1;
+
+    delay_ms = desktop_wake_delay_ms();
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "kde-session: fork desktop wake: %s\n",
+                strerror(errno));
+        return -1;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        run_desktop_wake_child(delay_ms);
+    }
+    setpgid(pid, pid);
+    fprintf(stderr, "kde-session: launching desktop wake delay_ms=%d\n",
+            delay_ms);
+    return pid;
+}
+
+static void reap_desktop_wake(pid_t pid)
+{
+    int status;
+
+    if (pid <= 0)
+        return;
+    if (waitpid(pid, &status, WNOHANG) == pid)
+        return;
 }
 
 static void x11_egl_logf(const char *fmt, ...)
@@ -1367,6 +1980,8 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
                                   const char *glx_fps_variant,
                                   const char *glx_fps_oml_queue_depth,
                                   const char *glx_fps_oml_issue_state_sample_interval,
+                                  const char *glx_fps_target_ms,
+                                  const char *glx_fps_max_frames,
                                   const char *present_fps_variant,
                                   const char *present_fps_queue_depth,
                                   const char *child_ld_preload)
@@ -1379,7 +1994,7 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
         timeout_ms = X11_EGL_SMOKE_TRACE_CHILD_TIMEOUT_MS;
 
     if (strcmp(mode, "glx-fps") == 0) {
-        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s glx_fps_variant=%s glx_fps_oml_queue_depth=%s glx_fps_oml_issue_state_sample_interval=%s process_ld_preload=(unset) child_ld_preload=%s timeout_ms=%d\n",
+        x11_egl_logf("host-x11-egl-smoke: diag launch mode=%s program=%s display=%s xauthority=%s glx_fps_variant=%s glx_fps_oml_queue_depth=%s glx_fps_oml_issue_state_sample_interval=%s glx_fps_target_ms=%s glx_fps_max_frames=%s process_ld_preload=(unset) child_ld_preload=%s timeout_ms=%d\n",
                      mode, program, display,
                      auth_path && auth_path[0] ? auth_path : "(preserve)",
                      glx_fps_variant && glx_fps_variant[0]
@@ -1391,6 +2006,12 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
                      glx_fps_oml_issue_state_sample_interval &&
                              glx_fps_oml_issue_state_sample_interval[0]
                          ? glx_fps_oml_issue_state_sample_interval
+                         : "(unset)",
+                     glx_fps_target_ms && glx_fps_target_ms[0]
+                         ? glx_fps_target_ms
+                         : "(unset)",
+                     glx_fps_max_frames && glx_fps_max_frames[0]
+                         ? glx_fps_max_frames
                          : "(unset)",
                      child_ld_preload && child_ld_preload[0]
                          ? child_ld_preload
@@ -1431,6 +2052,7 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
             setenv("XAUTHORITY", auth_path, 1);
         setenv("HOST_X11_EGL_SMOKE_MODE", mode, 1);
         setenv("HOST_X11_EGL_SMOKE_LOG", X11_EGL_SESSION_LOG, 1);
+        setenv("HOST_X11_PRESENT_TRACE_LOG", X11_EGL_PRESENT_TRACE_LOG, 1);
         if (glx_fps_variant && glx_fps_variant[0])
             setenv("HOST_X11_EGL_GLX_FPS_VARIANT", glx_fps_variant, 1);
         else
@@ -1446,6 +2068,16 @@ static int run_host_x11_egl_smoke(const char *display, const char *mode,
                    glx_fps_oml_issue_state_sample_interval, 1);
         else
             unsetenv("HOST_X11_EGL_GLX_FPS_OML_ISSUE_STATE_SAMPLE_INTERVAL");
+        if (glx_fps_target_ms && glx_fps_target_ms[0])
+            setenv("HOST_X11_EGL_GLX_FPS_TARGET_MS",
+                   glx_fps_target_ms, 1);
+        else
+            unsetenv("HOST_X11_EGL_GLX_FPS_TARGET_MS");
+        if (glx_fps_max_frames && glx_fps_max_frames[0])
+            setenv("HOST_X11_EGL_GLX_FPS_MAX_FRAMES",
+                   glx_fps_max_frames, 1);
+        else
+            unsetenv("HOST_X11_EGL_GLX_FPS_MAX_FRAMES");
         if (present_fps_variant && present_fps_variant[0])
             setenv("HOST_X11_PRESENT_FPS_VARIANT", present_fps_variant, 1);
         else
@@ -1481,6 +2113,10 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     char glx_fps_oml_queue_depth_raw[16];
     char glx_fps_oml_issue_state_sample_interval[16];
     char glx_fps_oml_issue_state_sample_interval_raw[16];
+    char glx_fps_target_ms[16];
+    char glx_fps_target_ms_raw[16];
+    char glx_fps_max_frames[16];
+    char glx_fps_max_frames_raw[16];
     char present_fps_variant[64];
     char present_fps_variant_raw[64];
     char present_fps_queue_depth[16];
@@ -1491,6 +2127,10 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     int glx_fps_oml_queue_depth_env_set = 0;
     int glx_fps_oml_issue_state_sample_interval_status = 0;
     int glx_fps_oml_issue_state_sample_interval_env_set = 0;
+    int glx_fps_target_ms_status = 0;
+    int glx_fps_target_ms_env_set = 0;
+    int glx_fps_max_frames_status = 0;
+    int glx_fps_max_frames_env_set = 0;
     int present_fps_variant_status = 0;
     int present_fps_variant_env_set = 0;
     int present_fps_queue_depth_status = 0;
@@ -1507,6 +2147,10 @@ static void run_x11_egl_session_probe(const char *probe_mode)
     glx_fps_oml_queue_depth_raw[0] = '\0';
     glx_fps_oml_issue_state_sample_interval[0] = '\0';
     glx_fps_oml_issue_state_sample_interval_raw[0] = '\0';
+    glx_fps_target_ms[0] = '\0';
+    glx_fps_target_ms_raw[0] = '\0';
+    glx_fps_max_frames[0] = '\0';
+    glx_fps_max_frames_raw[0] = '\0';
     present_fps_variant[0] = '\0';
     present_fps_variant_raw[0] = '\0';
     present_fps_queue_depth[0] = '\0';
@@ -1564,6 +2208,38 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                     glx_fps_oml_issue_state_sample_interval,
                     sizeof(glx_fps_oml_issue_state_sample_interval), "");
                 glx_fps_oml_issue_state_sample_interval_status = -2;
+            }
+        }
+        glx_fps_target_ms_status =
+            cmdline_get_value_status("kde_x11_egl_glx_fps_target_ms",
+                                     glx_fps_target_ms,
+                                     sizeof(glx_fps_target_ms));
+        if (glx_fps_target_ms_status > 0) {
+            x11_egl_copy_token(glx_fps_target_ms_raw,
+                               sizeof(glx_fps_target_ms_raw),
+                               glx_fps_target_ms);
+            if (valid_decimal_range(glx_fps_target_ms, 100, 60000)) {
+                glx_fps_target_ms_env_set = 1;
+            } else {
+                x11_egl_copy_token(glx_fps_target_ms,
+                                   sizeof(glx_fps_target_ms), "");
+                glx_fps_target_ms_status = -2;
+            }
+        }
+        glx_fps_max_frames_status =
+            cmdline_get_value_status("kde_x11_egl_glx_fps_max_frames",
+                                     glx_fps_max_frames,
+                                     sizeof(glx_fps_max_frames));
+        if (glx_fps_max_frames_status > 0) {
+            x11_egl_copy_token(glx_fps_max_frames_raw,
+                               sizeof(glx_fps_max_frames_raw),
+                               glx_fps_max_frames);
+            if (valid_decimal_range(glx_fps_max_frames, 1, 10000)) {
+                glx_fps_max_frames_env_set = 1;
+            } else {
+                x11_egl_copy_token(glx_fps_max_frames,
+                                   sizeof(glx_fps_max_frames), "");
+                glx_fps_max_frames_status = -2;
             }
         }
         glx_present_trace_requested =
@@ -1683,6 +2359,36 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                         glx_fps_oml_issue_state_sample_interval_raw[0]
                             ? glx_fps_oml_issue_state_sample_interval_raw
                             : "(empty)");
+            fprintf(fp, "probe_glx_fps_target_ms=%s\n",
+                    glx_fps_target_ms_env_set
+                        ? glx_fps_target_ms
+                        : (glx_fps_target_ms_status < 0
+                               ? "invalid"
+                               : "(unset)"));
+            fprintf(fp, "probe_glx_fps_target_ms_env_set=%d\n",
+                    glx_fps_target_ms_env_set);
+            fprintf(fp, "probe_glx_fps_target_ms_invalid=%d\n",
+                    glx_fps_target_ms_status < 0);
+            if (glx_fps_target_ms_status == -2)
+                fprintf(fp, "probe_glx_fps_target_ms_requested=%s\n",
+                        glx_fps_target_ms_raw[0]
+                            ? glx_fps_target_ms_raw
+                            : "(empty)");
+            fprintf(fp, "probe_glx_fps_max_frames=%s\n",
+                    glx_fps_max_frames_env_set
+                        ? glx_fps_max_frames
+                        : (glx_fps_max_frames_status < 0
+                               ? "invalid"
+                               : "(unset)"));
+            fprintf(fp, "probe_glx_fps_max_frames_env_set=%d\n",
+                    glx_fps_max_frames_env_set);
+            fprintf(fp, "probe_glx_fps_max_frames_invalid=%d\n",
+                    glx_fps_max_frames_status < 0);
+            if (glx_fps_max_frames_status == -2)
+                fprintf(fp, "probe_glx_fps_max_frames_requested=%s\n",
+                        glx_fps_max_frames_raw[0]
+                            ? glx_fps_max_frames_raw
+                            : "(empty)");
         }
         if (strcmp(run_mode, "present-fps") == 0) {
             fprintf(fp, "probe_present_fps_variant=%s\n",
@@ -1717,6 +2423,9 @@ static void run_x11_egl_session_probe(const char *probe_mode)
         fsync(fileno(fp));
         fclose(fp);
     }
+    fp = fopen(X11_EGL_PRESENT_TRACE_LOG, "w");
+    if (fp)
+        fclose(fp);
     if (strcmp(run_mode, "glx-fps") == 0) {
         if (glx_fps_variant_env_set) {
             x11_egl_logf("host-x11-egl-smoke: diag glx_fps_variant source=cmdline selected=%s env=HOST_X11_EGL_GLX_FPS_VARIANT\n",
@@ -1756,6 +2465,32 @@ static void run_x11_egl_session_probe(const char *probe_mode)
             x11_egl_logf("host-x11-egl-smoke: diag glx_fps_oml_issue_state_sample_interval status=FAIL source=cmdline env_set=0 reason=value-too-long min=1 max=64\n");
         } else {
             x11_egl_logf("host-x11-egl-smoke: diag glx_fps_oml_issue_state_sample_interval source=cmdline selected=default env_set=0 reason=unset\n");
+        }
+        if (glx_fps_target_ms_env_set) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_target_ms source=cmdline selected=%s env=HOST_X11_EGL_GLX_FPS_TARGET_MS\n",
+                         glx_fps_target_ms);
+        } else if (glx_fps_target_ms_status == -2) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_target_ms status=FAIL source=cmdline requested=%s env_set=0 reason=invalid-value min=100 max=60000\n",
+                         glx_fps_target_ms_raw[0]
+                             ? glx_fps_target_ms_raw
+                             : "(empty)");
+        } else if (glx_fps_target_ms_status < 0) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_target_ms status=FAIL source=cmdline env_set=0 reason=value-too-long min=100 max=60000\n");
+        } else {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_target_ms source=cmdline selected=default env_set=0 reason=unset\n");
+        }
+        if (glx_fps_max_frames_env_set) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_max_frames source=cmdline selected=%s env=HOST_X11_EGL_GLX_FPS_MAX_FRAMES\n",
+                         glx_fps_max_frames);
+        } else if (glx_fps_max_frames_status == -2) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_max_frames status=FAIL source=cmdline requested=%s env_set=0 reason=invalid-value min=1 max=10000\n",
+                         glx_fps_max_frames_raw[0]
+                             ? glx_fps_max_frames_raw
+                             : "(empty)");
+        } else if (glx_fps_max_frames_status < 0) {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_max_frames status=FAIL source=cmdline env_set=0 reason=value-too-long min=1 max=10000\n");
+        } else {
+            x11_egl_logf("host-x11-egl-smoke: diag glx_fps_max_frames source=cmdline selected=default env_set=0 reason=unset\n");
         }
         if (glx_fps_variant_status == -2) {
             x11_egl_logf("host-x11-egl-smoke: phase=glx_fps_variant status=FAIL mode=session reason=invalid-value requested=%s\n",
@@ -1807,6 +2542,40 @@ static void run_x11_egl_session_probe(const char *probe_mode)
             x11_egl_session_terminal(
                 run_mode, "FAIL", 2,
                 "invalid-glx-fps-oml-issue-state-sample-interval");
+            sync();
+            return;
+        }
+        if (glx_fps_target_ms_status == -2) {
+            x11_egl_logf("host-x11-egl-smoke: phase=glx_fps_config status=FAIL mode=session reason=invalid-target-ms requested=%s min=100 max=60000\n",
+                         glx_fps_target_ms_raw[0]
+                             ? glx_fps_target_ms_raw
+                             : "(empty)");
+            x11_egl_session_terminal(run_mode, "FAIL", 2,
+                                     "invalid-glx-fps-target-ms");
+            sync();
+            return;
+        }
+        if (glx_fps_target_ms_status < 0) {
+            x11_egl_logf("host-x11-egl-smoke: phase=glx_fps_config status=FAIL mode=session reason=target-ms-value-too-long min=100 max=60000\n");
+            x11_egl_session_terminal(run_mode, "FAIL", 2,
+                                     "invalid-glx-fps-target-ms");
+            sync();
+            return;
+        }
+        if (glx_fps_max_frames_status == -2) {
+            x11_egl_logf("host-x11-egl-smoke: phase=glx_fps_config status=FAIL mode=session reason=invalid-max-frames requested=%s min=1 max=10000\n",
+                         glx_fps_max_frames_raw[0]
+                             ? glx_fps_max_frames_raw
+                             : "(empty)");
+            x11_egl_session_terminal(run_mode, "FAIL", 2,
+                                     "invalid-glx-fps-max-frames");
+            sync();
+            return;
+        }
+        if (glx_fps_max_frames_status < 0) {
+            x11_egl_logf("host-x11-egl-smoke: phase=glx_fps_config status=FAIL mode=session reason=max-frames-value-too-long min=1 max=10000\n");
+            x11_egl_session_terminal(run_mode, "FAIL", 2,
+                                     "invalid-glx-fps-max-frames");
             sync();
             return;
         }
@@ -1903,7 +2672,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                                     "/bin/host-x11-egl-smoke",
                                     "--x11-connect-only",
                                     auth_path, NULL, NULL, NULL, NULL, NULL,
-                                    NULL);
+                                    NULL, NULL, NULL);
         if (rc != 0 && !auth_path) {
             x11_egl_logf("host-x11-egl-smoke: diag xwayland_auth rediscover_after_candidate_fail display=%s exit_status=%d\n",
                          displays[i], rc);
@@ -1918,7 +2687,7 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                                             "/bin/host-x11-egl-smoke",
                                             "--x11-connect-only",
                                             auth_path, NULL, NULL, NULL, NULL,
-                                            NULL, NULL);
+                                            NULL, NULL, NULL, NULL);
                 x11_egl_logf("host-x11-egl-smoke: phase=x11_preflight_candidate_retry status=%s display=%s exit_status=%d\n",
                              rc == 0 ? "PASS" : "FAIL", displays[i], rc);
             }
@@ -1952,6 +2721,12 @@ static void run_x11_egl_session_probe(const char *probe_mode)
                                         : NULL,
                                     glx_fps_oml_issue_state_sample_interval_env_set
                                         ? glx_fps_oml_issue_state_sample_interval
+                                        : NULL,
+                                    glx_fps_target_ms_env_set
+                                        ? glx_fps_target_ms
+                                        : NULL,
+                                    glx_fps_max_frames_env_set
+                                        ? glx_fps_max_frames
                                         : NULL,
                                     present_fps_variant_env_set
                                         ? present_fps_variant
@@ -2112,7 +2887,9 @@ int main(void)
     int status;
     pid_t kwin_pid;
     pid_t plasma_pid;
+    pid_t network_sni_pid = -1;
     pid_t x11_egl_probe_pid = -1;
+    pid_t desktop_wake_pid = -1;
     char *kwin[] = {
         "/usr/bin/kwin_wayland",
         "--xwayland",
@@ -2127,26 +2904,29 @@ int main(void)
     if (!is_executable(kwin[0])) {
         fprintf(stderr, "kde-session: kwin_wayland unavailable (%s), running Plasma child directly\n",
                 strerror(errno));
+        redirect_stdio_to_log(PLASMA_SESSION_LOG);
         execv(plasma[0], plasma);
         fprintf(stderr, "kde-session: exec failed: %s\n", strerror(errno));
         return 127;
     }
+    if (kwin_alloc_trace_enabled())
+        unlink(KWIN_ALLOC_TRACE_LOG);
 
     for (int attempt = 1; attempt <= 3; attempt++) {
         cleanup_session_sockets();
         clear_client_display_env();
         fprintf(stderr, "kde-session: launching KWin attempt=%d\n", attempt);
-        kwin_pid = spawn_child(kwin);
+        kwin_pid = spawn_kwin_child(kwin, attempt);
         if (kwin_pid < 0)
             return 127;
-        snapshot_kwin_maps(kwin_pid, attempt);
+        snapshot_kwin_proc(kwin_pid, attempt);
         if (wait_for_wayland_socket(kwin_pid, attempt) == 0) {
             setenv("WAYLAND_DISPLAY", "wayland-0", 1);
             if (wait_for_wayland_roundtrip(kwin_pid, attempt) != 0) {
                 clear_client_display_env();
                 goto retry;
             }
-            plasma_pid = spawn_child(plasma);
+            plasma_pid = spawn_child_logged(plasma, PLASMA_SESSION_LOG);
             if (plasma_pid < 0) {
                 terminate_child(kwin_pid);
                 clear_client_display_env();
@@ -2173,15 +2953,22 @@ retry:
 
 running:
     fprintf(stderr, "kde-session: KWin and plasmashell are running\n");
+    desktop_wake_pid = maybe_spawn_desktop_wake();
+    network_sni_pid = maybe_spawn_network_status_sni();
     x11_egl_probe_pid = maybe_spawn_x11_egl_session_probe();
     maybe_spawn_smoke_agent();
+    reap_desktop_wake(desktop_wake_pid);
     reap_x11_egl_session_probe(x11_egl_probe_pid);
     if (waitpid(plasma_pid, &status, 0) < 0) {
         fprintf(stderr, "kde-session: wait Plasma child: %s\n", strerror(errno));
         terminate_child(kwin_pid);
         terminate_child(plasma_pid);
+        terminate_child(desktop_wake_pid);
+        terminate_child(network_sni_pid);
         return 127;
     }
+    terminate_child(desktop_wake_pid);
+    terminate_child(network_sni_pid);
     terminate_child(kwin_pid);
 
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128;

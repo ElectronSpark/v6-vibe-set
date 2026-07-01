@@ -1,0 +1,90 @@
+#!/usr/bin/env expect
+
+set timeout 180
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format "%Y%m%dT%H%M%SZ"]
+set outdir "$build/proc-cmdline-rewrite-proof/$stamp"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set status "$outdir/status.txt"
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 video=80x25"
+
+log_file -a $runlog
+
+proc finish {code label details} {
+    global status runlog
+
+    set fh [open $status w]
+    puts $fh "status=$label $details runlog=$runlog"
+    close $fh
+    puts "\nPROC-CMDLINE-REWRITE-PROOF-$label $details log=$runlog"
+    exit $code
+}
+
+spawn timeout --foreground 180 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+
+expect {
+    -re {root:/#} {}
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 2 FAIL "reason=boot-crash"
+    }
+    timeout {
+        finish 3 FAIL "reason=no-prompt"
+    }
+    eof {
+        finish 4 FAIL "reason=early-eof"
+    }
+}
+
+set saw_before 0
+set saw_after 0
+set saw_pass 0
+
+send "/bin/proc-cmdline-rewrite-probe pad00000000000000000000000000000000 pad11111111111111111111111111111111; /bin/shutdown\r"
+
+expect {
+    -re {proc-cmdline-rewrite-probe phase=before[^\r\n]*} {
+        set saw_before 1
+        exp_continue
+    }
+    -re {proc-cmdline-rewrite-probe phase=after[^\r\n]*--type=renderer[^\r\n]*} {
+        set saw_after 1
+        exp_continue
+    }
+    -re {proc-cmdline-rewrite-probe result=PASS} {
+        set saw_pass 1
+        if {$saw_before && $saw_after} {
+            catch { exec pkill -TERM -P [exp_pid] -f qemu-system-x86_64 }
+            finish 0 PASS "reason=live-cmdline before=$saw_before after=$saw_after pass=$saw_pass"
+        }
+        exp_continue
+    }
+    -re {proc-cmdline-rewrite-probe result=FAIL[^\r\n]*} {
+        finish 5 FAIL "reason=probe-fail before=$saw_before after=$saw_after pass=$saw_pass"
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 6 FAIL "reason=probe-crash before=$saw_before after=$saw_after pass=$saw_pass"
+    }
+    eof {
+        if {$saw_before && $saw_after && $saw_pass} {
+            finish 0 PASS "reason=live-cmdline before=$saw_before after=$saw_after pass=$saw_pass"
+        }
+        finish 7 FAIL "reason=eof-missing-proof before=$saw_before after=$saw_after pass=$saw_pass"
+    }
+    timeout {
+        if {$saw_before && $saw_after && $saw_pass} {
+            finish 0 PASS "reason=live-cmdline before=$saw_before after=$saw_after pass=$saw_pass"
+        }
+        finish 8 FAIL "reason=timeout before=$saw_before after=$saw_after pass=$saw_pass"
+    }
+}

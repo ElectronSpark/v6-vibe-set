@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +18,9 @@ static const char *launcher_log_compat_path =
     "/tmp/host-gui-wayland-chromium.log";
 static const char *chrome_log_path = "/chrome_debug.log";
 static const char *chrome_log_compat_path = "/tmp/chrome_debug.log";
+static const char *egl_trace_preload_path =
+    "/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload.so";
+static const char *egl_trace_log_path = "/chromium-egl-trace.log";
 
 static void set_default_env(const char *name, const char *value)
 {
@@ -53,6 +58,64 @@ static void prepare_log_paths(void)
 {
     ensure_compat_link(launcher_log_compat_path, launcher_log_path);
     ensure_compat_link(chrome_log_compat_path, chrome_log_path);
+}
+
+static void unlink_egl_trace_logs(const char *path)
+{
+    const char *base;
+    const char *slash;
+    char dir_path[256];
+    char prefix[256];
+    DIR *dir;
+    struct dirent *de;
+    size_t dir_len;
+    size_t base_len;
+
+    if (!path || !path[0])
+        return;
+    unlink(path);
+
+    slash = strrchr(path, '/');
+    base = slash ? slash + 1 : path;
+    dir_len = slash ? (size_t)(slash - path) : 1;
+    if (dir_len == 0)
+        dir_len = 1;
+    if (dir_len >= sizeof(dir_path))
+        return;
+    if (slash) {
+        memcpy(dir_path, path, dir_len);
+        dir_path[dir_len] = '\0';
+    } else {
+        snprintf(dir_path, sizeof(dir_path), "%s", ".");
+    }
+
+    base_len = strlen(base);
+    if (base_len >= sizeof(prefix))
+        return;
+    snprintf(prefix, sizeof(prefix), "%s", base);
+    if (base_len > 4 && strcmp(prefix + base_len - 4, ".log") == 0)
+        prefix[base_len - 4] = '\0';
+
+    dir = opendir(dir_path);
+    if (!dir)
+        return;
+    while ((de = readdir(dir)) != NULL) {
+        char full[512];
+        size_t name_len = strlen(de->d_name);
+        size_t prefix_len = strlen(prefix);
+
+        if (name_len <= prefix_len + 4)
+            continue;
+        if (strncmp(de->d_name, prefix, prefix_len) != 0)
+            continue;
+        if (de->d_name[prefix_len] != '.')
+            continue;
+        if (strcmp(de->d_name + name_len - 4, ".log") != 0)
+            continue;
+        snprintf(full, sizeof(full), "%s/%s", dir_path, de->d_name);
+        unlink(full);
+    }
+    closedir(dir);
 }
 
 static void redirect_log(void)
@@ -126,6 +189,101 @@ static void log_final_argv(char **argv, int argc, const char *backend,
     fputs("\"\n", stderr);
 }
 
+static void log_env_value(const char *name)
+{
+    const char *value = getenv(name);
+
+    fprintf(stderr, "wayland-chromium-launcher: env %s=\"", name);
+    log_escaped_string(stderr, value ? value : "(unset)");
+    fputs("\"\n", stderr);
+}
+
+static void log_graphics_env(void)
+{
+    log_env_value("WAYLAND_DISPLAY");
+    log_env_value("DISPLAY");
+    log_env_value("XDG_RUNTIME_DIR");
+    log_env_value("OZONE_PLATFORM");
+    log_env_value("EGL_PLATFORM");
+    log_env_value("GALLIUM_DRIVER");
+    log_env_value("MESA_LOADER_DRIVER_OVERRIDE");
+    log_env_value("LIBGL_DRIVERS_PATH");
+    log_env_value("GBM_BACKENDS_PATH");
+    log_env_value("WAYLAND_CHROMIUM_WAYLAND_DEBUG");
+    log_env_value("WAYLAND_DEBUG");
+    log_env_value("WAYLAND_CHROMIUM_EGL_TRACE");
+    log_env_value("WAYLAND_CHROMIUM_AUTO_GL_FLAGS");
+    log_env_value("CHROMIUM_EGL_TRACE");
+    log_env_value("CHROMIUM_EGL_TRACE_LOG");
+    log_env_value("LD_LIBRARY_PATH");
+    log_env_value("LD_PRELOAD");
+    log_env_value("LIBVA_DRIVERS_PATH");
+    log_env_value("LIBVA_DRIVER_NAME");
+    log_env_value("WAYLAND_CHROMIUM_SIMDUTF_FORCE_IMPLEMENTATION");
+    log_env_value("SIMDUTF_FORCE_IMPLEMENTATION");
+    log_env_value("WAYLAND_CHROMIUM_ENABLE_DAV1D");
+    log_env_value("WAYLAND_CHROMIUM_ENABLE_VAAPI");
+}
+
+static int env_enabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    return value && value[0] && strcmp(value, "0") != 0 &&
+        strcasecmp(value, "false") != 0 &&
+        strcasecmp(value, "no") != 0 &&
+        strcasecmp(value, "off") != 0;
+}
+
+static int env_disabled_value(const char *value)
+{
+    return value && value[0] &&
+        (strcmp(value, "0") == 0 ||
+         strcasecmp(value, "false") == 0 ||
+         strcasecmp(value, "no") == 0 ||
+         strcasecmp(value, "off") == 0);
+}
+
+static void enable_egl_trace_preload(void)
+{
+    const char *old_preload;
+    char preload[1024];
+
+    if (!env_enabled("WAYLAND_CHROMIUM_EGL_TRACE"))
+        return;
+
+    setenv("CHROMIUM_EGL_TRACE", "1", 1);
+    set_default_env("CHROMIUM_EGL_TRACE_LOG", egl_trace_log_path);
+    unlink_egl_trace_logs(getenv("CHROMIUM_EGL_TRACE_LOG"));
+
+    old_preload = getenv("LD_PRELOAD");
+    if (old_preload && old_preload[0]) {
+        snprintf(preload, sizeof(preload), "%s:%s", egl_trace_preload_path,
+                 old_preload);
+    } else {
+        snprintf(preload, sizeof(preload), "%s", egl_trace_preload_path);
+    }
+    setenv("LD_PRELOAD", preload, 1);
+}
+
+static void enable_wayland_debug(void)
+{
+    if (!env_enabled("WAYLAND_CHROMIUM_WAYLAND_DEBUG"))
+        return;
+
+    setenv("WAYLAND_DEBUG", "client", 1);
+}
+
+static void apply_simdutf_force_implementation(void)
+{
+    const char *value = getenv("WAYLAND_CHROMIUM_SIMDUTF_FORCE_IMPLEMENTATION");
+
+    if (value && value[0]) {
+        setenv("SIMDUTF_FORCE_IMPLEMENTATION", value, 1);
+        return;
+    }
+}
+
 static void append_arg(char **argv, int *idx, int max, const char *arg)
 {
     if (*idx + 1 < max)
@@ -150,6 +308,24 @@ static void append_extra_flags(char **argv, int *idx, int max, char *flags)
     }
 }
 
+static int extra_flags_contain_prefix(const char *flags, const char *prefix)
+{
+    const char *p = flags;
+    size_t prefix_len = strlen(prefix);
+
+    while (p && *p) {
+        while (*p == ' ' || *p == '\t' || *p == '\n')
+            p++;
+        if (*p == '\0')
+            break;
+        if (strncmp(p, prefix, prefix_len) == 0)
+            return 1;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n')
+            p++;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     enum { MAX_ARGS = 96 };
@@ -159,8 +335,17 @@ int main(int argc, char **argv)
     const char *alsa_output_device = getenv("WAYLAND_CHROMIUM_ALSA_OUTPUT_DEVICE");
     char *extra_flags = getenv("WAYLAND_CHROMIUM_EXTRA_FLAGS");
     int use_x11 = backend && strcmp(backend, "x11") == 0;
-    int use_multiprocess = multiprocess && strcmp(multiprocess, "1") == 0;
+    int use_multiprocess = !env_disabled_value(multiprocess);
+    int enable_vaapi =
+        !env_disabled_value(getenv("WAYLAND_CHROMIUM_ENABLE_VAAPI"));
+    int auto_gl_flags =
+        !env_disabled_value(getenv("WAYLAND_CHROMIUM_AUTO_GL_FLAGS"));
+    int extra_has_use_gl =
+        extra_flags_contain_prefix(extra_flags, "--use-gl=");
+    int extra_has_use_angle =
+        extra_flags_contain_prefix(extra_flags, "--use-angle=");
     int idx = 0;
+    static char disable_features_arg[512];
 
     set_default_env("XDG_RUNTIME_DIR", "/tmp");
     set_default_env("XDG_DATA_DIRS", "/share:/usr/share");
@@ -175,9 +360,11 @@ int main(int argc, char **argv)
         setenv("DISPLAY", ":0", 1);
         unsetenv("WAYLAND_DISPLAY");
         setenv("OZONE_PLATFORM", "x11", 1);
+        set_default_env("EGL_PLATFORM", "x11");
     } else {
         set_default_env("WAYLAND_DISPLAY", "wayland-0");
         set_default_env("OZONE_PLATFORM", "wayland");
+        set_default_env("EGL_PLATFORM", "surfaceless");
     }
     set_default_env("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
     set_default_env("CHROME_LOG_FILE", chrome_log_path);
@@ -187,14 +374,20 @@ int main(int argc, char **argv)
     set_default_env("GIO_MODULE_DIR", "/lib/gio/modules");
     set_default_env("GIO_USE_TLS", "gnutls");
     set_default_env("ALSA_CONFIG_PATH", "/usr/share/alsa/alsa.conf");
-    set_default_env("LIBVA_DRIVERS_PATH", "/lib/dri");
-    set_default_env("LIBVA_DRIVER_NAME", "virtio_gpu");
+    if (enable_vaapi) {
+        set_default_env("LIBVA_DRIVERS_PATH", "/lib/dri");
+        set_default_env("LIBVA_DRIVER_NAME", "virtio_gpu");
+    } else {
+        unsetenv("LIBVA_DRIVERS_PATH");
+        unsetenv("LIBVA_DRIVER_NAME");
+    }
     set_default_env("XV6_GTK_DISABLE_ACCESSIBILITY", "1");
     set_default_env("XV6_DRM_TRACE", "1");
     set_default_env("DBUS_SESSION_BUS_ADDRESS",
                     "unix:abstract=xv6_session_bus");
     set_default_env("DBUS_SYSTEM_BUS_ADDRESS",
                     "unix:abstract=xv6_system_bus");
+    apply_simdutf_force_implementation();
     /*
      * Keep the imported non-graphics closure coherent. Chromium dlopens GTK,
      * ATK and GLib modules during startup; mixing host AT-SPI/ATK bridge
@@ -205,9 +398,13 @@ int main(int argc, char **argv)
      */
     setenv("LD_LIBRARY_PATH",
            "/opt/host-gui/wayland-chromium/lib:"
-           "/lib:/lib64:/usr/lib:/usr/lib64:"
+           "/lib:/lib64:/lib/x86_64-linux-gnu:"
+           "/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib64:"
            "/opt/host-gui/wayland-chromium/chrome-linux64",
            1);
+    unsetenv("LD_PRELOAD");
+    enable_wayland_debug();
+    enable_egl_trace_preload();
 
     prepare_log_paths();
     redirect_log();
@@ -221,18 +418,36 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, chrome_bin);
     append_arg(child_argv, &idx, MAX_ARGS,
                use_x11 ? "--ozone-platform=x11" : "--ozone-platform=wayland");
-    append_arg(child_argv, &idx, MAX_ARGS,
-               "--enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,"
-               "VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,"
-               "VaapiVideoEncoder,CanvasOopRasterization");
+    if (enable_vaapi) {
+        append_arg(child_argv, &idx, MAX_ARGS,
+                   "--enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,"
+                   "VaapiIgnoreDriverChecks,VaapiOnNvidiaGPUs,"
+                   "VaapiVideoEncoder,CanvasOopRasterization");
+    } else {
+        append_arg(child_argv, &idx, MAX_ARGS,
+                   "--enable-features=UseOzonePlatform,CanvasOopRasterization");
+    }
     append_arg(child_argv, &idx, MAX_ARGS, "--ignore-gpu-blocklist");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-gpu-rasterization");
+    if (!enable_vaapi) {
+        append_arg(child_argv, &idx, MAX_ARGS,
+                   "--disable-accelerated-video-decode");
+        append_arg(child_argv, &idx, MAX_ARGS,
+                   "--disable-accelerated-video-encode");
+    }
+    if (!use_x11 && auto_gl_flags) {
+        if (!extra_has_use_gl)
+            append_arg(child_argv, &idx, MAX_ARGS, "--use-gl=egl-angle");
+        if (!extra_has_use_angle)
+            append_arg(child_argv, &idx, MAX_ARGS, "--use-angle=opengles");
+    }
     append_arg(child_argv, &idx, MAX_ARGS, "--no-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-setuid-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-seccomp-filter-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-gpu-sandbox");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-dev-shm-usage");
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-vulkan");
+    append_arg(child_argv, &idx, MAX_ARGS, "--use-vulkan=disabled");
     if (!use_multiprocess) {
         append_arg(child_argv, &idx, MAX_ARGS, "--disable-gpu");
         append_arg(child_argv, &idx, MAX_ARGS, "--in-process-gpu");
@@ -251,10 +466,18 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, "--no-first-run");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-default-browser-check");
     append_arg(child_argv, &idx, MAX_ARGS, "--password-store=basic");
-    append_arg(child_argv, &idx, MAX_ARGS,
-               "--disable-features=AccessibilityService,Crashpad,MediaRouter,"
-               "OptimizationHints,CalculateNativeWinOcclusion,"
-               "UseChromeOSDirectVideoDecoder,UseFreedesktopSecretPortal");
+    snprintf(disable_features_arg, sizeof(disable_features_arg),
+             "--disable-features=AccessibilityService,Crashpad,MediaRouter,"
+             "OptimizationHints,CalculateNativeWinOcclusion,Vulkan,"
+             "DefaultANGLEVulkan,VulkanFromANGLE,%s"
+             "UseChromeOSDirectVideoDecoder,UseFreedesktopSecretPortal%s",
+             enable_vaapi ? "" :
+             "AcceleratedVideoDecodeLinuxGL,VaapiIgnoreDriverChecks,"
+             "AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,"
+             "VaapiVideoDecoder,VaapiVideoEncoder,",
+             env_enabled("WAYLAND_CHROMIUM_ENABLE_DAV1D") ? "" :
+             ",Dav1dVideoDecoder,WebRtcHwAv1Decoding");
+    append_arg(child_argv, &idx, MAX_ARGS, disable_features_arg);
     append_arg(child_argv, &idx, MAX_ARGS,
                "--user-data-dir=/tmp/wayland-chromium-profile");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-logging=stderr");
@@ -277,6 +500,7 @@ int main(int argc, char **argv)
 
     log_final_argv(child_argv, idx, backend, multiprocess, use_x11,
                    use_multiprocess);
+    log_graphics_env();
     fprintf(stderr, "wayland-chromium-launcher: exec %s root=%s\n",
             chrome_bin, app_root);
     fflush(stderr);

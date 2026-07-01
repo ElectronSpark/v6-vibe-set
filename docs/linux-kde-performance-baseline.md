@@ -2,6 +2,9 @@
 
 Date: 2026-06-21
 
+Baseline-era note: this file preserves Linux-vs-xv6 performance evidence.
+Current GUI direction lives in `docs/linux-drm-abi-compat-plan.md`.
+
 This records the Linux KDE Plasma control run and the current xv6 KDE result
 under KVM with virgl. KDE/Qt/KWin/Plasma sources remain upstream-clean; xv6
 changes are in staging, launch guardrails, probes, and rootfs construction.
@@ -55,7 +58,70 @@ QEMU trace counts:
 | `virtio_gpu_cmd_res_create_3d` | 54 | 275 |
 | `virtio_gpu_cmd_res_xfer_toh_3d` | 0 | 2 |
 
-## Current Fix
+## Chromium Playback Controls
+
+The current same-Chromium Linux playback controls use Ubuntu 24.04 under KVM,
+QEMU `virtio-vga-gl`, `gtk,gl=on`, Xorg/Openbox, the repo-staged Chrome for
+Testing binary, and the same host WSL virgl/D3D12 path. They are Chromium
+stress baselines, not KDE package baselines.
+
+| Metric | Local fixture | YouTube |
+| --- | ---: | ---: |
+| Artifact | `build-x86_64/linux-chromium-vm-control/20260628T163824Z-ubuntu-xorg-visible-http-perf-proof` | `build-x86_64/linux-chromium-vm-control/20260628T165123Z-ubuntu-xorg-visible-youtube-proof` |
+| Status | media PASS, screenshot missing | media PASS, geometry PASS, screenshot missing |
+| Guest geometry | visible Xorg, not recorded in summary | 1280x800 |
+| Renderer | `virgl (D3D12 (Intel(R) UHD Graphics))` | `virgl (D3D12 (Intel(R) UHD Graphics))` |
+| GLX acceleration | direct, accelerated | direct, accelerated |
+| `glxgears` | 482.165 FPS | 242.327 FPS |
+| Chrome process counts | total 14, GPU 1, renderer 6, zygote 2 | total 14, GPU 1, renderer 5, zygote 2 |
+| Video result | `measureFPS=31.933`, `rvfcFPS=44.577`, `measureDropped=11` | `decodedFPS=21.314`, `dropPct=1.206`, `mediaProgress=29.668/35.0s` |
+| Effective media size | local 1280x800 fixture | 854x480 |
+
+The local fixture is the cleaner performance baseline because it removes
+network and service variability. The YouTube proof is the real-service baseline:
+it successfully advances media with Chromium GPU and renderer processes alive,
+but YouTube selected 854x480 despite the `vq=hd720` URL hint. The `total`
+Chrome process count is not a role-derived browser count; only the GPU,
+renderer, and zygote counts are argument-derived in these Linux harnesses. QEMU
+monitor screendump failed because the monitor socket was gone by capture time,
+so these artifacts are playback/performance controls rather than durable visual
+proofs.
+
+Newer KWin/Wayland Linux control:
+
+```text
+build-x86_64/linux-chromium-vm-control/20260630T100838Z-ubuntu-kwin-virtual-http-perf-proof/
+```
+
+This run is the closest current Chromium comparison for the KDE target. It ran
+the repo-staged Chrome under Ubuntu 24.04 KWin virtual Wayland on virgl/D3D12,
+reached stable Chromium roles by the third process sample, and kept one GPU
+process plus six renderer processes alive. The local fixture decoded video
+successfully (`decoded=960 dropped=0 currentTime=16`) even though Chromium
+eventually used `--use-gl=disabled` after forced `--use-gl=egl` errors. The
+important baseline signal is process and media admission: Linux creates
+renderer roles and advances video on the same broad host GPU path.
+
+Current xv6 comparison:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260630T115357Z-chromium-ipc-syscall-tail-capture-timeout/
+build-x86_64/webkit-chromium-ipc-proof/20260630T120551Z/
+```
+
+The xv6 Chromium-video run has healthy raw GBM/virtgpu evidence, including a
+Linux-matched virtgpu `GETPARAM` matrix and five Chrome execbuffers from the
+GPU child. The frame capture passed, but Chromium failed above raw graphics:
+no renderer role stabilized, no page performance console lines appeared,
+NetworkService restarted, and children self-terminated after Chromium's
+"15 seconds with no connection" watchdog. The focused Linux/xv6
+`webkitabitest chromium-ipc` reducer now passes the four raw IPC shapes seen in
+the traces: stream `SCM_RIGHTS`/`EPOLLONESHOT`, seqpacket bootstrap EOF,
+seqpacket `SO_PASSCRED`, and seqpacket half-close `SCM_RIGHTS`. Continue FPS
+work from child/Mojo admission and renderer/media startup before changing
+scanout or raw AF_UNIX behavior.
+
+## Baseline-Era Fix
 
 `/usr/bin/Xwayland` in the final rootfs now resolves to the xv6 wrapper at
 `/bin/Xwayland`, preventing generated KDE overlays from bypassing the wrapper.
@@ -138,9 +204,19 @@ Rejected Linux capture attempts before the baseline:
 - `20260621-123132`: another host-side substitution issue in the guest script.
 - `20260621-123625` and `20260621-123831`: partial metric capture before the completion marker was made reliable.
 
-## Next Gap
+## Baseline-Era Next Gap
 
 To match the Linux baseline more closely, explain or reduce the
 Xwayland/DRI3/Present timing gap. The current xv6 run proves direct GLX/virgl
 startup and finite FPS measurement, but the QEMU submit/flush rate and measured
 FPS remain well below Linux.
+
+2026-06-29 Chromium/full-screen update: a focused xv6-owned scanout-cache
+change routes exact full-screen virgl `BO_PRESENT` through the page-flip
+resource cache. In the local-video reducer this reduced per-frame
+`SET_SCANOUT` churn from 352 to 6 and improved Chromium media FPS from 25.7 to
+40.8, with `virtio_present_copy_calls=0` in both runs. The remaining Chromium
+fullscreen gap is now GPU-process/renderer lifecycle jitter and async submit
+backpressure, not the old full-screen `SET_SCANOUT` path. Raising
+`virtio_gpu_async_submit_depth` to 4 or 32 caused capture-timeout runs before
+playback, so that is not a baseline default.

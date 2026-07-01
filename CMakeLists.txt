@@ -10,6 +10,10 @@ project(xv6_os NONE)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
+option(XV6_KASAN "Build the x86_64 kernel with experimental KASAN instrumentation" OFF)
+option(XV6_KMEMLEAK "Build the optional fixed-table kernel allocation tracker" ON)
+option(XV6_KLOG "Build the optional Linux-style kernel log ring and /proc/kmsg support" ON)
+
 include(CrossOptions)        # XV6_ARCH, paths, sysroot
 include(BuildKernel)         # kernel target
 include(BuildUser)           # user target

@@ -21,6 +21,9 @@ set(_kernel_configure_command
 		-DARCH=${_kernel_arch}
 		-DPLATFORM=qemu
 		-DOPT_LEVEL=2
+		-DXV6_KASAN=${XV6_KASAN}
+		-DXV6_KMEMLEAK=${XV6_KMEMLEAK}
+		-DXV6_KLOG=${XV6_KLOG}
 		-DCMAKE_C_COMPILER=${_kernel_host_cc}
 		-DCMAKE_ASM_COMPILER=${_kernel_host_cc})
 

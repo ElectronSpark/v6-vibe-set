@@ -60,6 +60,30 @@ stage_x11_present_trace_preload() {
     fi
 }
 
+stage_chromium_egl_trace_preload() {
+    local out="${BUILD_DIR}/chromium-egl-trace-preload.so"
+    local dst="${OVERLAY}/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload.so"
+
+    if ! has_pkg_config egl; then
+        note "warning: EGL development files not found; Chromium EGL trace preload not staged"
+        return 0
+    fi
+
+    # shellcheck disable=SC2046
+    if "${CC_BIN}" -O2 -Wall -Wextra -fPIC -shared \
+        $(pkg-config --cflags egl) \
+        -o "${out}" \
+        "${REPO_ROOT}/scripts/image/chromium-egl-trace-preload.c" \
+        -ldl -pthread >/dev/null 2>&1; then
+        mkdir -p "$(dirname "${dst}")"
+        cp -aL "${out}" "${dst}"
+        chmod 0755 "${dst}" 2>/dev/null || true
+        note "staged Chromium EGL trace preload at ${dst#${OVERLAY}}"
+    else
+        note "warning: failed to build Chromium EGL trace preload; not staged"
+    fi
+}
+
 stage_host_file() {
     local src="$1"
     local dst="$2"
@@ -325,6 +349,41 @@ download_file() {
     mv "${tmp}" "${out}"
 }
 
+prune_chromium_bundled_gl_stack() {
+    local chrome_runtime="$1"
+    local lib
+    local target
+    local disabled
+
+    if [[ "${XV6_KEEP_CHROMIUM_BUNDLED_EGL:-0}" == "1" ]]; then
+        note "keeping Chromium bundled EGL/GLES libraries by request"
+        return 0
+    fi
+
+    for lib in libEGL.so libGLESv2.so; do
+        if [[ ! -e "${chrome_runtime}/${lib}" ]]; then
+            continue
+        fi
+        disabled="${chrome_runtime}/${lib}.xv6-disabled"
+        rm -f "${disabled}"
+        mv "${chrome_runtime}/${lib}" "${disabled}"
+        case "${lib}" in
+            libEGL.so)
+                target="/lib/libEGL.so"
+                ;;
+            libGLESv2.so)
+                target="/lib/libGLESv2.so"
+                ;;
+            *)
+                echo "stage-host-gui-runtime: unexpected Chromium GL library ${lib}" >&2
+                exit 1
+                ;;
+        esac
+        ln -s "${target}" "${chrome_runtime}/${lib}"
+        note "disabled Chromium bundled ${lib}; ${chrome_runtime}/${lib#${chrome_runtime}/} links to guest Mesa ${target}"
+    done
+}
+
 stage_chromium_for_testing() {
     local cache_root="${BUILD_DIR}/wayland-chromium"
     local chrome_dir="${cache_root}/chrome-linux64"
@@ -362,6 +421,7 @@ stage_chromium_for_testing() {
     rm -rf "${app_root}/chrome-linux64"
     mkdir -p "${app_root}"
     rsync -aH --delete "${chrome_dir}/" "${app_root}/chrome-linux64/"
+    prune_chromium_bundled_gl_stack "${app_root}/chrome-linux64"
     note "staged wayland-chromium from ${chrome_bin}"
 }
 
@@ -369,6 +429,7 @@ stage_dbus
 stage_c_probes
 stage_wayland_probes
 stage_idle_if_available
+stage_chromium_egl_trace_preload
 stage_chromium_for_testing
 
 note "overlay=${OVERLAY}"

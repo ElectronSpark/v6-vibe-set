@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static void print_errno(const char *op)
@@ -303,6 +304,300 @@ out:
     close(server);
     unlink(path);
     printf("kde_unix_socket_probe epoll-listen result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int socketpair_sendmsg_ppoll_fd3_one(int sock_type, const char *label)
+{
+    struct pollfd pfd;
+    struct timespec timeout;
+    struct iovec iov;
+    struct msghdr msg;
+    char payload[8] = { 4, 0, 0, 0, 3, 0, 0, 0 };
+    char buf[8] = {0};
+    int sv[2] = {-1, -1};
+    int fd3_saved = -1;
+    int failed = 0;
+
+    errno = 0;
+    if (socketpair(AF_UNIX, sock_type | SOCK_CLOEXEC, 0, sv) < 0) {
+        char op[96];
+        snprintf(op, sizeof(op), "socketpair-sendmsg-ppoll-fd3-%s-socketpair",
+                 label);
+        print_errno(op);
+        return 1;
+    }
+
+    fd3_saved = dup(3);
+    if (fd3_saved < 0 && errno != EBADF) {
+        char op[96];
+        snprintf(op, sizeof(op), "socketpair-sendmsg-ppoll-fd3-%s-dup-save",
+                 label);
+        print_errno(op);
+        failed = 1;
+        goto out;
+    }
+
+    if (dup2(sv[1], 3) != 3) {
+        char op[96];
+        snprintf(op, sizeof(op), "socketpair-sendmsg-ppoll-fd3-%s-dup2",
+                 label);
+        print_errno(op);
+        failed = 1;
+        goto out;
+    }
+
+    iov.iov_base = payload;
+    iov.iov_len = sizeof(payload);
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    errno = 0;
+    ssize_t n = sendmsg(sv[0], &msg, MSG_NOSIGNAL);
+    printf("kde_unix_socket_probe socketpair-sendmsg-ppoll-fd3-%s sendmsg ret=%zd errno=%d %s\n",
+           label, n, errno, strerror(errno));
+    if (n != (ssize_t)sizeof(payload)) {
+        failed = 1;
+        goto out;
+    }
+
+    pfd.fd = 3;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 100000000;
+    errno = 0;
+    int pret = ppoll(&pfd, 1, &timeout, NULL);
+    printf("kde_unix_socket_probe socketpair-sendmsg-ppoll-fd3-%s ppoll ret=%d revents=0x%x errno=%d %s\n",
+           label, pret, pfd.revents, errno, strerror(errno));
+    if (pret != 1 || !(pfd.revents & POLLIN)) {
+        failed = 1;
+        goto out;
+    }
+
+    errno = 0;
+    ssize_t r = read(3, buf, sizeof(buf));
+    printf("kde_unix_socket_probe socketpair-sendmsg-ppoll-fd3-%s read ret=%zd errno=%d %s\n",
+           label, r, errno, strerror(errno));
+    if (r != (ssize_t)sizeof(payload) ||
+        memcmp(buf, payload, sizeof(payload)) != 0)
+        failed = 1;
+
+out:
+    if (fd3_saved >= 0) {
+        dup2(fd3_saved, 3);
+        close(fd3_saved);
+    } else {
+        close(3);
+    }
+    if (sv[0] >= 0)
+        close(sv[0]);
+    if (sv[1] >= 0)
+        close(sv[1]);
+    printf("kde_unix_socket_probe socketpair-sendmsg-ppoll-fd3-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int socketpair_sendmsg_ppoll_fd3(void)
+{
+    int failed = 0;
+
+    failed |= socketpair_sendmsg_ppoll_fd3_one(SOCK_STREAM, "stream");
+    failed |= socketpair_sendmsg_ppoll_fd3_one(SOCK_SEQPACKET, "seqpacket");
+    printf("kde_unix_socket_probe socketpair-sendmsg-ppoll-fd3 result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int socketpair_fd3_child_ack_one(int sock_type, const char *label,
+                                        int passcred, int ack_sendmsg)
+{
+    struct pollfd pfd;
+    struct timespec timeout;
+    struct iovec iov;
+    struct msghdr msg;
+    char payload[8] = { 4, 0, 0, 0, 3, 0, 0, 0 };
+    char ack[4] = { 'A', 'C', 'K', '!' };
+    char buf[8] = {0};
+    int sv[2] = {-1, -1};
+    int failed = 0;
+    int status = 0;
+    pid_t pid;
+
+    errno = 0;
+    if (socketpair(AF_UNIX, sock_type | SOCK_CLOEXEC, 0, sv) < 0) {
+        char op[128];
+        snprintf(op, sizeof(op), "socketpair-fd3-child-ack-%s-socketpair",
+                 label);
+        print_errno(op);
+        return 1;
+    }
+
+    if (passcred) {
+        int one = 1;
+        errno = 0;
+        if (setsockopt(sv[0], SOL_SOCKET, SO_PASSCRED,
+                       &one, sizeof(one)) < 0) {
+            char op[128];
+            snprintf(op, sizeof(op),
+                     "socketpair-fd3-child-ack-%s-so-passcred", label);
+            print_errno(op);
+            failed = 1;
+            goto out_nokill;
+        }
+    }
+
+    fflush(stdout);
+    pid = fork();
+    if (pid < 0) {
+        char op[128];
+        snprintf(op, sizeof(op), "socketpair-fd3-child-ack-%s-fork", label);
+        print_errno(op);
+        failed = 1;
+        goto out_nokill;
+    }
+
+    if (pid == 0) {
+        close(sv[0]);
+        if (dup2(sv[1], 3) != 3) {
+            char op[128];
+            snprintf(op, sizeof(op),
+                     "socketpair-fd3-child-ack-%s-child-dup2", label);
+            print_errno(op);
+            fflush(stdout);
+            _exit(20);
+        }
+        if (sv[1] != 3)
+            close(sv[1]);
+
+        pfd.fd = 3;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        timeout.tv_sec = 5;
+        timeout.tv_nsec = 0;
+        errno = 0;
+        int pret = ppoll(&pfd, 1, &timeout, NULL);
+        printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s child-ppoll ret=%d revents=0x%x errno=%d %s\n",
+               label, pret, pfd.revents, errno, strerror(errno));
+        if (pret != 1 || !(pfd.revents & POLLIN)) {
+            fflush(stdout);
+            _exit(21);
+        }
+
+        errno = 0;
+        ssize_t r = read(3, buf, sizeof(payload));
+        printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s child-read ret=%zd errno=%d %s\n",
+               label, r, errno, strerror(errno));
+        if (r != (ssize_t)sizeof(payload) ||
+            memcmp(buf, payload, sizeof(payload)) != 0) {
+            fflush(stdout);
+            _exit(22);
+        }
+
+        errno = 0;
+        ssize_t w;
+        if (ack_sendmsg) {
+            struct iovec aiov;
+            struct msghdr amsg;
+
+            aiov.iov_base = ack;
+            aiov.iov_len = sizeof(ack);
+            memset(&amsg, 0, sizeof(amsg));
+            amsg.msg_iov = &aiov;
+            amsg.msg_iovlen = 1;
+            w = sendmsg(3, &amsg, MSG_NOSIGNAL);
+        } else {
+            w = write(3, ack, sizeof(ack));
+        }
+        printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s child-%s ret=%zd errno=%d %s\n",
+               label, ack_sendmsg ? "sendmsg" : "write", w, errno,
+               strerror(errno));
+        fflush(stdout);
+        close(3);
+        _exit(w == (ssize_t)sizeof(ack) ? 0 : 23);
+    }
+
+    close(sv[1]);
+    sv[1] = -1;
+
+    iov.iov_base = payload;
+    iov.iov_len = sizeof(payload);
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    errno = 0;
+    ssize_t n = sendmsg(sv[0], &msg, MSG_NOSIGNAL);
+    printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s parent-sendmsg ret=%zd errno=%d %s\n",
+           label, n, errno, strerror(errno));
+    if (n != (ssize_t)sizeof(payload)) {
+        failed = 1;
+        goto out;
+    }
+
+    pfd.fd = sv[0];
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    timeout.tv_sec = 5;
+    timeout.tv_nsec = 0;
+    errno = 0;
+    int pret = ppoll(&pfd, 1, &timeout, NULL);
+    printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s parent-ppoll ret=%d revents=0x%x errno=%d %s\n",
+           label, pret, pfd.revents, errno, strerror(errno));
+    if (pret != 1 || !(pfd.revents & POLLIN)) {
+        failed = 1;
+        goto out;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    errno = 0;
+    ssize_t r = read(sv[0], buf, sizeof(ack));
+    printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s parent-read ret=%zd errno=%d %s\n",
+           label, r, errno, strerror(errno));
+    if (r != (ssize_t)sizeof(ack) || memcmp(buf, ack, sizeof(ack)) != 0)
+        failed = 1;
+
+out:
+    if (failed)
+        kill(pid, SIGKILL);
+    if (waitpid(pid, &status, 0) < 0) {
+        char op[128];
+        snprintf(op, sizeof(op), "socketpair-fd3-child-ack-%s-waitpid",
+                 label);
+        print_errno(op);
+        failed = 1;
+    } else {
+        printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s child-status=0x%x exited=%d code=%d\n",
+               label, status, WIFEXITED(status) ? 1 : 0,
+               WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            failed = 1;
+    }
+
+out_nokill:
+    if (sv[0] >= 0)
+        close(sv[0]);
+    if (sv[1] >= 0)
+        close(sv[1]);
+    printf("kde_unix_socket_probe socketpair-fd3-child-ack-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int socketpair_fd3_child_ack(void)
+{
+    int failed = 0;
+
+    failed |= socketpair_fd3_child_ack_one(SOCK_STREAM,
+                                           "stream-write", 0, 0);
+    failed |= socketpair_fd3_child_ack_one(SOCK_SEQPACKET,
+                                           "seqpacket-write", 0, 0);
+    failed |= socketpair_fd3_child_ack_one(SOCK_SEQPACKET,
+                                           "seqpacket-sendmsg", 0, 1);
+    failed |= socketpair_fd3_child_ack_one(SOCK_SEQPACKET,
+                                           "seqpacket-passcred-write", 1, 0);
+    printf("kde_unix_socket_probe socketpair-fd3-child-ack result=%s\n",
            failed ? "FAIL" : "PASS");
     return failed;
 }
@@ -1375,6 +1670,8 @@ int main(void)
     }
     printf("kde_unix_socket_probe data ret=0 byte=%c\n", byte);
     failed |= poll_roundtrip("/tmp/kde-unix-socket-probe-poll.sock");
+    failed |= socketpair_sendmsg_ppoll_fd3();
+    failed |= socketpair_fd3_child_ack();
     failed |= epoll_listen_roundtrip("/tmp/kde-unix-socket-probe-epoll.sock");
     failed |= epoll_connected_roundtrip("/tmp/kde-unix-socket-probe-epoll-connected.sock");
     failed |= epoll_listen_accept4_cloexec_roundtrip("/tmp/kde-unix-socket-probe-epoll-accept4.sock");

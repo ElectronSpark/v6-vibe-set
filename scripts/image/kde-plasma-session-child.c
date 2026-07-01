@@ -295,7 +295,7 @@ static void set_kde_env(void)
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("LOGNAME", "root", 1);
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("XDG_RUNTIME_DIR", "/dev/shm/xdg-runtime-root", 1);
     setenv("XDG_CACHE_HOME", "/dev/shm/kde-cache", 1);
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
@@ -323,6 +323,7 @@ static void set_kde_env(void)
            "/lib/x86_64-linux-gnu:/usr/lib:/lib",
            1);
     setenv("LD_PRELOAD",
+           "/opt/xv6-kde-abi-libs/libxv6-ifunc-memcpy.so:"
            "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:"
            "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0",
            0);

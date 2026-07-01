@@ -1,0 +1,264 @@
+#!/usr/bin/env expect
+
+set timeout 300
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/host-egl-gbm-gl-smoke-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set statuslog "$outdir/status.txt"
+set tmpimg "$outdir/host-egl-gbm-gl-smoke-proof.fs.img"
+set empty_startup "$outdir/empty-startup"
+set host_script "$outdir/host-egl-gbm-gl-smoke-proof.sh.host"
+set host_probe_log "$outdir/host-egl-gbm-gl-smoke.log"
+set host_mesa_probe_log "$outdir/host-egl-gbm-gl-smoke.mesa.log"
+set host_chrome_probe_log "$outdir/host-egl-gbm-gl-smoke.chrome-libs.log"
+set host_probe_status "$outdir/host-egl-gbm-gl-smoke.status"
+set guest_script "/host-egl-gbm-gl-smoke-proof.sh"
+set guest_probe_log "/host-egl-gbm-gl-smoke.log"
+set guest_mesa_probe_log "/host-egl-gbm-gl-smoke.mesa.log"
+set guest_chrome_probe_log "/host-egl-gbm-gl-smoke.chrome-libs.log"
+set guest_probe_status "/host-egl-gbm-gl-smoke.status"
+
+set attempt_profiles {
+    chromium_offscreen_pbuffer_es3
+    chromium_offscreen_pbuffer_es2
+    chromium_native_window_pbuffer_es3
+    chromium_native_window_pbuffer_es2
+    chromium_window_only_gbm_surface_es3
+    chromium_window_only_gbm_surface_es2
+    chromium_window_only_surfaceless_es3
+    chromium_window_only_surfaceless_es2
+    chromium_surfaceless_es3
+    chromium_surfaceless_es2
+}
+
+exec rm -f $runlog $statuslog $tmpimg $empty_startup $host_script $host_probe_log $host_mesa_probe_log $host_chrome_probe_log $host_probe_status
+exec cp $fsimg $tmpimg
+exec touch $empty_startup
+catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $empty_startup /etc/startup" $tmpimg >/dev/null 2>@1
+
+set fh [open $host_script w]
+puts $fh "#!/bin/sh"
+puts $fh "rm -f $guest_probe_log $guest_mesa_probe_log $guest_chrome_probe_log $guest_probe_status"
+puts $fh "rm -f /tmp/host-gui-host-egl-gbm-gl-smoke.log"
+puts $fh "echo status=running >$guest_probe_status"
+puts $fh "sync"
+puts $fh "export HOST_EGL_GBM_SMOKE_STDIO=0"
+puts $fh "export HOST_EGL_GBM_SMOKE_API=gles3"
+puts $fh "export HOST_EGL_GBM_SMOKE_CHROMIUM_ATTEMPTS=1"
+puts $fh "/bin/host-egl-gbm-gl-smoke --api=gles3 --chromium-attempts"
+puts $fh "cat /tmp/host-gui-host-egl-gbm-gl-smoke.log >$guest_mesa_probe_log"
+puts $fh "cat /tmp/host-gui-host-egl-gbm-gl-smoke.log >$guest_probe_log"
+puts $fh "rm -rf /chrome-egl-lib"
+puts $fh "mkdir /chrome-egl-lib"
+puts $fh "echo chrome_probe_start >$guest_chrome_probe_log"
+puts $fh "ln /opt/host-gui/wayland-chromium/chrome-linux64/libEGL.so /chrome-egl-lib/libEGL.so; echo chrome_ln_libEGL_so=\$? >>$guest_chrome_probe_log"
+puts $fh "ln /opt/host-gui/wayland-chromium/chrome-linux64/libEGL.so /chrome-egl-lib/libEGL.so.1; echo chrome_ln_libEGL_so_1=\$? >>$guest_chrome_probe_log"
+puts $fh "ln /opt/host-gui/wayland-chromium/chrome-linux64/libGLESv2.so /chrome-egl-lib/libGLESv2.so; echo chrome_ln_libGLESv2_so=\$? >>$guest_chrome_probe_log"
+puts $fh "ln /opt/host-gui/wayland-chromium/chrome-linux64/libGLESv2.so /chrome-egl-lib/libGLESv2.so.2; echo chrome_ln_libGLESv2_so_2=\$? >>$guest_chrome_probe_log"
+puts $fh "CHROME_LIB_PATH=/chrome-egl-lib:/opt/host-gui/host-egl-gbm-gl-smoke/lib:/lib:/lib/x86_64-linux-gnu:/lib64:/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib64:/opt/host-gui/wayland-chromium/chrome-linux64"
+puts $fh "echo chrome_lib_path=\$CHROME_LIB_PATH >>$guest_chrome_probe_log"
+puts $fh "( EGL_PLATFORM=gbm GALLIUM_DRIVER=virgl MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu LIBGL_DRIVERS_PATH=/lib/dri:/usr/lib/x86_64-linux-gnu/dri GBM_BACKENDS_PATH=/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm HOST_EGL_GBM_SMOKE_STDIO=1 HOST_EGL_GBM_SMOKE_API=gles3 HOST_EGL_GBM_SMOKE_CHROMIUM_ATTEMPTS=1 LD_LIBRARY_PATH=\$CHROME_LIB_PATH /opt/host-gui/host-egl-gbm-gl-smoke/lib/ld-linux-x86-64.so.2 --library-path \$CHROME_LIB_PATH /opt/host-gui/host-egl-gbm-gl-smoke/bin/host-egl-gbm-gl-smoke --api=gles3 --chromium-attempts >>$guest_chrome_probe_log 2>&1; echo chrome_probe_rc=\$? >>$guest_chrome_probe_log; echo chrome_probe_done=1 >>$guest_chrome_probe_log; sync ) &"
+puts $fh "chrome_pid=\$!"
+puts $fh "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do"
+puts $fh "  if grep chrome_probe_done=1 $guest_chrome_probe_log >/dev/null 2>&1; then break; fi"
+puts $fh "  sleep 1"
+puts $fh "done"
+puts $fh "if ! grep chrome_probe_done=1 $guest_chrome_probe_log >/dev/null 2>&1; then"
+puts $fh "  echo chrome_probe_timeout=1 pid=\$chrome_pid >>$guest_chrome_probe_log"
+puts $fh "  kill \$chrome_pid >/dev/null 2>&1"
+puts $fh "  sleep 1"
+puts $fh "fi"
+puts $fh "cat $guest_chrome_probe_log >>$guest_probe_log"
+puts $fh "echo status=DONE source=host-egl-gbm-gl-smoke-log >$guest_probe_status"
+puts $fh "sync"
+puts $fh "cat $guest_probe_status"
+close $fh
+
+catch { exec debugfs -w -R "rm $guest_script" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_log" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_mesa_probe_log" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_chrome_probe_log" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_status" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $host_script $guest_script" $tmpimg >/dev/null 2>@1
+
+set env(DISPLAY_MODE) "gtk"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "virtio-vga-gl-primary"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES) "1280"
+set env(QEMU_VIRTIO_GPU_YRES) "800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 video=1280x800"
+set send_slow {1 .01}
+
+proc fail {code label} {
+    global qemu_pid runlog statuslog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    set fh [open $statuslog w]
+    puts $fh "status=FAIL reason=$label log=$runlog"
+    close $fh
+    puts "\nHOST-EGL-GBM-GL-SMOKE-PROOF-FAIL reason=$label log=$runlog"
+    exit $code
+}
+
+proc dump_guest_file {guest host label} {
+    global tmpimg
+
+    set tmp "$host.debugfs.[pid]"
+    catch { file delete -force $tmp }
+    if {[catch { exec sh -c "debugfs -R 'dump $guest $tmp' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+        catch { file delete -force $tmp }
+        fail 30 "dump-$label"
+    }
+    file rename -force $tmp $host
+}
+
+proc analyze_probe_log {} {
+    global host_probe_log host_mesa_probe_log host_chrome_probe_log host_probe_status statuslog runlog attempt_profiles
+
+    if {![file exists $host_mesa_probe_log] || [file size $host_mesa_probe_log] == 0} {
+        fail 40 "empty-probe-log"
+    }
+    if {![file exists $host_chrome_probe_log] || [file size $host_chrome_probe_log] == 0} {
+        fail 46 "empty-chrome-libs-probe-log"
+    }
+    if {![file exists $host_probe_status] || [file size $host_probe_status] == 0} {
+        fail 41 "empty-probe-status"
+    }
+
+    set fh [open $host_mesa_probe_log r]
+    set mesa_log [read $fh]
+    close $fh
+
+    set fh [open $host_chrome_probe_log r]
+    set chrome_log [read $fh]
+    close $fh
+
+    set sfh [open $host_probe_status r]
+    set status [read $sfh]
+    close $sfh
+
+    if {![regexp {status=DONE source=host-egl-gbm-gl-smoke-log} $status]} {
+        fail 42 "missing-completion-status"
+    }
+    if {![regexp {host-egl-gbm-gl-smoke: phase=result status=PASS api=gles3 exit_status=0} $mesa_log]} {
+        fail 43 "missing-result-pass"
+    }
+    if {![regexp {host-egl-gbm-gl-smoke-launcher: phase=child_exit status=PASS exit_status=0} $mesa_log]} {
+        fail 44 "missing-launcher-child-pass"
+    }
+
+    array set seen {}
+    foreach profile $attempt_profiles {
+        set seen($profile) 0
+    }
+    set attempt_count 0
+    set attempt_pass 0
+    set attempt_fail 0
+    foreach line [split $mesa_log "\n"] {
+        if {![regexp {host-egl-gbm-gl-smoke: phase=egl_chromium_context_attempt } $line]} {
+            continue
+        }
+        incr attempt_count
+        if {[regexp { profile=([^ ]+)} $line -> profile] && [info exists seen($profile)]} {
+            set seen($profile) 1
+        }
+        if {[regexp { status=PASS } $line]} {
+            incr attempt_pass
+        } elseif {[regexp { status=FAIL } $line]} {
+            incr attempt_fail
+        }
+    }
+
+    set missing {}
+    foreach profile $attempt_profiles {
+        if {!$seen($profile)} {
+            lappend missing $profile
+        }
+    }
+    if {[llength $missing] != 0} {
+        fail 45 "missing-context-attempts-[join $missing ,]"
+    }
+
+    set chrome_attempt_count 0
+    set chrome_attempt_pass 0
+    set chrome_attempt_fail 0
+    set chrome_result "missing"
+    foreach line [split $chrome_log "\n"] {
+        if {[regexp {host-egl-gbm-gl-smoke: phase=result status=([^ ]+)} $line -> result]} {
+            set chrome_result $result
+        }
+        if {![regexp {host-egl-gbm-gl-smoke: phase=egl_chromium_context_attempt } $line]} {
+            continue
+        }
+        incr chrome_attempt_count
+        if {[regexp { status=PASS } $line]} {
+            incr chrome_attempt_pass
+        } elseif {[regexp { status=FAIL } $line]} {
+            incr chrome_attempt_fail
+        }
+    }
+
+    set fh [open $statuslog w]
+    puts $fh "status=PASS mesa_attempts=$attempt_count mesa_pass=$attempt_pass mesa_fail=$attempt_fail chrome_result=$chrome_result chrome_attempts=$chrome_attempt_count chrome_pass=$chrome_attempt_pass chrome_fail=$chrome_attempt_fail source=host-egl-gbm-gl-smoke-log mesa_log=$host_mesa_probe_log chrome_log=$host_chrome_probe_log combined_log=$host_probe_log runlog=$runlog"
+    close $fh
+    puts "\nHOST-EGL-GBM-GL-SMOKE-PROOF-PASS mesa_attempts=$attempt_count mesa_pass=$attempt_pass mesa_fail=$attempt_fail chrome_result=$chrome_result chrome_attempts=$chrome_attempt_count chrome_pass=$chrome_attempt_pass chrome_fail=$chrome_attempt_fail mesa_log=$host_mesa_probe_log chrome_log=$host_chrome_probe_log status=$host_probe_status runlog=$runlog"
+}
+
+log_file -a $runlog
+spawn timeout --foreground 300 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {root:/# ?} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 3 "crash-marker"
+    }
+    timeout {
+        fail 4 "no-prompt"
+    }
+    eof {
+        fail 5 "early-eof"
+    }
+}
+
+send "/bin/bash $guest_script; printf 'HOSTEGLGBMGL%s\\n' DONE\r"
+expect {
+    -re {status=DONE source=host-egl-gbm-gl-smoke-log} {
+        exp_continue
+    }
+    -re {HOSTEGLGBMGLDONE} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 6 "probe-crash-marker"
+    }
+    timeout {
+        fail 7 "probe-timeout"
+    }
+    eof {
+        fail 8 "probe-eof"
+    }
+}
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+set timeout 10
+expect {
+    eof {}
+    timeout {
+        catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    }
+}
+
+dump_guest_file $guest_probe_log $host_probe_log "probe-log"
+dump_guest_file $guest_mesa_probe_log $host_mesa_probe_log "mesa-probe-log"
+dump_guest_file $guest_chrome_probe_log $host_chrome_probe_log "chrome-probe-log"
+dump_guest_file $guest_probe_status $host_probe_status "probe-status"
+catch { file delete -force $tmpimg }
+analyze_probe_log
+exit 0

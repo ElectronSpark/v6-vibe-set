@@ -24,7 +24,7 @@ static void set_default_env(void)
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("LOGNAME", "root", 1);
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("XDG_RUNTIME_DIR", "/tmp/xdg-runtime-root", 0);
     setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:abstract=xv6_system_bus", 0);
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=xv6_session_bus", 0);

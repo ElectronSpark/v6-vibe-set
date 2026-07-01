@@ -1,0 +1,189 @@
+#!/usr/bin/env expect
+
+set timeout 300
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/kde-qt-plugin-graph-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set statuslog "$outdir/status.txt"
+set tmpimg "$outdir/kde-qt-plugin-graph-proof.fs.img"
+set empty_startup "$outdir/empty-startup"
+set host_script "$outdir/kde-qt-plugin-graph-proof.sh.host"
+set host_probe_log "$outdir/kde-qt-plugin-graph-probe.log"
+set host_probe_status "$outdir/kde-qt-plugin-graph-probe.status"
+set guest_script "/kde-qt-plugin-graph-proof.sh"
+set guest_probe_log "/kde-qt-plugin-graph-probe.log"
+set guest_probe_status "/kde-qt-plugin-graph-probe.status"
+
+exec rm -f $runlog $statuslog $tmpimg $empty_startup $host_script $host_probe_log $host_probe_status
+exec cp $fsimg $tmpimg
+exec touch $empty_startup
+catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $empty_startup /etc/startup" $tmpimg >/dev/null 2>@1
+
+set fh [open $host_script w]
+puts $fh "#!/bin/sh"
+puts $fh "rm -f $guest_probe_log $guest_probe_status"
+puts $fh "echo status=running source=kde-qt-plugin-graph-probe >$guest_probe_status"
+puts $fh "sync"
+puts $fh "/bin/kde-dlopen-probe --kwin-plugin-graph >$guest_probe_log"
+puts $fh "echo status=DONE source=kde-qt-plugin-graph-probe >$guest_probe_status"
+puts $fh "sync"
+puts $fh "cat $guest_probe_status"
+close $fh
+
+catch { exec debugfs -w -R "rm $guest_script" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_log" $tmpimg >/dev/null 2>@1 }
+catch { exec debugfs -w -R "rm $guest_probe_status" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $host_script $guest_script" $tmpimg >/dev/null 2>@1
+
+set env(DISPLAY_MODE) "gtk"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "virtio-vga-gl-primary"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES) "1280"
+set env(QEMU_VIRTIO_GPU_YRES) "800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 video=1280x800"
+set send_slow {1 .01}
+
+proc fail {code label} {
+    global qemu_pid runlog statuslog
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    set fh [open $statuslog w]
+    puts $fh "status=FAIL reason=$label log=$runlog"
+    close $fh
+    puts "\nKDE-QT-PLUGIN-GRAPH-PROOF-FAIL reason=$label log=$runlog"
+    exit $code
+}
+
+proc dump_guest_file {guest host label} {
+    global tmpimg
+
+    set tmp "$host.debugfs.[pid]"
+    catch { file delete -force $tmp }
+    if {[catch { exec sh -c "debugfs -R 'dump $guest $tmp' '$tmpimg' >/dev/null 2>&1" }]} {
+        catch { file delete -force $tmp }
+        fail 30 "dump-$label"
+    }
+    if {![file exists $tmp]} {
+        fail 31 "dump-$label-missing"
+    }
+    file rename -force $tmp $host
+}
+
+proc analyze_probe_log {} {
+    global host_probe_log host_probe_status statuslog runlog
+
+    if {![file exists $host_probe_log] || [file size $host_probe_log] == 0} {
+        fail 40 "empty-probe-log"
+    }
+    if {![file exists $host_probe_status] || [file size $host_probe_status] == 0} {
+        fail 41 "empty-probe-status"
+    }
+
+    set fh [open $host_probe_log r]
+    set log [read $fh]
+    close $fh
+
+    set sfh [open $host_probe_status r]
+    set status [read $sfh]
+    close $sfh
+
+    if {![regexp {status=DONE source=kde-qt-plugin-graph-probe} $status]} {
+        fail 42 "missing-completion-status"
+    }
+    if {![regexp {KDE_QT_PLUGIN_GRAPH_PROBE_PASS} $log]} {
+        fail 43 "missing-result-pass"
+    }
+    if {[regexp {KDE_QT_PLUGIN_GRAPH_PROBE_FAIL|KDE_QT_PLUGIN_GRAPH_PROBE_[A-Z0-9_]+:[^\n]* status=FAIL|KDE_QT_PLUGIN_GRAPH_PROBE_RESULT status=FAIL} $log]} {
+        fail 43 "probe-fail-row"
+    }
+    set pass_count [regexp -all {KDE_QT_PLUGIN_GRAPH_PROBE_PASS} $log]
+    if {$pass_count != 1} {
+        fail 43 "unexpected-pass-count-$pass_count"
+    }
+    foreach phase {qtcore qtdbus qtqml qtgui qtwidgets qtquick qtquicktemplates2 qtquickcontrols2 qtwaylandclient qtwaylandcompositor kf5coreaddons kf5configcore kf5configgui kf5configwidgets kf5i18n kf5globalaccel kf5globalaccelprivate kf5windowsystem kf5notifications kf5service kf5package kf5crash kf5style breezecommon breeze_style breeze_decoration frameworkintegration kwindowsystem_wayland_plugin kwin_nightcolor kwin_krunnerintegration kwin_colorintegration kdecorations2 kwineffects kwinglutils libkwin} {
+        set re "KDE_QT_PLUGIN_GRAPH_PROBE_DLOPEN:phase=$phase .* status=PASS"
+        if {![regexp $re $log]} {
+            fail 44 "missing-dlopen-pass-$phase"
+        }
+    }
+    foreach label {static_plugin_a static_plugin_b} {
+        set re "KDE_QT_PLUGIN_GRAPH_PROBE_KF5_TAIL:phase=libkwin label=$label status=PASS"
+        if {![regexp $re $log]} {
+            fail 45 "missing-kf5-tail-pass-$label"
+        }
+    }
+    foreach label {allocator_list allocator_mutex} {
+        set re "KDE_QT_PLUGIN_GRAPH_PROBE_PCRE2_TAIL:phase=libkwin label=$label status=PASS"
+        if {![regexp $re $log]} {
+            fail 45 "missing-pcre2-tail-pass-$label"
+        }
+    }
+    foreach label {workspace_self wayland_server_self cursors_self} {
+        set re "KDE_QT_PLUGIN_GRAPH_PROBE_KWIN_SELF:phase=libkwin label=$label status=PASS.*addr_stable=1"
+        if {![regexp $re $log]} {
+            fail 46 "missing-kwin-self-pass-$label"
+        }
+    }
+
+    set fh [open $statuslog w]
+    puts $fh "status=PASS source=kde-qt-plugin-graph-probe log=$host_probe_log runlog=$runlog"
+    close $fh
+    puts "\nKDE-QT-PLUGIN-GRAPH-PROOF-PASS probe_log=$host_probe_log status=$host_probe_status runlog=$runlog"
+}
+
+log_file -a $runlog
+spawn timeout --foreground 300 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re {root:/# ?} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 3 "crash-marker"
+    }
+    timeout {
+        fail 4 "no-prompt"
+    }
+    eof {
+        fail 5 "early-eof"
+    }
+}
+
+send "sh $guest_script; echo KDEQTPLUGINGRAPHDONE\r"
+expect {
+    -re {status=DONE source=kde-qt-plugin-graph-probe} {
+        exp_continue
+    }
+    -re {KDEQTPLUGINGRAPHDONE} {}
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        fail 6 "probe-crash-marker"
+    }
+    timeout {
+        fail 7 "probe-timeout"
+    }
+    eof {
+        fail 8 "probe-eof"
+    }
+}
+
+catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+set timeout 10
+expect {
+    eof {}
+    timeout {
+        catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    }
+}
+
+dump_guest_file $guest_probe_log $host_probe_log "probe-log"
+dump_guest_file $guest_probe_status $host_probe_status "probe-status"
+catch { file delete -force $tmpimg }
+analyze_probe_log
+exit 0

@@ -30,9 +30,147 @@ fi
 command -v mkfs.ext4 >/dev/null || { echo "make-rootfs: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
 command -v e2fsck   >/dev/null || { echo "make-rootfs: e2fsck not found (install e2fsprogs)" >&2; exit 1; }
 command -v rsync    >/dev/null || { echo "make-rootfs: rsync not found"               >&2; exit 1; }
+command -v perl     >/dev/null || { echo "make-rootfs: perl not found"                >&2; exit 1; }
+command -v realpath >/dev/null || { echo "make-rootfs: realpath not found"            >&2; exit 1; }
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
+
+compile_gsettings_schema_dir() {
+    local schemas_dir="$1"
+    local compiler="${SYSROOT}/host-tools/bin/glib-compile-schemas"
+    local schema_files
+
+    [[ -d "${schemas_dir}" ]] || return 0
+
+    shopt -s nullglob
+    schema_files=("${schemas_dir}"/*.gschema.xml)
+    shopt -u nullglob
+    (( ${#schema_files[@]} > 0 )) || return 0
+
+    if [[ ! -x "${compiler}" ]]; then
+        echo "make-rootfs: ${compiler} not found; cannot compile GSettings schemas in ${schemas_dir#${STAGE}}" >&2
+        exit 1
+    fi
+
+    echo "make-rootfs: compiling GSettings schemas in ${schemas_dir#${STAGE}}" >&2
+    PATH="${SYSROOT}/host-tools/bin${PATH:+:${PATH}}" \
+        "${compiler}" --strict "${schemas_dir}"
+
+    if [[ ! -f "${schemas_dir}/gschemas.compiled" ]]; then
+        echo "make-rootfs: glib-compile-schemas did not create ${schemas_dir#${STAGE}}/gschemas.compiled" >&2
+        exit 1
+    fi
+}
+
+compile_gsettings_schemas() {
+    compile_gsettings_schema_dir "$1/share/glib-2.0/schemas"
+    compile_gsettings_schema_dir "$1/usr/share/glib-2.0/schemas"
+}
+
+normalize_fontconfig_links() {
+    local stage="$1"
+    local confd="${stage}/etc/fonts/conf.d"
+    local link
+    local target
+    local relative
+
+    [[ -d "${confd}" ]] || return 0
+
+    while IFS= read -r -d '' link; do
+        target="$(readlink "${link}")"
+        [[ "${target}" == /* ]] || continue
+        [[ -e "${stage}${target}" ]] || continue
+        relative="$(realpath --relative-to="$(dirname "${link}")" "${stage}${target}")"
+        ln -sfn "${relative}" "${link}"
+    done < <(find "${confd}" -maxdepth 1 -type l -print0)
+}
+
+prune_xkb_file() {
+    local path="$1"
+    local expression="$2"
+    local stage_real real
+
+    [[ -f "${path}" ]] || return 0
+    stage_real="$(realpath -e -- "${STAGE}")"
+    real="$(realpath -e -- "${path}")"
+    case "${real}" in
+        "${stage_real}"/*) ;;
+        *)
+            echo "make-rootfs: refusing to prune XKB path outside stage: ${path}" >&2
+            return 1
+            ;;
+    esac
+    perl -0pi -e "${expression}" "${real}"
+}
+
+prune_xkb_for_xwayland() {
+    local root keycodes inet
+    local keycode_expr='s/^[ \t]*<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9]{2}|[1-9][0-9]{3,})>[^\n]*\n//mg'
+    local inet_expr='s/^[ \t]*key[ \t]+<I(?:25[6-9]|2[6-9][0-9]|[3-9][0-9]{2}|[1-9][0-9]{3,})>[^\n]*\n//mg'
+
+    # Xwayland still invokes xkbcomp's X11 keycode path, which is capped at
+    # 255.  Keep both historical XKB roots consistent after sysroot and
+    # generated overlays are layered into the final image.
+    for root in "${STAGE}/usr/share/X11" "${STAGE}/share/X11"; do
+        keycodes="${root}/xkb/keycodes/evdev"
+        inet="${root}/xkb/symbols/inet"
+        prune_xkb_file "${keycodes}" "${keycode_expr}"
+        prune_xkb_file "${inet}" "${inet_expr}"
+    done
+}
+
+compile_fontconfig_cache() {
+    local stage="$1"
+    local fc_cache="${stage}/usr/bin/fc-cache"
+    local pango_list="${stage}/bin/pango-list"
+    local cache_dir="${stage}/var/cache/fontconfig"
+    local ld_library_path
+    local pango_ld_library_path
+    local pango_log
+
+    [[ -x "${fc_cache}" && -d "${stage}/etc/fonts" ]] || return 0
+
+    normalize_fontconfig_links "${stage}"
+    mkdir -p "${cache_dir}"
+    echo "make-rootfs: compiling fontconfig caches" >&2
+    ld_library_path="${stage}/usr/lib/x86_64-linux-gnu:${stage}/usr/lib:${stage}/lib/x86_64-linux-gnu:${stage}/lib"
+    env -i \
+        HOME=/tmp \
+        TMPDIR=/tmp \
+        PATH=/usr/bin:/bin \
+        FONTCONFIG_SYSROOT="${stage}" \
+        FONTCONFIG_FILE=/etc/fonts/fonts.conf \
+        FONTCONFIG_PATH=/etc/fonts \
+        LD_LIBRARY_PATH="${ld_library_path}" \
+        "${fc_cache}" -s -f -v
+
+    if ! find "${cache_dir}" -type f -name '*.cache-*' -print -quit | grep -q .; then
+        echo "make-rootfs: fc-cache did not create files in /var/cache/fontconfig" >&2
+        exit 1
+    fi
+
+    if [[ -x "${pango_list}" ]]; then
+        echo "make-rootfs: compiling Pango/fontconfig caches" >&2
+        pango_ld_library_path="${stage}/lib:${stage}/usr/lib:${stage}/usr/lib/x86_64-linux-gnu:${stage}/lib/x86_64-linux-gnu"
+        pango_log="$(mktemp)"
+        if ! env -i \
+            HOME=/tmp \
+            TMPDIR=/tmp \
+            PATH=/usr/bin:/bin \
+            FONTCONFIG_SYSROOT="${stage}" \
+            FONTCONFIG_FILE=/etc/fonts/fonts.conf \
+            FONTCONFIG_PATH=/etc/fonts \
+            LD_LIBRARY_PATH="${pango_ld_library_path}" \
+            "${pango_list}" >"${pango_log}" 2>&1; then
+            echo "make-rootfs: pango-list failed while compiling fontconfig caches" >&2
+            tail -40 "${pango_log}" >&2 || true
+            rm -f "${pango_log}"
+            exit 1
+        fi
+        rm -f "${pango_log}"
+    fi
+}
 
 mkdir -p "${STAGE}"/{bin,dev,proc,sys,tmp,etc,root,lib,libexec,usr,share,var}
 chmod 01777 "${STAGE}/tmp"
@@ -92,6 +230,106 @@ fi
 mkdir -p "${STAGE}/run/mount"
 ln -sfn /proc/self/mounts "${STAGE}/etc/mtab"
 ln -sfn /usr/share/zoneinfo/Etc/UTC "${STAGE}/etc/localtime"
+
+normalize_python_entrypoints() {
+    # KDE package scripts use /usr/bin/python3 shebangs, but the xv6 image's
+    # tested Python executable is staged from the sysroot under /bin.
+    [[ -x "${STAGE}/bin/python3.12" ]] || return 0
+    mkdir -p "${STAGE}/usr/bin"
+    rm -f "${STAGE}/usr/bin/python3" "${STAGE}/usr/bin/python3.12"
+    ln -sfn /bin/python3.12 "${STAGE}/usr/bin/python3.12"
+    ln -sfn /bin/python3 "${STAGE}/usr/bin/python3"
+}
+
+normalize_python_entrypoints
+
+normalize_glibc_loader_entrypoints() {
+    local canonical="${STAGE}/lib/ld-linux-x86-64.so.2"
+    local fallback
+    local link
+
+    if [[ ! -e "${canonical}" ]]; then
+        for fallback in \
+            "${STAGE}/lib64/ld-linux-x86-64.so.2" \
+            "${STAGE}/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" \
+            "${STAGE}/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"; do
+            if [[ -e "${fallback}" ]]; then
+                mkdir -p "$(dirname "${canonical}")"
+                cp -aL "${fallback}" "${canonical}"
+                chmod 0755 "${canonical}" 2>/dev/null || true
+                break
+            fi
+        done
+    fi
+    [[ -e "${canonical}" ]] || return 0
+
+    mkdir -p \
+        "${STAGE}/lib64" \
+        "${STAGE}/lib/x86_64-linux-gnu" \
+        "${STAGE}/usr/lib/x86_64-linux-gnu" \
+        "${STAGE}/usr/lib64"
+    rm -f \
+        "${STAGE}/lib64/ld-linux-x86-64.so.2" \
+        "${STAGE}/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" \
+        "${STAGE}/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" \
+        "${STAGE}/usr/lib64/ld-linux-x86-64.so.2"
+    ln -sfn ../lib/ld-linux-x86-64.so.2 \
+        "${STAGE}/lib64/ld-linux-x86-64.so.2"
+    ln -sfn ../ld-linux-x86-64.so.2 \
+        "${STAGE}/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+    ln -sfn ../../../lib/ld-linux-x86-64.so.2 \
+        "${STAGE}/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+    ln -sfn ../../lib/ld-linux-x86-64.so.2 \
+        "${STAGE}/usr/lib64/ld-linux-x86-64.so.2"
+}
+
+normalize_glibc_loader_entrypoints
+
+normalize_glibc_runtime_entrypoints() {
+    local lib
+    local canonical
+    local fallback
+    local mode
+
+    mkdir -p "${STAGE}/usr/lib/x86_64-linux-gnu" \
+        "${STAGE}/lib/x86_64-linux-gnu"
+
+    for lib in \
+        libc.so.6 \
+        libm.so.6 \
+        libpthread.so.0 \
+        libdl.so.2 \
+        librt.so.1 \
+        libresolv.so.2 \
+        libutil.so.1 \
+        libanl.so.1 \
+        libthread_db.so.1; do
+        canonical="${STAGE}/usr/lib/x86_64-linux-gnu/${lib}"
+
+        if [[ ! -e "${canonical}" ]]; then
+            for fallback in \
+                "${STAGE}/lib/x86_64-linux-gnu/${lib}" \
+                "${STAGE}/lib/${lib}"; do
+                if [[ -e "${fallback}" ]]; then
+                    cp -aL "${fallback}" "${canonical}"
+                    break
+                fi
+            done
+        fi
+        [[ -e "${canonical}" ]] || continue
+
+        mode="$(stat -c '%a' "${canonical}" 2>/dev/null || true)"
+        rm -f "${STAGE}/lib/${lib}" "${STAGE}/lib/x86_64-linux-gnu/${lib}"
+        ln -sfn "../usr/lib/x86_64-linux-gnu/${lib}" "${STAGE}/lib/${lib}"
+        ln -sfn "../../usr/lib/x86_64-linux-gnu/${lib}" \
+            "${STAGE}/lib/x86_64-linux-gnu/${lib}"
+        if [[ -n "${mode}" ]]; then
+            chmod "${mode}" "${canonical}" 2>/dev/null || true
+        fi
+    done
+}
+
+normalize_glibc_runtime_entrypoints
 
 prune_overlay_graphics_runtime() {
     local dir
@@ -177,6 +415,49 @@ stage_plain_image_program() {
     "${cc_bin}" -O2 -Wall -Wextra -o "${out}" "${src}"
 }
 
+stage_host_bash() {
+    local bash_bin
+
+    bash_bin="$(command -v bash || true)"
+    if [[ -z "${bash_bin}" || ! -x "${bash_bin}" ]]; then
+        echo "make-rootfs: warning: host bash not found; guest /bin/bash not staged" >&2
+        return 0
+    fi
+
+    mkdir -p "${STAGE}/bin"
+    cp -L "${bash_bin}" "${STAGE}/bin/bash"
+    chmod 0755 "${STAGE}/bin/bash"
+}
+
+stage_xdg_settings_helper() {
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-xdg-settings.c" \
+        "${STAGE}/usr/bin/xdg-settings"
+}
+
+stage_kde_qtqml_ifunc_startup_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-qtqml-ifunc-startup-probe.c"
+    local out="${STAGE}/bin/kde-qtqml-ifunc-startup-probe"
+    local qtlib="${STAGE}/usr/lib/x86_64-linux-gnu/libQt5Qml.so.5"
+    local cc_bin="${CC:-cc}"
+
+    [[ -f "${src}" ]] || return 0
+    [[ -e "${qtlib}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-qtqml-ifunc-startup-probe" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "${out}")"
+    "${cc_bin}" -O2 -Wall -Wextra \
+        -Wl,--no-as-needed -Wl,--allow-shlib-undefined \
+        -Wl,-rpath,/usr/lib/x86_64-linux-gnu -Wl,-rpath,/lib/x86_64-linux-gnu \
+        -Wl,-rpath-link,"${STAGE}/usr/lib/x86_64-linux-gnu" \
+        -Wl,-rpath-link,"${STAGE}/lib/x86_64-linux-gnu" \
+        -L"${STAGE}/usr/lib/x86_64-linux-gnu" \
+        -L"${STAGE}/lib/x86_64-linux-gnu" \
+        -o "${out}" "${src}" -l:libQt5Qml.so.5 -ldl
+}
+
 stage_login1_shim() {
     local src="${REPO_ROOT}/scripts/image/xv6-login1-shim.c"
     local out="${STAGE}/bin/xv6-login1-shim"
@@ -239,6 +520,243 @@ stage_bluez_shim() {
     # shellcheck disable=SC2086
     "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
         -o "${out}" ${cflags} "${src}" ${libs}
+}
+
+stage_modemmanager_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-modemmanager-shim.c"
+    local out="${STAGE}/bin/xv6-modemmanager-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-modemmanager-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-modemmanager-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+}
+
+stage_networkmanager_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-networkmanager-shim.c"
+    local out="${STAGE}/bin/xv6-networkmanager-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-networkmanager-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-networkmanager-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin" "${STAGE}/usr/share/dbus-1/system-services"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+    cat > "${STAGE}/usr/share/dbus-1/system-services/org.freedesktop.NetworkManager.service" <<'EOF'
+[D-BUS Service]
+Name=org.freedesktop.NetworkManager
+Exec=/bin/xv6-networkmanager-shim
+User=root
+EOF
+}
+
+stage_network_status_sni() {
+    local src="${REPO_ROOT}/scripts/image/xv6-network-status-sni.c"
+    local out="${STAGE}/bin/xv6-network-status-sni"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-network-status-sni" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-network-status-sni" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+}
+
+stage_document_portal_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-document-portal-shim.c"
+    local out="${STAGE}/bin/xv6-document-portal-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-document-portal-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-document-portal-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin" "${STAGE}/usr/share/dbus-1/services"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+    cat > "${STAGE}/usr/share/dbus-1/services/org.freedesktop.portal.Documents.service" <<'EOF'
+[D-BUS Service]
+Name=org.freedesktop.portal.Documents
+Exec=/bin/xv6-document-portal-shim
+EOF
+}
+
+optional_service_exec_is_usable() {
+    local service="$1"
+    local exec_path
+
+    [[ -f "${service}" ]] || return 1
+    exec_path="$(
+        sed -n 's/^Exec=\([^[:space:]]*\).*/\1/p' "${service}" | head -n 1
+    )"
+    [[ -n "${exec_path}" ]] || return 1
+    case "${exec_path}" in
+        /bin/false|/usr/bin/false|/bin/xv6-false|/usr/bin/xv6-false)
+            return 1
+            ;;
+    esac
+    [[ -x "${STAGE}${exec_path}" ]]
+}
+
+write_optional_system_service_shim() {
+    local name="$1"
+    local mode="$2"
+    local service="${STAGE}/usr/share/dbus-1/system-services/${name}.service"
+
+    case "${mode}" in
+        minimal|force)
+            ;;
+        auto)
+            if optional_service_exec_is_usable "${service}"; then
+                echo "make-rootfs: preserving real optional D-Bus service ${name}"
+                return 0
+            fi
+            ;;
+        off|0|false|no)
+            echo "make-rootfs: optional D-Bus service shim disabled for ${name}"
+            return 0
+            ;;
+        *)
+            echo "make-rootfs: unknown XV6_DESKTOP_OPTIONAL_SERVICES_SHIM=${mode}" >&2
+            exit 1
+            ;;
+    esac
+
+    cat > "${service}" <<EOF
+[D-BUS Service]
+Name=${name}
+Exec=/bin/xv6-desktop-optional-services-shim
+User=root
+EOF
+}
+
+stage_desktop_optional_services_shim() {
+    local src="${REPO_ROOT}/scripts/image/xv6-desktop-optional-services-shim.c"
+    local out="${STAGE}/bin/xv6-desktop-optional-services-shim"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+    local shim_mode="${XV6_DESKTOP_OPTIONAL_SERVICES_SHIM:-minimal}"
+
+    [[ -f "${src}" ]] || return 0
+    case "${shim_mode}" in
+        off|0|false|no)
+            echo "make-rootfs: skipping xv6 desktop optional services shim"
+            return 0
+            ;;
+    esac
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build xv6-desktop-optional-services-shim" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build xv6-desktop-optional-services-shim" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags gio-2.0 gio-unix-2.0
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs gio-2.0 gio-unix-2.0
+    )"
+
+    mkdir -p "${STAGE}/bin" "${STAGE}/usr/share/dbus-1/system-services"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -Wl,-rpath,/usr/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+    write_optional_system_service_shim \
+        org.freedesktop.RealtimeKit1 "${shim_mode}"
+    write_optional_system_service_shim \
+        net.hadess.PowerProfiles "${shim_mode}"
+    write_optional_system_service_shim \
+        org.freedesktop.UPower.PowerProfiles "${shim_mode}"
+    write_optional_system_service_shim \
+        org.freedesktop.UDisks2 "${shim_mode}"
+    write_optional_system_service_shim \
+        org.freedesktop.UPower "${shim_mode}"
 }
 
 stage_kde_libinput_probe() {
@@ -384,11 +902,37 @@ stage_kde_wayland_seat_probe() {
 
 stage_kde_abi_overrides() {
     local dir="${STAGE}/opt/xv6-kde-abi-libs"
+    local cc_bin="${CC:-cc}"
+    local ifunc_map="${BUILD_DIR:-/tmp}/xv6-ifunc-memcpy-shim.map"
 
     mkdir -p "${dir}"
     ln -sfn /lib/libinput.so.10 "${dir}/libinput.so.10"
     ln -sfn /lib/libudev.so.1 "${dir}/libudev.so.1"
     ln -sfn /lib/libdrm.so.2 "${dir}/libdrm.so.2"
+    if [[ -f "${REPO_ROOT}/scripts/image/xv6-ifunc-memcpy-shim.c" ]]; then
+        if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+            echo "make-rootfs: ${cc_bin} not found; cannot build IFUNC memcpy shim" >&2
+            exit 1
+        fi
+        cat >"${ifunc_map}" <<'EOF'
+GLIBC_2.2.5 { };
+GLIBC_2.14 { } GLIBC_2.2.5;
+EOF
+        "${cc_bin}" -O2 -Wall -Wextra -fPIC -fno-builtin -shared -nostdlib \
+            -Wl,--version-script="${ifunc_map}" \
+            -Wl,-soname,libxv6-ifunc-memcpy.so \
+            -o "${dir}/libxv6-ifunc-memcpy.so" \
+            "${REPO_ROOT}/scripts/image/xv6-ifunc-memcpy-shim.c"
+    fi
+    if [[ -f "${REPO_ROOT}/scripts/image/kwin-alloc-trace-preload.c" ]]; then
+        if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+            echo "make-rootfs: ${cc_bin} not found; cannot build KWin alloc trace preload" >&2
+            exit 1
+        fi
+        "${cc_bin}" -O2 -Wall -Wextra -fPIC -shared \
+            -o "${dir}/kwin-alloc-trace-preload.so" \
+            "${REPO_ROOT}/scripts/image/kwin-alloc-trace-preload.c" -ldl
+    fi
 }
 
 stage_kde_session_launchers() {
@@ -412,14 +956,27 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kde-abi-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-dlopen-probe.c" \
         "${STAGE}/bin/kde-dlopen-probe"
+    stage_kde_qtqml_ifunc_startup_probe
     stage_plain_image_program "${REPO_ROOT}/scripts/image/icu-elf-tail-probe.c" \
         "${STAGE}/bin/icu-elf-tail-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kf5coreaddons-elf-tail-probe.c" \
+        "${STAGE}/bin/kf5coreaddons-elf-tail-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/chrome-rela-probe.c" \
+        "${STAGE}/bin/chrome-rela-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/chrome-zygote-fd3-probe.c" \
+        "${STAGE}/bin/chrome-zygote-fd3-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kwin-global-slot-probe.c" \
+        "${STAGE}/bin/kwin-global-slot-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
         "${STAGE}/bin/kde-unix-socket-probe"
     stage_kde_wayland_seat_probe
     stage_kde_drm_probe
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-process-probe.c" \
         "${STAGE}/bin/kde-process-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pgroup-kill-probe.c" \
+        "${STAGE}/bin/kde-pgroup-kill-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-thread-group-stop-probe.c" \
+        "${STAGE}/bin/kde-thread-group-stop-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-app-launch-probe.c" \
         "${STAGE}/bin/kde-app-launch-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-smoke-agent.c" \
@@ -448,7 +1005,12 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kde-trash-stat-probe"
     stage_login1_shim
     stage_bluez_shim
+    stage_modemmanager_shim
     stage_kde_libinput_probe
+    stage_networkmanager_shim
+    stage_network_status_sni
+    stage_document_portal_shim
+    stage_desktop_optional_services_shim
     stage_kde_proc_mountinfo_probe
     stage_kde_kwin_screenshot_probe
     stage_kde_abi_overrides
@@ -468,6 +1030,7 @@ if [[ -d "${STAGE}/share/X11/locale" &&
     mkdir -p "${STAGE}/usr/share/X11"
     ln -sfn ../../../share/X11/locale "${STAGE}/usr/share/X11/locale"
 fi
+prune_xkb_for_xwayland
 
 # 5b. Runtime configuration expected by network clients and OpenSSH.
 cat > "${STAGE}/etc/hosts" <<'EOF'
@@ -479,7 +1042,7 @@ nameserver 10.0.2.3
 EOF
 
 cat > "${STAGE}/etc/passwd" <<'EOF'
-root:x:0:0:root:/root:/bin/sh
+root:x:0:0:root:/root:/bin/bash
 messagebus:x:101:101:System Message Bus:/nonexistent:/bin/false
 polkitd:x:102:102:User for polkitd:/nonexistent:/bin/false
 systemd-network:x:103:103:systemd Network Management:/nonexistent:/bin/false
@@ -491,7 +1054,7 @@ rtkit:x:108:108:RealtimeKit daemon:/nonexistent:/bin/false
 systemd-resolve:x:109:109:systemd Resolver:/nonexistent:/bin/false
 systemd-timesync:x:110:110:systemd Time Synchronization:/nonexistent:/bin/false
 sshd:x:74:74:Privilege-separated SSH:/var/empty:/bin/false
-guest:x:1000:1000:Guest User:/home/guest:/bin/sh
+guest:x:1000:1000:Guest User:/home/guest:/bin/bash
 nobody:x:65534:65534:Nobody:/nonexistent:/bin/false
 EOF
 
@@ -535,6 +1098,37 @@ chmod 0600 "${STAGE}/etc/shadow"
 
 cat > "${STAGE}/etc/shells" <<'EOF'
 /bin/sh
+/bin/bash
+EOF
+
+cat > "${STAGE}/etc/profile" <<'EOF'
+export HOME="${HOME:-/root}"
+export USER="${USER:-root}"
+export LOGNAME="${LOGNAME:-root}"
+export SHELL=/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/
+export TERM="${TERM:-xterm-256color}"
+export LANG=C
+export LC_ALL=C
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export PYTHONHOME=/
+export PYTHONPATH=/lib/python3.12:/lib/python3.12/site-packages
+export PYTHONDONTWRITEBYTECODE=1
+EOF
+
+cat > "${STAGE}/root/.bashrc" <<'EOF'
+export SHELL=/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/
+export TERM="${TERM:-xterm-256color}"
+export LANG=C
+export LC_ALL=C
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export PYTHONHOME=/
+export PYTHONPATH=/lib/python3.12:/lib/python3.12/site-packages
+export PYTHONDONTWRITEBYTECODE=1
+PS1='root:\w# '
 EOF
 
 # Keep OpenSSL/GIO TLS clients on the same trust roots as NetSurf. OpenSSL's
@@ -754,6 +1348,17 @@ Host *
     LogLevel ERROR
 EOF
 
+stage_host_bash
+stage_xdg_settings_helper
+stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-dmesg.c" \
+    "${STAGE}/bin/dmesg"
+mkdir -p "${STAGE}/usr/bin"
+ln -sf /bin/dmesg "${STAGE}/usr/bin/dmesg"
+stage_plain_image_program "${REPO_ROOT}/scripts/image/xv6-ls.c" \
+    "${STAGE}/bin/ls"
+stage_plain_image_program "${REPO_ROOT}/scripts/image/proc-cmdline-rewrite-probe.c" \
+    "${STAGE}/bin/proc-cmdline-rewrite-probe"
+
 if command -v readelf >/dev/null 2>&1 &&
    find "${STAGE}/bin" "${STAGE}/libexec" -type f -perm -111 -print0 2>/dev/null |
    xargs -0 -r readelf -l 2>/dev/null |
@@ -944,6 +1549,30 @@ restore_local_mesa_runtime() {
     for dri in virtio_gpu_dri d3d12_dri swrast_dri kms_swrast_dri; do
         ln -sfn ../libgallium-26.2.0-devel.so "${STAGE}/lib/dri/${dri}.so"
     done
+    ln -sfn ../libgallium-26.2.0-devel.so \
+        "${STAGE}/lib/dri/virtio_gpu_drv_video.so"
+}
+
+repair_vaapi_driver_paths() {
+    local src_dir="${STAGE}/usr/lib/x86_64-linux-gnu/dri"
+    local dst_dir="${STAGE}/lib/dri"
+    local src name
+
+    [[ -d "${src_dir}" ]] || return 0
+    mkdir -p "${dst_dir}"
+
+    # VAAPI drivers are version-locked to Mesa/libva. Preserve local Mesa's
+    # virtio_gpu VA driver when restore_local_mesa_runtime staged it, and only
+    # backfill imported drivers for names that do not already exist in /lib/dri.
+    shopt -s nullglob
+    for src in "${src_dir}"/*_drv_video.so; do
+        name="$(basename "${src}")"
+        if [[ -e "${dst_dir}/${name}" || -L "${dst_dir}/${name}" ]]; then
+            continue
+        fi
+        ln -sfn "../../usr/lib/x86_64-linux-gnu/dri/${name}" "${dst_dir}/${name}"
+    done
+    shopt -u nullglob
 }
 
 stage_mesa_runtime() {
@@ -981,11 +1610,14 @@ stage_mesa_runtime() {
 
     prune_host_egl_gbm_runtime
     restore_local_mesa_runtime
+    repair_vaapi_driver_paths
     shopt -u nullglob
 }
 
 stage_host_glibc
 stage_mesa_runtime
+compile_gsettings_schemas "${STAGE}"
+compile_fontconfig_cache "${STAGE}"
 
 if [[ "${SIZE_MB}" == "auto" ]]; then
     stage_kib="$(du -sk "${STAGE}" | awk '{print $1}')"

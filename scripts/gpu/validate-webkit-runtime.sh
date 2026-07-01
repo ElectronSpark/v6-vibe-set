@@ -252,6 +252,14 @@ check_no_private_gobject_runtime
 
 if [[ -e "${sysroot}/lib/libgtk-3.so.0" &&
       -e "${sysroot}/lib/libgdk-3.so.0" ]]; then
+    if [[ ! -L "${sysroot}/lib/libgtk-3.so.0" ]]; then
+        echo "webkit-runtime-check: libgtk-3.so.0 must be a symlink to the staged GTK runtime file" >&2
+        exit 1
+    fi
+    if [[ ! -L "${sysroot}/lib/libgdk-3.so.0" ]]; then
+        echo "webkit-runtime-check: libgdk-3.so.0 must be a symlink to the staged GDK runtime file" >&2
+        exit 1
+    fi
     gtk_real="$(readlink -f "${sysroot}/lib/libgtk-3.so.0" 2>/dev/null || true)"
     gdk_real="$(readlink -f "${sysroot}/lib/libgdk-3.so.0" 2>/dev/null || true)"
     gtk_base="$(basename "${gtk_real:-${sysroot}/lib/libgtk-3.so.0}")"
@@ -460,6 +468,15 @@ if [[ -n "${fsimg}" ]]; then
     for path in "${required_rootfs[@]}"; do
         if ! debugfs -R "stat ${path}" "${fsimg}" >/dev/null 2>&1; then
             echo "webkit-runtime-check: fs.img missing ${path}" >&2
+            missing=1
+        fi
+    done
+    for path in /lib/libgtk-3.so.0 /lib/libgdk-3.so.0; do
+        if debugfs -R "stat ${path}" "${fsimg}" 2>/dev/null |
+           grep -q 'Type: symlink'; then
+            :
+        else
+            echo "webkit-runtime-check: fs.img ${path} must be a symlink" >&2
             missing=1
         fi
     done

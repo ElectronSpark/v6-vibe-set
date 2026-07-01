@@ -134,6 +134,7 @@ FILESYSTEM_TOOLS = {
 }
 
 ABI_PROBES = {
+    "alsapcmpoll",
     "cloexectest",
     "clonetest",
     "cowtest",
@@ -154,6 +155,7 @@ ABI_PROBES = {
     "mmaptest",
     "nouveauabitest",
     "pngtest",
+    "regpreservetest",
     "syscalltest",
     "testsig",
     "timerdemo",
@@ -213,7 +215,7 @@ ORIGINAL_UPSTREAM_URLS = {
     "readline": "https://git.savannah.gnu.org/git/readline.git",
     "sqlite": "https://github.com/sqlite/sqlite.git",
     "vim": "https://github.com/vim/vim.git",
-    "wayland-src": "https://gitlab.freedesktop.org/wayland/wayland.git",
+    "wayland-src": "https://github.com/ElectronSpark/v6-wayland.git",
     "weston": "https://gitlab.freedesktop.org/wayland/weston.git",
 }
 

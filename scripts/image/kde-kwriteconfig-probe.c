@@ -134,7 +134,7 @@ static void set_kde_env(void)
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("LOGNAME", "root", 1);
-    setenv("SHELL", "/bin/sh", 1);
+    setenv("SHELL", "/bin/bash", 1);
     setenv("XDG_RUNTIME_DIR", "/dev/shm/xdg-runtime-root", 1);
     setenv("XDG_CACHE_HOME", "/dev/shm/kde-cache", 1);
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
