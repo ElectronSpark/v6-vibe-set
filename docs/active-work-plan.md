@@ -169,6 +169,20 @@ because their current action items are summarized here.
      not promote AF_UNIX to notify-backed globally. Continue with Konsole/
      Qt/Wayland/DBus/PTTY admission evidence, and use the added slab
      cache/object diagnostic if the intermittent double-free reappears.
+   - 2026-07-01 PTY/poll attribution proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T114931Z-desktop-interaction-pty-poll-trace-pass/`.
+     The reducer passed with GPU nodes, NetworkManager shim, and PipeWire/
+     Pulse sink+monitor evidence intact. The new default-off
+     `pty_ready_trace=1` and `konsole_ready_trace=1` fd classifier show that
+     Konsole launch remains cheap (`launch_call_ms=55`) but `/dev/ptmx` and
+     `/dev/pts/1` are not opened until `5364-5365ms` after launch; the wrapper
+     starts at `7959ms` and bash at `8358ms`. Kernel PTY setup itself is quick
+     once reached (`ptmx-open` at guest `72853ms`, `pts-peer-fd` at
+     `72874ms`), and the first slave write wakes `/dev/ptmx` within the trace.
+     Classified poll samples before PTY creation are dominated by Konsole
+     Wayland `socket:[146]`, QDBus `socket:[148]`, and `eventfd`/pipe waits,
+     so keep the next branch on Qt/Wayland/DBus admission and wake propagation
+     before patching PTY behavior.
 
 3. Plan consolidation:
    - This file is the entry point.

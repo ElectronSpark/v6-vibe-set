@@ -337,6 +337,23 @@ Current direction:
   `af_unix_poll_notify_full_wait=1` only for focused wakeup/regression proof,
   and treat the RCU/slab double-free as a separate stability lead to reproduce
   with the new diagnostic.
+- 2026-07-01 default-off PTY and poll-fd attribution proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T114931Z-desktop-interaction-pty-poll-trace-pass/`.
+  The desktop interaction reducer passed with all hover, lower-left panel,
+  start-menu, tray, and direct-launch phases changed; `/dev/dri/card0`,
+  `/dev/dri/renderD128`, NetworkManager shim, and PipeWire/Pulse sink+monitor
+  evidence remained intact. The Konsole direct-launch split was
+  `launch_call_ms=55`, `pty_ptmx_since_launch_ms=5364`,
+  `pty_pts_since_launch_ms=5365`, `wrapper_start_since_launch_ms=7959`, and
+  `bash_start_since_launch_ms=8358`. Kernel PTY setup is not the main delay
+  once reached: `pty_ready_trace=1` recorded `ptmx-open` at guest `72853ms`,
+  `pts-peer-fd` at `72874ms`, then the first wrapper `pts-write` at `75673ms`
+  and `/dev/ptmx` poll readiness at `75682ms`. The new `konsole_ready_trace`
+  fd classifier shows the pre-PTY wait is primarily Qt/Wayland/DBus admission
+  and wake propagation through Wayland `socket:[146]`, QDBus `socket:[148]`,
+  eventfd, and pipe waits. Do not patch PTY behavior from this run; use the
+  next reducer to isolate the Qt/DBus/Wayland admission edge before changing
+  poll or AF_UNIX policy.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
