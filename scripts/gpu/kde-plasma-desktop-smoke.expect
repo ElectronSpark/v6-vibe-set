@@ -5969,15 +5969,22 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "{"
     puts $fh {  now_ms() {
     local up sec frac
-    if ! read up _ < /proc/uptime 2>/dev/null; then
-      echo 0
-      return
+    up="${EPOCHREALTIME:-}"
+    if [ -z "$up" ]; then
+      up="$(/bin/cat /proc/uptime 2>/dev/null)"
+      up="${up%% *}"
     fi
     sec="${up%.*}"
     frac="${up#*.}"
     if [ "$frac" = "$up" ]; then
       frac=0
     fi
+    case "$sec" in
+      ''|*[!0-9]*) echo 0; return ;;
+    esac
+    case "$frac" in
+      ''|*[!0-9]*) frac=0 ;;
+    esac
     frac="${frac}000"
     frac="${frac:0:3}"
     echo $((10#$sec * 1000 + 10#$frac))
@@ -6091,12 +6098,12 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh {      fi}
     puts $fh {      if [ "$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG" = 1 ]; then}
     puts $fh {        if [ "$KDE_APP_LAUNCH_PROBE_KPROFILE" = 1 ]; then}
-    puts $fh {          /bin/kprofile /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line; do}
+    puts $fh {          /bin/kprofile /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line || [ -n "$line" ]; do}
     puts $fh {            printf 'kde_interaction_helper wayland-debug-ms=%s line=%s\n' "$(now_ms)" "$line"}
     puts $fh {          done}
     puts $fh {          probe_rc=${PIPESTATUS[0]}}
     puts $fh {        else}
-    puts $fh {          /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line; do}
+    puts $fh {          /bin/kde-app-launch-probe 2>&1 | while IFS= read -r line || [ -n "$line" ]; do}
     puts $fh {            printf 'kde_interaction_helper wayland-debug-ms=%s line=%s\n' "$(now_ms)" "$line"}
     puts $fh {          done}
     puts $fh {          probe_rc=${PIPESTATUS[0]}}
@@ -6132,7 +6139,12 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "      ;;"
     puts $fh "  esac"
     puts $fh "} >\"\$log\" 2>&1"
-    puts $fh "printf 'status=DONE kind=%s label=%s probe_rc=%s\\n' \"\$kind\" \"\$label\" \"\${probe_rc:-0}\" >|\"\$tmp\""
+    puts $fh {result=PASS}
+    puts $fh {case "${probe_rc:-0}" in}
+    puts $fh {  0) result=PASS ;;}
+    puts $fh {  *) result=FAIL ;;}
+    puts $fh {esac}
+    puts $fh "printf 'status=DONE kind=%s label=%s result=%s probe_rc=%s\\n' \"\$kind\" \"\$label\" \"\$result\" \"\${probe_rc:-0}\" >|\"\$tmp\""
     puts $fh "sync"
     puts $fh "mv \"\$tmp\" \"\$status\""
     puts $fh "sync"
@@ -11554,8 +11566,8 @@ proc interaction_artifact_label {label} {
     return [regsub -all {[^A-Za-z0-9_.-]} $label {_}]
 }
 
-proc wait_for_interaction_status {status_path fail_label timeout_ms} {
-    global timeout
+proc wait_for_interaction_status {status_path fail_label timeout_ms {log_path ""}} {
+    global timeout outdir
 
     set old_timeout $timeout
     set deadline [expr {[clock milliseconds] + $timeout_ms}]
@@ -11575,7 +11587,19 @@ proc wait_for_interaction_status {status_path fail_label timeout_ms} {
     }
 
     set timeout $old_timeout
-    desktop_interaction_log_line "phase=artifact action=$fail_label status=timeout status_path=$status_path last_status=[evidence_quote $last_status]"
+    set timeout_log_path ""
+    set timeout_log_quote ""
+    if {$log_path ne ""} {
+        set timeout_log_text ""
+        if {[read_guest_artifact_text $log_path timeout_log_text]} {
+            set timeout_log_path "$outdir/kde-interaction-${fail_label}.timeout.log"
+            set fh [open $timeout_log_path w]
+            puts -nonewline $fh $timeout_log_text
+            close $fh
+            set timeout_log_quote [evidence_quote $timeout_log_text]
+        }
+    }
+    desktop_interaction_log_line "phase=artifact action=$fail_label status=timeout status_path=$status_path log_path=$log_path host_timeout_log=$timeout_log_path last_status=[evidence_quote $last_status] partial_log=$timeout_log_quote"
     finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $fail_label-artifact-timeout"
 }
 
@@ -11594,7 +11618,7 @@ proc run_desktop_interaction_helper_command {kind label helper_args timeout_ms} 
     set helper_start_ms [clock milliseconds]
     send "\025"
     send "/bin/bash $guest_desktop_interaction_script $kind $serial $safe_label $helper_args\r"
-    set status_text [wait_for_interaction_status $status_path "${kind}_${safe_label}" $timeout_ms]
+    set status_text [wait_for_interaction_status $status_path "${kind}_${safe_label}" $timeout_ms $log_path]
     set helper_elapsed_ms [expr {[clock milliseconds] - $helper_start_ms}]
     set timeout $old_timeout
 
@@ -11913,6 +11937,10 @@ proc measure_direct_app_launch_latency {} {
     set helper_elapsed_ms [lindex $result 4]
     set host_log_path [lindex $result 5]
     set host_status_path [lindex $result 6]
+    set probe_rc "missing"
+    if {[regexp {probe_rc=([-0-9]+)} [lindex $result 2] -> parsed_probe_rc]} {
+        set probe_rc $parsed_probe_rc
+    }
     set phase_text ""
     set phase_parse_text $log_text
     set phase_host_path "missing"
@@ -11927,6 +11955,10 @@ proc measure_direct_app_launch_latency {} {
     if {[regexp {kde_app_launch_probe[^\r\n]*status=FAIL} $log_text]} {
         desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=FAIL status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path"
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-app-launch-latency-probe-output-fail"
+    }
+    if {$probe_rc ne "missing" && $probe_rc != 0} {
+        desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=FAIL reason=probe-rc probe_rc=$probe_rc status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-app-launch-latency-probe-rc"
     }
     if {![regexp {kde_app_launch_probe[^\r\n]*status=PASS} $log_text]} {
         desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=FAIL reason=missing-pass status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
@@ -11986,7 +12018,7 @@ proc measure_direct_app_launch_latency {} {
             desktop_interaction_log_line "phase=direct-launch-detail action=kde-app-launch-probe detail=[evidence_quote [string map {"\t" " " "\r" "" "\n" " "} $match]]"
         }
     }
-    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms konsole_pty_ptmx_since_launch_ms=$konsole_pty_ptmx_since_launch_ms konsole_pty_pts_since_launch_ms=$konsole_pty_pts_since_launch_ms konsole_bash_start_since_launch_ms=$konsole_bash_start_since_launch_ms konsole_bash_start_since_wrapper_ms=$konsole_bash_start_since_wrapper_ms status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path phase_log=$phase_host_path"
+    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms probe_rc=$probe_rc konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms konsole_pty_ptmx_since_launch_ms=$konsole_pty_ptmx_since_launch_ms konsole_pty_pts_since_launch_ms=$konsole_pty_pts_since_launch_ms konsole_bash_start_since_launch_ms=$konsole_bash_start_since_launch_ms konsole_bash_start_since_wrapper_ms=$konsole_bash_start_since_wrapper_ms status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path phase_log=$phase_host_path"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms"
 }
 
