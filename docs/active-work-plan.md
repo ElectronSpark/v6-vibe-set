@@ -623,6 +623,24 @@ because their current action items are summarized here.
     static Chrome/dependency bytes and prelaunch file views as clean in that
     boot. The next target is concurrent child exec, file-backed mmap/fault, or
     dynamic-linker mapping behavior under Chromium multiprocess pressure.
+  - 2026-07-01 RELA and admission update:
+    `build-x86_64/kde-plasma-desktop-smoke-history/20260701T073450Z-chromium-low-noise-census-launcher-loader-regression/`
+    is a launcher/loader artifact, not video proof: Chromium exited `status=127`
+    after `elf_machine_rela_relative`, with no children. The standalone proof
+    `build-x86_64/chrome-rela-probe-proof/20260701T073850Z/run.log` then passed
+    eight full `chrome-rela-probe --chrome-chain` iterations
+    (`checked=35 skipped=5 missing=2 failed=0` each time), and its generated
+    8 GiB fs image was removed while preserving logs. The follow-up desktop
+    run
+    `build-x86_64/kde-plasma-desktop-smoke-history/20260701T074344Z-chromium-rela-clean-renderer-admission-chrome-crash/`
+    passed the in-boot RELA preprobe and had `launcher_loader_seen=0`. It
+    reached browser, zygote, GPU-process, NetworkService, and a renderer launch
+    packet to the zygote, but still no stable renderer role
+    (`exec_renderer=0`, `renderer_pids=0`). The page advanced through
+    `PERF-VIDEO start` with `skipCanPlay=1`, but `currentSrc` stayed empty and
+    `chrome_media_fd_trace` opened only `perf-video.html`, never the MP4.
+    Current target: browser-to-child/NetworkService handoff before MP4 open,
+    not DRM/FPS presentation.
   - 2026-06-30 enhanced GBM context-attribute proof:
     `build-x86_64/kde-plasma-desktop-smoke-history/20260630T022620-enhanced-gbm-context-attrs/`.
     This launch-only xv6 run passed the RELA preprobe and GBM preprobe while

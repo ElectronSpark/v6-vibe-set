@@ -1123,6 +1123,53 @@ Current direction:
 - Continue collecting video stalls as GPU-process restart, EGL admission,
   scanout/present pacing, or real memory/BO-growth evidence.
 
+2026-07-01 loader/admission update:
+
+- The low-noise census attempt archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T073450Z-chromium-low-noise-census-launcher-loader-regression/`
+  is not video evidence. It used `POST_STRICT=0`, launched Chromium with
+  no forced GL/ANGLE flags, and then the browser process exited `status=127`
+  after the glibc loader reported
+  `elf_machine_rela_relative: Assertion ... R_X86_64_RELATIVE`. No Chrome
+  children were cloned, no media lines appeared, and post-evidence correctly
+  classified the artifact as `status=FAIL reason=launcher-loader-regression`.
+  GPU nodes, NetworkManager SNI, and PipeWire/Pulse evidence stayed intact.
+- The standalone RELA proof
+  `build-x86_64/chrome-rela-probe-proof/20260701T073850Z/run.log` then passed
+  eight consecutive `/bin/chrome-rela-probe --chrome-chain` iterations:
+  every iteration ended with
+  `CHROME_RELA_PROBE_CHAIN_RESULT checked=35 skipped=5 missing=2 failed=0`
+  and `CHROME_RELA_PROBE_CHAIN_PASS`. The generated 8 GiB proof image was
+  removed after the run; the log and startup script remain.
+- The next desktop admission run is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T074344Z-chromium-rela-clean-renderer-admission-chrome-crash/`.
+  It enabled the RELA preprobe in the same KDE boot, and the preprobe passed
+  before Chromium launch. This time there was no loader assertion:
+  `launcher_loader_seen=0`, `rela_preprobe_summary ... status=PASS`.
+  Chromium reached browser, zygote, GPU-process, and NetworkService roles;
+  fast census saw `gpu_process_pids=1`, `utility_pids=1`, and `zygote_pids=6`.
+  The AF_UNIX payload trace captured a renderer launch packet sent to the
+  zygote (`--type=renderer`) and a subsequent child clone, but lifecycle/proc
+  evidence still did not observe a stable renderer process
+  (`exec_renderer=0`, `renderer_pids=0`), so treat renderer admission as
+  requested but not proven stable.
+- The same run moved the page past the old `before-src` stall using
+  `skipCanPlay=1`: console output reached `canplay-skip`, `fetch-begin`,
+  `after-src`, `after-load-call`, `PERF-VIDEO start`, `before-play`,
+  `after-play-call`, microtasks, and `fetch-error`. The `<video>` path still
+  never attached the media: `currentSrc=(empty)`, `ready=0`, `presented=0`,
+  `decoded=0`, `dropped=0`. `chrome_media_fd_trace` saw only
+  `/share/webkit/perf-video.html` open/fstat/pread64 events and no MP4 open.
+  NetworkService crashed/restarted after two "15 seconds with no connection"
+  children, and post-evidence classified the run as
+  `status=FAIL reason=chrome-crash-regression`.
+- Updated next reducer target: the current normal path is later than
+  deterministic loader/RELA corruption and raw zygote IPC primitives, but still
+  before media file open/playback. Focus on the browser-to-child/NetworkService
+  handoff that should turn the renderer request into a stable renderer and
+  initiate the `<video src=file://...mp4>` open. Avoid DRM/FPS patches until a
+  run opens the MP4 or reaches frame presentation.
+
 ### 4. Audio ABI Completeness
 
 Status: partial.
