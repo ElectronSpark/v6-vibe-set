@@ -1182,6 +1182,30 @@ Current direction:
   handoff that should turn the renderer request into a stable renderer and
   initiate the `<video src=file://...mp4>` open. Avoid DRM/FPS patches until a
   run opens the MP4 or reaches frame presentation.
+- The full-map, payload-heavy follow-up is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T080932Z-chromium-fullmaps-renderer-payload-no-connection-crash/`.
+  It kept normal no-forced-GL policy, disabled KDE preflight, and enabled
+  Chromium full maps, EGL preload tracing, AF_UNIX payload tracing, syscall
+  tails, and thread dumps. The run failed as
+  `status=FAIL reason=chrome-crash-regression`, but it is the strongest
+  admission evidence so far: GPU-process role was present
+  (`gpu_process_pids=1`), the GPU child opened `/dev/dri/renderD128`, Chromium
+  exchanged 1292 traced IPC operations in the EGL trace, delivered 68
+  `SCM_RIGHTS` messages carrying 123 fds, delivered credential-bearing
+  `CHILD_PING` traffic, and the browser sent a `--type=renderer` launch packet
+  with seven fds to zygote pid 189. The zygote received the 1508-byte renderer
+  payload and the passed fds, then cloned child pid 393, which continued
+  ChildIOT/Mojo traffic and received further `SCM_RIGHTS` fds. That rules out
+  raw AF_UNIX fd/credential delivery as the current whole failure.
+- The remaining blocker is now narrower: full Chromium still reports
+  `exec_renderer=0`, `renderer_pids=0`, no MP4 open, no media perf lines, and
+  three "15 seconds with no connection" children including NetworkService.
+  Because Chromium zygote children may not exec a new image, do not treat
+  `exec_renderer=0` alone as proof that no renderer was requested. The next
+  reducer should follow the post-fork zygote child from the received renderer
+  payload through argv/proctitle rewrite, initial-client-fd setup, Mojo channel
+  readiness, and media URL handoff. Avoid more EGL, DRM, or FPS work until a
+  renderer is stable enough to open the MP4 or emit media events.
 
 ### 4. Audio ABI Completeness
 

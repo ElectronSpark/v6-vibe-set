@@ -1229,14 +1229,33 @@ smaller and easier to gate:
 - Current interpretation: do not chase DRM present/FPS from this artifact yet.
   The next evidence target is browser-to-zygote/Mojo admission and why the
   zygotes spin without producing stable GPU/renderer roles.
+- 2026-07-01 full-map renderer-payload run:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T080932Z-chromium-fullmaps-renderer-payload-no-connection-crash/`.
+  This run failed as
+  `KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-chrome-crash-regression`, but
+  it materially narrowed the blocker. Chromium used normal no-forced-GL policy,
+  the GPU child opened `/dev/dri/renderD128`, fast census saw
+  `gpu_process_pids=1`, and the EGL preload trace observed 1292 IPC events, 68
+  `SCM_RIGHTS` control messages carrying 123 fds, and credential-bearing
+  `CHILD_PING` traffic. The browser sent a 1508-byte `--type=renderer`
+  launch packet with seven fds to a zygote; the zygote received the payload and
+  fds, cloned a child, and that child continued ChildIOT/Mojo traffic. Raw
+  AF_UNIX fd/credential delivery is therefore no longer the whole blocker.
+  The remaining gap is post-fork renderer/Mojo admission: post-evidence still
+  reported `renderer_pids=0`, `exec_renderer=0`, no MP4 open, no media perf
+  lines, and three "15 seconds with no connection" children including
+  NetworkService. Because Chromium zygote children may not exec a new image,
+  treat `exec_renderer=0` as an incomplete role signal, not by itself proof
+  that no renderer was requested.
 
 ## Next Chromium Reducer
 
-Use this zero-framebuffer-sample child-admission run before a behavior-changing
-kernel patch. It keeps the normal no-forced-GL policy, runs fast process census
-even with capture disabled, enables bounded IPC/syscall diagnostics, and turns
-on one final full-map Chromium process snapshot so repeated zygote RIPs can be
-mapped in the same boot:
+Use a lower-perturbation child-admission run before a behavior-changing kernel
+patch. It should keep the normal no-forced-GL policy and zero framebuffer
+samples, but avoid broad EGL tracing unless the specific question is EGL. The
+next evidence target is the post-fork zygote child after it receives a
+`--type=renderer` payload: argv/proctitle rewrite, initial-client-fd setup,
+Mojo channel readiness, and media URL handoff.
 
 ```sh
 KDE_SMOKE_REDUCER=chromium-video \
@@ -1244,25 +1263,25 @@ KDE_SMOKE_KDE_PREFLIGHT=0 \
 KDE_SMOKE_TOLERATE_READY_USER_EXCEPTIONS=1 \
 KDE_SMOKE_CHROMIUM_MULTIPROCESS=1 \
 KDE_SMOKE_CHROMIUM_AUTO_GL_FLAGS=0 \
-KDE_SMOKE_CHROMIUM_EGL_TRACE=1 \
 KDE_SMOKE_CHROMIUM_PROCESS_FULL_MAPS=1 \
 KDE_SMOKE_CHROMIUM_VIDEO_EGL_GBM_PREPROBE=0 \
-KDE_SMOKE_CHROMIUM_VIDEO_RELA_PREPROBE=0 \
+KDE_SMOKE_CHROMIUM_VIDEO_RELA_PREPROBE=1 \
 KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES=0 \
-KDE_SMOKE_CHROMIUM_VIDEO_SAMPLER_MS=12000 \
-KDE_SMOKE_CHROMIUM_VIDEO_FAST_CENSUS_MS=12000 \
+KDE_SMOKE_CHROMIUM_VIDEO_SAMPLER_MS=18000 \
+KDE_SMOKE_CHROMIUM_VIDEO_FAST_CENSUS_MS=22000 \
 KDE_SMOKE_CHROMIUM_VIDEO_FAST_CENSUS_INTERVAL_MS=50 \
 KDE_CHROMIUM_URL='file:///share/webkit/perf-video.html?asset=perf-1280x800-60fps.mp4&ms=8000&startupMs=4000&postFailObserveMs=4000&hud=1&skipCanPlay=1' \
-QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto chrome_lifecycle_trace=1 chrome_media_fd_trace=1 chrome_unix_ipc_trace=1 chrome_unix_ipc_payload_trace=1 chrome_syscall_tail_trace=1 chrome_syscall_trace_child_processes=1 chrome_poll_summary=1 chrome_thread_dump=1 chrome_thread_dump_samples=6 chrome_thread_dump_interval_ms=2000' \
+QEMU_APPEND_EXTRA='kde_xwayland_glamor=auto vfs_backend_read_revive=1 poll_notify_full_wait=1 chrome_lifecycle_trace=1 chrome_media_fd_trace=1 chrome_unix_ipc_trace=1 chrome_unix_ipc_payload_trace=1 chrome_unix_rw_trace=1 chrome_syscall_tail_trace=1 chrome_syscall_trace_child_processes=1 chrome_poll_summary=1 chrome_thread_dump=1 chrome_thread_dump_samples=6 chrome_thread_dump_interval_ms=2000 kasan=0 kmemleak=0 klog=0' \
 timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
 ```
 
 Interpretation:
 
-- No renderer/GPU/utility in fast census: chase browser-to-zygote and Mojo
-  handoff using the bounded payload/tail summaries.
-- Renderer/GPU appears but no media events: split the next reducer between MP4
-  open/read, Chromium media pipeline startup, and renderer IPC.
+- No renderer payload or child clone: chase browser-to-zygote launch request.
+- Renderer payload and child clone but no stable renderer role: inspect
+  post-fork argv/proctitle rewrite, initial-client-fd, and Mojo readiness.
+- Stable renderer/GPU appears but no media events: split the next reducer
+  between MP4 open/read, Chromium media pipeline startup, and renderer IPC.
 - Renderer/GPU stable but low or missing Wayland primary commits/callbacks:
   chase Wayland surface or present pacing.
 - Wayland commits/callbacks advance but Chrome execbuffers/fences remain near
