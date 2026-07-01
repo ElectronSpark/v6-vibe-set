@@ -277,6 +277,20 @@ Current direction:
   passed with `direct-launch=4847ms`, `konsole_wait_ms=3588`, tray
   open/close `1598/1111ms`, start-menu open/close `2108/1031ms`, network SNI
   registration, PipeWire sink/monitor readiness, and virgl DRM nodes registered.
+- The plain `desktop-interaction` final-capture path now stages the xv6-owned
+  `/kdi.sh` helper before boot. The previous Konsole-only Wayland trace run at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T102416Z-desktop-interaction-konsole-wayland-trace-agent-pass-final-capture-fail/`
+  had already reached `KDE_SMOKE_AGENT_DONE status=PASS`, but then failed the
+  outer final screenshot because `/kdi.sh` was missing. The proof run at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T103514Z-desktop-interaction-final-capture-helper-pass/`
+  now passes with `status_code=0`, preserves `kde-plasma-final.ppm/png`,
+  records `101` Konsole-gated `kde-wayland-unix` lines, and keeps the same
+  health invariants: `/dev/dri/card0`, `/dev/dri/renderD128`, PipeWire Pulse
+  sink/monitor readiness, network SNI registration, `kde_kwin_screenshot_probe
+  result=PASS`, and no panic/exception. In that proof, Konsole exec remained
+  cheap (`fork_elapsed_ms=8`, `exec_elapsed_ms=15`) while shell readiness still
+  dominated (`konsole_wait_ms=5048`), so the next Plasma bottleneck remains
+  readiness/wakeup after exec rather than process creation.
 - 2026-07-01 phase instrumentation is now staged in xv6-owned probes/harness:
   `kde-app-launch-probe` emits Konsole launch/marker/wrapper timing, and the
   desktop interaction reducer preserves `fbstat sample-current` open/info/

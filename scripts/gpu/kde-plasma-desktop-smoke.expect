@@ -12000,7 +12000,8 @@ if {[kde_smoke_reducer] eq "chromium-video"} {
     stage_chromium_video_rela_preprobe_script
 }
 
-if {[kde_smoke_reducer] eq "desktop-interaction-latency" ||
+if {[kde_smoke_reducer] eq "desktop-interaction" ||
+    [kde_smoke_reducer] eq "desktop-interaction-latency" ||
     [kde_smoke_reducer] eq "desktop-color-wakeup"} {
     stage_desktop_interaction_helper_script
 }
