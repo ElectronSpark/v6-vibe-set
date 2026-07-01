@@ -101,6 +101,8 @@ set role_probe_log "$outdir/kde-role-probe.log"
 set desktop_interaction_log "$outdir/kde-desktop-interaction-latency.log"
 set konsole_phase_log "$outdir/xv6-konsole-phase.log"
 set prompt_sync_log "$outdir/kde-prompt-sync.log"
+set host_cursor_sync_sh "$outdir/host-cursor-sync.sh"
+set host_cursor_sync_ps1 "$outdir/host-cursor-sync.ps1"
 set before_png "$outdir/kde-plasma-before.png"
 set after_png "$outdir/kde-plasma-after.png"
 set final_png "$outdir/kde-plasma-final.png"
@@ -134,6 +136,17 @@ proc env_bool {name default} {
         return 0
     }
     return $default
+}
+
+proc kde_interaction_input_source {} {
+    set input_source "qemu-monitor"
+    if {[info exists ::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]} {
+        set requested [string tolower $::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]
+        if {$requested eq "guest" || $requested eq "mouseinject"} {
+            set input_source "guest"
+        }
+    }
+    return $input_source
 }
 
 set chromium_video_warmup_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_WARMUP_SECONDS) : "8"}]
@@ -299,7 +312,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$prompt_sync_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -359,6 +372,30 @@ set env(QEMU_AUDIO) "none"
 set env(QEMU_VIRTIO_GPU_XRES) "1280"
 set env(QEMU_VIRTIO_GPU_YRES) "800"
 set kde_smoke_reducer [expr {[info exists env(KDE_SMOKE_REDUCER)] ? $env(KDE_SMOKE_REDUCER) : ""}]
+set kde_interaction_input_source [kde_interaction_input_source]
+set kde_interaction_cursor_owner "default"
+set kde_interaction_host_cursor_sync 0
+if {$kde_smoke_reducer eq "desktop-interaction-latency" ||
+    $kde_smoke_reducer eq "desktop-interaction" ||
+    $kde_smoke_reducer eq "desktop-color-wakeup"} {
+    if {$kde_interaction_input_source eq "qemu-monitor"} {
+        if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+            set env(QEMU_GTK_CURSOR_MODE) "host"
+        }
+        if {$env(QEMU_GTK_CURSOR_MODE) eq "host"} {
+            if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+                set env(QEMU_GTK_SHOW_CURSOR) "on"
+            }
+            set kde_interaction_cursor_owner "qemu-frontend-host"
+            set kde_interaction_host_cursor_sync \
+                [env_bool KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC 1]
+        } else {
+            set kde_interaction_cursor_owner "explicit-$env(QEMU_GTK_CURSOR_MODE)"
+        }
+    } else {
+        set kde_interaction_cursor_owner "guest-input-default"
+    }
+}
 set qemu_timeout ""
 if {[info exists env(KDE_SMOKE_QEMU_TIMEOUT_SECONDS)]} {
     set qemu_timeout $env(KDE_SMOKE_QEMU_TIMEOUT_SECONDS)
@@ -461,6 +498,166 @@ proc optional_monitor_screendump {} {
 proc host_screenshot {name path} {
     global root outdir
     catch { exec sh -c "'$root/scripts/gpu/capture-host-screen.sh' '$path' > '$outdir/kde-plasma-host-$name.log' 2>&1 || true" }
+}
+
+proc stage_host_cursor_sync_script {} {
+    global host_cursor_sync_sh host_cursor_sync_ps1
+
+    set ps [open $host_cursor_sync_ps1 w]
+    puts $ps {Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class Xv6CursorNative {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc,
+                                          IntPtr lParam);
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text,
+                                           int count);
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int x, int y);
+}
+"@
+
+$title = $env:XV6_QEMU_WINDOW_TITLE
+if ([string]::IsNullOrWhiteSpace($title)) {
+    $title = "xv6-os QEMU"
+}
+$guestX = [int]$env:XV6_CURSOR_X
+$guestY = [int]$env:XV6_CURSOR_Y
+if ($guestX -lt 0) { $guestX = 0 }
+if ($guestX -gt 65535) { $guestX = 65535 }
+if ($guestY -lt 0) { $guestY = 0 }
+if ($guestY -gt 65535) { $guestY = 65535 }
+
+$found = [IntPtr]::Zero
+$callback = [Xv6CursorNative+EnumWindowsProc]{
+    param([IntPtr]$hWnd, [IntPtr]$lParam)
+    if (-not [Xv6CursorNative]::IsWindowVisible($hWnd)) {
+        return $true
+    }
+    $text = New-Object System.Text.StringBuilder 512
+    [void][Xv6CursorNative]::GetWindowText($hWnd, $text, $text.Capacity)
+    $name = $text.ToString()
+    if ($name.Contains($title) -or
+        ($title -eq "xv6-os QEMU" -and $name.Contains("QEMU"))) {
+        $script:found = $hWnd
+        return $false
+    }
+    return $true
+}
+[void][Xv6CursorNative]::EnumWindows($callback, [IntPtr]::Zero)
+if ($found -eq [IntPtr]::Zero) {
+    Write-Output "status=SKIP reason=window-not-found title=$title"
+    exit 77
+}
+
+$rect = New-Object Xv6CursorNative+RECT
+if (-not [Xv6CursorNative]::GetClientRect($found, [ref]$rect)) {
+    Write-Output "status=FAIL reason=get-client-rect"
+    exit 2
+}
+$origin = New-Object Xv6CursorNative+POINT
+$origin.X = 0
+$origin.Y = 0
+if (-not [Xv6CursorNative]::ClientToScreen($found, [ref]$origin)) {
+    Write-Output "status=FAIL reason=client-to-screen"
+    exit 2
+}
+
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+if ($width -le 0 -or $height -le 0) {
+    Write-Output "status=FAIL reason=empty-client width=$width height=$height"
+    exit 2
+}
+$screenX = $origin.X + [int][Math]::Round(($guestX / 65535.0) * ($width - 1))
+$screenY = $origin.Y + [int][Math]::Round(($guestY / 65535.0) * ($height - 1))
+if (-not [Xv6CursorNative]::SetCursorPos($screenX, $screenY)) {
+    Write-Output "status=FAIL reason=set-cursor-pos screen_x=$screenX screen_y=$screenY"
+    exit 2
+}
+Write-Output "status=PASS screen_x=$screenX screen_y=$screenY client_x=$($origin.X) client_y=$($origin.Y) client_w=$width client_h=$height title=$title"
+exit 0
+}
+    close $ps
+
+    set sh [open $host_cursor_sync_sh w]
+    puts $sh {#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+        echo "status=FAIL reason=usage"
+        exit 2
+fi
+if ! command -v powershell.exe >/dev/null 2>&1 ||
+   ! command -v wslpath >/dev/null 2>&1; then
+        echo "status=SKIP reason=no-powershell"
+        exit 77
+fi
+ps1_win=$(wslpath -w "$XV6_CURSOR_SYNC_PS1")
+wslenv="XV6_CURSOR_X:XV6_CURSOR_Y:XV6_QEMU_WINDOW_TITLE"
+wslenv="${wslenv}:XV6_CURSOR_SYNC_PS1"
+if [[ -n "${WSLENV:-}" ]]; then
+        wslenv="${wslenv}:${WSLENV}"
+fi
+XV6_CURSOR_X="$1" \
+XV6_CURSOR_Y="$2" \
+XV6_QEMU_WINDOW_TITLE="${QEMU_WINDOW_TITLE:-xv6-os QEMU}" \
+XV6_CURSOR_SYNC_PS1="$XV6_CURSOR_SYNC_PS1" \
+WSLENV="$wslenv" \
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ps1_win"
+}
+    close $sh
+    catch { exec chmod +x $host_cursor_sync_sh }
+}
+
+proc sync_host_cursor_to_guest {x y} {
+    global host_cursor_sync_sh host_cursor_sync_ps1
+    global kde_interaction_host_cursor_sync
+
+    if {!$kde_interaction_host_cursor_sync} {
+        return
+    }
+
+    set start_ms [clock milliseconds]
+    set rc [catch {
+        exec env XV6_CURSOR_SYNC_PS1=$host_cursor_sync_ps1 \
+            $host_cursor_sync_sh $x $y
+    } out]
+    set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
+    set text [string map {"\t" " " "\r" "" "\n" " "} $out]
+    if {$rc == 0} {
+        desktop_interaction_log_line "phase=host-cursor-sync status=PASS x=$x y=$y elapsed_ms=$elapsed_ms detail=[evidence_quote $text]"
+    } elseif {[regexp {status=SKIP} $out]} {
+        desktop_interaction_log_line "phase=host-cursor-sync status=SKIP x=$x y=$y elapsed_ms=$elapsed_ms detail=[evidence_quote $text]"
+    } else {
+        desktop_interaction_log_line "phase=host-cursor-sync status=FAIL x=$x y=$y elapsed_ms=$elapsed_ms detail=[evidence_quote $text]"
+    }
 }
 
 proc fb_visual_enabled {} {
@@ -11784,13 +11981,9 @@ proc run_interaction_command {label command {allow_timeout 0}} {
 }
 
 proc run_desktop_interaction_action {label helper_args} {
-    set input_source "qemu-monitor"
-    if {[info exists ::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]} {
-        set requested [string tolower $::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]
-        if {$requested eq "guest" || $requested eq "mouseinject"} {
-            set input_source "guest"
-        }
-    }
+    global kde_interaction_input_source
+
+    set input_source $kde_interaction_input_source
     if {$input_source eq "qemu-monitor"} {
         set mode [lindex $helper_args 0]
         set start_ms [clock milliseconds]
@@ -11801,6 +11994,7 @@ proc run_desktop_interaction_action {label helper_args} {
             set x [lindex $helper_args 1]
             set y [lindex $helper_args 2]
             set ok [monitor_command "mouse_move $x $y"]
+            sync_host_cursor_to_guest $x $y
             set injection_count 1
         } elseif {$mode eq "click"} {
             set x [lindex $helper_args 1]
@@ -11808,6 +12002,7 @@ proc run_desktop_interaction_action {label helper_args} {
             if {![monitor_command "mouse_move $x $y"]} {
                 set ok 0
             }
+            sync_host_cursor_to_guest $x $y
             incr injection_count
             after 80
             if {![monitor_command "mouse_button 1"]} {
@@ -12097,6 +12292,7 @@ proc measure_direct_app_launch_latency {} {
 
 proc run_desktop_interaction_latency_reducer {} {
     global guest_before_ppm guest_after_ppm
+    global kde_interaction_input_source kde_interaction_cursor_owner
 
     set hover_timeout_ms [env_int_range KDE_SMOKE_INTERACTION_HOVER_TIMEOUT_MS 2500 100 30000]
     set tray_timeout_ms [env_int_range KDE_SMOKE_INTERACTION_TRAY_TIMEOUT_MS 5000 100 30000]
@@ -12111,15 +12307,17 @@ proc run_desktop_interaction_latency_reducer {} {
     set visible_min_nonblack [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_MIN_NONBLACK 1 1 1000000]
     set visible_attempts [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_ATTEMPTS 120 1 600]
     set visible_interval_ms [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_INTERVAL_MS 500 50 5000]
-    set input_source "qemu-monitor"
-    if {[info exists ::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]} {
-        set requested_input_source [string tolower $::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]
-        if {$requested_input_source eq "guest" || $requested_input_source eq "mouseinject"} {
-            set input_source "guest"
-        }
+    set input_source $kde_interaction_input_source
+    set qemu_gtk_cursor_mode "default"
+    set qemu_gtk_show_cursor "default"
+    if {[info exists ::env(QEMU_GTK_CURSOR_MODE)]} {
+        set qemu_gtk_cursor_mode $::env(QEMU_GTK_CURSOR_MODE)
+    }
+    if {[info exists ::env(QEMU_GTK_SHOW_CURSOR)]} {
+        set qemu_gtk_show_cursor $::env(QEMU_GTK_SHOW_CURSOR)
     }
 
-    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0] input_source=$input_source"
+    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0] input_source=$input_source cursor_owner=$kde_interaction_cursor_owner qemu_gtk_cursor_mode=$qemu_gtk_cursor_mode qemu_gtk_show_cursor=$qemu_gtk_show_cursor"
     measure_first_visible_frame "desktop-interaction-visible" $visible_min_nonblack $visible_attempts $visible_interval_ms
     after 1500
     capture_fb $guest_before_ppm "desktop-interaction-before"
@@ -12271,6 +12469,7 @@ if {[kde_smoke_reducer] eq "desktop-interaction" ||
     [kde_smoke_reducer] eq "desktop-interaction-latency" ||
     [kde_smoke_reducer] eq "desktop-color-wakeup"} {
     stage_desktop_interaction_helper_script
+    stage_host_cursor_sync_script
 }
 
 stage_kwin_loader_ifunc_script
