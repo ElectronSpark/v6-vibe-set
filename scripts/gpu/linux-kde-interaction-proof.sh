@@ -381,10 +381,162 @@ cmd "mount -o remount,size=6G / || true; apk add --no-cache eudev dbus dbus-x11 
 cmd "modprobe virtio_gpu || true; mkdir -p /run/dbus /run/user/0 /tmp/.X11-unix; chmod 700 /run/user/0; dbus-daemon --system --fork || true; ls -l /dev/dri || true" 120
 cmd {cat > /root/konsole-marker.sh <<'SH'
 #!/bin/sh
-printf 'linux-konsole-marker start_ms=%s pid=%s ppid=%s\n' "\$(cut -d' ' -f1 /proc/uptime)" "\$\$" "\$PPID" > /tmp/linux-konsole-ready
+now_ms()
+{
+    awk '{printf "%d", \$1 * 1000}' /proc/uptime
+}
+
+fd_target()
+{
+    readlink "/proc/\$\$/fd/\$1" 2>/dev/null || printf missing
+}
+
+parent_ptmx()
+{
+    for f in "/proc/\$PPID"/fd/*; do
+        t=\$(readlink "\$f" 2>/dev/null || true)
+        if [ "\$t" = /dev/ptmx ]; then
+            printf ptmx
+            return 0
+        fi
+    done
+    printf missing
+}
+
+ms="\$(now_ms)"
+tty_target="\$(fd_target 0)"
+ptmx_target="\$(parent_ptmx)"
+{
+    printf 'linux-konsole-phase phase=wrapper-start uptime_ms=%s pid=%s ppid=%s tty=%s parent_ptmx=%s\n' "\$ms" "\$\$" "\$PPID" "\$tty_target" "\$ptmx_target"
+    printf 'linux-konsole-marker start_ms=%s pid=%s ppid=%s\n' "\$ms" "\$\$" "\$PPID"
+    printf 'linux-konsole-phase phase=marker-written uptime_ms=%s pid=%s ppid=%s tty=%s parent_ptmx=%s\n' "\$(now_ms)" "\$\$" "\$PPID" "\$(fd_target 0)" "\$(parent_ptmx)"
+    printf 'linux-konsole-phase phase=shell-start uptime_ms=%s pid=%s ppid=%s tty=%s parent_ptmx=%s\n' "\$(now_ms)" "\$\$" "\$PPID" "\$(fd_target 0)" "\$(parent_ptmx)"
+} > /tmp/linux-konsole-ready
 exec /bin/sh -i
 SH
 chmod +x /root/konsole-marker.sh
+cat > /root/konsole-direct-launch.sh <<'SH'
+#!/bin/sh
+set -u
+rm -f /tmp/linux-konsole-ready /tmp/linux-konsole.log
+
+now_ms()
+{
+    awk '{printf "%d", \$1 * 1000}' /proc/uptime
+}
+
+pid_is_in_launch_tree()
+{
+    pid="\$1"
+    root="\$2"
+    [ "\$pid" = "\$root" ] && return 0
+    ppid=\$(awk '/^PPid:/ {print \$2}' "/proc/\$pid/status" 2>/dev/null || true)
+    [ "\$ppid" = "\$root" ]
+}
+
+scan_pty_pair()
+{
+    root="\$1"
+    ptmx=missing
+    pts=missing
+    for f in /proc/[0-9]*/fd/*; do
+        pid="\${f#/proc/}"
+        pid="\${pid%%/*}"
+        pid_is_in_launch_tree "\$pid" "\$root" || continue
+        t=\$(readlink "\$f" 2>/dev/null || true)
+        case "\$t" in
+            /dev/ptmx)
+                if [ "\$ptmx" = missing ]; then
+                    ptmx="\$t"
+                fi
+                ;;
+            /dev/pts/*)
+                if [ "\$pts" = missing ]; then
+                    pts="\$t"
+                fi
+                ;;
+        esac
+        if [ "\$ptmx" != missing ] && [ "\$pts" != missing ]; then
+            break
+        fi
+    done
+    printf '%s %s\n' "\$ptmx" "\$pts"
+}
+
+export HOME=/root
+export USER=root
+export LOGNAME=root
+export XDG_RUNTIME_DIR=/run/user/0
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=KDE
+export XDG_SESSION_DESKTOP=KDE
+export KDE_FULL_SESSION=true
+export KDE_SESSION_VERSION=6
+export QT_QPA_PLATFORM=wayland
+export GALLIUM_DRIVER=virgl
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus
+export WAYLAND_DISPLAY=wayland-0
+
+launch_start_ms=\$(now_ms)
+konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 &
+kp=\$!
+launch_done_ms=\$(now_ms)
+printf 'LINUX_KDE_DIRECT_DETAIL phase=launch-call pid=%s launch_start_ms=%s launch_done_ms=%s konsole_launch_call_ms=%s\n' \
+    "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((launch_done_ms - launch_start_ms))"
+
+ptmx_seen=0
+pts_seen=0
+ptmx_ms=-1
+pts_ms=-1
+ptmx_target=missing
+pts_target=missing
+i=0
+while [ "\$i" -lt 450 ]; do
+    set -- \$(scan_pty_pair "\$kp")
+    cur_ptmx="\$1"
+    cur_pts="\$2"
+    if [ "\$ptmx_seen" -eq 0 ] && [ "\$cur_ptmx" != missing ]; then
+        ptmx_seen=1
+        ptmx_ms=\$(now_ms)
+        ptmx_target="\$cur_ptmx"
+        printf 'LINUX_KDE_DIRECT_DETAIL phase=pty-ptmx uptime_ms=%s pid=%s pty_target=%s konsole_pty_ptmx_since_launch_ms=%s\n' \
+            "\$ptmx_ms" "\$kp" "\$ptmx_target" "\$((ptmx_ms - launch_start_ms))"
+    fi
+    if [ "\$pts_seen" -eq 0 ] && [ "\$cur_pts" != missing ]; then
+        pts_seen=1
+        pts_ms=\$(now_ms)
+        pts_target="\$cur_pts"
+        printf 'LINUX_KDE_DIRECT_DETAIL phase=pty-pts uptime_ms=%s pid=%s pty_target=%s konsole_pty_pts_since_launch_ms=%s\n' \
+            "\$pts_ms" "\$kp" "\$pts_target" "\$((pts_ms - launch_start_ms))"
+    fi
+    if [ -s /tmp/linux-konsole-ready ]; then
+        break
+    fi
+    i=\$((i + 1))
+    sleep 0.02
+done
+
+i=0
+while [ "\$i" -lt 450 ]; do
+    if [ -s /tmp/linux-konsole-ready ]; then
+        break
+    fi
+    i=\$((i + 1))
+    sleep 0.1
+done
+
+ready_ms=\$(now_ms)
+if [ -s /tmp/linux-konsole-ready ]; then
+    printf 'LINUX_KDE_DIRECT_PASS pid=%s launch_start_ms=%s launch_done_ms=%s wait_elapsed_ms=%s ptmx_seen=%s ptmx_ms=%s ptmx_target=%s pts_seen=%s pts_ms=%s pts_target=%s\n' \
+        "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((ready_ms - launch_start_ms))" "\$ptmx_seen" "\$ptmx_ms" "\$ptmx_target" "\$pts_seen" "\$pts_ms" "\$pts_target"
+else
+    printf 'LINUX_KDE_DIRECT_FAIL pid=%s launch_start_ms=%s launch_done_ms=%s wait_elapsed_ms=%s ptmx_seen=%s ptmx_ms=%s ptmx_target=%s pts_seen=%s pts_ms=%s pts_target=%s\n' \
+        "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((ready_ms - launch_start_ms))" "\$ptmx_seen" "\$ptmx_ms" "\$ptmx_target" "\$pts_seen" "\$pts_ms" "\$pts_target"
+fi
+cat /tmp/linux-konsole-ready 2>/dev/null || true
+echo LINUX_KDE_DIRECT_DONE
+SH
+chmod +x /root/konsole-direct-launch.sh
 cat > /root/sample-screen.sh <<'SH'
 #!/bin/sh
 set -u
@@ -548,17 +700,146 @@ sample_once "desktop-interaction-after"
 
 set direct_start [clock milliseconds]
 ilog "phase=direct-launch action=konsole status=start start_ms=\$direct_start"
-set direct_cmd {rm -f /tmp/linux-konsole-ready; export HOME=/root USER=root LOGNAME=root XDG_RUNTIME_DIR=/run/user/0 XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE KDE_FULL_SESSION=true KDE_SESSION_VERSION=6 QT_QPA_PLATFORM=wayland GALLIUM_DRIVER=virgl DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus WAYLAND_DISPLAY=wayland-0; konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 & kp=\$!; i=0; while test "\$i" -lt 450; do test -s /tmp/linux-konsole-ready && break; i=\$((i+1)); sleep 0.1; done; test -s /tmp/linux-konsole-ready && echo LINUX_KDE_DIRECT_PASS pid=\$kp || echo LINUX_KDE_DIRECT_FAIL pid=\$kp; cat /tmp/linux-konsole-ready 2>/dev/null || true; echo LINUX_KDE_DIRECT_DONE}
+set direct_cmd {/root/konsole-direct-launch.sh}
 send -- "\$direct_cmd\r"
 set direct_status "timeout"
+set direct_pid "missing"
+set direct_launch_call_ms "-1"
+set direct_launch_start_ms "-1"
+set direct_launch_done_ms "-1"
+set direct_guest_wait_ms "-1"
+set direct_pty_ptmx_since_launch_ms "-1"
+set direct_pty_pts_since_launch_ms "-1"
+set direct_pty_ptmx_target "missing"
+set direct_pty_pts_target "missing"
+set direct_pty_ptmx_ms "-1"
+set direct_pty_pts_ms "-1"
+set direct_pty_ptmx_seen "0"
+set direct_pty_pts_seen "0"
+set direct_wrapper_start_since_launch_ms "-1"
+set direct_marker_written_since_launch_ms "-1"
+set direct_shell_start_since_launch_ms "-1"
 expect {
-  -re "LINUX_KDE_DIRECT_PASS" { set direct_status "PASS"; exp_continue }
-  -re "LINUX_KDE_DIRECT_FAIL" { set direct_status "FAIL"; exp_continue }
+  -re {LINUX_KDE_DIRECT_DETAIL phase=launch-call pid=([^ ]+) launch_start_ms=([0-9]+) launch_done_ms=([0-9]+) konsole_launch_call_ms=([0-9-]+)} {
+    set direct_pid \$expect_out(1,string)
+    set direct_launch_start_ms \$expect_out(2,string)
+    set direct_launch_done_ms \$expect_out(3,string)
+    set direct_launch_call_ms \$expect_out(4,string)
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=launch-call pid=\$direct_pid launch_start_ms=\$direct_launch_start_ms launch_done_ms=\$direct_launch_done_ms konsole_launch_call_ms=\$direct_launch_call_ms"
+    exp_continue
+  }
+  -re {LINUX_KDE_DIRECT_DETAIL phase=pty-ptmx uptime_ms=([0-9]+) pid=([^ ]+) pty_target=([^ ]+) konsole_pty_ptmx_since_launch_ms=([0-9-]+)} {
+    set direct_pty_ptmx_seen "1"
+    set direct_pty_ptmx_ms \$expect_out(1,string)
+    set direct_pid \$expect_out(2,string)
+    set direct_pty_ptmx_target \$expect_out(3,string)
+    set direct_pty_ptmx_since_launch_ms \$expect_out(4,string)
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=pty-ptmx pid=\$direct_pid uptime_ms=\$direct_pty_ptmx_ms pty_target=\$direct_pty_ptmx_target konsole_pty_ptmx_since_launch_ms=\$direct_pty_ptmx_since_launch_ms"
+    exp_continue
+  }
+  -re {LINUX_KDE_DIRECT_DETAIL phase=pty-pts uptime_ms=([0-9]+) pid=([^ ]+) pty_target=([^ ]+) konsole_pty_pts_since_launch_ms=([0-9-]+)} {
+    set direct_pty_pts_seen "1"
+    set direct_pty_pts_ms \$expect_out(1,string)
+    set direct_pid \$expect_out(2,string)
+    set direct_pty_pts_target \$expect_out(3,string)
+    set direct_pty_pts_since_launch_ms \$expect_out(4,string)
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=pty-pts pid=\$direct_pid uptime_ms=\$direct_pty_pts_ms pty_target=\$direct_pty_pts_target konsole_pty_pts_since_launch_ms=\$direct_pty_pts_since_launch_ms"
+    exp_continue
+  }
+  -re {LINUX_KDE_DIRECT_PASS pid=([^ ]+) launch_start_ms=([0-9]+) launch_done_ms=([0-9]+) wait_elapsed_ms=([0-9-]+) ptmx_seen=([0-9]+) ptmx_ms=([0-9-]+) ptmx_target=([^ ]+) pts_seen=([0-9]+) pts_ms=([0-9-]+) pts_target=([^ \r\n]+)} {
+    set direct_status "PASS"
+    set direct_pid \$expect_out(1,string)
+    set direct_launch_start_ms \$expect_out(2,string)
+    set direct_launch_done_ms \$expect_out(3,string)
+    set direct_guest_wait_ms \$expect_out(4,string)
+    set direct_pty_ptmx_seen \$expect_out(5,string)
+    set direct_pty_ptmx_ms \$expect_out(6,string)
+    set direct_pty_ptmx_target \$expect_out(7,string)
+    set direct_pty_pts_seen \$expect_out(8,string)
+    set direct_pty_pts_ms \$expect_out(9,string)
+    set direct_pty_pts_target \$expect_out(10,string)
+    exp_continue
+  }
+  -re {LINUX_KDE_DIRECT_FAIL pid=([^ ]+) launch_start_ms=([0-9]+) launch_done_ms=([0-9]+) wait_elapsed_ms=([0-9-]+) ptmx_seen=([0-9]+) ptmx_ms=([0-9-]+) ptmx_target=([^ ]+) pts_seen=([0-9]+) pts_ms=([0-9-]+) pts_target=([^ \r\n]+)} {
+    set direct_status "FAIL"
+    set direct_pid \$expect_out(1,string)
+    set direct_launch_start_ms \$expect_out(2,string)
+    set direct_launch_done_ms \$expect_out(3,string)
+    set direct_guest_wait_ms \$expect_out(4,string)
+    set direct_pty_ptmx_seen \$expect_out(5,string)
+    set direct_pty_ptmx_ms \$expect_out(6,string)
+    set direct_pty_ptmx_target \$expect_out(7,string)
+    set direct_pty_pts_seen \$expect_out(8,string)
+    set direct_pty_pts_ms \$expect_out(9,string)
+    set direct_pty_pts_target \$expect_out(10,string)
+    exp_continue
+  }
+  -re {linux-konsole-phase phase=wrapper-start uptime_ms=([0-9]+) pid=([^ ]+) ppid=([^ ]+) tty=([^ ]+) parent_ptmx=([^ \r\n]+)} {
+    set uptime_ms \$expect_out(1,string)
+    set phase_pid \$expect_out(2,string)
+    set phase_ppid \$expect_out(3,string)
+    set phase_tty \$expect_out(4,string)
+    set phase_ptmx \$expect_out(5,string)
+    if {\$direct_launch_start_ms ne "-1"} {
+      set direct_wrapper_start_since_launch_ms [expr {\$uptime_ms - \$direct_launch_start_ms}]
+    }
+    if {\$direct_pty_pts_seen eq "0" && [string match "/dev/pts/*" \$phase_tty]} {
+      set direct_pty_pts_seen "1"
+      set direct_pty_pts_ms \$uptime_ms
+      set direct_pty_pts_target \$phase_tty
+      set direct_pty_pts_since_launch_ms \$direct_wrapper_start_since_launch_ms
+    }
+    if {\$direct_pty_ptmx_seen eq "0" && \$phase_ptmx eq "ptmx"} {
+      set direct_pty_ptmx_seen "1"
+      set direct_pty_ptmx_ms \$uptime_ms
+      set direct_pty_ptmx_target "/dev/ptmx"
+      set direct_pty_ptmx_since_launch_ms \$direct_wrapper_start_since_launch_ms
+    }
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=wrapper-start uptime_ms=\$uptime_ms pid=\$phase_pid ppid=\$phase_ppid tty=\$phase_tty parent_ptmx=\$phase_ptmx konsole_wrapper_start_since_launch_ms=\$direct_wrapper_start_since_launch_ms"
+    exp_continue
+  }
+  -re {linux-konsole-phase phase=marker-written uptime_ms=([0-9]+) pid=([^ ]+) ppid=([^ ]+) tty=([^ ]+) parent_ptmx=([^ \r\n]+)} {
+    set uptime_ms \$expect_out(1,string)
+    set phase_pid \$expect_out(2,string)
+    set phase_ppid \$expect_out(3,string)
+    set phase_tty \$expect_out(4,string)
+    set phase_ptmx \$expect_out(5,string)
+    if {\$direct_launch_start_ms ne "-1"} {
+      set direct_marker_written_since_launch_ms [expr {\$uptime_ms - \$direct_launch_start_ms}]
+    }
+    if {\$direct_pty_ptmx_seen eq "0" && \$phase_ptmx eq "ptmx"} {
+      set direct_pty_ptmx_seen "1"
+      set direct_pty_ptmx_ms \$uptime_ms
+      set direct_pty_ptmx_target "/dev/ptmx"
+      set direct_pty_ptmx_since_launch_ms \$direct_marker_written_since_launch_ms
+    }
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=marker-written uptime_ms=\$uptime_ms pid=\$phase_pid ppid=\$phase_ppid tty=\$phase_tty parent_ptmx=\$phase_ptmx konsole_marker_written_since_launch_ms=\$direct_marker_written_since_launch_ms"
+    exp_continue
+  }
+  -re {linux-konsole-phase phase=shell-start uptime_ms=([0-9]+) pid=([^ ]+) ppid=([^ ]+) tty=([^ ]+) parent_ptmx=([^ \r\n]+)} {
+    set uptime_ms \$expect_out(1,string)
+    set phase_pid \$expect_out(2,string)
+    set phase_ppid \$expect_out(3,string)
+    set phase_tty \$expect_out(4,string)
+    set phase_ptmx \$expect_out(5,string)
+    if {\$direct_launch_start_ms ne "-1"} {
+      set direct_shell_start_since_launch_ms [expr {\$uptime_ms - \$direct_launch_start_ms}]
+    }
+    if {\$direct_pty_ptmx_seen eq "0" && \$phase_ptmx eq "ptmx"} {
+      set direct_pty_ptmx_seen "1"
+      set direct_pty_ptmx_ms \$uptime_ms
+      set direct_pty_ptmx_target "/dev/ptmx"
+      set direct_pty_ptmx_since_launch_ms \$direct_shell_start_since_launch_ms
+    }
+    ilog "phase=direct-launch-detail action=konsole status=PASS kind=shell-start uptime_ms=\$uptime_ms pid=\$phase_pid ppid=\$phase_ppid tty=\$phase_tty parent_ptmx=\$phase_ptmx konsole_shell_start_since_launch_ms=\$direct_shell_start_since_launch_ms"
+    exp_continue
+  }
   -re "LINUX_KDE_DIRECT_DONE" {}
   timeout { set direct_status "timeout" }
 }
 set direct_elapsed [expr {[clock milliseconds] - \$direct_start}]
-ilog "phase=direct-launch action=konsole status=\$direct_status elapsed_ms=\$direct_elapsed konsole_wait_ms=\$direct_elapsed"
+set direct_wait_ms [expr {\$direct_guest_wait_ms ne "-1" ? \$direct_guest_wait_ms : \$direct_elapsed}]
+ilog "phase=direct-launch action=konsole status=\$direct_status elapsed_ms=\$direct_elapsed konsole_wait_ms=\$direct_wait_ms pid=\$direct_pid konsole_launch_call_ms=\$direct_launch_call_ms konsole_launch_start_ms=\$direct_launch_start_ms konsole_launch_done_ms=\$direct_launch_done_ms konsole_pty_ptmx_seen=\$direct_pty_ptmx_seen konsole_pty_ptmx_since_launch_ms=\$direct_pty_ptmx_since_launch_ms konsole_pty_ptmx_ms=\$direct_pty_ptmx_ms konsole_pty_ptmx_target=\$direct_pty_ptmx_target konsole_pty_pts_seen=\$direct_pty_pts_seen konsole_pty_pts_since_launch_ms=\$direct_pty_pts_since_launch_ms konsole_pty_pts_ms=\$direct_pty_pts_ms konsole_pty_pts_target=\$direct_pty_pts_target konsole_wrapper_start_since_launch_ms=\$direct_wrapper_start_since_launch_ms konsole_marker_written_since_launch_ms=\$direct_marker_written_since_launch_ms konsole_shell_start_since_launch_ms=\$direct_shell_start_since_launch_ms"
 
 set fh [open "${STATUS}" w]
 if {\$direct_status eq "PASS" && \$visual_ok} {

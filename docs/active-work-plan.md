@@ -205,6 +205,22 @@ because their current action items are summarized here.
      while all visual samples are invalid due QEMU monitor `screendump`
      unavailability. Continue treating Linux visual hover/start/tray parity as
      unproven until a supported Linux screenshot backend is added.
+   - 2026-07-01 Linux KVM+virgl Konsole phase parity proof is archived at
+     `build-x86_64/linux-kde-interaction-proof/20260701T132550Z-konsole-wrapper-fd-token/`.
+     The harness now emits xv6-shaped direct-launch fields:
+     `konsole_launch_call_ms`, guest `konsole_wait_ms`, wrapper marker timing,
+     shell-start timing, and PTY fd evidence from the wrapper. The phase-only
+     run completed with `status_code=0` and preserved the known visual gap
+     (`LINUX-KDE-INTERACTION-PHASE-ONLY visual-baseline-missing`) while
+     proving Linux shell readiness remains much faster than xv6:
+     launch call `0ms`, wrapper `/dev/pts/0` at `250ms`,
+     shell start `270ms`, guest wait `390ms`, host elapsed `588ms`, and virgl
+     trace activity (`ctx_submit=71`, `res_flush=235`, fence responses `60`).
+     `/dev/dri/card0` and `/dev/dri/renderD128` were present. The serial log
+     also shows the wrapper parent had `parent_ptmx=ptmx`; the current
+     interaction-log parser promotes PTMX from any marker phase, so future
+     scalar lines can carry both PTMX and PTS when the first marker token is
+     clipped by the serial stream.
    - 2026-07-01 opt-in kstats poll-wait attribution proof is archived at
      `build-x86_64/kde-plasma-desktop-smoke-history/20260701T123447Z-desktop-interaction-poll-wait-summary-kprofile-pass/`.
      The reducer passed with desktop visible at `17438ms`, panel hover

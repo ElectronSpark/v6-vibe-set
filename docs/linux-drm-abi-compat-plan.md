@@ -458,6 +458,18 @@ Current direction:
   hover, panel, start-menu, and tray timings remain invalid because
   `screendump` produced no surface. Use this as a shell-readiness baseline
   only until a supported Linux screenshot backend is added.
+- The Linux interaction harness now emits xv6-shaped Konsole direct-launch
+  phase fields. The phase-only proof at
+  `build-x86_64/linux-kde-interaction-proof/20260701T132550Z-konsole-wrapper-fd-token/`
+  completed with `status_code=0`,
+  `LINUX-KDE-INTERACTION-PHASE-ONLY visual-baseline-missing`, `/dev/dri/card0`,
+  `/dev/dri/renderD128`, and virgl trace activity. It measured Linux Konsole
+  launch call `0ms`, wrapper `/dev/pts/0` at `250ms`, shell start `270ms`,
+  guest wait `390ms`, and host elapsed `588ms`; the serial marker also shows
+  `parent_ptmx=ptmx`. This keeps the Linux reference sharply below xv6's
+  latest `konsole_wait_ms=3771` and PTY-at-`2834-2836ms` proof, so the next
+  xv6 work should stay on pre-PTY Qt/Wayland/DBus/eventfd/pipe endpoint
+  classification before changing global poll or PTY behavior.
 - The current Konsole-readiness profiler proof is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T061204Z-desktop-interaction-kprofile-poll-futex-proof/`.
   Kernel `kstats` ABI version 3 appends opt-in counters for `poll`, `ppoll`,
