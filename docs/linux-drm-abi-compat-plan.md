@@ -244,6 +244,24 @@ Current direction:
   `1199-1873ms`, start-menu open `2248ms`, start-menu close `1224ms`, tray
   open `2153ms`, tray close `1005ms`, and direct launch `5537ms`
   (`konsole_wait_ms=4171`, `KDE_APP_LAUNCH_PROBE_KPROFILE=0`).
+- The VFS backend read-revive optimization remains runtime gated with
+  `vfs_backend_read_revive=1`. The proof run archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T043347Z-desktop-interaction-vfs-read-revive-kprofile-pass/`
+  passed with the flag enabled and reduced the direct-launch profiled path:
+  `vfs_inode_cache_miss_revive_without_wlock` went from `4103` to `0`,
+  `vfs_inode_cache_read_revive_success=3983`, dentry-inode time fell from
+  `1068ms` to `470ms`, and `sys_openat_ms` fell from `1404ms` to `944ms`.
+  The user-visible launch path improved but remains dominated by Konsole shell
+  readiness (`4382ms`), so this is useful but not a complete Plasma
+  responsiveness fix. Keep the flag default-off until parallel lookup/unlink/
+  rename/LRU stress with KASAN/kmemleak or equivalent lifetime proof validates
+  the changed inode-LRU invariant.
+- `kstats` now has a size-aware `kstats2(2)` ABI for appended counters while
+  legacy `kstats(2)` copies only the stable v1 prefix. The no-desktop ABI proof
+  is archived at
+  `build-x86_64/kstats-abi-proof/20260701T044849Z-clean/`; it records
+  `kprofile` reading the appended read-revive counters and `clockbench getpid`
+  passing through the legacy `SYS_kstats` path.
 - Next evidence should split Konsole readiness into pty/session, Wayland
   surface, and shell-marker phases, and split hover delay into input injection,
   Plasma paint, and framebuffer readback timing.
