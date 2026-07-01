@@ -1688,6 +1688,18 @@ static long monotonic_ms(void)
     return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
+static int set_fd_nonblock(const char *label, int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        printf("kde_unix_socket_probe %s set-nonblock fd=%d errno=%d %s\n",
+               label, fd, errno, strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
 static int notify_mix_one(const char *label, int signal_fd)
 {
     struct pollfd pfds[3];
@@ -1838,6 +1850,507 @@ static int notify_mix(void)
     return failed;
 }
 
+struct qt_dispatch_channel {
+    const char *label;
+    const char *path;
+    int server;
+    int client;
+    int accepted;
+};
+
+static void qt_dispatch_channel_close(struct qt_dispatch_channel *ch)
+{
+    if (ch->accepted >= 0)
+        close(ch->accepted);
+    if (ch->client >= 0)
+        close(ch->client);
+    if (ch->server >= 0)
+        close(ch->server);
+    if (ch->path != NULL)
+        unlink(ch->path);
+    ch->accepted = -1;
+    ch->client = -1;
+    ch->server = -1;
+}
+
+static int qt_dispatch_prepare_parent_dir(const char *path)
+{
+    char dir[108];
+    const char *slash = strrchr(path, '/');
+    size_t len;
+
+    if (slash == NULL || slash == path)
+        return 0;
+    len = (size_t)(slash - path);
+    if (len >= sizeof(dir))
+        return 0;
+    memcpy(dir, path, len);
+    dir[len] = '\0';
+    if (mkdir(dir, 0700) < 0 && errno != EEXIST) {
+        printf("kde_unix_socket_probe qt-dispatch mkdir path=%s errno=%d %s\n",
+               dir, errno, strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
+static int qt_dispatch_channel_open(struct qt_dispatch_channel *ch,
+                                    const char *label, const char *path)
+{
+    struct sockaddr_un sa;
+
+    ch->label = label;
+    ch->path = path;
+    ch->server = -1;
+    ch->client = -1;
+    ch->accepted = -1;
+
+    if (qt_dispatch_prepare_parent_dir(path))
+        return 1;
+
+    unlink(path);
+    ch->server = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (ch->server < 0) {
+        print_errno("qt-dispatch-socket-server");
+        goto fail;
+    }
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", path);
+
+    if (bind(ch->server, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        print_errno("qt-dispatch-bind");
+        goto fail;
+    }
+    if (listen(ch->server, 1) < 0) {
+        print_errno("qt-dispatch-listen");
+        goto fail;
+    }
+
+    ch->client = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (ch->client < 0) {
+        print_errno("qt-dispatch-socket-client");
+        goto fail;
+    }
+    if (connect(ch->client, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        print_errno("qt-dispatch-connect");
+        goto fail;
+    }
+
+    ch->accepted = accept4(ch->server, NULL, NULL, SOCK_CLOEXEC);
+    if (ch->accepted < 0) {
+        print_errno("qt-dispatch-accept4");
+        goto fail;
+    }
+
+    if (set_fd_nonblock(label, ch->client) ||
+        set_fd_nonblock(label, ch->accepted))
+        goto fail;
+
+    printf("kde_unix_socket_probe qt-dispatch-%s pair path=%s client=%d accepted=%d\n",
+           label, path, ch->client, ch->accepted);
+    return 0;
+
+fail:
+    qt_dispatch_channel_close(ch);
+    return 1;
+}
+
+static ssize_t qt_dispatch_sendmsg_split(int fd, const char *a, const char *b)
+{
+    struct iovec iov[2];
+    struct msghdr msg;
+
+    iov[0].iov_base = (void *)a;
+    iov[0].iov_len = strlen(a);
+    iov[1].iov_base = (void *)b;
+    iov[1].iov_len = strlen(b);
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 2;
+    errno = 0;
+    return sendmsg(fd, &msg, MSG_NOSIGNAL | MSG_DONTWAIT);
+}
+
+static ssize_t qt_dispatch_recv_socket(const char *label, int fd,
+                                       const char *expected)
+{
+    struct iovec iov;
+    struct msghdr msg;
+    char buf[32];
+    ssize_t n;
+    size_t expected_len = strlen(expected);
+
+    memset(buf, 0, sizeof(buf));
+    iov.iov_base = buf;
+    iov.iov_len = sizeof(buf) - 1;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    errno = 0;
+    n = recvmsg(fd, &msg, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+    printf("kde_unix_socket_probe qt-dispatch-%s recvmsg ret=%zd flags=0x%x "
+           "data=%.*s errno=%d %s\n",
+           label, n, msg.msg_flags, n > 0 ? (int)n : 0, buf,
+           errno, strerror(errno));
+    if (n != (ssize_t)expected_len || memcmp(buf, expected, expected_len) != 0)
+        return -1;
+    return n;
+}
+
+static int qt_dispatch_drain_pipe(const char *label, int fd)
+{
+    char buf[16];
+    ssize_t total = 0;
+
+    for (;;) {
+        errno = 0;
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n > 0) {
+            total += n;
+            continue;
+        }
+        printf("kde_unix_socket_probe qt-dispatch-%s pipe-drain total=%zd "
+               "last_ret=%zd errno=%d %s\n",
+               label, total, n, errno, strerror(errno));
+        return total > 0 && n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) ?
+            0 : 1;
+    }
+}
+
+static int qt_dispatch_drain_eventfd(const char *label, int fd)
+{
+    unsigned long long val = 0;
+
+    errno = 0;
+    ssize_t n = read(fd, &val, sizeof(val));
+    printf("kde_unix_socket_probe qt-dispatch-%s eventfd-drain ret=%zd "
+           "value=%llu errno=%d %s\n",
+           label, n, val, errno, strerror(errno));
+    return n == (ssize_t)sizeof(val) && val > 0 ? 0 : 1;
+}
+
+static int qt_dispatch_poll_print(const char *label, const char *phase,
+                                  struct pollfd *pfds, nfds_t nfds,
+                                  int timeout_ms, int min_ready)
+{
+    long start_ms = monotonic_ms();
+    errno = 0;
+    int pret = poll(pfds, nfds, timeout_ms);
+    long end_ms = monotonic_ms();
+
+    printf("kde_unix_socket_probe qt-dispatch-%s %s poll ret=%d "
+           "elapsed_ms=%ld errno=%d %s",
+           label, phase, pret,
+           (start_ms >= 0 && end_ms >= start_ms) ? end_ms - start_ms : -1,
+           errno, strerror(errno));
+    for (nfds_t i = 0; i < nfds; i++)
+        printf(" fd%u=%d:0x%x", (unsigned int)i, pfds[i].fd,
+               pfds[i].revents);
+    printf("\n");
+    if (pret < min_ready)
+        return 1;
+    return 0;
+}
+
+static int qt_dispatch_rearm_one(const char *label, const char *path,
+                                 int use_eventfd)
+{
+    struct qt_dispatch_channel ch;
+    struct pollfd pfds[2];
+    int pipefd[2] = {-1, -1};
+    int efd = -1;
+    int failed = 0;
+    int status = 0;
+    pid_t pid = -1;
+
+    if (qt_dispatch_channel_open(&ch, label, path))
+        return 1;
+
+    if (!use_eventfd) {
+        if (pipe(pipefd) < 0) {
+            print_errno("qt-dispatch-pipe");
+            failed = 1;
+            goto out_nokill;
+        }
+        if (set_fd_nonblock(label, pipefd[0]))
+            failed = 1;
+    } else {
+        efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        if (efd < 0) {
+            print_errno("qt-dispatch-eventfd");
+            failed = 1;
+            goto out_nokill;
+        }
+    }
+    if (failed)
+        goto out_nokill;
+
+    pid = fork();
+    if (pid < 0) {
+        print_errno("qt-dispatch-fork");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    if (pid == 0) {
+        unsigned long long one = 1;
+        ssize_t n;
+
+        usleep(100000);
+        if (!use_eventfd) {
+            errno = 0;
+            n = write(pipefd[1], "P", 1);
+            printf("kde_unix_socket_probe qt-dispatch-%s child-pipe-write ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            if (n != 1)
+                _exit(30);
+        } else {
+            errno = 0;
+            n = write(efd, &one, sizeof(one));
+            printf("kde_unix_socket_probe qt-dispatch-%s child-eventfd-write ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            if (n != (ssize_t)sizeof(one))
+                _exit(31);
+        }
+
+        usleep(250000);
+        n = qt_dispatch_sendmsg_split(ch.accepted, use_eventfd ? "QD" : "WL",
+                                      use_eventfd ? "B" : "A");
+        printf("kde_unix_socket_probe qt-dispatch-%s child-sendmsg ret=%zd errno=%d %s\n",
+               label, n, errno, strerror(errno));
+        fflush(stdout);
+        _exit(n == 3 ? 0 : 32);
+    }
+
+    pfds[0].fd = ch.client;
+    pfds[0].events = POLLIN;
+    pfds[0].revents = 0;
+    pfds[1].fd = use_eventfd ? efd : pipefd[0];
+    pfds[1].events = POLLIN;
+    pfds[1].revents = 0;
+
+    failed |= qt_dispatch_poll_print(label, "self-wake", pfds, 2, 3000, 1);
+    if (!(pfds[1].revents & POLLIN) || (pfds[0].revents & POLLIN))
+        failed = 1;
+    if (!failed)
+        failed |= use_eventfd ? qt_dispatch_drain_eventfd(label, efd) :
+                  qt_dispatch_drain_pipe(label, pipefd[0]);
+
+    pfds[0].revents = 0;
+    pfds[1].revents = 0;
+    failed |= qt_dispatch_poll_print(label, "socket-rearm", pfds, 2, 3000, 1);
+    if (!(pfds[0].revents & POLLIN))
+        failed = 1;
+    if (!failed)
+        failed |= qt_dispatch_recv_socket(label, ch.client,
+                                          use_eventfd ? "QDB" : "WLA") < 0;
+
+    if (waitpid(pid, &status, 0) < 0) {
+        print_errno("qt-dispatch-waitpid");
+        failed = 1;
+    } else {
+        printf("kde_unix_socket_probe qt-dispatch-%s child-status=0x%x exited=%d code=%d\n",
+               label, status, WIFEXITED(status) ? 1 : 0,
+               WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            failed = 1;
+    }
+    pid = -1;
+
+out_nokill:
+    if (pid > 0) {
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+    }
+    if (pipefd[0] >= 0)
+        close(pipefd[0]);
+    if (pipefd[1] >= 0)
+        close(pipefd[1]);
+    if (efd >= 0)
+        close(efd);
+    qt_dispatch_channel_close(&ch);
+    printf("kde_unix_socket_probe qt-dispatch-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int qt_dispatch_combined(void)
+{
+    struct qt_dispatch_channel wl = {
+        .label = NULL, .path = NULL, .server = -1, .client = -1,
+        .accepted = -1
+    };
+    struct qt_dispatch_channel dbus = {
+        .label = NULL, .path = NULL, .server = -1, .client = -1,
+        .accepted = -1
+    };
+    struct pollfd pfds[4];
+    int pipefd[2] = {-1, -1};
+    int efd = -1;
+    int failed = 0;
+    int status = 0;
+    int saw_wl = 0;
+    int saw_pipe = 0;
+    int saw_dbus = 0;
+    int saw_eventfd = 0;
+    pid_t pid = -1;
+
+    if (qt_dispatch_channel_open(&wl, "combined-wayland",
+                                 "/tmp/kde-qt-dispatch-wayland-0") ||
+        qt_dispatch_channel_open(&dbus, "combined-dbus",
+                                 "/tmp/kde-qt-dispatch-dbus/bus")) {
+        failed = 1;
+        goto out_nokill;
+    }
+    if (pipe(pipefd) < 0) {
+        print_errno("qt-dispatch-combined-pipe");
+        failed = 1;
+        goto out_nokill;
+    }
+    if (set_fd_nonblock("combined", pipefd[0])) {
+        failed = 1;
+        goto out_nokill;
+    }
+    efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (efd < 0) {
+        print_errno("qt-dispatch-combined-eventfd");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        print_errno("qt-dispatch-combined-fork");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    if (pid == 0) {
+        unsigned long long one = 1;
+        ssize_t n;
+
+        usleep(80000);
+        errno = 0;
+        n = write(pipefd[1], "P", 1);
+        printf("kde_unix_socket_probe qt-dispatch-combined child-pipe-write ret=%zd errno=%d %s\n",
+               n, errno, strerror(errno));
+        if (n != 1)
+            _exit(40);
+        usleep(100000);
+        n = qt_dispatch_sendmsg_split(wl.accepted, "W", "1");
+        printf("kde_unix_socket_probe qt-dispatch-combined child-wayland-sendmsg ret=%zd errno=%d %s\n",
+               n, errno, strerror(errno));
+        if (n != 2)
+            _exit(41);
+        usleep(100000);
+        errno = 0;
+        n = write(efd, &one, sizeof(one));
+        printf("kde_unix_socket_probe qt-dispatch-combined child-eventfd-write ret=%zd errno=%d %s\n",
+               n, errno, strerror(errno));
+        if (n != (ssize_t)sizeof(one))
+            _exit(42);
+        usleep(100000);
+        n = qt_dispatch_sendmsg_split(dbus.accepted, "D", "1");
+        printf("kde_unix_socket_probe qt-dispatch-combined child-dbus-sendmsg ret=%zd errno=%d %s\n",
+               n, errno, strerror(errno));
+        fflush(stdout);
+        _exit(n == 2 ? 0 : 43);
+    }
+
+    pfds[0].fd = wl.client;
+    pfds[0].events = POLLIN;
+    pfds[1].fd = pipefd[0];
+    pfds[1].events = POLLIN;
+    pfds[2].fd = dbus.client;
+    pfds[2].events = POLLIN;
+    pfds[3].fd = efd;
+    pfds[3].events = POLLIN;
+
+    for (int iter = 0; iter < 8 &&
+         !(saw_wl && saw_pipe && saw_dbus && saw_eventfd); iter++) {
+        for (int i = 0; i < 4; i++)
+            pfds[i].revents = 0;
+        char phase[32];
+        snprintf(phase, sizeof(phase), "combined-iter-%d", iter);
+        if (qt_dispatch_poll_print("combined", phase, pfds, 4, 3000, 1)) {
+            failed = 1;
+            break;
+        }
+        if (pfds[0].revents & POLLIN) {
+            saw_wl = 1;
+            failed |= qt_dispatch_recv_socket("combined-wayland",
+                                              wl.client, "W1") < 0;
+        }
+        if (pfds[1].revents & POLLIN) {
+            saw_pipe = 1;
+            failed |= qt_dispatch_drain_pipe("combined", pipefd[0]);
+        }
+        if (pfds[2].revents & POLLIN) {
+            saw_dbus = 1;
+            failed |= qt_dispatch_recv_socket("combined-dbus",
+                                              dbus.client, "D1") < 0;
+        }
+        if (pfds[3].revents & POLLIN) {
+            saw_eventfd = 1;
+            failed |= qt_dispatch_drain_eventfd("combined", efd);
+        }
+        if (failed)
+            break;
+    }
+
+    printf("kde_unix_socket_probe qt-dispatch-combined observed "
+           "wayland=%d pipe=%d dbus=%d eventfd=%d\n",
+           saw_wl, saw_pipe, saw_dbus, saw_eventfd);
+    if (!(saw_wl && saw_pipe && saw_dbus && saw_eventfd))
+        failed = 1;
+
+    if (waitpid(pid, &status, 0) < 0) {
+        print_errno("qt-dispatch-combined-waitpid");
+        failed = 1;
+    } else {
+        printf("kde_unix_socket_probe qt-dispatch-combined child-status=0x%x exited=%d code=%d\n",
+               status, WIFEXITED(status) ? 1 : 0,
+               WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            failed = 1;
+    }
+    pid = -1;
+
+out_nokill:
+    if (pid > 0) {
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+    }
+    if (pipefd[0] >= 0)
+        close(pipefd[0]);
+    if (pipefd[1] >= 0)
+        close(pipefd[1]);
+    if (efd >= 0)
+        close(efd);
+    qt_dispatch_channel_close(&wl);
+    qt_dispatch_channel_close(&dbus);
+    rmdir("/tmp/kde-qt-dispatch-dbus");
+    printf("kde_unix_socket_probe qt-dispatch-combined result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int qt_dispatch_mix(void)
+{
+    int failed = 0;
+
+    failed |= qt_dispatch_rearm_one("wayland-pipe-rearm",
+                                    "/tmp/kde-qt-dispatch-wayland-0", 0);
+    failed |= qt_dispatch_rearm_one("qdbus-eventfd-rearm",
+                                    "/tmp/kde-qt-dispatch-dbus/bus", 1);
+    failed |= qt_dispatch_combined();
+    printf("kde_unix_socket_probe qt-dispatch-mix result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
 int main(int argc, char **argv)
 {
     const char *path = "/tmp/kde-unix-socket-probe.sock";
@@ -1854,6 +2367,8 @@ int main(int argc, char **argv)
         return scm_zero_readiness() ? 1 : 0;
     if (argc == 2 && strcmp(argv[1], "--notify-mix") == 0)
         return notify_mix() ? 1 : 0;
+    if (argc == 2 && strcmp(argv[1], "--qt-dispatch-mix") == 0)
+        return qt_dispatch_mix() ? 1 : 0;
     if (argc != 1) {
         printf("kde_unix_socket_probe unknown-argument=%s\n", argv[1]);
         return 2;

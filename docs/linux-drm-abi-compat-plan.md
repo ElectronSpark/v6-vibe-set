@@ -418,6 +418,21 @@ Current direction:
   notify-complete under the risky full-wait knobs; keep chasing the richer
   Qt/Wayland/DBus protocol or activation edge before promoting AF_UNIX full
   waits globally.
+- 2026-07-01 Qt-style dispatch rearm reducer evidence is archived at
+  `build-x86_64/qt-dispatch-mix-proof/20260701T140708Z-linux-host-final/`
+  for the Linux host reference and
+  `build-x86_64/qt-dispatch-mix-proof/20260701T141654Z-xv6-nographic/`
+  for the xv6 nographic guest proof. The new opt-in
+  `/bin/kde-unix-socket-probe --qt-dispatch-mix` mode covers
+  `wayland-pipe-rearm`, `qdbus-eventfd-rearm`, and a combined
+  Wayland/pipe/DBus/eventfd loop. It passed on Linux, then passed in xv6 with
+  `poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 desktop=0`; the
+  same guest run also passed `--notify-mix` and the default AF_UNIX probe.
+  This rules out the direct Qt dispatcher self-wake/re-enter-poll shape as the
+  remaining Konsole pre-PTY blocker. Keep AF_UNIX full waits diagnostic-only;
+  next evidence should target DBus/Wayland activation or protocol ordering, or
+  add per-wait wake-source accounting in `__vfs_poll_impl()` before changing
+  global poll behavior.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.

@@ -284,6 +284,21 @@ because their current action items are summarized here.
      the next reducer needs to mimic the richer Qt/Wayland/DBus state machine,
      such as Wayland request/response ordering, DBus activation, nested event
      dispatch, or fd ownership transitions.
+   - 2026-07-01 Qt-style dispatch rearm reducer evidence is archived at
+     `build-x86_64/qt-dispatch-mix-proof/20260701T140708Z-linux-host-final/`
+     for the Linux host reference and
+     `build-x86_64/qt-dispatch-mix-proof/20260701T141654Z-xv6-nographic/`
+     for the xv6 guest proof. The new opt-in
+     `/bin/kde-unix-socket-probe --qt-dispatch-mix` mode passed on Linux, then
+     passed in an xv6 nographic guest booted with
+     `poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 desktop=0`.
+     It covers `wayland-pipe-rearm`, `qdbus-eventfd-rearm`, and a combined
+     Wayland/pipe/DBus/eventfd dispatch loop; the same xv6 run also passed
+     `--notify-mix` and the default AF_UNIX probe. This rules out the direct
+     Qt dispatcher self-wake/re-enter-poll shape under the risky full-wait
+     knobs. Keep AF_UNIX full waits diagnostic-only and move the next
+     investigation up to DBus/Wayland activation/protocol ordering or add
+     kernel per-wait wake-source instrumentation around `__vfs_poll_impl()`.
 
 3. Plan consolidation:
    - This file is the entry point.

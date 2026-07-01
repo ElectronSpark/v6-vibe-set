@@ -1,0 +1,166 @@
+#!/usr/bin/env expect
+
+set timeout 240
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg [expr {[info exists env(FSIMG)] && $env(FSIMG) ne "" ? $env(FSIMG) : "$build/fs.img"}]
+set stamp [clock format [clock seconds] -gmt 1 -format "%Y%m%dT%H%M%SZ"]
+set outdir "$build/qt-dispatch-mix-proof/$stamp-xv6-nographic"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set status "$outdir/status.txt"
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_AUDIO) "none"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 video=80x25 poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 kasan=0 kmemleak=0 klog=0"
+
+log_file -a $runlog
+
+proc finish {code label details} {
+    global status runlog
+
+    set fh [open $status w]
+    puts $fh "status=$label $details runlog=$runlog"
+    close $fh
+    puts "\nKDE-QT-DISPATCH-MIX-PROOF-$label $details log=$runlog"
+    exit $code
+}
+
+spawn timeout --foreground 240 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+
+expect {
+    -re {root:/#} {}
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 2 FAIL "reason=boot-crash"
+    }
+    timeout {
+        finish 3 FAIL "reason=no-prompt"
+    }
+    eof {
+        finish 4 FAIL "reason=early-eof"
+    }
+}
+
+set saw_wayland_rearm 0
+set saw_qdbus_rearm 0
+set saw_combined_observed 0
+set saw_qt_pass 0
+set saw_notify_pass 0
+set saw_default_pass 0
+
+set send_slow {1 .004}
+after 3000
+send "\r"
+
+expect {
+    -re {root:/#} {}
+    timeout {}
+}
+
+send -s "/bin/kde-unix-socket-probe --qt-dispatch-mix\r"
+
+expect {
+    -re {kde_unix_socket_probe qt-dispatch-wayland-pipe-rearm result=PASS} {
+        set saw_wayland_rearm 1
+        exp_continue
+    }
+    -re {kde_unix_socket_probe qt-dispatch-qdbus-eventfd-rearm result=PASS} {
+        set saw_qdbus_rearm 1
+        exp_continue
+    }
+    -re {observed[^\r\n]*wayland=1[^\r\n]*pipe=1[^\r\n]*dbus=1[^\r\n]*eventfd=1} {
+        set saw_combined_observed 1
+        exp_continue
+    }
+    -re {kde_unix_socket_probe qt-dispatch-mix result=PASS} {
+        set saw_qt_pass 1
+        exp_continue
+    }
+    -re {root:/#} {
+        if {!($saw_wayland_rearm && $saw_qdbus_rearm &&
+              $saw_combined_observed && $saw_qt_pass)} {
+            finish 5 FAIL "reason=qt-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+    }
+    -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
+        finish 6 FAIL "reason=qt-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 7 FAIL "reason=qt-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    eof {
+        finish 8 FAIL "reason=qt-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    timeout {
+        finish 9 FAIL "reason=qt-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+}
+
+send -s "/bin/kde-unix-socket-probe --notify-mix\r"
+
+expect {
+    -re {kde_unix_socket_probe notify-mix result=PASS} {
+        set saw_notify_pass 1
+        exp_continue
+    }
+    -re {root:/#} {
+        if {!$saw_notify_pass} {
+            finish 10 FAIL "reason=notify-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+    }
+    -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
+        finish 11 FAIL "reason=notify-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 12 FAIL "reason=notify-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    eof {
+        finish 13 FAIL "reason=notify-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    timeout {
+        finish 14 FAIL "reason=notify-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+}
+
+send -s "/bin/kde-unix-socket-probe\r"
+
+expect {
+    -re {kde_unix_socket_probe result=PASS} {
+        set saw_default_pass 1
+        exp_continue
+    }
+    -re {root:/#} {
+        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+            $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
+            send "/bin/shutdown\r"
+            catch { exec pkill -TERM -P [exp_pid] -f qemu-system-x86_64 }
+            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+        finish 15 FAIL "reason=default-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
+        finish 16 FAIL "reason=default-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 17 FAIL "reason=default-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    eof {
+        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+            $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
+            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+        finish 18 FAIL "reason=default-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    timeout {
+        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+            $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
+            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+        finish 19 FAIL "reason=default-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+}
