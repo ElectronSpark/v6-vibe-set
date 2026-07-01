@@ -205,6 +205,20 @@ because their current action items are summarized here.
      while all visual samples are invalid due QEMU monitor `screendump`
      unavailability. Continue treating Linux visual hover/start/tray parity as
      unproven until a supported Linux screenshot backend is added.
+   - 2026-07-01 opt-in kstats poll-wait attribution proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T123447Z-desktop-interaction-poll-wait-summary-kprofile-pass/`.
+     The reducer passed with desktop visible at `17438ms`, panel hover
+     `1139-1541ms`, start-menu open/close `2304/1199ms`, tray open/close
+     `1662/1081ms`, and direct launch `6244ms`
+     (`konsole_wait_ms=4935`). The new `kstats` v4 counters are profile-gated
+     and show the direct-launch window is still dominated by poll wait exposure
+     rather than launch syscall cost: `sys_poll_wait_rescan_ms=259090`,
+     `sys_poll_wait_notify_ms=242683`, `sys_poll_wait_timeout_ms=258656`,
+     `sys_poll_wait_eventfd_ms=204511`, and
+     `sys_poll_wait_unix_ms=127594`, while ready waits were only `434ms`.
+     Treat these counters as overlapping fd-set exposure, not exclusive wall
+     time. They justify the next reducer around Qt/Wayland/DBus/eventfd wake
+     propagation before changing global poll or AF_UNIX policy.
 
 3. Plan consolidation:
    - This file is the entry point.

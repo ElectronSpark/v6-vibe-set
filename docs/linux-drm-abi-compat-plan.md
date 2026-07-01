@@ -364,6 +364,18 @@ Current direction:
   futex wake paths. Because trace volume inflated PTY readiness to `17140ms`
   and shell readiness to `24592ms`, use it for attribution only, not as a
   performance baseline.
+- 2026-07-01 opt-in `kstats` poll-wait attribution now records overlapping
+  fd-set exposure by fd class and ready/timeout outcome. The proof archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T123447Z-desktop-interaction-poll-wait-summary-kprofile-pass/`
+  passed without verbose IPC trace distortion and measured direct launch at
+  `6244ms` (`konsole_wait_ms=4935`, PTY at `3158-3161ms`). The profiled window
+  reported `sys_poll_wait_timeout_ms=258656`,
+  `sys_poll_wait_rescan_ms=259090`, `sys_poll_wait_notify_ms=242683`,
+  `sys_poll_wait_eventfd_ms=204511`, and
+  `sys_poll_wait_unix_ms=127594`, versus `sys_poll_wait_ready_ms=434`.
+  These counters are opt-in through `kstatsctl(2)`/`kprofile`; use them to
+  guide the next Qt/Wayland/DBus/eventfd wake reducer before changing global
+  poll or AF_UNIX policy.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
