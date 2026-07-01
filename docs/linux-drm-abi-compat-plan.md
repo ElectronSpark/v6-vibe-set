@@ -265,6 +265,28 @@ Current direction:
 - Next evidence should split Konsole readiness into pty/session, Wayland
   surface, and shell-marker phases, and split hover delay into input injection,
   Plasma paint, and framebuffer readback timing.
+- 2026-07-01 phase instrumentation is now staged in xv6-owned probes/harness:
+  `kde-app-launch-probe` emits Konsole launch/marker/wrapper timing, and the
+  desktop interaction reducer preserves `fbstat sample-current` open/info/
+  alloc/readback/stats/total timing plus input-injection overhead fields. Static
+  Tcl completeness, `git diff --check`, and C syntax checks passed, and
+  `rootfs-refresh` rebuilt `build-x86_64/fs.img`.
+- The first instrumented desktop-interaction run reproduced the black desktop
+  path before hover timing could be measured:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
+  All 120 active `fbstat sample-current` reads returned
+  `nonblack=0`, while per-sample timing showed readback itself was only about
+  `56-96ms` and helper elapsed was usually about `420-770ms`; this is not a
+  Tcl parser failure.
+- The focused desktop-color wakeup control passed as a reducer at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050800Z-desktop-color-wakeup-scanout-black-pass/`,
+  but it warned `input-readback-no-visible-change`. With
+  `virtio_gpu_scanout_read_diag=1` and `fb_present_sample_diag=1`, KWin/Plasma
+  were alive and virgl page-flipped resources `4/5/14`, yet each
+  resource-scanout sample and both pre/post-click KMS readbacks reported
+  `sample_nonblack=0`. The next proof target is therefore the virtio-gpu/KMS
+  page-flip/readback lineage for black-start runs before treating hover or
+  Chromium FPS data from that boot as UI/compositor latency.
 
 ### 3. Chromium As Regression / Stress Probe
 

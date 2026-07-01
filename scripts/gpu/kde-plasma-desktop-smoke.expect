@@ -11401,6 +11401,24 @@ proc env_int_range {name default min max} {
     return $default
 }
 
+proc fb_sample_timing_fields {log_text} {
+    set fields "sample_open_ms=-1 sample_info_ms=-1 sample_alloc_ms=-1 sample_readback_ms=-1 sample_stats_ms=-1 sample_total_ms=-1"
+    if {[regexp {fb_sample_current_timing[^\r\n]*open_ms=([0-9]+)[^\r\n]*info_ms=([0-9]+)[^\r\n]*alloc_ms=([0-9]+)[^\r\n]*readback_ms=([0-9]+)[^\r\n]*stats_ms=([0-9]+)[^\r\n]*total_ms=([0-9]+)} $log_text -> open_ms info_ms alloc_ms readback_ms stats_ms total_ms]} {
+        set fields "sample_open_ms=$open_ms sample_info_ms=$info_ms sample_alloc_ms=$alloc_ms sample_readback_ms=$readback_ms sample_stats_ms=$stats_ms sample_total_ms=$total_ms"
+    }
+    return $fields
+}
+
+proc prefix_key_value_fields {prefix fields} {
+    set result {}
+    foreach field $fields {
+        if {[regexp {^([^=]+)=(.*)$} $field -> key value]} {
+            lappend result "${prefix}${key}=$value"
+        }
+    }
+    return [join $result " "]
+}
+
 proc sample_current_once {label} {
     global interaction_sample_counter runlog
 
@@ -11410,11 +11428,12 @@ proc sample_current_once {label} {
     set nonzero -1
     set center "missing"
     set sample_line "missing"
+    set sample_timing_fields "sample_open_ms=-1 sample_info_ms=-1 sample_alloc_ms=-1 sample_readback_ms=-1 sample_stats_ms=-1 sample_total_ms=-1"
 
     if {![env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0]} {
         drain_serial_available
         if {![file exists $runlog]} {
-            return [list $hash $nonblack $center $sample_line $nonblack]
+            return [list $hash $nonblack $center $sample_line $nonblack $sample_timing_fields]
         }
 
         foreach raw_line [split [read_text_file $runlog] "\n"] {
@@ -11428,12 +11447,13 @@ proc sample_current_once {label} {
             }
         }
 
-        return [list $hash $nonblack $center $sample_line $nonzero]
+        return [list $hash $nonblack $center $sample_line $nonzero $sample_timing_fields]
     }
 
     set result [run_desktop_interaction_helper_command sample $label "" 30000]
     set log_text [lindex $result 3]
     set helper_elapsed_ms [lindex $result 4]
+    set sample_timing_fields [fb_sample_timing_fields $log_text]
     if {[regexp {(fb_sample_current[^\r\n]* nonzero=([0-9]+) nonblack=([0-9]+)[^\r\n]*hash=(0x[0-9a-fA-F]+)[^\r\n]*center=(0x[0-9a-fA-F]+)[^\r\n]*)} $log_text -> line nz nb h c]} {
         set sample_line [string map {"\t" " " "\r" "" "\n" " "} $line]
         set nonzero $nz
@@ -11448,12 +11468,12 @@ proc sample_current_once {label} {
         set nonzero $nonblack
     }
     if {$sample_line eq "missing"} {
-        desktop_interaction_log_line "phase=sample action=$label status=missing helper_elapsed_ms=$helper_elapsed_ms"
+        desktop_interaction_log_line "phase=sample action=$label status=missing helper_elapsed_ms=$helper_elapsed_ms $sample_timing_fields"
     } else {
-        desktop_interaction_log_line "phase=sample action=$label status=PASS hash=$hash nonzero=$nonzero nonblack=$nonblack center=$center helper_elapsed_ms=$helper_elapsed_ms"
+        desktop_interaction_log_line "phase=sample action=$label status=PASS hash=$hash nonzero=$nonzero nonblack=$nonblack center=$center helper_elapsed_ms=$helper_elapsed_ms $sample_timing_fields"
     }
 
-    return [list $hash $nonblack $center $sample_line $nonzero]
+    return [list $hash $nonblack $center $sample_line $nonzero $sample_timing_fields $helper_elapsed_ms]
 }
 
 proc run_interaction_command {label command {allow_timeout 0}} {
@@ -11530,7 +11550,9 @@ proc run_desktop_interaction_action {label helper_args} {
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-injection-failed"
     }
     set injection_summary [join $injection_lines " | "]
-    desktop_interaction_log_line "phase=action action=$label status=PASS helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
+    set input_injection_overhead_ms [expr {$helper_elapsed_ms - $injection_total_ms}]
+    desktop_interaction_log_line "phase=action action=$label status=PASS helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
+    return [list $helper_elapsed_ms $injection_total_ms [llength $injection_lines] $input_injection_overhead_ms]
 }
 
 proc measure_first_visible_frame {label min_nonblack attempts delay_ms} {
@@ -11595,32 +11617,58 @@ proc measure_visual_action {phase action_label x y helper_args timeout_ms interv
     set before_nonblack [lindex $before 1]
     set before_center [lindex $before 2]
     set action_start_ms [clock milliseconds]
+    set action_helper_elapsed_ms -1
+    set input_injection_total_ms -1
+    set input_injection_count -1
+    set input_injection_overhead_ms -1
 
-    run_desktop_interaction_action "${phase}_${action_label}" $helper_args
+    set action_result [run_desktop_interaction_action "${phase}_${action_label}" $helper_args]
+    set action_helper_elapsed_ms [lindex $action_result 0]
+    set input_injection_total_ms [lindex $action_result 1]
+    set input_injection_count [lindex $action_result 2]
+    set input_injection_overhead_ms [lindex $action_result 3]
 
     set visual_start_ms [clock milliseconds]
     set action_elapsed_ms [expr {$visual_start_ms - $action_start_ms}]
     set first_changed_ms -1
     set first_changed_visual_ms -1
+    set first_changed_sample_start_visual_ms -1
+    set first_changed_sample_end_visual_ms -1
+    set first_changed_sample_elapsed_ms -1
+    set first_changed_sample_timing_fields "first_changed_sample_open_ms=-1 first_changed_sample_info_ms=-1 first_changed_sample_alloc_ms=-1 first_changed_sample_readback_ms=-1 first_changed_sample_stats_ms=-1 first_changed_sample_total_ms=-1"
     set first_hash "missing"
     set first_nonblack -1
     set first_center "missing"
     set last_hash "missing"
     set last_nonblack -1
     set last_center "missing"
+    set last_sample_start_visual_ms -1
+    set last_sample_end_visual_ms -1
+    set last_sample_elapsed_ms -1
+    set last_sample_timing_fields "last_sample_open_ms=-1 last_sample_info_ms=-1 last_sample_alloc_ms=-1 last_sample_readback_ms=-1 last_sample_stats_ms=-1 last_sample_total_ms=-1"
     set samples 0
     set deadline [expr {$visual_start_ms + $timeout_ms}]
     while {[clock milliseconds] <= $deadline} {
         after $interval_ms
         incr samples
+        set sample_start_ms [clock milliseconds]
+        set last_sample_start_visual_ms [expr {$sample_start_ms - $visual_start_ms}]
         set current [sample_current_once "${phase}_${action_label}_${samples}"]
+        set sample_end_ms [clock milliseconds]
+        set last_sample_end_visual_ms [expr {$sample_end_ms - $visual_start_ms}]
+        set last_sample_elapsed_ms [expr {$sample_end_ms - $sample_start_ms}]
         set last_hash [lindex $current 0]
         set last_nonblack [lindex $current 1]
         set last_center [lindex $current 2]
+        set last_sample_timing_fields [prefix_key_value_fields "last_" [lindex $current 5]]
         if {$before_hash ne "missing" && $last_hash ne "missing" &&
             $last_hash ne $before_hash} {
-            set first_changed_ms [expr {[clock milliseconds] - $action_start_ms}]
-            set first_changed_visual_ms [expr {[clock milliseconds] - $visual_start_ms}]
+            set first_changed_ms [expr {$sample_end_ms - $action_start_ms}]
+            set first_changed_visual_ms $last_sample_end_visual_ms
+            set first_changed_sample_start_visual_ms $last_sample_start_visual_ms
+            set first_changed_sample_end_visual_ms $last_sample_end_visual_ms
+            set first_changed_sample_elapsed_ms $last_sample_elapsed_ms
+            set first_changed_sample_timing_fields [prefix_key_value_fields "first_changed_" [lindex $current 5]]
             set first_hash $last_hash
             set first_nonblack $last_nonblack
             set first_center $last_center
@@ -11630,7 +11678,7 @@ proc measure_visual_action {phase action_label x y helper_args timeout_ms interv
 
     set end_ms [expr {[clock milliseconds] - $action_start_ms}]
     set status [expr {$first_changed_ms >= 0 ? "changed" : "no-change"}]
-    desktop_interaction_log_line "phase=$phase action=$action_label status=$status x=$x y=$y start_ms=$action_start_ms action_elapsed_ms=$action_elapsed_ms first_changed_ms=$first_changed_ms first_changed_visual_ms=$first_changed_visual_ms end_ms=$end_ms samples=$samples interval_ms=$interval_ms timeout_ms=$timeout_ms before_hash=$before_hash before_nonblack=$before_nonblack before_center=$before_center first_hash=$first_hash first_nonblack=$first_nonblack first_center=$first_center last_hash=$last_hash last_nonblack=$last_nonblack last_center=$last_center"
+    desktop_interaction_log_line "phase=$phase action=$action_label status=$status x=$x y=$y start_ms=$action_start_ms action_elapsed_ms=$action_elapsed_ms action_helper_elapsed_ms=$action_helper_elapsed_ms input_injection_total_ms=$input_injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=$input_injection_count first_changed_ms=$first_changed_ms first_changed_visual_ms=$first_changed_visual_ms first_changed_sample_start_visual_ms=$first_changed_sample_start_visual_ms first_changed_sample_end_visual_ms=$first_changed_sample_end_visual_ms first_changed_sample_elapsed_ms=$first_changed_sample_elapsed_ms $first_changed_sample_timing_fields end_ms=$end_ms samples=$samples interval_ms=$interval_ms timeout_ms=$timeout_ms before_hash=$before_hash before_nonblack=$before_nonblack before_center=$before_center first_hash=$first_hash first_nonblack=$first_nonblack first_center=$first_center last_hash=$last_hash last_nonblack=$last_nonblack last_center=$last_center last_sample_start_visual_ms=$last_sample_start_visual_ms last_sample_end_visual_ms=$last_sample_end_visual_ms last_sample_elapsed_ms=$last_sample_elapsed_ms $last_sample_timing_fields"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=$phase action=$action_label status=$status first_changed_ms=$first_changed_ms end_ms=$end_ms before_hash=$before_hash last_hash=$last_hash"
 }
 
@@ -11654,8 +11702,24 @@ proc measure_direct_app_launch_latency {} {
     set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
     set konsole_wait_ms "missing"
     set konsole_sample_ms "missing"
+    set konsole_launch_call_ms "missing"
+    set konsole_wrapper_start_since_launch_ms "missing"
+    set konsole_wrapper_marker_found_since_wrapper_ms "missing"
+    set konsole_wrapper_before_exec_delta_ms "missing"
     if {[regexp {konsole_wait_ms=([0-9]+)} $log_text -> kw]} {
         set konsole_wait_ms $kw
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*launch_call_ms=([-0-9]+)} $log_text -> klc]} {
+        set konsole_launch_call_ms $klc
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_start_since_launch_ms=([-0-9]+)} $log_text -> ksl]} {
+        set konsole_wrapper_start_since_launch_ms $ksl
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_marker_found_since_wrapper_ms=([-0-9]+)} $log_text -> kmw]} {
+        set konsole_wrapper_marker_found_since_wrapper_ms $kmw
+    }
+    if {[regexp {kde_app_launch_probe konsole_phase[^\r\n]*wrapper_before_exec_delta_ms=([-0-9]+)} $log_text -> kbe]} {
+        set konsole_wrapper_before_exec_delta_ms $kbe
     }
     if {[regexp {KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS=([0-9]+)} $log_text -> ksm]} {
         set konsole_sample_ms $ksm
@@ -11666,11 +11730,12 @@ proc measure_direct_app_launch_latency {} {
         set line [string trimright $raw_line "\r"]
         if {[regexp {kde_app_launch_probe launch app=konsole[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe marker phase=konsole-ready status=found[^\r\n]*} $line match] ||
+            [regexp {kde_app_launch_probe konsole_phase[^\r\n]*} $line match] ||
             [regexp {xv6-konsole-shell-ready[^\r\n]*} $line match]} {
             desktop_interaction_log_line "phase=direct-launch-detail action=kde-app-launch-probe detail=[evidence_quote [string map {"\t" " " "\r" "" "\n" " "} $match]]"
         }
     }
-    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms status_path=$status_path log_path=$log_path host_log=$host_log_path"
+    desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms status_path=$status_path log_path=$log_path host_log=$host_log_path"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms"
 }
 
