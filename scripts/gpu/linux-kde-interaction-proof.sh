@@ -24,14 +24,14 @@ TRACE_EVENTS="${CAPTURE_DIR}/qemu-trace-events"
 QEMU_TRACE="${CAPTURE_DIR}/qemu-virtio-gpu.trace"
 SERIAL_LOG="${CAPTURE_DIR}/serial.expect.log"
 HOST_LOG="${CAPTURE_DIR}/host.log"
-MONITOR_SOCK="${CAPTURE_DIR}/qemu-monitor.sock"
+MONITOR_SOCK="${LINUX_KDE_MONITOR_SOCK:-${WORK_DIR}/qemu-monitor-${STAMP}.sock}"
 INTERACTION_LOG="${CAPTURE_DIR}/linux-kde-interaction-latency.log"
 SUMMARY="${CAPTURE_DIR}/summary.txt"
 STATUS="${CAPTURE_DIR}/status.txt"
 DISPLAY_BACKEND="${LINUX_KDE_QEMU_DISPLAY:-gtk,gl=on,show-cursor=on}"
 QEMU_DEVICE="${LINUX_KDE_QEMU_DEVICE:-virtio-vga-gl,xres=1280,yres=800}"
 QEMU_INPUT_DEVICE="${LINUX_KDE_QEMU_INPUT_DEVICE:-virtio-tablet-pci}"
-SAMPLE_SOURCE="${LINUX_KDE_SAMPLE_SOURCE:-grim}"
+SAMPLE_SOURCE="${LINUX_KDE_SAMPLE_SOURCE:-screendump}"
 QEMU_MEMORY="${LINUX_KDE_QEMU_MEMORY:-8192}"
 QEMU_SMP="${LINUX_KDE_QEMU_SMP:-4}"
 WIDTH="${LINUX_KDE_WIDTH:-1280}"
@@ -536,7 +536,8 @@ sample_once "desktop-interaction-after"
 
 set direct_start [clock milliseconds]
 ilog "phase=direct-launch action=konsole status=start start_ms=\$direct_start"
-send -- "rm -f /tmp/linux-konsole-ready; export HOME=/root USER=root LOGNAME=root XDG_RUNTIME_DIR=/run/user/0 XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE KDE_FULL_SESSION=true KDE_SESSION_VERSION=6 QT_QPA_PLATFORM=wayland GALLIUM_DRIVER=virgl DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus WAYLAND_DISPLAY=wayland-0; konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 & kp=\\\$!; i=0; while [ \\\$i -lt 450 ]; do [ -s /tmp/linux-konsole-ready ] && break; i=\\\$((i+1)); sleep 0.1; done; test -s /tmp/linux-konsole-ready && echo LINUX_KDE_DIRECT_PASS pid=\\\$kp || echo LINUX_KDE_DIRECT_FAIL pid=\\\$kp; cat /tmp/linux-konsole-ready 2>/dev/null || true; echo LINUX_KDE_DIRECT_DONE\r"
+set direct_cmd {rm -f /tmp/linux-konsole-ready; export HOME=/root USER=root LOGNAME=root XDG_RUNTIME_DIR=/run/user/0 XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE KDE_FULL_SESSION=true KDE_SESSION_VERSION=6 QT_QPA_PLATFORM=wayland GALLIUM_DRIVER=virgl DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus WAYLAND_DISPLAY=wayland-0; konsole --separate --workdir /root -e /root/konsole-marker.sh >/tmp/linux-konsole.log 2>&1 & kp=\$!; i=0; while test "\$i" -lt 450; do test -s /tmp/linux-konsole-ready && break; i=\$((i+1)); sleep 0.1; done; test -s /tmp/linux-konsole-ready && echo LINUX_KDE_DIRECT_PASS pid=\$kp || echo LINUX_KDE_DIRECT_FAIL pid=\$kp; cat /tmp/linux-konsole-ready 2>/dev/null || true; echo LINUX_KDE_DIRECT_DONE}
+send -- "\$direct_cmd\r"
 set direct_status "timeout"
 expect {
   -re "LINUX_KDE_DIRECT_PASS" { set direct_status "PASS"; exp_continue }
