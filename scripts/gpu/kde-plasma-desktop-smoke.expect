@@ -2030,6 +2030,18 @@ proc chromium_no_connection_child_summary {} {
     array set syscall_tail_recorded {}
     array set syscall_tail_families {}
     array set syscall_tail_last {}
+    array set syscall_tail_fd_last {}
+    array set scm_recv_fds {}
+    array set scm_recv_last {}
+    array set fdtable_clone {}
+    array set fdtable_initial_candidate {}
+    array set payload_count {}
+    array set payload_type {}
+    array set payload_initial_client_fd {}
+    array set payload_utility {}
+    array set payload_sandbox {}
+    array set payload_first {}
+    array set payload_last {}
 
     foreach pid $no_connection_pids {
         set wanted($pid) 1
@@ -2066,10 +2078,68 @@ proc chromium_no_connection_child_summary {} {
         set syscall_tail_recorded($pid) "missing"
         set syscall_tail_families($pid) "missing"
         set syscall_tail_last($pid) "missing"
+        set syscall_tail_fd_last($pid) "missing"
+        set scm_recv_fds($pid) ""
+        set scm_recv_last($pid) ""
+        set fdtable_clone($pid) "missing"
+        set fdtable_initial_candidate($pid) "missing"
+        set payload_count($pid) 0
+        set payload_type($pid) "missing"
+        set payload_initial_client_fd($pid) "missing"
+        set payload_utility($pid) "missing"
+        set payload_sandbox($pid) "missing"
+        set payload_first($pid) ""
+        set payload_last($pid) ""
     }
 
     foreach raw_line [split [read_text_file $runlog] "\n"] {
         set line [string trimright $raw_line "\r"]
+        if {[regexp {chrome-unix-ipc-payload: .* pid=([0-9]+) tgid=([0-9]+).* fd=([0-9]+).* sample_len=([0-9]+) full_len=([0-9]+).* type=([^ ]+) initial_client_fd=([^ ]+) utility=([^ ]+) sandbox=([^ ]+).* ascii="([^"]*)"} $line -> pid tgid fd sample_len full_len ptype pfd putility psandbox pascii]} {
+            if {[info exists wanted($tgid)]} {
+                incr payload_count($tgid)
+                if {$payload_first($tgid) eq ""} {
+                    set payload_first($tgid) [chromium_short_value $line 220]
+                }
+                set payload_last($tgid) [chromium_short_value $line 220]
+                if {$ptype ne "-"} {
+                    set payload_type($tgid) $ptype
+                }
+                if {$pfd ne "-"} {
+                    set payload_initial_client_fd($tgid) $pfd
+                }
+                if {$putility ne "-"} {
+                    set payload_utility($tgid) $putility
+                }
+                if {$psandbox ne "-"} {
+                    set payload_sandbox($tgid) $psandbox
+                }
+            }
+            continue
+        }
+        if {[regexp {chrome-syscall-tail-fd .*pid=([0-9]+) tgid=([0-9]+).*} $line -> pid tgid]} {
+            if {[info exists wanted($tgid)]} {
+                set syscall_tail_fd_last($tgid) [chromium_short_value $line 220]
+            }
+            continue
+        }
+        if {[regexp {chrome-fd-trace: fdtable pid=([0-9]+) tgid=([0-9]+).* tag=clone-child-prewake-lite .*total=([0-9]+)} $line -> pid tgid total]} {
+            if {[info exists wanted($tgid)]} {
+                set fdtable_clone($tgid) "total=$total"
+            }
+            continue
+        }
+        if {[regexp {chrome-fd-trace: fdtable-entry pid=([0-9]+) tag=clone-child-prewake-lite fd=([0-9]+) cloexec=([0-9]+).* kind=([0-9]+).* f_flags=0x([0-9a-fA-F]+).* path=([^ ]+) target=(.*)} $line -> pid fd cloexec kind fflags path target]} {
+            if {[info exists wanted($pid)]} {
+                set entry "fd=$fd,cloexec=$cloexec,kind=$kind,flags=0x$fflags,path=$path,target=[chromium_short_value $target 80]"
+                if {$fdtable_initial_candidate($pid) eq "missing"} {
+                    set fdtable_initial_candidate($pid) $entry
+                } elseif {[regexp {socket|pipe|custom|/dev/dri|/tmp/\.org\.chromium|wayland|mojo} $path] ||
+                          [regexp {socket|pipe|custom|/dev/dri|/tmp/\.org\.chromium|wayland|mojo} $target]} {
+                    set fdtable_initial_candidate($pid) $entry
+                }
+            }
+            continue
+        }
         if {[regexp {chrome-syscall-tail-summary: reason=exit pid=([0-9]+) tgid=([0-9]+).* recorded=([0-9]+)} $line -> pid tgid recorded]} {
             if {[info exists wanted($tgid)] && $pid eq $tgid} {
                 set syscall_tail_recorded($tgid) $recorded
@@ -2183,6 +2253,16 @@ proc chromium_no_connection_child_summary {} {
             if {$op eq "scm-emit-cred" || $op eq "scm-recv-cred"} {
                 incr ipc_cred_count($owner)
             }
+            if {$op eq "scm-recv" &&
+                [regexp { newfd=([-0-9]+)} $line -> newfd]} {
+                if {$scm_recv_fds($owner) eq ""} {
+                    set scm_recv_fds($owner) $newfd
+                } elseif {[llength [split $scm_recv_fds($owner) ,]] < 12 &&
+                          [lsearch -exact [split $scm_recv_fds($owner) ,] $newfd] < 0} {
+                    append scm_recv_fds($owner) ",$newfd"
+                }
+                set scm_recv_last($owner) [chromium_short_value $line 220]
+            }
             if {$first_ipc($owner) eq ""} {
                 set first_ipc($owner) $line
             }
@@ -2220,7 +2300,11 @@ proc chromium_no_connection_child_summary {} {
     set contexts {}
     foreach pid $no_connection_pids {
         set role_text [chromium_role_bits_text $roles_hex($pid)]
-        lappend contexts "pid=$pid,roles=0x$roles_hex($pid),role_text=$role_text,type=$type_arg($pid),utility=$utility_subtype($pid),sandbox=$service_sandbox($pid),initial_client_fd=$initial_client_fd($pid),shared_files=$shared_files($pid),render_node=$render_node($pid),metrics=$metrics_shmem($pid),field_trial=$field_trial($pid),trace_uuid=$trace_uuid($pid),ipc=$ipc_count($pid),ipc_recv=$ipc_recv_count($pid),ipc_send=$ipc_send_count($pid),ipc_scm=$ipc_scm_count($pid),ipc_cred=$ipc_cred_count($pid),ipc_bytes_in=$ipc_bytes_in($pid),ipc_bytes_out=$ipc_bytes_out($pid),epoll_ctl=$epoll_ctl_count($pid),epoll_wait=$epoll_wait_count($pid),epoll_ready=$epoll_ready_count($pid),exit=$exit_status($pid),reap=$reap_status($pid),tail_recorded=$syscall_tail_recorded($pid),tail_families=[evidence_quote $syscall_tail_families($pid)],tail_last=[evidence_quote $syscall_tail_last($pid)],first_ipc=[evidence_quote $first_ipc($pid)],last_ipc=[evidence_quote $last_ipc($pid)],first_epoll=[evidence_quote $first_epoll($pid)],last_epoll=[evidence_quote $last_epoll($pid)]"
+        set scm_fds $scm_recv_fds($pid)
+        if {$scm_fds eq ""} {
+            set scm_fds "missing"
+        }
+        lappend contexts "pid=$pid,roles=0x$roles_hex($pid),role_text=$role_text,type=$type_arg($pid),utility=$utility_subtype($pid),sandbox=$service_sandbox($pid),initial_client_fd=$initial_client_fd($pid),payload_count=$payload_count($pid),payload_type=$payload_type($pid),payload_initial_client_fd=$payload_initial_client_fd($pid),payload_utility=$payload_utility($pid),payload_sandbox=$payload_sandbox($pid),payload_first=[evidence_quote $payload_first($pid)],payload_last=[evidence_quote $payload_last($pid)],shared_files=$shared_files($pid),render_node=$render_node($pid),metrics=$metrics_shmem($pid),field_trial=$field_trial($pid),trace_uuid=$trace_uuid($pid),fdtable_clone=$fdtable_clone($pid),fdtable_initial_candidate=[evidence_quote $fdtable_initial_candidate($pid)],scm_recv_fds=$scm_fds,scm_recv_last=[evidence_quote $scm_recv_last($pid)],ipc=$ipc_count($pid),ipc_recv=$ipc_recv_count($pid),ipc_send=$ipc_send_count($pid),ipc_scm=$ipc_scm_count($pid),ipc_cred=$ipc_cred_count($pid),ipc_bytes_in=$ipc_bytes_in($pid),ipc_bytes_out=$ipc_bytes_out($pid),epoll_ctl=$epoll_ctl_count($pid),epoll_wait=$epoll_wait_count($pid),epoll_ready=$epoll_ready_count($pid),exit=$exit_status($pid),reap=$reap_status($pid),tail_recorded=$syscall_tail_recorded($pid),tail_families=[evidence_quote $syscall_tail_families($pid)],tail_last=[evidence_quote $syscall_tail_last($pid)],tail_fd_last=[evidence_quote $syscall_tail_fd_last($pid)],first_ipc=[evidence_quote $first_ipc($pid)],last_ipc=[evidence_quote $last_ipc($pid)],first_epoll=[evidence_quote $first_epoll($pid)],last_epoll=[evidence_quote $last_epoll($pid)]"
     }
 
     return "available=1 no_connection_count=[llength $no_connection_pids] no_connection_pids=[join $no_connection_pids ,] network_restart_count=$network_restart_count runlog_present=1 first_no_connection=[evidence_quote $first_no_connection] last_no_connection=[evidence_quote $last_no_connection] contexts=[evidence_quote [join $contexts {;}]]"
