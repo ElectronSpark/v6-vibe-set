@@ -319,6 +319,24 @@ Current direction:
   `wrapper_marker_found_since_wrapper_ms=98`), so the current Plasma launch
   bottleneck is before the shell payload and should stay focused on
   Konsole/Qt/Wayland/PTY/session wakeup and admission timing.
+- 2026-07-01 AF_UNIX full-wait opt-in is now a diagnostic only, not a promoted
+  policy. The first proof with `poll_notify_full_wait=1
+  af_unix_poll_notify_full_wait=1` reached the interaction/direct-launch lane
+  but hit an intermittent allocator assertion in the RCU callback thread:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T113143Z-af-unix-full-wait-slab-double-free-fail/`.
+  It preserved early GPU (`/dev/dri/card0`, `/dev/dri/renderD128`), audio
+  registration, and NetworkManager shim evidence before
+  `__slab_obj_put(): double free detected`. A rerun with an added slab
+  cache/object diagnostic passed at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T113543Z-af-unix-full-wait-diagnostic-pass/`,
+  but did not solve responsiveness: direct Konsole launch was `10721ms`
+  (`konsole_wait_ms=8295`), PTY readiness was `6523-6524ms`, wrapper start was
+  `8069ms`, start-menu open/close was `2043/1026ms`, tray open/close was
+  `1704/1018ms`, and one desktop hover still reported no visual change. Keep
+  AF_UNIX sockets on the rescan safety net by default; use
+  `af_unix_poll_notify_full_wait=1` only for focused wakeup/regression proof,
+  and treat the RCU/slab double-free as a separate stability lead to reproduce
+  with the new diagnostic.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.

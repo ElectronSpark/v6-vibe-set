@@ -158,6 +158,17 @@ because their current action items are summarized here.
      dominant Konsole readiness delay in this run; continue the next
      responsiveness branch in the Konsole/Qt/Wayland/DBus event/admission
      path while keeping `poll_notify_full_wait` default-off.
+   - 2026-07-01 AF_UNIX full-wait remains diagnostic-only. The new default-off
+     `af_unix_poll_notify_full_wait=1` proof gate exposed one intermittent
+     RCU/slab double-free at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T113143Z-af-unix-full-wait-slab-double-free-fail/`,
+     then passed on rerun at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T113543Z-af-unix-full-wait-diagnostic-pass/`
+     with GPU/network/audio guards intact. The pass did not improve the main
+     launch metric (`direct-launch=10721ms`, `konsole_wait_ms=8295`), so do
+     not promote AF_UNIX to notify-backed globally. Continue with Konsole/
+     Qt/Wayland/DBus/PTTY admission evidence, and use the added slab
+     cache/object diagnostic if the intermittent double-free reappears.
 
 3. Plan consolidation:
    - This file is the entry point.
