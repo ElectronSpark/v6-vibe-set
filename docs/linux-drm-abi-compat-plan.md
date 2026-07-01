@@ -409,6 +409,22 @@ Current direction:
   capability-gated full-wait policy reduces artificial Konsole/Wayland/DBus
   wait churn, but it should remain default-off until a Chromium-video
   regression pass and broader notify-backed fd coverage prove it safe.
+- The gated kqueue timer-dispatch instrumentation is archived first as a
+  passive-sample miss at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T082054Z-desktop-interaction-kqueue-timer-trace-visible-timeout/`
+  and then as a passing active-sample run at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T082442Z-desktop-interaction-kqueue-timer-trace-active-sample-pass/`.
+  The passive run showed a visible host desktop and live virgl/KDE services,
+  but lacked passive `FB: virgl resource-scanout sample` lines, so the active
+  sampler is the authoritative artifact for this trace. The pass kept
+  `poll_notify_full_wait=1` and `kde_kqueue_spin_trace=1` scoped to KDE/
+  Konsole evidence. It measured direct Konsole launch `7362ms` with
+  `konsole_wait_ms=5925`; the new timer fields observed `15` timed kqueue
+  wakes, `4` timer-fired wakes, `4` empty timeout wakes, `max_dispatch_ms=5`,
+  and `max_overrun_ms=5`. Thus the remaining Konsole readiness delay is not
+  explained by raw scheduler timer dispatch latency. Treat the next
+  responsiveness branch as Konsole/Qt/Wayland/DBus event/admission work, while
+  leaving scheduler wake ordering and `poll_notify_full_wait` defaults alone.
 - The first Chromium-video stress attempt with `poll_notify_full_wait=1` did
   not reach Chromium and is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T065932Z-chromium-video-poll-full-wait-wireplumber-gp-fail/`.

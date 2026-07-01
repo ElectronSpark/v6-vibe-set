@@ -1,6 +1,6 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-06-30.
+Last updated: 2026-07-01.
 
 This is the top-level active plan for the current xv6 work. It merges the
 live direction from the kernel sanitizer/logging, Linux GUI ABI, KDE/Chromium
@@ -142,6 +142,22 @@ because their current action items are summarized here.
      `sys_futex_wait_ms=7061`, while `sys_openat_ms` stayed comparable.
      Keep `poll_notify_full_wait` default-off until Chromium-video and broader
      notify-backed fd regression proof justify enabling it.
+   - 2026-07-01 gated kqueue timer-dispatch trace:
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T082054Z-desktop-interaction-kqueue-timer-trace-visible-timeout/`
+     showed a visible host desktop and intact GPU/network/audio guards, but
+     the passive visible detector had no `FB: virgl resource-scanout sample`
+     lines and timed out. The active-sample rerun passed at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T082442Z-desktop-interaction-kqueue-timer-trace-active-sample-pass/`
+     with desktop visible `15784ms`, hover changes Chromium/Dolphin/KWrite/
+     Konsole `1561/966/2999/1157ms`, panel hover `910-1339ms`, start menu
+     open/close `2076/1254ms`, tray open/close `1570/956ms`, and direct
+     Konsole launch `7362ms` (`konsole_wait_ms=5925`). The new default-off
+     `kde_kqueue_spin_trace` fields recorded `15` timed kqueue wakes, `4`
+     timer-fired wakes, `4` empty timeout wakes, and only `max_dispatch_ms=5`
+     / `max_overrun_ms=5`. That rules out raw scheduler timer dispatch as the
+     dominant Konsole readiness delay in this run; continue the next
+     responsiveness branch in the Konsole/Qt/Wayland/DBus event/admission
+     path while keeping `poll_notify_full_wait` default-off.
 
 3. Plan consolidation:
    - This file is the entry point.
