@@ -324,6 +324,22 @@ because their current action items are summarized here.
      the counter path. Continue above raw poll notification toward
      DBus/Wayland activation/protocol ordering, or add precise kqueue event
      identity tracing before making behavior-changing poll/AF_UNIX patches.
+   - 2026-07-01 precise delivered-kevent trace proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T145100Z-desktop-interaction-kqueue-event-trace-pass/`.
+     Kernel now emits `kde-ready-kqueue-event` only under the existing
+     `konsole_ready_trace=1` gate, mapping returned `kevent.udata` back to
+     the original `pollfd` and fd target without changing poll/kqueue
+     behavior. The reducer passed with GPU virgl, NetworkManager SNI, and
+     PipeWire/Pulse guards intact. Trace volume inflated direct launch to
+     `10143ms` (`konsole_wait_ms=7734`), so use it for attribution only. In
+     this run the delivered events were `65` total: eventfd `32`, AF_UNIX
+     sockets `30`, pipes `2`, and PTMX `1`; all were `EVFILT_READ`. The new
+     trace confirms the hot Wayland socket `socket:[146]` and eventfd waits
+     do return through kqueue, while the timeout-rescan buckets still do not
+     produce ready fds. The next behavior work should stay on
+     DBus/Wayland/Qt activation/protocol sequencing or, if needed, add
+     producer-origin tagging inside kqueue before changing AF_UNIX rescan
+     policy.
 
 3. Plan consolidation:
    - This file is the entry point.

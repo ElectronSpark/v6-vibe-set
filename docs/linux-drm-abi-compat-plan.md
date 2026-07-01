@@ -453,6 +453,21 @@ Current direction:
   target should therefore stay above raw poll notification, in DBus/Wayland
   activation/protocol ordering, or first add precise kqueue event identity
   tracing before changing global poll/AF_UNIX behavior.
+- 2026-07-01 precise delivered-kevent trace proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T145100Z-desktop-interaction-kqueue-event-trace-pass/`.
+  The new `konsole_ready_trace=1`-only `kde-ready-kqueue-event` line maps
+  returned `kevent.udata` to the original `pollfd` and fd target. It is a
+  trace hook, not a behavior change. The reducer passed with `/dev/dri/card0`,
+  `/dev/dri/renderD128`, virgl renderer, NetworkManager SNI, and PipeWire/
+  Pulse sink+monitor evidence intact. Trace volume inflated direct launch to
+  `10143ms` (`konsole_wait_ms=7734`), so use timing only as distorted
+  attribution evidence. Delivered events were eventfd `32`, AF_UNIX socket
+  `30`, pipe `2`, and PTMX `1`, all `EVFILT_READ`; examples include the
+  Wayland socket `socket:[146]`, `anon_inode:[eventfd]`, and `/dev/ptmx`.
+  This confirms the hot Wayland/eventfd paths do return through kqueue and
+  points the next fix away from a simple raw missed-wakeup theory, toward
+  DBus/Wayland/Qt activation/protocol sequencing or, if that remains
+  ambiguous, producer-origin tagging inside kqueue.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
