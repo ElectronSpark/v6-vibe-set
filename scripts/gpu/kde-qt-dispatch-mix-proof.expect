@@ -49,6 +49,7 @@ expect {
 set saw_wayland_rearm 0
 set saw_qdbus_rearm 0
 set saw_combined_observed 0
+set saw_af_unix_edges_pass 0
 set saw_qt_pass 0
 set saw_notify_pass 0
 set saw_default_pass 0
@@ -60,6 +61,44 @@ send "\r"
 expect {
     -re {root:/#} {}
     timeout {}
+}
+
+send -s "/bin/kde-unix-socket-probe --af-unix-poll-edges\r"
+
+expect {
+    -re {kde_unix_socket_probe af-unix-poll-edge-byte-write result=PASS} {
+        exp_continue
+    }
+    -re {kde_unix_socket_probe af-unix-poll-edge-peer-close result=PASS} {
+        exp_continue
+    }
+    -re {kde_unix_socket_probe af-unix-poll-edge-peer-shutdown result=PASS} {
+        exp_continue
+    }
+    -re {kde_unix_socket_probe af-unix-poll-edge-scm-rights-byte result=PASS} {
+        exp_continue
+    }
+    -re {kde_unix_socket_probe af-unix-poll-edges result=PASS} {
+        set saw_af_unix_edges_pass 1
+        exp_continue
+    }
+    -re {root:/#} {
+        if {!$saw_af_unix_edges_pass} {
+            finish 5 FAIL "reason=af-unix-edges-missing-proof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        }
+    }
+    -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
+        finish 6 FAIL "reason=af-unix-edges-probe-fail af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    -re {panic|fatal page fault|coredump: generating|exception} {
+        finish 7 FAIL "reason=af-unix-edges-probe-crash af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    eof {
+        finish 8 FAIL "reason=af-unix-edges-eof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
+    timeout {
+        finish 9 FAIL "reason=af-unix-edges-timeout af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+    }
 }
 
 send -s "/bin/kde-unix-socket-probe --qt-dispatch-mix\r"
@@ -84,20 +123,20 @@ expect {
     -re {root:/#} {
         if {!($saw_wayland_rearm && $saw_qdbus_rearm &&
               $saw_combined_observed && $saw_qt_pass)} {
-            finish 5 FAIL "reason=qt-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+            finish 15 FAIL "reason=qt-missing-proof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
         }
     }
     -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
-        finish 6 FAIL "reason=qt-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 16 FAIL "reason=qt-probe-fail af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     -re {panic|fatal page fault|coredump: generating|exception} {
-        finish 7 FAIL "reason=qt-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 17 FAIL "reason=qt-probe-crash af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     eof {
-        finish 8 FAIL "reason=qt-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 18 FAIL "reason=qt-eof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     timeout {
-        finish 9 FAIL "reason=qt-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 19 FAIL "reason=qt-timeout af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
 }
 
@@ -110,20 +149,20 @@ expect {
     }
     -re {root:/#} {
         if {!$saw_notify_pass} {
-            finish 10 FAIL "reason=notify-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+            finish 20 FAIL "reason=notify-missing-proof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
         }
     }
     -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
-        finish 11 FAIL "reason=notify-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 21 FAIL "reason=notify-probe-fail af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     -re {panic|fatal page fault|coredump: generating|exception} {
-        finish 12 FAIL "reason=notify-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 22 FAIL "reason=notify-probe-crash af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     eof {
-        finish 13 FAIL "reason=notify-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 23 FAIL "reason=notify-eof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     timeout {
-        finish 14 FAIL "reason=notify-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 24 FAIL "reason=notify-timeout af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
 }
 
@@ -135,32 +174,35 @@ expect {
         exp_continue
     }
     -re {root:/#} {
-        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+        if {$saw_af_unix_edges_pass &&
+            $saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
             $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
             send "/bin/shutdown\r"
             catch { exec pkill -TERM -P [exp_pid] -f qemu-system-x86_64 }
-            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+            finish 0 PASS "reason=qt-dispatch-mix af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
         }
-        finish 15 FAIL "reason=default-missing-proof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 25 FAIL "reason=default-missing-proof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     -re {kde_unix_socket_probe [^\r\n]*result=FAIL[^\r\n]*} {
-        finish 16 FAIL "reason=default-probe-fail wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 26 FAIL "reason=default-probe-fail af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     -re {panic|fatal page fault|coredump: generating|exception} {
-        finish 17 FAIL "reason=default-probe-crash wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 27 FAIL "reason=default-probe-crash af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     eof {
-        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+        if {$saw_af_unix_edges_pass &&
+            $saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
             $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
-            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+            finish 0 PASS "reason=qt-dispatch-mix af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
         }
-        finish 18 FAIL "reason=default-eof wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 28 FAIL "reason=default-eof af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
     timeout {
-        if {$saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
+        if {$saw_af_unix_edges_pass &&
+            $saw_wayland_rearm && $saw_qdbus_rearm && $saw_combined_observed &&
             $saw_qt_pass && $saw_notify_pass && $saw_default_pass} {
-            finish 0 PASS "reason=qt-dispatch-mix wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+            finish 0 PASS "reason=qt-dispatch-mix af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
         }
-        finish 19 FAIL "reason=default-timeout wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
+        finish 29 FAIL "reason=default-timeout af_unix_edges=$saw_af_unix_edges_pass wayland_rearm=$saw_wayland_rearm qdbus_rearm=$saw_qdbus_rearm combined=$saw_combined_observed qt=$saw_qt_pass notify=$saw_notify_pass default=$saw_default_pass"
     }
 }

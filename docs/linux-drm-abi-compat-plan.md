@@ -433,6 +433,21 @@ Current direction:
   next evidence should target DBus/Wayland activation or protocol ordering, or
   add per-wait wake-source accounting in `__vfs_poll_impl()` before changing
   global poll behavior.
+- 2026-07-01 AF_UNIX full-wait edge reducer coverage now includes delayed
+  peer byte write, peer close/EOF, `shutdown(SHUT_WR)` EOF, and an
+  SCM_RIGHTS-bearing byte. Linux host reference is archived at
+  `build-x86_64/af-unix-poll-edges-proof/20260701T150331Z-linux-host/`; the
+  xv6 nographic full-wait proof is archived at
+  `build-x86_64/qt-dispatch-mix-proof/20260701T150451Z-xv6-nographic/`. The
+  xv6 run booted with
+  `poll_notify_full_wait=1 af_unix_poll_notify_full_wait=1 desktop=0` and
+  passed `--af-unix-poll-edges`, `--qt-dispatch-mix`, `--notify-mix`, and the
+  default AF_UNIX probe. The edge waits returned in about `100-106ms`,
+  matching the delayed child action, and SCM_RIGHTS `recvmsg()` returned a
+  valid received fd. This closes the previously missing reducer coverage
+  without justifying a kernel behavior change: keep AF_UNIX off the global
+  notify-backed default and continue with richer DBus/Wayland activation or
+  producer-origin wake attribution.
 - 2026-07-01 opt-in Konsole pre-PTY wake/readiness `kstats` v7 proof is
   archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T144316Z-desktop-interaction-kqueue-ready-v7-pass/`.

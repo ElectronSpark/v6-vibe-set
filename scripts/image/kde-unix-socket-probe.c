@@ -1850,6 +1850,229 @@ static int notify_mix(void)
     return failed;
 }
 
+enum af_unix_poll_edge_action {
+    AF_UNIX_POLL_EDGE_BYTE,
+    AF_UNIX_POLL_EDGE_CLOSE,
+    AF_UNIX_POLL_EDGE_SHUTDOWN,
+    AF_UNIX_POLL_EDGE_SCM_RIGHTS,
+};
+
+static ssize_t send_scm_rights_byte(int sock, int fd)
+{
+    char byte = 'F';
+    struct iovec iov;
+    struct msghdr msg;
+    char control[CMSG_SPACE(sizeof(int))];
+    struct cmsghdr *cmsg;
+
+    memset(&msg, 0, sizeof(msg));
+    memset(control, 0, sizeof(control));
+    iov.iov_base = &byte;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+    msg.msg_controllen = cmsg->cmsg_len;
+    errno = 0;
+    return sendmsg(sock, &msg, MSG_NOSIGNAL);
+}
+
+static int recv_scm_rights_byte(const char *label, int sock)
+{
+    char byte = 0;
+    struct iovec iov;
+    struct msghdr msg;
+    char control[CMSG_SPACE(sizeof(int))];
+    struct cmsghdr *cmsg;
+    int received_fd = -1;
+
+    memset(&msg, 0, sizeof(msg));
+    memset(control, 0, sizeof(control));
+    iov.iov_base = &byte;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    errno = 0;
+    ssize_t n = recvmsg(sock, &msg, MSG_CMSG_CLOEXEC);
+    printf("kde_unix_socket_probe af-unix-poll-edge-%s recvmsg ret=%zd "
+           "byte=%c flags=0x%x controllen=%zu errno=%d %s\n",
+           label, n, n == 1 ? byte : '?', msg.msg_flags,
+           (size_t)msg.msg_controllen, errno, strerror(errno));
+    if (n != 1 || byte != 'F')
+        return 1;
+    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level == SOL_SOCKET &&
+            cmsg->cmsg_type == SCM_RIGHTS &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(int))) {
+            memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
+            break;
+        }
+    }
+    printf("kde_unix_socket_probe af-unix-poll-edge-%s scm_fd=%d\n",
+           label, received_fd);
+    if (received_fd < 0)
+        return 1;
+    close(received_fd);
+    return 0;
+}
+
+static int af_unix_poll_edge_one(const char *label,
+                                 enum af_unix_poll_edge_action action)
+{
+    struct pollfd pfd;
+    int sv[2] = {-1, -1};
+    int pipefd[2] = {-1, -1};
+    int failed = 0;
+    int status = 0;
+    pid_t pid;
+    long start_ms;
+    long end_ms;
+    char byte = 0;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) {
+        print_errno("af-unix-poll-edge-socketpair");
+        return 1;
+    }
+    if (action == AF_UNIX_POLL_EDGE_SCM_RIGHTS && pipe(pipefd) < 0) {
+        print_errno("af-unix-poll-edge-pipe");
+        close(sv[0]);
+        close(sv[1]);
+        return 1;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        print_errno("af-unix-poll-edge-fork");
+        failed = 1;
+        goto out_nokill;
+    }
+
+    if (pid == 0) {
+        close(sv[0]);
+        usleep(100000);
+        errno = 0;
+        if (action == AF_UNIX_POLL_EDGE_BYTE) {
+            ssize_t n = write(sv[1], "B", 1);
+            printf("kde_unix_socket_probe af-unix-poll-edge-%s child-write ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            fflush(stdout);
+            _exit(n == 1 ? 0 : 20);
+        }
+        if (action == AF_UNIX_POLL_EDGE_CLOSE) {
+            printf("kde_unix_socket_probe af-unix-poll-edge-%s child-close\n",
+                   label);
+            close(sv[1]);
+            fflush(stdout);
+            _exit(0);
+        }
+        if (action == AF_UNIX_POLL_EDGE_SHUTDOWN) {
+            int ret = shutdown(sv[1], SHUT_WR);
+            printf("kde_unix_socket_probe af-unix-poll-edge-%s child-shutdown ret=%d errno=%d %s\n",
+                   label, ret, errno, strerror(errno));
+            fflush(stdout);
+            _exit(ret == 0 ? 0 : 21);
+        }
+        ssize_t n = send_scm_rights_byte(sv[1], pipefd[0]);
+        printf("kde_unix_socket_probe af-unix-poll-edge-%s child-send-scm ret=%zd errno=%d %s\n",
+               label, n, errno, strerror(errno));
+        fflush(stdout);
+        _exit(n == 1 ? 0 : 22);
+    }
+
+    close(sv[1]);
+    sv[1] = -1;
+    pfd.fd = sv[0];
+    pfd.events = POLLIN | POLLRDHUP;
+    pfd.revents = 0;
+    start_ms = monotonic_ms();
+    errno = 0;
+    int pret = poll(&pfd, 1, 3000);
+    end_ms = monotonic_ms();
+    printf("kde_unix_socket_probe af-unix-poll-edge-%s poll ret=%d "
+           "elapsed_ms=%ld revents=0x%x errno=%d %s\n",
+           label, pret, (start_ms >= 0 && end_ms >= start_ms) ?
+           end_ms - start_ms : -1, pfd.revents, errno, strerror(errno));
+    if (pret != 1)
+        failed = 1;
+    if (action == AF_UNIX_POLL_EDGE_BYTE ||
+        action == AF_UNIX_POLL_EDGE_SCM_RIGHTS) {
+        if (!(pfd.revents & POLLIN))
+            failed = 1;
+    } else if (!(pfd.revents & (POLLIN | POLLHUP | POLLRDHUP))) {
+        failed = 1;
+    }
+    if (end_ms >= start_ms && end_ms - start_ms > 1500)
+        failed = 1;
+
+    if (!failed) {
+        if (action == AF_UNIX_POLL_EDGE_BYTE) {
+            errno = 0;
+            ssize_t n = read(sv[0], &byte, 1);
+            printf("kde_unix_socket_probe af-unix-poll-edge-%s read ret=%zd byte=%c errno=%d %s\n",
+                   label, n, n == 1 ? byte : '?', errno, strerror(errno));
+            failed |= n != 1 || byte != 'B';
+        } else if (action == AF_UNIX_POLL_EDGE_CLOSE ||
+                   action == AF_UNIX_POLL_EDGE_SHUTDOWN) {
+            errno = 0;
+            ssize_t n = read(sv[0], &byte, 1);
+            printf("kde_unix_socket_probe af-unix-poll-edge-%s read-eof ret=%zd errno=%d %s\n",
+                   label, n, errno, strerror(errno));
+            failed |= n != 0;
+        } else {
+            failed |= recv_scm_rights_byte(label, sv[0]);
+        }
+    }
+
+    if (waitpid(pid, &status, 0) < 0) {
+        print_errno("af-unix-poll-edge-waitpid");
+        failed = 1;
+    } else {
+        printf("kde_unix_socket_probe af-unix-poll-edge-%s child-status=0x%x exited=%d code=%d\n",
+               label, status, WIFEXITED(status) ? 1 : 0,
+               WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            failed = 1;
+    }
+    pid = -1;
+
+out_nokill:
+    if (sv[0] >= 0)
+        close(sv[0]);
+    if (sv[1] >= 0)
+        close(sv[1]);
+    if (pipefd[0] >= 0)
+        close(pipefd[0]);
+    if (pipefd[1] >= 0)
+        close(pipefd[1]);
+    printf("kde_unix_socket_probe af-unix-poll-edge-%s result=%s\n",
+           label, failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+static int af_unix_poll_edges(void)
+{
+    int failed = 0;
+
+    failed |= af_unix_poll_edge_one("byte-write", AF_UNIX_POLL_EDGE_BYTE);
+    failed |= af_unix_poll_edge_one("peer-close", AF_UNIX_POLL_EDGE_CLOSE);
+    failed |= af_unix_poll_edge_one("peer-shutdown",
+                                    AF_UNIX_POLL_EDGE_SHUTDOWN);
+    failed |= af_unix_poll_edge_one("scm-rights-byte",
+                                    AF_UNIX_POLL_EDGE_SCM_RIGHTS);
+    printf("kde_unix_socket_probe af-unix-poll-edges result=%s\n",
+           failed ? "FAIL" : "PASS");
+    return failed;
+}
+
 struct qt_dispatch_channel {
     const char *label;
     const char *path;
@@ -2367,6 +2590,8 @@ int main(int argc, char **argv)
         return scm_zero_readiness() ? 1 : 0;
     if (argc == 2 && strcmp(argv[1], "--notify-mix") == 0)
         return notify_mix() ? 1 : 0;
+    if (argc == 2 && strcmp(argv[1], "--af-unix-poll-edges") == 0)
+        return af_unix_poll_edges() ? 1 : 0;
     if (argc == 2 && strcmp(argv[1], "--qt-dispatch-mix") == 0)
         return qt_dispatch_mix() ? 1 : 0;
     if (argc != 1) {
