@@ -299,7 +299,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$prompt_sync_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/chromium-video-*.ppm '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$prompt_sync_log' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -430,6 +430,26 @@ proc monitor_screendump_to {path log_path} {
     catch { file delete -force $log_path }
     catch { exec sh -c "printf 'screendump $path\\n' | nc -U -w 4 -q 1 '$monitor' >'$log_path' 2>&1" }
     return [expr {[file exists $path] && [file size $path] > 32}]
+}
+
+proc monitor_command {cmd {timeout_sec 4}} {
+    global monitor outdir
+
+    set log_path "$outdir/qemu-monitor-command.log"
+    set cmd_path "$outdir/qemu-monitor-command-[pid]-[clock microseconds].txt"
+    set fh [open $cmd_path w]
+    puts $fh $cmd
+    close $fh
+    set rc [catch {
+        exec sh -c "nc -U -w $timeout_sec -q 1 '$monitor' < '$cmd_path' >> '$log_path' 2>&1"
+    } err]
+    catch { file delete -force $cmd_path }
+    if {$rc != 0} {
+        desktop_interaction_log_line "phase=monitor action=command status=FAIL cmd=[evidence_quote $cmd] error=[evidence_quote $err]"
+        return 0
+    }
+    desktop_interaction_log_line "phase=monitor action=command status=PASS cmd=[evidence_quote $cmd]"
+    return 1
 }
 
 proc optional_monitor_screendump {} {
@@ -11764,6 +11784,59 @@ proc run_interaction_command {label command {allow_timeout 0}} {
 }
 
 proc run_desktop_interaction_action {label helper_args} {
+    set input_source "qemu-monitor"
+    if {[info exists ::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]} {
+        set requested [string tolower $::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]
+        if {$requested eq "guest" || $requested eq "mouseinject"} {
+            set input_source "guest"
+        }
+    }
+    if {$input_source eq "qemu-monitor"} {
+        set mode [lindex $helper_args 0]
+        set start_ms [clock milliseconds]
+        set injection_count 0
+        set ok 1
+
+        if {$mode eq "move"} {
+            set x [lindex $helper_args 1]
+            set y [lindex $helper_args 2]
+            set ok [monitor_command "mouse_move $x $y"]
+            set injection_count 1
+        } elseif {$mode eq "click"} {
+            set x [lindex $helper_args 1]
+            set y [lindex $helper_args 2]
+            if {![monitor_command "mouse_move $x $y"]} {
+                set ok 0
+            }
+            incr injection_count
+            after 80
+            if {![monitor_command "mouse_button 1"]} {
+                set ok 0
+            }
+            incr injection_count
+            after 80
+            if {![monitor_command "mouse_button 0"]} {
+                set ok 0
+            }
+            incr injection_count
+        } elseif {$mode eq "key"} {
+            set key [lindex $helper_args 1]
+            set ok [monitor_command "sendkey $key"]
+            set injection_count 1
+        } else {
+            desktop_interaction_log_line "phase=action action=$label status=FAIL reason=unknown-monitor-input-mode input_source=$input_source mode=[evidence_quote $mode]"
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-unknown-monitor-input"
+        }
+
+        set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
+        set status [expr {$ok ? "PASS" : "FAIL"}]
+        desktop_interaction_log_line "phase=action action=$label status=$status input_source=$input_source helper_elapsed_ms=$elapsed_ms input_injection_total_ms=$elapsed_ms input_injection_overhead_ms=0 input_injection_count=$injection_count input_injection=[evidence_quote $helper_args]"
+        if {!$ok} {
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-monitor-input-failed"
+        }
+        return [list $elapsed_ms $elapsed_ms $injection_count 0]
+    }
+
     set result [run_desktop_interaction_helper_command action $label $helper_args 20000]
     set status_path [lindex $result 0]
     set log_path [lindex $result 1]
@@ -11794,7 +11867,7 @@ proc run_desktop_interaction_action {label helper_args} {
     }
     set injection_summary [join $injection_lines " | "]
     set input_injection_overhead_ms [expr {$helper_elapsed_ms - $injection_total_ms}]
-    desktop_interaction_log_line "phase=action action=$label status=PASS helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
+    desktop_interaction_log_line "phase=action action=$label status=PASS input_source=$input_source helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
     return [list $helper_elapsed_ms $injection_total_ms [llength $injection_lines] $input_injection_overhead_ms]
 }
 
@@ -12038,8 +12111,15 @@ proc run_desktop_interaction_latency_reducer {} {
     set visible_min_nonblack [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_MIN_NONBLACK 1 1 1000000]
     set visible_attempts [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_ATTEMPTS 120 1 600]
     set visible_interval_ms [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_INTERVAL_MS 500 50 5000]
+    set input_source "qemu-monitor"
+    if {[info exists ::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]} {
+        set requested_input_source [string tolower $::env(KDE_SMOKE_INTERACTION_INPUT_SOURCE)]
+        if {$requested_input_source eq "guest" || $requested_input_source eq "mouseinject"} {
+            set input_source "guest"
+        }
+    }
 
-    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0]"
+    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0] input_source=$input_source"
     measure_first_visible_frame "desktop-interaction-visible" $visible_min_nonblack $visible_attempts $visible_interval_ms
     after 1500
     capture_fb $guest_before_ppm "desktop-interaction-before"
