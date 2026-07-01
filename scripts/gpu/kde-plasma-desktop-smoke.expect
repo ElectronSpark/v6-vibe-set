@@ -441,7 +441,7 @@ proc monitor_command {cmd {timeout_sec 4}} {
     puts $fh $cmd
     close $fh
     set rc [catch {
-        exec sh -c "nc -U -w $timeout_sec -q 1 '$monitor' < '$cmd_path' >> '$log_path' 2>&1"
+        exec sh -c "nc -U -w $timeout_sec -q 0 '$monitor' < '$cmd_path' >> '$log_path' 2>&1"
     } err]
     catch { file delete -force $cmd_path }
     if {$rc != 0} {
