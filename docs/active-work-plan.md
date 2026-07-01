@@ -373,6 +373,25 @@ because their current action items are summarized here.
      DBus/Wayland/Qt activation/protocol sequencing or, if needed, add
      producer-origin tagging inside kqueue before changing AF_UNIX rescan
      policy.
+   - 2026-07-01 semantic DBus capture harness proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T153413Z-desktop-interaction-semantic-capture-clean-pass/`.
+     The reducer passed with host-preserved direct-launch status
+     `probe_rc=0`, no stale dynamic interaction artifacts, virgl DRM nodes,
+     NetworkManager SNI, PipeWire/Pulse sink+monitor readiness, QEMU virgl
+     activity (`ctx_submit=387`, `res_flush=145`, `fence_resp=387`), and no
+     panic/fatal page fault/coredump/exception. Desktop visible was `26542ms`;
+     hover remained noisy with Chromium and Dolphin no-change in the `1200ms`
+     window, KWrite/Konsole changed at `1181/1205ms`, panel hover changed at
+     `1237-1609ms`, start menu open/close was `2770/1219ms`, tray open/close
+     was `1768/1125ms`, and direct launch was `7494ms`
+     (`konsole_wait_ms=4082`). Konsole exec remained cheap (`53ms`), PTY fds
+     appeared at `2924-2925ms`, wrapper at `4087ms`, and bash at `4264ms`.
+     `gdbus` preflight passed; DBus monitor output showed the Konsole DBus
+     name only after the delayed pre-PTY path, so this does not support a
+     DBus activation stall before PTY creation. Next evidence should add
+     timestamped Wayland protocol/configure/ack/frame capture, or
+     producer-origin tagging for the already-delivered Wayland/eventfd kqueue
+     events, before behavior-changing kernel patches.
 
 3. Plan consolidation:
    - This file is the entry point.

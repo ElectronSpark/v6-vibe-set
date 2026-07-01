@@ -500,6 +500,23 @@ Current direction:
   points the next fix away from a simple raw missed-wakeup theory, toward
   DBus/Wayland/Qt activation/protocol sequencing or, if that remains
   ambiguous, producer-origin tagging inside kqueue.
+- 2026-07-01 semantic DBus capture harness proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T153413Z-desktop-interaction-semantic-capture-clean-pass/`.
+  The reducer passed with host-preserved direct-launch status `probe_rc=0`,
+  cleaned dynamic interaction artifacts, virgl DRM nodes, NetworkManager SNI,
+  PipeWire/Pulse sink+monitor readiness, QEMU virgl activity
+  (`ctx_submit=387`, `res_flush=145`, `fence_resp=387`), and no panic/fatal
+  page fault/coredump/exception. It measured desktop visible `26542ms`, hover
+  no-change for Chromium/Dolphin in the `1200ms` window, KWrite/Konsole hover
+  `1181/1205ms`, panel hover `1237-1609ms`, start menu open/close
+  `2770/1219ms`, tray open/close `1768/1125ms`, and direct launch `7494ms`
+  (`konsole_wait_ms=4082`). Konsole exec was still cheap (`53ms`), PTY fds
+  appeared at `2924-2925ms`, wrapper at `4087ms`, and bash at `4264ms`.
+  `gdbus` preflight passed; DBus monitor output showed the Konsole DBus name
+  only after the delayed pre-PTY path. That moves the next proof target from
+  DBus activation to timestamped Wayland protocol/configure/ack/frame capture
+  or producer-origin tagging for the already-delivered Wayland/eventfd kqueue
+  events before behavior-changing kernel patches.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
