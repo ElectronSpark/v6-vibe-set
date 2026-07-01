@@ -398,8 +398,15 @@ because their current action items are summarized here.
      coordinates, while `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0` preserves
      measurement runs without PowerShell cursor-sync overhead. Guest
      `/bin/mouseinject` mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so
-     it uses the guest hardware cursor instead of a hidden host-only cursor.
-     The reusable host-side sync helper is
+     it uses the guest hardware cursor instead of a hidden host-only cursor;
+     if a reducer explicitly combines guest mouse injection with
+     `QEMU_GTK_CURSOR_MODE=host`, the host cursor is mirrored to the final
+     injected absolute coordinate and the action log records
+     `host_cursor_sync_ms`. The focused proof is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T181315Z-guest-mouseinject-host-cursor-pass/`;
+     it passed `desktop-color-wakeup` with `status_code=0`,
+     `input_source=guest`, `phase=host-cursor-sync status=PASS`, and
+     `virtio_gpu_host_cursor_only=1`. The reusable host-side sync helper is
      `scripts/gpu/qemu-host-cursor-sync.sh`; Chromium/YouTube and Linux KDE
      reference probes use it in host-cursor mode with
      `CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC` and `LINUX_KDE_HOST_CURSOR_SYNC`

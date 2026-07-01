@@ -533,8 +533,15 @@ Current direction:
   measurement runs can disable sync with
   `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0`. Guest `/bin/mouseinject`
   interaction mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so it uses
-  the virtio-gpu hardware cursor path, while host-cursor mode keeps guest
-  cursor uploads suppressed and moves the QEMU frontend cursor through
+  the virtio-gpu hardware cursor path. If a reducer explicitly combines
+  guest mouse injection with `QEMU_GTK_CURSOR_MODE=host`, the host cursor is
+  mirrored to the final injected absolute coordinate and the action log
+  records `host_cursor_sync_ms`, while guest cursor uploads stay suppressed.
+  Focused proof:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T181315Z-guest-mouseinject-host-cursor-pass/`
+  passed `desktop-color-wakeup` with `status_code=0`, `input_source=guest`,
+  `phase=host-cursor-sync status=PASS`, and `virtio_gpu_host_cursor_only=1`.
+  Host-cursor mode moves the QEMU frontend cursor through
   `scripts/gpu/qemu-host-cursor-sync.sh`. Chromium/YouTube and Linux KDE
   reference probes share that helper and can disable its host-side timing
   overhead with `CHROMIUM_YOUTUBE_HOST_CURSOR_SYNC=0` or

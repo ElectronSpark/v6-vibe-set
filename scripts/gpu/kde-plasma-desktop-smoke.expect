@@ -379,32 +379,35 @@ set kde_interaction_host_cursor_sync 0
 if {$kde_smoke_reducer eq "desktop-interaction-latency" ||
     $kde_smoke_reducer eq "desktop-interaction" ||
     $kde_smoke_reducer eq "desktop-color-wakeup"} {
-    if {$kde_interaction_input_source eq "qemu-monitor"} {
-        if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+    if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
+        if {$kde_interaction_input_source eq "qemu-monitor"} {
             set env(QEMU_GTK_CURSOR_MODE) "host"
-        }
-        if {$env(QEMU_GTK_CURSOR_MODE) eq "host"} {
-            if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
-                set env(QEMU_GTK_SHOW_CURSOR) "on"
-            }
-            set kde_interaction_cursor_owner "qemu-frontend-host"
-            set kde_interaction_host_cursor_sync \
-                [env_bool KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC 1]
         } else {
-            set kde_interaction_cursor_owner "explicit-$env(QEMU_GTK_CURSOR_MODE)"
-        }
-    } else {
-        if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
             set env(QEMU_GTK_CURSOR_MODE) "guest"
         }
-        if {$env(QEMU_GTK_CURSOR_MODE) eq "guest"} {
-            if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
-                set env(QEMU_GTK_SHOW_CURSOR) "off"
-            }
-            set kde_interaction_cursor_owner "guest-hardware-cursor"
-        } else {
-            set kde_interaction_cursor_owner "guest-input-explicit-$env(QEMU_GTK_CURSOR_MODE)"
+    }
+    if {$env(QEMU_GTK_CURSOR_MODE) eq "host"} {
+        if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+            set env(QEMU_GTK_SHOW_CURSOR) "on"
         }
+        set kde_interaction_host_cursor_sync \
+            [env_bool KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC 1]
+        if {$kde_interaction_input_source eq "qemu-monitor"} {
+            set kde_interaction_cursor_owner "qemu-monitor-host-cursor"
+        } else {
+            set kde_interaction_cursor_owner "guest-input-host-cursor"
+        }
+    } elseif {$env(QEMU_GTK_CURSOR_MODE) eq "guest"} {
+        if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {
+            set env(QEMU_GTK_SHOW_CURSOR) "off"
+        }
+        if {$kde_interaction_input_source eq "qemu-monitor"} {
+            set kde_interaction_cursor_owner "qemu-monitor-guest-hardware-cursor"
+        } else {
+            set kde_interaction_cursor_owner "guest-hardware-cursor"
+        }
+    } else {
+        set kde_interaction_cursor_owner "explicit-$env(QEMU_GTK_CURSOR_MODE)"
     }
 }
 set qemu_timeout ""
@@ -652,7 +655,7 @@ proc sync_host_cursor_to_guest {x y} {
     global kde_interaction_host_cursor_sync
 
     if {!$kde_interaction_host_cursor_sync} {
-        return
+        return 0
     }
 
     set start_ms [clock milliseconds]
@@ -669,6 +672,7 @@ proc sync_host_cursor_to_guest {x y} {
     } else {
         desktop_interaction_log_line "phase=host-cursor-sync status=FAIL x=$x y=$y elapsed_ms=$elapsed_ms detail=[evidence_quote $text]"
     }
+    return $elapsed_ms
 }
 
 proc fb_visual_enabled {} {
@@ -11988,6 +11992,20 @@ proc run_interaction_command {label command {allow_timeout 0}} {
     optional_prompt
 }
 
+proc interaction_helper_cursor_target {helper_args} {
+    set mode [lindex $helper_args 0]
+
+    if {$mode eq "move" || $mode eq "click"} {
+        set x [lindex $helper_args 1]
+        set y [lindex $helper_args 2]
+        if {[string is integer -strict $x] &&
+            [string is integer -strict $y]} {
+            return [list 1 $x $y]
+        }
+    }
+    return [list 0 0 0]
+}
+
 proc run_desktop_interaction_action {label helper_args} {
     global kde_interaction_input_source
 
@@ -12045,6 +12063,7 @@ proc run_desktop_interaction_action {label helper_args} {
     set log_path [lindex $result 1]
     set log_text [lindex $result 3]
     set helper_elapsed_ms [lindex $result 4]
+    set host_cursor_sync_ms 0
     set injection_lines {}
     set injection_total_ms 0
     set injection_fail 0
@@ -12068,9 +12087,15 @@ proc run_desktop_interaction_action {label helper_args} {
         desktop_interaction_log_line "phase=action action=$label status=FAIL reason=input-injection status_path=$status_path log_path=$log_path log=[evidence_quote $log_text]"
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-injection-failed"
     }
+    set cursor_target [interaction_helper_cursor_target $helper_args]
+    if {[lindex $cursor_target 0]} {
+        set host_cursor_sync_ms \
+            [sync_host_cursor_to_guest [lindex $cursor_target 1] \
+                                       [lindex $cursor_target 2]]
+    }
     set injection_summary [join $injection_lines " | "]
     set input_injection_overhead_ms [expr {$helper_elapsed_ms - $injection_total_ms}]
-    desktop_interaction_log_line "phase=action action=$label status=PASS input_source=$input_source helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
+    desktop_interaction_log_line "phase=action action=$label status=PASS input_source=$input_source helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_overhead_ms=$input_injection_overhead_ms input_injection_count=[llength $injection_lines] host_cursor_sync_ms=$host_cursor_sync_ms status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
     return [list $helper_elapsed_ms $injection_total_ms [llength $injection_lines] $input_injection_overhead_ms]
 }
 
@@ -12390,6 +12415,7 @@ proc run_desktop_interaction_latency_reducer {} {
 
 proc click_abs {x y done_label fail_label} {
     run_interaction_command $fail_label "/bin/mouseinject $x $y 0; /bin/mouseinject $x $y 1; /bin/mouseinject $x $y 0"
+    sync_host_cursor_to_guest $x $y
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO click label=$done_label status=PASS x=$x y=$y"
 }
 
@@ -12415,6 +12441,7 @@ proc double_click_abs {x y done_prefix fail_label} {
     }
     set timeout $old_timeout
     optional_prompt
+    sync_host_cursor_to_guest $x $y
     sleep 5
 }
 
