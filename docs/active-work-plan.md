@@ -299,6 +299,31 @@ because their current action items are summarized here.
      knobs. Keep AF_UNIX full waits diagnostic-only and move the next
      investigation up to DBus/Wayland activation/protocol ordering or add
      kernel per-wait wake-source instrumentation around `__vfs_poll_impl()`.
+   - 2026-07-01 opt-in Konsole pre-PTY wake/readiness `kstats` v7 proof is
+     archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T144316Z-desktop-interaction-kqueue-ready-v7-pass/`.
+     A no-desktop ABI smoke first proved the appended fields are visible to
+     guest `kprofile` at
+     `build-x86_64/kprofile-v7-proof/20260701T144031Z-nographic-send-on-first-prompt/`.
+     The desktop reducer passed with desktop visible at `20497ms`, hover
+     changes Chromium/Dolphin/KWrite/Konsole `3380/1055/1061/1136ms`, panel
+     hover `1134-1654ms`, start-menu open/close `2084/1136ms`, tray
+     open/close `1792/1150ms`, and direct launch `5078ms`
+     (`konsole_wait_ms=2364`). Konsole launch was still cheap
+     (`launch_call_ms=47`), first PTY fds appeared at `1508-1510ms`, wrapper
+     start at `2333ms`, and bash at `2426ms`. The v7 counters show
+     overlapping pre-PTY exposure of `1472ms`: Wayland `896ms`, pipe `836ms`,
+     QDBus `575ms`, eventfd `572ms`, with `1364ms` in timed rescan waits but
+     `0ms`/`0` calls in all `rescan_ready_*` buckets. All observed ready
+     buckets were after kqueue delivery (`kqueue_wake_ms=108`,
+     `event_ready_ms=108`; ready Wayland/QDBus/eventfd `40/5/61ms`), so this
+     run does not support a simple "fd became ready only on timeout rescan"
+     theory. Audit note: these v7 fields are post-wait readiness categories
+     and may include writable readiness; they are not exact wake-source
+     causality because `kqueue_wait()` event identities are not preserved into
+     the counter path. Continue above raw poll notification toward
+     DBus/Wayland activation/protocol ordering, or add precise kqueue event
+     identity tracing before making behavior-changing poll/AF_UNIX patches.
 
 3. Plan consolidation:
    - This file is the entry point.

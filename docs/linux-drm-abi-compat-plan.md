@@ -433,6 +433,26 @@ Current direction:
   next evidence should target DBus/Wayland activation or protocol ordering, or
   add per-wait wake-source accounting in `__vfs_poll_impl()` before changing
   global poll behavior.
+- 2026-07-01 opt-in Konsole pre-PTY wake/readiness `kstats` v7 proof is
+  archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T144316Z-desktop-interaction-kqueue-ready-v7-pass/`.
+  A no-desktop ABI smoke first proved the appended fields are visible to guest
+  `kprofile` at
+  `build-x86_64/kprofile-v7-proof/20260701T144031Z-nographic-send-on-first-prompt/`.
+  The desktop interaction reducer passed with GPU virgl, NetworkManager SNI,
+  and PipeWire/Pulse sink+monitor evidence intact. It measured direct launch
+  `5078ms` (`konsole_wait_ms=2364`), first PTY fds at `1508-1510ms`, wrapper
+  start at `2333ms`, and bash at `2426ms`. Pre-PTY poll exposure was
+  `1472ms`: Wayland `896ms`, pipe `836ms`, QDBus `575ms`, eventfd `572ms`.
+  Timed rescans still consumed `1364ms`, but all `rescan_ready_*` counters
+  were zero, while all observed ready buckets followed kqueue delivery
+  (`kqueue_wake_ms=108`, `event_ready_ms=108`). This argues against a simple
+  missed-notification timeout-rescan bug for this sample. Caveat: the v7
+  counters classify post-wait readiness and can include writable readiness;
+  they do not preserve exact `kqueue_wait()` event identities. The next fix
+  target should therefore stay above raw poll notification, in DBus/Wayland
+  activation/protocol ordering, or first add precise kqueue event identity
+  tracing before changing global poll/AF_UNIX behavior.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
