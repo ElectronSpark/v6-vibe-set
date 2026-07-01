@@ -343,6 +343,21 @@ Current direction:
   eventfds, and Wayland/DBus peers, not PTY setup or process creation. Add
   peer identity/queue detail for the sampled `socket:[146]` and `socket:[148]`
   waits before behavior-changing scheduler, poll, or futex patches.
+- The peer-attribution and Konsole-process kqueue wait proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T064325Z-desktop-interaction-konsole-kqueue-sleep-pass/`.
+  It passed the desktop interaction reducer with `/dev/dri/card0`,
+  `/dev/dri/renderD128`, NetworkManager shim, and PipeWire/Pulse evidence
+  intact. The direct Konsole path was slower under tracing:
+  `konsole_launch_call_ms=8`, `konsole_wrapper_start_since_launch_ms=14280`,
+  and `konsole_wait_ms=14998`. `kprofile` recorded
+  `sys_poll_blocking_ms=55736`, `sys_ppoll_ms=16016`,
+  `sys_futex_wait_ms=14225`, and `sys_openat_lookup_ms=11354`. The new
+  `kde_kqueue_spin_trace_konsole_only=1` gate confines kqueue wait tracing to
+  the Konsole process group; the `timeout=10` wake samples had median `10ms`,
+  average `17.1ms`, p90 `35ms`, p99 `71ms`, max `95ms`, and `153/161`
+  samples with `nready=0`. This points at timer/scheduler wake latency and
+  empty timeout churn as the next evidence branch, while the extra trace
+  overhead means this run should not be treated as a performance baseline.
 
 ### 3. Chromium As Regression / Stress Probe
 
