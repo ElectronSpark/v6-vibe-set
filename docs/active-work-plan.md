@@ -219,6 +219,21 @@ because their current action items are summarized here.
      Treat these counters as overlapping fd-set exposure, not exclusive wall
      time. They justify the next reducer around Qt/Wayland/DBus/eventfd wake
      propagation before changing global poll or AF_UNIX policy.
+   - 2026-07-01 opt-in Konsole pre-PTY `kstats` v5 attribution proof is
+     archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T125524Z-desktop-interaction-konsole-prepty-kstats-pass/`.
+     The reducer passed with desktop visible at `17393ms`, hover changed
+     Chromium/Dolphin/KWrite/Konsole at `1939/2590/1292/1088ms`, panel hover
+     at `1104-1417ms`, start-menu open/close `2810/1134ms`, tray open/close
+     `1811/995ms`, and direct launch `5484ms`
+     (`konsole_wait_ms=3771`, PTY `2834-2836ms`, wrapper `3821ms`, bash
+     `4004ms`). The pre-PTY window now isolates `2930ms` of poll wait
+     exposure: Wayland `1726ms`, pipe `1639ms`, eventfd `1198ms`,
+     unclassified AF_UNIX `1203ms`, timeout `2821ms`, ready only `108ms`.
+     Pre-PTY futex waits were only `49ms`, all woken. GPU virgl, network SNI,
+     and PipeWire/Pulse sink+monitor guards stayed intact. Next reducer should
+     classify the unclassified AF_UNIX/pipe endpoint roles and test why
+     Wayland-poll progress still depends on timeout/rescan before PTY.
 
 3. Plan consolidation:
    - This file is the entry point.

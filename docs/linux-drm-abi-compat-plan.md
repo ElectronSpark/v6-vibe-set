@@ -376,6 +376,21 @@ Current direction:
   These counters are opt-in through `kstatsctl(2)`/`kprofile`; use them to
   guide the next Qt/Wayland/DBus/eventfd wake reducer before changing global
   poll or AF_UNIX policy.
+- 2026-07-01 opt-in Konsole pre-PTY `kstats` v5 counters now split the
+  direct-launch wait before the first PTY boundary. The proof archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T125524Z-desktop-interaction-konsole-prepty-kstats-pass/`
+  passed with direct launch `5484ms`, `konsole_wait_ms=3771`, first PTY at
+  `2834-2836ms`, wrapper at `3821ms`, and bash at `4004ms`. The pre-PTY
+  buckets reported `konsole_prepty_poll_total_ms=2930`,
+  `konsole_prepty_poll_wayland_ms=1726`,
+  `konsole_prepty_poll_pipe_ms=1639`,
+  `konsole_prepty_poll_eventfd_ms=1198`,
+  `konsole_prepty_poll_unix_other_ms=1203`,
+  `konsole_prepty_poll_timeout_ms=2821`, and ready waits only `108ms`.
+  `konsole_prepty_futex_wait_ms=49`, all woken, rules out futex waits as the
+  main pre-PTY bottleneck in this run. Keep global poll/AF_UNIX behavior
+  unchanged; the next evidence target is endpoint-level classification and a
+  focused Wayland/Qt pipe/eventfd wake reducer.
 - The first instrumented desktop-interaction run reproduced the black desktop
   path before hover timing could be measured:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T050534Z-desktop-interaction-phase-instrumentation-visible-timeout/`.
