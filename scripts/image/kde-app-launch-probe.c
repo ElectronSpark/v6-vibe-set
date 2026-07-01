@@ -22,6 +22,8 @@ struct app_probe {
     int exit_code;
     int signal_code;
     long long launch_elapsed_ms;
+    long long fork_elapsed_ms;
+    long long exec_elapsed_ms;
 };
 
 static const char *chromium_evidence_path =
@@ -231,7 +233,11 @@ static void chromium_evidence_expected_url(pid_t launched_pid,
 static int launch_app(struct app_probe *probe)
 {
     long long start_ms;
+    long long fork_return_ms;
     pid_t pid;
+    int exec_pipe[2] = { -1, -1 };
+    int exec_errno = 0;
+    int have_exec_pipe = 0;
 
     if (access(probe->argv[0], X_OK) < 0) {
         fprintf(stderr, "kde_app_launch_probe %s missing path=%s errno=%d\n",
@@ -239,24 +245,71 @@ static int launch_app(struct app_probe *probe)
         return 0;
     }
 
+    if (pipe(exec_pipe) == 0) {
+        int flags = fcntl(exec_pipe[1], F_GETFD, 0);
+
+        if (flags >= 0 && fcntl(exec_pipe[1], F_SETFD,
+                                flags | FD_CLOEXEC) == 0) {
+            have_exec_pipe = 1;
+        } else {
+            close(exec_pipe[0]);
+            close(exec_pipe[1]);
+            exec_pipe[0] = -1;
+            exec_pipe[1] = -1;
+        }
+    }
+
     start_ms = monotonic_ms();
     pid = fork();
     if (pid < 0) {
         fprintf(stderr, "kde_app_launch_probe %s fork_failed errno=%d\n",
                 probe->name, errno);
+        if (exec_pipe[0] >= 0)
+            close(exec_pipe[0]);
+        if (exec_pipe[1] >= 0)
+            close(exec_pipe[1]);
         return 0;
     }
     if (pid == 0) {
+        if (have_exec_pipe)
+            close(exec_pipe[0]);
         execv(probe->argv[0], probe->argv);
+        exec_errno = errno;
+        if (have_exec_pipe) {
+            ssize_t ignored =
+                write(exec_pipe[1], &exec_errno, sizeof(exec_errno));
+            (void)ignored;
+        }
         fprintf(stderr, "kde_app_launch_probe exec_failed app=%s errno=%d\n",
                 probe->name, errno);
         _exit(127);
     }
+    fork_return_ms = monotonic_ms();
+    if (have_exec_pipe) {
+        ssize_t n;
+
+        close(exec_pipe[1]);
+        n = read(exec_pipe[0], &exec_errno, sizeof(exec_errno));
+        close(exec_pipe[0]);
+        if (n == (ssize_t)sizeof(exec_errno)) {
+            fprintf(stderr,
+                    "kde_app_launch_probe exec_failed app=%s pid=%ld "
+                    "errno=%d fork_elapsed_ms=%lld exec_elapsed_ms=%lld\n",
+                    probe->name, (long)pid, exec_errno,
+                    fork_return_ms - start_ms, monotonic_ms() - start_ms);
+            return 0;
+        }
+    }
     probe->pid = pid;
     probe->launch_elapsed_ms = monotonic_ms() - start_ms;
+    probe->fork_elapsed_ms = fork_return_ms - start_ms;
+    probe->exec_elapsed_ms = probe->launch_elapsed_ms;
     fprintf(stderr,
-            "kde_app_launch_probe launch app=%s pid=%ld elapsed_ms=%lld\n",
-            probe->name, (long)pid, probe->launch_elapsed_ms);
+            "kde_app_launch_probe launch app=%s pid=%ld fork_elapsed_ms=%lld "
+            "exec_elapsed_ms=%lld elapsed_ms=%lld exec_pipe=%d\n",
+            probe->name, (long)pid, probe->fork_elapsed_ms,
+            probe->exec_elapsed_ms, probe->launch_elapsed_ms,
+            have_exec_pipe);
     return 1;
 }
 
@@ -2010,7 +2063,7 @@ static int run_chromium_only(const char *chromium_url)
         "/bin/wayland-chromium", (char *)chromium_url, NULL
     };
     struct app_probe chromium = {
-        "chromium", chromium_argv, -1, 0, 0, -1, 0, 0
+        "chromium", chromium_argv, -1, 0, 0, -1, 0, 0, 0, 0
     };
     int ok;
     int launcher_log = 0;
@@ -2191,12 +2244,12 @@ int main(int argc, char **argv)
                             "/tmp/xv6-kde-app-probe.txt", NULL };
     char *chromium_argv[] = { "/bin/wayland-chromium", "about:blank", NULL };
     struct app_probe probes[] = {
-        { "konsole", konsole_argv, -1, 0, 0, -1, 0, 0 },
-        { "terminal", terminal_argv, -1, 0, 0, -1, 0, 0 },
-        { "dolphin", dolphin_argv, -1, 0, 0, -1, 0, 0 },
-        { "kate", kate_argv, -1, 0, 0, -1, 0, 0 },
-        { "kwrite", kwrite_argv, -1, 0, 0, -1, 0, 0 },
-        { "chromium", chromium_argv, -1, 0, 0, -1, 0, 0 },
+        { "konsole", konsole_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
+        { "terminal", terminal_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
+        { "dolphin", dolphin_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
+        { "kate", kate_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
+        { "kwrite", kwrite_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
+        { "chromium", chromium_argv, -1, 0, 0, -1, 0, 0, 0, 0 },
     };
     int require_chromium = has_arg(argc, argv, "--require-chromium");
     int chromium_only = has_arg(argc, argv, "--chromium-only");

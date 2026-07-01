@@ -5851,6 +5851,36 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "tmp=\"\${status}.tmp.\$\$.\${RANDOM:-0}\""
     puts $fh "/bin/rm -f \"\$status\" \"\$tmp\" \"\$log\""
     puts $fh "{"
+    puts $fh {  now_ms() {
+    local up sec frac
+    if ! read up _ < /proc/uptime 2>/dev/null; then
+      echo 0
+      return
+    fi
+    sec="${up%.*}"
+    frac="${up#*.}"
+    if [ "$frac" = "$up" ]; then
+      frac=0
+    fi
+    frac="${frac}000"
+    frac="${frac:0:3}"
+    echo $((10#$sec * 1000 + 10#$frac))
+  }
+  run_injection() {
+    local mode="$1"
+    shift
+    local start end rc status_text
+    start="$(now_ms)"
+    rc=0
+    "$@" || rc=$?
+    end="$(now_ms)"
+    status_text=PASS
+    if [ "$rc" -ne 0 ]; then
+      status_text=FAIL
+    fi
+    echo "kde_interaction_helper phase=input-injection mode=$mode status=$status_text start_ms=$start end_ms=$end elapsed_ms=$((end - start)) rc=$rc command=$*"
+    return "$rc"
+  }}
     puts $fh "  case \"\$kind\" in"
     puts $fh "    capture)"
     puts $fh "      fbstat ppm-current \"\$1\" 0 0 1280 800"
@@ -5864,15 +5894,15 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "      shift"
     puts $fh "      case \"\$mode\" in"
     puts $fh "        move)"
-    puts $fh "          /bin/mouseinject \"\$1\" \"\$2\" 0"
+    puts $fh "          run_injection move /bin/mouseinject \"\$1\" \"\$2\" 0"
     puts $fh "          ;;"
     puts $fh "        click)"
-    puts $fh "          /bin/mouseinject \"\$1\" \"\$2\" 0"
-    puts $fh "          /bin/mouseinject \"\$1\" \"\$2\" 1"
-    puts $fh "          /bin/mouseinject \"\$1\" \"\$2\" 0"
+    puts $fh "          run_injection click-move /bin/mouseinject \"\$1\" \"\$2\" 0"
+    puts $fh "          run_injection click-down /bin/mouseinject \"\$1\" \"\$2\" 1"
+    puts $fh "          run_injection click-up /bin/mouseinject \"\$1\" \"\$2\" 0"
     puts $fh "          ;;"
     puts $fh "        key)"
-    puts $fh "          /bin/keyinject key \"\$1\""
+    puts $fh "          run_injection key /bin/keyinject key \"\$1\""
     puts $fh "          ;;"
     puts $fh "        *)"
     puts $fh "          echo \"kde-interaction-helper: unknown action mode=\$mode\""
@@ -11476,11 +11506,31 @@ proc run_desktop_interaction_action {label helper_args} {
     set log_path [lindex $result 1]
     set log_text [lindex $result 3]
     set helper_elapsed_ms [lindex $result 4]
+    set injection_lines {}
+    set injection_total_ms 0
+    set injection_fail 0
+    foreach raw_line [split $log_text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {kde_interaction_helper phase=input-injection[^\r\n]*} $line match]} {
+            lappend injection_lines [string map {"\t" " " "\r" "" "\n" " "} $match]
+            if {[regexp {elapsed_ms=([0-9]+)} $match -> elapsed]} {
+                set injection_total_ms [expr {$injection_total_ms + $elapsed}]
+            }
+            if {[regexp {status=FAIL} $match]} {
+                set injection_fail 1
+            }
+        }
+    }
     if {[regexp {mouseinject: (open|write) [^\r\n]*failed} $log_text]} {
         desktop_interaction_log_line "phase=action action=$label status=FAIL reason=mouseinject status_path=$status_path log_path=$log_path log=[evidence_quote $log_text]"
         finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-failed"
     }
-    desktop_interaction_log_line "phase=action action=$label status=PASS helper_elapsed_ms=$helper_elapsed_ms status_path=$status_path log_path=$log_path"
+    if {$injection_fail} {
+        desktop_interaction_log_line "phase=action action=$label status=FAIL reason=input-injection status_path=$status_path log_path=$log_path log=[evidence_quote $log_text]"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-action-injection-failed"
+    }
+    set injection_summary [join $injection_lines " | "]
+    desktop_interaction_log_line "phase=action action=$label status=PASS helper_elapsed_ms=$helper_elapsed_ms input_injection_total_ms=$injection_total_ms input_injection_count=[llength $injection_lines] status_path=$status_path log_path=$log_path input_injection=[evidence_quote $injection_summary]"
 }
 
 proc measure_first_visible_frame {label min_nonblack attempts delay_ms} {
@@ -11611,6 +11661,14 @@ proc measure_direct_app_launch_latency {} {
         set konsole_sample_ms $ksm
     } elseif {[regexp {marker phase=konsole-ready status=waiting} $log_text]} {
         set konsole_sample_ms "logged"
+    }
+    foreach raw_line [split $log_text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {kde_app_launch_probe launch app=konsole[^\r\n]*} $line match] ||
+            [regexp {kde_app_launch_probe marker phase=konsole-ready status=found[^\r\n]*} $line match] ||
+            [regexp {xv6-konsole-shell-ready[^\r\n]*} $line match]} {
+            desktop_interaction_log_line "phase=direct-launch-detail action=kde-app-launch-probe detail=[evidence_quote [string map {"\t" " " "\r" "" "\n" " "} $match]]"
+        }
     }
     desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms status_path=$status_path log_path=$log_path host_log=$host_log_path"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms"

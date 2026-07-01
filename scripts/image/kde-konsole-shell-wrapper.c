@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -23,6 +24,13 @@ int main(int argc, char **argv)
     long long written_ms;
     long long before_exec_ms;
     int fd = open(marker, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int stdin_isatty = isatty(STDIN_FILENO);
+    int stdout_isatty = isatty(STDOUT_FILENO);
+    int stderr_isatty = isatty(STDERR_FILENO);
+    int session_id = getsid(0);
+    int pgrp = getpgrp();
+    int tty_pgrp = tcgetpgrp(STDIN_FILENO);
+    const char *tty = ttyname(STDIN_FILENO);
 
     open_ms = monotonic_ms();
     if (fd < 0) {
@@ -36,9 +44,12 @@ int main(int argc, char **argv)
     before_exec_ms = monotonic_ms();
     dprintf(fd,
             "xv6-konsole-shell-ready start_ms=%lld open_ms=%lld "
-            "before_exec_ms=%lld pid=%ld ppid=%ld\n",
+            "before_exec_ms=%lld pid=%ld ppid=%ld stdin_isatty=%d "
+            "stdout_isatty=%d stderr_isatty=%d getsid=%d getpgrp=%d "
+            "tcgetpgrp=%d tty=%s\n",
             start_ms, open_ms, before_exec_ms, (long)getpid(),
-            (long)getppid());
+            (long)getppid(), stdin_isatty, stdout_isatty, stderr_isatty,
+            session_id, pgrp, tty_pgrp, tty ? tty : "(none)");
     close(fd);
     written_ms = monotonic_ms();
     dprintf(STDOUT_FILENO,
