@@ -1234,6 +1234,62 @@ Current direction:
   payload through argv/proctitle rewrite, initial-client-fd setup, Mojo channel
   readiness, and media URL handoff. Avoid more EGL, DRM, or FPS work until a
   renderer is stable enough to open the MP4 or emit media events.
+- A strict GBM config sanity rerun is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T090602Z-chromium-video-egl-gbm-require-config-fail/`.
+  It intentionally set `KDE_SMOKE_CHROMIUM_VIDEO_EGL_GBM_REQUIRE_CONFIG=1` and
+  failed before Chromium launch because virgl GBM exposed no ES RGB pbuffer
+  configs: `egl_choose_config ... status=FAIL reason=no_config_required`,
+  while render-node open, virtgpu GETPARAM, GBM device creation, EGL init, and
+  configless/surfaceless extension probes were otherwise Linux-shaped
+  (`pbuffer=0`, `window=250`, `surfaceless_es3_count=50`). Treat pbuffer
+  absence as a recorded compatibility fact, not a hard gate for current
+  Chromium admission.
+- The post-AF_UNIX-rescan normal Chromium admission run is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T091217Z-chromium-post-afunix-rescan-mojo-no-renderer-crash/`.
+  It kept `poll_notify_full_wait=1`, `vfs_backend_read_revive=1`, normal
+  no-forced-GL launcher policy, RELA and GBM preprobes, zero video samples,
+  full maps, IPC payload tracing, media fd tracing, syscall tails, and thread
+  dumps. RELA passed (`checked=35 skipped=5 missing=2 failed=0`) and GBM
+  passed with a configless/surfaceless ES3 context and renderer
+  `virgl (D3D12 (Intel(R) UHD Graphics))`; the host GBM status file remained
+  completion-only (`status=DONE`).
+- The same run got farther than raw zygote bootstrap: lifecycle evidence saw
+  `clone=149`, `clone_process=17`, `clone_thread=132`, `exec=11`,
+  `clone_gpu=3`, `clone_utility=24`, `clone_zygote=76`, `exec_gpu=1`,
+  `exec_utility=2`, and `exec_zygote=2`. Fast census saw browser, GPU,
+  utility, and zygote roles (`browser_pids=3`, `gpu_process_pids=1`,
+  `utility_pids=2`, `zygote_pids=9`), but still no stable renderer
+  (`renderer_pids=0`, `exec_renderer=0`) and no media progress
+  (`perf_count=0`, `playing_count=0`, `result_count=0`, no MP4 open in
+  `chrome_media_fd_trace`, and no Chrome execbuffers). Four children hit
+  Chromium's "15 seconds with no connection" watchdog, including one
+  NetworkService restart; QEMU GPU work stayed tiny (`ctx_submit=67`,
+  `res_flush=19`) compared with the Linux KWin Chromium-video baseline.
+- Updated next reducer target: the browser/zygote path now proves enough
+  AF_UNIX/SCM/CREDENTIALS delivery for `CHILD_PING`, FD-passed Mojo traffic,
+  a GPU child, and NetworkService utility startup, but not enough for child
+  connection establishment. Before a behavior patch, compare or trace the
+  post-fork child handoff around `--initial-client-fd`, `SO_PEERCRED`,
+  `shutdown()` half-close state, epoll/poll readiness, futex waits, and
+  procfs/cmdline/proctitle updates for the no-connection children.
+- The first extracted child-control reducer now lives in
+  `user/programs/webkitabitest/webkitabitest.c` as
+  `chromium-forked-ipc`. It creates a forked `SOCK_SEQPACKET|SOCK_NONBLOCK`
+  pair, validates cross-process `SO_PASSCRED`/`SO_PEERCRED`, receives a
+  `CHILD_PING`, passes a bootstrap payload plus `SCM_RIGHTS` fd with
+  `MSG_CMSG_CLOEXEC`, rearms one-shot epoll across ACK, `shutdown(SHUT_WR)`,
+  and final close, and verifies every message by payload, credentials, fd
+  contents, and EOF. Linux control passed with
+  `build-x86_64/sysroot/bin/webkitabitest chromium-forked-ipc`
+  (`1 passed, 0 skipped, 0 failed`). xv6 guest proof passed in
+  `build-x86_64/webkitabitest-forked-ipc/20260701T093559Z/run.log`
+  (`WEBKITABITEST-FORKED-IPC-PASS`); the temporary copied 8 GiB test image was
+  removed after preserving the log. This closes the minimal forked seqpacket
+  credentials/fd/half-close shape as the direct Chromium no-connection cause.
+  The next proof should trace a Chromium-specific layer that the reducer does
+  not model: exact initial-client-fd selection, Mojo invitation acceptance,
+  process role/proctitle transition, or task/thread scheduling after the
+  zygote child receives its launch payload.
 
 ### 4. Audio ABI Completeness
 
