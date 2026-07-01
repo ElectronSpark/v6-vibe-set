@@ -358,6 +358,25 @@ Current direction:
   samples with `nready=0`. This points at timer/scheduler wake latency and
   empty timeout churn as the next evidence branch, while the extra trace
   overhead means this run should not be treated as a performance baseline.
+- The first post-trace uninstrumented rerun crashed during KWin readiness and
+  is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T064717Z-desktop-interaction-kwin-qtcore-gp-fail/`.
+  It trapped in host `libQt5Core.so.5` at
+  `QObjectPrivate::connectImpl(...)` with a pointer register containing the
+  string fragment `/x86_64-`; treat this as a separate KWin/Qt memory
+  corruption or reuse stability lead, not as responsiveness evidence.
+- The default-off `poll_notify_full_wait=1` A/B proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T065304Z-desktop-interaction-poll-notify-full-wait-pass/`.
+  With `vfs_backend_read_revive=1`, `kde_poll_summary=1`, and notify-backed
+  poll sets allowed to sleep until their real timeout, the desktop interaction
+  reducer passed with GPU nodes, NetworkManager SNI, and PipeWire/Pulse
+  evidence intact. Direct Konsole launch fell to `6355ms`
+  (`konsole_wait_ms=5204`) from the trace-heavy `26137ms`/`14998ms` path, and
+  kprofile recorded `sys_poll_blocking_ms=13989`,
+  `sys_futex_wait_ms=6201`, and `sys_openat_ms=1042`. The run is evidence
+  that the unconditional 10ms `poll` rescan creates artificial wake churn for
+  KDE's Wayland/DBus/eventfd paths; keep the knob default-off until more
+  regression proof and a Chromium-video pass validate the broader policy.
 
 ### 3. Chromium As Regression / Stress Probe
 
