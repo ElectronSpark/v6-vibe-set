@@ -278,12 +278,13 @@ proc measure_visible {label attempts delay_ms min_nonblack} {
         if {\$nonblack >= \$min_nonblack} {
             set elapsed [expr {[clock milliseconds] - \$start_ms}]
             ilog "phase=startup action=\$label status=visible min_nonblack=\$min_nonblack first_visible_ms=\$elapsed first_nonzero_ms=\$first_nonzero_ms samples=\$samples interval_ms=\$delay_ms last_hash=[lindex \$last 0] last_nonzero=\$nonzero last_nonblack=\$nonblack last_center=[lindex \$last 2]"
-            return
+            return 1
         }
         after \$delay_ms
     }
     set elapsed [expr {[clock milliseconds] - \$start_ms}]
     ilog "phase=startup action=\$label status=timeout min_nonblack=\$min_nonblack elapsed_ms=\$elapsed first_nonzero_ms=\$first_nonzero_ms samples=\$samples interval_ms=\$delay_ms last_hash=[lindex \$last 0] last_nonzero=[lindex \$last 3] last_nonblack=[lindex \$last 1] last_center=[lindex \$last 2]"
+    return 0
 }
 
 proc do_action {kind x y} {
@@ -521,7 +522,7 @@ expect {
 expect -re "LINUX_KDE_CTRL# "
 
 ilog "phase=meta reducer=linux-kde-interaction-latency hover_timeout_ms=${HOVER_TIMEOUT_MS} tray_timeout_ms=${TRAY_TIMEOUT_MS} interval_ms=${INTERVAL_MS} visible_min_nonblack=${VISIBLE_MIN_NONBLACK} visible_attempts=${VISIBLE_ATTEMPTS} visible_interval_ms=${VISIBLE_INTERVAL_MS} input_source=qemu-monitor"
-measure_visible "desktop-interaction-visible" ${VISIBLE_ATTEMPTS} ${VISIBLE_INTERVAL_MS} ${VISIBLE_MIN_NONBLACK}
+set visual_ok [measure_visible "desktop-interaction-visible" ${VISIBLE_ATTEMPTS} ${VISIBLE_INTERVAL_MS} ${VISIBLE_MIN_NONBLACK}]
 after 1500
 sample_once "desktop-interaction-before"
 
@@ -549,10 +550,15 @@ set direct_elapsed [expr {[clock milliseconds] - \$direct_start}]
 ilog "phase=direct-launch action=konsole status=\$direct_status elapsed_ms=\$direct_elapsed konsole_wait_ms=\$direct_elapsed"
 
 set fh [open "${STATUS}" w]
-if {\$direct_status eq "PASS"} {
+if {\$direct_status eq "PASS" && \$visual_ok} {
     puts \$fh "status_code=0"
     puts \$fh "label=LINUX-KDE-INTERACTION-DONE"
     close \$fh
+} elseif {\$direct_status eq "PASS"} {
+    puts \$fh "status_code=7"
+    puts \$fh "label=LINUX-KDE-INTERACTION-FAIL visual-baseline"
+    close \$fh
+    exit 7
 } else {
     puts \$fh "status_code=6"
     puts \$fh "label=LINUX-KDE-INTERACTION-FAIL direct-launch"

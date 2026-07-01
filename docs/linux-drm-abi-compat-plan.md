@@ -287,6 +287,34 @@ Current direction:
   `sample_nonblack=0`. The next proof target is therefore the virtio-gpu/KMS
   page-flip/readback lineage for black-start runs before treating hover or
   Chromium FPS data from that boot as UI/compositor latency.
+- The follow-up pageflip/copy and KMS-copy A/B runs narrowed the black-start
+  lane without patching KDE/Qt/KWin/Mesa/Chromium. The pageflip-copy run at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T051713Z-desktop-interaction-pageflip-copy-validation-fallback-pass/`
+  completed the interaction reducer only after
+  `pageflip-copy validation failed ... src_nonblack=5 flip_nonblack=0`,
+  proving that the flip resource can remain black while the source is
+  nonblack. The forced KMS resource-copy run at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T052834Z-desktop-color-force-kms-resource-copy-kms-readback-black-pass/`
+  proved the copy lane with `FB: virgl resource-copy present ...`, but KMS
+  readback of the current framebuffer still returned `sample_nonblack=0`.
+  With KMS readback skipped, the active-sampling proof at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T053346Z-desktop-interaction-force-copy-skip-kms-sample-current-pass/`
+  became visible at `26538ms`, recorded nonblack interaction samples, and
+  completed hover/panel/start-menu/tray/direct-launch phases. This makes the
+  next kernel question narrower: distinguish stale KMS framebuffer readback and
+  black flip-resource copies from the actually displayed persistent scanout,
+  then choose a fallback that does not add per-frame copy cost to the normal
+  FPS path.
+- Linux VM interaction comparison is not yet a valid visual baseline on this
+  host. `build-x86_64/linux-kde-interaction-proof/20260701T051942Z/` showed
+  QEMU monitor `screendump` failing with `Error: no surface`, and
+  `build-x86_64/linux-kde-interaction-proof/20260701T052423Z/` showed guest
+  `grim` failing with `compositor doesn't support the screen capture protocol`.
+  Both still provide a useful direct-launch reference: Linux Konsole readiness
+  was `349-637ms`, while recent xv6 runs remain around `4-5s` from Konsole
+  launch to the shell-wrapper marker. The Linux proof harness now treats a
+  missing visual baseline as a failure instead of reporting a green
+  `LINUX-KDE-INTERACTION-DONE` from direct launch alone.
 
 ### 3. Chromium As Regression / Stress Probe
 
