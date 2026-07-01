@@ -1047,6 +1047,34 @@ Harness reliability update:
   the render node and issued four DRM ioctls, but the surviving zygotes
   repeatedly ran at user RIP `0x7ffffe7eb9dd`. Treat the next target as
   browser-to-zygote/Mojo admission, not DRM present pacing.
+- Current 2026-07-01 child-admission evidence:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T072012Z-chromium-admission-no-renderer-no-connection-crash/`.
+  This run kept the normal Linux-policy launcher shape (`argv_use_gl_count=0`,
+  `argv_use_angle_count=0`), skipped frame capture with
+  `KDE_SMOKE_CHROMIUM_VIDEO_SAMPLES=0`, disabled KDE preflight, passed the RELA
+  preprobe (`checked=35 skipped=5 missing=2 failed=0`), and enabled lifecycle,
+  AF_UNIX IPC payload, AF_UNIX read/write, syscall-tail, and media-fd tracing.
+  It is useful evidence even though the top-level label is
+  `chromium-video-chrome-crash-regression`: the failure is Chromium child
+  admission, not a kernel panic, Chromium INT3, or page fault.
+- The July 1 run moved past the earlier no-GPU/no-utility shape but still did
+  not reach renderer or media playback. Fast census saw browser, GPU, utility,
+  and zygote roles (`browser_pids=3`, `gpu_process_pids=2`,
+  `utility_pids=2`, `zygote_pids=9`) but still `renderer_pids=0`. Chromium
+  opened and read `/share/webkit/perf-video.html`, never opened
+  `perf-1280x800-60fps.mp4`, and emitted no `PERF-VIDEO` console lines. The
+  post-evidence parser reported four no-connection children, including
+  child+zygote-style exits and a `network.mojom.NetworkService` restart; the
+  launcher also logged one GPU process exit with wait status `0x200`
+  (`exit_code=512`, exit status 2).
+- Regression guards remained intact in the same run: `/dev/dri/card0` and
+  `/dev/dri/renderD128` registered, the NetworkManager shim acquired
+  `iface=net0`, the network SNI registered `network-wired-activated`, and
+  PipeWire Pulse reported `alsa_output.xv6_virtio` plus its monitor. Virtio-gpu
+  activity was low (`ctx_submit=53`) compared with the clean Linux KWin/Wayland
+  no-forced-GL comparator `20260630T050817Z`, which admitted GPU by sample 2,
+  admitted five renderers by sample 3, stabilized at `gpu=1 renderer=6`, passed
+  `VIDEO_RESULT`, and recorded `ctx_submit=2734`.
 - Harness map capture knob:
   `KDE_SMOKE_CHROMIUM_PROCESS_FULL_MAPS=1` now requests full Chromium process
   maps from the xv6-owned probe and adds one detailed final process snapshot
@@ -1074,6 +1102,12 @@ Current direction:
   after zygote ack, renderer role creation, media file open/read, and Wayland
   buffer delivery. Avoid broad `chrome_fd_trace=1` unless the target is
   specifically file descriptor churn.
+- The next full-Chromium evidence run should reduce perturbation rather than
+  patch behavior: keep normal no-forced-GL policy, zero capture samples, full
+  process maps, and only lifecycle + AF_UNIX IPC payload + AF_UNIX read/write +
+  media-fd tracing. If that exposes a concrete bad Mojo/seqpacket payload or
+  child connection transition, reduce it in `webkitabitest chromium-ipc` before
+  changing kernel socket, poll, futex, DRM, or EGL behavior.
 - For forced `angle/gles` and GBM reducers, continue investigating
   GPU-process restart and EGL/ANGLE admission separately from the normal launch
   path.
