@@ -76,9 +76,9 @@
 #   QEMU_GTK_CURSOR_MODE=host
 #                           GTK cursor policy: host keeps QEMU GTK's host
 #                           pointer visible and suppresses guest cursor-image
-#                           uploads to avoid WSLg black cursor squares; guest
-#                           restores guest hardware cursor images and shape
-#                           changes for focused cursor debugging.
+#                           uploads for stable automated interaction; guest
+#                           restores hardware cursor images and shape changes
+#                           for focused cursor debugging.
 #   QEMU_GTK_SHOW_CURSOR=on
 #                           Keep the host cursor visible in GTK. Default is
 #                           on for host cursor mode and off for guest mode.
@@ -534,13 +534,12 @@ case "${ARCH}" in
                 if [[ "${QEMU_GPU}" == *"-gl"* ]]; then
                         qemu_prepend_default_flag virtio_gpu_3d_scanout 1
                         if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
-                                # QEMU GTK's guest cursor pixbuf path can
-                                # render Chromium cursor images as a black
-                                # square on WSLg.  Keep Weston off the
-                                # software cursor path in both modes; host
-                                # mode uses the frontend pointer, while guest
-                                # mode restores hardware cursor images so
-                                # surface-specific shapes can be debugged.
+                                # Host mode uses the frontend pointer for
+                                # stable harness interaction.  Guest mode
+                                # restores hardware cursor images so
+                                # surface-specific shapes can be debugged;
+                                # all-transparent cursor uploads are hidden
+                                # in the virtio-gpu cursor path.
                                 if [[ "${QEMU_GTK_CURSOR_MODE}" == "host" ]]; then
                                         qemu_prepend_default_flag virtio_gpu_host_cursor_only 1
                                 fi

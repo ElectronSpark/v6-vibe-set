@@ -532,11 +532,23 @@ Current direction:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T171300Z-desktop-interaction-host-cursor-sync-pass/`;
   measurement runs can disable sync with
   `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0`. Guest `/bin/mouseinject`
-  interaction mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so it uses
-  the virtio-gpu hardware cursor path. If a reducer explicitly combines
-  guest mouse injection with `QEMU_GTK_CURSOR_MODE=host`, the host cursor is
-  mirrored to the final injected absolute coordinate and the action log
-  records `host_cursor_sync_ms`, while guest cursor uploads stay suppressed.
+  interaction mode also defaults to host-cursor mode on WSLg/GTK for
+  measurement stability. The guest-cursor black-square control was reduced to
+  xv6 uploading a visible all-transparent cursor image after valid nonempty
+  KWin cursor uploads. A Linux/KWin control on the same QEMU GTK/virgl path
+  produced zero `virtio_gpu_update_cursor` events while still recording 69 3D
+  submits and 9 scanout changes, so Linux avoided this cursor queue edge in
+  the control. xv6 now treats all-transparent cursor uploads as cursor-hide
+  commands in `virtio_gpu_user_set_cursor()`. Proof:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T191341Z-guest-cursor-transparent-hide-proof/`
+  shows `alpha_nonzero=0` followed by
+  `virtio_gpu: cursor upload hidden all-transparent ... ret=0`.
+  The kernel-side `mouseinject_cursor=1` path mirrors synthetic absolute
+  mouse writes into virtio-gpu cursor motion only when explicitly requested.
+  Normal reducers mirror the QEMU host cursor to the final injected absolute
+  coordinate and record `host_cursor_sync_ms`; explicit guest-cursor runs can
+  now exercise the transparent-hide path instead of sending zeroed visible
+  cursor resources.
   Focused proof:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T181315Z-guest-mouseinject-host-cursor-pass/`
   passed `desktop-color-wakeup` with `status_code=0`, `input_source=guest`,

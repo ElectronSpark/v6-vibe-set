@@ -380,11 +380,7 @@ if {$kde_smoke_reducer eq "desktop-interaction-latency" ||
     $kde_smoke_reducer eq "desktop-interaction" ||
     $kde_smoke_reducer eq "desktop-color-wakeup"} {
     if {![info exists env(QEMU_GTK_CURSOR_MODE)]} {
-        if {$kde_interaction_input_source eq "qemu-monitor"} {
-            set env(QEMU_GTK_CURSOR_MODE) "host"
-        } else {
-            set env(QEMU_GTK_CURSOR_MODE) "guest"
-        }
+        set env(QEMU_GTK_CURSOR_MODE) "host"
     }
     if {$env(QEMU_GTK_CURSOR_MODE) eq "host"} {
         if {![info exists env(QEMU_GTK_SHOW_CURSOR)]} {

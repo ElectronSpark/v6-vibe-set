@@ -25,6 +25,7 @@ QEMU_TRACE="${CAPTURE_DIR}/qemu-virtio-gpu.trace"
 SERIAL_LOG="${CAPTURE_DIR}/serial.expect.log"
 HOST_LOG="${CAPTURE_DIR}/host.log"
 MONITOR_SOCK="${LINUX_KDE_MONITOR_SOCK:-${WORK_DIR}/qemu-monitor-${STAMP}.sock}"
+HOST_WINDOW_SCREENSHOT="${CAPTURE_DIR}/host-window-screenshot.sh"
 INTERACTION_LOG="${CAPTURE_DIR}/linux-kde-interaction-latency.log"
 WAYLAND_DEBUG_SUMMARY="${CAPTURE_DIR}/linux-wayland-debug-gap-summary.log"
 SUMMARY="${CAPTURE_DIR}/summary.txt"
@@ -48,6 +49,9 @@ VISIBLE_INTERVAL_MS="${LINUX_KDE_VISIBLE_INTERVAL_MS:-500}"
 VISIBLE_MIN_NONBLACK="${LINUX_KDE_VISIBLE_MIN_NONBLACK:-1}"
 REQUIRE_VISUAL="${LINUX_KDE_REQUIRE_VISUAL:-1}"
 WAYLAND_DEBUG_DIRECT="${LINUX_KDE_WAYLAND_DEBUG:-0}"
+HOST_WINDOW_MIN_WIDTH="${LINUX_KDE_HOST_WINDOW_MIN_WIDTH:-$((WIDTH * 3 / 4))}"
+HOST_WINDOW_MIN_HEIGHT="${LINUX_KDE_HOST_WINDOW_MIN_HEIGHT:-$((HEIGHT * 3 / 4))}"
+HOST_WINDOW_MIN_NONBLACK_PCT="${LINUX_KDE_HOST_WINDOW_MIN_NONBLACK_PCT:-45}"
 
 mkdir -p "${CAPTURE_DIR}" "${WORK_DIR}" "${BOOT_DIR}"
 
@@ -64,6 +68,11 @@ need qemu-system-x86_64
 need curl
 need nc
 need python3
+if [[ "${SAMPLE_SOURCE}" == "host-window" ]]; then
+    need convert
+    need powershell.exe
+    need wslpath
+fi
 
 if [[ ! -f "${ISO}" ]]; then
     echo "linux-kde-interaction-proof: downloading ${ISO_URL}" | tee -a "${HOST_LOG}"
@@ -87,6 +96,7 @@ virtio_gpu_cmd_set_scanout
 virtio_gpu_cmd_res_flush
 virtio_gpu_cmd_res_create_3d
 virtio_gpu_cmd_res_xfer_toh_3d
+virtio_gpu_update_cursor
 virtio_gpu_fence_ctrl
 virtio_gpu_fence_resp
 EOF
@@ -145,6 +155,134 @@ print(f"phase=sample action={label} status=PASS hash=0x{h:016x} nonzero={nonzero
 PY
 chmod +x "${CAPTURE_DIR}/ppm_stats.py"
 
+cat >"${HOST_WINDOW_SCREENSHOT}" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+    echo "status=FAIL reason=usage" >&2
+    exit 2
+fi
+
+out=$1
+title=$2
+mkdir -p "$(dirname "$out")"
+rm -f "$out"
+
+if ! command -v powershell.exe >/dev/null 2>&1 ||
+   ! command -v wslpath >/dev/null 2>&1 ||
+   ! command -v convert >/dev/null 2>&1; then
+    echo "status=FAIL reason=missing-host-window-backend" >&2
+    exit 127
+fi
+
+tmp_png="${out%.ppm}.host-window.png"
+rm -f "$tmp_png"
+out_win=$(wslpath -w "$(readlink -f "$tmp_png")")
+wslenv="XV6_HOST_SCREENSHOT_OUT_WIN:XV6_QEMU_WINDOW_TITLE"
+if [[ -n "${WSLENV:-}" ]]; then
+    wslenv="${wslenv}:${WSLENV}"
+fi
+
+XV6_HOST_SCREENSHOT_OUT_WIN="$out_win" \
+XV6_QEMU_WINDOW_TITLE="$title" \
+WSLENV="$wslenv" \
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class Xv6HostShotNative {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc,
+                                          IntPtr lParam);
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text,
+                                           int count);
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+}
+"@
+
+$title = $env:XV6_QEMU_WINDOW_TITLE
+$out = $env:XV6_HOST_SCREENSHOT_OUT_WIN
+$found = [IntPtr]::Zero
+$callback = [Xv6HostShotNative+EnumWindowsProc]{
+    param([IntPtr]$hWnd, [IntPtr]$lParam)
+    if (-not [Xv6HostShotNative]::IsWindowVisible($hWnd)) {
+        return $true
+    }
+    $text = New-Object System.Text.StringBuilder 512
+    [void][Xv6HostShotNative]::GetWindowText($hWnd, $text, $text.Capacity)
+    $name = $text.ToString()
+    if ($name.Contains($title)) {
+        $script:found = $hWnd
+        return $false
+    }
+    return $true
+}
+[void][Xv6HostShotNative]::EnumWindows($callback, [IntPtr]::Zero)
+if ($found -eq [IntPtr]::Zero) {
+    Write-Error "window-not-found title=$title"
+    exit 77
+}
+
+$rect = New-Object Xv6HostShotNative+RECT
+if (-not [Xv6HostShotNative]::GetClientRect($found, [ref]$rect)) {
+    Write-Error "get-client-rect"
+    exit 2
+}
+$origin = New-Object Xv6HostShotNative+POINT
+$origin.X = 0
+$origin.Y = 0
+if (-not [Xv6HostShotNative]::ClientToScreen($found, [ref]$origin)) {
+    Write-Error "client-to-screen"
+    exit 2
+}
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+if ($width -le 0 -or $height -le 0) {
+    Write-Error "empty-client width=$width height=$height"
+    exit 2
+}
+
+$bitmap = New-Object System.Drawing.Bitmap $width, $height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($origin.X, $origin.Y, 0, 0,
+                         (New-Object System.Drawing.Size $width, $height))
+$bitmap.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
+$graphics.Dispose()
+$bitmap.Dispose()
+' >/dev/null
+
+convert "$tmp_png" "$out"
+rm -f "$tmp_png"
+test -s "$out"
+SH
+chmod +x "${HOST_WINDOW_SCREENSHOT}"
+
 cat >"${CAPTURE_DIR}/run-linux-kde-interaction.expect" <<EOF
 #!/usr/bin/expect -f
 set timeout 2400
@@ -156,12 +294,16 @@ set status_file "${STATUS}"
 set monitor_sock "${MONITOR_SOCK}"
 set capture_dir "${CAPTURE_DIR}"
 set ppm_stats "${CAPTURE_DIR}/ppm_stats.py"
+set host_window_screenshot "${HOST_WINDOW_SCREENSHOT}"
 set width ${WIDTH}
 set height ${HEIGHT}
 set hover_timeout_ms ${HOVER_TIMEOUT_MS}
 set tray_timeout_ms ${TRAY_TIMEOUT_MS}
 set interval_ms ${INTERVAL_MS}
 set sample_source "${SAMPLE_SOURCE}"
+set host_window_min_width ${HOST_WINDOW_MIN_WIDTH}
+set host_window_min_height ${HOST_WINDOW_MIN_HEIGHT}
+set host_window_min_nonblack_pct ${HOST_WINDOW_MIN_NONBLACK_PCT}
 
 proc ilog {line} {
     global interaction_log
@@ -218,6 +360,8 @@ proc sample_once {label} {
     global sample_source
     if {\$sample_source eq "grim"} {
         return [guest_sample_once \$label]
+    } elseif {\$sample_source eq "host-window"} {
+        return [host_window_sample_once \$label]
     }
 
     global capture_dir ppm_stats
@@ -244,6 +388,50 @@ proc sample_once {label} {
     regexp {nonblack=([0-9]+)} \$stats -> nonblack
     regexp {center=(0x[0-9a-fA-F]+)} \$stats -> center
     regexp {nonzero=([0-9]+)} \$stats -> nonzero
+    return [list \$hash \$nonblack \$center \$nonzero]
+}
+
+proc host_window_sample_once {label} {
+    global capture_dir ppm_stats host_window_screenshot host_cursor_title
+    global host_window_min_width host_window_min_height
+    global host_window_min_nonblack_pct
+
+    set path "\$capture_dir/\$label.ppm"
+    set start_ms [clock milliseconds]
+    set rc [catch { exec \$host_window_screenshot \$path \$host_cursor_title } err]
+    set helper_elapsed_ms [expr {[clock milliseconds] - \$start_ms}]
+    if {\$rc != 0 || ![file exists \$path] || [file size \$path] <= 0} {
+        ilog "phase=sample action=\$label status=FAIL reason=host-window-screenshot helper_elapsed_ms=\$helper_elapsed_ms error=[string map {\n { } \r { }} \$err]"
+        return [list missing -1 missing -1]
+    }
+    set stats "missing"
+    if {[catch { exec python3 \$ppm_stats \$path \$label } stats]} {
+        ilog "phase=sample action=\$label status=FAIL reason=ppm-stats helper_elapsed_ms=\$helper_elapsed_ms error=[string map {\n { } \r { }} \$stats]"
+        return [list missing -1 missing -1]
+    }
+    append stats " helper_elapsed_ms=\$helper_elapsed_ms sample_source=host-window path=\$path"
+    set hash missing
+    set nonblack -1
+    set center missing
+    set nonzero -1
+    set width -1
+    set height -1
+    regexp {hash=(0x[0-9a-fA-F]+)} \$stats -> hash
+    regexp {nonblack=([0-9]+)} \$stats -> nonblack
+    regexp {center=(0x[0-9a-fA-F]+)} \$stats -> center
+    regexp {nonzero=([0-9]+)} \$stats -> nonzero
+    regexp {width=([0-9]+)} \$stats -> width
+    regexp {height=([0-9]+)} \$stats -> height
+    set pixels [expr {\$width > 0 && \$height > 0 ? \$width * \$height : 0}]
+    set min_nonblack [expr {\$pixels > 0 ?
+        int((\$pixels * \$host_window_min_nonblack_pct + 99) / 100) : 0}]
+    if {\$width < \$host_window_min_width ||
+        \$height < \$host_window_min_height ||
+        \$nonblack < \$min_nonblack} {
+        ilog "\$stats visual_quality=FAIL min_width=\$host_window_min_width min_height=\$host_window_min_height min_nonblack_pct=\$host_window_min_nonblack_pct min_nonblack=\$min_nonblack reason=host-window-black-or-cropped"
+        return [list missing -1 missing -1]
+    }
+    ilog "\$stats visual_quality=PASS min_width=\$host_window_min_width min_height=\$host_window_min_height min_nonblack_pct=\$host_window_min_nonblack_pct min_nonblack=\$min_nonblack"
     return [list \$hash \$nonblack \$center \$nonzero]
 }
 
@@ -987,7 +1175,7 @@ fi
     for event in virtio_gpu_cmd_ctx_submit virtio_gpu_cmd_set_scanout \
                  virtio_gpu_cmd_res_flush virtio_gpu_fence_ctrl \
                  virtio_gpu_fence_resp virtio_gpu_cmd_res_create_3d \
-                 virtio_gpu_cmd_res_xfer_toh_3d; do
+                 virtio_gpu_cmd_res_xfer_toh_3d virtio_gpu_update_cursor; do
         printf '%s %s\n' "${event}" "$(grep -c "${event}" "${QEMU_TRACE}" 2>/dev/null || true)"
     done
 } >"${SUMMARY}"

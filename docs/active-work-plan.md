@@ -397,12 +397,22 @@ because their current action items are summarized here.
      defaulting to the QEMU/host cursor and syncing it to injected guest
      coordinates, while `KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0` preserves
      measurement runs without PowerShell cursor-sync overhead. Guest
-     `/bin/mouseinject` mode now defaults to `QEMU_GTK_CURSOR_MODE=guest` so
-     it uses the guest hardware cursor instead of a hidden host-only cursor;
-     if a reducer explicitly combines guest mouse injection with
-     `QEMU_GTK_CURSOR_MODE=host`, the host cursor is mirrored to the final
-     injected absolute coordinate and the action log records
-     `host_cursor_sync_ms`. The focused proof is archived at
+     `/bin/mouseinject` interaction mode also defaults to host-cursor mode on
+     this WSLg/GTK path for measurement stability. The black-square
+     guest-cursor negative control was reduced to xv6 handing QEMU/GTK a
+     visible all-transparent cursor resource after valid nonempty cursor
+     uploads; Linux/KWin under the same GTK/virgl control emitted zero
+     `virtio_gpu_update_cursor` trace events while still doing 69 3D submits
+     and 9 scanout changes. `virtio_gpu_user_set_cursor()` now treats
+     all-transparent cursor images as cursor-hide commands. Proof is archived
+     at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T191341Z-guest-cursor-transparent-hide-proof/`,
+     with `alpha_nonzero=0` followed by
+     `virtio_gpu: cursor upload hidden all-transparent ... ret=0`.
+     Guest hardware cursor mirroring remains opt-in with `mouseinject_cursor=1`
+     for cursor-plane debugging; normal harness runs keep
+     `virtio_gpu_host_cursor_only=1` and mirror the host cursor to the final
+     injected absolute coordinate. The focused host-cursor proof is archived at
      `build-x86_64/kde-plasma-desktop-smoke-history/20260701T181315Z-guest-mouseinject-host-cursor-pass/`;
      it passed `desktop-color-wakeup` with `status_code=0`,
      `input_source=guest`, `phase=host-cursor-sync status=PASS`, and
