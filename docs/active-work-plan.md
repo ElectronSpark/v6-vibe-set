@@ -128,6 +128,20 @@ because their current action items are summarized here.
      `PROC-CMDLINE-REWRITE-PROOF-FAIL reason=eof-missing-proof before=1 after=0 pass=1`.
      Treat this as partial guard evidence only; rerun or harden the harness
      before using it as final proof for future path-copy changes.
+   - 2026-07-01 Plasma poll-wait A/B evidence now confirms the current
+     Konsole readiness bottleneck is still wait/wakeup dominated. The safer
+     capability-gated run with `poll_notify_full_wait=1` is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T070514Z-desktop-interaction-poll-notify-flagged-pass/`
+     and measured direct Konsole launch `6180ms`, `konsole_wait_ms=4980`,
+     `sys_poll_blocking_ms=13636`, `sys_ppoll_ms=4979`, and
+     `sys_futex_wait_ms=6225`. The matched full-wait-off run at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T075456Z-desktop-interaction-poll-full-wait-off-ab/`
+     passed with GPU, network, and PipeWire/Pulse guards intact but regressed
+     direct launch to `7796ms`, `konsole_wait_ms=6394`,
+     `sys_poll_blocking_ms=17041`, `sys_ppoll_ms=6303`, and
+     `sys_futex_wait_ms=7061`, while `sys_openat_ms` stayed comparable.
+     Keep `poll_notify_full_wait` default-off until Chromium-video and broader
+     notify-backed fd regression proof justify enabling it.
 
 3. Plan consolidation:
    - This file is the entry point.

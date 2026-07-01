@@ -396,6 +396,19 @@ Current direction:
   `sys_openat_ms=1176`. GPU nodes, NetworkManager SNI, and PipeWire/Pulse
   sink+monitor evidence remained intact, and the Konsole/Wayland/DBus poll
   summaries still show real event wakes on AF_UNIX/eventfd paths.
+- The matched full-wait-off A/B proof is archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T075456Z-desktop-interaction-poll-full-wait-off-ab/`.
+  It reran the desktop interaction reducer with the same safe read-revive and
+  KDE poll-summary knobs, but without `poll_notify_full_wait=1`. The reducer
+  passed and preserved GPU nodes, NetworkManager SNI, and PipeWire/Pulse
+  sink+monitor evidence with no panic, exception, or user fault. Metrics were
+  worse on the direct Konsole path: launch `7796ms` with
+  `konsole_wait_ms=6394`, `sys_poll_blocking_ms=17041`,
+  `sys_ppoll_ms=6303`, and `sys_futex_wait_ms=7061`, while `sys_openat_ms`
+  stayed comparable at `1150`. This strengthens the attribution that the
+  capability-gated full-wait policy reduces artificial Konsole/Wayland/DBus
+  wait churn, but it should remain default-off until a Chromium-video
+  regression pass and broader notify-backed fd coverage prove it safe.
 - The first Chromium-video stress attempt with `poll_notify_full_wait=1` did
   not reach Chromium and is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T065932Z-chromium-video-poll-full-wait-wireplumber-gp-fail/`.
