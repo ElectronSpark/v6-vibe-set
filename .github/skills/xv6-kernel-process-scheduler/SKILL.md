@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-process-scheduler
 description: 'Use when: debugging xv6-os scheduler, run queues, EEVDF, FIFO, idle scheduling, clone/exit, PID tables, process groups, workqueues, signals, or runnable threads not running.'
-argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads output'
 ---
 
 # xv6 Kernel Process Scheduler
@@ -19,6 +18,26 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 - Lifecycle: `thread.c`, `clone.c`, `exit.c`, `thread_group.c`, `pid.c`, `pgroup.c`.
 - Async work: `workqueue.c`, `kernel/kernel/inc/proc/workqueue*.h`.
 - Signals and futexes: `signal.c`, `sys_signal.c`, `futex.c`.
+
+## Wake-To-Run Latency Diagnostic
+
+- Opt-in cmdline flag `kde_wake_to_run_trace=<N>` measures scheduler
+  wake-to-run latency for Konsole-exec'd threads without changing behavior.
+  Implementation: `kernel/kernel/kde_ready_trace.c` plus two hooks in
+  `proc/sched.c` (`__do_scheduler_wakeup()` stamps the sleeping thread under
+  `pi_lock`; the print happens after `context_switch_finish()` releases the
+  rq lock).
+- `N=1` prints every scoped wake; `N>1` prints only latencies of at least
+  `N` ms. For timing-sensitive GUI runs use a threshold form such as
+  `kde_wake_to_run_trace=5`; printing every wake floods the serial console
+  and itself perturbs the launch timing it is measuring.
+- Output line shape:
+  `kde-wake-to-run: ms=... pid=... name=... wake_to_run_ms=... waker_pid=... waker=... waker_irq=...`
+- Use this trace to separate "the woken thread was scheduled late" from
+  "the producer acted late": bounded wake-to-run latencies with a large
+  end-to-end gap point at producer progress, not the scheduler. Check
+  `docs/active-work-plan.md` for which GUI latency hypotheses are already
+  closed by this metric before reopening scheduler work.
 
 ## WebKit/Multi-Threaded Process Symptom
 

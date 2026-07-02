@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-freeze-triage
 description: 'Use when: diagnosing xv6-os freezes, KVM hangs, QEMU stalls, all CPUs idle, GDB stub captures, xv6-freeze output, or kernel/user tasks stuck INTERRUPTIBLE. Focuses on kernel-first freeze triage.'
-argument-hint: 'Describe the freeze symptom or paste xv6-freeze output'
 ---
 
 # xv6 Kernel Freeze Triage

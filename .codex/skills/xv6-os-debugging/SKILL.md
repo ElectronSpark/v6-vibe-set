@@ -13,7 +13,7 @@ The real skill files for this repo live in `.github/skills`.
 - For Linux GUI ABI, X11/XWayland, Chromium/WebKit host-app stress, AF_UNIX/SCM,
   or desktop launcher ABI policy, also read
   `.github/skills/xv6-linux-gui-abi/SKILL.md`.
-- Read `docs/linux-drm-abi-compat-plan.md` only when the task references the
-  active plan or current run state.
+- Read `docs/active-work-plan.md` when the task references the active plan or
+  current run state.
 - Add new durable repo skills under `.github/skills`, then update `.github/skills/INDEX.md`.
 - Do not add new repo skill content under `.codex/skills`; keep `.codex` entries as redirects only.

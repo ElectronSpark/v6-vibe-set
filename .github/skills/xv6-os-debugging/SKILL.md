@@ -1,7 +1,6 @@
 ---
 name: xv6-os-debugging
 description: 'Use when: working in this xv6-os repo on QEMU boot, kernel symbols, GUI/Wayland ports, Linux GUI ABI/X11/Chromium stress, NetSurf, OpenSSL/OpenSSH, rootfs images, or nested submodule commit/push workflows.'
-argument-hint: 'Describe the xv6-os build, runtime, or port symptom'
 ---
 
 # xv6-os Debugging
@@ -15,7 +14,7 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - For Linux GUI ABI, X11/XWayland, Chromium/WebKit stress, AF_UNIX/SCM, or
   host GUI proof work, read `.github/skills/xv6-linux-gui-abi/SKILL.md`.
   If the task references the active compatibility plan or current run state,
-  also read `docs/linux-drm-abi-compat-plan.md`.
+  also read `docs/active-work-plan.md`.
 - For suspected ABI mismatches, prefer a minimal reducer that reproduces one
   syscall, event, fd, socket, mapping, or protocol edge. Use the full process
   only when the interaction is too complex to isolate cheaply.
@@ -29,6 +28,50 @@ The real repo skill files live under `.github/skills`. Repo-local `.codex/skills
 - Run GUI tests headlessly with:
   - `DISPLAY_MODE=nographic QEMU_NET=0 FSIMG=/tmp/xv6-test.img bash scripts/launch-gui.sh`
 - Check whether `build-x86_64/fs.img` actually changed with `stat`; a running QEMU session or stale image can hide a successful rebuild.
+- Before a new GUI/VM proof, check for stale QEMU or smoke harness processes.
+  Keep one compile/VM lane at a time unless the user explicitly allows
+  parallel runtime work.
+- Preserve GUI proof artifacts before reusing mutable scratch directories.
+  For KDE smoke runs, copy the files from
+  `build-x86_64/kde-plasma-desktop-smoke/` into a timestamped directory under
+  `build-x86_64/kde-plasma-desktop-smoke-history/`, excluding generated
+  `kde-plasma.fs.img` payloads. After archiving logs, screenshots, traces,
+  and status files, remove obsolete generated smoke fs images rather than
+  deleting evidence. Copy-paste archive command:
+
+  ```sh
+  d=build-x86_64/kde-plasma-desktop-smoke-history/$(date -u +%Y%m%dT%H%M%SZ)-<label> \
+    && mkdir -p "$d" \
+    && find build-x86_64/kde-plasma-desktop-smoke -maxdepth 1 -type f ! -name '*.img' -exec cp {} "$d/" \; \
+    && rm -f build-x86_64/kde-plasma-desktop-smoke/*.img
+  ```
+
+- Use `QEMU_DRY_RUN=1 ./scripts/launch/launch-gui.sh` to verify the actual
+  display, GPU, input, cursor, network, audio, and kernel append settings
+  before attributing an interactive GUI symptom to the guest.
+
+## KDE Smoke Harness Gotchas
+
+- Trace volume changes the timing it measures. Do not combine multiple
+  per-event trace flags (for example an every-wake scheduler trace plus
+  futex and IPC traces) in timing runs; combined serial volume can push
+  app-readiness probes past their timeout caps. Use latency-threshold
+  forms (for example `kde_wake_to_run_trace=5`) and role-scoped flags in
+  timing-sensitive runs.
+- Kernel cmdline flags passed through expect `spawn env` can be silently
+  lost by quoting. Always verify the booted cmdline in the run log
+  (`grep 'kernel cmdline' <log>`); for PCID specifically check
+  `vm_asid_init: max ASID = <nonzero>`.
+- A failing run with `__slab_obj_put: double free cache='rcu_head_cache'` is
+  the known intermittent RCU double-free (see `xv6-kernel-locking-rcu`).
+  Archive it, rerun once, and only implicate your change if the failure
+  frequency rises.
+- Quick performance microbenchmarks staged in the rootfs: `syscalltlb`
+  (per-syscall cost + TLB amplification; also builds on the host with
+  `gcc -O2 -DHOST_LIBC_PROGRAM` as a Linux control) and `clockbench`
+  (clock_gettime/getpid loops). Rebuild with
+  `cmake --build build-x86_64 --target user` then
+  `cmake --build build-x86_64 --target rootfs-refresh`.
 
 ## Kernel Symbols
 

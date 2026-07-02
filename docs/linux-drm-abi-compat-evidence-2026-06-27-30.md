@@ -1,10 +1,11 @@
 # Linux DRM / GUI ABI Evidence Archive, 2026-06-27 To 2026-06-30
 
 This archive preserves the detailed evidence that was previously embedded in
-`docs/linux-drm-abi-compat-plan.md`. The active plan should stay compact and
-current; this file keeps the Linux VM controls, WSL2 host facts, Xwayland/GLX
-reducer chronology, KDE performance notes, and Chromium stress-probe evidence
-for audit and handoff.
+the archived `docs/archive/plan-consolidation-20260701/linux-drm-abi-compat-plan.md`.
+The active plan in `docs/active-work-plan.md` should stay compact and current;
+this file keeps the Linux VM controls, WSL2 host facts, Xwayland/GLX reducer
+chronology, KDE performance notes, and Chromium stress-probe evidence for audit
+and handoff.
 
 ### Linux VM Virgl / GBM Control
 
@@ -817,7 +818,7 @@ silently undercounted.
 ## Archived Gap Snapshot
 
 This section is preserved as dated evidence. Current GUI direction lives in
-`docs/linux-drm-abi-compat-plan.md`.
+`docs/active-work-plan.md`.
 
 ### 1. Xwayland GLAMOR / GLX Acceleration
 

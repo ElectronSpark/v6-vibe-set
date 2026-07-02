@@ -29,6 +29,69 @@ The current KVM/virgl DRM baseline is healthy enough to run KDE:
 - Linux KDE KVM+virgl baseline and xv6 comparison are recorded in
   `docs/linux-kde-performance-baseline.md`.
 
+## Current Paused Handoff
+
+The KDE/Chromium responsiveness job is paused for consolidation. Resume this
+lane from the artifacts below; do not reopen Weston, do not patch upstream
+KDE/Qt/KWin/Xwayland/Mesa/Chromium, and do not apply behavior-changing kernel
+patches before a narrower reducer or metric identifies the delayed edge.
+
+Latest xv6 proof:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260701T225007Z-desktop-interaction-konsole-futex-timeout-pass/
+```
+
+Key evidence:
+
+- `KDE-PLASMA-DESKTOP-SMOKE-DONE` completed for
+  `desktop-interaction-latency`.
+- Plasma visibility was late but valid:
+  `first_nonzero_ms=14964`, `first_visible_ms=25627`.
+- Interaction samples are still noisy: lower-left launcher hover changed in
+  `978ms`, start-menu open changed in `854ms`, several desktop/panel/tray
+  samples were no-change in the short `100ms` window.
+- Direct Konsole launch remains the clearest Linux-parity gap:
+  `elapsed_ms=18570`, `konsole_wait_ms=15255`,
+  `/dev/ptmx` at `10586ms`, `/dev/pts/1` at `10589ms`, wrapper start at
+  `14880ms`, marker found at `15314ms`.
+- Same-host Linux KVM+virgl controls reach the same Konsole PTY/wrapper/shell
+  phase in roughly `260-510ms`; use Linux mainly for phase timing and cursor
+  policy because visual hover/tray capture remains weak on this host.
+- The cursor lane is separated from the remaining responsiveness gap. The
+  latest Linux and xv6 same-display traces both show zero virtio cursor
+  update/move commands. Any black-box pointer report on the host-cursor path
+  is outside the guest virtio cursor queue.
+- The long futex wait is producer-delayed, not a lost key or timeout. The
+  longest observed `WaylandEventThr` futex wait enqueued at `ms=73816` on
+  `uaddr=0x400cf410`, `key_vm=0x00000000beb5dd40`, `key_addr=0x400cf410`,
+  with `has_timeout=0 timeout_ms=0`; the main Konsole thread eventually woke
+  the same key at `ms=83661` with `ret=1`, and ready trace reported
+  `wait_ms=9844`. All `53` recorded wait-parameter lines had no timeout.
+
+Current closed/de-prioritized theories:
+
+- guest hardware cursor image upload or transparent cursor upload;
+- raw PTY allocation/open, because the live activation-PTY reducer completes
+  PTY setup in subsecond time under the same KDE session;
+- raw live-KDE Wayland configure/frame delivery and raw D-Bus/eventfd
+  readiness, because the activation-PTY reducer reaches registry/configure/
+  frame/QDBus/PTTY in about `0.5-0.6s`;
+- basic AF_UNIX/pipe/eventfd dispatch and Qt-style rearm, because Linux and
+  xv6 reducer controls pass with Linux-like wake timing;
+- futex key mismatch or futex timeout drift for the long wait.
+
+Next proof target:
+
+Measure Konsole-scoped producer progress and wake-to-run latency around the
+real pre-PTY path. Prefer behavior-free instrumentation gated by an explicit
+cmdline flag and `konsole_ready_trace=1`. Correlate scheduler wake/run timing,
+futex wait/wake keys, poll/kqueue readiness, fd graph snapshots, and the first
+`/dev/ptmx` transition. Keep `poll_notify_full_wait=0`,
+`af_unix_poll_notify_full_wait=0`, broad `kde_ipc_trace=0`, and diagnostic
+sanitizers/logging off for timing runs unless the proof specifically needs
+them.
+
 ## Guardrails
 
 - Do not push without asking.
@@ -538,11 +601,40 @@ Current direction:
   KWin cursor uploads. A Linux/KWin control on the same QEMU GTK/virgl path
   produced zero `virtio_gpu_update_cursor` events while still recording 69 3D
   submits and 9 scanout changes, so Linux avoided this cursor queue edge in
-  the control. xv6 now treats all-transparent cursor uploads as cursor-hide
-  commands in `virtio_gpu_user_set_cursor()`. Proof:
+  the control. The refreshed Linux current-display control
+  `build-x86_64/linux-kde-interaction-proof/20260701T203033Z-cursor-current-display-control/`
+  used the same GTK/virgl cursor/display shape as xv6
+  (`gtk,gl=es,grab-on-hover=on,show-cursor=on,...`), passed host cursor sync,
+  and still recorded `virtio_gpu_update_cursor 0`, `virtio_gpu_cmd_ctx_submit
+  77`, and `virtio_gpu_cmd_res_flush 259`. xv6 now mirrors the Linux control
+  invariant exactly in host-cursor-only mode: it keeps KMS cursor bookkeeping
+  but suppresses all virtio cursor queue uploads and moves instead of sending
+  a `resource_id=0` cursor-plane hide. Proof:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T213337Z-desktop-interaction-linux-matched-host-cursor-pass/`
+  passed `desktop-interaction`; `kde-plasma-qemu-trace-summary.txt` records
+  `virtio_gpu_update_cursor` count `0`, while `run.log` records suppressed
+  host-cursor-only uploads/moves and the GPU/KWin/DRM/NetworkManager and
+  PipeWire-Pulse guards stayed green. The earlier partial proof
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T205346Z-host-cursor-hide-pactl-fail/`
+  had one `virtio_gpu_update_cursor ... update, res 0x0`; that path is now
+  superseded because Linux showed even the hide command was unnecessary on
+  this host. xv6 also treats all-transparent cursor uploads as cursor-hide
+  commands outside host-cursor-only mode in `virtio_gpu_user_set_cursor()`.
+  Proof:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T191341Z-guest-cursor-transparent-hide-proof/`
   shows `alpha_nonzero=0` followed by
   `virtio_gpu: cursor upload hidden all-transparent ... ret=0`.
+  A fresh same-display Linux control,
+  `build-x86_64/linux-kde-interaction-proof/20260701T224337Z/`, repeated the
+  reference check with `gtk,gl=es,grab-on-hover=on,show-cursor=on,...`, passed
+  host cursor sync, and recorded `virtio_gpu_update_cursor 0`,
+  `virtio_gpu_move_cursor 0`, `virtio_gpu_cmd_ctx_submit 72`, and
+  `virtio_gpu_cmd_res_flush 259`. The active xv6 smoke trace also has zero
+  update/move cursor commands. Therefore any current black-box pointer on this
+  host-cursor path is no longer explained by a guest virtio cursor queue
+  upload; pursue stale launch state, QEMU/GTK frontend cursor rendering, or a
+  guest scene/scanout cursor representation before changing cursor queue
+  behavior again.
   The kernel-side `mouseinject_cursor=1` path mirrors synthetic absolute
   mouse writes into virtio-gpu cursor motion only when explicitly requested.
   Normal reducers mirror the QEMU host cursor to the final injected absolute
@@ -658,6 +750,121 @@ Current direction:
   latest `konsole_wait_ms=3771` and PTY-at-`2834-2836ms` proof, so the next
   xv6 work should stay on pre-PTY Qt/Wayland/DBus/eventfd/pipe endpoint
   classification before changing global poll or PTY behavior.
+- 2026-07-01 later Linux KVM+virgl direct-launch controls strengthen the same
+  clue. The Wayland-debug control at
+  `build-x86_64/linux-kde-interaction-proof/20260701T175942Z-wayland-debug-gap/`
+  reached PTY/wrapper at `480ms`, shell at `510ms`, and produced bounded
+  protocol gaps (`max_proto_gap_ms=894.334`, `max_host_gap_ms=400`). A later
+  direct-launch run at
+  `build-x86_64/linux-kde-interaction-proof/20260701T193635Z-xv6-display-cursor-control/`
+  reached wrapper at `330ms` and shell at `360ms`. By contrast, the quiet xv6
+  kprofile proof at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T195626Z-desktop-interaction-kprofile-only-pass/`
+  launched Konsole cheaply (`fork_elapsed_ms=3`, `exec_elapsed_ms=54`) but did
+  not open `/dev/ptmx` until `3631ms`; pre-PTY time was dominated by
+  Wayland/QDBus poll exposure (`konsole_prepty_poll_total_ms=3662`,
+  `wayland_ms=2174`, `qdbus_ms=1488`, `timeout_ms=3533`) while futex was only
+  `62ms`.
+- The same-day host Linux and xv6 default nographic
+  `kde-unix-socket-probe --qt-dispatch-mix` controls passed with roughly
+  Linux-like wake timing:
+  `build-x86_64/linux-reducer-proof/20260701T200207Z-host-qt-dispatch/` and
+  `build-x86_64/qt-dispatch-mix-proof/20260701T200356Z-xv6-default-nographic/`.
+  This rules out basic AF_UNIX, pipe, eventfd, and Qt-style dispatch rearm as
+  the missing Linux behavior. The live-KDE activation/PTTY reducer now covers
+  the semantic admission path missing from the synthetic reducer and passed
+  strictly at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T204516Z-activation-pty-strict-pass/`:
+  real Wayland registry/globals at `300-302ms`, xdg configure/ack at `373ms`,
+  shm buffer commit at `378ms`, frame callback at `512ms`, QDBus read plus an
+  eventfd wake before PTY at `520ms` (`qdbus_read_bytes=52`,
+  `qdbus_eventfd_events=1`), PTY open at `526ms`, and total `539ms`. That
+  makes raw live-KDE Wayland admission, frame delivery, raw D-Bus/eventfd
+  readiness, and PTY setup unlikely to explain the multi-second full-Konsole
+  gap. The recent broad `kde_ipc_trace=1` attempt failed prompt sync before
+  direct launch, so future timing runs should avoid broad IPC tracing and use a
+  Konsole-scoped activation ladder: exec to first `/dev/ptmx`, with timestamps
+  for the real Qt/Konsole/KLauncher/KIO/session-management checkpoints.
+- 2026-07-01 Linux-shaped procfs pipe diagnostic: host Linux exposes anonymous
+  pipe fd links as `pipe:[same-id]` on both ends and the same fds report
+  ordinary `poll()` readiness before/after writes. xv6 VFS pipes now carry a
+  monotonic id and expose `pipe:[id]` through `/proc/<pid>/fd/<n>` readlink,
+  replacing the previous opaque `file:[0]` labels for pipe fds. This is a
+  diagnostic-only change for the Konsole pre-PTY reducer; it does not alter
+  pipe readiness. Proof:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T213337Z-desktop-interaction-linux-matched-host-cursor-pass/`
+  shows real Konsole fds and pollfd targets as `pipe:[79]`, `pipe:[80]`, and
+  `pipe:[87]`.
+- 2026-07-01 refreshed Linux clue and current xv6 proof: the Linux
+  current-display control
+  `build-x86_64/linux-kde-interaction-proof/20260701T203033Z-cursor-current-display-control/`
+  used the same `gtk,gl=es,...show-cursor=on` host-cursor display shape and
+  still recorded zero `virtio_gpu_update_cursor` events while direct Konsole
+  reached wrapper/shell at `270/300ms`. The visual Linux host-window control
+  `build-x86_64/linux-kde-interaction-proof/20260701T183909Z-plasma-visual-required-host-window-1280x800/`
+  proved first desktop visibility at `1110ms` and Konsole wrapper/shell at
+  `350/380ms`, but its hover/tray hashes stayed flat too, so it is useful for
+  startup and Konsole phase timing rather than hover/tray parity. The clean
+  xv6 current pass
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T210417Z-desktop-interaction-current-pass/`
+  originally matched the cursor invariant only partially by issuing one guest
+  cursor-plane hide (`virtio_gpu_update_cursor ... res 0x0`). The later
+  Linux-matched proof
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T213337Z-desktop-interaction-linux-matched-host-cursor-pass/`
+  now records zero `virtio_gpu_update_cursor` commands in xv6 too, with GPU,
+  NetworkManager SNI, and PipeWire/Pulse sink+monitor guards intact. The clean
+  current pass also proves the tiny live
+  Wayland/QDBus/PTTY activation path is fast (`total_ms=493`,
+  `pty_open_ms=488`), while real Konsole remains late (`/dev/ptmx` and
+  `/dev/pts/1` at `3184-3186ms`, wrapper at `4604ms`, bash at `4815ms`).
+  This makes the next Linux-guided target the real Konsole
+  Qt/KWayland/DBus/KIO activation ladder, not broad PTY, synthetic
+  AF_UNIX/eventfd, or generic Wayland frame delivery.
+- 2026-07-01 tightened xv6 Konsole pre-PTY sample:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T211644Z-konsole-prepty-tight-sample-pass/`
+  passed with the same host-cursor-only invariant, GPU trace, NetworkManager
+  SNI, and PipeWire/Pulse sink+monitor guards intact. The tighter 25ms wait
+  sampling is not a clean performance baseline, but it is strong attribution
+  evidence: direct launch stretched to `17079ms`, Konsole did not open
+  `/dev/ptmx` and `/dev/pts/1` until `10628-10631ms`, the wrapper appeared at
+  `11819ms`, and bash at `12028ms`. The pre-PTY wait samples were split across
+  `39` futex, `38` poll, and `3` ppoll waitdetails, with repeated poll targets
+  `socket:[160]` (Wayland-looking), `socket:[162]` (D-Bus-looking),
+  `anon_inode:[eventfd]`, and unresolved `file:[0]` before the new pipe
+  readlink diagnostic landed. Scoped kernel
+  `konsole-prepty-wake-source` tracing showed many successful unix wake
+  propagations in that same window, while the same run's activation-PTY probe
+  reached Wayland registry/configure/frame, QDBus pre-PTY, and PTY open in
+  `642ms`. The actionable Linux clue is therefore phase-specific: Linux real
+  Konsole reaches wrapper/shell in `270-510ms`, but xv6 real Konsole burns
+  seconds before PTY despite small live Wayland/QDBus/PTTY and synthetic
+  Qt-dispatch reducers passing. The next reducer can now use `pipe:[id]`
+  pollfd identities and add role-scoped timing around real Konsole's
+  Qt/KWayland/DBus/KIO/session-management checkpoints before changing poll,
+  futex, scheduler, or socket behavior.
+- 2026-07-01 Linux-shaped xv6 Konsole fdgraph snapshot proof:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T222523Z-desktop-interaction-konsole-fdgraph-snapshot-pass/`
+  passed and adds the missing side-by-side clue against the Linux snapshot
+  control
+  `build-x86_64/linux-kde-interaction-proof/20260701T220616Z-konsole-bg-snapshot-fixed/`.
+  Linux reached wrapper/shell at `500-550ms` with renderD128, PTMX/PTS,
+  Wayland, DBus, eventfd, pipe, and inotify fds already present by the useful
+  early snapshots. xv6 reached the desktop and preserved GPU, network SNI, and
+  PipeWire/Pulse guards, but direct Konsole launch took `21771ms`; the wait
+  phase was `17073ms`, PTMX/PTS first appeared at `14386-14387ms`, and the
+  wrapper marker appeared at `16971ms`. xv6 snapshots showed only console/log
+  fds through `1500ms`, first showed the Wayland/eventfd/pipe graph at
+  `2748ms`, still lacked PTY/renderD128 at `4050ms`, and only showed
+  renderD128 after the ready marker. AF_UNIX wake-source trace showed
+  propagation rather than an obvious lost socket wake, and poll waits were
+  smaller than the missing interval; the largest kernel wait in the run was a
+  `WaylandEventThr` futex wait of `12946ms`. Also note that xv6
+  `/proc/*/wchan` still reports only `0`, while Linux exposes useful wait
+  sites such as futex and poll wait functions; treat that as a diagnostic ABI
+  gap. The next no-behavior-change run should enable Konsole-scoped
+  `kde_futex_trace=1 kde_ipc_trace_konsole_only=1` with the same snapshot
+  ladder to prove whether the 12.9s handoff is a futex-key/wake-count/timing
+  mismatch or scheduler latency before patching futex, poll, sockets, or DRM.
 - The current Konsole-readiness profiler proof is archived at
   `build-x86_64/kde-plasma-desktop-smoke-history/20260701T061204Z-desktop-interaction-kprofile-poll-futex-proof/`.
   Kernel `kstats` ABI version 3 appends opt-in counters for `poll`, `ppoll`,

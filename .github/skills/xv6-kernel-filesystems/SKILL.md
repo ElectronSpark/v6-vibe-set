@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-filesystems
 description: 'Use when: debugging xv6-os tmpfs, xv6fs, devtmpfs, procfs, ext4 via lwext4, filesystem mount operations, inode/file ops, truncation, orphan cleanup, or filesystem-backed I/O.'
-argument-hint: 'Describe the filesystem or mount symptom'
 ---
 
 # xv6 Kernel Filesystems

@@ -1,7 +1,6 @@
 ---
 name: xv6-debug-build-repro
 description: 'Use when: debugging xv6-os fresh clones, Docker/container builds, copied prebuilt toolchains, CMake/Ninja stamp files, toolchain byproducts, submodule SHAs, clean build reproducibility, or build-vs-runtime mismatch.'
-argument-hint: 'Describe the build environment and failing target'
 ---
 
 # xv6 Build Repro Debugging

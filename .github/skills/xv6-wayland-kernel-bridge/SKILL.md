@@ -1,10 +1,18 @@
 ---
 name: xv6-wayland-kernel-bridge
 description: 'Use when: debugging xv6-os Wayland compositor interactions with kernel input, epoll, kqueue, generated wlcomp.c, desktop GUI freeze, NetSurf launch, file manager, or compositor event-loop regressions.'
-argument-hint: 'Describe the GUI/compositor symptom'
 ---
 
 # xv6 Wayland Kernel Bridge
+
+## Scope Note
+
+This skill documents the legacy `wlcomp` compositor lane. The KDE
+Plasma/KWin desktop lane presents through the virtio-gpu KMS page-flip path
+instead of `FB_GPU_BLIT`; for KWin-era present pacing, frame caps, or
+desktop responsiveness, route to `xv6-debug-gui-runtime` (present pacing
+section) and `xv6-linux-gui-abi` first. The input-bridge, event-loop, and
+generated-source rules below remain valid for `wlcomp`-based sessions.
 
 ## When to Use
 

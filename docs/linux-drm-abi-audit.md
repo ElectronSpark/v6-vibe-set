@@ -477,7 +477,7 @@ Runtime evidence:
 - Live scanout sample:
   `fb_sample_current screen=1280x800 pitch=512 rect=0,0 128x128 total=16384 nonzero=16384 nonblack=16384 avg_rgb=62,43,29 hash=0x9b5a7ff068c03c18 center=0xff0a1534 corners=0xff08102c,0xff09112d,0xff0f1d3f,0xff101e40`.
 - Coverage check:
-  `comm -23 <(rg -o 'DRM_IOCTL_[A-Z0-9_]+' docs/linux-drm-abi-impl-steps.md | sort -u) <(rg -o 'DRM_IOCTL_[A-Z0-9_]+' /tmp/xv6-debugcon.log | sort -u)`
+  `comm -23 <(rg -o 'DRM_IOCTL_[A-Z0-9_]+' docs/archive/plan-consolidation-20260701/linux-drm-abi-impl-steps.md | sort -u) <(rg -o 'DRM_IOCTL_[A-Z0-9_]+' /tmp/xv6-debugcon.log | sort -u)`
   returned no missing ioctl names.
 
 `ret/errno` uses the xv6 user convention reported by `drmabitest`: successful

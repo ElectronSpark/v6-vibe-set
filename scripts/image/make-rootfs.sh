@@ -900,6 +900,54 @@ stage_kde_wayland_seat_probe() {
         -o "${out}" ${cflags} "${src}" ${libs}
 }
 
+stage_kde_wayland_activation_pty_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-wayland-activation-pty-probe.c"
+    local out="${STAGE}/bin/kde-wayland-activation-pty-probe"
+    local build_dir="${STAGE}/tmp/kde-wayland-activation-pty-probe-build"
+    local xdg_xml="${SYSROOT}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
+    local xdg_c="${build_dir}/xdg-shell-protocol.c"
+    local xdg_h="${build_dir}/xdg-shell-client-protocol.h"
+    local scanner="${SYSROOT}/host-tools/bin/wayland-scanner"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig:${SYSROOT}/share/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-wayland-activation-pty-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build kde-wayland-activation-pty-probe" >&2
+        exit 1
+    fi
+    if [[ ! -x "${scanner}" ]]; then
+        echo "make-rootfs: ${scanner} not found; cannot build kde-wayland-activation-pty-probe" >&2
+        exit 1
+    fi
+    if [[ ! -f "${xdg_xml}" ]]; then
+        echo "make-rootfs: ${xdg_xml} not found; cannot build kde-wayland-activation-pty-probe" >&2
+        exit 1
+    fi
+
+    mkdir -p "${build_dir}" "${STAGE}/bin"
+    "${scanner}" private-code "${xdg_xml}" "${xdg_c}"
+    "${scanner}" client-header "${xdg_xml}" "${xdg_h}"
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags wayland-client
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs wayland-client
+    )"
+
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib -I"${build_dir}" \
+        -o "${out}" ${cflags} "${src}" "${xdg_c}" ${libs} -pthread
+    rm -rf "${build_dir}"
+}
+
 stage_kde_abi_overrides() {
     local dir="${STAGE}/opt/xv6-kde-abi-libs"
     local cc_bin="${CC:-cc}"
@@ -970,6 +1018,7 @@ stage_kde_session_launchers() {
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
         "${STAGE}/bin/kde-unix-socket-probe"
     stage_kde_wayland_seat_probe
+    stage_kde_wayland_activation_pty_probe
     stage_kde_drm_probe
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-process-probe.c" \
         "${STAGE}/bin/kde-process-probe"

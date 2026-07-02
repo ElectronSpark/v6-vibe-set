@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Import a host Linux GUI executable into the xv6 rootfs overlay.
 #
-# This is an offline staging helper for docs/linux-drm-abi-compat-plan.md §10.5.
+# This is an offline staging helper tracked from docs/active-work-plan.md.
 # It does not claim the imported app is supported; runtime proof still requires
-# a Weston desktop launch, visible window, input, clean exit, logs, framebuffer
+# a visible desktop launch, input, clean exit, logs, framebuffer
 # proof, and the existing GPU/WebKit gates.
 set -euo pipefail
 

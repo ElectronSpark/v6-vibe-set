@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-block-storage
 description: 'Use when: debugging xv6-os block devices, bio, blkdev, request queues, iosched, gendisk, MBR/GPT partitions, virtio_disk, ramdisk, loop devices, or filesystem I/O hangs.'
-argument-hint: 'Describe the block/storage symptom'
 ---
 
 # xv6 Kernel Block Storage

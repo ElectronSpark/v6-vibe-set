@@ -1,7 +1,6 @@
 ---
 name: xv6-debug-fluid-triage
 description: 'Use when: debugging xv6-os with incomplete evidence, evolving hypotheses, uncertain freeze causes, provisional diagnostics, contradictory captures, or fast-changing runtime symptoms that are not ready to become source-derived ground truth.'
-argument-hint: 'Describe the symptom, latest capture, and current uncertainty'
 ---
 
 # xv6 Fluid Debug Triage

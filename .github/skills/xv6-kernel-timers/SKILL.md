@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-timers
 description: 'Use when: working on xv6-os timer core, scheduler timers, hardware ticks, LAPIC timer, RISC-V timer, RTC, timerfd, sleep_ms, timeout callbacks, retry_limit, or overdue timers.'
-argument-hint: 'Describe the timer or timeout symptom'
 ---
 
 # xv6 Kernel Timers

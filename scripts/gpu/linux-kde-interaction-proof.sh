@@ -49,6 +49,7 @@ VISIBLE_INTERVAL_MS="${LINUX_KDE_VISIBLE_INTERVAL_MS:-500}"
 VISIBLE_MIN_NONBLACK="${LINUX_KDE_VISIBLE_MIN_NONBLACK:-1}"
 REQUIRE_VISUAL="${LINUX_KDE_REQUIRE_VISUAL:-1}"
 WAYLAND_DEBUG_DIRECT="${LINUX_KDE_WAYLAND_DEBUG:-0}"
+DIRECT_SNAPSHOT_MS="${LINUX_KDE_DIRECT_SNAPSHOT_MS:-}"
 HOST_WINDOW_MIN_WIDTH="${LINUX_KDE_HOST_WINDOW_MIN_WIDTH:-$((WIDTH * 3 / 4))}"
 HOST_WINDOW_MIN_HEIGHT="${LINUX_KDE_HOST_WINDOW_MIN_HEIGHT:-$((HEIGHT * 3 / 4))}"
 HOST_WINDOW_MIN_NONBLACK_PCT="${LINUX_KDE_HOST_WINDOW_MIN_NONBLACK_PCT:-45}"
@@ -697,6 +698,69 @@ export GALLIUM_DRIVER=virgl
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/kde-session-bus
 export WAYLAND_DISPLAY=wayland-0
 export LINUX_KDE_WAYLAND_DEBUG=${WAYLAND_DEBUG_DIRECT}
+export LINUX_KDE_DIRECT_SNAPSHOT_MS="${DIRECT_SNAPSHOT_MS}"
+
+dump_launch_tree_snapshot()
+{
+    root="\$1"
+    label="\$2"
+    now="\$(now_ms)"
+    printf 'LINUX_KDE_DIRECT_SNAPSHOT label=%s uptime_ms=%s root=%s begin\n' "\$label" "\$now" "\$root"
+    for p in /proc/[0-9]*; do
+        pid="\${p#/proc/}"
+        pid_is_in_launch_tree "\$pid" "\$root" || continue
+        comm=\$(cat "\$p/comm" 2>/dev/null || printf missing)
+        state=\$(awk '/^State:/ {print \$2}' "\$p/status" 2>/dev/null || printf missing)
+        wchan=\$(cat "\$p/wchan" 2>/dev/null || printf missing)
+        cmd=\$(tr '\0' ' ' < "\$p/cmdline" 2>/dev/null | sed 's/[[:space:]]\\+/ /g')
+        printf 'LINUX_KDE_DIRECT_SNAPSHOT label=%s process pid=%s ppid=%s state=%s comm=%s wchan=%s cmd=%s\n' \
+            "\$label" "\$pid" "\$(awk '/^PPid:/ {print \$2}' "\$p/status" 2>/dev/null || printf missing)" \
+            "\$state" "\$comm" "\$wchan" "\$cmd"
+        for t in "\$p"/task/[0-9]*; do
+            [ -e "\$t" ] || continue
+            tid="\${t##*/}"
+            tcomm=\$(cat "\$t/comm" 2>/dev/null || printf missing)
+            tstate=\$(awk '/^State:/ {print \$2}' "\$t/status" 2>/dev/null || printf missing)
+            twchan=\$(cat "\$t/wchan" 2>/dev/null || printf missing)
+            printf 'LINUX_KDE_DIRECT_SNAPSHOT label=%s thread pid=%s tid=%s state=%s comm=%s wchan=%s\n' \
+                "\$label" "\$pid" "\$tid" "\$tstate" "\$tcomm" "\$twchan"
+        done
+        for f in "\$p"/fd/*; do
+            [ -e "\$f" ] || continue
+            fd="\${f##*/}"
+            target=\$(readlink "\$f" 2>/dev/null || printf missing)
+            printf 'LINUX_KDE_DIRECT_SNAPSHOT label=%s fd pid=%s fd=%s target=%s\n' \
+                "\$label" "\$pid" "\$fd" "\$target"
+        done
+    done
+    printf 'LINUX_KDE_DIRECT_SNAPSHOT label=%s uptime_ms=%s root=%s end\n' "\$label" "\$(now_ms)" "\$root"
+}
+
+start_launch_tree_snapshots()
+{
+    root="\$1"
+    schedule="\$2"
+    base_ms="\$3"
+    [ -n "\$schedule" ] || return 0
+    (
+        for point in \$schedule; do
+            [ -n "\$point" ] || continue
+            case "\$point" in
+                *[!0-9]*)
+                    continue
+                    ;;
+            esac
+            now=\$(now_ms)
+            remaining=\$((base_ms + point - now))
+            if [ "\$remaining" -gt 0 ]; then
+                delay=\$(awk -v ms="\$remaining" 'BEGIN { printf "%.3f", ms / 1000.0 }')
+                sleep "\$delay"
+            fi
+            dump_launch_tree_snapshot "\$root" "\${point}ms"
+        done
+    ) &
+    snapshot_pid="\$!"
+}
 
 launch_start_ms=\$(now_ms)
 wayland_reader_pid=
@@ -716,6 +780,10 @@ else
     kp=\$!
 fi
 launch_done_ms=\$(now_ms)
+snapshot_pid=
+if [ -n "\$LINUX_KDE_DIRECT_SNAPSHOT_MS" ]; then
+    start_launch_tree_snapshots "\$kp" "\$LINUX_KDE_DIRECT_SNAPSHOT_MS" "\$launch_start_ms"
+fi
 printf 'LINUX_KDE_DIRECT_DETAIL phase=launch-call pid=%s launch_start_ms=%s launch_done_ms=%s konsole_launch_call_ms=%s\n' \
     "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((launch_done_ms - launch_start_ms))"
 
@@ -769,6 +837,9 @@ else
         "\$kp" "\$launch_start_ms" "\$launch_done_ms" "\$((ready_ms - launch_start_ms))" "\$ptmx_seen" "\$ptmx_ms" "\$ptmx_target" "\$pts_seen" "\$pts_ms" "\$pts_target"
 fi
 cat /tmp/linux-konsole-ready 2>/dev/null || true
+if [ -n "\$snapshot_pid" ]; then
+    wait "\$snapshot_pid" 2>/dev/null || true
+fi
 if [ -n "\$wayland_reader_pid" ]; then
     i=0
     while kill -0 "\$wayland_reader_pid" 2>/dev/null && [ "\$i" -lt 20 ]; do

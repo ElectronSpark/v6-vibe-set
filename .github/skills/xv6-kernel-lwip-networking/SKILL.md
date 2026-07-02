@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-lwip-networking
 description: 'Use when: debugging xv6-os lwIP, TCP/IP, DHCP, DNS, sockets, sys_arch, lwip_glue, pbufs, socket syscalls, network daemons, or protocol behavior after NIC handoff.'
-argument-hint: 'Describe the lwIP/socket/protocol symptom'
 ---
 
 # xv6 Kernel lwIP Networking

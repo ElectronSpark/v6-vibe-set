@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-event-wait
 description: 'Use when: debugging xv6-os kqueue, epoll, kevent, poll callbacks, knotes, EVFILT_READ/WRITE/TIMER/SIGNAL/PROC/VNODE, level-triggered readiness, nested epoll, sleeping threads with CHAN=0, epoll_wait stalls, compositor waits, /dev/mouse readiness, or /dev/kbd readiness.'
-argument-hint: 'Describe the blocked wait or readiness issue'
 ---
 
 # xv6 Kernel Event Waits

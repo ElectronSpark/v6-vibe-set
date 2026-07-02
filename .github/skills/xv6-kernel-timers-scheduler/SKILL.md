@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-timers-scheduler
 description: 'Use when: debugging xv6-os timer_tick, sched_timer, sleep_ms, timed waits, kqueue timeouts, all CPUs idle, overdue timers, retry_limit, scheduler wakeups, or xv6-timers GDB output.'
-argument-hint: 'Describe the timer symptom or paste xv6-timers output'
 ---
 
 # xv6 Kernel Timers And Scheduler

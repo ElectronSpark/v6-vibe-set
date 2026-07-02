@@ -11,8 +11,9 @@ Evidence used for this pass:
 
 - repo-local guidance in `.github/skills/xv6-os-debugging/SKILL.md` and
   `.github/skills/xv6-linux-gui-abi/SKILL.md`
-- current direction and guardrails in `docs/linux-drm-abi-compat-plan.md`
-- package scope/order in `docs/linux-userland-upstream-depatch-plan.md`
+- current direction and guardrails in `docs/active-work-plan.md`
+- archived package scope/order in
+  `docs/archive/plan-consolidation-20260701/linux-userland-upstream-depatch-plan.md`
 - current `ports/*/CMakeLists.txt`, non-source staging files, patch-slot
   directories, `user/programs`, rootfs overlay files, and generated KDE package
   inventory under `build-x86_64/kde-noble-plasma`
@@ -264,7 +265,7 @@ stay in scope for the all-user-packages de-patching inventory.
 
 | Item | Current state | Inventory treatment |
 | --- | --- | --- |
-| `alsapcmpoll` | Present in `user/programs`; not listed in `docs/linux-userland-upstream-depatch-plan.md`. | Included as a local audio ABI probe. |
+| `alsapcmpoll` | Present in `user/programs`; not listed in the archived upstream de-patch plan. | Included as a local audio ABI probe. |
 | `regpreservetest` | Present in `user/programs`. | Included as a local ABI regression test. |
 | `ports/vim/xv6-vim-launcher.c` | Present beside imported Vim source. | Listed as xv6-owned launcher/support wrapper, not an imported Vim source patch. |
 | `ports/peanut-gb` | Present in current `ports` tree though not in the earlier CMake wrapper list. | Listed as a demo dependency for local Wayland tools, not a KDE target. |

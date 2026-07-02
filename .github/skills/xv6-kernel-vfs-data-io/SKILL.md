@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-vfs-data-io
 description: 'Use when: implementing or debugging xv6-os regular-file data I/O separation, generic VFS/page-cache read/write helpers, address-space block mapping, readahead, writeback, mmap file faults, xv6fs/ext4fs data path conversion, or VFS_DATA_IO_TODO.md updates.'
-argument-hint: 'Describe the regular-file data I/O change or bug'
 ---
 
 # xv6 Kernel VFS Data I/O

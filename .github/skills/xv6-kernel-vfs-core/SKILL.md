@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-vfs-core
 description: 'Use when: debugging xv6-os VFS, path lookup, mounts, unmounts, superblocks, inodes, dentries, files, fdtable, file locks, uio, pipes, unix sockets, eventfd, or timerfd.'
-argument-hint: 'Describe the VFS symptom or file operation'
 ---
 
 # xv6 Kernel VFS Core

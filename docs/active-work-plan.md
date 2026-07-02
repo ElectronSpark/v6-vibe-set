@@ -1,12 +1,197 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-01.
+Last updated: 2026-07-02.
 
 This is the top-level active plan for the current xv6 work. It merges the
 live direction from the kernel sanitizer/logging, Linux GUI ABI, KDE/Chromium
 performance, userland de-patching, and kernel cleanup lanes. Detailed evidence
-stays in the linked plan or evidence files; do not delete historical files just
+stays in the evidence and inventory files; do not delete historical files just
 because their current action items are summarized here.
+
+Single-plan rule: `docs/active-work-plan.md` is the only live plan file in the
+root of `docs/`. Former plan files were archived under
+`docs/archive/plan-consolidation-20260701/` and must not be edited as active
+handoff sources.
+
+## Current Paused Handoff
+
+The current KDE/Chromium performance job is paused for plan/skill
+consolidation. No QEMU or worker-agent lane should be assumed active. Resume
+from evidence, not memory.
+
+Latest archived proof:
+
+```text
+build-x86_64/kde-plasma-desktop-smoke-history/20260702T000718Z-desktop-interaction-wake-to-run-threshold5-pass/
+```
+
+What it proves:
+
+- The desktop-interaction reducer passed (`status_code=0`) with no panic,
+  fatal page fault, or coredump. Plasma became visibly nonblack at
+  `first_nonzero_ms=11908` and visibly colored at `first_visible_ms=20077`.
+- The new opt-in `kde_wake_to_run_trace` kernel diagnostic (see below) proves
+  scheduler wake-to-run latency is NOT the Konsole pre-PTY bottleneck.
+  With a 5ms print threshold, only 53 Konsole-scoped wakes across the whole
+  run reached 5ms; the worst was `85ms` (`QDBusConnection`, woken by
+  `worker_thread`), the next worst `66ms`, and everything else was `36ms` or
+  less — including through the entire pre-PTY window.
+- The multi-second pre-PTY gap persists under that bounded scheduling
+  latency: `launch_call_ms=20`, `/dev/ptmx` at `7007ms`, `/dev/pts/1` at
+  `7009ms`, wrapper start at `9288ms`, marker at `9600ms`, and
+  `konsole_wait_ms=9570`. Therefore the delayed edge is producer progress
+  (the producers act late), not wake-to-run scheduling delay, lost wakes,
+  futex key mismatch, or futex timeout drift.
+- Trace-volume caution proven by two archived negative controls: printing
+  every Konsole-scoped wake (threshold 1) plus futex/IPC traces pushed
+  Konsole shell readiness past the probe's 45s cap
+  (`20260702T000057Z-desktop-interaction-wake-to-run-konsole-scope-trace-volume-probe-fail/`,
+  `20260702T000453Z-desktop-interaction-wake-to-run-all-wakes-konsole-45s-timeout-fail/`),
+  and broad name-based scoping flooded session startup
+  (`20260701T235647Z-desktop-interaction-wake-to-run-broad-scope-flood-session-ready-timeout/`).
+  Use `kde_wake_to_run_trace=5` (or higher) for timing-sensitive runs.
+- Previous baseline proof retained:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260701T225007Z-desktop-interaction-konsole-futex-timeout-pass/`
+  proved the long `WaylandEventThr` futex wait was an untimed wait
+  (`has_timeout=0 timeout_ms=0` across all 53 wait-params) eventually woken
+  by the main Konsole thread, with the Linux host-cursor invariant intact
+  (`virtio_gpu_update_cursor=0`, `virtio_gpu_move_cursor=0`).
+- Linux same-display controls remain much faster: real Konsole reaches
+  PTY/wrapper/shell in roughly `260-510ms` on this host's KVM+virgl path.
+- Poll/kqueue and AF_UNIX/eventfd/pipe basics are not currently the leading
+  explanation: synthetic Qt-dispatch and live activation-PTY reducers are fast,
+  AF_UNIX wake-source tracing shows successful producer wake propagation, and
+  the latest long wait is an eventual producer wake rather than a lost wake.
+
+Current interpretation:
+
+- Closed or de-prioritized for this branch: guest virtio cursor upload,
+  all-transparent cursor upload, raw PTY open, tiny live Wayland frame
+  delivery, raw D-Bus/eventfd readiness, basic AF_UNIX/pipe/eventfd dispatch,
+  futex key mismatch, futex timeout drift, and now scheduler wake-to-run
+  latency for Konsole-scoped threads.
+- Still open: real Konsole's pre-PTY Qt/KWayland/DBus/KIO/session path and
+  why its producers act late. The next behavior-free proof should measure
+  producer-side run/progress timing — what each producer thread does between
+  Konsole exec and the first `/dev/ptmx` open — correlated with the fd graph
+  snapshots. Do not patch scheduler, futex, poll/kqueue, or AF_UNIX globally
+  until that evidence identifies the delayed producer step.
+- New kernel diagnostic available for this lane: `kde_wake_to_run_trace=<N>`
+  (in `kernel/kernel/kde_ready_trace.c`, hooks in `proc/sched.c`) stamps
+  Konsole-exec'd threads at wakeup in `__do_scheduler_wakeup()` and prints
+  `kde-wake-to-run: ... wake_to_run_ms=... waker_pid=... waker=...` after
+  `context_switch_finish()` releases the rq lock. `N=1` prints every wake;
+  `N>1` prints only latencies of at least `N` ms. It is field-writes-only in
+  the wake path and prints outside scheduler locks; default off.
+
+2026-07-02 bottleneck identification (both performance lanes):
+
+- Plasma/Konsole responsiveness: the dominant kernel-side cost class is
+  fixed per-syscall overhead plus its hidden TLB amplification. The new
+  dual-mode microbenchmark `user/programs/syscalltlb/syscalltlb.c` (archived
+  proof `build-x86_64/syscall-tlb-proof/20260702T005247Z/`) measured raw
+  `getpid` at `~5.0-6.0us` in the xv6 KVM guest versus `63-76ns` on the same
+  host Linux (`~75x`), and up to `~3.5us` of additional TLB-refill cost per
+  syscall with a 1024-page working set (Linux control: `~0`). Mechanism, all
+  per syscall on x86_64: `usertrap_syscall()` writes CR3 to the kernel table
+  and `usertrapret()`/`userret` writes CR3 back with forced `noflush=0`
+  (`kernel/arch/x86_64/irq/trap.c`), discarding the entire user TLB twice;
+  plus 2 `rdmsr` + 3 `wrmsr`, a serializing CR0.TS read/write, two trapframe
+  copies, and 4 atomic VM-cpumask RMWs (`vm_cpu_offline/online`). The
+  `usertrapret` comment documents why `noflush=1` is unsafe today: the
+  per-CPU TRAPFRAME-slot PTE is rewritten by `vm_cpu_online()` on every
+  return without precise invalidation. Konsole launch windows execute
+  `~4000` `openat` + `~686k` copyin/copyout calls, so this tax multiplies
+  across the whole pre-PTY phase. Secondary measured contributors from the
+  archived kprofile
+  (`20260701T123447Z-desktop-interaction-poll-wait-summary-kprofile-pass`):
+  `sys_openat` averages `~326us/call` (55% path lookup, 40% fileopen) and
+  `ext4_pcache_read_page` averages `~487us/call`. Candidate fixes, in
+  evidence order: (1) precise TRAPFRAME-slot TLB invalidation so the return
+  path can use `noflush=1`/PCID; (2) stop rewriting the trapframe PTE when
+  the same thread resumes on the same CPU; (3) cache user FS_BASE instead of
+  `rdmsr` per syscall; (4) lighter openat lookup/fileopen path. Each needs
+  its own reducer gate because the PCID lane previously exposed KWin/Qt
+  corruption.
+- Chromium video frame dropping (`presentedFPS=27.2` vs `decodedFPS=60.6`):
+  the presented rate equals the virtio flush rate in the archived trace
+  (`res_flush=444` over the `~16s` sampler window `~= 27-28/s`), so pacing
+  is capped in the KMS present path, not in Chromium decode. Mechanism:
+  `virtio_gpu_page_flip_resource()` (`kernel/kernel/virtio_gpu_scanout.c`)
+  synchronously drains the async queue until the flipped buffer's producer
+  fence completes on the host unless the opt-in
+  `virtio_gpu_ordered_page_flip=1` posts the flip queue-ordered instead.
+  The 27.2 FPS run booted with `vgpu_async_pf=1 vgpu_async_flush=1` but not
+  the ordered flag, so every flip of a freshly rendered buffer serialized
+  render->present. Direct-KMS A/B proof
+  (`build-x86_64/pageflip-ordered-ab-proof/20260702T005257Z/`): `mesakmsgl`
+  through the same flip path improved from `100.3` FPS (baseline KDE flags)
+  to `118.4/125.1` FPS with `virtio_gpu_ordered_page_flip=1`, on a trivial
+  scene where the fence wait is short; at compositor scale the drain
+  predicts the observed `~27` FPS cap. A full desktop-interaction reducer
+  with the ordered flag passed with guards intact
+  (`20260702T010010Z-desktop-interaction-ordered-pageflip-pass`,
+  `first_visible_ms=18046`, `konsole_wait_ms=4202`); one retry hit the known
+  intermittent `rcu_head_cache` double-free
+  (`20260702T005734Z-desktop-interaction-ordered-pageflip-rcu-double-free-fail`,
+  same signature as the AF_UNIX full-wait lane's `20260701T113143Z` failure,
+  crash in `rcu_cb_kthread` -> `slab_free`). Final Chromium-video
+  confirmation remains blocked by the renderer-admission failure lane; run
+  the Chromium-video reducer with `virtio_gpu_ordered_page_flip=1` once
+  renderer admission is fixed before promoting the flag to default.
+
+Recommended next proof after this consolidation (executed 2026-07-02 as the
+wake-to-run pass above; keep this shape for the follow-up producer-progress
+trace, replacing `kde_wake_to_run_trace=5` with the next producer-side flag):
+
+```sh
+KDE_SMOKE_REDUCER=desktop-interaction-latency \
+KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE=1 \
+KDE_SMOKE_INTERACTION_HOST_CURSOR_SYNC=0 \
+KDE_SMOKE_INTERACTION_HOVER_TIMEOUT_MS=100 \
+KDE_SMOKE_INTERACTION_TRAY_TIMEOUT_MS=100 \
+KDE_SMOKE_INTERACTION_MENU_TIMEOUT_MS=100 \
+KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS=0 \
+KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS=250 \
+KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS='50 150 300 750 1500 2500 3500 6000 9000 12000 15000' \
+KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE=0 \
+KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG=0 \
+QEMU_APPEND_EXTRA='konsole_ready_trace=1 kde_wake_to_run_trace=5 poll_notify_full_wait=0 af_unix_poll_notify_full_wait=0 kde_ipc_trace=0 kde_poll_summary=0 kasan=0 kmemleak=0 klog=0' \
+timeout 900 scripts/gpu/kde-plasma-desktop-smoke.expect
+```
+
+Do not combine `kde_wake_to_run_trace=1` with `kde_futex_trace=1` and
+`kde_ipc_trace_konsole_only=1` in timing-sensitive runs; that combination is
+proven to push Konsole shell readiness past the probe's 45s cap.
+
+Current dirty-tree notes to preserve:
+
+- `kernel/proc/futex.c` contains trace-only futex wait-parameter
+  instrumentation used to prove `has_timeout=0 timeout_ms=0`; it is not a
+  behavior change.
+- 2026-07-02: the kernel submodule additionally carries the trace-only
+  `kde_wake_to_run_trace` diagnostic in `kernel/kde_ready_trace.c`,
+  `inc/kde_ready_trace.h`, `inc/proc/thread_types.h` (four cold-section
+  fields), `proc/thread.c` (field init), and `proc/sched.c` (two hook
+  calls). No scheduler behavior change.
+- The top-level harness/rootfs work remains intentionally dirty in
+  `cmake/BuildImage.cmake`, `scripts/gpu/kde-plasma-desktop-smoke.expect`,
+  `scripts/gpu/linux-kde-interaction-proof.sh`,
+  `scripts/image/kde-app-launch-probe.c`, and `scripts/image/make-rootfs.sh`.
+  `scripts/image/kde-wayland-activation-pty-probe.c` is a new untracked
+  probe source, not a modification. Audit-corrected 2026-07-02: the tree also
+  carries dirty `scripts/audit/userland_depatch_inventory.py`,
+  `scripts/gpu/perf-video-gate-matrix.sh`, `scripts/image/import-host-gui.sh`,
+  updated docs (`linux-drm-abi-audit.md`,
+  `linux-drm-abi-compat-evidence-2026-06-27-30.md`,
+  `linux-kde-performance-baseline.md`, `linux-user-package-inventory.md`),
+  the plan-consolidation doc renames, refreshed `.github/skills` files, and
+  untracked `.github/skills/xv6-debug-gui-runtime/VALIDATED_GPU_BASELINES.md`.
+- `ports/xz/src` is an unrelated dirty nested checkout; do not revert it as
+  part of KDE/Chromium work.
+- The active smoke output was archived into the history directory above and
+  the generated `kde-plasma.fs.img` scratch payload was removed; logs,
+  screenshots, traces, and status files were preserved.
 
 ## Active Goals
 
@@ -22,6 +207,62 @@ because their current action items are summarized here.
    - Skip Weston unless explicitly reopened.
    - Fix FPS drops through Linux ABI, kernel, libc/sysroot, rootfs data, or
      xv6-owned probes/harness before considering imported source changes.
+   - 2026-07-01 Linux clue for the current Plasma responsiveness branch:
+     Linux KVM+virgl on the same WSLg/GTK host-cursor display path records
+     zero guest cursor updates while keeping the host cursor visible, and
+     reaches Konsole PTY/wrapper/shell readiness in roughly `270-510ms`
+     depending on trace mode. xv6 now mirrors that cursor invariant exactly
+     in `virtio_gpu_host_cursor_only=1`: it keeps KMS cursor bookkeeping but
+     suppresses all virtio cursor queue uploads and moves. Proof:
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T213337Z-desktop-interaction-linux-matched-host-cursor-pass/`
+     passed `desktop-interaction` with `virtio_gpu_update_cursor` count `0`,
+     GPU/KWin/DRM/NetworkManager/PipeWire-Pulse guards intact, and the
+     generated smoke fs image removed after archiving logs/screenshots/traces.
+     Full Konsole still lagged in that run (`/dev/ptmx` at `3735ms`, wrapper
+     at `4691ms`, bash at `4923ms`), so the cursor mismatch is separated from
+     the remaining responsiveness gap. Current interpretation: raw PTY, raw
+     live Wayland configure/frame, and basic D-Bus/eventfd readiness are not
+     the remaining multi-second gap; continue with a Konsole-scoped
+     Qt/KWayland/DBus/KIO activation ladder before behavior-changing kernel
+     patches.
+     A fresh same-display Linux check,
+     `build-x86_64/linux-kde-interaction-proof/20260701T224337Z/`, again used
+     `gtk,gl=es,grab-on-hover=on,show-cursor=on,...`, passed host cursor
+     sync, and recorded `virtio_gpu_update_cursor 0` / `virtio_gpu_move_cursor
+     0` with 72 virgl submits and 259 resource flushes. The active xv6 smoke
+     trace likewise records zero update/move cursor commands. Treat any
+     remaining black-box pointer report on this path as outside the virtio
+     cursor queue: likely a stale/non-matched launch, a QEMU/GTK frontend
+     cursor-rendering edge, or a guest scene/scanout cursor representation
+     rather than a Linux-required guest hardware cursor upload.
+   - 2026-07-01 tightened xv6 Konsole pre-PTY sample:
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T211644Z-konsole-prepty-tight-sample-pass/`.
+     This active-sample run preserved the same cursor/GPU/audio/network guards
+     and passed, but the 25ms wait-sampling probe amplified the existing
+     bottleneck: direct launch took `17079ms`, Konsole opened `/dev/ptmx` and
+     `/dev/pts/1` only at `10628-10631ms` since launch, the wrapper appeared
+     at `11819ms`, and bash at `12028ms`. The sampled wait state before PTY
+     was still dominated by poll/futex exposure (`39` futex waitdetail samples,
+     `38` poll, `3` ppoll) over Wayland/QDBus-looking fds
+     (`socket:[160]`, `socket:[162]`, `anon_inode:[eventfd]`, and unresolved
+     `file:[0]`). A narrow Linux-shaped diagnostic follow-up now gives
+     anonymous VFS pipes monotonic ids and `/proc/<pid>/fd/<n>` readlinks of
+     `pipe:[id]`; the 20260701T213337Z proof shows Konsole pipe fds and
+     pollfd targets as `pipe:[79]`, `pipe:[80]`, `pipe:[87]` instead of
+     `file:[0]`. Kernel wake-source tracing showed frequent successful
+     Wayland/DBus unix wake propagation, while the small activation-PTY probe
+     in the same run still completed Wayland frame, QDBus checkpoint, and PTY
+     open in `642ms`. This reinforces the Linux-derived clue: the missing
+     behavior is in real Konsole's pre-PTY Qt/KWayland/DBus/KIO/session path,
+     not generic PTY setup, tiny live Wayland frame delivery, or synthetic
+     AF_UNIX/eventfd dispatch.
+   - The same current pass measured desktop visible at `25330ms`, start-menu
+     open at `958ms`, start-menu close and tray open/close as `no-change`,
+     and several hover targets as `no-change`. Linux visual hover/tray samples
+     are still not a valid parity baseline on this host because available
+     capture paths either miss surfaces or produce flat hashes, so use Linux
+     mainly for cursor and Konsole phase timing until a stronger screenshot
+     backend lands.
    - Previous Plasma responsiveness proof:
      `build-x86_64/kde-plasma-desktop-smoke-history/20260630T191127Z-desktop-interaction-launch-timing-zero-delay/`.
      Minimal tray staging reduced tray-open latency from `3754ms` to about
@@ -403,8 +644,27 @@ because their current action items are summarized here.
      visible all-transparent cursor resource after valid nonempty cursor
      uploads; Linux/KWin under the same GTK/virgl control emitted zero
      `virtio_gpu_update_cursor` trace events while still doing 69 3D submits
-     and 9 scanout changes. `virtio_gpu_user_set_cursor()` now treats
-     all-transparent cursor images as cursor-hide commands. Proof is archived
+     and 9 scanout changes. The fresh current-display Linux control at
+     `build-x86_64/linux-kde-interaction-proof/20260701T203033Z-cursor-current-display-control/`
+     used the xv6-shaped GTK flags
+     `gtk,gl=es,grab-on-hover=on,show-cursor=on,full-screen=off,zoom-to-fit=off,show-menubar=off,show-tabs=off`,
+     passed host cursor sync, and again recorded
+     `virtio_gpu_update_cursor 0` with `77` virgl submits and `259` resource
+     flushes. Treat remaining black-box host-pointer reports as either stale
+     launch/kernel state or QEMU/GTK frontend cursor mode, not a normal
+     Linux/KWin guest cursor-image requirement. The Linux clue drove a
+     host-cursor-only xv6 hardening: the kernel now sends one explicit
+     `resource_id=0` cursor-plane hide before suppressing further guest cursor
+     images in `virtio_gpu_host_cursor_only=1` mode. Partial proof is archived
+     at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T205346Z-host-cursor-hide-pactl-fail/`;
+     `run.log` contains
+     `virtio_gpu: host-cursor-only hidden guest cursor x=0 y=0`, and
+     `kde-plasma-qemu.trace` contains exactly one
+     `virtio_gpu_update_cursor ... update, res 0x0` with no visible cursor
+     resource upload before KDE startup hit a separate `pactl` fatal page
+     fault. `virtio_gpu_user_set_cursor()` now also treats all-transparent
+     cursor images as cursor-hide commands. Proof is archived
      at
      `build-x86_64/kde-plasma-desktop-smoke-history/20260701T191341Z-guest-cursor-transparent-hide-proof/`,
      with `alpha_nonzero=0` followed by
@@ -466,18 +726,86 @@ because their current action items are summarized here.
      shell at `510ms`, and `konsole_wait_ms=1640`. The protocol summary had
      `gap_count=6`, `max_proto_gap_ms=894.334`, and `max_host_gap_ms=400`.
      The latest xv6 Wayland-debug timeout remains much worse
-     (`max_proto_gap_ms=2666.350`, `max_host_gap_ms=24660`) and should be
-     followed by a quiet xv6 run joining `WAYLAND_DEBUG=client`, kprofile
-     pre-PTY counters, `konsole_ready_trace=1`,
-     `konsole_prepty_wake_source_trace=1`, `kde_wayland_unix_trace=1`, and
-     `kde_ipc_trace=1`, while keeping `poll_notify_full_wait` and
-     `af_unix_poll_notify_full_wait` off.
+     (`max_proto_gap_ms=2666.350`, `max_host_gap_ms=24660`), but the first
+     joined run with broad `kde_ipc_trace=1` was too perturbing and failed at
+     prompt sync before direct launch. Keep broad IPC tracing out of timing
+     runs. The useful Linux clue is that Konsole opens its PTY before or around
+     the first xdg configure/frame progression on Linux, while xv6 spends
+     several seconds before `/dev/ptmx` with pre-PTY waits exposed on the
+     Wayland socket, QDBus socket/eventfd, and Wayland pipe. The live-KDE
+     activation/PTTY reducer now covers the missing semantic layer and passed
+     strictly at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T204516Z-activation-pty-strict-pass/`:
+     real registry/globals completed at `300-302ms`, xdg configure/ack at
+     `373ms`, shm buffer commit at `378ms`, frame callback at `512ms`,
+     QDBus read plus an eventfd wake before PTY at `520ms`
+     (`qdbus_read_bytes=52`, `qdbus_eventfd_events=1`), PTY open at `526ms`,
+     and total `539ms`. This rules out raw live-KDE Wayland admission,
+     frame delivery, raw D-Bus/eventfd readiness, and PTY setup as the several
+     second Konsole bottleneck. Keep `poll_notify_full_wait` and
+     `af_unix_poll_notify_full_wait` off; the next evidence target is a
+     Konsole-scoped activation ladder from exec to first `/dev/ptmx`, tracing
+     the real Qt/Konsole/KLauncher/KIO/session-management checkpoints without
+     broad `kde_ipc_trace=1`.
+   - 2026-07-01 follow-up xv6 Wayland-only Konsole probe is archived at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T214746Z-desktop-interaction-wayland-only-direct-launch-timeout/`.
+     It failed late at `direct-launch_kde-app-launch-probe-artifact-timeout`,
+     but preserved useful timing. The desktop became visible at `24945ms`;
+     hover/start/tray visible-change checks still clustered around
+     `701-1145ms` with framebuffer readback itself only about `89-191ms`.
+     Direct Konsole launch stayed cheap (`launch_call_ms=45`), but the first
+     `/dev/ptmx` and `/dev/pts/1` fds appeared only at `5063-5067ms`,
+     wrapper start at `6580ms`, and bash at `6809ms`. The same Linux control
+     family repeatedly reaches PTY/wrapper/shell at roughly `250-510ms`.
+     Wayland debug in the xv6 run shows registry/DMABUF activity, transient
+     surfaces, then the real `xdg_surface`/`xdg_toplevel` path after the
+     delayed PTY/shell marker; post-ready wait samples include poll on
+     `eventfd`, `inotify`, sockets, and `pipe:[id]`. The refined Linux clue is
+     therefore still a real-Konsole pre-PTY/session-admission delay, not raw
+     PTY creation, raw live-KDE Wayland admission, QEMU cursor mode, or broad
+     rendering throughput.
+   - 2026-07-01 Linux direct-launch snapshot proof is archived at
+     `build-x86_64/linux-kde-interaction-proof/20260701T220616Z-konsole-bg-snapshot-fixed/`.
+     The Linux harness now supports opt-in
+     `LINUX_KDE_DIRECT_SNAPSHOT_MS` process/thread/fd snapshots for Konsole
+     direct launch. With snapshots at `50 150 300 500`, Linux still reached
+     wrapper/shell at `500-550ms`. The `50ms` snapshot saw only the Konsole
+     process and stdio/log fds, while the next useful snapshot showed the
+     fully admitted Qt/Wayland/DBus/renderD128/eventfd/pipe/inotify graph plus
+     `/dev/ptmx`, `/dev/pts/0`, and the child shell. Compared with the latest
+     xv6 semantic run (`/dev/ptmx` at `3819ms`, wrapper at `5252ms`), the
+     missing xv6 interval is before the Linux-style fd graph appears, not
+     after terminal shell setup. Next kernel evidence should therefore trace
+     the xv6 transition from initial Konsole fds to the first renderD128,
+     Wayland/DBus sockets, eventfds, pipes, inotify, and PTY, using
+     Konsole-scoped readiness/wake-source tracing rather than broad IPC trace.
+   - 2026-07-01 Linux-shaped xv6 Konsole fdgraph snapshot proof is archived
+     at
+     `build-x86_64/kde-plasma-desktop-smoke-history/20260701T222523Z-desktop-interaction-konsole-fdgraph-snapshot-pass/`.
+     The reducer passed, but direct Konsole launch was still slow:
+     `elapsed_ms=21771`, `konsole_wait_ms=17073`, `/dev/ptmx` and
+     `/dev/pts/1` first appeared at `14386-14387ms`, and the wrapper marker
+     appeared at `16971ms`. The snapshot ladder showed only console/log fds
+     through the `1500ms` sample; the first Wayland/eventfd/pipe graph was
+     visible at `2748ms`, still without PTY or render node at `4050ms`, and
+     `/dev/dri/renderD128` appeared only in the post-ready dump. The matching
+     Linux control had renderD128, `/dev/ptmx`, `/dev/pts/0`, and the shell by
+     roughly `150-550ms`. In the xv6 kernel trace, AF_UNIX wake propagation
+     was present and the largest poll waits were under one second
+     (`WaylandEventThr` `945ms`, QDBus `436ms`), while the standout wait was a
+     `WaylandEventThr` futex wait of `12946ms`. The next behavior-free proof
+     should therefore keep the snapshot ladder and add Konsole-scoped
+     `kde_futex_trace=1 kde_ipc_trace_konsole_only=1` to inspect futex keys,
+     wake counts, and handoff timing before changing scheduler, futex, poll,
+     or socket behavior.
 
 3. Plan consolidation:
-   - This file is the entry point.
-   - Active plans should be compact and point to durable evidence.
+   - This file is the single active plan entry point.
+   - Keep active status compact and point to durable evidence.
    - Evidence archives remain append-only unless intentionally moved to a
      dated historical file.
+   - Former plan files live under
+     `docs/archive/plan-consolidation-20260701/` and are historical only.
 
 4. Kernel deduplication:
    - Deduplicate only after evidence identifies a shared kernel pattern.
@@ -1319,16 +1647,12 @@ because their current action items are summarized here.
 
 ## Authoritative Active Files
 
-- Linux GUI/DRM active direction:
-  `docs/linux-drm-abi-compat-plan.md`.
+- Current plan, handoff, and next-work queue:
+  `docs/active-work-plan.md`.
 - KDE/Linux performance baseline:
   `docs/linux-kde-performance-baseline.md`.
-- Userland de-patching policy:
-  `docs/linux-userland-upstream-depatch-plan.md`.
-- Kernel-side ABI backlog:
-  `docs/linux-userland-abi-kernel-gap-plan.md`.
-- VM/memory ABI backlog:
-  `docs/linux-vm-abi-compat-plan.md`.
+- Supporting evidence, audits, inventories, and TSV/CSV inputs remain in
+  `docs/` but are not active plan files.
 
 ## Historical Or Supporting Files
 
@@ -1339,8 +1663,9 @@ because their current action items are summarized here.
 - Inventory TSV/CSV files are generated or semi-generated audit inputs. Update
   them with the owning scanner or audit workflow rather than hand-merging them
   into prose plans.
-- `docs/alpine-virgl-desktop-handoff-plan.md` is historical reference for the
-  older Alpine/virgl lane, not the current KDE target.
+- Archived former plan files under
+  `docs/archive/plan-consolidation-20260701/` are historical references, not
+  current handoff sources.
 
 ## Document Map
 
@@ -1350,18 +1675,18 @@ dated archive.
 
 | File | Role | Current owner |
 | --- | --- | --- |
-| `docs/active-work-plan.md` | Active top-level index and canonical diagnostics snapshot | edit for current cross-lane status, KASAN/KLOG/KMEMLEAK evidence, and document map changes |
-| `docs/linux-drm-abi-compat-plan.md` | Active KDE/Chromium/DRM GUI plan | edit for GUI evidence and next reducers; link to this file for detailed diagnostics evidence |
+| `docs/active-work-plan.md` | Only live plan, top-level index, and canonical diagnostics snapshot | edit for current cross-lane status, GUI direction, KASAN/KLOG/KMEMLEAK evidence, and next work |
 | `docs/linux-kde-performance-baseline.md` | Active Linux-vs-xv6 performance baseline | edit when Linux VM or xv6 performance proof changes |
-| `docs/linux-userland-upstream-depatch-plan.md` | Active imported-source cleanup policy | edit for upstream-clean/package policy |
-| `docs/linux-userland-abi-kernel-gap-plan.md` | Active kernel ABI backlog | edit for Linux ABI syscall/procfs/VFS/socket gaps |
-| `docs/linux-vm-abi-compat-plan.md` | Active VM/memory ABI backlog | edit for mmap/VM/memory semantics exposed by GUI apps |
 | `docs/linux-drm-abi-compat-evidence-2026-06-27-30.md` | Historical evidence archive | append only when preserving dated proof |
 | `docs/linux-userland-upstream-depatch-evidence-2026-06-27-28.md` | Historical evidence archive | append only for dated upstream-clean proof |
-| `docs/linux-drm-abi-audit.md` | Historical/supporting DRM audit | preserve; active GUI status lives in DRM compat plan |
-| `docs/linux-drm-abi-impl-steps.md` | Historical/supporting implementation notes | preserve; do not let 2026-06-07 state override current plan |
-| `docs/alpine-virgl-desktop-handoff-plan.md` | Historical Alpine/virgl lane | preserve; current target is KDE/Chromium |
-| `docs/linux-abi-compat-plan.md` | Historical ABI roadmap | preserve; current kernel backlog supersedes stale wrong-dispatch items |
+| `docs/linux-drm-abi-audit.md` | Historical/supporting DRM audit | preserve; active GUI status lives in this plan |
+| `docs/archive/plan-consolidation-20260701/alpine-virgl-desktop-handoff-plan.md` | Historical Alpine/virgl lane | archived; current target is KDE/Chromium |
+| `docs/archive/plan-consolidation-20260701/linux-abi-compat-plan.md` | Historical ABI roadmap | archived; current kernel backlog supersedes stale wrong-dispatch items |
+| `docs/archive/plan-consolidation-20260701/linux-drm-abi-impl-steps.md` | Historical/supporting DRM implementation notes | archived; do not let 2026-06-07 state override current plan |
+| `docs/archive/plan-consolidation-20260701/linux-drm-abi-compat-plan.md` | Historical KDE/Chromium/DRM GUI plan | archived; current GUI direction lives here |
+| `docs/archive/plan-consolidation-20260701/linux-userland-upstream-depatch-plan.md` | Historical imported-source cleanup plan | archived; current upstream-clean policy lives here |
+| `docs/archive/plan-consolidation-20260701/linux-userland-abi-kernel-gap-plan.md` | Historical kernel ABI backlog | archived; current ABI backlog lives here |
+| `docs/archive/plan-consolidation-20260701/linux-vm-abi-compat-plan.md` | Historical VM/memory ABI backlog | archived; current VM backlog lives here |
 | `docs/linux-abi-audit.md` and `.csv` | Supporting generated ABI audit | update via audit workflow |
 | `docs/linux-abi-semantic-audit.md` and `.csv` | Supporting generated semantic audit | update via audit workflow |
 | `docs/linux-gui-file-inventory.md` | Supporting GUI file inventory | update via inventory workflow |
@@ -1371,10 +1696,10 @@ dated archive.
 | `docs/linux-userland-upstream-refs.tsv` | Supporting upstream ref data | update with source-ref audit |
 | `docs/linux-userland-user-program-audit.tsv` | Supporting local program audit | update with userland audit workflow |
 
-2026-06-30 consolidation step: `docs/linux-drm-abi-compat-plan.md` now points
-to this file for detailed KASAN/KLOG/KMEMLEAK artifacts instead of duplicating
-the diagnostics evidence block. Keep GUI-specific effects in the DRM plan and
-cross-lane diagnostic proof here.
+2026-07-01 consolidation step: `docs/active-work-plan.md` is now the only live
+plan file in the docs root. Former plan files were moved to
+`docs/archive/plan-consolidation-20260701/`; keep current GUI, ABI,
+userland-cleanliness, sanitizer, and kernel-cleanup direction here.
 
 ## Next Work Queue
 

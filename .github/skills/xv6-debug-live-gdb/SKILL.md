@@ -1,7 +1,6 @@
 ---
 name: xv6-debug-live-gdb
 description: 'Use when: debugging a live xv6-os QEMU/GDB session, GDB attach state, QEMU_GDB, QEMU_GDB_WAIT, xv6-freeze, xv6-syscall, xv6-kqueue, HMP monitor captures, stale VM sessions, or post-patch runtime validation.'
-argument-hint: 'Describe the live VM/GDB state or paste the capture'
 ---
 
 # xv6 Live GDB Debugging

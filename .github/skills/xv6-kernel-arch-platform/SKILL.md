@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-arch-platform
 description: 'Use when: working on xv6-os architecture code, x86_64 boot, RISC-V boot, AP startup, MMU page tables, LAPIC/IOAPIC/PLIC, SMP, IPI, trapframe ABI, platform discovery, or arch debug hooks.'
-argument-hint: 'Describe the arch/platform symptom or file path'
 ---
 
 # xv6 Kernel Architecture And Platform
@@ -32,3 +31,8 @@ argument-hint: 'Describe the arch/platform symptom or file path'
 - xv6-tmp is RISC-V and OrangePi-oriented; its boot, PLIC, timer, and device details are not authoritative for x86_64/QEMU.
 - Trapframe, context, and signal trampoline layout mismatches often compile cleanly but fail at runtime.
 - Do not move sleeping operations into interrupt, IPI, or early boot context.
+- x86_64 PCID (`x86_pcid=1`) is opt-in with documented GUI corruption
+  history under SMP load. Verify `vm_asid_init: max ASID = <nonzero>` in
+  the boot log before trusting any PCID A/B; a `QEMU_APPEND` quoting mistake
+  silently leaves it off. The per-syscall CR3/TLB cost map lives in
+  `xv6-kernel-traps-syscalls`.

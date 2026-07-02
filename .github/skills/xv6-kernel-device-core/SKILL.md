@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-device-core
 description: 'Use when: working on xv6-os device registration, dev numbers, cdev read/write/ioctl/poll, devtmpfs exposure, null/random devices, framebuffer cdevs, or generic device lifecycle.'
-argument-hint: 'Describe the device registration or cdev symptom'
 ---
 
 # xv6 Kernel Device Core

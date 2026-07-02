@@ -14,6 +14,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 struct app_probe {
     const char *name;
     char *const *argv;
@@ -44,6 +48,14 @@ struct konsole_phase_state {
     long long ptmx_seen_ms;
     long long pts_seen_ms;
     char pts_target[128];
+};
+
+#define KONSOLE_SNAPSHOT_MAX 16
+
+struct konsole_snapshot_schedule {
+    int count;
+    int next;
+    int points_ms[KONSOLE_SNAPSHOT_MAX];
 };
 
 static long long monotonic_ms(void)
@@ -195,6 +207,19 @@ static void escape_string(char *out, size_t out_size, const char *in)
         }
     }
     out[off] = '\0';
+}
+
+static void trim_line(char *buf)
+{
+    size_t len;
+
+    if (!buf)
+        return;
+    len = strlen(buf);
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' ||
+                       buf[len - 1] == ' ' || buf[len - 1] == '\t')) {
+        buf[--len] = '\0';
+    }
 }
 
 static void chromium_evidence_open(void)
@@ -644,6 +669,46 @@ static int parse_env_int_or_default(const char *name, int fallback, int min,
     if (parsed > max)
         return max;
     return (int)parsed;
+}
+
+static void parse_konsole_snapshot_schedule(struct konsole_snapshot_schedule *s)
+{
+    const char *value = getenv("KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS");
+    char buf[256];
+    char *save = NULL;
+    char *tok;
+
+    memset(s, 0, sizeof(*s));
+    if (!value || value[0] == '\0')
+        return;
+    snprintf(buf, sizeof(buf), "%s", value);
+    for (tok = strtok_r(buf, ", \t", &save); tok != NULL;
+         tok = strtok_r(NULL, ", \t", &save)) {
+        char *end = NULL;
+        long parsed;
+
+        if (s->count >= KONSOLE_SNAPSHOT_MAX)
+            break;
+        errno = 0;
+        parsed = strtol(tok, &end, 10);
+        if (errno || end == tok || *end != '\0')
+            continue;
+        if (parsed < 0)
+            parsed = 0;
+        if (parsed > 60000)
+            parsed = 60000;
+        s->points_ms[s->count++] = (int)parsed;
+    }
+    for (int i = 1; i < s->count; i++) {
+        int v = s->points_ms[i];
+        int j = i - 1;
+
+        while (j >= 0 && s->points_ms[j] > v) {
+            s->points_ms[j + 1] = s->points_ms[j];
+            j--;
+        }
+        s->points_ms[j + 1] = v;
+    }
 }
 
 static int read_text_file(const char *path, char *buf, size_t size)
@@ -1873,6 +1938,270 @@ static void dump_interesting_processes(const char *phase, int chromium_only)
     closedir(dir);
 }
 
+static void log_konsole_snapshot(const char *fmt, ...)
+{
+    const char *paths[] = { konsole_phase_log_path, konsole_phase_mirror_path };
+    va_list ap;
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        int fd = open(paths[i], O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                      0644);
+
+        if (fd < 0)
+            continue;
+        va_start(ap, fmt);
+        vdprintf(fd, fmt, ap);
+        va_end(ap);
+        close(fd);
+    }
+}
+
+static int proc_state(const char *pid_name, const char *task_name,
+                      char *out, size_t out_size)
+{
+    char path[384];
+    char buf[2048];
+    char *line;
+    char *save = NULL;
+
+    if (out_size == 0)
+        return 0;
+    out[0] = '\0';
+    if (task_name)
+        snprintf(path, sizeof(path), "/proc/%s/task/%s/status", pid_name,
+                 task_name);
+    else
+        snprintf(path, sizeof(path), "/proc/%s/status", pid_name);
+    if (read_text_file(path, buf, sizeof(buf)) <= 0)
+        return 0;
+    for (line = strtok_r(buf, "\n", &save); line;
+         line = strtok_r(NULL, "\n", &save)) {
+        if (strncmp(line, "State:", 6) == 0) {
+            const char *p = line + 6;
+
+            while (*p == ' ' || *p == '\t')
+                p++;
+            snprintf(out, out_size, "%s", p);
+            trim_line(out);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int pid_in_konsole_snapshot_tree(const char *pid_name, pid_t root_pid)
+{
+    char *end = NULL;
+    long pid = strtol(pid_name, &end, 10);
+
+    if (end == pid_name || *end != '\0')
+        return 0;
+    if (pid == (long)root_pid)
+        return 1;
+    return process_ppid(pid_name) == (int)root_pid;
+}
+
+static void dump_konsole_snapshot_threads(const char *label,
+                                          long long since_launch_ms,
+                                          const char *pid_name)
+{
+    char task_dir[320];
+    DIR *dir;
+    struct dirent *de;
+
+    snprintf(task_dir, sizeof(task_dir), "/proc/%s/task", pid_name);
+    dir = opendir(task_dir);
+    if (!dir)
+        return;
+
+    while ((de = readdir(dir)) != NULL) {
+        char path[PATH_MAX];
+        char comm[128];
+        char wchan[128];
+        char state[256];
+        char comm_esc[256];
+        char wchan_esc[256];
+        char state_esc[512];
+        int all_digits = 1;
+
+        if (de->d_name[0] == '.')
+            continue;
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+        snprintf(path, sizeof(path), "/proc/%s/task/%s/comm", pid_name,
+                 de->d_name);
+        if (read_text_file(path, comm, sizeof(comm)) <= 0)
+            snprintf(comm, sizeof(comm), "missing");
+        trim_line(comm);
+        snprintf(path, sizeof(path), "/proc/%s/task/%s/wchan", pid_name,
+                 de->d_name);
+        if (read_text_file(path, wchan, sizeof(wchan)) <= 0)
+            snprintf(wchan, sizeof(wchan), "missing");
+        trim_line(wchan);
+        if (!proc_state(pid_name, de->d_name, state, sizeof(state)))
+            snprintf(state, sizeof(state), "missing");
+        escape_string(comm_esc, sizeof(comm_esc), comm);
+        escape_string(wchan_esc, sizeof(wchan_esc), wchan);
+        escape_string(state_esc, sizeof(state_esc), state);
+        log_konsole_snapshot("kde_app_launch_probe konsole_snapshot "
+                             "label=%s since_launch_ms=%lld thread pid=%s "
+                             "tid=%s state=\"%s\" comm=\"%s\" wchan=\"%s\"\n",
+                             label, since_launch_ms, pid_name, de->d_name,
+                             state_esc, comm_esc, wchan_esc);
+    }
+
+    closedir(dir);
+}
+
+static void dump_konsole_snapshot_fds(const char *label,
+                                      long long since_launch_ms,
+                                      const char *pid_name)
+{
+    char fd_dir[PATH_MAX];
+    DIR *dir;
+    struct dirent *de;
+
+    snprintf(fd_dir, sizeof(fd_dir), "/proc/%s/fd", pid_name);
+    dir = opendir(fd_dir);
+    if (!dir)
+        return;
+
+    while ((de = readdir(dir)) != NULL) {
+        char link_path[PATH_MAX + 512];
+        char target[512];
+        char target_esc[1024];
+        ssize_t n;
+
+        if (de->d_name[0] == '.')
+            continue;
+        snprintf(link_path, sizeof(link_path), "%s/%s", fd_dir, de->d_name);
+        n = readlink(link_path, target, sizeof(target) - 1);
+        if (n < 0)
+            continue;
+        target[n] = '\0';
+        escape_string(target_esc, sizeof(target_esc), target);
+        log_konsole_snapshot("kde_app_launch_probe konsole_snapshot "
+                             "label=%s since_launch_ms=%lld fd pid=%s fd=%s "
+                             "target=\"%s\"\n",
+                             label, since_launch_ms, pid_name, de->d_name,
+                             target_esc);
+    }
+
+    closedir(dir);
+}
+
+static void dump_konsole_snapshot(pid_t root_pid, long long base_ms,
+                                  int point_ms)
+{
+    DIR *dir;
+    struct dirent *de;
+    long long now = monotonic_ms();
+    long long since_launch_ms = now - base_ms;
+    char label[32];
+
+    snprintf(label, sizeof(label), "%dms", point_ms);
+    log_konsole_snapshot("kde_app_launch_probe konsole_snapshot label=%s "
+                         "since_launch_ms=%lld root_pid=%ld begin\n",
+                         label, since_launch_ms, (long)root_pid);
+    dir = opendir("/proc");
+    if (!dir) {
+        log_konsole_snapshot("kde_app_launch_probe konsole_snapshot label=%s "
+                             "since_launch_ms=%lld root_pid=%ld "
+                             "opendir_errno=%d error=\"%s\"\n",
+                             label, since_launch_ms, (long)root_pid, errno,
+                             strerror(errno));
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char path[320];
+        char cmdline_raw[8192];
+        char cmdline[8192];
+        char comm[128];
+        char wchan[128];
+        char state[256];
+        char cmd_esc[8192];
+        char comm_esc[256];
+        char wchan_esc[256];
+        char state_esc[512];
+        int all_digits = 1;
+        int cmd_n;
+        int ppid;
+
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits ||
+            !pid_in_konsole_snapshot_tree(de->d_name, root_pid)) {
+            continue;
+        }
+
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", de->d_name);
+        cmd_n = read_text_file(path, cmdline_raw, sizeof(cmdline_raw));
+        if (cmd_n > 0)
+            memcpy(cmdline, cmdline_raw, (size_t)cmd_n + 1);
+        else
+            cmdline[0] = '\0';
+        normalize_cmdline(cmdline, cmd_n);
+        snprintf(path, sizeof(path), "/proc/%s/comm", de->d_name);
+        if (read_text_file(path, comm, sizeof(comm)) <= 0)
+            snprintf(comm, sizeof(comm), "missing");
+        trim_line(comm);
+        snprintf(path, sizeof(path), "/proc/%s/wchan", de->d_name);
+        if (read_text_file(path, wchan, sizeof(wchan)) <= 0)
+            snprintf(wchan, sizeof(wchan), "missing");
+        trim_line(wchan);
+        if (!proc_state(de->d_name, NULL, state, sizeof(state)))
+            snprintf(state, sizeof(state), "missing");
+        ppid = process_ppid(de->d_name);
+        escape_string(cmd_esc, sizeof(cmd_esc), cmdline);
+        escape_string(comm_esc, sizeof(comm_esc), comm);
+        escape_string(wchan_esc, sizeof(wchan_esc), wchan);
+        escape_string(state_esc, sizeof(state_esc), state);
+        log_konsole_snapshot("kde_app_launch_probe konsole_snapshot label=%s "
+                             "since_launch_ms=%lld process pid=%s ppid=%d "
+                             "state=\"%s\" comm=\"%s\" wchan=\"%s\" "
+                             "cmd=\"%s\"\n",
+                             label, since_launch_ms, de->d_name, ppid,
+                             state_esc, comm_esc, wchan_esc, cmd_esc);
+        dump_konsole_snapshot_threads(label, since_launch_ms, de->d_name);
+        dump_konsole_snapshot_fds(label, since_launch_ms, de->d_name);
+    }
+
+    closedir(dir);
+    log_konsole_snapshot("kde_app_launch_probe konsole_snapshot label=%s "
+                         "since_launch_ms=%lld root_pid=%ld end\n",
+                         label, monotonic_ms() - base_ms, (long)root_pid);
+}
+
+static void maybe_dump_konsole_snapshots(pid_t root_pid, long long base_ms,
+                                         struct konsole_snapshot_schedule *s)
+{
+    long long elapsed;
+
+    if (!s || s->count == 0 || root_pid <= 0)
+        return;
+    elapsed = monotonic_ms() - base_ms;
+    while (s->next < s->count && elapsed >= s->points_ms[s->next]) {
+        dump_konsole_snapshot(root_pid, base_ms, s->points_ms[s->next]);
+        s->next++;
+        elapsed = monotonic_ms() - base_ms;
+    }
+}
+
 static int read_marker_payload(const char *path, char *buf, size_t size)
 {
     int n;
@@ -2016,7 +2345,8 @@ static int wait_for_path_traced(const char *path, int timeout_ms,
                                 char *found_payload,
                                 size_t found_payload_size,
                                 long long *found_ms_out,
-                                struct konsole_phase_state *phase_state)
+                                struct konsole_phase_state *phase_state,
+                                struct konsole_snapshot_schedule *snapshot_schedule)
 {
     long long start_ms = monotonic_ms();
     long long next_sample_ms = start_ms;
@@ -2030,6 +2360,7 @@ static int wait_for_path_traced(const char *path, int timeout_ms,
         long long elapsed_ms = now - start_ms;
 
         sample_konsole_pty_fds(child_pid, base_ms, phase_state);
+        maybe_dump_konsole_snapshots(child_pid, base_ms, snapshot_schedule);
 
         if (access(path, F_OK) == 0) {
             char payload[512];
@@ -2471,6 +2802,7 @@ int main(int argc, char **argv)
     size_t probe_count = require_chromium ? 6 : 5;
     int konsole_marker_ok = 1;
     struct konsole_phase_state konsole_phase_state = { 0 };
+    struct konsole_snapshot_schedule konsole_snapshot_schedule;
     int shells_before;
     int shells_after;
     int ok = 1;
@@ -2509,6 +2841,7 @@ int main(int argc, char **argv)
     if (require_chromium)
         chromium_evidence_open();
     set_kde_env();
+    parse_konsole_snapshot_schedule(&konsole_snapshot_schedule);
     konsole_phase_log_reset();
     unlink(konsole_marker);
     shells_before = count_shell_processes();
@@ -2540,7 +2873,8 @@ int main(int argc, char **argv)
                                              konsole_marker_payload,
                                              sizeof(konsole_marker_payload),
                                              &konsole_marker_found_ms,
-                                             &konsole_phase_state);
+                                             &konsole_phase_state,
+                                             &konsole_snapshot_schedule);
     konsole_wait_elapsed_ms = monotonic_ms() - konsole_wait_start_ms;
     shells_after = count_shell_processes();
     fprintf(stderr,

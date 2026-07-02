@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-utility-tools
 description: 'Use when: working on xv6-os bits.c, bitmap/bit helpers, string/memory primitives, compiler/cache macros, types, errno, kobject refcounts, accounting, kstats, resource metrics, or power hooks.'
-argument-hint: 'Describe the utility helper or call-site issue'
 ---
 
 # xv6 Kernel Utility Tools

@@ -313,7 +313,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -6157,6 +6157,13 @@ proc stage_desktop_interaction_helper_script {} {
         $::env(KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS) <= 60000} {
         set konsole_wait_sample_default $::env(KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS)
     }
+    set konsole_snapshot_default ""
+    if {[info exists ::env(KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS)]} {
+        set konsole_snapshot_value [string map {"\n" " " "\r" " " "\t" " "} $::env(KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS)]
+        if {[regexp {^[0-9, ]*$} $konsole_snapshot_value]} {
+            set konsole_snapshot_default $konsole_snapshot_value
+        }
+    }
     set kprofile_default 0
     if {[info exists ::env(KDE_APP_LAUNCH_PROBE_KPROFILE)]} {
         set kprofile_value [string tolower $::env(KDE_APP_LAUNCH_PROBE_KPROFILE)]
@@ -6260,15 +6267,17 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "    direct-launch)"
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS:=$interlaunch_delay_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS:=$konsole_wait_sample_default}\""
+    puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS:=$konsole_snapshot_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_KPROFILE:=$kprofile_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE:=$semantic_capture_default}\""
     puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG:=$wayland_debug_default}\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS=\$KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS=\$KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS\""
+    puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS=\$KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_KPROFILE=\$KDE_APP_LAUNCH_PROBE_KPROFILE\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE=\$KDE_APP_LAUNCH_PROBE_SEMANTIC_CAPTURE\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG=\$KDE_APP_LAUNCH_PROBE_WAYLAND_DEBUG\""
-    puts $fh "      export KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS"
+    puts $fh "      export KDE_APP_LAUNCH_PROBE_INTERLAUNCH_DELAY_MS KDE_APP_LAUNCH_PROBE_KONSOLE_WAIT_SAMPLE_MS KDE_APP_LAUNCH_PROBE_KONSOLE_SNAPSHOT_MS"
     puts $fh {      semantic_pids=""}
     puts $fh {      semantic_logs=""}
     puts $fh {      semantic_pairs=""}
@@ -6355,6 +6364,19 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh {        done}
     puts $fh {      fi}
     puts $fh {      echo "kde_interaction_helper direct-launch probe_rc=$probe_rc"}
+    puts $fh "      ;;"
+    puts $fh "    activation-pty)"
+    puts $fh {      export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/dev/shm/xdg-runtime-root}"}
+    puts $fh {      export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"}
+    puts $fh {      export DBUS_SYSTEM_BUS_ADDRESS="${DBUS_SYSTEM_BUS_ADDRESS:-unix:abstract=xv6_system_bus}"}
+    puts $fh {      export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:abstract=xv6_session_bus}"}
+    puts $fh {      export KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_FRAME="${KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_FRAME:-1}"}
+    puts $fh {      export KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_QDBUS="${KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_QDBUS:-1}"}
+    puts $fh {      export LD_LIBRARY_PATH=/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib:/lib}
+    puts $fh {      echo "kde_interaction_helper activation-pty env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR WAYLAND_DISPLAY=$WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS REQUIRE_FRAME=$KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_FRAME REQUIRE_QDBUS=$KDE_WAYLAND_ACTIVATION_PTY_REQUIRE_QDBUS"}
+    puts $fh {      /bin/kde-wayland-activation-pty-probe "$@"}
+    puts $fh {      probe_rc=$?}
+    puts $fh {      echo "kde_interaction_helper activation-pty probe_rc=$probe_rc"}
     puts $fh "      ;;"
     puts $fh "    fbstat)"
     puts $fh "      fbstat"
@@ -7142,6 +7164,12 @@ proc finish_after_user_exception {code label} {
     finish $code $label
 }
 
+proc finish_after_crash {code label} {
+    puts "KDE-PLASMA-DESKTOP-SMOKE-WARN crash-drain-before-finish label=[evidence_quote $label]"
+    drain_after_crash_match 5
+    finish $code $label
+}
+
 proc finish {code label} {
     global qemu_pid runlog tmpimg ppm png guest_before_ppm guest_after_ppm
     global guest_final_ppm
@@ -7541,7 +7569,7 @@ proc kde_session_ready_role_probe_fallback {} {
         }
         -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
             set timeout $old_timeout
-            finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash"
+            finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash"
         }
         -re {pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
             if {!$kde_tolerate_ready_user_exceptions} {
@@ -7579,7 +7607,7 @@ proc wait_for_kde_session_ready {} {
             finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry"
         }
         -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
-            finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash"
+            finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash"
         }
         -re {pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
             if {!$kde_tolerate_ready_user_exceptions} {
@@ -11762,7 +11790,7 @@ proc desktop_interaction_log_line {line} {
 proc persist_interaction_helper_log {kind serial safe_label log_text} {
     global outdir
 
-    if {$kind ne "direct-launch" && $kind ne "fbstat"} {
+    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat"} {
         return ""
     }
 
@@ -11776,7 +11804,7 @@ proc persist_interaction_helper_log {kind serial safe_label log_text} {
 proc persist_interaction_helper_status {kind serial safe_label status_text} {
     global outdir
 
-    if {$kind ne "direct-launch" && $kind ne "fbstat"} {
+    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat"} {
         return ""
     }
 
@@ -12332,6 +12360,7 @@ proc measure_direct_app_launch_latency {} {
         if {[regexp {kde_app_launch_probe launch app=konsole[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe marker phase=konsole-ready status=found[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe konsole_phase_detail[^\r\n]*} $line match] ||
+            [regexp {kde_app_launch_probe konsole_snapshot[^\r\n]*} $line match] ||
             [regexp {kde_app_launch_probe konsole_phase[^\r\n]*} $line match] ||
             [regexp {xv6-konsole-shell phase=[^\r\n]*} $line match] ||
             [regexp {xv6-konsole-shell-ready[^\r\n]*} $line match]} {
@@ -12340,6 +12369,87 @@ proc measure_direct_app_launch_latency {} {
     }
     desktop_interaction_log_line "phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms helper_elapsed_ms=$helper_elapsed_ms probe_rc=$probe_rc konsole_wait_ms=$konsole_wait_ms konsole_sample_ms=$konsole_sample_ms konsole_launch_call_ms=$konsole_launch_call_ms konsole_wrapper_start_since_launch_ms=$konsole_wrapper_start_since_launch_ms konsole_wrapper_marker_found_since_wrapper_ms=$konsole_wrapper_marker_found_since_wrapper_ms konsole_wrapper_before_exec_delta_ms=$konsole_wrapper_before_exec_delta_ms konsole_pty_ptmx_since_launch_ms=$konsole_pty_ptmx_since_launch_ms konsole_pty_pts_since_launch_ms=$konsole_pty_pts_since_launch_ms konsole_bash_start_since_launch_ms=$konsole_bash_start_since_launch_ms konsole_bash_start_since_wrapper_ms=$konsole_bash_start_since_wrapper_ms status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path phase_log=$phase_host_path"
     puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=direct-launch action=kde-app-launch-probe status=PASS elapsed_ms=$elapsed_ms"
+}
+
+proc measure_wayland_activation_pty_probe {} {
+    set start_ms [clock milliseconds]
+    desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=start start_ms=$start_ms"
+    set result [run_desktop_interaction_helper_command activation-pty kde-wayland-activation-pty-probe "" 45000]
+    set status_path [lindex $result 0]
+    set log_path [lindex $result 1]
+    set status_text [lindex $result 2]
+    set log_text [lindex $result 3]
+    set helper_elapsed_ms [lindex $result 4]
+    set host_log_path [lindex $result 5]
+    set host_status_path [lindex $result 6]
+    set probe_rc "missing"
+    if {[regexp {probe_rc=([-0-9]+)} $status_text -> parsed_probe_rc]} {
+        set probe_rc $parsed_probe_rc
+    }
+    if {$probe_rc eq "missing" || $probe_rc != 0} {
+        desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=FAIL reason=probe-rc probe_rc=$probe_rc status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-activation-pty-probe-rc"
+    }
+    if {![regexp {kde_wayland_activation_pty_probe phase=result status=PASS[^\r\n]*} $log_text result_line]} {
+        desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=FAIL reason=missing-pass status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-activation-pty-probe-missing-pass"
+    }
+
+    set total_ms "missing"
+    set configure_ms "missing"
+    set frame_done_ms "missing"
+    set buffer_release_ms "missing"
+    set pty_open_ms "missing"
+    set qdbus_socket_events "missing"
+    set qdbus_eventfd_events "missing"
+    set qdbus_read_bytes "missing"
+    set qdbus_prepty_ms "missing"
+    foreach {key var_name} {
+        total_ms total_ms
+        configure_ms configure_ms
+        frame_done_ms frame_done_ms
+        buffer_release_ms buffer_release_ms
+        pty_open_ms pty_open_ms
+        qdbus_socket_events qdbus_socket_events
+        qdbus_eventfd_events qdbus_eventfd_events
+        qdbus_read_bytes qdbus_read_bytes
+        qdbus_prepty_ms qdbus_prepty_ms
+    } {
+        if {[regexp [format {%s=([-0-9]+)} $key] $result_line -> value]} {
+            set $var_name $value
+        }
+    }
+    foreach {field value} [list \
+        total_ms $total_ms \
+        configure_ms $configure_ms \
+        pty_open_ms $pty_open_ms \
+        qdbus_socket_events $qdbus_socket_events \
+        qdbus_eventfd_events $qdbus_eventfd_events \
+        qdbus_read_bytes $qdbus_read_bytes \
+        qdbus_prepty_ms $qdbus_prepty_ms] {
+        if {![string is integer -strict $value] || $value <= 0} {
+            desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=FAIL reason=weak-field field=$field value=$value result=[evidence_quote $result_line] status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-activation-pty-probe-weak-$field"
+        }
+    }
+    set have_frame_or_release 0
+    foreach value [list $frame_done_ms $buffer_release_ms] {
+        if {[string is integer -strict $value] && $value > 0} {
+            set have_frame_or_release 1
+        }
+    }
+    if {!$have_frame_or_release} {
+        desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=FAIL reason=missing-frame-or-release frame_done_ms=$frame_done_ms buffer_release_ms=$buffer_release_ms result=[evidence_quote $result_line] status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path log=[evidence_quote $log_text]"
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-activation-pty-probe-missing-frame"
+    }
+    foreach raw_line [split $log_text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {kde_wayland_activation_pty_probe phase=(registry-roundtrip|globals|empty-commit|toplevel-configure|xdg-configure|configure-wait|buffer-commit|frame-wait|qdbus-prepty|pty-open|qdbus-sidecar-summary|result)[^\r\n]*} $line match]} {
+            desktop_interaction_log_line "phase=activation-pty-detail action=kde-wayland-activation-pty-probe detail=[evidence_quote [string map {"\t" " " "\r" "" "\n" " "} $match]]"
+        }
+    }
+    desktop_interaction_log_line "phase=activation-pty action=kde-wayland-activation-pty-probe status=PASS elapsed_ms=[expr {[clock milliseconds] - $start_ms}] helper_elapsed_ms=$helper_elapsed_ms probe_rc=$probe_rc total_ms=$total_ms configure_ms=$configure_ms frame_done_ms=$frame_done_ms buffer_release_ms=$buffer_release_ms pty_open_ms=$pty_open_ms qdbus_socket_events=$qdbus_socket_events qdbus_eventfd_events=$qdbus_eventfd_events qdbus_read_bytes=$qdbus_read_bytes qdbus_prepty_ms=$qdbus_prepty_ms status_path=$status_path log_path=$log_path host_log=$host_log_path host_status=$host_status_path"
+    puts "KDE-PLASMA-DESKTOP-SMOKE-INFO interaction phase=activation-pty action=kde-wayland-activation-pty-probe status=PASS elapsed_ms=[expr {[clock milliseconds] - $start_ms}]"
 }
 
 proc run_desktop_interaction_latency_reducer {} {
@@ -12359,6 +12469,8 @@ proc run_desktop_interaction_latency_reducer {} {
     set visible_min_nonblack [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_MIN_NONBLACK 1 1 1000000]
     set visible_attempts [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_ATTEMPTS 120 1 600]
     set visible_interval_ms [env_int_range KDE_SMOKE_INTERACTION_VISIBLE_INTERVAL_MS 500 50 5000]
+    set activation_pty_enabled [env_bool KDE_SMOKE_INTERACTION_ACTIVATION_PTY_PROBE 0]
+    set activation_pty_first [expr {$activation_pty_enabled && [env_bool KDE_SMOKE_INTERACTION_ACTIVATION_PTY_FIRST 0]}]
     set input_source $kde_interaction_input_source
     set qemu_gtk_cursor_mode "default"
     set qemu_gtk_show_cursor "default"
@@ -12369,7 +12481,13 @@ proc run_desktop_interaction_latency_reducer {} {
         set qemu_gtk_show_cursor $::env(QEMU_GTK_SHOW_CURSOR)
     }
 
-    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0] input_source=$input_source cursor_owner=$kde_interaction_cursor_owner qemu_gtk_cursor_mode=$qemu_gtk_cursor_mode qemu_gtk_show_cursor=$qemu_gtk_show_cursor"
+    desktop_interaction_log_line "phase=meta reducer=desktop-interaction-latency hover_timeout_ms=$hover_timeout_ms tray_timeout_ms=$tray_timeout_ms menu_timeout_ms=$menu_timeout_ms interval_ms=$interval_ms tray_x=$tray_x tray_y=$tray_y launcher_x=$launcher_x launcher_y=$launcher_y close_x=$close_x close_y=$close_y visible_min_nonblack=$visible_min_nonblack visible_attempts=$visible_attempts visible_interval_ms=$visible_interval_ms active_sample=[env_bool KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE 0] activation_pty_enabled=$activation_pty_enabled activation_pty_first=$activation_pty_first input_source=$input_source cursor_owner=$kde_interaction_cursor_owner qemu_gtk_cursor_mode=$qemu_gtk_cursor_mode qemu_gtk_show_cursor=$qemu_gtk_show_cursor"
+    if {$activation_pty_first} {
+        measure_wayland_activation_pty_probe
+        if {[env_bool KDE_SMOKE_INTERACTION_ACTIVATION_PTY_ONLY 0]} {
+            finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=desktop-interaction-latency activation-pty-only"
+        }
+    }
     measure_first_visible_frame "desktop-interaction-visible" $visible_min_nonblack $visible_attempts $visible_interval_ms
     after 1500
     capture_fb $guest_before_ppm "desktop-interaction-before"
@@ -12405,6 +12523,9 @@ proc run_desktop_interaction_latency_reducer {} {
     measure_visual_action tray close $close_x $close_y "key esc" $tray_timeout_ms $interval_ms
 
     capture_fb $guest_after_ppm "desktop-interaction-after"
+    if {$activation_pty_enabled && !$activation_pty_first} {
+        measure_wayland_activation_pty_probe
+    }
     measure_direct_app_launch_latency
     finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=desktop-interaction-latency"
 }
@@ -12542,7 +12663,7 @@ set qemu_pid [exp_pid]
 expect {
     -re {FB: registered /dev/fb0 \(virtio-gpu direct 1280x800x32} {}
     -re {PANIC|fatal page fault|spin_lock reentry} {
-        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL early-crash"
+        finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL early-crash"
     }
     timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-fb0" }
     eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL early-eof" }
@@ -12551,7 +12672,7 @@ expect {
 expect {
     -re {xv6-desktop-session: selected desktop=kde} {}
     -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
-        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL launch-crash"
+        finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL launch-crash"
     }
     timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-desktop-dispatch" }
     eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL dispatch-eof" }
@@ -12560,7 +12681,7 @@ expect {
 expect {
     -re {kde-session: starting KDE Plasma desktop} {}
     -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|exec failed|not found|status=127} {
-        finish 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-crash"
+        finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-crash"
     }
     timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-kde-session" }
     eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-eof" }

@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-sleep-wakeup
 description: 'Use when: debugging xv6-os sleep/wakeup races, thread_queue, futex waits, timed sleeps, wait channels, INTERRUPTIBLE threads, missed wakeups, or blocked kernel threads.'
-argument-hint: 'Describe the blocked wait or paste thread/timer state'
 ---
 
 # xv6 Kernel Sleep And Wakeup
@@ -33,3 +32,9 @@ argument-hint: 'Describe the blocked wait or paste thread/timer state'
 - Wait-channel output alone is insufficient for timer-backed waits.
 - Waking before enqueue or after state transition can lose the event even when the wake function is called.
 - Avoid wakeups from contexts that cannot safely acquire the required locks.
+- Before blaming slow wakeups for GUI latency, run the behavior-free
+  `kde_wake_to_run_trace=<N>` diagnostic (documented in
+  `xv6-kernel-process-scheduler`). Bounded wake-to-run latencies with a
+  large end-to-end gap indicate producer-side delay, not a scheduler or
+  wakeup bug; check `docs/active-work-plan.md` for lanes already closed by
+  this metric.

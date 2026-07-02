@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-ipc
 description: 'Use when: debugging xv6-os System V IPC, message queues, semaphores, shared memory, IPC keys, IDs, permissions, sleeping senders/receivers, semop, shm attach, or IPC cleanup.'
-argument-hint: 'Describe the IPC syscall or blocked operation'
 ---
 
 # xv6 Kernel IPC

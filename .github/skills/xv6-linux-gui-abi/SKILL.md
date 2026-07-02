@@ -18,6 +18,9 @@ Do not use this skill as an app-porting playbook. Host GUI apps are probes.
 The deliverable is Linux ABI compatibility or a reduced mismatch, not a custom
 launcher, patched app, or one-off packaging workaround.
 
+Current KDE/Chromium work skips Weston unless `docs/active-work-plan.md`
+explicitly reopens that lane.
+
 ## Reducer-First Debugging
 
 - Default to localizing mismatches with the smallest program that reproduces the
@@ -86,8 +89,9 @@ launcher, patched app, or one-off packaging workaround.
 ## Dynamic Role Discovery
 
 - Guest service PIDs, TGIDs, and TIDs are dynamic.
-- Never identify Chromium, NetworkService, Xwayland, Weston, D-Bus, GPU,
-  renderer, desktop, or helpers by copied numeric IDs or launch order.
+- Never identify Chromium, NetworkService, Xwayland, D-Bus, GPU, renderer,
+  desktop/compositor services, or helpers by copied numeric IDs or launch
+  order.
 - First derive the role in the same boot from semantic evidence: argv,
   executable path, thread name, fd/socket graph, lifecycle, surface mapping, or
   SCM/credential traffic.
@@ -115,6 +119,51 @@ launcher, patched app, or one-off packaging workaround.
   launchers.
 - Do not reopen DNS, static PID theories, desktop launchers, or packaging unless
   new evidence points at that layer.
+
+## KDE Plasma Responsiveness Workflow
+
+- Check `docs/active-work-plan.md` first for which bottleneck hypotheses
+  are already closed by metrics before opening a new lane. Durable routing:
+  scheduler wake-to-run latency is measurable behavior-free with
+  `kde_wake_to_run_trace=<N>` (see `xv6-kernel-process-scheduler`);
+  per-syscall fixed cost and TLB amplification are measurable with
+  `syscalltlb` (see `xv6-kernel-traps-syscalls`); present-path frame caps
+  are diagnosable by comparing flush rate to presented FPS (see
+  `xv6-debug-gui-runtime`).
+- Use Linux KVM+virgl as a phase reference for the same host and QEMU display
+  shape. Keep visual capture validity separate from phase timing: a Linux run
+  can be a useful PTY/wrapper/shell or cursor-policy control even when
+  screenshot, hover, or tray hashes are unusable on the host.
+- For WSLg/GTK/virgl interaction runs, default to a single visible QEMU/host
+  cursor. Treat guest hardware cursor images as an opt-in debugging path, and
+  compare QEMU trace counts before blaming cursor pixels. If Linux on the same
+  display path records zero virtio cursor update/move commands, xv6 should not
+  require guest cursor queue traffic for normal interaction.
+- For Plasma launch responsiveness, split Konsole into explicit phases:
+  fork/exec launch call, early process/thread/fd graph, first Wayland/DBus/
+  eventfd/pipe/render-node graph, first `/dev/ptmx`, first `/dev/pts/*`,
+  wrapper start, marker write, shell start, and visible window/render effects.
+  A late PTY in the full app is not by itself a PTY kernel bug if live PTY
+  reducers are fast.
+- When a GUI wait looks futex-related, prove the futex shape before patching:
+  capture wait enqueue, key, value, bitset, timeout parameters, wake key,
+  wake return count, and wait-woken timing. A delayed wake with matching key
+  and `ret=1` points to producer progress or wake-to-run latency, not futex
+  key mismatch.
+- Keep broad tracing out of timing runs unless the question requires it.
+  Prefer role-scoped flags such as Konsole-only futex, wake-source, scheduler,
+  fd graph, or activation probes. `WAYLAND_DEBUG`, broad IPC tracing, semantic
+  D-Bus monitors, and high-frequency wait sampling can change the timing they
+  are meant to measure.
+- Before behavior-changing scheduler, futex, poll/kqueue, AF_UNIX, or PTY
+  patches, gather a reducer or a behavior-free metric that identifies the
+  delayed edge. Wake-to-run latency is already measured and bounded; the
+  next open metric is producer-side progress between Konsole exec and the
+  first `/dev/ptmx` open.
+- Preserve GPU, network, and audio guards with responsiveness proofs:
+  render-node/card-node presence, virgl submit/flush/fence activity, desktop
+  process health, NetworkManager/SNI or connectivity proof, and PipeWire/Pulse
+  sink/monitor or playback evidence as appropriate.
 
 ## AF_UNIX / SCM ABI
 

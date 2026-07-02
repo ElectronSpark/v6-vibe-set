@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-network-devices
 description: 'Use when: debugging xv6-os netdev, e1000, x1_emac, PHY drivers, RX/TX rings, NIC interrupts, packet handoff to lwIP, /dev/netconf, or network-driver freezes.'
-argument-hint: 'Describe the NIC/netdev symptom or CPU stack'
 ---
 
 # xv6 Kernel Network Devices

@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-data-structures
 description: 'Use when: working on xv6-os list, llist, hlist, bintree, rbtree, maple tree, xarray, intrusive containers, range maps, indexed object maps, or container lifetime bugs.'
-argument-hint: 'Describe the data structure or invariant issue'
 ---
 
 # xv6 Kernel Data Structures

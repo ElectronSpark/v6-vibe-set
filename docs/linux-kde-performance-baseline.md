@@ -3,7 +3,7 @@
 Date: 2026-06-21
 
 Baseline-era note: this file preserves Linux-vs-xv6 performance evidence.
-Current GUI direction lives in `docs/linux-drm-abi-compat-plan.md`.
+Current GUI direction lives in `docs/active-work-plan.md`.
 
 This records the Linux KDE Plasma control run and the current xv6 KDE result
 under KVM with virgl. KDE/Qt/KWin/Plasma sources remain upstream-clean; xv6

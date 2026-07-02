@@ -1,4 +1,4 @@
 interface:
   display_name: "xv6 OS Debugging Redirect"
   short_description: "Redirects to .github/skills/xv6-os-debugging and Linux GUI ABI skills"
-  default_prompt: "Use .github/skills/xv6-os-debugging/SKILL.md. For Linux GUI ABI, X11/XWayland, Chromium/WebKit stress, AF_UNIX/SCM, or desktop launcher policy also read .github/skills/xv6-linux-gui-abi/SKILL.md; read docs/linux-drm-abi-compat-plan.md when the task references the active plan or current run state. For long Hyper-V GPU work use .github/skills/xv6-debug-gui-runtime/AGENT_TEAM.md and GPU_OPENGL_PLAN.md. Keep .codex skill files as redirects only."
+  default_prompt: "Use .github/skills/xv6-os-debugging/SKILL.md. For Linux GUI ABI, X11/XWayland, Chromium/WebKit stress, AF_UNIX/SCM, or desktop launcher policy also read .github/skills/xv6-linux-gui-abi/SKILL.md; read docs/active-work-plan.md when the task references the active plan or current run state. For long Hyper-V GPU work use .github/skills/xv6-debug-gui-runtime/AGENT_TEAM.md and GPU_OPENGL_PLAN.md. Keep .codex skill files as redirects only."

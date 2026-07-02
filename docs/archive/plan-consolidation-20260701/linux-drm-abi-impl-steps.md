@@ -2,12 +2,13 @@
 
 Last updated: 2026-06-07
 
-This document is the **actionable companion** to
-[`docs/linux-drm-abi-compat-plan.md`](./linux-drm-abi-compat-plan.md). The plan
-explains *why*; this file lists *exactly which APIs* need work and gives
-small, ordered, copy-followable steps. It is written so a less-capable model
+This document is a historical implementation companion to the archived
+`docs/archive/plan-consolidation-20260701/linux-drm-abi-compat-plan.md`.
+Current direction lives in `docs/active-work-plan.md`; this file lists the
+older API step inventory for reference. It is written so a less-capable model
 (or a new contributor) can execute one numbered step at a time without having
-to design anything.
+to design anything, but do not treat the 2026-06-07 ordering as current without
+checking the active plan first.
 
 ## How to use this document
 

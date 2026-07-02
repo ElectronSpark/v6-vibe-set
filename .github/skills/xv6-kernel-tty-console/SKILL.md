@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-tty-console
 description: 'Use when: debugging xv6-os TTY, PTY, ptmx, termios, sessions, foreground process groups, job-control signals, console, UART, keyboard-to-terminal input, or terminal poll readiness.'
-argument-hint: 'Describe the TTY/console/session symptom'
 ---
 
 # xv6 Kernel TTY And Console

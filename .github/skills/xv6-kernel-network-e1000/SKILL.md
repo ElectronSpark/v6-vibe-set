@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-network-e1000
 description: 'Use when: debugging xv6-os e1000 NIC, lwIP, DHCP, timer interrupt hotspots, RX path freezes, network app display, /dev/netconf, or CPU0 stuck in e1000_poll_rx/e1000_recv.'
-argument-hint: 'Describe the NIC/network symptom or CPU stack'
 ---
 
 # xv6 Kernel Network And e1000

@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-debugging
 description: 'Use when: working on xv6-os GDB stub, gdbstub_arch, scripts/xv6.gdb, backtraces, symbols, ksymbols, panic diagnostics, coredump, asm offsets, cmdline, or freeze captures.'
-argument-hint: 'Describe the debugging artifact or diagnostic failure'
 ---
 
 # xv6 Kernel Debugging

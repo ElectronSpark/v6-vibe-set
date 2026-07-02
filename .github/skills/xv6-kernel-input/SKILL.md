@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-input
 description: 'Use when: debugging xv6-os PS/2 mouse, VMware absolute vmmouse, keyboard, /dev/mouse, /dev/kbd, mouse ring counters, cdev poll callbacks, cursor movement, or input lost after GUI boot.'
-argument-hint: 'Describe the input symptom or paste xv6-input output'
 ---
 
 # xv6 Kernel Input

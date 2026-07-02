@@ -1,7 +1,6 @@
 ---
 name: xv6-kernel-build-init
 description: 'Use when: working on xv6-os kernel CMake, object-library aggregation, start_kernel init order, linker scripts, kernel image layout, asm offset generation, ARCH/PLATFORM config, or early init failures.'
-argument-hint: 'Describe the build/init/link symptom'
 ---
 
 # xv6 Kernel Build And Init
