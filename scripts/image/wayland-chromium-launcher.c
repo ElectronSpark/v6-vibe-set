@@ -13,6 +13,10 @@ static const char *chrome_dir =
     "/opt/host-gui/wayland-chromium/chrome-linux64";
 static const char *chrome_bin =
     "/opt/host-gui/wayland-chromium/chrome-linux64/chrome";
+static const char *bundled_chrome_dir =
+    "/opt/host-gui/wayland-chromium/chrome-linux64-xv6-bundled-gl";
+static const char *bundled_chrome_bin =
+    "/opt/host-gui/wayland-chromium/chrome-linux64-xv6-bundled-gl/chrome";
 static const char *launcher_log_path = "/host-gui-wayland-chromium.log";
 static const char *launcher_log_compat_path =
     "/tmp/host-gui-wayland-chromium.log";
@@ -164,9 +168,9 @@ static void log_escaped_string(FILE *out, const char *s)
     }
 }
 
-static void log_final_argv(char **argv, int argc, const char *backend,
-                           const char *multiprocess, int use_x11,
-                           int use_multiprocess)
+static void log_final_argv(char **argv, int argc, const char *child_exec,
+                           const char *backend, const char *multiprocess,
+                           int use_x11, int use_multiprocess)
 {
     fprintf(stderr,
             "wayland-chromium-launcher: launch_marker pid=%ld ppid=%ld "
@@ -185,7 +189,7 @@ static void log_final_argv(char **argv, int argc, const char *backend,
         fputs("\"\n", stderr);
     }
     fprintf(stderr, "wayland-chromium-launcher: child_exec path=\"");
-    log_escaped_string(stderr, chrome_bin);
+    log_escaped_string(stderr, child_exec);
     fputs("\"\n", stderr);
 }
 
@@ -213,8 +217,16 @@ static void log_graphics_env(void)
     log_env_value("WAYLAND_DEBUG");
     log_env_value("WAYLAND_CHROMIUM_EGL_TRACE");
     log_env_value("WAYLAND_CHROMIUM_AUTO_GL_FLAGS");
+    log_env_value("WAYLAND_CHROMIUM_BUNDLED_GL");
     log_env_value("CHROMIUM_EGL_TRACE");
+    log_env_value("CHROMIUM_EGL_TRACE_PROC");
+    log_env_value("CHROMIUM_EGL_TRACE_CALLSITE");
+    log_env_value("CHROMIUM_EGL_TRACE_WAYLAND");
+    log_env_value("CHROMIUM_EGL_TRACE_GTK");
+    log_env_value("CHROMIUM_EGL_TRACE_DLSYM_WRAP");
     log_env_value("CHROMIUM_EGL_TRACE_LOG");
+    log_env_value("XV6_MESA_EGL_CONTEXT_TRACE");
+    log_env_value("MESA_EXTENSION_OVERRIDE");
     log_env_value("LD_LIBRARY_PATH");
     log_env_value("LD_PRELOAD");
     log_env_value("LIBVA_DRIVERS_PATH");
@@ -340,6 +352,11 @@ int main(int argc, char **argv)
         !env_disabled_value(getenv("WAYLAND_CHROMIUM_ENABLE_VAAPI"));
     int auto_gl_flags =
         !env_disabled_value(getenv("WAYLAND_CHROMIUM_AUTO_GL_FLAGS"));
+    int use_bundled_gl = env_enabled("WAYLAND_CHROMIUM_BUNDLED_GL");
+    const char *selected_chrome_dir =
+        use_bundled_gl ? bundled_chrome_dir : chrome_dir;
+    const char *selected_chrome_bin =
+        use_bundled_gl ? bundled_chrome_bin : chrome_bin;
     int extra_has_use_gl =
         extra_flags_contain_prefix(extra_flags, "--use-gl=");
     int extra_has_use_angle =
@@ -392,16 +409,30 @@ int main(int argc, char **argv)
      * Keep the imported non-graphics closure coherent. Chromium dlopens GTK,
      * ATK and GLib modules during startup; mixing host AT-SPI/ATK bridge
      * libraries with guest GLib/ATK registers duplicate GObject types before
-     * the browser surface is created. Leave Chromium's own directory last so
-     * its bundled EGL/GLES/SwiftShader libraries do not shadow the guest
-     * Wayland/Mesa/DRM stack.
+     * the browser surface is created. Leave Chromium's own directory last by
+     * default so its bundled EGL/GLES/SwiftShader libraries do not shadow the
+     * guest Wayland/Mesa/DRM stack. The default-off bundled-GL diagnostic execs
+     * an alternate Chrome root whose $ORIGIN/libEGL.so and libGLESv2.so are the
+     * preserved ANGLE copies; Chromium's GPU code opens those by module path, so
+     * LD_LIBRARY_PATH alone is not enough.
      */
-    setenv("LD_LIBRARY_PATH",
-           "/opt/host-gui/wayland-chromium/lib:"
-           "/lib:/lib64:/lib/x86_64-linux-gnu:"
-           "/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib64:"
-           "/opt/host-gui/wayland-chromium/chrome-linux64",
-           1);
+    if (use_bundled_gl) {
+        setenv("LD_LIBRARY_PATH",
+               "/opt/host-gui/wayland-chromium/chrome-linux64-xv6-bundled-gl:"
+               "/opt/host-gui/wayland-chromium/chrome-linux64-xv6-bundled-gl/xv6-bundled-gl:"
+               "/opt/host-gui/wayland-chromium/chrome-linux64:"
+               "/opt/host-gui/wayland-chromium/lib:"
+               "/lib:/lib64:/lib/x86_64-linux-gnu:"
+               "/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib64",
+               1);
+    } else {
+        setenv("LD_LIBRARY_PATH",
+               "/opt/host-gui/wayland-chromium/lib:"
+               "/lib:/lib64:/lib/x86_64-linux-gnu:"
+               "/usr/lib/x86_64-linux-gnu:/usr/lib:/usr/lib64:"
+               "/opt/host-gui/wayland-chromium/chrome-linux64",
+               1);
+    }
     unsetenv("LD_PRELOAD");
     enable_wayland_debug();
     enable_egl_trace_preload();
@@ -411,11 +442,11 @@ int main(int argc, char **argv)
     fprintf(stderr, "wayland-chromium-launcher: starting argc=%d\n", argc);
     fflush(stderr);
 
-    if (chdir(chrome_dir) != 0)
+    if (chdir(selected_chrome_dir) != 0)
         fprintf(stderr, "wayland-chromium-launcher: chdir %s failed: %s\n",
-                chrome_dir, strerror(errno));
+                selected_chrome_dir, strerror(errno));
 
-    append_arg(child_argv, &idx, MAX_ARGS, chrome_bin);
+    append_arg(child_argv, &idx, MAX_ARGS, selected_chrome_bin);
     append_arg(child_argv, &idx, MAX_ARGS,
                use_x11 ? "--ozone-platform=x11" : "--ozone-platform=wayland");
     if (enable_vaapi) {
@@ -498,13 +529,13 @@ int main(int argc, char **argv)
         append_arg(child_argv, &idx, MAX_ARGS, "about:blank");
     child_argv[idx] = NULL;
 
-    log_final_argv(child_argv, idx, backend, multiprocess, use_x11,
-                   use_multiprocess);
+    log_final_argv(child_argv, idx, selected_chrome_bin, backend,
+                   multiprocess, use_x11, use_multiprocess);
     log_graphics_env();
     fprintf(stderr, "wayland-chromium-launcher: exec %s root=%s\n",
-            chrome_bin, app_root);
+            selected_chrome_bin, app_root);
     fflush(stderr);
-    execv(chrome_bin, child_argv);
+    execv(selected_chrome_bin, child_argv);
     fprintf(stderr, "wayland-chromium-launcher: exec failed: %s\n",
             strerror(errno));
     return 127;

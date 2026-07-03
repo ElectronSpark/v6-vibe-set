@@ -13,6 +13,11 @@ BUILD_DIR="${BUILD_DIR:-${ROOT}/build-${ARCH}}"
 FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
 QEMU_GPU="${QEMU_GPU:-virtio-vga-gl-primary}"
+# GUI freezes are usually debugged after the guest is already running.  Keep
+# QEMU's GDB stub available by default, but never pause at reset here.
+QEMU_GDB=1
+QEMU_GDB_WAIT=0
+QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 # KDE is started from /etc/startup with the rootfs' loader guardrails
 # (notably LD_BIND_NOW=1).  Passing desktop=kde here bypasses that proven
 # startup path and can make KWin abort during Plasma startup.
@@ -21,6 +26,9 @@ AUTO_BUILD="${AUTO_BUILD:-0}"
 
 export DISPLAY_MODE
 export QEMU_GPU
+export QEMU_GDB
+export QEMU_GDB_WAIT
+export QEMU_GDB_PORT
 export QEMU_APPEND
 
 newer_than_fsimg() {
@@ -121,9 +129,40 @@ cmd=(bash "${SCRIPT_DIR}/run-qemu.sh" "${ARCH}" "${KERNEL_PATH}" "${FSIMG}")
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     printf 'DISPLAY_MODE=%q' "${DISPLAY_MODE}"
     printf ' QEMU_GPU=%q' "${QEMU_GPU}"
+    printf ' QEMU_GDB=%q' "${QEMU_GDB}"
+    printf ' QEMU_GDB_WAIT=%q' "${QEMU_GDB_WAIT}"
+    printf ' QEMU_GDB_PORT=%q' "${QEMU_GDB_PORT}"
     printf ' %q' "${cmd[@]}"
     printf '\n'
     exit 0
+fi
+
+# WSLg's PulseAudio socket can accept connections but never complete the
+# client handshake (server hung on the Windows side).  run-qemu's auto
+# audio detection then picks "pa" and QEMU exits 1 with
+# "could not connect to PulseAudio server".  A plain socket probe cannot
+# detect this, so retry once with a WAV sink when the first attempt fails
+# with the PulseAudio signature and the backend was not explicitly forced
+# by the caller.  The WAV backend keeps guest playback drainable without
+# requiring host audio; a virtio-sound card backed by "none" can leave
+# Chromium with AUDIO_RENDERER_ERROR on media pages.
+if [[ "${QEMU_AUDIO_BACKEND:-auto}" == "auto" ]]; then
+    stderr_log="$(mktemp /tmp/launch-gui-stderr.XXXXXX)"
+    trap 'rm -f "${stderr_log}" "${audio_wav_path:-}"' EXIT
+    set +e
+    "${cmd[@]}" 2> >(tee "${stderr_log}" >&2)
+    rc=$?
+    set -e
+    if [[ ${rc} -ne 0 ]] && grep -q \
+            -e "could not connect to PulseAudio" \
+            -e "Failed to initialize PA context" \
+            "${stderr_log}"; then
+        audio_wav_path="$(mktemp /tmp/xv6-qemu-audio.XXXXXX.wav)"
+        echo "launch-gui: PulseAudio backend failed (WSLg server hung?); retrying with QEMU_AUDIO_BACKEND=wav,path=${audio_wav_path}" >&2
+        QEMU_AUDIO_BACKEND="wav,path=${audio_wav_path}" "${cmd[@]}"
+        rc=$?
+    fi
+    exit "${rc}"
 fi
 
 exec "${cmd[@]}"

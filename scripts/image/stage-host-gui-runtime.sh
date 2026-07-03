@@ -351,22 +351,22 @@ download_file() {
 
 prune_chromium_bundled_gl_stack() {
     local chrome_runtime="$1"
+    local bundled_dir="${chrome_runtime}/xv6-bundled-gl"
     local lib
     local target
-    local disabled
 
     if [[ "${XV6_KEEP_CHROMIUM_BUNDLED_EGL:-0}" == "1" ]]; then
         note "keeping Chromium bundled EGL/GLES libraries by request"
         return 0
     fi
 
+    rm -rf "${bundled_dir}"
+    mkdir -p "${bundled_dir}"
     for lib in libEGL.so libGLESv2.so; do
         if [[ ! -e "${chrome_runtime}/${lib}" ]]; then
             continue
         fi
-        disabled="${chrome_runtime}/${lib}.xv6-disabled"
-        rm -f "${disabled}"
-        mv "${chrome_runtime}/${lib}" "${disabled}"
+        mv "${chrome_runtime}/${lib}" "${bundled_dir}/${lib}"
         case "${lib}" in
             libEGL.so)
                 target="/lib/libEGL.so"
@@ -380,8 +380,33 @@ prune_chromium_bundled_gl_stack() {
                 ;;
         esac
         ln -s "${target}" "${chrome_runtime}/${lib}"
-        note "disabled Chromium bundled ${lib}; ${chrome_runtime}/${lib#${chrome_runtime}/} links to guest Mesa ${target}"
+        note "disabled Chromium bundled ${lib}; ${chrome_runtime}/${lib#${chrome_runtime}/} links to guest Mesa ${target}; bundled copy saved under xv6-bundled-gl"
     done
+}
+
+stage_chromium_bundled_gl_root() {
+    local chrome_runtime="$1"
+    local alt_runtime="${chrome_runtime}-xv6-bundled-gl"
+    local bundled_dir="${chrome_runtime}/xv6-bundled-gl"
+    local lib
+
+    if [[ ! -d "${bundled_dir}" ]]; then
+        note "Chromium bundled GL alternate root skipped; no saved bundled GL directory"
+        return 0
+    fi
+
+    rm -rf "${alt_runtime}"
+    cp -al "${chrome_runtime}" "${alt_runtime}"
+    for lib in libEGL.so libGLESv2.so; do
+        if [[ ! -e "${bundled_dir}/${lib}" ]]; then
+            note "warning: saved Chromium bundled ${lib} missing; alternate root incomplete"
+            continue
+        fi
+        rm -f "${alt_runtime}/${lib}"
+        cp -aL "${bundled_dir}/${lib}" "${alt_runtime}/${lib}"
+        chmod 0755 "${alt_runtime}/${lib}" 2>/dev/null || true
+    done
+    note "staged Chromium bundled GL alternate root at ${alt_runtime#${OVERLAY}}"
 }
 
 stage_chromium_for_testing() {
@@ -422,6 +447,7 @@ stage_chromium_for_testing() {
     mkdir -p "${app_root}"
     rsync -aH --delete "${chrome_dir}/" "${app_root}/chrome-linux64/"
     prune_chromium_bundled_gl_stack "${app_root}/chrome-linux64"
+    stage_chromium_bundled_gl_root "${app_root}/chrome-linux64"
     note "staged wayland-chromium from ${chrome_bin}"
 }
 
