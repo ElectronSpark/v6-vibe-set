@@ -1,6 +1,7 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-03 (added Code Review section; recut Q1 as review-informed).
+Last updated: 2026-07-03 (added Code Review + in-VM Runtime Audit; recut Q1
+as review-informed; kernel+user Q1 commits landed).
 
 Single-plan rule: this is the only live plan file. The full pre-rewrite plan
 with every evidence chain through 2026-07-02 is preserved append-only at
@@ -25,6 +26,12 @@ Three lanes, in priority order:
 Every change must move one of these without regressing the others. Measure
 with the exact commands in each lane's steps; verify the booted cmdline in
 every run log (`grep 'x86 kernel cmdline'`).
+
+PREREQUISITE for all GUI rows (M1, M4-M9): a live WSLg host audio path.
+If host PulseAudio is down, the guest `pactl` faults and every KDE smoke
+fails at `kde-session-ready-crash` before any metric is captured — restore
+audio first (`wsl --shutdown` from Windows). Only M2/M3 and the fork gate
+run without a desktop. See "Runtime Audit" below for the last reproduction.
 
 | # | Metric | How measured | Current (2026-07-03) | Goal |
 |---|--------|--------------|----------------------|------|
@@ -53,20 +60,20 @@ lane sections as status records; do not re-execute them.
 
 Active queue, in order:
 
-- Q1 COMMIT SWEEP — NOW REVIEW-INFORMED (highest-risk debt, do first):
-  the tree carries ~27 modified kernel files, a dirty ports/mesa/src
-  (+276 lines incl. the validated EGL attr-order fix), user and top-level
-  harness diffs. This work is NO LONGER "verified, just commit it": read
-  the Code Review section above and triage its 10 findings first.
-  Resolve (fix, or explicitly gate + record as a follow-up lane item) the
-  two starred blockers before committing the affected lanes: CR-1 (do not
-  commit P0 as done while the idle-pull precheck can starve the 1+1 case)
-  and CR-2 (do not ship the user-triggerable panic). CR-5/CR-6 are cheap
-  gating fixes worth folding in since they touch M2/M8. Then commit
-  deepest-first (mesa -> kernel -> user -> top) in lane-scoped commits
-  (P0 idle-pull, R7a registry, R7b inotify FIONREAD, R7c tick fastpath,
-  P1 FS_BASE/2b, R8 diagnostics, Mesa attr-order fix), then refresh the
-  Guardrails dirty-by-design list. No push without user approval.
+- Q1 COMMIT SWEEP — PARTIALLY LANDED; now REVIEW-INFORMED. Status
+  2026-07-03: kernel (HEAD `07efc74`) and user (HEAD `6e13b1f`) are
+  COMMITTED; mesa attr-order is committed (`ports/mesa/src` `5e3f4bebe`)
+  but ~9 files remain dirty in `ports/mesa/src`, `ports` shows a modified
+  pointer, and top-level harness scripts (`run-qemu.sh`,
+  `stage-host-gui-runtime.sh`, `host-egl-gbm-gl-smoke.c`) are still
+  uncommitted. REMAINING WORK: (a) finish the mesa/src + ports + top-level
+  commits deepest-first; (b) the kernel was committed WITHOUT resolving
+  the two starred Code Review blockers — CR-1 (idle-pull precheck can
+  still starve the 1+1 case; committed as `ad7032d`) and CR-2 (unprivileged
+  non-canonical `arch_prctl` panic; committed inside `57b09dc`) are now
+  IN-TREE and need follow-up fix commits, not a pre-commit gate. CR-5/CR-6
+  (probe hot-path atomics + IRQ-stack frame, touch M2/M8) likewise landed
+  unfixed — fold into a follow-up. No push without user approval.
 - Q2 = R8 GL decision + implementation: default Chromium path fails on
   missing `GL_ANGLE_robust_client_memory` (then a 6-extension ladder) in
   Chromium passthrough. Options analyzed in the R8 section: implement the
@@ -321,6 +328,69 @@ scaffolding): 4th open-coded `FIONREAD` 0x541B (`vfs_syscall.c` ~:8287 +
 instrumentation (`rq.c` + `timer.c`); x86-only IPI probe hooks (no riscv
 parity); ~120 lines of duplicated chrome-unix trace printf blocks in
 `sys_socket.c`; stray `}}` reformat `sched_eevdf.c` ~:1225.
+
+## Runtime Audit — Scoreboard Reproduction (2026-07-03, in-VM)
+
+Independent in-VM audit of the scoreboard. Two passes were run: an earlier
+pass while WSLg host PulseAudio was DOWN (all GUI metrics blocked), and a
+later pass after audio recovered (GUI metrics reproduced). The kernel work
+was committed between passes — the audited build (`xv6.bin` 16:11) equals
+the current committed tree (kernel HEAD `07efc74`; `ad7032d` idle-pull =
+CR-1/CR-10, `57b09dc` FS_BASE cache = CR-2/CR-3/CR-4). Harness scripts
+(new): `scripts/audit/plan-audit-nographic.expect` + `plan-audit-battery.sh`
+— non-interactive (single in-guest script, one sentinel), avoiding the
+bracketed-paste `[?2004h` regex fragility that hangs interactive drivers.
+
+Build & boot: current tree compiles clean and boots clean (no panic) —
+none of CR-1..CR-10 manifest as a build/boot break or a nographic-path
+crash. CR-1 needs the GUI-load 1+1 shape; CR-2 needs a non-canonical
+`arch_prctl` — neither exercised by these gates (still open in review).
+
+Nographic (no audio/desktop dependency):
+
+- **M2 getpid_ns: REPRODUCES.** 3 clean boots (npages=64): 1.69 / 1.94 /
+  2.02 us vs plan's "1.65-1.94us typical" — sits at the top of the band.
+  Still RED vs <1.5us goal, as documented.
+- **M3 tlb_amp@1024pg: REPRODUCES.** 2.12 / 3.19 / 3.51 us vs plan's
+  2.7-3.7us band. Nonzero vs goal 0, as documented.
+- **Fork-safety: REPRODUCES / PASS.** forktest rc=1 (`fork claimed to
+  work N times!` known exhaustion), clonetest rc=0, cowtest rc=0, no
+  panic/fault/coredump.
+
+KDE desktop (after host audio recovered — 2 runs, `reducer=desktop-interaction-latency`
+`KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE=1`):
+
+- **M5 first_visible_ms: REPRODUCES / PASS.** 9617 / 10022 ms vs plan's
+  8632-14623 band, both < 15000 goal.
+- **M4 konsole_wait_ms: REPRODUCES / PASS on retry.** Run 2 = 1759 ms
+  (< 2000 goal, matches documented 1958 ms). Run 1 hit a NEW, previously
+  undocumented intermittent: konsole launched (fork+exec 30 ms, PTY fds
+  seen) but its `/dev/shm/xv6-konsole-shell-ready` marker never appeared
+  (45 s timeout) and konsole went zombie -> `kde-app-launch-latency-probe-output-fail`.
+  Retry passed clean, so it is a flake, not a regression — but it is
+  NOT in the plan's known-flake list and should be added to the R5-class
+  triage set (konsole-shell-ready-timeout).
+- **M8 idle host CPU: corroborates BORDERLINE-RED.** ~123% sampled during
+  the interaction phase (10 s utime+stime delta, HZ=100). Not a pure-idle
+  window (reducer interacts then shuts down), but consistent with the
+  plan's own borderline 101-128% and above the <100% goal.
+- **M9 Chromium visible: NOT DIRECTLY RE-TESTED** (needs the separate
+  `chromium-video` reducer; the desktop-interaction runs did not exercise
+  it). Plan already documents M9 FAIL on the default path.
+- **M1 (3x15min replays), M6/M7 (GPU FPS): NOT ATTEMPTED** — expensive /
+  GPU-FPS specific; queue as follow-ups.
+
+Environmental note (was the whole-audit blocker earlier): when WSLg host
+PulseAudio is DOWN, the guest `pactl` takes a fatal page fault inside
+`libpulsecommon`/`libpulse` and the KDE smoke fails at
+`kde-session-ready-crash` — ALL 7 GUI-gated rows (M1/M4/M5/M6/M7/M8/M9)
+become unreproducible via that one cascade. Recovery is host-side
+`wsl --shutdown` from Windows (not possible from inside WSL). The plan
+lists audio only as a side "Known Issue," not as a gating prerequisite —
+worth stating in the Scoreboard that those rows require a live audio path.
+Harness gap: `KDE_SMOKE_TOLERATE_OPTIONAL_PACTL_READY_CRASH=1` does NOT
+rescue that run — a generic fatal-page-fault arm matches the pactl
+signature before the pactl-tolerant arm.
 
 ## Work Style — Time Budget and Batching (added 2026-07-03)
 
@@ -2975,6 +3045,12 @@ Steps:
 - Known intermittent: `rcu_head_cache` double-free
   (`rcu_cb_kthread -> slab_free`); archive + rerun once; only implicate a
   change if frequency rises (see `xv6-kernel-locking-rcu` skill).
+- Known intermittent (new 2026-07-03, in-VM audit): konsole-shell-ready
+  timeout — konsole launches (fork+exec ok, PTY fds seen) but never writes
+  `/dev/shm/xv6-konsole-shell-ready`, hits the 45s marker timeout, goes
+  zombie -> `kde-app-launch-latency-probe-output-fail` (M4 unmeasured).
+  Seen 1/2 audit runs; retry passed with `konsole_wait_ms=1759`. Rerun
+  once before implicating a change; only escalate if frequency rises.
 - Trace volume perturbs the timing it measures: use thresholded/role-scoped
   trace flags in timing runs (`kde_wake_to_run_trace=5`, never `=1` combined
   with futex/IPC traces).

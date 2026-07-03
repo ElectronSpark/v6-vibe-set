@@ -56,8 +56,12 @@
 #   QEMU_AUDIO_BACKEND=auto Host audio backend for virtio-sound. auto picks
 #                           PulseAudio/PipeWire/SDL for interactive launches
 #                           when available and stays silent for nographic.
-#                           Set none for a silent card, or pa, pipewire, sdl,
-#                           wav, etc. for an explicit QEMU backend.
+#                           On WSLg, auto uses a WAV sink because QEMU's
+#                           PulseAudio backend connects but WSLg rejects its
+#                           stream volume/mute control calls. Set none for a
+#                           silent card, or pa, pipewire, sdl, wav, etc. for
+#                           an explicit QEMU backend.
+#   QEMU_AUDIO_WAV_PATH=... WAV output path used by auto fallback when selected.
 #   QEMU_GTK_GDK_SCALE=1    Force QEMU's GTK window to a 1:1 host scale.
 #   QEMU_WINDOW_PLACE=0     Set to 1 to move an interactive GTK QEMU window
 #                           to a monitor after launch. This uses X11 window
@@ -120,6 +124,7 @@ QEMU_AUDIO="${QEMU_AUDIO:-virtio}"
 QEMU_AUDIO_STREAMS="${QEMU_AUDIO_STREAMS:-1}"
 QEMU_AUDIO_BACKEND="${QEMU_AUDIO_BACKEND:-auto}"
 QEMU_AUDIO_ID="${QEMU_AUDIO_ID:-xv6snd0}"
+QEMU_AUDIO_WAV_PATH="${QEMU_AUDIO_WAV_PATH:-}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 QEMU_GPU="${QEMU_GPU:-auto}"
 QEMU_GDB="${QEMU_GDB:-0}"
@@ -345,6 +350,17 @@ qemu_audio_backend_available() {
                 grep -qx -- "${backend}"
 }
 
+qemu_audio_set_wav_backend() {
+        if ! qemu_audio_backend_available wav; then
+                return 1
+        fi
+        if [[ -z "${QEMU_AUDIO_WAV_PATH}" ]]; then
+                QEMU_AUDIO_WAV_PATH="/tmp/xv6-qemu-audio.$$.$(date -u +%Y%m%dT%H%M%SZ).wav"
+        fi
+        QEMU_AUDIO_BACKEND="wav,path=${QEMU_AUDIO_WAV_PATH}"
+        return 0
+}
+
 resolve_qemu_audio_backend() {
         if [[ "${QEMU_AUDIO_BACKEND}" != "auto" ]]; then
                 return 0
@@ -352,6 +368,11 @@ resolve_qemu_audio_backend() {
 
         if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                 QEMU_AUDIO_BACKEND="none"
+                return 0
+        fi
+
+        if host_is_wsl && qemu_audio_set_wav_backend; then
+                echo "run-qemu: WSLg PulseAudio rejects QEMU stream controls; using WAV audio sink ${QEMU_AUDIO_WAV_PATH}" >&2
                 return 0
         fi
 

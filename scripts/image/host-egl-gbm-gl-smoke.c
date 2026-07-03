@@ -1156,6 +1156,21 @@ main(int argc, char **argv)
             version ? "PASS" : "FAIL", smoke_api_name(api),
             has_extension((const char *)glGetString(GL_EXTENSIONS),
                           "GL_OES_surfaceless_context"));
+    {
+        const char *gl_extensions = (const char *)glGetString(GL_EXTENSIONS);
+
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=gl_chromium_extension_probe status=%s api=%s angle_client_arrays=%d angle_request_extension=%d angle_robust_client_memory=%d angle_webgl_compatibility=%d chromium_bind_generates_resource=%d chromium_copy_texture=%d extensions_len=%zu\n",
+                version ? "PASS" : "FAIL", smoke_api_name(api),
+                has_extension(gl_extensions, "GL_ANGLE_client_arrays"),
+                has_extension(gl_extensions, "GL_ANGLE_request_extension"),
+                has_extension(gl_extensions, "GL_ANGLE_robust_client_memory"),
+                has_extension(gl_extensions, "GL_ANGLE_webgl_compatibility"),
+                has_extension(gl_extensions,
+                              "GL_CHROMIUM_bind_generates_resource"),
+                has_extension(gl_extensions, "GL_CHROMIUM_copy_texture"),
+                gl_extensions ? strlen(gl_extensions) : 0);
+    }
     rc = version ? 0 : 1;
     fprintf(stderr,
             "host-egl-gbm-gl-smoke: phase=result status=%s api=%s exit_status=%d\n",

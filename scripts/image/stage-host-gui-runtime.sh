@@ -239,7 +239,10 @@ stage_c_probes() {
 				$(PKG_CONFIG_PATH= \
 				  PKG_CONFIG_LIBDIR="${SYSROOT}/lib/pkgconfig" \
 				  PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
-				  pkg-config --cflags --libs egl glesv2 gbm gl)
+				  pkg-config --cflags --libs egl glesv2 gbm gl) \
+				-Wl,-rpath-link,"${SYSROOT}/lib" \
+				-Wl,-rpath-link,"${SYSROOT}/lib/x86_64-linux-gnu" \
+				-Wl,-rpath-link,"${SYSROOT}/usr/lib/x86_64-linux-gnu"
 		else
 			note "warning: Mesa EGL/GLES/GBM runtime files incomplete; host EGL/GBM reducer not staged"
 		fi

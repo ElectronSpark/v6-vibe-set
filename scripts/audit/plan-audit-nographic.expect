@@ -1,0 +1,67 @@
+#!/usr/bin/env expect
+# Plan-audit nographic battery: M2 (getpid_ns), M3 (tlb_amplification_ns) via
+# `syscalltlb 2000`, plus fork-safety (forktest/clonetest/cowtest). Default
+# boot (PCID opt-in => off). Drives a single in-guest script and matches one
+# sentinel, avoiding per-command regex fragility. All output -> run.log.
+
+set timeout 400
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/plan-audit-nographic"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/plan-audit.fs.img"
+set empty "$outdir/empty-startup"
+set battery "$root/scripts/audit/plan-audit-battery.sh"
+
+if {![catch {exec pgrep -f qemu-system-x86_64} pids] && [string trim $pids] ne ""} {
+    puts "\nPLAN-AUDIT-FAIL competing-qemu-running pids=$pids"; exit 10
+}
+
+exec rm -f $runlog $tmpimg $empty
+exec cp $fsimg $tmpimg
+exec touch $empty
+# empty startup => clean interactive shell; inject the battery script
+catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $empty /etc/startup" $tmpimg >/dev/null 2>@1
+catch { exec debugfs -w -R "rm /plan-audit.sh" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $battery /plan-audit.sh" $tmpimg >/dev/null 2>@1
+
+set env(DISPLAY_MODE) "nographic"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "none"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 video=80x25"
+
+log_file -a $runlog
+
+spawn timeout --foreground 380 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {root:/#} {}
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nPLAN-AUDIT-FAIL crash-at-boot log=$runlog"; exit 2
+    }
+    timeout { puts "\nPLAN-AUDIT-FAIL no-prompt log=$runlog"; exit 3 }
+    eof { puts "\nPLAN-AUDIT-FAIL early-eof log=$runlog"; exit 4 }
+}
+
+send "bash /plan-audit.sh\r"
+
+expect {
+    -re {PLAN_AUDIT_END} { }
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nPLAN-AUDIT-FAIL crash-during-battery log=$runlog"; exit 5
+    }
+    timeout { puts "\nPLAN-AUDIT-FAIL battery-timeout log=$runlog"; exit 6 }
+    eof { puts "\nPLAN-AUDIT-FAIL battery-eof log=$runlog"; exit 7 }
+}
+
+send "/bin/shutdown\r"
+expect { timeout {} eof {} }
+catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+puts "\nPLAN-AUDIT-NOGRAPHIC-DONE log=$runlog"
+exit 0
