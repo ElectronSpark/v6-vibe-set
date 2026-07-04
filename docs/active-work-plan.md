@@ -2249,17 +2249,65 @@ Q0 in-VM validation (2026-07-04, two chromium-video kprofile runs):
   post-evidence parser the new format against the archived run.
 - Archived: `20260704T144500Z-q0-kprofile-wait-fix-first-valid-m7-window`.
 
-## P3 — Ext4 Read-Path Serialization (candidate perf lane)
+## P3 — Ext4 Read-Path Serialization (active perf lane)
 
-Status 2026-07-04: OPEN-CANDIDATE, not yet scheduled ahead of Q1-Q7.
-Hypothesis from the M7 archive: Chromium startup/playback stalls are dominated
-by synchronous ext4 page fills under the global per-fs lock
-(`ext4_pcache_read_page_ms=29981`, `pages_filled=38686`, no useful readahead
-coverage before the Q0 counter fix). The likely implementation slice is to
-reuse `ext4fs_submit_readahead` / `ext4fs_folio_submit_direct` for fault and
-pread paths, and to avoid holding `ext4fs_lock(esb)` while waiting for BIO
-completion. This should move M4/M5 startup and M7 stalls together, but it must
-stay behind the current queue unless the user explicitly reprioritizes it.
+Status 2026-07-04: first slice LANDED gated (user reprioritized it ahead of
+the queue). Original hypothesis from the M7 archive: Chromium
+startup/playback stalls are dominated by synchronous ext4 page fills under
+the global per-fs lock (`ext4_pcache_read_page_ms=29981`,
+`pages_filled=38686`, no useful readahead coverage before the Q0 counter
+fix).
+
+2026-07-04 P3 first slice IMPLEMENTED + GATED (opt-in, default OFF):
+`ext4_read_page_direct=1` kernel cmdline gate. `ext4fs_read_page_direct`
+(kernel `lwext4_port/ext4fs_file.c`) fills a single pcache page without
+holding the esb mutex across the device wait: block mapping resolved under
+`ext4fs_lock`, direct BIO submitted, lock released before `bio_await` —
+the same two-phase pattern as `ext4fs_file_prefault`/
+`ext4fs_submit_readahead`. Read-after-write coherence: dirty file data lives
+in the lwext4 bcache (`ext4fs_pcache_write_page` dirties bcache blocks), so
+the direct disk read happens ONLY when the block has no bcache entry; a
+cached uptodate block is memcpy'd under the lock (no device wait), anything
+else falls back to the locked `ext4fs_fill_page_from_ref`. Handles the
+read_folio per-page fallback (pcn->data mid-folio) via folio-offset
+arithmetic; holes zero-fill; EOF tails zeroed. The disabled `read_folio`
+direct path's stale-data hazard is avoided by the bcache check (that path
+had none).
+
+Gate battery (flag ON, all PASS):
+
+- Nographic: `forktest` rc=1 known table-exhaustion signature, `clonetest`
+  rc=0, `cowtest` rc=0; cold sequential read healthy (4004 readahead pages,
+  7 single fills, 16MB in 396ms); boot itself pages every ELF through the
+  new path. Note: guest kprofile needs absolute exec paths (`/bin/bash`),
+  and guest /bin/sh does not glob.
+- Chromium-video kprofile A/B vs same-day flag-OFF baseline
+  (`20260704T144500Z-q0-kprofile-wait-fix-first-valid-m7-window`), identical
+  workload (33,693 vs 33,700 fills):
+  `ext4_pcache_read_page_ms` 29,016 -> 14,469 (-50.1%; 0.86 -> 0.43
+  ms/fill), `ext4_lookup_lock_wait_ms` 2,570 -> 1,232 (-52%),
+  `ext4_fault_ms` 2,492 -> 848 (-66%), browser start (first chrome log ->
+  PERF-VIDEO start) 10.63s -> 6.17s (-42%). Video unchanged within noise
+  (presentedFPS 36.8 -> 35.7, dropPct 52.4 -> 51.0, decodedFPS ~61) —
+  confirms M7's ceiling is the present path (P2 step 3), not I/O. No crash
+  classes. Archive:
+  `20260704T151500Z-p3-ext4-read-page-direct-chromium-kprofile-ab-pass`.
+- KDE desktop-interaction active-sample (flag ON): `status_code=0` DONE,
+  `first_visible_ms=11131` (M5 PASS), `konsole_wait_ms=2133` (M4 within the
+  recorded noise band), `first_nonzero_ms=8541`, no crash classes. Archive:
+  `20260704T153000Z-p3-ext4-read-page-direct-kde-active-sample-pass`.
+
+Next P3 steps:
+
+1. Default-flip `ext4_read_page_direct=1` per Guardrails: same-session
+   default-on vs explicit default-off control, KDE active-sample + chromium
+   launch-only guard, revert-ready one-liner. Needs user approval to
+   promote.
+2. Second slice (optional): batch the remaining non-sequential single-page
+   fills (executable page-in pattern; the direct path halves their cost but
+   batching would cut their count) — e.g. widen fault readahead below the
+   64MB `vm_file_fault_ra_min_bytes` floor or feed fault-around windows
+   into `submit_readahead`.
 
 ## Guardrails
 
