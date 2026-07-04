@@ -97,12 +97,14 @@ Active queue, in order:
   `a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
   `GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
   copy/conversion paths. Mesa commit `fec4c3be56be` fixes robust uniform
-  length results; the new Wayland `mesaanglepassthrough` reducer is wired and
-  passed a staged-library host run rc 0, with robust uniform coverage passing
-  and the WebGL-compatible context portion SKIPping until EGL context attribute
-  plumbing implements `EGL_ANGLE_create_context_webgl_compatibility`. Offline
-  verification passed:
+  length results. Mesa commit `fb27245039c5` adds context-specific
+  `GL_ANGLE_webgl_compatibility` support via
+  `EGL_ANGLE_create_context_webgl_compatibility`; the Wayland
+  `mesaanglepassthrough` reducer now passes a staged-library host run rc 0
+  covering normal-context absence, WebGL-context presence, and robust uniform
+  length PASS. Offline verification passed:
   `git -C ports/mesa/src diff --check`,
+  `git -C ports diff --check`,
   `cmake --build build-x86_64/ports --target port-mesa -j2`,
   `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
   staged-library host `mesacopytexture` rc 0 on non-software renderer
@@ -110,11 +112,8 @@ Active queue, in order:
   `cmake --build build-x86_64/ports --target port-wayland-mesaanglepassthrough-install -j2`,
   and staged-library host `mesaanglepassthrough` rc 0. No QEMU/VM runtime
   proof yet.
-  Remaining ladder before runtime default-Chromium proof:
-  WebGL-compatible context attribute plumbing (not a blind global string flip)
-  and VM/runtime Chromium proof.
-  Rootfs image is stale relative to staged Mesa libs; refresh it and verify
-  the actual image library choice before any runtime gate, with the
+  Next: refresh the rootfs, verify the actual image library choice, and run the
+  batched runtime Chromium gate unless another offline gap is found; keep the
   `rootfs-generated-overlays/kde-runtime` overlay Mesa-copy caveat in mind.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
@@ -509,12 +508,14 @@ and robust get/readpixels/texture-upload wrappers with error-output hygiene.
 `a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
 `GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
 copy/conversion paths for Chromium's offline reducer surface. Mesa commit
-`fec4c3be56be` fixes robust uniform length results, and the new Wayland
-`mesaanglepassthrough` reducer is wired and passes a staged-library host run rc
-0: robust uniform coverage passes, while the WebGL-compatible context portion
-SKIPs until EGL context attribute plumbing implements
-`EGL_ANGLE_create_context_webgl_compatibility`. Verification
+`fec4c3be56be` fixes robust uniform length results. Mesa commit
+`fb27245039c5` adds context-specific `GL_ANGLE_webgl_compatibility` support via
+`EGL_ANGLE_create_context_webgl_compatibility`, and the Wayland
+`mesaanglepassthrough` reducer passes a staged-library host run rc 0 covering
+normal-context absence, WebGL-context presence, and robust uniform length PASS.
+Verification
 passed with `git -C ports/mesa/src diff --check`,
+`git -C ports diff --check`,
 `cmake --build build-x86_64/ports --target port-mesa -j2`,
 `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
 and staged-library host `mesacopytexture` rc 0 on non-software renderer
@@ -530,14 +531,12 @@ invariance for level-1 copies, expects rectangle targets to fail with
 `GL_INVALID_ENUM` when unsupported, and aligns same-texture/same-level subcopy
 with ANGLE's invalid-operation validation. Unsupported GL/EGL capabilities still
 SKIP instead of false-failing.
-Remaining ladder before runtime default-Chromium proof:
-WebGL-compatible context attribute plumbing (not a blind global string flip)
-and VM/runtime Chromium proof.
-Before any runtime gate, refresh the stale rootfs image relative to staged Mesa
-libs and verify the actual image library choice, especially overlay Mesa copies
-under `rootfs-generated-overlays/kde-runtime`. M9 tracks the default Chromium
-proof; M7 stays blocked on this AND on the P2-step-3 zero-copy present path
-(see P3 / M7 findings).
+No QEMU/VM runtime proof yet. Next: refresh the rootfs, verify the actual image
+library choice, and run the batched runtime Chromium gate unless another
+offline gap is found, especially around overlay Mesa copies under
+`rootfs-generated-overlays/kde-runtime`. M9 tracks the default Chromium proof;
+M7 stays blocked on this AND on the P2-step-3 zero-copy present path (see P3 /
+M7 findings).
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 
