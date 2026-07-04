@@ -217,9 +217,14 @@ Active queue, in order:
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
   1.65-1.94us vs the <1.5us goal; these two cuts are the remaining
   identified fixed costs. Implement both together, one gate battery.
-- Q5 = R5 flake-rate reduction: the KWin startup crash family is now the
-  main gate polluter and blocked the 2026-07-04 post-KDE-ABI-closure M9 retry
-  after the single allowed rerun. Root-cause or bound it; it blocks R6 step 2
+- Q5 = R5 flake-rate reduction: ROOT CAUSE FOUND AND FIXED 2026-07-04
+  (kernel free-before-TLB-shootdown in mm teardown/madvise deferred
+  release; full record in the R5 lane). Gate battery passed, M4 1883.
+  Remaining Q5 work is statistical closure only (accrue 30+ clean
+  attempt-1 KWin launches across future batteries), after which R6 step 2
+  (Q7) unblocks. Historical context: the family was the main gate polluter
+  and blocked the 2026-07-04 post-KDE-ABI-closure M9 retry
+  after the single allowed rerun. It blocked R6 step 2
   and the next meaningful Q2/M9 runtime classification. Offline R5 preflight
   added 2026-07-04: `scripts/gpu/kde-abi-closure-preflight.sh` extracts
   `build-x86_64/fs.img` into a temp root, validates KWin/libkwin,
@@ -1623,7 +1628,10 @@ Steps:
 3. If kernel-side: reduce to a minimal repro (synthetic futex/mutex stress
    under idle churn) and fix. If payload-side: document and close the lane.
 
-Status: classified for the M1/R7c gate; root cause remains bounded-open as a
+Status 2026-07-04: ROOT CAUSE FOUND AND FIXED — kernel free-before-TLB-shootdown
+in the mm teardown/madvise deferred-release batches (see the dated record at
+the end of this lane). Statistical closure accrues across future KDE runs.
+Previous: classified for the M1/R7c gate; root cause was bounded-open as a
 separate KWin/Qt object-pointer corruption lane. 2026-07-02: the "Chromium
 window not visible" half of the user report is CONFIRMED SEPARATE from this
 lane and from the P0 fix — it has its own lane now (R8 above) with the fresh
@@ -1648,6 +1656,109 @@ are the authoritative evidence. Classification for M1/R7c: historical
 intermittent KWin startup crash family, not a deterministic P0/R7c regression
 and not a freeze recurrence. The invalid replay-2 first attempt stays excluded;
 the three R5-clean responsive replays are enough for the M1 clean gate.
+
+2026-07-04 R5 ROOT CAUSE FOUND + FIX LANDED (offline forensics, zero
+exploratory VM boots; five subagent passes over archives + sources):
+
+Evidence chain (all offline):
+
+1. Full-archive signature mining (72 crash-bearing dirs, superseding the
+   46-dir inventory): ONE corruption family across ~24 instruction sites in
+   11 modules; ASLR-invariant file_off identifies repeat sites (libQt5Core
+   0xdbc9f x12, libkwin 0x1fe3d4 x6, libc 0x9fff4 x4, libstdc++ 0xbb91d
+   x4, ...). 7-10% per KWin launch, attempt-1/cold-cache only, retry clean;
+   two crashes inside ld.so itself. Rates: 53/769 history dirs; 3/29 KWin
+   starts in the egltrace-noweston loop.
+2. Disassembly forensics against the staged guest libs: EVERY poisoned slot
+   is a NULL-expected runtime global in the zero-fill TAIL of the last
+   file-backed page of a library's RW PT_LOAD segment (KWin::effects,
+   std::__new_handler, GLPlatform::s_platform, fontconfig lazy FcMutex*,
+   ICU gDataDirectory, a Q_GLOBAL_STATIC QMutex d_ptr). Poison content
+   verified != file bytes and != zeros -> recycled-frame residue (ld.so
+   path scratch "/usr/lib/x86_64-" repeats, env/cmdline fragments
+   "kde_smok"/"ssibilit"/"_requir", live &_rtld_global pointers).
+   Exception: libQt5Core 0x30fb85 is a distinct unchecked-nullptr bug in
+   KWin::LibinputBackend (Connection::create() failure ->
+   moveToThread(nullptr)) — payload-side, secondary.
+3. Default-config mechanism audit: PCID off, cr3-noflush off,
+   ext4_read_page_direct off in all failing runs; no user PTE carries
+   PTE_G; futex has the wrong failure mode; all fill paths that serve
+   those pages zero the tail. => the frame was corrupted AFTER a correct
+   install: freed to the allocator while translations to it remained.
+
+ROOT CAUSE (kernel mm/vm.c): free-before-shootdown in the deferred-release
+batches. `__vma_clear_range` (munmap/exec/mremap teardown) released anon
+frames via `page_free_anon_batch` whenever its 256-entry defer array
+overflowed MID-LOOP, but performed the TLB shootdown only AFTER the loop.
+`__vm_madvise_dontneed` was worse: both its mid-batch and per-segment
+releases preceded the single final flush. Any VMA/madvise range >1MB
+therefore returned frames to the buddy allocator while other CPUs held
+stale TLB translations. The owning process legitimately reuses the VA range
+(munmap->mmap, MADV_DONTNEED heap reuse), so a sibling thread WRITES
+through the stale translation onto a frame already reallocated to another
+process — during KDE attempt 1 that is kwin's freshly-faulted private-ELF
+.bss-tail pages (cold-cache load storm = allocator churn + multithreaded
+helpers tearing down >1MB maps). Attempt 2 is quiet -> clean. Matches
+every archived signature including the poison content.
+
+FIX (kernel, default-on correctness change): track the un-shot-down span
+(`flush_from`) and call `vm_remote_sfence_range` for the cleared span
+BEFORE every mid-batch/per-segment `page_free_anon_batch`, restoring the
+code's own documented two-phase invariant ("Phase 2 (after TLB flush)
+releases refs"). The madvise per-segment flush REPLACES the old final
+flush (no added cost for single-segment madvise; first version stacked
+them and inflated M4 to 4817 — refactored same-session). The madvise
+mid-batch flush drops/re-takes the pgtable spinlock around the IPI-ack
+wait (waiters spin with IRQs off and could never ack).
+
+LATENT bugs found by the same audits — recorded, NOT fixed (all dormant
+behind `vma_file_hugepage_collapse_enabled()` == 0, vm.c:2792; they BLOCK
+ever re-enabling hugepage collapse):
+
+- `__vma_clear_range` hugepage branch frees the whole 2MB folio when an
+  unmap edge lands INSIDE the huge mapping (no coverage check).
+- `vm_mprotect` hugepage branch rewrites the whole 2MB PTE protection on
+  partial coverage; `__vm_madvise_dontneed` has no hugepage check at all.
+- `page_free_anon_batch` frees everything as order-0 — a deferred 2MB
+  folio would corrupt the buddy allocator.
+- Whole-folio COW leaks one ref when the old folio's head page is
+  unmapped.
+
+Gate battery with the fix (all PASS):
+
+- Nographic: forktest rc=1 (known signature), clonetest rc=0, cowtest
+  rc=0; boot probe 7/8 clean (one unreproduced stall after service spawn,
+  FIFO-driven boot — watch for recurrence).
+- KDE desktop-interaction active-sample x3: attempt 1 hit the KNOWN
+  artifact/visible-timeout harness flake class (17 prior archives; KWin
+  itself clean) — archived
+  `20260704T170500Z-r5-tlb-fix-kde-gate-known-artifact-timeout-rerun-needed`;
+  rerun DONE `status_code=0` but M4 4817 (the double-flush, above) —
+  archived `20260704T172500Z-r5-tlb-fix-kde-active-sample-pass-m4-high`;
+  final run with the refactor DONE `status_code=0`,
+  `konsole_wait_ms=1883` (BETTER than the 1958 scoreboard value),
+  `first_visible_ms=11471`, zero kwin markers — archived
+  `20260704T174500Z-r5-tlb-fix-kde-active-sample-pass-m4-1883`.
+- KWin launched clean on attempt=1 in 3/3 KDE boots with the fix.
+
+Statistical closure: baseline flake is 7-10% per KWin launch; every future
+KDE battery accrues evidence (target: 30+ attempt-1 launches with zero
+R5-class crashes). Track attempt-1 crash markers in every subsequent
+archive. NOTE: this fix plausibly also feeds R3 (rcu_head_cache
+double-free symptoms) and explains why the 2026-07-02 cr3-noflush trial
+"reproduced the KWin corruption" (noflush widens the same stale-TLB
+window) — watch both lanes' rates.
+
+Secondary follow-ups spawned by R5 forensics:
+
+- KWin LibinputBackend nullptr deref (crash site 5) — payload bug
+  (Connection::create() failure unchecked); triage alongside R9 input
+  work; kernel not implicated.
+- Crash-dump tooling gap: /core.PID ELF cores are generated in-guest but
+  never extracted; no symbolizer exists; the kwin fatal dump could also
+  print the faulting VA's PTE/frame page-struct state. Cheap additions if
+  R5-class evidence is needed again.
+
 
 ## P0 — Chromium/YouTube Freeze (solution)
 
