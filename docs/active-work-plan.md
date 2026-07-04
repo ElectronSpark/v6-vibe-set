@@ -55,7 +55,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Post-KDE-ABI-closure runtime retry no longer shows the libinput/libudev loader miss, but both allowed attempts hit the historical KWin startup `#PF` before KDE readiness and Chromium launch; M9 remains unresolved, blocked by R5 flake-rate reduction | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Post-Solid/libudev repair Q2 launch-only reaches KDE readiness, passes KWin/Plasma preflight, launches and samples Chromium, but still fails strict launch evidence because the launcher/chrome/capture guest logs are missing and the browser later becomes a zombie; M9 remains unresolved at a later Chromium launch-evidence blocker | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -218,13 +218,14 @@ Active queue, in order:
   after the single allowed rerun. Root-cause or bound it; it blocks R6 step 2
   and the next meaningful Q2/M9 runtime classification. Offline R5 preflight
   added 2026-07-04: `scripts/gpu/kde-abi-closure-preflight.sh` extracts
-  `build-x86_64/fs.img` into a temp root, validates KWin/libkwin plus
-  `/opt/xv6-kde-abi-libs` and the libinput/libudev/libevdev/libmtdev/libwacom
-  closure with image-like `LD_LIBRARY_PATH`, `readelf -V`, `objdump -T`, and
-  `ldd -r`, and currently passes for
-  `libinput_event_get_gesture_event@LIBINPUT_0.20.0` and
-  `udev_device_get_udev@LIBUDEV_183`. `/bin/kde-libinput-probe` is already
-  staged and directly exercises
+  `build-x86_64/fs.img` into a temp root, validates KWin/libkwin,
+  plasmashell/libKF5Solid, `/opt/xv6-kde-abi-libs`, and the
+  libinput/libudev/libevdev/libmtdev/libwacom closure with image-like
+  `LD_LIBRARY_PATH`, `readelf -V`, `objdump -T`, and `ldd -r`, and currently
+  passes for `libinput_event_get_gesture_event@LIBINPUT_0.20.0`,
+  `udev_device_get_udev@LIBUDEV_183`, and
+  `udev_enumerate_scan_subsystems@LIBUDEV_183`. `/bin/kde-libinput-probe` is
+  already staged and directly exercises
   `udev_new`, `libinput_udev_create_context`, and
   `libinput_udev_assign_seat("seat0")`; the no-KWin reducer below now runs it
   before the first KWin launch and exits immediately after the probe.
@@ -337,6 +338,53 @@ Active queue, in order:
   reason=not-launched`, and there is no new `GL_CHROMIUM_copy_texture`,
   WebGL/ANGLE, or robust-uniform Chromium evidence because Chromium never
   launched.
+  Follow-up Solid/libudev ABI repair 2026-07-04: the Q2 launch-only retry had
+  moved past the earlier libinput seat blocker but then lost plasmashell during
+  preflight because `libKF5Solid.so.5` required
+  `udev_enumerate_scan_subsystems@LIBUDEV_183`. The local xv6 libudev shim now
+  exports that symbol at `LIBUDEV_183`, returns local subsystem list entries
+  for `/sys/class/drm` and `/sys/class/input` when the matching device nodes
+  exist, and resolves those subsystem syspaths to minimal `udev_device`
+  objects with Linux-shaped `sysname=drm/input` and `subsystem=subsystem`.
+  Offline preflight was broadened to seed `/usr/bin/plasmashell` and
+  `/usr/lib/x86_64-linux-gnu/libKF5Solid.so.5`, so this class is caught before
+  boot. A sidecar read-only ABI check corroborated the repair: staged
+  `libudev.so.1` exports `udev_enumerate_scan_subsystems@LIBUDEV_183`,
+  shim-first `ldd -r` for plasmashell/libKF5Solid/kwin_wayland reports no
+  unresolved `udev_*` symbols, and a static closure walk from
+  plasmashell/libKF5Solid/kwin_wayland found `closure_objects=156` and no
+  unresolved shim imports.
+  Verification passed: `git diff --check`, `git -C ports diff --check`,
+  `bash -n scripts/gpu/kde-abi-closure-preflight.sh`,
+  `cmake --build build-x86_64/ports --target port-libudev -j2`,
+  `readelf -Ws build-x86_64/sysroot/lib/libudev.so.1.0.0` and image
+  extraction both show `udev_enumerate_scan_subsystems@@LIBUDEV_183`, and
+  `cmake --build build-x86_64 --target rootfs-refresh -j2` passed. The
+  refreshed image still has `/opt/xv6-kde-abi-libs/libudev.so.1 -> /lib/libudev.so.1`.
+  Expanded offline preflight now passes with
+  `closure_objects=164 versioned_undefs=39332`.
+  No-Chromium KDE-ready verification passed with
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=kde-ready KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE=1 scripts/gpu/kde-plasma-desktop-smoke.expect`;
+  archive:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T112932Z-kde-ready-post-udev-scan-subsystems/`.
+  The run reported `KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kde-ready`, KWin and
+  plasmashell running, no KWin crash regression, and the pre-KWin libinput
+  probe still passing. One Q2 launch-only retry then ran with default
+  Mesa/virgl and explicit unsets for bundled/software GL knobs:
+  `env -u KDE_SMOKE_CHROMIUM_BUNDLED_GL -u KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE -u MESA_EXTENSION_OVERRIDE -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER -u MESA_LOADER_DRIVER_OVERRIDE -u LIBGL_ALWAYS_INDIRECT QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`.
+  Archive:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T113038Z-q2-chromium-launch-only-post-udev-scan-subsystems/`.
+  Result: FAIL `chromium-video-launch-evidence-FAIL`, not a KDE/Solid loader
+  failure. `kde-preflight-runner.status` is `status=PASS`, KWin logged virgl
+  on `D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)`, and the Chromium sampler
+  passed (`samples=63`, `duration_ms=18000`), with process evidence showing
+  the browser launched under `GALLIUM_DRIVER=virgl`,
+  `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`, `/lib/dri`, and `/lib/libgbm.so.1`.
+  The strict launch evidence still failed because
+  `/host-gui-wayland-chromium.log`, `/chrome_debug.log`, and capture status
+  were missing; the sampled browser later became a zombie. There are no
+  `undefined symbol`, `LIBUDEV`, `libKF5Solid`, `symbol lookup`, KWin `#PF`,
+  `PANIC`, or fatal page fault markers in the archived logs.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has

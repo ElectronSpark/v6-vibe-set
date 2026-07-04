@@ -7,8 +7,8 @@ usage() {
 usage: scripts/gpu/kde-abi-closure-preflight.sh [--keep-temp] [fs.img]
 
 Extracts the KDE/Qt library runtime from fs.img into a temporary directory and
-checks the KWin/libinput/libudev dynamic loader closure without modifying the
-image or booting a VM.
+checks the KWin/Plasma/libinput/libudev dynamic loader closure without
+modifying the image or booting a VM.
 EOF
 }
 
@@ -71,6 +71,7 @@ extract_one() {
 
 mkdir -p "${root}/usr/bin" "${root}/usr" "${root}/opt" "${root}"
 extract_one /usr/bin/kwin_wayland "${root}/usr/bin"
+extract_one /usr/bin/plasmashell "${root}/usr/bin"
 extract_one /usr/lib "${root}/usr"
 extract_one /lib "${root}"
 extract_one /opt/xv6-kde-abi-libs "${root}/opt"
@@ -94,7 +95,9 @@ ld_dirs = [
 ]
 seed_paths = [
     "/usr/bin/kwin_wayland",
+    "/usr/bin/plasmashell",
     "/usr/lib/x86_64-linux-gnu/libkwin.so.5",
+    "/usr/lib/x86_64-linux-gnu/libKF5Solid.so.5",
 ]
 seed_sonames = [
     "libinput.so.10",
@@ -106,6 +109,7 @@ seed_sonames = [
 expected_versions = [
     ("libinput_event_get_gesture_event", "LIBINPUT_0.20.0"),
     ("udev_device_get_udev", "LIBUDEV_183"),
+    ("udev_enumerate_scan_subsystems", "LIBUDEV_183"),
 ]
 
 errors = []
@@ -351,7 +355,9 @@ for image_rel, version in [
 ld_library_path = ":".join(str(image_path(d)) for d in ld_dirs)
 ldd_targets = [
     image_path("/usr/bin/kwin_wayland"),
+    image_path("/usr/bin/plasmashell"),
     image_path("/usr/lib/x86_64-linux-gnu/libkwin.so.5"),
+    image_path("/usr/lib/x86_64-linux-gnu/libKF5Solid.so.5"),
     image_path("/opt/xv6-kde-abi-libs/libinput.so.10"),
 ]
 env = os.environ.copy()
