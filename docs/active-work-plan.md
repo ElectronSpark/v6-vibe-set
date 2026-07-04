@@ -57,7 +57,7 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1958ms independent verification pass 2026-07-03 (was 1888ms R8 pass; the 2386ms P1-gate reading was noise — M4 is genuinely under target) | < 2000ms (Linux same-host ref: 260-510ms) |
 | M5 | `first_visible_ms` | same | 12972ms independent verification pass 2026-07-03 (8632-14623ms band) | < 15000ms |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
-| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | FIRST VALID full-window reading 2026-07-04 (kprofile mode, wait-fix run `20260704T144500Z-q0-kprofile-wait-fix-first-valid-m7-window`): `presentedFPS=36.8 decodedFPS=61.9 dropPct=52.4 speed=0.983 advanced=15.16` — decode keeps 60fps pace, present path is the ceiling (fbstat: 475/475 page flips software_blit, native_present_credit=0) | >= 55 |
+| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | 42.9 after the P2 ordered-pageflip default flip 2026-07-04 (dropPct 52.4->26.4, decode 60.7 keeps pace; was 36.8 same-day baseline). Remaining ceiling: software-blit present path (727/727 flips software_blit) + Q2 GL | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
 | M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | PASS 2026-07-04 after the `wl_shm` fix: pre-Chromium registry probe sees/binds `wl_shm` and creates a tiny shm buffer; Q2 launch-only finishes `status_code=0`, Chromium sampler PASS | PASS |
 
@@ -455,7 +455,9 @@ Active queue, in order:
   telemetry recorded `presentedFPS=39.8` / `dropPct=24.25`; that is useful M7
   evidence but not a full non-launch-only M7 pass.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
-- Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
+- Q7 = DONE 2026-07-04: ordered-pageflip default flip landed with the
+  same-session A/B battery (see P2 lane record); M7 36.8 -> 42.9. P2
+  step 3 (>=55) remains blocked on the software-blit present path and Q2.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
   owner evidence; do not treat it as a Q1 commit blocker, but do not claim
   M8 green. Parked: R3 (bounded-open with diagnostic in place), M7
@@ -2221,6 +2223,44 @@ Steps:
    `virtio_gpu_ordered_page_flip=1` behavior.
 3. After the renderer-admission lane unblocks, run the Chromium-video
    reducer for M7 (`presentedFPS >= 55`); only then close this lane.
+
+2026-07-04 P2 step 2 DEFAULT FLIP LANDED (Q7, unblocked by the R5 root-cause
+fix): `virtio_gpu_ordered_page_flip` is now default-ON via
+`virtio_gpu_ordered_page_flip_enabled()` in `kernel/virtio_gpu_scanout.c`
+(absent token = on; `=0/no/false/off` restores the drain-to-fence path;
+one-line revert = call site swap back to `virtio_gpu_cmdline_enabled`).
+
+Same-session A/B battery (same binary, all PASS, zero KWin crash markers in
+every run — R5 statistical accrual now 5/5 clean attempt-1 launches since
+the fix):
+
+- Default-on KDE active-sample: cmdline verified WITHOUT the token,
+  `status_code=0`, `konsole_wait_ms=2144`, `first_visible_ms=12311`.
+  Archive: `20260704T181500Z-q7-ordered-pageflip-default-on-kde-active-sample-pass`.
+  (The 2026-07-03 promotion attempt failed 0/2 at this exact gate — both
+  were R5-class KWin startup crashes, now root-caused/fixed; this pass
+  confirms R5 was the sole blocker.)
+- Explicit default-off control: cmdline verified WITH
+  `virtio_gpu_ordered_page_flip=0`, `status_code=0`,
+  `konsole_wait_ms=2122`, `first_visible_ms=13165` — statistically
+  indistinguishable from default-on; the opt-out works.
+  Archive: `20260704T183000Z-q7-ordered-pageflip-default-off-control-pass`.
+- Chromium-video kprofile with default-on: full-window measurement
+  `presentedFPS=42.9 decodedFPS=60.7 dropPct=26.43 speed=0.973
+  advanced=14.86` vs the same-day default-off baseline
+  `presentedFPS=36.8 dropPct=52.4` — +17% presented FPS, drops HALVED,
+  727 page flips in the window vs 475 (all still software_blit — the
+  remaining ceiling). Post-evidence `status=FAIL
+  reason=launch-evidence-missing` is the documented kprofile-mode
+  bookkeeping. Archive:
+  `20260704T185000Z-q7-ordered-pageflip-default-on-chromium-video-m7-42fps`.
+
+M6 guard: direct-KMS A/B (100 -> 118-125 FPS) was step 1, archived
+2026-07-02; unchanged by this flip (same code path, now default).
+
+P2 remaining: step 3 = M7 >= 55, still capped by the software-blit present
+path + Q2 GL decision (see M7 findings + P3 lane); the ordered default is
+necessary-but-not-sufficient for it.
 
 ## M7 / Present-Path + Measurement-Validity Findings (2026-07-04, OFFLINE)
 
