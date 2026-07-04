@@ -824,6 +824,41 @@ offline gap is found, especially around overlay Mesa copies under
 M7 stays blocked on this AND on the P2-step-3 zero-copy present path (see P3 /
 M7 findings).
 
+KDE/Wayland liveness update (2026-07-04): Q2 launch-only's latest Wayland
+`Connection refused` is now narrowed to KDE session teardown before Chromium,
+not Chromium renderer/GPU admission. The older Q2 archive
+`20260704T114635Z-q2-chromium-launch-only-launcher-log-fix-wayland-refused/`
+had real launcher evidence but Chromium never reached renderer/GPU admission.
+The no-Chromium reducer archive
+`20260704T121419Z-kde-wayland-liveness-late-roundtrip/` proves the same class:
+initial KDE readiness, the first hard liveness gate, and the standalone
+Wayland seat probe all passed; five seconds later `/kslc.sh` failed roles with
+`kwin=0 plasmashell=0 xwayland=0`, no `wayland-*` socket, and rc 2. The new
+plasma child wrapper evidence captured
+`plasmashell exited status=1 lifetime_ms=7589 immediate=1` after KCrash
+recursion, `Bad file descriptor`, and downstream `Failed to create wl_display
+(Connection refused)`. KWin still logged the default accelerated renderer
+`virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` / Mesa 26.2, with no KWin
+fatal marker in that archive.
+
+Implementation checkpoint: `kde-plasma-session-child` now logs plasmashell
+pid/exit/signal/lifetime while preserving the existing session teardown policy,
+and the smoke harness stages `/kslc.sh` for `chromium-video` and the new
+`kde-wayland-liveness` reducer. That gate requires process roles plus a real
+Wayland roundtrip, then dumps KWin/plasmashell/preflight logs and focused
+`/proc` status/fd/maps/socket evidence on failure before Chromium launch. No
+Chromium GL/Mesa/virgl/software fallback knobs were changed.
+
+Single Q2 rerun after this checkpoint:
+`20260704T121552Z-q2-chromium-launch-only-session-ready-pactl-gp/` did not
+reach Chromium or `/kslc.sh`; it failed earlier as
+`KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash` on a user-space `#GP`
+in `pactl` during KDE readiness. Preflight still reached PASS and KWin logged
+the same virgl/Mesa renderer, but Chromium launch evidence was missing and
+post-evidence reported `not-launched`, `browser_seen=0`, `renderer_seen=0`,
+`gpu_seen=0`. Do not rerun Q2 just to chase the older refused symptom until the
+session readiness/liveness blocker is fixed or the `pactl` #GP is classified.
+
 ## R7 — Desktop Responsiveness Composite (new lane)
 
 Why this lane exists: after the P0 idle-pull fix the user still reported a

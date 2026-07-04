@@ -9,7 +9,10 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define PLASMASHELL_IMMEDIATE_EXIT_MS 8000
 
 static void mkdir_one(const char *path, mode_t mode)
 {
@@ -108,6 +111,76 @@ static void terminate_child(pid_t pid)
     }
     kill(pid, SIGKILL);
     waitpid(pid, &status, 0);
+}
+
+static long long monotonic_ms(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+        return 0;
+    return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+static pid_t spawn_plasmashell(char *const argv[])
+{
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        fprintf(stderr, "kde-plasma-session-child: fork plasmashell: %s\n",
+                strerror(errno));
+        return -1;
+    }
+    if (pid == 0) {
+        execv(argv[0], argv);
+        fprintf(stderr,
+                "kde-plasma-session-child: exec plasmashell failed: %s\n",
+                strerror(errno));
+        _exit(127);
+    }
+    fprintf(stderr, "kde-plasma-session-child: plasmashell pid=%ld\n",
+            (long)pid);
+    return pid;
+}
+
+static int wait_for_plasmashell_logged(char *const argv[])
+{
+    long long start_ms = monotonic_ms();
+    long long lifetime_ms;
+    int status;
+    pid_t pid = spawn_plasmashell(argv);
+
+    if (pid < 0)
+        return 127;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            fprintf(stderr,
+                    "kde-plasma-session-child: wait plasmashell: %s\n",
+                    strerror(errno));
+            return 127;
+        }
+    }
+
+    lifetime_ms = monotonic_ms() - start_ms;
+    if (WIFEXITED(status)) {
+        fprintf(stderr,
+                "kde-plasma-session-child: plasmashell exited status=%d lifetime_ms=%lld immediate=%d\n",
+                WEXITSTATUS(status), lifetime_ms,
+                lifetime_ms < PLASMASHELL_IMMEDIATE_EXIT_MS);
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        fprintf(stderr,
+                "kde-plasma-session-child: plasmashell signaled signal=%d lifetime_ms=%lld immediate=%d\n",
+                WTERMSIG(status), lifetime_ms,
+                lifetime_ms < PLASMASHELL_IMMEDIATE_EXIT_MS);
+        return 128 + WTERMSIG(status);
+    }
+
+    fprintf(stderr,
+            "kde-plasma-session-child: plasmashell stopped status=%d lifetime_ms=%lld immediate=%d\n",
+            status, lifetime_ms, lifetime_ms < PLASMASHELL_IMMEDIATE_EXIT_MS);
+    return 127;
 }
 
 static int wait_for_pipewire_core(void);
@@ -402,8 +475,5 @@ int main(void)
     run_optional(kded, 0, 0);
     run_optional(activity, 0, 0);
 
-    execv(plasmashell[0], plasmashell);
-    fprintf(stderr, "kde-plasma-session-child: exec plasmashell failed: %s\n",
-            strerror(errno));
-    return 127;
+    return wait_for_plasmashell_logged(plasmashell);
 }
