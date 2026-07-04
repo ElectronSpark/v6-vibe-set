@@ -2,9 +2,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -13,6 +15,7 @@
 #include <unistd.h>
 
 #define PLASMASHELL_IMMEDIATE_EXIT_MS 8000
+#define KDE_AUDIO_STATUS_LOG "/kde-audio-status.log"
 
 static void mkdir_one(const char *path, mode_t mode)
 {
@@ -45,6 +48,45 @@ static int cmdline_has_flag(const char *flag)
             return 1;
     }
     return 0;
+}
+
+static int env_is_enabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    if (!value || !*value)
+        return 0;
+    return strcmp(value, "0") != 0 && strcasecmp(value, "false") != 0 &&
+           strcasecmp(value, "no") != 0 && strcasecmp(value, "off") != 0;
+}
+
+static int pactl_readiness_probe_enabled(void)
+{
+    return cmdline_has_flag("kde_pactl_probe=1") ||
+           env_is_enabled("KDE_PACTL_READINESS_PROBE");
+}
+
+static void audio_status(const char *fmt, ...)
+{
+    FILE *fp;
+    va_list ap;
+
+    fprintf(stderr, "kde-plasma-session-child: audio ");
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+
+    fp = fopen(KDE_AUDIO_STATUS_LOG, "a");
+    if (!fp)
+        return;
+
+    fprintf(fp, "kde_audio_status ");
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+    fputc('\n', fp);
+    fclose(fp);
 }
 
 static void seed_pulse_cookie_file(const char *path)
@@ -229,21 +271,41 @@ static void run_audio_services(char *const pipewire[],
     const char *ld_preload = getenv("LD_PRELOAD");
     char *saved_ld_library_path = ld_library_path ? strdup(ld_library_path) : NULL;
     char *saved_ld_preload = ld_preload ? strdup(ld_preload) : NULL;
+    int core_ready;
+    int pulse_ready;
+    int pactl_enabled = pactl_readiness_probe_enabled();
 
+    audio_status("phase=start status=START pactl_probe=%s",
+                 pactl_enabled ? "enabled" : "skipped");
     unsetenv("LD_LIBRARY_PATH");
     unsetenv("LD_PRELOAD");
     run_optional(pipewire, 0, 0);
-    wait_for_pipewire_core();
+    core_ready = wait_for_pipewire_core();
     run_optional(wireplumber, 0, 0);
-    wait_for_pipewire_core();
+    core_ready = wait_for_pipewire_core() || core_ready;
     run_optional(pipewire_pulse, 0, 0);
-    wait_for_pulse_server();
-    wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl", "list", "short",
-                                          "sinks", NULL },
-                         "alsa_output.xv6_virtio", "sink");
-    wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl", "list", "short",
-                                          "sources", NULL },
-                         "alsa_output.xv6_virtio.monitor", "monitor");
+    pulse_ready = wait_for_pulse_server();
+    audio_status("phase=socket status=%s pipewire_core=%d pulse_socket=%d",
+                 pulse_ready ? "PASS" : "FAIL", core_ready, pulse_ready);
+    if (!pactl_enabled) {
+        audio_status("phase=pactl status=SKIPPED reason=nonessential-readiness-probe enable=kde_pactl_probe=1");
+    } else {
+        int sink_ready;
+        int monitor_ready;
+
+        sink_ready = wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl",
+                                                           "list", "short",
+                                                           "sinks", NULL },
+                                          "alsa_output.xv6_virtio", "sink");
+        monitor_ready = wait_for_pactl_entry((char *const[]){ "/usr/bin/pactl",
+                                                              "list", "short",
+                                                              "sources", NULL },
+                                             "alsa_output.xv6_virtio.monitor",
+                                             "monitor");
+        audio_status("phase=pactl status=%s sink=%d monitor=%d",
+                     sink_ready && monitor_ready ? "PASS" : "FAIL",
+                     sink_ready, monitor_ready);
+    }
 
     if (saved_ld_library_path) {
         setenv("LD_LIBRARY_PATH", saved_ld_library_path, 1);
@@ -462,12 +524,14 @@ int main(void)
 
     signal(SIGCHLD, SIG_DFL);
     set_kde_env();
+    unlink(KDE_AUDIO_STATUS_LOG);
     fprintf(stderr, "kde-plasma-session-child: starting Plasma services\n");
 
     run_optional(dbus_env, 1, 5000);
     run_optional(sycoca, 1, 15000);
     if (cmdline_has_flag("kde_audio=0")) {
         fprintf(stderr, "kde-plasma-session-child: audio services disabled by kde_audio=0\n");
+        audio_status("phase=disabled status=SKIPPED reason=kde_audio=0");
     } else {
         fprintf(stderr, "kde-plasma-session-child: starting audio services\n");
         run_audio_services(pipewire, wireplumber, pipewire_pulse);

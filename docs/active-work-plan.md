@@ -39,11 +39,13 @@ are cross-checked against a monotonic wall reference. Any kprofile run with
 `kprofile_timeout_hit=1` is truncated and must not be used for M7/M4/M5/M8
 scoreboard movement.
 
-PREREQUISITE for all GUI rows (M1, M4-M9): a live WSLg host audio path.
-If host PulseAudio is down, the guest `pactl` faults and every KDE smoke
-fails at `kde-session-ready-crash` before any metric is captured — restore
-audio first (`wsl --shutdown` from Windows). Only M2/M3 and the fork gate
-run without a desktop. See "Runtime Audit" below for the last reproduction.
+GUI audio note (2026-07-04): host audio is no longer a readiness
+prerequisite. KDE starts PipeWire/Pulse and records `/kde-audio-status.log`,
+but `pactl` sink/source enumeration is default-off because archived faults put
+that crash in the optional libpulse helper path. Re-enable only for direct
+audio diagnostics with `kde_pactl_probe=1` or
+`KDE_PACTL_READINESS_PROBE=1`. Explicit audio tests still need a live WSLg
+audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 
 | # | Metric | How measured | Current (2026-07-03) | Goal |
 |---|--------|--------------|----------------------|------|
@@ -55,7 +57,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Post-Solid/libudev repair Q2 launch-only reaches KDE readiness, passes KWin/Plasma preflight, launches and samples Chromium, but still fails strict launch evidence because the launcher/chrome/capture guest logs are missing and the browser later becomes a zombie; M9 remains unresolved at a later Chromium launch-evidence blocker | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | After the optional-audio update, no-Chromium liveness passes and Q2 reaches pre-Chromium liveness plus Chromium launch, but plasmashell KCrash/session teardown recurs around launch; Chromium exits after Wayland `Connection refused` before renderer/GPU roles appear | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -824,40 +826,63 @@ offline gap is found, especially around overlay Mesa copies under
 M7 stays blocked on this AND on the P2-step-3 zero-copy present path (see P3 /
 M7 findings).
 
-KDE/Wayland liveness update (2026-07-04): Q2 launch-only's latest Wayland
-`Connection refused` is now narrowed to KDE session teardown before Chromium,
-not Chromium renderer/GPU admission. The older Q2 archive
-`20260704T114635Z-q2-chromium-launch-only-launcher-log-fix-wayland-refused/`
-had real launcher evidence but Chromium never reached renderer/GPU admission.
-The no-Chromium reducer archive
-`20260704T121419Z-kde-wayland-liveness-late-roundtrip/` proves the same class:
-initial KDE readiness, the first hard liveness gate, and the standalone
+KDE/Wayland liveness update (2026-07-04): the current evidence splits two
+blockers. First, the Q2 archive
+`20260704T121552Z-q2-chromium-launch-only-session-ready-pactl-gp/` failed in
+KDE readiness because `pactl` took a user-space `#GP` at
+`rip=0x7fffff694449` with no CR2 and a text-shaped non-canonical `rdi`
+(`common-1`). KWin/plasmashell/Xwayland still reached PASS immediately after
+that crash, so `pactl` is not the Plasma/session-death cause. It is now
+removed from the readiness-critical path by default: the session child still
+starts PipeWire/wireplumber/pipewire-pulse and records
+`/kde-audio-status.log`, but the old `pactl list short sinks/sources` checks
+are skipped unless `kde_pactl_probe=1` or `KDE_PACTL_READINESS_PROBE=1` is set.
+If re-enabled, treat the crash as a direct libpulse/ABI diagnostic, not as a
+KDE readiness gate failure.
+
+Second, the Plasma/Wayland teardown remains a real, separate blocker. The
+older no-Chromium reducer archive
+`20260704T121419Z-kde-wayland-liveness-late-roundtrip/` proved the failure
+class: initial KDE readiness, the first hard liveness gate, and the standalone
 Wayland seat probe all passed; five seconds later `/kslc.sh` failed roles with
-`kwin=0 plasmashell=0 xwayland=0`, no `wayland-*` socket, and rc 2. The new
-plasma child wrapper evidence captured
+`kwin=0 plasmashell=0 xwayland=0`, no `wayland-*` socket, and rc 2. The plasma
+child wrapper captured
 `plasmashell exited status=1 lifetime_ms=7589 immediate=1` after KCrash
 recursion, `Bad file descriptor`, and downstream `Failed to create wl_display
 (Connection refused)`. KWin still logged the default accelerated renderer
 `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` / Mesa 26.2, with no KWin
 fatal marker in that archive.
 
-Implementation checkpoint: `kde-plasma-session-child` now logs plasmashell
-pid/exit/signal/lifetime while preserving the existing session teardown policy,
-and the smoke harness stages `/kslc.sh` for `chromium-video` and the new
-`kde-wayland-liveness` reducer. That gate requires process roles plus a real
-Wayland roundtrip, then dumps KWin/plasmashell/preflight logs and focused
-`/proc` status/fd/maps/socket evidence on failure before Chromium launch. No
-Chromium GL/Mesa/virgl/software fallback knobs were changed.
+Post-fix verification: after `rootfs-refresh`, the no-Chromium liveness
+reducer passed in
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T122805Z-kde-wayland-liveness-pactl-skipped-pass/`
+with `status_code=0`, `kwin=1 plasmashell=1 xwayland=1`, a successful
+Wayland roundtrip, and `kde_audio_status ... pulse_socket=1` followed by
+`phase=pactl status=SKIPPED`. That shows `pactl` no longer blocks readiness
+and the liveness reducer can pass with default virgl/Mesa acceleration.
 
-Single Q2 rerun after this checkpoint:
-`20260704T121552Z-q2-chromium-launch-only-session-ready-pactl-gp/` did not
-reach Chromium or `/kslc.sh`; it failed earlier as
-`KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash` on a user-space `#GP`
-in `pactl` during KDE readiness. Preflight still reached PASS and KWin logged
-the same virgl/Mesa renderer, but Chromium launch evidence was missing and
-post-evidence reported `not-launched`, `browser_seen=0`, `renderer_seen=0`,
-`gpu_seen=0`. Do not rerun Q2 just to chase the older refused symptom until the
-session readiness/liveness blocker is fixed or the `pactl` #GP is classified.
+The required single Q2 retry then ran with all bundled/software GL overrides
+unset and is archived at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T123120Z-q2-chromium-launch-only-pactl-skipped-wayland-refused/`.
+It moved past the old `pactl` blocker and past pre-Chromium liveness
+(`kwin=1 plasmashell=1 xwayland=1`, Wayland roundtrip PASS), but failed later
+as `KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-evidence-FAIL`
+(`status_code=8`). The launch log has real Chromium evidence
+(`launcher_log=1 launcher_marker=1 launcher_child_exec=1 launcher_url=1`) and
+then Chromium exits 1 after `Failed to connect to Wayland display:
+Connection refused` / `Failed to initialize Wayland platform`. The plasma
+child log from the same run shows the remaining session blocker directly:
+`KCrash: Application Name = plasmashell`, `The Wayland connection experienced
+a fatal error: Bad file descriptor`, and
+`plasmashell exited status=1 lifetime_ms=10132 immediate=0`. Post evidence saw
+the browser plus crashpad only (`browser_seen=1 renderer_seen=0 gpu_seen=0`)
+and no Chromium user fault. Host EGL/GBM GLES3 smoke still passed on
+`GALLIUM_DRIVER=virgl`, `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`; KWin and
+the host smoke both report
+`virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))` with Mesa
+`26.2.0-devel`. One kernel anomaly remains in that Q2 run:
+`slab_alloc: repairing corrupt freelist cache='rcu_head_cache' ...`; correlate
+any recurrence with the bounded-open R3 owner-history diagnostics.
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 
@@ -1360,10 +1385,12 @@ Steps:
 2. If kernel-side: reduce and fix with its own gate. If payload-side:
    document here and close the lane.
 
-Status: classified and closed for current kernel-gate interpretation. Treat
-future pactl crashes as optional-helper noise only when the gate explicitly
-sets the default-off tolerate knob; otherwise the smoke harness still fails
-fast.
+Status: classified and closed for current kernel-gate interpretation. As of
+2026-07-04 the KDE session no longer invokes `pactl` on the readiness-critical
+path by default; it records PipeWire/Pulse socket status in
+`/kde-audio-status.log` and logs `phase=pactl status=SKIPPED`. Treat future
+`pactl` crashes as optional-helper/libpulse diagnostic evidence unless the run
+explicitly enabled `kde_pactl_probe=1` or `KDE_PACTL_READINESS_PROBE=1`.
 
 2026-07-03 R4 classification: inspected the pactl-fail archives from
 2026-06-27 through 2026-07-02, including
@@ -1387,6 +1414,16 @@ marker in the pactl-fail runs. Classification: historical intermittent
 pactl/libpulse helper crash, payload-side for gate purposes. Reopen only with
 a direct pactl/PulseAudio reducer if it becomes deterministic or user-visible
 audio failure, or if future evidence couples it to kernel corruption markers.
+
+2026-07-04 update: the Q2 archive
+`20260704T121552Z-q2-chromium-launch-only-session-ready-pactl-gp/` reproduced
+the related `#GP` form at `rip=0x7fffff694449` with no CR2 and non-canonical
+`rdi=0x312d6e6f6d6d6f63` (`common-1`-shaped). KWin/plasmashell/Xwayland still
+reached PASS immediately after the `pactl` crash, proving this helper crash is
+not the Plasma/Wayland teardown cause. The follow-up Q2 archive
+`20260704T123120Z-q2-chromium-launch-only-pactl-skipped-wayland-refused/`
+skipped `pactl`, reached Chromium launch, and failed later on the separate
+plasmashell KCrash / Wayland `Connection refused` blocker.
 
 ## R5 — KWin Startup SIGSEGV in `QMutex::unlock()` (new lane)
 
