@@ -115,13 +115,15 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   PASS, explicit-off control PASS after one known visible-timeout flake,
   and M9 launch-only PASS, but an extra default-on active-sample rerun hit
   `kwin_wayland` #GP in `libQt5Core.so.5` (`kde-session-ready-crash`).
-  Because this is on the P3 risk list (KWin/loader recycled-byte
-  corruption), `ext4_read_page_direct` stays default-OFF. Next diagnostic:
-  cold-cache crash-focused A/B, 3-5 default-on vs explicit-off KDE
-  active-sample runs, extracting KWin fault/core/PTE or frame evidence if
-  the #GP recurs, before any promotion retry. Optional second slice still
-  exists after promotion: batch remaining non-sequential single-page fills
-  (executable page-in; ~71% of fills).
+  The post-stop cold-cache A/B did not reproduce that R5-class KWin/QtCore
+  signature, but stopped on direct-read ON run 5 with a new kernel page
+  fault (`cr2=0x1aafdd193 err=0x2 rip=0xffff80000039a34c`, RIP resolving
+  into kernel `_rodata`) after four clean ON runs, one clean OFF run, and
+  one known OFF visible-timeout flake. `ext4_read_page_direct` stays
+  default-OFF; no promotion retry until the new ON-arm kernel fault is
+  triaged/cleared and a fresh promotion battery has zero R5-class crashes.
+  Optional second slice still exists after promotion: batch remaining
+  non-sequential single-page fills (executable page-in; ~71% of fills).
 - N3 = R9 cursor out-of-range (user-visible) + the KWin LibinputBackend
   nullptr payload bug found by R5 forensics (same input area). Harness
   ready: `scripts/gpu/r9-cursor-contract-probe.expect` (source-only,
@@ -349,6 +351,33 @@ diagnostic is crash-focused cold-cache A/B (3-5 default-on vs explicit-off
 KDE active-sample runs plus KWin fault/core/PTE or frame evidence if the
 #GP recurs). Optional second slice = batch the remaining non-sequential
 single-page fills (executable page-in pattern, ~71% of fills).
+
+Post-stop cold-cache crash-focused A/B 2026-07-04 used the reverted
+default-OFF source with explicit tokens in both arms
+(`QEMU_APPEND_EXTRA=ext4_read_page_direct=1` vs `=0`) and
+`KDE_SMOKE_REDUCER=desktop-interaction-latency`,
+`KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE=1`, `QEMU_AUDIO_BACKEND=none`, with
+software/bundled GL fallback env unset. Result before stop: ON PASS x4
+(`20260704T183909Z-n2-ab-direct-read-on-run1-pass`,
+`20260704T184121Z-n2-ab-direct-read-on-run2-pass`,
+`20260704T184327Z-n2-ab-direct-read-on-run3-pass`,
+`20260704T184741Z-n2-ab-direct-read-on-run4-pass`), OFF PASS x1
+(`20260704T184534Z-n2-ab-direct-read-off-run1-pass`), OFF known
+visible-timeout flake x1
+(`20260704T185037Z-n2-ab-direct-read-off-run2-visible-timeout`), then ON
+run 5 stopped on a new kernel page fault
+(`20260704T185323Z-n2-ab-direct-read-on-run5-kernel-page-fault-stop`):
+`*** KERNEL PAGE FAULT: cr2=0x1aafdd193 err=0x2
+rip=0xffff80000039a34c`, backtrace line
+`sig_trampoline.S:29: sig_trampoline+250691`, `Core: 2`, idle thread,
+panic at `kernel/arch/x86_64/irq/trap.c:2023`. Symbol resolution maps the
+RIP into kernel `_rodata`, not a normal function body. No A/B archive
+matched the prior R5 KWin/QtCore signature (`kwin_wayland` #GP at
+`libQt5Core.so.5` file offset `0xdbc9f`, bad pointer
+`0x2d34365f3638782f`). Classification: not an R5 recurrence, but the
+direct-read arm produced a new kernel fault before the recommended 5x5
+could complete, so N2 default promotion remains blocked and default-OFF is
+the required state.
 
 ### Q2 / R8 — Chromium real GL: DONE (validated 2026-07-04)
 
