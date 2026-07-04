@@ -227,6 +227,20 @@ Active queue, in order:
   `/bin/kde-libinput-probe` is already staged and directly exercises
   `udev_new`, `libinput_udev_create_context`, and
   `libinput_udev_assign_seat("seat0")`.
+  Offline R5 diagnostic harness patch added 2026-07-04:
+  `kde-session.c` has a default-off pre-KWin hook enabled by
+  `kde_pre_kwin_libinput_probe=1` or `KDE_PRE_KWIN_LIBINPUT_PROBE=1`; it runs
+  `/bin/kde-libinput-probe --r9-cursor-contract --timeout-ms 1`, writes
+  `/kde-pre-kwin-libinput.log`, and emits a compact serial status before the
+  first KWin launch. `kde-plasma-desktop-smoke.expect` now supports
+  `KDE_SMOKE_REDUCER=kde-ready` and host env
+  `KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE=1`, preserves the pre-KWin log artifact,
+  and no longer fails on intermediate `KWin startup attempt=N failed, retrying`
+  lines. Offline verification passed: C syntax-only, `git diff --check`,
+  `port-wayland-session-install`, `rootfs-refresh`, and debugfs extraction
+  showing updated `/bin/kde-session` strings plus staged
+  `/bin/kde-libinput-probe`. No runtime gate result is claimed; an attempted
+  Expect syntax check (`expect -n`) was not a dry run and was killed.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has

@@ -34,6 +34,7 @@ set guest_kwin_alloc_trace_log "/kde-kwin-alloc-trace.log"
 set guest_kde_session_kwin_log "/kde-session-kwin.log"
 set guest_kde_session_plasma_log "/kde-session-plasma-child.log"
 set guest_kde_network_sni_log "/kde-network-status-sni.log"
+set guest_pre_kwin_libinput_log "/kde-pre-kwin-libinput.log"
 set guest_kwin_loader_ifunc_log "/kli.log"
 set guest_kwin_loader_ifunc_script "/kkli.sh"
 set guest_qtqml_ifunc_log "/kqi.log"
@@ -80,6 +81,7 @@ set kwin_alloc_trace_log "$outdir/kde-kwin-alloc-trace.log"
 set kde_session_kwin_log "$outdir/kde-session-kwin.log"
 set kde_session_plasma_log "$outdir/kde-session-plasma-child.log"
 set kde_network_sni_log "$outdir/kde-network-status-sni.log"
+set pre_kwin_libinput_log "$outdir/kde-pre-kwin-libinput.log"
 set kwin_loader_ifunc_log "$outdir/kde-kwin-loader-ifunc.log"
 set qtqml_ifunc_log "$outdir/kde-qtqml-ifunc-startup.log"
 set qtqml_ifunc_status "$outdir/kde-qtqml-ifunc-startup.status"
@@ -335,7 +337,7 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_network_sni_log' '$pre_kwin_libinput_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -354,6 +356,7 @@ catch { exec sh -c "debugfs -w -R 'rm $guest_wayland_chromium_compat_log' '$tmpi
 catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_compat_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_alloc_trace_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_pre_kwin_libinput_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_loader_ifunc_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_loader_ifunc_script' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_qtqml_ifunc_log' '$tmpimg' >/dev/null 2>&1" }
@@ -453,7 +456,8 @@ if {[info exists env(KDE_SMOKE_AGENT)]} {
           $kde_smoke_reducer eq "desktop-color-wakeup" ||
           $kde_smoke_reducer eq "kwin-screenshot" ||
           $kde_smoke_reducer eq "desktop-interaction-latency" ||
-          $kde_smoke_reducer eq "chromium-video"} {
+          $kde_smoke_reducer eq "chromium-video" ||
+          $kde_smoke_reducer eq "kde-ready"} {
     set kde_smoke_agent "0"
 } else {
     set kde_smoke_agent "1"
@@ -477,6 +481,9 @@ if {$present_sample_diag eq "" && $kde_smoke_reducer eq "desktop-color-wakeup"} 
 }
 if {$present_sample_diag ne "" && $present_sample_diag ne "0"} {
     append qemu_append " fb_present_sample_diag=1 fb_present_sample_diag_limit=512"
+}
+if {[env_bool KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE 0]} {
+    append qemu_append " kde_pre_kwin_libinput_probe=1"
 }
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
@@ -10956,8 +10963,9 @@ proc finish {code label} {
     global guest_chromium_video_rela_preprobe_status
     global wayland_chromium_log chrome_debug_log kwin_alloc_trace_log
     global guest_kde_session_kwin_log guest_kde_session_plasma_log
-    global guest_kde_network_sni_log
+    global guest_kde_network_sni_log guest_pre_kwin_libinput_log
     global kde_session_kwin_log kde_session_plasma_log kde_network_sni_log
+    global pre_kwin_libinput_log
     global kwin_loader_ifunc_log qtqml_ifunc_log qtqml_ifunc_status
     global kde_preflight_runner_log kde_preflight_runner_status
     global kde_preflight_ready_log
@@ -11000,6 +11008,7 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_kde_session_kwin_log $kde_session_kwin_log
     dump_optional_guest_artifact $guest_kde_session_plasma_log $kde_session_plasma_log
     dump_optional_guest_artifact $guest_kde_network_sni_log $kde_network_sni_log
+    dump_optional_guest_artifact $guest_pre_kwin_libinput_log $pre_kwin_libinput_log
     dump_optional_guest_artifact $guest_kwin_loader_ifunc_log $kwin_loader_ifunc_log
     dump_optional_guest_artifact $guest_qtqml_ifunc_log $qtqml_ifunc_log
     dump_optional_guest_artifact $guest_qtqml_ifunc_status $qtqml_ifunc_status
@@ -11380,8 +11389,12 @@ proc wait_for_kde_session_ready {} {
             set timeout $old_timeout
             return
         }
-        -re {KWin startup attempt=[0-9]+ failed|KWin startup failed after retries} {
+        -re {KWin startup failed after retries} {
             finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry"
+        }
+        -re {KWin startup attempt=([0-9]+) failed, retrying} {
+            puts "KDE-PLASMA-DESKTOP-SMOKE-INFO kde-session-startup-retry attempt=$expect_out(1,string)"
+            exp_continue
         }
         -re {(kde-exception-fatal-summary: pid=[0-9]+ name=(pactl|/usr/bin/pactl)[^\r\n]*|pid [0-9]+ (pactl|/usr/bin/pactl): fatal page fault[^\r\n]*|coredump: generating[^\r\n]*(pactl|/usr/bin/pactl)[^\r\n]*|(pactl|/usr/bin/pactl)[^\r\n]*coredump: generating[^\r\n]*)} {
             if {[tolerate_optional_pactl_ready_crash "session-ready" $expect_out(0,string)]} {
@@ -16566,6 +16579,11 @@ if {[kde_smoke_reducer] eq "kwin-screenshot"} {
         finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kwin-screenshot settle_ms=$settle_ms"
     }
     finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kwin-screenshot-probe-low-color settle_ms=$settle_ms"
+}
+
+if {[kde_smoke_reducer] eq "kde-ready"} {
+    wait_for_kde_session_ready
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kde-ready"
 }
 
 if {[kde_smoke_reducer] eq "desktop-interaction-latency"} {

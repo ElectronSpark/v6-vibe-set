@@ -24,6 +24,7 @@
 #define KWIN_SESSION_LOG "/kde-session-kwin.log"
 #define PLASMA_SESSION_LOG "/kde-session-plasma-child.log"
 #define NETWORK_SNI_LOG "/kde-network-status-sni.log"
+#define PRE_KWIN_LIBINPUT_LOG "/kde-pre-kwin-libinput.log"
 #define X11_EGL_SMOKE_CHILD_TIMEOUT_MS 35000
 #define X11_EGL_SMOKE_TRACE_CHILD_TIMEOUT_MS 85000
 #define X11_EGL_SESSION_PROBE_TIMEOUT_MS 90000
@@ -78,6 +79,17 @@ static int cmdline_has_flag(const char *flag)
             return 1;
     }
     return 0;
+}
+
+static int env_bool_enabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    return value &&
+           (strcmp(value, "1") == 0 ||
+            strcmp(value, "true") == 0 ||
+            strcmp(value, "yes") == 0 ||
+            strcmp(value, "on") == 0);
 }
 
 static int cmdline_get_value_status(const char *key, char *value,
@@ -701,6 +713,12 @@ static pid_t spawn_child(char *const argv[])
     return spawn_child_logged(argv, NULL);
 }
 
+static int pre_kwin_libinput_probe_enabled(void)
+{
+    return cmdline_has_flag("kde_pre_kwin_libinput_probe=1") ||
+           env_bool_enabled("KDE_PRE_KWIN_LIBINPUT_PROBE");
+}
+
 static int kwin_alloc_trace_enabled(void)
 {
     static int initialized;
@@ -800,6 +818,106 @@ static pid_t spawn_kwin_child(char *const argv[], int attempt)
     unsetenv("KWIN_ALLOC_TRACE_LOG");
     unsetenv("KWIN_ALLOC_TRACE_ATTEMPT");
     return pid;
+}
+
+static void restore_ld_preload(const char *old_preload, int had_preload)
+{
+    if (had_preload)
+        setenv("LD_PRELOAD", old_preload, 1);
+    else
+        unsetenv("LD_PRELOAD");
+}
+
+static void apply_kwin_ld_preload_policy_no_trace(void)
+{
+    int preload_mode = kwin_ld_preload_mode();
+
+    if (preload_mode == 1)
+        setenv("LD_PRELOAD", KWIN_COMPAT_PRELOAD, 1);
+    else if (preload_mode == 2)
+        unsetenv("LD_PRELOAD");
+}
+
+static void maybe_run_pre_kwin_libinput_probe(void)
+{
+    char *argv[] = {
+        "/bin/kde-libinput-probe",
+        "--r9-cursor-contract",
+        "--timeout-ms",
+        "1",
+        NULL
+    };
+    const char *old_preload = getenv("LD_PRELOAD");
+    char old_preload_buf[1024];
+    int had_preload = old_preload != NULL;
+    pid_t pid;
+    int status = 0;
+
+    if (!pre_kwin_libinput_probe_enabled())
+        return;
+
+    if (!is_executable(argv[0])) {
+        fprintf(stderr,
+                "kde-session: pre-kwin-libinput-probe status=SKIP reason=missing path=%s log=%s\n",
+                argv[0], PRE_KWIN_LIBINPUT_LOG);
+        return;
+    }
+
+    if (old_preload)
+        snprintf(old_preload_buf, sizeof(old_preload_buf), "%s", old_preload);
+    else
+        old_preload_buf[0] = '\0';
+
+    unlink(PRE_KWIN_LIBINPUT_LOG);
+    apply_kwin_ld_preload_policy_no_trace();
+    pid = spawn_child_logged(argv, PRE_KWIN_LIBINPUT_LOG);
+    restore_ld_preload(old_preload_buf, had_preload);
+    if (pid < 0) {
+        fprintf(stderr,
+                "kde-session: pre-kwin-libinput-probe status=FAIL reason=fork log=%s\n",
+                PRE_KWIN_LIBINPUT_LOG);
+        return;
+    }
+
+    for (int waited_ms = 0; waited_ms < 5000; waited_ms += 100) {
+        pid_t got = waitpid(pid, &status, WNOHANG);
+
+        if (got == pid) {
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                fprintf(stderr,
+                        "kde-session: pre-kwin-libinput-probe status=PASS exit_status=0 log=%s\n",
+                        PRE_KWIN_LIBINPUT_LOG);
+            } else if (WIFEXITED(status)) {
+                fprintf(stderr,
+                        "kde-session: pre-kwin-libinput-probe status=FAIL exit_status=%d log=%s\n",
+                        WEXITSTATUS(status), PRE_KWIN_LIBINPUT_LOG);
+            } else if (WIFSIGNALED(status)) {
+                fprintf(stderr,
+                        "kde-session: pre-kwin-libinput-probe status=FAIL signal=%d log=%s\n",
+                        WTERMSIG(status), PRE_KWIN_LIBINPUT_LOG);
+            } else {
+                fprintf(stderr,
+                        "kde-session: pre-kwin-libinput-probe status=FAIL wait_status=%d log=%s\n",
+                        status, PRE_KWIN_LIBINPUT_LOG);
+            }
+            return;
+        }
+        if (got < 0 && errno != EINTR) {
+            fprintf(stderr,
+                    "kde-session: pre-kwin-libinput-probe status=FAIL reason=wait errno=%d %s log=%s\n",
+                    errno, strerror(errno), PRE_KWIN_LIBINPUT_LOG);
+            return;
+        }
+        usleep(100000);
+    }
+
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        ;
+    fprintf(stderr,
+            "kde-session: pre-kwin-libinput-probe status=TIMEOUT timeout_ms=5000 log=%s\n",
+            PRE_KWIN_LIBINPUT_LOG);
 }
 
 static int process_cmdline_contains(const char *needle)
@@ -2911,6 +3029,7 @@ int main(void)
     }
     if (kwin_alloc_trace_enabled())
         unlink(KWIN_ALLOC_TRACE_LOG);
+    maybe_run_pre_kwin_libinput_probe();
 
     for (int attempt = 1; attempt <= 3; attempt++) {
         cleanup_session_sockets();
