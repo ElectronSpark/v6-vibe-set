@@ -55,7 +55,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is awaiting a post-KDE-ABI-libs runtime retry: the previous run exposed `libinput.so.10` -> `udev_device_get_udev@LIBUDEV_183`; the offline image now stages the matching KDE runtime `libudev.so.1` beside `libinput.so.10` and proves the pair resolves | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Post-KDE-ABI-closure runtime retry no longer shows the libinput/libudev loader miss, but both allowed attempts hit the historical KWin startup `#PF` before KDE readiness and Chromium launch; M9 remains unresolved, blocked by R5 flake-rate reduction | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -192,16 +192,31 @@ Active queue, in order:
   `libinput.so.10` still requires `libudev.so.1`; and `LD_LIBRARY_PATH` with
   the extracted `/opt` libs first made `ldd -r` report no unresolved/not-found
   entries. `/bin/mesacopytexture` and `/bin/mesaanglepassthrough` remain in
-  the refreshed image. M9 now needs the next allowed no-overrides runtime gate
-  to learn whether KDE reaches Chromium launch.
+  the refreshed image. Post-KDE-ABI-closure runtime gate 2026-07-04, default
+  Mesa path/no bundled, software, or extension overrides,
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video
+  KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`,
+  consumed the single allowed historical-flake rerun and still failed before
+  KDE readiness/Chromium launch with
+  `KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash`. Both attempts show
+  `kwin_wayland` `#PF` at `rip=0x7ffffd85cb85` in
+  `/usr/lib/x86_64-linux-gnu/libQt5Core.so.5`, no `undefined symbol`,
+  `LIBINPUT`, or `LIBUDEV` loader failure, and post evidence
+  `chromium_mesa_extension_override=""` plus `status=FAIL reason=not-launched`.
+  Therefore the old Chromium missing-extension fatals remain unobserved only
+  because Chromium did not launch. Archives:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T101045Z-q2-post-kde-abi-closure-chromium-launch-only-r5-flake/`
+  and
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T101153Z-q2-post-kde-abi-closure-chromium-launch-only-r5-rerun/`.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
   1.65-1.94us vs the <1.5us goal; these two cuts are the remaining
   identified fixed costs. Implement both together, one gate battery.
 - Q5 = R5 flake-rate reduction: the KWin startup crash family is now the
-  main gate polluter (cost 2 P2 default-flip runs and 3 rerun-needed
-  archives in one night). Root-cause or bound it; it blocks R6 step 2.
+  main gate polluter and blocked the 2026-07-04 post-KDE-ABI-closure M9 retry
+  after the single allowed rerun. Root-cause or bound it; it blocks R6 step 2
+  and the next meaningful Q2/M9 runtime classification.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
