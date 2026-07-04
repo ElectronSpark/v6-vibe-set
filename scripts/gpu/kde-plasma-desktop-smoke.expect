@@ -457,7 +457,8 @@ if {[info exists env(KDE_SMOKE_AGENT)]} {
           $kde_smoke_reducer eq "kwin-screenshot" ||
           $kde_smoke_reducer eq "desktop-interaction-latency" ||
           $kde_smoke_reducer eq "chromium-video" ||
-          $kde_smoke_reducer eq "kde-ready"} {
+          $kde_smoke_reducer eq "kde-ready" ||
+          $kde_smoke_reducer eq "pre-kwin-libinput"} {
     set kde_smoke_agent "0"
 } else {
     set kde_smoke_agent "1"
@@ -482,8 +483,16 @@ if {$present_sample_diag eq "" && $kde_smoke_reducer eq "desktop-color-wakeup"} 
 if {$present_sample_diag ne "" && $present_sample_diag ne "0"} {
     append qemu_append " fb_present_sample_diag=1 fb_present_sample_diag_limit=512"
 }
-if {[env_bool KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE 0]} {
+set pre_kwin_libinput_probe_only [expr {
+    [env_bool KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE_ONLY 0] ||
+    $kde_smoke_reducer eq "pre-kwin-libinput"
+}]
+if {[env_bool KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE 0] ||
+    $pre_kwin_libinput_probe_only} {
     append qemu_append " kde_pre_kwin_libinput_probe=1"
+}
+if {$pre_kwin_libinput_probe_only} {
+    append qemu_append " kde_pre_kwin_libinput_probe_only=1"
 }
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
@@ -15432,6 +15441,37 @@ proc run_probe_suite {} {
     run_guest_check "/bin/kde-pty-shell-probe" "kde-pty-shell-probe" 30
 }
 
+proc wait_for_pre_kwin_libinput_probe_only {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 45
+    expect {
+        -re {kde-session: pre-kwin-libinput-probe-only status=PASS rc=0} {
+            set timeout $old_timeout
+            finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=pre-kwin-libinput"
+        }
+        -re {kde-session: pre-kwin-libinput-probe-only status=FAIL rc=([0-9]+)} {
+            set rc [string trim $expect_out(1,string)]
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL pre-kwin-libinput rc=$rc"
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            set timeout $old_timeout
+            finish_after_crash 3 "KDE-PLASMA-DESKTOP-SMOKE-FAIL pre-kwin-libinput-crash"
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL pre-kwin-libinput-timeout"
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL pre-kwin-libinput-eof"
+        }
+    }
+    set timeout $old_timeout
+}
+
 proc run_late_kde_guardrails {} {
     run_wayland_seat_probe
     run_guest_check "/bin/kde-trash-stat-probe" "kde-trash-stat-probe" 20
@@ -16490,6 +16530,10 @@ expect {
     }
     timeout { finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL no-kde-session" }
     eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL session-eof" }
+}
+
+if {[kde_smoke_reducer] eq "pre-kwin-libinput"} {
+    wait_for_pre_kwin_libinput_probe_only
 }
 
 if {[kde_smoke_reducer] eq "x11-egl"} {

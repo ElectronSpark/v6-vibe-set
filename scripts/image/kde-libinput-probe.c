@@ -3,11 +3,14 @@
 #include <limits.h>
 #include <linux/input.h>
 #include <poll.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -143,6 +146,137 @@ static const char *axis_name(unsigned int code)
     return "ABS_UNKNOWN";
 }
 
+static const char *ev_type_name(unsigned int type)
+{
+    if (type == 0)
+        return "EV";
+    if (type == EV_KEY)
+        return "EV_KEY";
+    if (type == EV_REL)
+        return "EV_REL";
+    if (type == EV_ABS)
+        return "EV_ABS";
+    return "EV_UNKNOWN";
+}
+
+static void print_hex_bytes(const unsigned char *bytes, size_t len)
+{
+    for (size_t i = 0; i < len; i++)
+        printf("%02x", bytes[i]);
+}
+
+static void print_path_stat(const char *path)
+{
+    struct stat st;
+    int rc;
+    int err;
+
+    errno = 0;
+    rc = stat(path, &st);
+    err = rc < 0 ? errno : 0;
+    if (rc == 0) {
+        printf("%s r9_path_stat path=%s rc=0 errno=0 mode=0%o "
+               "rdev=%u:%u readable=%d\n",
+               R9_PREFIX, path, (unsigned int)(st.st_mode & 07777),
+               (unsigned int)major(st.st_rdev),
+               (unsigned int)minor(st.st_rdev),
+               access(path, R_OK) == 0 ? 1 : 0);
+    } else {
+        printf("%s r9_path_stat path=%s rc=-1 errno=%d readable=0\n",
+               R9_PREFIX, path, err);
+    }
+}
+
+static void print_evdev_version(const char *path, int fd)
+{
+    int version = 0;
+    int rc;
+    int err;
+
+    errno = 0;
+    rc = ioctl(fd, EVIOCGVERSION, &version);
+    err = rc < 0 ? errno : 0;
+    printf("%s r9_evdev_ioctl path=%s op=EVIOCGVERSION rc=%d errno=%d "
+           "version=0x%x\n",
+           R9_PREFIX, path, rc, err, version);
+}
+
+static void print_evdev_id(const char *path, int fd)
+{
+    struct input_id id;
+    int rc;
+    int err;
+
+    memset(&id, 0, sizeof(id));
+    errno = 0;
+    rc = ioctl(fd, EVIOCGID, &id);
+    err = rc < 0 ? errno : 0;
+    printf("%s r9_evdev_ioctl path=%s op=EVIOCGID rc=%d errno=%d "
+           "bustype=0x%x vendor=0x%x product=0x%x version=0x%x\n",
+           R9_PREFIX, path, rc, err, id.bustype, id.vendor, id.product,
+           id.version);
+}
+
+static void print_evdev_name(const char *path, int fd)
+{
+    char name[128];
+    int rc;
+    int err;
+
+    memset(name, 0, sizeof(name));
+    errno = 0;
+    rc = ioctl(fd, EVIOCGNAME(sizeof(name)), name);
+    err = rc < 0 ? errno : 0;
+    printf("%s r9_evdev_ioctl path=%s op=EVIOCGNAME rc=%d errno=%d "
+           "name=%s\n",
+           R9_PREFIX, path, rc, err, rc >= 0 ? name : "");
+}
+
+static void print_evdev_bits(const char *path, int fd, unsigned int type)
+{
+    unsigned char bits[64];
+    int rc;
+    int err;
+
+    memset(bits, 0, sizeof(bits));
+    errno = 0;
+    rc = ioctl(fd, EVIOCGBIT(type, sizeof(bits)), bits);
+    err = rc < 0 ? errno : 0;
+    printf("%s r9_evdev_ioctl path=%s op=EVIOCGBIT(%s) rc=%d errno=%d "
+           "bytes=",
+           R9_PREFIX, path, ev_type_name(type), rc, err);
+    print_hex_bytes(bits, sizeof(bits));
+    printf("\n");
+}
+
+static void print_evdev_prop(const char *path, int fd)
+{
+    unsigned char bits[16];
+    int rc;
+    int err;
+
+    memset(bits, 0, sizeof(bits));
+    errno = 0;
+    rc = ioctl(fd, EVIOCGPROP(sizeof(bits)), bits);
+    err = rc < 0 ? errno : 0;
+    printf("%s r9_evdev_ioctl path=%s op=EVIOCGPROP rc=%d errno=%d bytes=",
+           R9_PREFIX, path, rc, err);
+    print_hex_bytes(bits, sizeof(bits));
+    printf("\n");
+}
+
+static void print_evdev_ioctl_matrix(const char *path, int fd)
+{
+    print_evdev_version(path, fd);
+    print_evdev_id(path, fd);
+    print_evdev_name(path, fd);
+    print_evdev_bits(path, fd, 0);
+    print_evdev_bits(path, fd, EV_KEY);
+    print_evdev_bits(path, fd, EV_REL);
+    print_evdev_bits(path, fd, EV_ABS);
+    print_evdev_prop(path, fd);
+}
+
 static void print_absinfo(const char *path, int fd, unsigned int code,
                           struct r9_counts *counts)
 {
@@ -173,6 +307,8 @@ static int open_event_devices(struct event_dev devs[MAX_EVENT_DEVS],
         int err;
 
         snprintf(devs[i].path, sizeof(devs[i].path), "/dev/input/event%d", i);
+        if (i < 2)
+            print_path_stat(devs[i].path);
         errno = 0;
         devs[i].fd = open(devs[i].path, O_RDONLY | O_NONBLOCK);
         err = devs[i].fd < 0 ? errno : 0;
@@ -182,6 +318,7 @@ static int open_event_devices(struct event_dev devs[MAX_EVENT_DEVS],
             continue;
         opened++;
         counts->event_devices_open++;
+        print_evdev_ioctl_matrix(devs[i].path, devs[i].fd);
         print_absinfo(devs[i].path, devs[i].fd, ABS_X, counts);
         print_absinfo(devs[i].path, devs[i].fd, ABS_Y, counts);
     }
@@ -296,6 +433,162 @@ static const struct libinput_interface li_interface = {
     .close_restricted = close_restricted,
 };
 
+static void libinput_log_handler_fn(struct libinput *li,
+                                    enum libinput_log_priority priority,
+                                    const char *format, va_list args)
+{
+    (void)li;
+    printf("%s r9_libinput_log priority=%d message=", R9_PREFIX, priority);
+    vprintf(format, args);
+    printf("\n");
+}
+
+static int udev_list_has_name(struct udev_list_entry *entry, const char *name)
+{
+    for (; entry; entry = udev_list_entry_get_next(entry)) {
+        const char *entry_name = udev_list_entry_get_name(entry);
+
+        if (entry_name && name && strcmp(entry_name, name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static void print_udev_list(const char *kind, struct udev_list_entry *entry)
+{
+    for (; entry; entry = udev_list_entry_get_next(entry)) {
+        printf("%s r9_udev_%s name=%s\n",
+               R9_PREFIX, kind,
+               udev_list_entry_get_name(entry) ?
+                   udev_list_entry_get_name(entry) : "");
+    }
+}
+
+static void print_udev_selected_property(struct udev_device *dev,
+                                         const char *key)
+{
+    const char *value = udev_device_get_property_value(dev, key);
+
+    printf("%s r9_udev_property key=%s value=%s\n",
+           R9_PREFIX, key, value ? value : "");
+}
+
+static void print_udev_device(struct udev_device *dev, const char *syspath)
+{
+    static const char *const selected_props[] = {
+        "DEVNAME",
+        "SUBSYSTEM",
+        "DEVTYPE",
+        "ID_INPUT",
+        "ID_INPUT_KEY",
+        "ID_INPUT_KEYBOARD",
+        "ID_INPUT_MOUSE",
+        "ID_INPUT_TOUCHPAD",
+        "ID_INPUT_TOUCHSCREEN",
+        "ID_INPUT_TABLET",
+        "ID_SEAT",
+        "WL_SEAT",
+        "ID_FOR_SEAT",
+        "ID_PATH",
+        "TAGS",
+        "CURRENT_TAGS",
+        "LIBINPUT_IGNORE_DEVICE",
+    };
+    dev_t devnum = udev_device_get_devnum(dev);
+    struct udev_list_entry *tags = udev_device_get_tags_list_entry(dev);
+    struct udev_list_entry *current_tags =
+        udev_device_get_current_tags_list_entry(dev);
+
+    printf("%s r9_udev_device syspath=%s sysname=%s sysnum=%s "
+           "devnode=%s subsystem=%s devtype=%s initialized=%d devnum=%u:%u "
+           "action=%s has_tag_seat=%d has_tag_master_of_seat=%d "
+           "has_tag_uaccess=%d\n",
+           R9_PREFIX, syspath ? syspath : "",
+           udev_device_get_sysname(dev) ? udev_device_get_sysname(dev) : "",
+           udev_device_get_sysnum(dev) ? udev_device_get_sysnum(dev) : "",
+           udev_device_get_devnode(dev) ? udev_device_get_devnode(dev) : "",
+           udev_device_get_subsystem(dev) ?
+               udev_device_get_subsystem(dev) : "",
+           udev_device_get_devtype(dev) ? udev_device_get_devtype(dev) : "",
+           udev_device_get_is_initialized(dev),
+           (unsigned int)major(devnum), (unsigned int)minor(devnum),
+           udev_device_get_action(dev) ? udev_device_get_action(dev) : "",
+           udev_list_has_name(tags, "seat") ||
+               udev_list_has_name(current_tags, "seat"),
+           udev_list_has_name(tags, "master-of-seat") ||
+               udev_list_has_name(current_tags, "master-of-seat"),
+           udev_list_has_name(tags, "uaccess") ||
+               udev_list_has_name(current_tags, "uaccess"));
+
+    for (size_t i = 0; i < sizeof(selected_props) / sizeof(selected_props[0]);
+         i++)
+        print_udev_selected_property(dev, selected_props[i]);
+    print_udev_list("properties", udev_device_get_properties_list_entry(dev));
+    print_udev_list("tags", tags);
+    print_udev_list("current_tags", current_tags);
+}
+
+static void print_udev_enumeration(struct udev *udev)
+{
+    struct udev_enumerate *enumerate;
+    struct udev_list_entry *entry;
+    int rc;
+    int count = 0;
+
+    if (!udev) {
+        printf("%s r9_udev_enumerate subsystem=input rc=-1 errno=%d "
+               "reason=no_udev\n",
+               R9_PREFIX, EINVAL);
+        return;
+    }
+
+    enumerate = udev_enumerate_new(udev);
+    if (!enumerate) {
+        printf("%s r9_udev_enumerate subsystem=input rc=-1 errno=%d "
+               "reason=new_failed\n",
+               R9_PREFIX, errno ? errno : ENOMEM);
+        return;
+    }
+
+    rc = udev_enumerate_add_match_subsystem(enumerate, "input");
+    printf("%s r9_udev_enumerate_add_match_subsystem subsystem=input rc=%d "
+           "errno=%d\n",
+           R9_PREFIX, rc, rc < 0 ? errno : 0);
+    rc = udev_enumerate_add_match_is_initialized(enumerate);
+    printf("%s r9_udev_enumerate_add_match_is_initialized rc=%d errno=%d\n",
+           R9_PREFIX, rc, rc < 0 ? errno : 0);
+    errno = 0;
+    rc = udev_enumerate_scan_devices(enumerate);
+    printf("%s r9_udev_enumerate_scan subsystem=input rc=%d errno=%d\n",
+           R9_PREFIX, rc, rc < 0 ? errno : 0);
+    if (rc < 0) {
+        udev_enumerate_unref(enumerate);
+        return;
+    }
+
+    for (entry = udev_enumerate_get_list_entry(enumerate); entry;
+         entry = udev_list_entry_get_next(entry)) {
+        const char *syspath = udev_list_entry_get_name(entry);
+        struct udev_device *dev;
+
+        count++;
+        printf("%s r9_udev_enumerate_entry subsystem=input syspath=%s\n",
+               R9_PREFIX, syspath ? syspath : "");
+        dev = udev_device_new_from_syspath(udev, syspath);
+        if (!dev) {
+            printf("%s r9_udev_device syspath=%s status=NULL errno=%d\n",
+                   R9_PREFIX, syspath ? syspath : "",
+                   errno ? errno : ENODEV);
+            continue;
+        }
+        print_udev_device(dev, syspath);
+        udev_device_unref(dev);
+    }
+    printf("%s r9_udev_enumerate_summary subsystem=input count=%d\n",
+           R9_PREFIX, count);
+    udev_enumerate_unref(enumerate);
+}
+
 static void setup_libinput_probe(struct libinput_probe *probe)
 {
     memset(probe, 0, sizeof(*probe));
@@ -313,6 +606,8 @@ static void setup_libinput_probe(struct libinput_probe *probe)
         return;
     }
 
+    print_udev_enumeration(probe->udev);
+
     errno = 0;
     probe->li = libinput_udev_create_context(&li_interface, NULL, probe->udev);
     if (!probe->li) {
@@ -322,6 +617,8 @@ static void setup_libinput_probe(struct libinput_probe *probe)
                R9_PREFIX, probe->setup_errno, probe->reason);
         return;
     }
+    libinput_log_set_handler(probe->li, libinput_log_handler_fn);
+    libinput_log_set_priority(probe->li, LIBINPUT_LOG_PRIORITY_DEBUG);
 
     errno = 0;
     probe->setup_rc = libinput_udev_assign_seat(probe->li, "seat0");
@@ -540,6 +837,8 @@ static int run_r9_cursor_contract(const struct r9_options *opts)
     open_event_devices(devs, &counts);
     mouse_fd = open_mouse_device();
     setup_libinput_probe(&libinput_probe);
+    if (!libinput_probe.available)
+        counts.fatal_errors++;
     sample_devices(devs, mouse_fd, &libinput_probe, opts, &counts);
 
     if (libinput_probe.available) {

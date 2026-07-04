@@ -905,7 +905,7 @@ stage_kde_abi_overrides() {
     local cc_bin="${CC:-cc}"
     local ifunc_map="${BUILD_DIR:-/tmp}/xv6-ifunc-memcpy-shim.map"
     local kde_libinput="${STAGE}/usr/lib/x86_64-linux-gnu/libinput.so.10"
-    local kde_libudev="${STAGE}/usr/lib/x86_64-linux-gnu/libudev.so.1"
+    local xv6_libudev="${STAGE}/lib/libudev.so.1"
 
     mkdir -p "${dir}"
     if [[ -e "${kde_libinput}" ]]; then
@@ -914,11 +914,11 @@ stage_kde_abi_overrides() {
     else
         ln -sfn /lib/libinput.so.10 "${dir}/libinput.so.10"
     fi
-    if [[ -e "${kde_libudev}" ]]; then
-        cp -L "${kde_libudev}" "${dir}/libudev.so.1"
-        chmod 0755 "${dir}/libudev.so.1" 2>/dev/null || true
-    else
+    if [[ -e "${xv6_libudev}" ]]; then
         ln -sfn /lib/libudev.so.1 "${dir}/libudev.so.1"
+    else
+        echo "make-rootfs: missing xv6 libudev shim at ${xv6_libudev}" >&2
+        exit 1
     fi
     ln -sfn /lib/libdrm.so.2 "${dir}/libdrm.so.2"
     if [[ -f "${REPO_ROOT}/scripts/image/xv6-ifunc-memcpy-shim.c" ]]; then

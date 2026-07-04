@@ -716,7 +716,14 @@ static pid_t spawn_child(char *const argv[])
 static int pre_kwin_libinput_probe_enabled(void)
 {
     return cmdline_has_flag("kde_pre_kwin_libinput_probe=1") ||
+           cmdline_has_flag("kde_pre_kwin_libinput_probe_only=1") ||
            env_bool_enabled("KDE_PRE_KWIN_LIBINPUT_PROBE");
+}
+
+static int pre_kwin_libinput_probe_only_enabled(void)
+{
+    return cmdline_has_flag("kde_pre_kwin_libinput_probe_only=1") ||
+           env_bool_enabled("KDE_PRE_KWIN_LIBINPUT_PROBE_ONLY");
 }
 
 static int kwin_alloc_trace_enabled(void)
@@ -838,7 +845,7 @@ static void apply_kwin_ld_preload_policy_no_trace(void)
         unsetenv("LD_PRELOAD");
 }
 
-static void maybe_run_pre_kwin_libinput_probe(void)
+static int maybe_run_pre_kwin_libinput_probe(void)
 {
     char *argv[] = {
         "/bin/kde-libinput-probe",
@@ -854,13 +861,13 @@ static void maybe_run_pre_kwin_libinput_probe(void)
     int status = 0;
 
     if (!pre_kwin_libinput_probe_enabled())
-        return;
+        return 0;
 
     if (!is_executable(argv[0])) {
         fprintf(stderr,
                 "kde-session: pre-kwin-libinput-probe status=SKIP reason=missing path=%s log=%s\n",
                 argv[0], PRE_KWIN_LIBINPUT_LOG);
-        return;
+        return pre_kwin_libinput_probe_only_enabled() ? 127 : 0;
     }
 
     if (old_preload)
@@ -876,7 +883,7 @@ static void maybe_run_pre_kwin_libinput_probe(void)
         fprintf(stderr,
                 "kde-session: pre-kwin-libinput-probe status=FAIL reason=fork log=%s\n",
                 PRE_KWIN_LIBINPUT_LOG);
-        return;
+        return 127;
     }
 
     for (int waited_ms = 0; waited_ms < 5000; waited_ms += 100) {
@@ -887,26 +894,29 @@ static void maybe_run_pre_kwin_libinput_probe(void)
                 fprintf(stderr,
                         "kde-session: pre-kwin-libinput-probe status=PASS exit_status=0 log=%s\n",
                         PRE_KWIN_LIBINPUT_LOG);
+                return 0;
             } else if (WIFEXITED(status)) {
                 fprintf(stderr,
                         "kde-session: pre-kwin-libinput-probe status=FAIL exit_status=%d log=%s\n",
                         WEXITSTATUS(status), PRE_KWIN_LIBINPUT_LOG);
+                return WEXITSTATUS(status);
             } else if (WIFSIGNALED(status)) {
                 fprintf(stderr,
                         "kde-session: pre-kwin-libinput-probe status=FAIL signal=%d log=%s\n",
                         WTERMSIG(status), PRE_KWIN_LIBINPUT_LOG);
+                return 128 + WTERMSIG(status);
             } else {
                 fprintf(stderr,
                         "kde-session: pre-kwin-libinput-probe status=FAIL wait_status=%d log=%s\n",
                         status, PRE_KWIN_LIBINPUT_LOG);
+                return 126;
             }
-            return;
         }
         if (got < 0 && errno != EINTR) {
             fprintf(stderr,
                     "kde-session: pre-kwin-libinput-probe status=FAIL reason=wait errno=%d %s log=%s\n",
                     errno, strerror(errno), PRE_KWIN_LIBINPUT_LOG);
-            return;
+            return 127;
         }
         usleep(100000);
     }
@@ -918,6 +928,7 @@ static void maybe_run_pre_kwin_libinput_probe(void)
     fprintf(stderr,
             "kde-session: pre-kwin-libinput-probe status=TIMEOUT timeout_ms=5000 log=%s\n",
             PRE_KWIN_LIBINPUT_LOG);
+    return 124;
 }
 
 static int process_cmdline_contains(const char *needle)
@@ -3029,7 +3040,17 @@ int main(void)
     }
     if (kwin_alloc_trace_enabled())
         unlink(KWIN_ALLOC_TRACE_LOG);
-    maybe_run_pre_kwin_libinput_probe();
+    {
+        int pre_kwin_probe_rc = maybe_run_pre_kwin_libinput_probe();
+
+        if (pre_kwin_libinput_probe_only_enabled()) {
+            fprintf(stderr,
+                    "kde-session: pre-kwin-libinput-probe-only status=%s rc=%d\n",
+                    pre_kwin_probe_rc == 0 ? "PASS" : "FAIL",
+                    pre_kwin_probe_rc);
+            return pre_kwin_probe_rc == 0 ? 0 : 127;
+        }
+    }
 
     for (int attempt = 1; attempt <= 3; attempt++) {
         cleanup_session_sockets();

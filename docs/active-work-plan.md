@@ -223,17 +223,21 @@ Active queue, in order:
   closure with image-like `LD_LIBRARY_PATH`, `readelf -V`, `objdump -T`, and
   `ldd -r`, and currently passes for
   `libinput_event_get_gesture_event@LIBINPUT_0.20.0` and
-  `udev_device_get_udev@LIBUDEV_183`. No new guest reducer was added because
-  `/bin/kde-libinput-probe` is already staged and directly exercises
+  `udev_device_get_udev@LIBUDEV_183`. `/bin/kde-libinput-probe` is already
+  staged and directly exercises
   `udev_new`, `libinput_udev_create_context`, and
-  `libinput_udev_assign_seat("seat0")`.
+  `libinput_udev_assign_seat("seat0")`; the no-KWin reducer below now runs it
+  before the first KWin launch and exits immediately after the probe.
   Offline R5 diagnostic harness patch added 2026-07-04:
   `kde-session.c` has a default-off pre-KWin hook enabled by
   `kde_pre_kwin_libinput_probe=1` or `KDE_PRE_KWIN_LIBINPUT_PROBE=1`; it runs
   `/bin/kde-libinput-probe --r9-cursor-contract --timeout-ms 1`, writes
   `/kde-pre-kwin-libinput.log`, and emits a compact serial status before the
-  first KWin launch. `kde-plasma-desktop-smoke.expect` now supports
-  `KDE_SMOKE_REDUCER=kde-ready` and host env
+  first KWin launch. `kde-session.c` also accepts
+  `kde_pre_kwin_libinput_probe_only=1` for a pre-KWin probe-only exit.
+  `kde-plasma-desktop-smoke.expect` now supports
+  `KDE_SMOKE_REDUCER=kde-ready`, `KDE_SMOKE_REDUCER=pre-kwin-libinput`, and
+  host env
   `KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE=1`, preserves the pre-KWin log artifact,
   and no longer fails on intermediate `KWin startup attempt=N failed, retrying`
   lines. Offline verification passed: C syntax-only, `git diff --check`,
@@ -260,6 +264,45 @@ Active queue, in order:
   Chromium guest artifacts are placeholder `missing guest_path=...` files, so
   this is a pre-Chromium/KWin result and strengthens the
   `LibInput::Connection::create(session)` null-return hypothesis.
+  Follow-up reducer/fix 2026-07-04: the no-KWin reducer first reproduced the
+  blocker without launching KWin:
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=pre-kwin-libinput scripts/gpu/kde-plasma-desktop-smoke.expect`
+  failed with `status_code=8`, `r9_udev_enumerate_summary subsystem=input
+  count=0`, Ubuntu/systemd libudev log `udev: failed to create the udev
+  monitor`, and `r9_libinput_status rc=-1 errno=93
+  reason=assign_seat_failed`. The compact baseline copy is
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T110313Z-r5-pre-kwin-libinput-probe-only-before-shim/`.
+  Root cause was the KDE ABI override pairing Ubuntu `libinput.so.10` with
+  Ubuntu `libudev.so.1`; that path tripped xv6's missing
+  `NETLINK_KOBJECT_UEVENT` support. The smallest fix was to keep Ubuntu
+  `libinput.so.10`, restore `/opt/xv6-kde-abi-libs/libudev.so.1` to the xv6
+  shim, export the shim's missing common symbols including
+  `udev_device_get_udev@LIBUDEV_183`, and teach the shim about
+  `/dev/input/event0` and `/dev/input/event1` as initialized `input` devices
+  with `ID_INPUT=1`, `ID_INPUT_KEYBOARD=1`/`ID_INPUT_MOUSE=1`, `ID_SEAT=seat0`,
+  `WL_SEAT=default`, and `seat` tags. Verification passed:
+  `git diff --check`, `git -C ports diff --check`,
+  `cmake --build build-x86_64/ports --target port-libudev -j2`,
+  `readelf -Ws build-x86_64/sysroot/lib/libudev.so.1.0.0` showing
+  `udev_device_get_udev`, `udev_list_entry_get_value`, and
+  `udev_device_has_tag` at `LIBUDEV_183`, C syntax-only checks for
+  `kde-libinput-probe.c` and `kde-session.c`, and
+  `cmake --build build-x86_64 --target rootfs-refresh -j2`.
+  `scripts/gpu/kde-abi-closure-preflight.sh` still passes, with
+  `udev_device_get_udev@LIBUDEV_183` provided by `/lib/libudev.so.1.0.0`.
+  `debugfs` on `build-x86_64/fs.img` confirms
+  `/opt/xv6-kde-abi-libs/libudev.so.1` is now a symlink to
+  `/lib/libudev.so.1` while `/opt/xv6-kde-abi-libs/libinput.so.10` remains
+  the regular Ubuntu/KDE runtime copy.
+  Post-fix no-KWin verification with the same reducer passed:
+  `status_code=0`, archive
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T110434Z-r5-pre-kwin-libinput-probe-only-shim-ready/`.
+  `run.log` has `pre-kwin-libinput-probe-only status=PASS rc=0` and no KWin
+  launch marker. The probe now enumerates both input devices and reaches
+  `r9_libinput_status rc=0 errno=0 reason=ready fd=6`; `r9_summary` ends
+  `result=PASS`. This closes the deterministic `assign_seat_failed` pre-KWin
+  blocker. The historical KWin `QObject::moveToThread(QThread*)+0x15` crash was
+  not rerun in this reducer and remains a separate R5/KWin startup lane.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
