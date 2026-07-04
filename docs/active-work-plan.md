@@ -77,12 +77,38 @@ The 07-03 Q1-Q7 queue is RETIRED: Q1 landed, Q2 runtime-validated (real
 GL), Q5 root-caused+fixed, Q7 landed. New queue:
 
 - N1 = M7 present path (P2 step 3): the last M7 blocker. All flips are
-  software_blit copies. Two sub-routes to evaluate FIRST as a decision
-  slice: (a) rutabaga/gfxstream-capable QEMU enabling virgl+blob
-  (dmabuf/zero-copy scanout; current QEMU rejects "virgl+blob"), an
-  external-capability change; (b) kernel-side reduction of copies in the
-  virtio-gpu present path short of full zero-copy. Measure the blit cost
-  share first (offline: fbstat + kprofile archives) before building.
+  software_blit copies. Decision slice result 2026-07-04: route (a) is
+  fail-closed on this host. Runnable QEMU is
+  `/usr/bin/qemu-system-x86_64` Debian 9.0.2. It advertises classic
+  `virtio-gpu-pci`, `virtio-gpu-gl-pci`, `virtio-vga`,
+  `virtio-vga-gl`, and `vhost-user-gpu-pci`, but no
+  rutabaga/gfxstream/cross-domain device. `virtio-gpu-rutabaga-pci,help`
+  says "Device not found"; classic `virtio-gpu-gl-pci,help` fails with
+  `undefined symbol: qemu_egl_display`. `/dev/udmabuf`, `/dev/kvm`, and
+  `/dev/dxg` exist; no `/dev/dri/renderD*` exists. Host has
+  `libvulkan_gfxstream.so` and `libvirglrenderer.so.1`, but no usable
+  `rutabaga_gfx_ffi` surfaced. Non-GL `virtio-gpu-pci` supports
+  `blob`, `hostmem`, and `max_hostmem`, and a dry-run can form a memfd
+  command with `blob=true,hostmem=32M,max_hostmem=32M`; the
+  `virtio-vga-gl-primary` + blob lane still fail-closes with
+  `QEMU rejects virgl + blob ("blobs and virgl are not compatible")`.
+  Landed launcher detection only: `QEMU_BIN=/path/to/qemu-system-x86_64`
+  selects the probed binary, and
+  `QEMU_GPU=virtio-gpu-rutabaga{,-primary}` or
+  `QEMU_GPU=virtio-vga-rutabaga-primary` requires blob/hostmem/
+  max_hostmem, `/dev/udmabuf`, hardware host DRI, the rutabaga device,
+  `gfxstream-vulkan`, `cross-domain`, `wsi`, and memfd RAM; it refuses
+  classic virgl or software fallback. No M7 run was attempted because
+  the route cannot dry-run to device args. Kernel route is also not ready
+  to implement blindly: creatable capset admission currently supports
+  VIRGL/VIRGL2 only (DRM is query-only), not upstream gfxstream/
+  cross-domain. Next kernel task, after a capable host/QEMU exists:
+  define and wire `VIRTIO_GPU_CMD_SET_SCANOUT_BLOB`, carry blob resource
+  format/stride/modifier metadata through the fb/KMS present path, add
+  gfxstream/cross-domain capset admission only with a real contract, and
+  add native/blob present counters. Route (b) remains low payoff unless
+  new evidence contradicts `bo_present_copy_ticks=0` and
+  `virtio_present_copy_calls=0`.
 - N2 = P3 promotion: default-flip `ext4_read_page_direct=1` (browser
   start 10.6s -> 6.2s, read_page_ms -50%, battery green 07-04; needs the
   Guardrails default-flip protocol: same-session A/B + control + battery).
@@ -265,7 +291,13 @@ default-on KDE pass (M4 2144), explicit-off control pass (M4 2122), video
 36.8 -> 42.9. Archives `20260704T181500Z/183000Z/185000Z-q7-*`.
 Step 3 (zero-copy present, M7 >= 55) is N1: every flip is still
 `software_blit` with `native_present_credit=0` (fbstat), the sole
-remaining M7 ceiling.
+remaining M7 ceiling. N1 route (a) now has fail-closed launcher selectors
+for rutabaga/gfxstream/blob plus a `QEMU_BIN` override, but this host
+cannot run them: no hardware `/dev/dri/renderD*`, no rutabaga QEMU
+device, and broken classic `*-gl` device help. Kernel blob resources and
+host-visible mmap already exist, but creatable capsets are VIRGL/VIRGL2
+only; scanout-blob/native-present and gfxstream/cross-domain admission are
+future slices once a capable host route is available.
 
 ### P3 — Ext4 read-path serialization: first slice LANDED gated (= N2)
 

@@ -4,13 +4,19 @@
 # Boots the kernel + xv6fs disk image in qemu-system-<arch>.
 # Set DISPLAY_MODE=gtk|sdl|nographic (default gtk on x86_64, nographic on riscv64).
 # Debugging:
+#   QEMU_BIN=qemu-system-<arch>
+#                           QEMU executable used for capability probes and
+#                           launch. Set to an absolute path when scouting a
+#                           custom rutabaga/gfxstream build.
 #   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
 #   QEMU_GDB_PORT=2159      Use a different GDB stub port.
 #   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
 #   QEMU_GPU=auto           GPU model: auto, bochs, virtio-gpu,
 #                           virtio-gpu-primary, virtio-gpu-gl,
 #                           virtio-gpu-gl-primary, virtio-vga-gl-primary,
-#                           or none.
+#                           virtio-gpu-rutabaga,
+#                           virtio-gpu-rutabaga-primary,
+#                           virtio-vga-rutabaga-primary, or none.
 #   QEMU_VIRTIO_GPU_BLOB=auto
 #                           Enable virtio-gpu blob resources with hostmem when
 #                           /dev/udmabuf is available on this launcher path.
@@ -22,6 +28,16 @@
 #                           GPU launch cannot see host /dev/dri.
 #   QEMU_REQUIRE_UDMABUF=0  Fail instead of warning when blob resources are
 #                           requested but /dev/udmabuf is unavailable.
+#   QEMU_RUTABAGA_CAPSETS=gfxstream-vulkan,cross-domain
+#                           Comma-separated rutabaga capsets to request. The
+#                           guarded route rejects unknown capsets and requires
+#                           QEMU device support for every selected capset.
+#   QEMU_RUTABAGA_WSI=headless
+#                           Rutabaga WSI mode for the fail-closed gfxstream
+#                           lane; set empty to omit the option.
+#   QEMU_RUTABAGA_WAYLAND_SOCKET=
+#                           Optional explicit wayland-socket-path when using
+#                           the cross-domain rutabaga capset.
 #   QEMU_REQUIRE_KVM=auto   Require KVM for WebKit-accelerated GUI launches.
 #                           Set to 0 for deliberate slow-path debugging.
 #   QEMU_CPU=auto           Use host CPU features under KVM and qemu64 under TCG.
@@ -89,6 +105,7 @@ if [[ $# -ne 3 ]]; then
 fi
 ARCH="$1"; KERNEL="$2"; FSIMG="$3"
 
+QEMU_BIN="${QEMU_BIN:-qemu-system-${ARCH}}"
 QEMU_EXTRA="${QEMU_EXTRA:-}"
 QEMU_CPUS="${QEMU_CPUS:-6}"
 QEMU_MEMORY="${QEMU_MEMORY:-4G}"
@@ -125,6 +142,9 @@ QEMU_VIRTIO_GPU_HOSTMEM="${QEMU_VIRTIO_GPU_HOSTMEM:-1G}"
 QEMU_VIRTIO_GPU_MAX_HOSTMEM="${QEMU_VIRTIO_GPU_MAX_HOSTMEM:-${QEMU_VIRTIO_GPU_HOSTMEM}}"
 QEMU_REQUIRE_HOST_DRI="${QEMU_REQUIRE_HOST_DRI:-0}"
 QEMU_REQUIRE_UDMABUF="${QEMU_REQUIRE_UDMABUF:-0}"
+QEMU_RUTABAGA_CAPSETS="${QEMU_RUTABAGA_CAPSETS:-gfxstream-vulkan,cross-domain}"
+QEMU_RUTABAGA_WSI="${QEMU_RUTABAGA_WSI:-headless}"
+QEMU_RUTABAGA_WAYLAND_SOCKET="${QEMU_RUTABAGA_WAYLAND_SOCKET:-}"
 QEMU_REQUIRE_KVM="${QEMU_REQUIRE_KVM:-auto}"
 QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
 QEMU_WSL_D3D12_ADAPTER="${QEMU_WSL_D3D12_ADAPTER:-auto}"
@@ -325,7 +345,7 @@ host_dri_has_render_node() {
 qemu_audio_backend_available() {
         local backend="$1"
 
-        qemu-system-"${ARCH}" -audiodev help 2>&1 |
+        "${QEMU_BIN}" -audiodev help 2>&1 |
                 awk '/^Available audio drivers:/{seen=1; next} seen && NF {print $1}' |
                 grep -qx -- "${backend}"
 }
@@ -395,6 +415,20 @@ print_host_gpu_hint() {
         echo "run-qemu:   blobs: /dev/udmabuf must already exist and be accessible" >&2
 }
 
+qemu_device_help_has_device() {
+        local help="$1"
+        local device="$2"
+
+        grep -Eq "^${device} options:" <<< "${help}"
+}
+
+qemu_device_help_has_option() {
+        local help="$1"
+        local option="$2"
+
+        grep -Eq "^[[:space:]]+${option}(=|<)" <<< "${help}"
+}
+
 case "${ARCH}" in
         riscv64)
                 DISPLAY_MODE="${DISPLAY_MODE:-nographic}"
@@ -405,7 +439,7 @@ case "${ARCH}" in
                 else
                         DISPLAY_ARGS=(-display "${DISPLAY_MODE}" -serial mon:stdio)
                 fi
-                exec qemu-system-riscv64 \
+                exec "${QEMU_BIN}" \
                         -machine virt -cpu rv64 -smp 2 -m 256M \
                         "${DISPLAY_ARGS[@]}" \
                         -bios default \
@@ -471,6 +505,10 @@ case "${ARCH}" in
                                 QEMU_GPU="bochs"
                         fi
                         echo "run-qemu: auto GPU selected ${QEMU_GPU}" >&2
+                fi
+                gpu_is_rutabaga=0
+                if [[ "${QEMU_GPU}" == *rutabaga* ]]; then
+                        gpu_is_rutabaga=1
                 fi
                 if [[ "${HOST_GL_MODE}" == "wsl-d3d12" && "${QEMU_GPU}" == *"-gl"* ]]; then
                         if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
@@ -558,6 +596,14 @@ case "${ARCH}" in
                         # Virgl/D3D12 can spend close to a minute compiling and
                         # validating early WebKit GL work.  Do not abort the
                         # guest GL contexts during that one-time warmup.
+                        qemu_prepend_default_flag virtio_gpu_irq_wait_ms 60000
+                fi
+                if [[ "${gpu_is_rutabaga}" == "1" ]]; then
+                        qemu_prepend_default_flag virtio_gpu_3d_scanout 1
+                        qemu_prepend_default_flag virtio_gpu_disable_pageflip_copy 1
+                        qemu_prepend_default_flag virtio_gpu_present_no_drain 1
+                        qemu_prepend_default_flag vgpu_async_flush 1
+                        qemu_prepend_default_flag vgpu_async_pf 1
                         qemu_prepend_default_flag virtio_gpu_irq_wait_ms 60000
                 fi
                 # Use mon:stdio so QEMU intercepts Ctrl-A X to quit (and
@@ -664,13 +710,16 @@ case "${ARCH}" in
                 # virgl ('-gl') GPU types enable 3D via virglrenderer.  QEMU's
                 # classic virgl path rejects blob resources at device realize
                 # ("blobs and virgl are not compatible (yet)"); only the
-                # separate rutabaga/gfxstream backend supports virgl + blob.
+                # separate rutabaga/gfxstream lane has its own fail-closed
+                # blob/hostmem selector below.
                 gpu_is_virgl=0
                 if [[ "${QEMU_GPU}" == *gl* ]]; then
                         gpu_is_virgl=1
                 fi
                 if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "auto" ]]; then
-                        if [[ -r /dev/udmabuf && -w /dev/udmabuf ]]; then
+                        if [[ "${gpu_is_rutabaga}" == "1" ]]; then
+                                QEMU_VIRTIO_GPU_BLOB=1
+                        elif [[ -r /dev/udmabuf && -w /dev/udmabuf ]]; then
                                 QEMU_VIRTIO_GPU_BLOB=1
                         else
                                 QEMU_VIRTIO_GPU_BLOB=0
@@ -689,14 +738,14 @@ case "${ARCH}" in
                         echo "run-qemu: disabling virtio-gpu blob: this QEMU's virgl path is incompatible with blob resources (set QEMU_VIRGL_BLOB_OK=1 to override)." >&2
                         QEMU_VIRTIO_GPU_BLOB=0
                 fi
-                if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" ]]; then
+                if [[ "${QEMU_VIRTIO_GPU_BLOB}" == "1" && "${gpu_is_rutabaga}" != "1" ]]; then
                         if [[ ! -r /dev/udmabuf || ! -w /dev/udmabuf ]]; then
                                 echo "run-qemu: QEMU_VIRTIO_GPU_BLOB=1 needs /dev/udmabuf on this launcher path." >&2
                                 print_host_gpu_hint
                                 exit 2
                         fi
                         gpu_gl_opts+=",blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM},max_hostmem=${QEMU_VIRTIO_GPU_MAX_HOSTMEM}"
-                elif [[ "${QEMU_REQUIRE_UDMABUF}" == "1" ]]; then
+                elif [[ "${QEMU_REQUIRE_UDMABUF}" == "1" && "${gpu_is_rutabaga}" != "1" ]]; then
                         echo "run-qemu: QEMU_REQUIRE_UDMABUF=1 but /dev/udmabuf is unavailable." >&2
                         print_host_gpu_hint
                         exit 2
@@ -733,6 +782,108 @@ case "${ARCH}" in
                                 # desktop to start.
                                 GPU_ARGS=(-vga none -device "virtio-vga-gl,id=xv6gpu0,${gpu_gl_opts}")
                                 ;;
+                        virtio-gpu-rutabaga|virtio-gpu-rutabaga-primary|virtio-vga-rutabaga-primary)
+                                rutabaga_fail=0
+                                rutabaga_device="virtio-gpu-rutabaga-pci"
+                                if [[ "${QEMU_GPU}" == "virtio-vga-rutabaga-primary" ]]; then
+                                        rutabaga_device="virtio-vga-rutabaga"
+                                fi
+                                if [[ "${QEMU_VIRTIO_GPU_BLOB}" != "1" ]]; then
+                                        echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires QEMU_VIRTIO_GPU_BLOB=1 (or auto); refusing a rutabaga launch without blob/hostmem." >&2
+                                        rutabaga_fail=1
+                                fi
+                                if [[ ! -r /dev/udmabuf || ! -w /dev/udmabuf ]]; then
+                                        echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires readable/writable /dev/udmabuf for the blob route." >&2
+                                        rutabaga_fail=1
+                                fi
+                                if ! host_dri_available; then
+                                        if host_dri_has_known_software; then
+                                                echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires hardware host /dev/dri/renderD*; only software DRM nodes were detected." >&2
+                                        elif host_dri_has_render_node; then
+                                                echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires hardware host /dev/dri/renderD* readable/writable by this user." >&2
+                                        elif host_dri_exists; then
+                                                echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires a usable hardware host render node; /dev/dri exists but no render node is usable." >&2
+                                        else
+                                                echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires a hardware host /dev/dri/renderD* node; none is present." >&2
+                                        fi
+                                        rutabaga_fail=1
+                                fi
+                                rutabaga_help="$("${QEMU_BIN}" -device "${rutabaga_device},help" 2>&1 || true)"
+                                if ! qemu_device_help_has_device "${rutabaga_help}" "${rutabaga_device}"; then
+                                        echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires QEMU device '${rutabaga_device}', but this qemu does not advertise it." >&2
+                                        echo "run-qemu: qemu -device ${rutabaga_device},help output:" >&2
+                                        printf '%s\n' "${rutabaga_help}" >&2
+                                        rutabaga_fail=1
+                                else
+                                        if ! qemu_device_help_has_option "${rutabaga_help}" hostmem; then
+                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks required hostmem blob aperture support." >&2
+                                                rutabaga_fail=1
+                                        fi
+                                        if ! qemu_device_help_has_option "${rutabaga_help}" max_hostmem; then
+                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks required max_hostmem blob aperture support." >&2
+                                                rutabaga_fail=1
+                                        fi
+                                        if ! qemu_device_help_has_option "${rutabaga_help}" blob; then
+                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks required blob option." >&2
+                                                rutabaga_fail=1
+                                        fi
+                                        if [[ -n "${QEMU_RUTABAGA_WSI}" ]] &&
+                                           ! qemu_device_help_has_option "${rutabaga_help}" wsi; then
+                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks required wsi option for QEMU_RUTABAGA_WSI=${QEMU_RUTABAGA_WSI}." >&2
+                                                rutabaga_fail=1
+                                        fi
+                                        if [[ -n "${QEMU_RUTABAGA_WAYLAND_SOCKET}" ]] &&
+                                           ! qemu_device_help_has_option "${rutabaga_help}" wayland-socket-path; then
+                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks wayland-socket-path for QEMU_RUTABAGA_WAYLAND_SOCKET." >&2
+                                                rutabaga_fail=1
+                                        fi
+                                fi
+                                rutabaga_opts="xres=${QEMU_VIRTIO_GPU_XRES},yres=${QEMU_VIRTIO_GPU_YRES},blob=true,hostmem=${QEMU_VIRTIO_GPU_HOSTMEM},max_hostmem=${QEMU_VIRTIO_GPU_MAX_HOSTMEM}"
+                                rutabaga_capset_count=0
+                                IFS=',' read -r -a rutabaga_capsets <<< "${QEMU_RUTABAGA_CAPSETS}"
+                                for rutabaga_capset in "${rutabaga_capsets[@]}"; do
+                                        case "${rutabaga_capset}" in
+                                                "")
+                                                        ;;
+                                                gfxstream-vulkan|cross-domain)
+                                                        rutabaga_capset_count=$((rutabaga_capset_count + 1))
+                                                        if qemu_device_help_has_device "${rutabaga_help}" "${rutabaga_device}" &&
+                                                           ! qemu_device_help_has_option "${rutabaga_help}" "${rutabaga_capset}"; then
+                                                                echo "run-qemu: QEMU device '${rutabaga_device}' lacks required rutabaga capset option '${rutabaga_capset}'." >&2
+                                                                rutabaga_fail=1
+                                                        fi
+                                                        rutabaga_opts+=",${rutabaga_capset}=on"
+                                                        ;;
+                                                *)
+                                                        echo "run-qemu: unsupported QEMU_RUTABAGA_CAPSETS entry '${rutabaga_capset}' (supported: gfxstream-vulkan,cross-domain)." >&2
+                                                        rutabaga_fail=1
+                                                        ;;
+                                        esac
+                                done
+                                if [[ "${rutabaga_capset_count}" -eq 0 ]]; then
+                                        echo "run-qemu: QEMU_GPU=${QEMU_GPU} requires at least one rutabaga capset in QEMU_RUTABAGA_CAPSETS." >&2
+                                        rutabaga_fail=1
+                                fi
+                                if [[ -n "${QEMU_RUTABAGA_WSI}" ]]; then
+                                        rutabaga_opts+=",wsi=${QEMU_RUTABAGA_WSI}"
+                                fi
+                                if [[ -n "${QEMU_RUTABAGA_WAYLAND_SOCKET}" ]]; then
+                                        rutabaga_opts+=",wayland-socket-path=${QEMU_RUTABAGA_WAYLAND_SOCKET}"
+                                fi
+                                if [[ "${rutabaga_fail}" != "0" ]]; then
+                                        echo "run-qemu: refusing fail-closed rutabaga/gfxstream/blob route; no classic virgl or software GL fallback will be selected." >&2
+                                        print_host_gpu_hint
+                                        exit 2
+                                fi
+                                if [[ "${QEMU_GPU}" == "virtio-gpu-rutabaga-primary" ]]; then
+                                        qemu_prepend_default_flag virtio_gpu_force_scanout 1
+                                        GPU_ARGS=(-vga none -device "${rutabaga_device},id=xv6gpu0,${rutabaga_opts}")
+                                elif [[ "${QEMU_GPU}" == "virtio-vga-rutabaga-primary" ]]; then
+                                        GPU_ARGS=(-vga none -device "${rutabaga_device},id=xv6gpu0,${rutabaga_opts}")
+                                else
+                                        GPU_ARGS=(-device "${rutabaga_device},id=xv6gpu0,${rutabaga_opts}")
+                                fi
+                                ;;
                         none)
                                 GPU_ARGS=(-vga none)
                                 ;;
@@ -747,7 +898,8 @@ case "${ARCH}" in
                 # with "need rutabaga or udmabuf for blob resources".  Flag the
                 # memfd backend only when blob is actually attached to the GPU.
                 QEMU_GPU_NEEDS_MEMFD=0
-                if [[ " ${GPU_ARGS[*]} " == *"blob=true"* ]]; then
+                if [[ " ${GPU_ARGS[*]} " == *"blob=true"* ||
+                      "${gpu_is_rutabaga}" == "1" ]]; then
                         QEMU_GPU_NEEDS_MEMFD=1
                 fi
                 INPUT_ARGS=()
@@ -803,7 +955,7 @@ case "${ARCH}" in
                                 QEMU_MACHINE="${QEMU_MACHINE},memory-backend=${QEMU_MEM_BACKEND_ID}"
                         fi
                 fi
-                QEMU_CMD=(qemu-system-x86_64
+                QEMU_CMD=("${QEMU_BIN}"
                         -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}"
                         "${MEM_BACKEND_ARGS[@]}"
                         "${KVM_ARGS[@]}" "${CPU_ARGS[@]}"
