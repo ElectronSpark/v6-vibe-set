@@ -19,6 +19,7 @@ file mkdir $outdir
 
 set runlog "$outdir/run.log"
 set monitor "$outdir/qemu-monitor.sock"
+set qmp_monitor "$outdir/qemu-qmp.sock"
 set tmpimg "$outdir/r9-kde-plasma.fs.img"
 set guest_sh "$outdir/guest-r9-run.sh"
 set guest_bash "$outdir/guest-r9-run-bash.sh"
@@ -30,6 +31,7 @@ set debugfs_cmds "$outdir/debugfs-setup.commands"
 set debugfs_log "$outdir/debugfs-setup.log"
 set qemu_dry_run_log "$outdir/qemu-dry-run.txt"
 set monitor_log "$outdir/qemu-monitor-command.log"
+set qmp_log "$outdir/qemu-qmp-command.log"
 set status_log "$outdir/r9-probe.status"
 set output_log "$outdir/r9-probe-output.log"
 set cmdline_log "$outdir/r9-cmdline.txt"
@@ -277,7 +279,7 @@ proc inject_guest_setup {} {
 }
 
 proc configure_qemu_env {} {
-    global monitor
+    global monitor qmp_monitor
 
     set ::env(DISPLAY_MODE) "gtk"
     if {![info exists ::env(USE_KVM)]} {
@@ -294,7 +296,7 @@ proc configure_qemu_env {} {
     set ::env(QEMU_VIRTIO_GPU_YRES) "800"
     set ::env(QEMU_APPEND) "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0 glsmoke=0 r9_cursor_contract_probe=1"
 
-    set extra "-monitor unix:$monitor,server,nowait"
+    set extra "-monitor unix:$monitor,server,nowait -qmp unix:$qmp_monitor,server,nowait"
     if {[info exists ::env(R9_CURSOR_CONTRACT_QEMU_EXTRA)] &&
         $::env(R9_CURSOR_CONTRACT_QEMU_EXTRA) ne ""} {
         append extra " " $::env(R9_CURSOR_CONTRACT_QEMU_EXTRA)
@@ -327,7 +329,7 @@ proc run_qemu_dry_run {} {
     }
 }
 
-proc monitor_command {cmd {timeout_sec 4}} {
+proc monitor_command_output {cmd {timeout_sec 4}} {
     global monitor monitor_log outdir
 
     set cmd_path "$outdir/qemu-monitor-command-[pid]-[clock microseconds].txt"
@@ -337,7 +339,35 @@ proc monitor_command {cmd {timeout_sec 4}} {
     } out]
     catch { file delete -force $cmd_path }
     append_text_file $monitor_log "cmd=$cmd\nrc=$rc\n$out\n"
+    return [list $rc $out]
+}
+
+proc monitor_command {cmd {timeout_sec 4}} {
+    set result [monitor_command_output $cmd $timeout_sec]
+    set rc [lindex $result 0]
     if {$rc != 0} {
+        return 0
+    }
+    return 1
+}
+
+proc qmp_command {json {timeout_sec 4}} {
+    global qmp_monitor qmp_log outdir
+
+    set cmd_path "$outdir/qemu-qmp-command-[pid]-[clock microseconds].json"
+    write_text_file $cmd_path "{\"execute\":\"qmp_capabilities\"}\n$json\n"
+    set rc [catch {
+        exec nc -U -w $timeout_sec -q 0 $qmp_monitor < $cmd_path 2>@1
+    } out]
+    catch { file delete -force $cmd_path }
+    append_text_file $qmp_log "cmd=$json\nrc=$rc\n$out\n"
+    if {$rc != 0} {
+        return 0
+    }
+    if {[regexp {\"error\"} $out]} {
+        return 0
+    }
+    if {![regexp {\"return\"} $out]} {
         return 0
     }
     return 1
@@ -373,8 +403,10 @@ proc kill_qemu {} {
     global qemu_pid
 
     if {[info exists qemu_pid] && $qemu_pid ne ""} {
+        catch { exec kill -TERM -- -$qemu_pid }
         catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
         after 1000
+        catch { exec kill -KILL -- -$qemu_pid }
         catch { wait }
     }
 }
@@ -466,20 +498,75 @@ proc wait_for_armed {} {
 proc inject_mouse_moves {} {
     set moves {
         {0 0}
-        {32768 32768}
-        {65535 65535}
-        {16384 49152}
-        {49152 16384}
+        {16384 16384}
+        {32767 32767}
+        {8192 24575}
+        {24575 8192}
     }
 
+    artifact_note "absolute_mouse_move_range=0..32767"
+    select_absolute_mouse
     foreach move $moves {
         set x [lindex $move 0]
         set y [lindex $move 1]
-        if {![monitor_command "mouse_move $x $y"]} {
-            finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-mouse-move"
+        if {![qmp_absolute_move $x $y]} {
+            finish 9 "R9-CURSOR-CONTRACT-FAIL qmp-absolute-move"
         }
         after 250
     }
+}
+
+proc qmp_absolute_move {x y} {
+    set json "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":\[{\"type\":\"abs\",\"data\":{\"axis\":\"x\",\"value\":$x}},{\"type\":\"abs\",\"data\":{\"axis\":\"y\",\"value\":$y}}\]}}"
+    return [qmp_command $json]
+}
+
+proc select_absolute_mouse {} {
+    set info_result [monitor_command_output "info mice"]
+    set info_rc [lindex $info_result 0]
+    set info_text [lindex $info_result 1]
+    set mouse_index ""
+
+    if {$info_rc != 0} {
+        finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-info-mice"
+    }
+
+    foreach line [split $info_text "\n"] {
+        if {[regexp {Mouse #([0-9]+): .*\(absolute\)} $line -> index]} {
+            set mouse_index $index
+            break
+        }
+    }
+
+    if {$mouse_index eq ""} {
+        artifact_note "absolute_mouse_select=FAIL reason=no-absolute-mouse"
+        finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-no-absolute-mouse"
+    }
+
+    artifact_note "absolute_mouse_index=$mouse_index"
+    if {![monitor_command "mouse_set $mouse_index"]} {
+        finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-mouse-set-absolute"
+    }
+
+    set verify_result [monitor_command_output "info mice"]
+    set verify_rc [lindex $verify_result 0]
+    set verify_text [lindex $verify_result 1]
+    set active_absolute 0
+
+    if {$verify_rc != 0} {
+        finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-info-mice-after-set"
+    }
+    foreach line [split $verify_text "\n"] {
+        if {[regexp "\\* Mouse #$mouse_index: .*\\(absolute\\)" $line]} {
+            set active_absolute 1
+            break
+        }
+    }
+    if {!$active_absolute} {
+        artifact_note "absolute_mouse_select=FAIL reason=active-verify-failed index=$mouse_index"
+        finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-absolute-mouse-not-active"
+    }
+    artifact_note "absolute_mouse_select=PASS index=$mouse_index"
 }
 
 proc wait_for_done {} {
@@ -507,7 +594,7 @@ if {![file exists $fsimg]} {
     exit 2
 }
 
-catch { file delete -force $monitor $runlog $qemu_dry_run_log $monitor_log }
+catch { file delete -force $monitor $qmp_monitor $runlog $qemu_dry_run_log $monitor_log $qmp_log }
 catch { file delete -force $debugfs_cmds $debugfs_log $startup_verify $r9_run_verify }
 catch { file delete -force $status_log $output_log $cmdline_log $process_log $r9_lines $summary_log }
 

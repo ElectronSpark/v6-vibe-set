@@ -137,27 +137,26 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   non-sequential single-page fills (executable page-in; ~71% of fills).
 - N3 = R9 cursor out-of-range (user-visible) + the KWin LibinputBackend
   nullptr payload bug found by R5 forensics (same input area). Harness
-  fixed: `scripts/gpu/r9-cursor-contract-probe.expect` now batches debugfs
-  image mutation, records setup phases/failures in `STATUS.txt`, verifies
-  `/r9-run.sh` and `/etc/startup`, and avoids guest `grep -q` so the xv6
-  guest script reaches `phase=armed`. Dry-run gate passed:
-  `R9_CURSOR_CONTRACT_DRY_RUN=1 timeout 60 expect scripts/gpu/r9-cursor-contract-probe.expect`
-  (artifact
-  `build-x86_64/r9-cursor-contract-probe-history/20260704T194831Z/`,
-  `qemu-dry-run.txt` present, `/r9-run.sh` verified in the copied image).
-  Real probe `20260704T200703Z` now PASS after making the standalone R9
-  runner use the KDE session ABI library path
-  (`/opt/xv6-kde-abi-libs` first). Root cause for the `20260704T195436Z`
-  failure was the probe's default RUNPATH preferring the host
+  and seat plumbing are fixed; coordinate delivery is now classified and
+  has a passing contract. Root cause for the `20260704T195436Z` failure
+  was the probe's default RUNPATH preferring the host
   `/usr/lib/x86_64-linux-gnu` libinput/libudev stack; udev enumeration was
-  empty and libinput failed monitor/seat setup. New evidence: udev input
-  enumeration returns count=2 for event0/event1 with `seat` tags and
-  `ID_SEAT=seat0`, libinput reports `reason=ready fd=6`, then drains
-  18 libinput events but zero absolute samples; `/dev/mouse` still repeats
-  x=127 y=127 after the initial 0,0 sample. Next N3 slice is coordinate/event
-  sampling only: compare raw evdev reads/libinput event types against monitor
-  moves and `/dev/mouse`; do not reopen image injection or seat plumbing unless
-  `STATUS.txt` or `r9-lines.txt` regresses.
+  empty and libinput failed monitor/seat setup. Root cause for the
+  `20260704T200703Z` coordinate failure was QEMU injection, not kernel
+  scaling/storage, evdev, or libinput classification: HMP `mouse_move`
+  delivered legacy PS/2 relative samples (`flags=0`, repeated/clamped
+  127,127) and zero ABS samples. The strict HMP-selected rerun
+  `20260704T202206Z` proved `mouse_set 3`/`info mice` selected
+  `QEMU Virtio Tablet (absolute)` but HMP still produced only PS/2
+  relative samples. Current harness therefore keeps HMP `info mice` as
+  routing evidence, adds a QMP socket, and injects raw 0..32767 tablet
+  coordinates with `input-send-event` absolute X/Y pairs. Probe PASS is
+  now strict: zero evdev ABS or zero libinput absolute samples fails with
+  an explicit reason. Dry-run `20260704T202724Z` PASS; real R9
+  `20260704T202747Z` PASS with `/dev/mouse flags=1`, `evdev_abs_samples=10`,
+  `libinput_abs_samples=5`, and `result=PASS reason=coordinate_samples`.
+  Next N3 work can move past coordinate delivery to cursor-plane transform /
+  user-visible pointer behavior and the LibinputBackend nullptr payload bug.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
   Implement both together, one battery.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
@@ -554,18 +553,32 @@ raw path normalizes to 0..65535 — verify at runtime); (2) raw ABS values
 at screen edges vs host pointer; (3) cursor-plane transform under
 `virtio_gpu_host_cursor_only=1`. Probe machinery is now harness-fixed and
 source-only: `scripts/gpu/r9-cursor-contract-probe.expect`
-(startup-injected `/r9-run.sh`, debugfs polling, monitor `mouse_move` after
+(startup-injected `/r9-run.sh`, debugfs polling, QMP absolute injection after
 `phase=armed`) — do NOT drive the probe over the interactive serial shell.
 Dry-run `20260704T200628Z` passed with `qemu-dry-run.txt` after the R9
 runner inherited the KDE ABI library path. Real probe `20260704T200703Z`
-reached `armed_pid=57`, sent all five monitor moves, and passed discovery:
+reached `armed_pid=57`, sent all five HMP monitor moves, and passed discovery:
 udev enumerated event0/event1 (`count=2`) and libinput assigned `seat0`
-(`r9_libinput_status rc=0 errno=0 reason=ready fd=6`). Remaining blocker is
-now the coordinate/event layer: libinput reported 18 events but
-`absolute_samples=0`, evdev collected no raw ABS samples during the monitor
-moves despite EVIOCGABS reporting 0..65535 metadata, and `/dev/mouse` still
-clamped/repeated x=127 y=127. Include the LibinputBackend nullptr payload fix
-here.
+(`r9_libinput_status rc=0 errno=0 reason=ready fd=6`), but HMP produced only
+relative PS/2 samples: libinput reported 18 events with
+`absolute_samples=0`, evdev collected no raw ABS samples, and `/dev/mouse`
+clamped/repeated `flags=0 x=127 y=127`.
+
+Coordinate slice result 2026-07-04: HMP routing was the failure layer.
+Strict rerun `20260704T202206Z` selected `Mouse #3: QEMU Virtio Tablet
+(absolute)` with HMP `mouse_set 3`, then still produced only PS/2 relative
+samples and failed strictly with `reason=no_evdev_abs_samples`. The fixed
+harness now opens `qemu-qmp.sock` and sends QMP `input-send-event` absolute
+axis events in the virtio tablet's raw 0..32767 range, while retaining HMP
+`info mice`/`mouse_set` logs as routing evidence and killing the spawned QEMU
+process group on finish. Dry-run `20260704T202724Z` PASS; real R9
+`20260704T202747Z` PASS: `/dev/mouse flags=1`; event1 EV_ABS samples
+0/0, 32768/32768, 65535/65535, 16384/49150, 49150/16384; libinput absolute
+samples 0/0, 640/400, 1279.980/799.988, 320/599.976, 959.961/200; summary
+`evdev_abs_samples=10 mouse_samples=5 libinput_abs_samples=5 result=PASS
+reason=coordinate_samples`. Include the LibinputBackend nullptr payload fix
+and cursor-plane/user-visible follow-up here; do not reopen image injection,
+seat plumbing, or kernel signed-16 storage without new contradictory evidence.
 
 ## Verification Gates
 

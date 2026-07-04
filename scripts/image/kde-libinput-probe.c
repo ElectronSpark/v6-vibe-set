@@ -814,9 +814,26 @@ static const char *summary_result(const struct r9_counts *counts)
 {
     if (counts->fatal_errors)
         return "FAIL";
-    if (counts->abs_ioctl_attempts > 0)
-        return "PASS";
-    return "NO_SAMPLES";
+    if (counts->abs_ioctl_ok <= 0)
+        return "FAIL";
+    if (counts->evdev_abs_samples <= 0)
+        return "FAIL";
+    if (counts->libinput_abs_samples <= 0)
+        return "FAIL";
+    return "PASS";
+}
+
+static const char *summary_reason(const struct r9_counts *counts)
+{
+    if (counts->fatal_errors)
+        return "fatal_errors";
+    if (counts->abs_ioctl_ok <= 0)
+        return "no_abs_metadata";
+    if (counts->evdev_abs_samples <= 0)
+        return "no_evdev_abs_samples";
+    if (counts->libinput_abs_samples <= 0)
+        return "no_libinput_abs_samples";
+    return "coordinate_samples";
 }
 
 static int run_r9_cursor_contract(const struct r9_options *opts)
@@ -826,6 +843,8 @@ static int run_r9_cursor_contract(const struct r9_options *opts)
     struct libinput_probe libinput_probe;
     int mouse_fd;
     const char *li_reason;
+    const char *result;
+    const char *reason;
 
     memset(&counts, 0, sizeof(counts));
     for (int i = 0; i < MAX_EVENT_DEVS; i++)
@@ -855,15 +874,17 @@ static int run_r9_cursor_contract(const struct r9_options *opts)
     cleanup_libinput_probe(&libinput_probe);
     close_event_devices(devs);
 
+    result = summary_result(&counts);
+    reason = summary_reason(&counts);
     printf("%s r9_summary event_devices_open=%d abs_ioctl_attempts=%d "
            "abs_ioctl_ok=%d evdev_abs_samples=%d mouse_samples=%d "
-           "libinput_events=%d libinput_abs_samples=%d result=%s\n",
+           "libinput_events=%d libinput_abs_samples=%d result=%s reason=%s\n",
            R9_PREFIX, counts.event_devices_open, counts.abs_ioctl_attempts,
            counts.abs_ioctl_ok, counts.evdev_abs_samples,
            counts.mouse_samples, counts.libinput_events,
-           counts.libinput_abs_samples, summary_result(&counts));
+           counts.libinput_abs_samples, result, reason);
 
-    return counts.fatal_errors ? 1 : 0;
+    return strcmp(result, "PASS") == 0 ? 0 : 1;
 }
 
 int main(int argc, char **argv)
