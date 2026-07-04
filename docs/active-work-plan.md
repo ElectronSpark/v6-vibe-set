@@ -3,9 +3,10 @@
 Last updated: 2026-07-04 (FULL COMPACTION REWRITE after the 07-04 round:
 R5 root-caused + fixed, P2 ordered-pageflip default landed, Q2 real-GL
 runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
-gated, kprofile measurement validity fixed. All verbose evidence chains
-moved to the history file and git log; this file holds current status,
-queue, rules, and compact lane conclusions only.)
+gated, N2 ext4 default promotion attempted but NOT accepted after a
+default-on KWin #GP rerun, kprofile measurement validity fixed. All
+verbose evidence chains moved to the history file and git log; this file
+holds current status, queue, rules, and compact lane conclusions only.)
 
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
@@ -109,11 +110,18 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   add native/blob present counters. Route (b) remains low payoff unless
   new evidence contradicts `bo_present_copy_ticks=0` and
   `virtio_present_copy_calls=0`.
-- N2 = P3 promotion: default-flip `ext4_read_page_direct=1` (browser
-  start 10.6s -> 6.2s, read_page_ms -50%, battery green 07-04; needs the
-  Guardrails default-flip protocol: same-session A/B + control + battery).
-  Then optional second slice: batch the remaining non-sequential
-  single-page fills (executable page-in; ~71% of fills).
+- N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
+  guarded battery had static/build/nographic PASS, one KDE active-sample
+  PASS, explicit-off control PASS after one known visible-timeout flake,
+  and M9 launch-only PASS, but an extra default-on active-sample rerun hit
+  `kwin_wayland` #GP in `libQt5Core.so.5` (`kde-session-ready-crash`).
+  Because this is on the P3 risk list (KWin/loader recycled-byte
+  corruption), `ext4_read_page_direct` stays default-OFF. Next diagnostic:
+  cold-cache crash-focused A/B, 3-5 default-on vs explicit-off KDE
+  active-sample runs, extracting KWin fault/core/PTE or frame evidence if
+  the #GP recurs, before any promotion retry. Optional second slice still
+  exists after promotion: batch remaining non-sequential single-page fills
+  (executable page-in; ~71% of fills).
 - N3 = R9 cursor out-of-range (user-visible) + the KWin LibinputBackend
   nullptr payload bug found by R5 forensics (same input area). Harness
   ready: `scripts/gpu/r9-cursor-contract-probe.expect` (source-only,
@@ -299,7 +307,7 @@ host-visible mmap already exist, but creatable capsets are VIRGL/VIRGL2
 only; scanout-blob/native-present and gfxstream/cross-domain admission are
 future slices once a capable host route is available.
 
-### P3 — Ext4 read-path serialization: first slice LANDED gated (= N2)
+### P3 — Ext4 read-path serialization: first slice LANDED gated; N2 stopped
 
 `ext4fs_pcache_read_page` held the per-mount esb mutex across device
 waits, serializing all readers/faulters (0.86ms/fill, ~29s per video
@@ -311,9 +319,36 @@ A/B same workload: read_page_ms 29016 -> 14469 (-50%), lookup lock wait
 -52%, ext4_fault_ms -66%, browser start 10.63s -> 6.17s (-42%); video
 unchanged (present-path ceiling); fork/clone/cow + KDE battery green.
 Archive `20260704T151500Z-p3-ext4-read-page-direct-chromium-kprofile-ab-pass`.
-N2 = promote the default per Guardrails; optional second slice = batch
-the remaining non-sequential single-page fills (executable page-in
-pattern, ~71% of fills).
+
+N2 guarded promotion attempt 2026-07-04: source flip made omitted token
+default-on and explicit `ext4_read_page_direct=0` default-off control, then
+ran the acceptance battery. Static/build PASS (`git diff --check`,
+`git -C kernel diff --check`, kernel build). Nographic fork safety PASS:
+`forktest` rc=1 known exhaustion signature, `clonetest` rc=0, `cowtest`
+rc=0, boot cmdline had no direct-read token. KDE active-sample default-on
+PASS with no direct-read token
+(`20260704T181959Z-n2-ext4-direct-default-on-kde-active-sample-pass`;
+M4 3518, M5 13420). Explicit-off control with
+`QEMU_APPEND_EXTRA=ext4_read_page_direct=0` had one known visible-timeout
+flake (`20260704T182300Z-n2-ext4-direct-explicit-off-kde-visible-timeout-rerun-needed`)
+then PASS
+(`20260704T182457Z-n2-ext4-direct-explicit-off-kde-active-sample-control-pass`;
+M4 2365, M5 10015, cmdline proved token present). M9 launch-only default
+real-GL guard PASS with software/bundled GL env unset
+(`20260704T182703Z-n2-ext4-direct-default-on-chromium-launch-only-m9-pass`;
+GPU/init/GL request errors 0, no `--use-gl`/ANGLE fallback args).
+However, an extra default-on KDE active-sample rerun produced
+`KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-ready-crash`: `kwin_wayland`
+#GP in `/usr/lib/x86_64-linux-gnu/libQt5Core.so.5`, no direct-read token
+in cmdline
+(`20260704T183012Z-n2-ext4-direct-default-on-kde-kwin-gp-stop`). Because
+the N2 risk list includes KWin/ld.so recycled-byte corruption, the battery
+is not clear/safe. The source flip was reverted before commit; current
+state remains default-OFF with opt-in `ext4_read_page_direct=1`. Next
+diagnostic is crash-focused cold-cache A/B (3-5 default-on vs explicit-off
+KDE active-sample runs plus KWin fault/core/PTE or frame evidence if the
+#GP recurs). Optional second slice = batch the remaining non-sequential
+single-page fills (executable page-in pattern, ~71% of fills).
 
 ### Q2 / R8 — Chromium real GL: DONE (validated 2026-07-04)
 
@@ -449,7 +484,7 @@ Include the LibinputBackend nullptr payload fix here.
   (key 07-04 entries: `*-q0-kprofile-wait-fix-first-valid-m7-window`,
   `*-p3-ext4-read-page-direct-*`, `*-r5-tlb-fix-*`,
   `*-q7-ordered-pageflip-*`, `*-q2-mesa-angle-ladder-*`,
-  `*-q2-real-gl-full-video-m7-44fps`).
+  `*-q2-real-gl-full-video-m7-44fps`, `*-n2-ext4-direct-*`).
 - `build-x86_64/yt-mainpage-freeze-repro/` — P0/M1 replays.
 - `build-x86_64/syscall-tlb-proof/`, `build-x86_64/pageflip-ordered-ab-proof/`,
   `build-x86_64/desktop-bottleneck-profile/`,
