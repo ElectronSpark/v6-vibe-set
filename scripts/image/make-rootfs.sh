@@ -904,9 +904,15 @@ stage_kde_abi_overrides() {
     local dir="${STAGE}/opt/xv6-kde-abi-libs"
     local cc_bin="${CC:-cc}"
     local ifunc_map="${BUILD_DIR:-/tmp}/xv6-ifunc-memcpy-shim.map"
+    local kde_libinput="${STAGE}/usr/lib/x86_64-linux-gnu/libinput.so.10"
 
     mkdir -p "${dir}"
-    ln -sfn /lib/libinput.so.10 "${dir}/libinput.so.10"
+    if [[ -e "${kde_libinput}" ]]; then
+        cp -L "${kde_libinput}" "${dir}/libinput.so.10"
+        chmod 0755 "${dir}/libinput.so.10" 2>/dev/null || true
+    else
+        ln -sfn /lib/libinput.so.10 "${dir}/libinput.so.10"
+    fi
     ln -sfn /lib/libudev.so.1 "${dir}/libudev.so.1"
     ln -sfn /lib/libdrm.so.2 "${dir}/libdrm.so.2"
     if [[ -f "${REPO_ROOT}/scripts/image/xv6-ifunc-memcpy-shim.c" ]]; then
