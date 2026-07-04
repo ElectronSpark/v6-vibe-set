@@ -11,6 +11,11 @@ static const char *chrome_dir =
     "/opt/host-gui/wayland-chromium/chrome-linux64";
 static const char *chrome_bin =
     "/opt/host-gui/wayland-chromium/chrome-linux64/chrome";
+static const char *launcher_log_path = "/host-gui-wayland-chromium.log";
+static const char *launcher_compat_log_path =
+    "/tmp/host-gui-wayland-chromium.log";
+static const char *chrome_debug_log_path = "/chrome_debug.log";
+static const char *chrome_debug_compat_log_path = "/tmp/chrome_debug.log";
 
 static void set_default_env(const char *name, const char *value)
 {
@@ -30,7 +35,15 @@ static void redirect_log(void)
             close(null_fd);
     }
 
-    int fd = open("/tmp/host-gui-wayland-chromium.log",
+    unlink(launcher_compat_log_path);
+    if (symlink(launcher_log_path, launcher_compat_log_path) < 0 &&
+        errno != EEXIST) {
+        /* The canonical root log is still opened below. */
+    }
+
+    int fd = open(launcher_log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0)
+        fd = open(launcher_compat_log_path,
                   O_WRONLY | O_CREAT | O_APPEND, 0644);
 
     if (fd < 0)
@@ -39,6 +52,47 @@ static void redirect_log(void)
     dup2(fd, STDERR_FILENO);
     if (fd > STDERR_FILENO)
         close(fd);
+}
+
+static void fprint_escaped(FILE *out, const char *text)
+{
+    static const char hex[] = "0123456789abcdef";
+
+    if (!text) {
+        fputs("(unset)", out);
+        return;
+    }
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        unsigned char c = *p;
+
+        if (c == '\\' || c == '"') {
+            fputc('\\', out);
+            fputc(c, out);
+        } else if (c >= 0x20 && c <= 0x7e) {
+            fputc(c, out);
+        } else {
+            fputs("\\x", out);
+            fputc(hex[c >> 4], out);
+            fputc(hex[c & 0xf], out);
+        }
+    }
+}
+
+static void log_env_value(const char *name)
+{
+    fprintf(stderr, "wayland-chromium-launcher: env %s=\"", name);
+    fprint_escaped(stderr, getenv(name));
+    fputs("\"\n", stderr);
+}
+
+static void log_child_argv(char *const *argv, int argc)
+{
+    fprintf(stderr, "wayland-chromium-launcher: final_argc=%d\n", argc);
+    for (int i = 0; i < argc; i++) {
+        fprintf(stderr, "wayland-chromium-launcher: argv_%d=\"", i);
+        fprint_escaped(stderr, argv[i]);
+        fputs("\"\n", stderr);
+    }
 }
 
 static void append_arg(char **argv, int *idx, int max, const char *arg)
@@ -95,7 +149,14 @@ int main(int argc, char **argv)
         set_default_env("OZONE_PLATFORM", "wayland");
     }
     set_default_env("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
-    set_default_env("CHROME_LOG_FILE", "/tmp/chrome_debug.log");
+    set_default_env("CHROME_LOG_FILE", chrome_debug_log_path);
+    if (strcmp(getenv("CHROME_LOG_FILE"), chrome_debug_log_path) == 0) {
+        unlink(chrome_debug_compat_log_path);
+        if (symlink(chrome_debug_log_path, chrome_debug_compat_log_path) < 0 &&
+            errno != EEXIST) {
+            /* The canonical CHROME_LOG_FILE path remains usable. */
+        }
+    }
     set_default_env("NO_AT_BRIDGE", "1");
     set_default_env("GTK_MODULES", "");
     set_default_env("GSETTINGS_SCHEMA_DIR", "/share/glib-2.0/schemas");
@@ -188,6 +249,21 @@ int main(int argc, char **argv)
         append_arg(child_argv, &idx, MAX_ARGS, "about:blank");
     child_argv[idx] = NULL;
 
+    fprintf(stderr, "wayland-chromium-launcher: launch_marker pid=%ld\n",
+            (long)getpid());
+    log_env_value("EGL_PLATFORM");
+    log_env_value("SIMDUTF_FORCE_IMPLEMENTATION");
+    log_env_value("WAYLAND_CHROMIUM_SIMDUTF_FORCE_IMPLEMENTATION");
+    log_env_value("WAYLAND_CHROMIUM_EGL_TRACE");
+    log_env_value("XV6_MESA_EGL_CONTEXT_TRACE");
+    log_env_value("MESA_EXTENSION_OVERRIDE");
+    log_env_value("WAYLAND_CHROMIUM_BUNDLED_GL");
+    log_env_value("WAYLAND_CHROMIUM_WAYLAND_DEBUG");
+    log_env_value("WAYLAND_DEBUG");
+    log_env_value("LD_PRELOAD");
+    log_child_argv(child_argv, idx);
+    fprintf(stderr, "wayland-chromium-launcher: child_exec path=%s\n",
+            chrome_bin);
     fprintf(stderr, "wayland-chromium-launcher: exec %s root=%s\n",
             chrome_bin, app_root);
     fflush(stderr);

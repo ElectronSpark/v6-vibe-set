@@ -823,10 +823,10 @@ proc write_color_metrics {diff_pixels} {
 }
 
 proc chromium_guest_artifact_clear_command {} {
-    global guest_wayland_chromium_log guest_chrome_debug_log
+    global guest_wayland_chromium_log guest_wayland_chromium_compat_log
+    global guest_chrome_debug_log guest_chrome_debug_compat_log
     global guest_kwin_alloc_trace_log guest_kwin_loader_ifunc_log
     global guest_qtqml_ifunc_log guest_qtqml_ifunc_status
-    global guest_wayland_chromium_compat_log guest_chrome_debug_compat_log
     global guest_chromium_process_evidence_log guest_chromium_launch_probe_log
 
     return "rm -f $guest_wayland_chromium_log $guest_wayland_chromium_compat_log $guest_chrome_debug_log $guest_chrome_debug_compat_log $guest_chromium_process_evidence_log $guest_chromium_launch_probe_log"
@@ -9453,6 +9453,15 @@ proc write_chromium_video_post_evidence {} {
         [regexp {kde_chromium_video_capture result status=PASS} [read_text_file $chromium_video_capture_log]]} {
         set capture_result_pass 1
     }
+    if {$chromium_launch_only eq "1"} {
+        if {![guest_artifact_real_file $chromium_video_capture_log]} {
+            set capture_log_summary "status=SKIP reason=launch-only"
+            set capture_timing_summary "status=SKIP reason=launch-only"
+        }
+        if {![guest_artifact_real_file $chromium_video_capture_status]} {
+            set capture_status_line "status=SKIP reason=launch-only"
+        }
+    }
     if {[guest_artifact_real_file $host_egl_gbm_status]} {
         set egl_gbm_status_line [string trim [read_text_file $host_egl_gbm_status]]
     }
@@ -9753,7 +9762,7 @@ proc write_chromium_video_post_evidence {} {
     if {$fast_census_result_line ne ""} {
         puts $fh "chromium_video_post_evidence fast_census_result=$fast_census_result_line"
     }
-    puts $fh "chromium_video_post_evidence capture_log_present=[expr {[file exists $chromium_video_capture_log] ? 1 : 0}]"
+    puts $fh "chromium_video_post_evidence capture_log_present=[guest_artifact_real_file $chromium_video_capture_log]"
     puts $fh "chromium_video_post_evidence capture_log_summary=$capture_log_summary"
     puts $fh "chromium_video_post_evidence capture_timing_summary=$capture_timing_summary"
     puts $fh "chromium_video_post_evidence capture_status=$capture_status_line"
@@ -11012,7 +11021,13 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_host_egl_gbm_log $host_egl_gbm_log
     dump_optional_guest_artifact $guest_host_egl_gbm_status $host_egl_gbm_status
     dump_optional_guest_artifact $guest_wayland_chromium_log $wayland_chromium_log
+    if {![guest_artifact_real_file $wayland_chromium_log]} {
+        dump_optional_guest_artifact $guest_wayland_chromium_compat_log $wayland_chromium_log
+    }
     dump_optional_guest_artifact $guest_chrome_debug_log $chrome_debug_log
+    if {![guest_artifact_real_file $chrome_debug_log]} {
+        dump_optional_guest_artifact $guest_chrome_debug_compat_log $chrome_debug_log
+    }
     dump_optional_guest_artifact $guest_kwin_alloc_trace_log $kwin_alloc_trace_log
     dump_optional_guest_artifact $guest_kde_session_kwin_log $kde_session_kwin_log
     dump_optional_guest_artifact $guest_kde_session_plasma_log $kde_session_plasma_log

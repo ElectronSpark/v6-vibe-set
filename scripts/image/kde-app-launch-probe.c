@@ -161,14 +161,22 @@ static void escape_string(char *out, size_t out_size, const char *in)
 
 static void chromium_evidence_open(void)
 {
-    chromium_evidence = fopen(chromium_evidence_path, "w");
+    int fd = open(chromium_evidence_path,
+                  O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC,
+                  0644);
+
+    if (fd >= 0)
+        chromium_evidence = fdopen(fd, "a");
     if (!chromium_evidence) {
+        if (fd >= 0)
+            close(fd);
         fprintf(stderr,
                 "kde_app_launch_probe chromium_evidence open_failed path=%s "
                 "errno=%d %s\n",
                 chromium_evidence_path, errno, strerror(errno));
         return;
     }
+    setvbuf(chromium_evidence, NULL, _IOLBF, 0);
     fprintf(chromium_evidence,
             "kde_chromium_process_evidence begin pid=%ld ppid=%ld\n",
             (long)getpid(), (long)getppid());
@@ -177,14 +185,21 @@ static void chromium_evidence_open(void)
 
 static void chromium_evidence_open_append(const char *phase)
 {
-    chromium_evidence = fopen(chromium_evidence_path, "a");
+    int fd = open(chromium_evidence_path,
+                  O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+
+    if (fd >= 0)
+        chromium_evidence = fdopen(fd, "a");
     if (!chromium_evidence) {
+        if (fd >= 0)
+            close(fd);
         fprintf(stderr,
                 "kde_app_launch_probe chromium_evidence append_open_failed "
                 "path=%s errno=%d %s\n",
                 chromium_evidence_path, errno, strerror(errno));
         return;
     }
+    setvbuf(chromium_evidence, NULL, _IOLBF, 0);
     fprintf(chromium_evidence,
             "kde_chromium_process_evidence sampler phase=%s pid=%ld ppid=%ld "
             "begin\n",
@@ -262,15 +277,25 @@ static int launch_app(struct app_probe *probe)
 
 static int child_still_running(pid_t pid)
 {
-    int status;
-    pid_t got;
+    char path[64];
+    char buf[512];
+    int fd;
+    ssize_t n;
 
-    got = waitpid(pid, &status, WNOHANG);
-    if (got == 0)
-        return 1;
-    if (got < 0 && errno == ECHILD)
+    if (pid <= 0)
+        return 0;
+    snprintf(path, sizeof(path), "/proc/%ld/status", (long)pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
         return kill(pid, 0) == 0;
-    return 0;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0)
+        return kill(pid, 0) == 0;
+    buf[n] = '\0';
+    if (strstr(buf, "State:\tZ") || strstr(buf, "State:\tX"))
+        return 0;
+    return 1;
 }
 
 static int file_contains_string(const char *path, const char *needle)
@@ -2037,6 +2062,11 @@ static int run_chromium_only(const char *chromium_url)
                                    &launcher_log, &launcher_marker,
                                    &launcher_child_exec, &launcher_url,
                                    &launcher_wayland_platform_fail);
+    record_child_status(&chromium);
+    if (chromium.pid > 0 && child_still_running(chromium.pid))
+        chromium.ok = 1;
+    if (!chromium.ok)
+        ok = 0;
     if (!launcher_log || !launcher_marker || !launcher_child_exec ||
         !launcher_url || launcher_wayland_platform_fail)
         ok = 0;

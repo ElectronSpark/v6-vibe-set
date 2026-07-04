@@ -385,6 +385,30 @@ Active queue, in order:
   were missing; the sampled browser later became a zombie. There are no
   `undefined symbol`, `LIBUDEV`, `libKF5Solid`, `symbol lookup`, KWin `#PF`,
   `PANIC`, or fatal page fault markers in the archived logs.
+  Follow-up on 2026-07-04 fixed the harness/launcher contract that caused
+  the first Q2 failure to be ambiguous: `/bin/wayland-chromium` now writes the
+  canonical `/host-gui-wayland-chromium.log` and `/chrome_debug.log` paths,
+  keeps `/tmp` compat symlinks, emits strict launch markers/argv/env evidence,
+  and the launch probe appends process evidence without reaping the child
+  during liveness checks. The smoke harness now falls back to the compat `/tmp`
+  logs if the root paths are absent, and future launch-only post-evidence marks
+  capture as `SKIP reason=launch-only` instead of treating the intentionally
+  absent capture as noise. After `rootfs-refresh`, one Q2 launch-only retry
+  with all bundled/software GL env vars unset still failed:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T114635Z-q2-chromium-launch-only-launcher-log-fix-wayland-refused/`.
+  This retry narrowed the remaining blocker to KDE/Wayland session liveness,
+  not Chromium GL startup: launcher evidence is real
+  (`launcher_log=1 launcher_marker=1 launcher_child_exec=1 launcher_url=1`)
+  and Chromium exits 1 after `Failed to connect to Wayland display:
+  Connection refused`, while `kde-session-plasma-child.log` records
+  plasmashell KCrash and `The Wayland connection broke. Did the Wayland
+  compositor die?`. Preflight still passes, KWin/host EGL still use accelerated
+  virgl on `D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)` with Mesa
+  `26.2.0-devel`, the sampler sees only the browser role
+  (`renderer_seen=0 gpu_seen=0`) plus crashpad, and no Solid/libudev/KWin #PF,
+  PANIC, or fatal page fault markers appear. The current Q2 blocker is
+  therefore a compositor/session refusal before Chromium can create Wayland
+  surfaces or renderer/GPU roles.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
