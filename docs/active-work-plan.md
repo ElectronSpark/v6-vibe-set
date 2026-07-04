@@ -81,13 +81,30 @@ Active queue, in order:
   `bash -n`, `git diff --check`, CMake configure, and `rootfs-refresh`;
   debugfs proof showed `/.stamp` absent and `/opt/xv6-kde/README.txt`
   present. No VM boot and no push were part of this checkpoint.
-- Q2 = R8 GL decision + implementation: default Chromium path fails on
-  missing `GL_ANGLE_robust_client_memory` (then a 6-extension ladder) in
-  Chromium passthrough. Options analyzed in the R8 section: implement the
-  passthrough-required semantics in Mesa/virgl, or adopt a documented
-  launcher GL policy (bundled-ANGLE/software fallback — works launch-only
-  today but M7-poor). Needs a user decision on direction before heavy
-  implementation.
+- Q2 = R8 GL implementation: user decision is resolved — pursue
+  hardware-accelerated default Chromium via Mesa/virgl passthrough-required
+  semantics. Bundled/software fallback remains diagnostic/emergency only, not
+  the solution. Offline Mesa first slice was implemented and independently
+  reviewed/built, but is not runtime-validated and not full conformance: it
+  adds/repairs first-slice GLES2 Gallium advertisement/dispatch/query support
+  for `GL_ANGLE_robust_client_memory`,
+  `GL_CHROMIUM_bind_generates_resource`, `GL_ANGLE_client_arrays`, and
+  `GL_ANGLE_request_extension`; adds `xv6_angle_passthrough.c`, GLES-only
+  ANGLE dispatch, requestable-extension empty-list semantics,
+  `CLIENT_ARRAYS` false and bind-generates true getters, and robust
+  get/readpixels/texture-upload wrappers with error-output hygiene.
+  `GL_KHR_debug` already existed. Offline verification passed:
+  `git diff --check`, `git -C ports/mesa/src diff --check`, and
+  `cmake --build build-x86_64/ports --target port-mesa -j2`; no QEMU/VM yet.
+  Remaining ladder before runtime default-Chromium proof:
+  `GL_CHROMIUM_copy_texture` real semantics/dispatch,
+  `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
+  global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
+  Non-blocking first-slice gap: `GetUniform*RobustANGLE` length remains
+  conservative/untouched on success unless Chromium callers require length.
+  Rootfs image is stale relative to staged Mesa libs; refresh it and verify
+  the actual image library choice before any runtime gate, with the
+  `rootfs-generated-overlays/kde-runtime` overlay Mesa-copy caveat in mind.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
@@ -440,7 +457,8 @@ admission, Mojo/fd-lifecycle parsers, bootstrap-peer traces, callsite/proc
 probes, bundled-ANGLE and extension-override experiments, every archive path)
 lives append-only in the history file
 `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`. Do NOT
-re-run those probes; only the current conclusion and the open decision matter.
+re-run those probes; only the current conclusion and Q2 implementation ladder
+matter.
 
 Conclusion (settled):
 - Renderer admission is EXONERATED — the window-not-visible symptom was never a
@@ -465,11 +483,31 @@ Conclusion (settled):
   (`presentedFPS~=31`, `dropPct~=26`). It is a visibility workaround/probe only;
   the default Chrome root still points at guest Mesa and fails the same class.
 
-Q2 decision required before heavy work (see Work Order): either (a) implement
-the required passthrough semantics in Mesa/virgl, or (b) adopt a documented,
-default-off-until-approved launcher GL policy (bundled-ANGLE or software
-fallback). M9 tracks the outcome; M7 stays blocked on this AND on the P2-step-3
-zero-copy present path (see P3 / M7 findings).
+Q2 direction is resolved: do not skip GPU acceleration; implement the required
+passthrough semantics in Mesa/virgl so default Chromium remains
+hardware-accelerated. Bundled/software fallback is diagnostic/emergency only,
+not the solution. Offline Mesa first slice is implemented and independently
+reviewed/built, but not runtime-validated and not full conformance: it adds the
+first-slice GLES2 Gallium advertisement/dispatch/query support for
+`GL_ANGLE_robust_client_memory`, `GL_CHROMIUM_bind_generates_resource`,
+`GL_ANGLE_client_arrays`, and `GL_ANGLE_request_extension`, with
+`xv6_angle_passthrough.c`, GLES-only ANGLE dispatch, requestable-extension
+empty-list semantics, `CLIENT_ARRAYS` false and bind-generates true getters,
+and robust get/readpixels/texture-upload wrappers with error-output hygiene.
+`GL_KHR_debug` already existed. Offline verification passed (`git diff
+--check`, `git -C ports/mesa/src diff --check`, and `cmake --build
+build-x86_64/ports --target port-mesa -j2`); no QEMU/VM runtime proof yet.
+Remaining ladder before runtime default-Chromium proof:
+`GL_CHROMIUM_copy_texture` real semantics/dispatch,
+`GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
+global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
+The known non-blocking first-slice gap is `GetUniform*RobustANGLE` length:
+success still leaves length conservative/untouched unless callers require it.
+Before any runtime gate, refresh the stale rootfs image relative to staged Mesa
+libs and verify the actual image library choice, especially overlay Mesa copies
+under `rootfs-generated-overlays/kde-runtime`. M9 tracks the default Chromium
+proof; M7 stays blocked on this AND on the P2-step-3 zero-copy present path
+(see P3 / M7 findings).
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 
@@ -1594,8 +1632,11 @@ M7 stalls together; propose as a new perf lane (P3?) or fold into P1.
 process (pid 292, host-gui log:107) fired right at playback start and coincides
 with the 543ms stall. This is the same passthrough-ANGLE extension gap tracked
 in R8/Q2, now shown to bite the full video path (not just launch-only), forcing
-the page's canvas/HUD onto raster fallback during the measured window. No new
-decision — it reinforces that Q2 must be resolved before M7 is trustworthy.
+the page's canvas/HUD onto raster fallback during the measured window. Q2 is
+now resolved toward Mesa/virgl passthrough-required semantics; this
+reconfirmation remains the reason M7 is not trustworthy until the rest of the
+extension ladder is implemented, the rootfs image is refreshed, and default
+Chromium is runtime-validated.
 
 ### Cheap OFFLINE next actions (no VM boot; matches Work Style)
 1. Fix kprofile: timeout budget (>=40s), CPU-units divisor, pgroup-descendant
