@@ -55,7 +55,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Default Mesa path still FAILs with the known robust-client crash; explicit default-off `WAYLAND_CHROMIUM_BUNDLED_GL=1` alternate root passes launch-only via disabled/software GL fallback | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is inconclusive: two 2026-07-04 launch-only attempts failed before Chromium with the known R5 KWin startup-retry flake, so the old missing-extension fatal was not re-exercised | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -129,8 +129,23 @@ Active queue, in order:
   under `/usr/lib/x86_64-linux-gnu`, but it has no overlay
   `libEGL.so*`, `libGLESv2.so*`, or `libgbm.so*`; a GLX/Xwayland path may
   still load the overlay Mesa, while the Chromium GLES/EGL Q2 path resolves to
-  the staged `/lib` Mesa. No QEMU/VM runtime proof yet; next run the batched
-  runtime Chromium gate.
+  the staged `/lib` Mesa. Runtime gate attempts 2026-07-04 used the default
+  Mesa path with
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1`
+  and no bundled/software GL override. Both attempts failed before Chromium
+  launch with `KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry` after
+  `kwin exited before Wayland socket status=32512`, matching the known R5
+  KWin startup flake. Archives:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T094240Z-q2-chromium-video-launch-only-r5-flake/`
+  and
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T094451Z-q2-chromium-video-launch-only-r5-rerun-flake/`.
+  Rerun stopped after the allowed known-flake retry. The rerun
+  `kde-chromium-video-post-evidence.log` ends `status=FAIL reason=not-launched`;
+  `/host-gui-wayland-chromium.log`, `/chrome_debug.log`,
+  `/kde-chromium-launch-probe.log`, and the sampler logs are missing guest
+  artifacts. Therefore the old missing-extension fatal is not observed in these
+  runs, but only because Chromium never launched; M9 remains blocked on a clean
+  desktop-start boot for the Q2 Chromium signal.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
