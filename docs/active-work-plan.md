@@ -57,9 +57,9 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1958ms independent verification pass 2026-07-03 (was 1888ms R8 pass; the 2386ms P1-gate reading was noise — M4 is genuinely under target) | < 2000ms (Linux same-host ref: 260-510ms) |
 | M5 | `first_visible_ms` | same | 12972ms independent verification pass 2026-07-03 (8632-14623ms band) | < 15000ms |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
-| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | 42.9 after the P2 ordered-pageflip default flip 2026-07-04 (dropPct 52.4->26.4, decode 60.7 keeps pace; was 36.8 same-day baseline). Remaining ceiling: software-blit present path (727/727 flips software_blit) + Q2 GL | >= 55 |
+| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | 44.2 with REAL GL + ordered pageflip 2026-07-04 (arc: 36.8 baseline -> 42.9 ordered flip -> 44.2 real GL; dropPct 29.6, decode 61.5). Remaining ceiling: software-blit scanout (P2 step 3); real-GL kprofile runs need KPROFILE_SECONDS=90 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | PASS 2026-07-04 after the `wl_shm` fix: pre-Chromium registry probe sees/binds `wl_shm` and creates a tiny shm buffer; Q2 launch-only finishes `status_code=0`, Chromium sampler PASS | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | PASS 2026-07-04 on the DEFAULT path with REAL hardware GL (Mesa extension ladder runtime-validated: zero missing-GL fatals, zero software fallbacks, GPU errors 0). Earlier same-day: wl_shm fix PASS | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -864,12 +864,52 @@ invariance for level-1 copies, expects rectangle targets to fail with
 `GL_INVALID_ENUM` when unsupported, and aligns same-texture/same-level subcopy
 with ANGLE's invalid-operation validation. Unsupported GL/EGL capabilities still
 SKIP instead of false-failing.
-No QEMU/VM runtime proof yet. Next: refresh the rootfs, verify the actual image
-library choice, and run the batched runtime Chromium gate unless another
-offline gap is found, especially around overlay Mesa copies under
-`rootfs-generated-overlays/kde-runtime`. M9 tracks the default Chromium proof;
-M7 stays blocked on this AND on the P2-step-3 zero-copy present path (see P3 /
-M7 findings).
+2026-07-04 Q2 RUNTIME VALIDATION — first default-path M9 PASS with real
+hardware GL (user direction confirmed: real GL, no software fallback):
+
+Staging verification (offline): mesa/src HEAD `fb2724503` (webgl-compat)
+with the full ladder implemented; sysroot `libgallium-26.2.0-devel.so`
+carries all six GL_ANGLE_*/GL_CHROMIUM_* strings and `libEGL.so.1.0.0`
+carries `EGL_ANGLE_create_context_webgl_compatibility`; the LIVE fs.img
+serves the same fresh copies from /lib (LIBGL_DRIVERS_PATH puts /lib/dri
+first; /opt/host-gui/wayland-chromium/lib holds only the trace preload —
+no LD shadowing; the kde-runtime overlay's /usr/lib copies are second in
+every search path).
+
+M9 launch-only gate (default Chromium path, guest Mesa/virgl, NO bundled
+GL, NO extension override): `status_code=0` DONE, post-evidence
+`status=PASS reason=launch-only`, ZERO `missing GL_*` fatals, ZERO
+`kFatalFailure`, ZERO `--use-gl=disabled` fallback relaunches,
+`gpu_init/config/exit_error_count=0`, `launcher_crash_seen=0`. The
+passthrough command decoder accepted guest Mesa/virgl real GL for the
+first time. Archive:
+`20260704T192000Z-q2-mesa-angle-ladder-launch-only-first-default-path-pass`.
+(M9 scoreboard: PASS on the DEFAULT path.)
+
+Full chromium-video kprofile with real GL + ordered pageflip default:
+first attempt hit a NEW
+measurement caveat — real-GL startup pays a one-time virgl->D3D12
+shader-compile + heavier cold-paging cost (read_page_ms 46.6s in that
+window), so the 40s kprofile budget expired ~2s into playback; archived
+`20260704T193500Z-q2-real-gl-video-kprofile-window-short-rerun-needed`
+(rule: real-GL kprofile video runs need
+KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE_SECONDS=90). The 90s rerun covered the
+full window: `presentedFPS=44.2 decodedFPS=61.5 dropPct=29.62
+speed=0.954 advanced=14.33`, ZERO GL fatals/fallbacks across 75s of real
+GL. M7 arc today: 36.8 (baseline) -> 42.9 (ordered pageflip) -> 44.2
+(real GL + ordered pageflip); the remaining gap to >=55 is the
+software-blit scanout path (P2 step 3 / P3-M7 findings). Archive:
+`20260704T195500Z-q2-real-gl-full-video-m7-44fps`.
+
+R5 accrual through the Q2 battery: 9/9 clean attempt-1 KWin launches (running total since the R5 TLB fix).
+
+Chromium binary ground truth (offline probe of chrome-linux64 150.0.7871.24):
+the validating command decoder is DEAD in this build ("Ignoring request for
+the validating command decoder. It is not supported on this platform.") —
+passthrough is the only functional decoder, so the Mesa extension ladder was
+the only real-GL route. The binary's checked extension set matches the
+implemented ladder exactly; bundled ANGLE (GL/GLES/Vulkan/SwiftShader
+backends compiled in) stays disabled/symlinked to guest Mesa in the image.
 
 KDE/Wayland liveness update (2026-07-04): the current evidence splits two
 blockers. First, the Q2 archive
