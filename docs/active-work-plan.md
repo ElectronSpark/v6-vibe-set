@@ -502,6 +502,13 @@ and robust get/readpixels/texture-upload wrappers with error-output hygiene.
 build-x86_64/ports --target port-mesa -j2`); no QEMU/VM runtime proof yet.
 A later offline `GL_CHROMIUM_copy_texture` attempt was rejected as
 semantically incomplete and removed; do not count or revive that code.
+Pre-implementation reducer hardening for `mesacopytexture` now sharpens the
+offline proof surface before the real Mesa work: it keeps missing extension/proc
+as rc 77, rejects software renderers, broadens conversion/error/level/subcopy
+coverage, and leaves only genuinely optional target fixtures as SKIP. Verified
+offline with `git -C ports diff --check`, `port-wayland-mesacopytexture-install`,
+and a host reducer run returning rc 77 on missing `GL_CHROMIUM_copy_texture`;
+this is not runtime default-Chromium proof and does not implement Mesa semantics.
 Remaining ladder before runtime default-Chromium proof:
 `GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
 transform/conversion support,
