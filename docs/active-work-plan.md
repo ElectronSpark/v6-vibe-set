@@ -96,17 +96,23 @@ Active queue, in order:
   `GL_KHR_debug` already existed. Mesa commit
   `a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
   `GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
-  copy/conversion paths. Offline verification passed:
+  copy/conversion paths. Mesa commit `fec4c3be56be` fixes robust uniform
+  length results; the new Wayland `mesaanglepassthrough` reducer is wired and
+  passed a staged-library host run rc 0, with robust uniform coverage passing
+  and the WebGL-compatible context portion SKIPping until EGL context attribute
+  plumbing implements `EGL_ANGLE_create_context_webgl_compatibility`. Offline
+  verification passed:
   `git -C ports/mesa/src diff --check`,
   `cmake --build build-x86_64/ports --target port-mesa -j2`,
   `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
-  and staged-library host `mesacopytexture` rc 0 on non-software renderer
-  `D3D12 (Intel(R) UHD Graphics)`. No QEMU/VM runtime proof yet.
+  staged-library host `mesacopytexture` rc 0 on non-software renderer
+  `D3D12 (Intel(R) UHD Graphics)`,
+  `cmake --build build-x86_64/ports --target port-wayland-mesaanglepassthrough-install -j2`,
+  and staged-library host `mesaanglepassthrough` rc 0. No QEMU/VM runtime
+  proof yet.
   Remaining ladder before runtime default-Chromium proof:
-  `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
-  global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
-  Non-blocking first-slice gap: `GetUniform*RobustANGLE` length remains
-  conservative/untouched on success unless Chromium callers require length.
+  WebGL-compatible context attribute plumbing (not a blind global string flip)
+  and VM/runtime Chromium proof.
   Rootfs image is stale relative to staged Mesa libs; refresh it and verify
   the actual image library choice before any runtime gate, with the
   `rootfs-generated-overlays/kde-runtime` overlay Mesa-copy caveat in mind.
@@ -502,12 +508,20 @@ and robust get/readpixels/texture-upload wrappers with error-output hygiene.
 `GL_KHR_debug` already existed. Mesa commit
 `a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
 `GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
-copy/conversion paths for Chromium's offline reducer surface. Verification
+copy/conversion paths for Chromium's offline reducer surface. Mesa commit
+`fec4c3be56be` fixes robust uniform length results, and the new Wayland
+`mesaanglepassthrough` reducer is wired and passes a staged-library host run rc
+0: robust uniform coverage passes, while the WebGL-compatible context portion
+SKIPs until EGL context attribute plumbing implements
+`EGL_ANGLE_create_context_webgl_compatibility`. Verification
 passed with `git -C ports/mesa/src diff --check`,
 `cmake --build build-x86_64/ports --target port-mesa -j2`,
 `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
 and staged-library host `mesacopytexture` rc 0 on non-software renderer
-`D3D12 (Intel(R) UHD Graphics)`. No QEMU/VM runtime proof yet.
+`D3D12 (Intel(R) UHD Graphics)`, plus
+`cmake --build build-x86_64/ports --target port-wayland-mesaanglepassthrough-install -j2`
+and staged-library host `mesaanglepassthrough` rc 0. No QEMU/VM runtime proof
+yet.
 `mesacopytexture` remains the focused offline proof surface: it keeps missing
 extension/proc as rc 77, rejects software renderers, broadens
 conversion/error/level/subcopy coverage, adds guarded external EGLImage/OES and
@@ -517,10 +531,8 @@ invariance for level-1 copies, expects rectangle targets to fail with
 with ANGLE's invalid-operation validation. Unsupported GL/EGL capabilities still
 SKIP instead of false-failing.
 Remaining ladder before runtime default-Chromium proof:
-`GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
-global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
-The known non-blocking first-slice gap is `GetUniform*RobustANGLE` length:
-success still leaves length conservative/untouched unless callers require it.
+WebGL-compatible context attribute plumbing (not a blind global string flip)
+and VM/runtime Chromium proof.
 Before any runtime gate, refresh the stale rootfs image relative to staged Mesa
 libs and verify the actual image library choice, especially overlay Mesa copies
 under `rootfs-generated-overlays/kde-runtime`. M9 tracks the default Chromium
