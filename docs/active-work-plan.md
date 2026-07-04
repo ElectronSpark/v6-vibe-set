@@ -241,6 +241,25 @@ Active queue, in order:
   showing updated `/bin/kde-session` strings plus staged
   `/bin/kde-libinput-probe`. No runtime gate result is claimed; an attempted
   Expect syntax check (`expect -n`) was not a dry run and was killed.
+  Runtime R5 diagnostic 2026-07-04 ran exactly one KDE-ready pre-KWin probe
+  with
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=kde-ready KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE=1 scripts/gpu/kde-plasma-desktop-smoke.expect`;
+  Chromium was not launched. The default command left fresh artifacts in
+  `build-x86_64/kde-plasma-desktop-smoke/`; compact manual history copy
+  (scratch fs image excluded) is
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T104003Z-r5-pre-kwin-libinput-kde-ready/`.
+  Result: FAIL `kde-session-ready-crash` (`status_code=3`). The preserved
+  `kde-pre-kwin-libinput.log` reports probe `result=PASS` but classifies the
+  libinput setup as `assign_seat_failed` (`r9_libinput_status rc=-1 errno=93
+  reason=assign_seat_failed`), not `ready fd=N`. `run.log` confirms
+  `kde_pre_kwin_libinput_probe=1`, then `launching KWin attempt=1`; there are
+  no attempt-2 or retry markers before the harness failure. KWin crashed with
+  `#PF cr2=0x8 rip=0x7ffffd85cb85` in
+  `/usr/lib/x86_64-linux-gnu/libQt5Core.so.5` at file offset `0x30fb85`,
+  resolving against the staged QtCore to `QObject::moveToThread(QThread*)+0x15`.
+  Chromium guest artifacts are placeholder `missing guest_path=...` files, so
+  this is a pre-Chromium/KWin result and strengthens the
+  `LibInput::Connection::create(session)` null-return hypothesis.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
