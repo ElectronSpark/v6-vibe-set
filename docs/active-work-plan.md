@@ -113,7 +113,11 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   gfxstream/cross-domain capset admission only with a real contract, and
   add native/blob present counters. Route (b) remains low payoff unless
   new evidence contradicts `bo_present_copy_ticks=0` and
-  `virtio_present_copy_calls=0`.
+  `virtio_present_copy_calls=0`. NEXT N1 STEP: an ATTRIBUTION slice, not
+  building — the "software-blit scanout" theory conflicts with those
+  zero copy counters, so measure where classic-virgl present time
+  actually goes (offline from fbstat/kprofile archives first, then at
+  most one instrumented run) before writing any present-path code.
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
@@ -199,6 +203,15 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   accrued; count every future battery), R3 recurrence watch (rcu_head
   double-free may share the R5 root cause — one `slab_alloc: repairing
   corrupt freelist cache='rcu_head_cache'` line was seen 07-04 pre-R5-fix).
+Recommended execution order: (1) N1 attribution slice; (2) N7 tick-loss
+fix (measurement trust + late timer fires; feeds M7 pacing and N5; timer
+hot path -> full battery + M2/M3 within noise); (3) N6 R2 retest-first
+battery; (4) N5 M8 idle cadence; (5) N2 retry ONLY after its fault
+diagnosis gate; (6) N3 residual LibinputBackend nullptr; (7) a NEW P1
+approach for M2 <1.5us (N4 cpumask/CR0.TS is dead: the cpumask half
+stalls forktest, CR0-only missed targets — do not re-apply the saved
+patches; find a different cost).
+
 - Parked: CR-3 (%fs selector reload semantics), CR-7 (starve-probe RCU),
   CR-9 (timer 1-jiffy boundary race, needs timerfd reducer); latent
   hugepage-path bugs (list in the R5 lane — they BLOCK re-enabling
@@ -290,6 +303,14 @@ Check BEFORE declaring any gate failed or hypothesis confirmed.
 21. When host WSLg PulseAudio is down AND a pactl probe is explicitly
     enabled, the guest pactl fault cascades into `kde-session-ready-crash`
     (recovery: `wsl --shutdown` from Windows). Default runs skip pactl.
+22. HMP `mouse_move` delivers legacy PS/2 RELATIVE samples regardless of
+    `mouse_set` selecting the absolute virtio tablet. Inject absolute
+    coordinates ONLY via QMP `input-send-event` (R9 lesson; two probe
+    runs burned).
+23. Guest probes must pin RUNPATH/LD_LIBRARY_PATH to the intended guest
+    libs: a probe's default RUNPATH preferred the host
+    /usr/lib/x86_64-linux-gnu stack and silently broke udev/libinput
+    enumeration.
 
 ## Guardrails
 
