@@ -315,6 +315,28 @@ Active queue, in order:
   `kde-session-kwin.log` and `kde-plasma-kwin-crash-regression.txt` are empty,
   so the previous `QObject::moveToThread(QThread*)+0x15`/`#PF` signature did
   not reproduce in this single readiness run. Chromium/M9 remains untested.
+  Q2 launch-only retry 2026-07-04 then ran exactly once with default
+  Mesa/virgl and explicit unsets for bundled/software GL knobs:
+  `env -u KDE_SMOKE_CHROMIUM_BUNDLED_GL -u KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE -u MESA_EXTENSION_OVERRIDE -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER -u MESA_LOADER_DRIVER_OVERRIDE -u LIBGL_ALWAYS_INDIRECT QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`.
+  Archive:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T111839Z-q2-chromium-launch-only-kde-preflight-kwin-timeout/`.
+  Result: FAIL `status_code=8`
+  `KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-preflight-kwin-timeout`, not a Chromium
+  result. `run.log` reached virgl render-node setup, `Xwayland is running`,
+  and `KWin and plasmashell are running`, but KDE did not stay ready:
+  `kde-preflight-runner.status` remained `status=waiting`, the last readiness
+  probe showed `kwin=0 plasmashell=0`, and
+  `kde-session-plasma-child.log` has `/usr/bin/plasmashell: symbol lookup
+  error: /usr/lib/x86_64-linux-gnu/libKF5Solid.so.5: undefined symbol:
+  udev_enumerate_scan_subsystems, version LIBUDEV_183`, followed by
+  `The Wayland connection broke`. KWin did not emit the previous `#PF`
+  signature: `kde-plasma-kwin-crash-regression.txt` is empty. Renderer evidence
+  still proves default GPU acceleration (`virgl (D3D12 (NVIDIA GeForce RTX
+  4060 Laptop GPU))`, Mesa `26.2.0-devel (git-fec4c3be56)`); Chromium logs are
+  missing guest-path placeholders, post evidence ends `status=FAIL
+  reason=not-launched`, and there is no new `GL_CHROMIUM_copy_texture`,
+  WebGL/ANGLE, or robust-uniform Chromium evidence because Chromium never
+  launched.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
