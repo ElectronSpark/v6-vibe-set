@@ -6,7 +6,7 @@ runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
 gated, N2 ext4 default promotion attempted but NOT accepted after a
 default-on KWin #GP rerun; later N2 ON-arm kernel #PF classified and
 opt-in diagnostics landed; kprofile measurement validity fixed; N3 R9
-dry-run harness blocker classified. All verbose evidence chains moved to
+coordinate and visible cursor probes passed. All verbose evidence chains moved to
 the history file and git log; this file holds current status, queue,
 rules, and compact lane conclusions only.)
 
@@ -155,8 +155,23 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   an explicit reason. Dry-run `20260704T202724Z` PASS; real R9
   `20260704T202747Z` PASS with `/dev/mouse flags=1`, `evdev_abs_samples=10`,
   `libinput_abs_samples=5`, and `result=PASS reason=coordinate_samples`.
-  Next N3 work can move past coordinate delivery to cursor-plane transform /
-  user-visible pointer behavior and the LibinputBackend nullptr payload bug.
+  Visible cursor-plane probe `scripts/gpu/r9-cursor-visible-probe.expect`
+  then passed in guest cursor mode at
+  `build-x86_64/r9-cursor-visible-probe-history/20260704T205234Z-r9-cursor-visible-probe`:
+  dry-run proves `show-cursor=off` and no
+  `virtio_gpu_host_cursor_only=1`; QMP `input-send-event` remains the
+  coordinate proof; `/dev/mouse flags=1`, evdev ABS and libinput absolute
+  samples are present; cursor-plane traces land at 0,0 / 640,400 /
+  1279,799 with no 2x/out-of-range transform; no panic/KWin crash/
+  LibinputBackend nullptr marker was seen. Framebuffer/host capture does
+  not prove visible cursor pixels because the GTK hardware cursor overlay is
+  outside the QEMU framebuffer capture path. Regression guards passed and
+  were archived at
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T210241Z-r9-visible-desktop-interaction-pass`
+  and
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T205909Z-r9-visible-chromium-launch-only-pass`.
+  Remaining N3 work is the later/secondary KWin LibinputBackend nullptr
+  payload unless a startup/input crash reproduces under the visible probe.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
   Implement both together, one battery.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
@@ -576,9 +591,32 @@ process group on finish. Dry-run `20260704T202724Z` PASS; real R9
 0/0, 32768/32768, 65535/65535, 16384/49150, 49150/16384; libinput absolute
 samples 0/0, 640/400, 1279.980/799.988, 320/599.976, 959.961/200; summary
 `evdev_abs_samples=10 mouse_samples=5 libinput_abs_samples=5 result=PASS
-reason=coordinate_samples`. Include the LibinputBackend nullptr payload fix
-and cursor-plane/user-visible follow-up here; do not reopen image injection,
-seat plumbing, or kernel signed-16 storage without new contradictory evidence.
+reason=coordinate_samples`.
+
+Visible cursor-plane slice result 2026-07-04: new harness
+`scripts/gpu/r9-cursor-visible-probe.expect` PASS at
+`build-x86_64/r9-cursor-visible-probe-history/20260704T205234Z-r9-cursor-visible-probe`.
+The run uses guest cursor mode (`qemu-dry-run.txt` has `show-cursor=off`)
+with no `virtio_gpu_host_cursor_only=1`, preserves
+`qemu-qmp-command.log` for `input-send-event` absolute X/Y injection and
+`qemu-monitor-command.log` for `info mice` evidence only, and keeps the
+strict coordinate contract alive (`/dev/mouse flags=1`,
+`evdev_abs_samples=10`, `libinput_abs_samples=5`). Cursor traces prove
+`virtio_gpu: cursor upload visible` and injected cursor transforms
+0/0 -> 0/0, 32768/32768 -> 640/400, 65535/65535 -> 1279/799 with
+`cursor_transform_out_of_range=0`. Crash-marker scan stayed clean for
+panic/KWin/LibinputBackend nullptr signatures. `r9-visible-evidence.txt`
+records `capture_visibility=NOT_PROVEN`: QEMU framebuffer captures do not
+prove the GTK hardware cursor overlay, and this headless harness has no
+deterministic host-window capture path. Guard runs after the harness-only
+change passed and were archived at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T210241Z-r9-visible-desktop-interaction-pass`
+(desktop-interaction-latency active sample, direct launch PASS) and
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T205909Z-r9-visible-chromium-launch-only-pass`
+(chromium-video launch-only PASS). The visible cursor gate is closed; keep
+the KWin LibinputBackend nullptr payload here as later/secondary unless this
+probe reproduces a startup/input crash. Do not reopen image injection, seat
+plumbing, or kernel signed-16 storage without new contradictory evidence.
 
 ## Verification Gates
 
