@@ -55,7 +55,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is still blocked before Chromium: the post-libinput-symbol repair rerun cleared the old gesture symbol failure, but exposed the next KWin loader ABI miss in the staged KDE `libinput.so.10` -> `udev_device_get_udev@LIBUDEV_183` | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is awaiting a post-KDE-ABI-libs runtime retry: the previous run exposed `libinput.so.10` -> `udev_device_get_udev@LIBUDEV_183`; the offline image now stages the matching KDE runtime `libudev.so.1` beside `libinput.so.10` and proves the pair resolves | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -177,8 +177,23 @@ Active queue, in order:
   udev_device_get_udev, version LIBUDEV_183`; post evidence ends
   `status=FAIL reason=not-launched`, with Chromium process counts zero and
   `chromium_mesa_extension_override=""`. Per the loader-recurrence guardrail,
-  no rerun was attempted. M9 remains blocked on the next KDE ABI-libs loader
-  repair, then a clean desktop-start boot for the Q2 Chromium signal.
+  no rerun was attempted. Offline/no-QEMU repair on 2026-07-04 changed
+  `scripts/image/make-rootfs.sh` so `/opt/xv6-kde-abi-libs/libudev.so.1` is
+  copied from the generated KDE runtime when present, while preserving the
+  `/lib/libudev.so.1` fallback for non-KDE images. Root cause: the staged KDE
+  `libinput.so.10.13.0` requires `udev_device_get_udev@LIBUDEV_183`, but the
+  local xv6 `/lib/libudev.so.1.0.0` shim lacks that symbol; the KDE runtime
+  `libudev.so.1.7.8` provides it and only adds already-present `libcap.so.2`
+  as a direct dependency. Verification passed: `bash -n`, `rootfs-refresh`,
+  debugfs extraction from `build-x86_64/fs.img` showed `/opt/xv6-kde-abi-libs`
+  now contains regular `libinput.so.10` and `libudev.so.1` files; hashes match
+  the KDE overlay copies and differ from the local shims; `objdump -T` on the
+  extracted `libudev.so.1` shows `udev_device_get_udev@LIBUDEV_183`; extracted
+  `libinput.so.10` still requires `libudev.so.1`; and `LD_LIBRARY_PATH` with
+  the extracted `/opt` libs first made `ldd -r` report no unresolved/not-found
+  entries. `/bin/mesacopytexture` and `/bin/mesaanglepassthrough` remain in
+  the refreshed image. M9 now needs the next allowed no-overrides runtime gate
+  to learn whether KDE reaches Chromium launch.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
