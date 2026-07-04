@@ -190,11 +190,31 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
   threads at 85-130%). Host-side attribution done; next is guest tick/timer
   cadence reduction (relates to N7).
-- N6 = R2 PCID stale-TLB lane: RETEST CHEAPLY FIRST — the R5
-  free-before-shootdown fix plausibly WAS the "PCID corruption" (noflush
-  widens the same stale-TLB window; the 07-02 noflush trial reproduced the
-  exact KWin signature R5 explained). One guarded PCID default-flip KDE
-  battery before any new reducer work.
+- N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
+  retired as a corruption lane, default stays OFF for perf reasons.
+  (a) Safety: offline audit (GO) verified every noflush-specific hazard is
+  covered (trapframe slot has its own invlpg; ASID recycle is
+  generation-flushed; the only anon-free paths are the R5-fixed ones) and
+  re-verified the 07-02 crash signatures as the R5 recycled-frame family.
+  Opt-in retest on the R5-fixed kernel (`x86_pcid=1 x86_cr3_noflush=1`,
+  both tokens + `max ASID = 4095` verified per boot): nographic
+  fork/clone/cow PASS, and 3/3 KDE active-sample DONE with ZERO
+  KWin/corruption markers — the 07-02 trial corrupted within 2 runs, so
+  the "PCID corruption" is CONFIRMED to have been the R5
+  free-before-shootdown bug. Archives
+  `20260704T221000Z/222000Z/223000Z-n6-pcid-noflush-retest-kde{1,2,3}`.
+  (b) Perf: same-session nographic A/B — tlb_amplification roughly HALVED
+  (256/512/1024pg: 1479/1781/4085 -> 911/770/2364ns) but getpid_ns
+  unchanged; and the KDE battery shows a consistent desktop REGRESSION:
+  M4 2697-2867 (vs 1883-2144 band) and M5 15570-16742 (3/3 above the
+  15000 goal). Mechanism: with PCID active every page/range shootdown
+  degrades to a full global flush (invlpg cannot cross PCIDs;
+  vm_remote_sfence_page forces CR4.PGE toggles), so desktop
+  COW/fault shootdown traffic pays more than the syscall path saves.
+  VERDICT: keep PCID/noflush default-OFF. Future re-evaluation condition:
+  implement INVPCID-based per-PCID single-page/range flushes (CPUID
+  check + fallback), then rerun this exact A/B; only promote if M4/M5
+  hold within noise. R5 closure accrual from this battery: +3 (12/30+).
 - N7 = timer tick loss (~14% under load): fix jiffies advancement
   (TSC-compensate or any-CPU advance). Fixes measurement trust AND late
   timer fires (frame pacing). Gate: nographic + KDE battery + M2/M3 within
@@ -205,8 +225,8 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   corrupt freelist cache='rcu_head_cache'` line was seen 07-04 pre-R5-fix).
 Recommended execution order: (1) N1 attribution slice; (2) N7 tick-loss
 fix (measurement trust + late timer fires; feeds M7 pacing and N5; timer
-hot path -> full battery + M2/M3 within noise); (3) N6 R2 retest-first
-battery; (4) N5 M8 idle cadence; (5) N2 retry ONLY after its fault
+hot path -> full battery + M2/M3 within noise); (3) N6 DONE 2026-07-04
+(resolved, see its entry); (4) N5 M8 idle cadence; (5) N2 retry ONLY after its fault
 diagnosis gate; (6) N3 residual LibinputBackend nullptr; (7) a NEW P1
 approach for M2 <1.5us (N4 cpumask/CR0.TS is dead: the cpumask half
 stalls forktest, CR0-only missed targets — do not re-apply the saved
@@ -552,13 +572,16 @@ OPEN residuals (park unless they block a gate): plasmashell system-tray
 crash root cause (tray stays opt-in), one `xkbcomp` #GP class, one
 liveness roundtrip race archive, GL conformance depth beyond the ladder.
 
-### R2 — PCID stale-TLB: OPEN, retest first (= N6)
+### R2 — PCID stale-TLB: CLOSED as a corruption lane (2026-07-04)
 
-The R5 free-before-shootdown fix plausibly explains the "PCID corruption"
-(noflush widens the same stale-TLB window; the 07-02 noflush default trial
-reproduced exactly the KWin corruption signature R5 root-caused). Before
-any reducer work: one guarded PCID/noflush default-flip KDE battery on the
-fixed kernel.
+The "PCID corruption" WAS the R5 free-before-shootdown bug: signatures
+re-verified same-family, all noflush-specific hazards audited covered, and
+the opt-in retest on the fixed kernel ran 3/3 clean KDE batteries where the
+07-02 trial corrupted within 2 (see N6 in the Work Order for the full
+record + archives). PCID/noflush stays default-OFF on perf grounds: M3
+amplification halves but desktop M4/M5 regress ~30% because page-level
+shootdowns degrade to global flushes under PCID. Reopen only as a PERF
+lane behind INVPCID-based per-PCID flush support.
 
 ### R3 — rcu_head_cache double-free: bounded-open, watch
 
