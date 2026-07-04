@@ -1,0 +1,464 @@
+#!/usr/bin/env expect
+
+set timeout 300
+match_max 2000000
+
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format "%Y%m%dT%H%M%SZ"]
+set outdir "$build/r9-cursor-contract-probe-history/$stamp"
+if {[info exists env(R9_CURSOR_CONTRACT_OUTDIR)] && $env(R9_CURSOR_CONTRACT_OUTDIR) ne ""} {
+    set outdir $env(R9_CURSOR_CONTRACT_OUTDIR)
+} elseif {[info exists env(R9_CURSOR_PROBE_OUTDIR)] && $env(R9_CURSOR_PROBE_OUTDIR) ne ""} {
+    set outdir $env(R9_CURSOR_PROBE_OUTDIR)
+}
+
+file mkdir $outdir
+
+set runlog "$outdir/run.log"
+set monitor "$outdir/qemu-monitor.sock"
+set tmpimg "$outdir/r9-kde-plasma.fs.img"
+set guest_sh "$outdir/guest-r9-run.sh"
+set guest_bash "$outdir/guest-r9-run-bash.sh"
+set startup_orig "$outdir/startup.orig"
+set startup_new "$outdir/startup.r9"
+set qemu_dry_run_log "$outdir/qemu-dry-run.txt"
+set monitor_log "$outdir/qemu-monitor-command.log"
+set status_log "$outdir/r9-probe.status"
+set output_log "$outdir/r9-probe-output.log"
+set cmdline_log "$outdir/r9-cmdline.txt"
+set process_log "$outdir/r9-process-probe.log"
+set r9_lines "$outdir/r9-lines.txt"
+set summary_log "$outdir/STATUS.txt"
+
+proc env_bool {name default} {
+    if {![info exists ::env($name)]} {
+        return $default
+    }
+    set value [string tolower $::env($name)]
+    if {$value eq "1" || $value eq "true" || $value eq "yes" ||
+        $value eq "on"} {
+        return 1
+    }
+    if {$value eq "0" || $value eq "false" || $value eq "no" ||
+        $value eq "off" || $value eq ""} {
+        return 0
+    }
+    return $default
+}
+
+proc write_text_file {path text} {
+    set fh [open $path w]
+    puts -nonewline $fh $text
+    close $fh
+}
+
+proc append_text_file {path text} {
+    set fh [open $path a]
+    puts -nonewline $fh $text
+    close $fh
+}
+
+proc read_text_file {path} {
+    set fh [open $path r]
+    set text [read $fh]
+    close $fh
+    return $text
+}
+
+proc artifact_note {text} {
+    global summary_log
+    append_text_file $summary_log "$text\n"
+}
+
+proc debugfs_dump_file {image guest host} {
+    catch { file delete -force $host }
+    set rc [catch {
+        exec debugfs -R "dump $guest $host" $image >/dev/null 2>@1
+    } err]
+    if {$rc != 0 || ![file exists $host]} {
+        return [list 0 $err]
+    }
+    return [list 1 ""]
+}
+
+proc debugfs_read_guest {image guest host} {
+    set result [debugfs_dump_file $image $guest $host]
+    if {![lindex $result 0]} {
+        return ""
+    }
+    if {![file exists $host]} {
+        return ""
+    }
+    return [read_text_file $host]
+}
+
+proc remove_guest_r9_files {image} {
+    set listing ""
+    catch { set listing [exec debugfs -R "ls -p /" $image 2>@1] }
+    foreach line [split $listing "\n"] {
+        if {[regexp {^/[^/]*/[^/]*/[^/]*/[^/]*/([^/]*)/} $line -> name] &&
+            [string match "r9-*" $name]} {
+            catch { exec debugfs -w -R "rm /$name" $image >/dev/null 2>@1 }
+        }
+    }
+}
+
+proc generate_guest_scripts {} {
+    global guest_sh guest_bash
+
+    write_text_file $guest_sh "/bin/bash /r9-run-bash.sh\n"
+
+    set fh [open $guest_bash w]
+    puts $fh {#!/bin/bash}
+    puts $fh {set +e}
+    puts $fh {}
+    puts $fh {STATUS=/r9-probe.status}
+    puts $fh {STATUS_TMP=/r9-probe.status.tmp}
+    puts $fh {OUTPUT=/r9-probe-output.log}
+    puts $fh {PROCESS_LOG=/r9-process-probe.log}
+    puts $fh {CMDLINE=/r9-cmdline.txt}
+    puts $fh {}
+    puts $fh "write_status() {"
+    puts $fh {    echo "$*" > "$STATUS_TMP"}
+    puts $fh {    /bin/mv "$STATUS_TMP" "$STATUS"}
+    puts $fh {    /bin/sync}
+    puts $fh "}"
+    puts $fh {}
+    puts $fh {/bin/rm -f "$STATUS" "$STATUS_TMP" "$OUTPUT" "$PROCESS_LOG" "$CMDLINE"}
+    puts $fh {cat /proc/cmdline > "$CMDLINE" 2>/dev/null}
+    puts $fh {write_status "phase=waiting armed=0 process_wait_seconds=0"}
+    puts $fh {}
+    puts $fh {ready=0}
+    puts $fh {i=0}
+    puts $fh {while [ "$i" -lt 120 ]; do}
+    puts $fh {    /bin/kde-process-probe > "$PROCESS_LOG" 2>&1}
+    puts $fh {    if /bin/grep -q 'status=PASS' "$PROCESS_LOG"; then}
+    puts $fh {        ready=1}
+    puts $fh {        break}
+    puts $fh {    fi}
+    puts $fh {    /bin/sleep 1}
+    puts $fh {    i=$((i + 1))}
+    puts $fh {    write_status "phase=waiting armed=0 process_wait_seconds=$i"}
+    puts $fh {done}
+    puts $fh {}
+    puts $fh {if [ "$ready" -ne 1 ]; then}
+    puts $fh {    write_status "phase=process-timeout armed=0 exit_status=124 process_wait_seconds=$i"}
+    puts $fh {    exit 124}
+    puts $fh {fi}
+    puts $fh {}
+    puts $fh {/bin/kde-libinput-probe --r9-cursor-contract --width 1280 --height 800 --timeout-ms 20000 > "$OUTPUT" 2>&1 &}
+    puts $fh {child=$!}
+    puts $fh {/bin/sleep 2}
+    puts $fh {if kill -0 "$child" >/dev/null 2>&1; then}
+    puts $fh {    write_status "phase=armed armed=1 pid=$child process_wait_seconds=$i"}
+    puts $fh {else}
+    puts $fh {    wait "$child"}
+    puts $fh {    rc=$?}
+    puts $fh {    write_status "phase=done armed=0 pid=$child exit_status=$rc process_wait_seconds=$i reason=child-exited-before-arm"}
+    puts $fh {    exit "$rc"}
+    puts $fh {fi}
+    puts $fh {}
+    puts $fh {wait "$child"}
+    puts $fh {rc=$?}
+    puts $fh {write_status "phase=done armed=1 pid=$child exit_status=$rc process_wait_seconds=$i"}
+    puts $fh {/bin/sync}
+    puts $fh {exit "$rc"}
+    close $fh
+}
+
+proc inject_guest_setup {} {
+    global tmpimg guest_sh guest_bash startup_orig startup_new
+
+    remove_guest_r9_files $tmpimg
+    catch { exec debugfs -w -R "rm /r9-run.sh" $tmpimg >/dev/null 2>@1 }
+    catch { exec debugfs -w -R "rm /r9-run-bash.sh" $tmpimg >/dev/null 2>@1 }
+    exec debugfs -w -R "write $guest_sh /r9-run.sh" $tmpimg >/dev/null 2>@1
+    exec debugfs -w -R "write $guest_bash /r9-run-bash.sh" $tmpimg >/dev/null 2>@1
+
+    set startup_text ""
+    set dump [debugfs_dump_file $tmpimg "/etc/startup" $startup_orig]
+    if {[lindex $dump 0]} {
+        set startup_text [read_text_file $startup_orig]
+    }
+    set filtered {}
+    foreach line [split $startup_text "\n"] {
+        if {[string trim $line] eq "/bin/sh /r9-run.sh"} {
+            continue
+        }
+        lappend filtered $line
+    }
+    set startup_text [join $filtered "\n"]
+    set startup_text [string trimright $startup_text "\n"]
+    if {$startup_text ne ""} {
+        append startup_text "\n"
+    }
+    append startup_text "/bin/sh /r9-run.sh\n"
+    if {[string length $startup_text] >= 1023} {
+        error "/etc/startup would exceed init's 1023-byte read limit after R9 append"
+    }
+    write_text_file $startup_new $startup_text
+    catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+    exec debugfs -w -R "write $startup_new /etc/startup" $tmpimg >/dev/null 2>@1
+}
+
+proc configure_qemu_env {} {
+    global monitor
+
+    set ::env(DISPLAY_MODE) "gtk"
+    if {![info exists ::env(USE_KVM)]} {
+        set ::env(USE_KVM) "1"
+    }
+    if {![info exists ::env(QEMU_GPU)]} {
+        set ::env(QEMU_GPU) "virtio-vga-gl-primary"
+    }
+    set ::env(QEMU_INPUT) "virtio"
+    set ::env(QEMU_NET) "0"
+    set ::env(QEMU_AUDIO) "none"
+    set ::env(QEMU_GTK_CURSOR_MODE) "host"
+    set ::env(QEMU_VIRTIO_GPU_XRES) "1280"
+    set ::env(QEMU_VIRTIO_GPU_YRES) "800"
+    set ::env(QEMU_APPEND) "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0 glsmoke=0 r9_cursor_contract_probe=1"
+
+    set extra "-monitor unix:$monitor,server,nowait"
+    if {[info exists ::env(R9_CURSOR_CONTRACT_QEMU_EXTRA)] &&
+        $::env(R9_CURSOR_CONTRACT_QEMU_EXTRA) ne ""} {
+        append extra " " $::env(R9_CURSOR_CONTRACT_QEMU_EXTRA)
+    } elseif {[info exists ::env(QEMU_EXTRA)] && $::env(QEMU_EXTRA) ne ""} {
+        append extra " " $::env(QEMU_EXTRA)
+    }
+    set ::env(QEMU_EXTRA) $extra
+}
+
+proc run_qemu_dry_run {} {
+    global root kernel tmpimg qemu_dry_run_log
+
+    set old_dry ""
+    set had_old [info exists ::env(QEMU_DRY_RUN)]
+    if {$had_old} {
+        set old_dry $::env(QEMU_DRY_RUN)
+    }
+    set ::env(QEMU_DRY_RUN) "1"
+    set rc [catch {
+        exec bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $tmpimg 2>@1
+    } out]
+    if {$had_old} {
+        set ::env(QEMU_DRY_RUN) $old_dry
+    } else {
+        unset ::env(QEMU_DRY_RUN)
+    }
+    write_text_file $qemu_dry_run_log "$out\n"
+    if {$rc != 0} {
+        error "QEMU dry run failed: $out"
+    }
+}
+
+proc monitor_command {cmd {timeout_sec 4}} {
+    global monitor monitor_log outdir
+
+    set cmd_path "$outdir/qemu-monitor-command-[pid]-[clock microseconds].txt"
+    write_text_file $cmd_path "$cmd\n"
+    set rc [catch {
+        exec nc -U -w $timeout_sec -q 0 $monitor < $cmd_path 2>@1
+    } out]
+    catch { file delete -force $cmd_path }
+    append_text_file $monitor_log "cmd=$cmd\nrc=$rc\n$out\n"
+    if {$rc != 0} {
+        return 0
+    }
+    return 1
+}
+
+proc poll_status {} {
+    global tmpimg outdir
+    set poll_path "$outdir/r9-probe.status.poll"
+    return [debugfs_read_guest $tmpimg "/r9-probe.status" $poll_path]
+}
+
+proc extract_artifacts {} {
+    global tmpimg status_log output_log cmdline_log process_log r9_lines
+
+    set status_ok [lindex [debugfs_dump_file $tmpimg "/r9-probe.status" $status_log] 0]
+    set output_ok [lindex [debugfs_dump_file $tmpimg "/r9-probe-output.log" $output_log] 0]
+    catch { debugfs_dump_file $tmpimg "/r9-cmdline.txt" $cmdline_log }
+    catch { debugfs_dump_file $tmpimg "/r9-process-probe.log" $process_log }
+
+    set lines ""
+    if {$output_ok && [file exists $output_log]} {
+        foreach line [split [read_text_file $output_log] "\n"] {
+            if {[string first "r9_" $line] >= 0} {
+                append lines [string trimright $line "\r"] "\n"
+            }
+        }
+    }
+    write_text_file $r9_lines $lines
+    return [list $status_ok $output_ok]
+}
+
+proc kill_qemu {} {
+    global qemu_pid
+
+    if {[info exists qemu_pid] && $qemu_pid ne ""} {
+        catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+        after 1000
+        catch { wait }
+    }
+}
+
+proc finish {code label} {
+    global runlog outdir summary_log status_log output_log r9_lines
+
+    kill_qemu
+    set extracted [extract_artifacts]
+    set status_ok [lindex $extracted 0]
+    set output_ok [lindex $extracted 1]
+
+    artifact_note "label=$label"
+    artifact_note "exit_code=$code"
+    artifact_note "outdir=$outdir"
+    artifact_note "runlog=$runlog"
+    artifact_note "status_dump=$status_ok"
+    artifact_note "output_dump=$output_ok"
+
+    if {$code == 0} {
+        if {!$status_ok || !$output_ok} {
+            artifact_note "result=FAIL reason=missing-final-artifacts"
+            puts "\nR9-CURSOR-CONTRACT-FAIL missing-final-artifacts outdir=$outdir log=$runlog"
+            exit 20
+        }
+        set status_text [read_text_file $status_log]
+        set output_text [read_text_file $output_log]
+        if {![regexp {phase=done} $status_text] ||
+            ![regexp {exit_status=0} $status_text]} {
+            artifact_note "result=FAIL reason=bad-final-status status=[string map {\n { } \r { }} $status_text]"
+            puts "\nR9-CURSOR-CONTRACT-FAIL bad-final-status outdir=$outdir log=$runlog"
+            exit 21
+        }
+        if {![regexp {r9_cursor_contract} $output_text] ||
+            ![regexp {r9_summary[^\n]*result=PASS} $output_text]} {
+            artifact_note "result=FAIL reason=missing-or-failed-r9-lines"
+            puts "\nR9-CURSOR-CONTRACT-FAIL missing-or-failed-r9-lines outdir=$outdir log=$runlog r9_lines=$r9_lines"
+            exit 22
+        }
+        artifact_note "result=PASS"
+        puts "\nR9-CURSOR-CONTRACT-PASS outdir=$outdir log=$runlog r9_lines=$r9_lines"
+        exit 0
+    }
+
+    artifact_note "result=FAIL"
+    puts "\n$label outdir=$outdir log=$runlog"
+    exit $code
+}
+
+proc passive_serial_tick {} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 1
+    expect {
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|coredump: generating|kernel trap|Out of memory} {
+            set timeout $old_timeout
+            finish 4 "R9-CURSOR-CONTRACT-FAIL serial-crash-marker"
+        }
+        timeout {}
+        eof {
+            set timeout $old_timeout
+            finish 5 "R9-CURSOR-CONTRACT-FAIL serial-eof"
+        }
+    }
+    set timeout $old_timeout
+}
+
+proc wait_for_armed {} {
+    set deadline [expr {[clock seconds] + [expr {[info exists ::env(R9_CURSOR_ARM_TIMEOUT_SECONDS)] ? $::env(R9_CURSOR_ARM_TIMEOUT_SECONDS) : 180}]}]
+
+    while {[clock seconds] < $deadline} {
+        passive_serial_tick
+        set status [poll_status]
+        if {[regexp {phase=armed[^\n]*armed=1[^\n]*pid=([0-9]+)} $status -> pid]} {
+            artifact_note "armed_pid=$pid"
+            return
+        }
+        if {[regexp {phase=done} $status]} {
+            finish 6 "R9-CURSOR-CONTRACT-FAIL child-done-before-armed"
+        }
+        if {[regexp {phase=process-timeout} $status]} {
+            finish 7 "R9-CURSOR-CONTRACT-FAIL process-probe-timeout"
+        }
+    }
+    finish 8 "R9-CURSOR-CONTRACT-FAIL status-timeout-before-armed"
+}
+
+proc inject_mouse_moves {} {
+    set moves {
+        {0 0}
+        {32768 32768}
+        {65535 65535}
+        {16384 49152}
+        {49152 16384}
+    }
+
+    foreach move $moves {
+        set x [lindex $move 0]
+        set y [lindex $move 1]
+        if {![monitor_command "mouse_move $x $y"]} {
+            finish 9 "R9-CURSOR-CONTRACT-FAIL monitor-mouse-move"
+        }
+        after 250
+    }
+}
+
+proc wait_for_done {} {
+    set deadline [expr {[clock seconds] + [expr {[info exists ::env(R9_CURSOR_DONE_TIMEOUT_SECONDS)] ? $::env(R9_CURSOR_DONE_TIMEOUT_SECONDS) : 90}]}]
+
+    while {[clock seconds] < $deadline} {
+        passive_serial_tick
+        set status [poll_status]
+        if {[regexp {phase=done} $status]} {
+            finish 0 "R9-CURSOR-CONTRACT-PASS"
+        }
+        if {[regexp {phase=process-timeout} $status]} {
+            finish 7 "R9-CURSOR-CONTRACT-FAIL process-probe-timeout"
+        }
+    }
+    finish 10 "R9-CURSOR-CONTRACT-FAIL status-timeout-before-done"
+}
+
+if {![file exists $kernel]} {
+    puts "R9-CURSOR-CONTRACT-FAIL missing-kernel path=$kernel"
+    exit 2
+}
+if {![file exists $fsimg]} {
+    puts "R9-CURSOR-CONTRACT-FAIL missing-fsimg path=$fsimg"
+    exit 2
+}
+
+catch { file delete -force $monitor $runlog $qemu_dry_run_log $monitor_log }
+catch { file delete -force $status_log $output_log $cmdline_log $process_log $r9_lines $summary_log }
+exec cp $fsimg $tmpimg
+generate_guest_scripts
+inject_guest_setup
+configure_qemu_env
+
+set dry_run [expr {[env_bool R9_CURSOR_CONTRACT_DRY_RUN 0] ||
+                   [env_bool R9_CURSOR_PROBE_DRY_RUN 0] ||
+                   [env_bool QEMU_DRY_RUN 0]}]
+if {$dry_run} {
+    run_qemu_dry_run
+    artifact_note "label=R9-CURSOR-CONTRACT-DRY-RUN-PASS"
+    artifact_note "outdir=$outdir"
+    artifact_note "tmpimg=$tmpimg"
+    artifact_note "qemu_dry_run=$qemu_dry_run_log"
+    puts "\nR9-CURSOR-CONTRACT-DRY-RUN-PASS outdir=$outdir image=$tmpimg qemu_dry_run=$qemu_dry_run_log"
+    exit 0
+}
+
+log_file -a $runlog
+spawn timeout --foreground $timeout bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+wait_for_armed
+inject_mouse_moves
+wait_for_done

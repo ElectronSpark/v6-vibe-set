@@ -176,6 +176,14 @@ Lane bullets (context for the queue above):
   script or existing guest-agent artifact path), write `/r9-probe-output.log`
   and `/r9-probe.status`, retrieve them via debugfs after shutdown, and
   inject pointer moves only after a script-generated armed marker.
+  Worker AF added reusable source-only harness
+  `scripts/gpu/r9-cursor-contract-probe.expect`: it copies the fs image,
+  injects startup-triggered `/r9-run.sh`, polls `/r9-probe.status` with
+  read-only debugfs, and sends monitor `mouse_move` events only after
+  `phase=armed`. Offline/no-VM verification passed via the harness dry-run,
+  generated guest script syntax checks, debugfs image checks, and QEMU command
+  construction; runtime cursor evidence remains intentionally uncollected in
+  this slice.
 
 ## Code Review — Uncommitted Kernel Diff (2026-07-03)
 
