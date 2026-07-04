@@ -147,6 +147,15 @@ Lane bullets (context for the queue above):
   Also check any 07-03 changes touching input/evdev before blaming QEMU.
   Note: KDE smoke interaction latency metrics use monitor-injected input
   and guest-side sampling, so M4/M5 remain valid even with this bug.
+  2026-07-04 offline follow-up: source/archive triage found the virtio
+  tablet raw `0..32767` path already normalized to the guest
+  `0..65535` `/dev/mouse`/evdev/libinput contract, with no archived
+  EVIOCGABS/raw-event/transformed-coordinate evidence proving a 2x range
+  mismatch. Added and staged a default-off `/bin/kde-libinput-probe`
+  R9 cursor-contract diagnostic (`--r9-cursor-contract` or
+  `KDE_LIBINPUT_PROBE_R9_CURSOR=1`) that records EVIOCGABS, raw evdev,
+  `/dev/mouse`, and libinput transformed-coordinate samples without
+  changing launcher/session defaults.
 
 ## Code Review — Uncommitted Kernel Diff (2026-07-03)
 
