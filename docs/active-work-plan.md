@@ -72,17 +72,15 @@ lane sections as status records; do not re-execute them.
 
 Active queue, in order:
 
-- Q1 COMMIT SWEEP — CURRENT STATE CORRECTION 2026-07-04. Q0 commits are
-  present: top-level `56d2ee5`, kernel `ef2dab6`, user `d14a2ca`.
-  Fresh deepest-first audit shows nested repos are clean (`kernel`, `user`,
-  `ports`, and `ports/mesa/src`); this supersedes stale notes about dirty
-  Mesa/ports pointers or old kernel/user hashes. Remaining dirty Q1 work is
-  top-level only: source/docs for generated rootfs/KDE runtime overlays and
-  launch defaults. Non-VM rootfs-refresh checkpoint after the `.stamp` leak
-  fix passed: `bash -n`, `git diff --check`, CMake configure, and
-  `rootfs-refresh`; debugfs proof showed `/.stamp` absent and
-  `/opt/xv6-kde/README.txt` present. Commit only coherent top-level
-  source/docs; do not stage generated build output. No VM boot and no push.
+- Q1 COMMIT SWEEP — LANDED 2026-07-04 through top-level `d60c203`
+  (`rootfs: stage KDE desktop runtime overlays`). Q0 commits are present:
+  top-level `56d2ee5`, kernel `ef2dab6`, user `d14a2ca`. Focused status
+  checks show the top level, `kernel`, `user`, `ports`, and `ports/mesa/src`
+  clean; stale dirty-inventory notes below are historical/superseded.
+  Non-VM rootfs-refresh checkpoint after the `.stamp` leak fix passed:
+  `bash -n`, `git diff --check`, CMake configure, and `rootfs-refresh`;
+  debugfs proof showed `/.stamp` absent and `/opt/xv6-kde/README.txt`
+  present. No VM boot and no push were part of this checkpoint.
 - Q2 = R8 GL decision + implementation: default Chromium path fails on
   missing `GL_ANGLE_robust_client_memory` (then a 6-extension ladder) in
   Chromium passthrough. Options analyzed in the R8 section: implement the
@@ -1630,21 +1628,13 @@ stay behind the current queue unless the user explicitly reprioritizes it.
   with futex/IPC traces).
 - One compile/VM lane at a time; check `pgrep -af qemu-system` first; never
   launch QEMU with a trailing `&` (use async terminal mode).
-- `ports/xz/src` is unrelated dirty state; do not revert.
-- Dirty-by-design inventory (2026-07-03, superseding the noflush-only
-  note): kernel submodule carries the uncommitted P0 idle-pull/atomic
-  halt, R7a O(1) rq registry, R7b inotify FIONREAD ABI fix, R7c timer
-  tick fastpath, P1 2a FS_BASE cache + 2b trapframe change, and gated
-  diagnostic probes (rq/timer/starve/R3 RCU tagging — all default-off);
-  `ports/mesa/src` carries the validated EGL no-error attr-order fix +
-  gated context trace; `user` carries the linuxsyscallabitest
-  inotify-fionread reducer and wakestorm; top level carries harness/
-  launcher/preload diagnostics (default-off) and the bundled-GL
-  alternate-root staging. ALL of this is queue item Q1 — commit it
-  lane-scoped before new work; keep this list current afterward. NOTE:
-  the kernel portion has an open review (see "Code Review — Uncommitted
-  Kernel Diff (2026-07-03)") — triage CR-1..CR-10, resolve blockers CR-1
-  and CR-2, before/as part of committing.
+- Historical dirty inventory (superseded 2026-07-04): earlier handoffs
+  recorded `ports/xz/src` unrelated dirty state plus Q1 dirty-by-design
+  changes in `kernel`, `ports/mesa/src`, `user`, and the top level. Q1 is
+  now landed through top-level `d60c203`, and focused status checks show the
+  top level, `kernel`, `user`, `ports`, and `ports/mesa/src` clean. Treat
+  the old inventory as resolved history; new behavior-affecting diffs must
+  be committed, reverted, or listed here with justification.
 
 ## Verification Gates
 
@@ -1694,6 +1684,7 @@ submodule at handover; every behavior-affecting diff must be committed,
 reverted, or listed in this plan with justification. NEVER push without
 explicit user approval.
 
-For the current Q1 sweep: "verified" is not sufficient — the kernel diff
-has an open review (Code Review section); triage CR-1..CR-10 and resolve
-blockers CR-1/CR-2 before committing the P0 and P1 lanes.
+Q1 sweep closure (2026-07-04): the current Q1 commit sweep is no longer
+pending; source/runtime/docs rootfs overlay work landed through `d60c203`.
+Remaining CR items are tracked as follow-ups in the Code Review section, not
+as blockers to committing the landed Q1 batch.
