@@ -1,7 +1,7 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-04 (appended Q2 launch-only post-system-tray-isolation
-result on top-level `81f9e5b`; materialized on branch
+Last updated: 2026-07-04 (appended Q2 `wl_shm` root cause/fix plus
+launch-only PASS after the post-system-tray-isolation blocker; materialized on branch
 codex/host-linux-abi-shell-port-ff as a copy of the canonical plan; appended
 "M7 / Present-Path + Measurement-Validity Findings (2026-07-04, OFFLINE)" near
 the P2 lane. NOTE: the canonical plan also lives on
@@ -57,9 +57,9 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1958ms independent verification pass 2026-07-03 (was 1888ms R8 pass; the 2386ms P1-gate reading was noise — M4 is genuinely under target) | < 2000ms (Linux same-host ref: 260-510ms) |
 | M5 | `first_visible_ms` | same | 12972ms independent verification pass 2026-07-03 (8632-14623ms band) | < 15000ms |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
-| M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
+| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | Launch-only Q2 now reaches perf-video and records `presentedFPS=39.8`, but full non-launch-only M7 was not retried and remains below target/unpromoted | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | After system-tray isolation, Q2 gets past initial and delayed session liveness and launches the Chromium browser process, but fails before renderer/GPU admission on `No wl_shm object` / `Failed to initialize Wayland platform`; no Chromium surface evidence yet | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | PASS 2026-07-04 after the `wl_shm` fix: pre-Chromium registry probe sees/binds `wl_shm` and creates a tiny shm buffer; Q2 launch-only finishes `status_code=0`, Chromium sampler PASS | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -413,6 +413,42 @@ Active queue, in order:
   PANIC, or fatal page fault markers appear. The current Q2 blocker is
   therefore a compositor/session refusal before Chromium can create Wayland
   surfaces or renderer/GPU roles.
+  Follow-up `wl_shm` root cause/fix on 2026-07-04 supersedes that blocker:
+  the post-system-tray-isolation Q2 archive's KWin log contained
+  `wl_global_create: implemented version for 'wl_shm' higher than interface
+  version (2 > 1)`, while Chromium later reported `No wl_shm object` and
+  `Failed to initialize Wayland platform`. Inspection showed the staged
+  libwayland protocol XML/server build implements `wl_shm` v2, but imported
+  KWin/KWayland objects also export generated `wl_shm_interface` symbols; the
+  smallest repair keeps libwayland-server's server-side `wl_shm` and
+  `wl_shm_pool` protocol metadata private to `wayland-shm.c` when registering
+  and creating shm resources, so compositor-local generated symbols cannot
+  preempt the metadata used by `wl_display_init_shm()`.
+  A new no-Chromium registry reducer/probe now gates this class before
+  Chromium: archive
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T141143Z-kde-wayland-registry-wl-shm-pass/`
+  passed with `wl_compositor=1`, `wl_shm=11 wl_shm_version=2`,
+  `shm_bound=1`, `shm_buffer=1`, `wl_seat=12`, `xdg_wm_base=6`, and
+  `zwp_linux_dmabuf_v1=43`. The single allowed Q2 launch-only retry then ran
+  with the exact bundled/software GL unsets:
+  `env -u KDE_SMOKE_CHROMIUM_BUNDLED_GL -u KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE -u MESA_EXTENSION_OVERRIDE -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER -u MESA_LOADER_DRIVER_OVERRIDE -u LIBGL_ALWAYS_INDIRECT QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`.
+  Archive:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T141345Z-q2-chromium-launch-only-wl-shm-fixed-pass/`.
+  Result: PASS `status_code=0`
+  `KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=chromium-video ... chromium_launch_only=1`.
+  The pre-Chromium registry gate again passed (`wl_shm=11`, `shm_bound=1`,
+  `shm_buffer=1`), Chromium launch evidence reports
+  `launcher_wayland_platform_fail=0`, the sampler reports `samples=63
+  duration_ms=18000 status=PASS`, and the archived Chromium log has no
+  `No wl_shm object` or `Failed to initialize Wayland platform`; Chromium now
+  only warns that it binds `wl_shm` v1 while v2 is available and proceeds to
+  perf-video. GPU evidence stayed on the accelerated path: KWin and host EGL
+  reported Mesa/virgl on `D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)`, the
+  browser env retained `LIBGL_DRIVERS_PATH=/lib/dri:/usr/lib/x86_64-linux-gnu/dri`,
+  `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`, and `GALLIUM_DRIVER=virgl`, with
+  no `llvmpipe`/`swrast`/software or bundled-GL markers. Launch-only perf-video
+  telemetry recorded `presentedFPS=39.8` / `dropPct=24.25`; that is useful M7
+  evidence but not a full non-launch-only M7 pass.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
@@ -993,6 +1029,31 @@ surface/protocol evidence, and no Chromium ANGLE/WebGL/`GL_CHROMIUM_copy_texture
 or robust-client clue because Chromium did not reach that layer. The next Q2
 blocker is therefore Wayland global advertisement/delivery for `wl_shm`, not
 the former system-tray liveness crash or the old missing-extension class.
+
+Q2 `wl_shm` closure 2026-07-04: the old archive's KWin log showed
+`wl_global_create: implemented version for 'wl_shm' higher than interface
+version (2 > 1)`, which explains why normal Chromium clients saw no usable
+`wl_shm` global. The Wayland source/build implements `wl_shm` v2; the failure
+was process-local ELF symbol interposition from imported KWin/KWayland
+generated protocol metadata. `wayland-shm.c` now uses private server-side
+`wl_shm`/`wl_shm_pool` interface metadata for `wl_display_init_shm()`, bind,
+and shm-pool resource creation. The new no-Chromium
+`KDE_SMOKE_REDUCER=kde-wayland-registry` gate passed in
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T141143Z-kde-wayland-registry-wl-shm-pass/`:
+it enumerated `wl_compositor=1`, `wl_shm=11 wl_shm_version=2`, `wl_seat=12`,
+`xdg_wm_base=6`, `zwp_linux_dmabuf_v1=43`, bound `wl_shm`, observed ARGB/XRGB
+formats, and created a 1x1 `XRGB8888` shm buffer (`shm_bound=1`,
+`shm_buffer=1`). The required single Q2 launch-only retry then passed in
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T141345Z-q2-chromium-launch-only-wl-shm-fixed-pass/`
+using the exact `env -u ...` command above: pre-Chromium registry gate PASS,
+`launcher_wayland_platform_fail=0`, Chromium sampler PASS (`samples=63`,
+`duration_ms=18000`), no `No wl_shm object`, and no `Failed to initialize
+Wayland platform`. GPU evidence remained clean Mesa/virgl/D3D12 with Chromium
+env `/lib/dri`, `GALLIUM_DRIVER=virgl`, and
+`MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`; no software or bundled GL markers
+were present. This makes M9 green on the launch-only gate. M7 is still not
+closed: the launch-only page reached perf-video and reported
+`presentedFPS=39.8`, below target and not from a full non-launch-only reducer.
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 

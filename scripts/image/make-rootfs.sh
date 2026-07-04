@@ -900,6 +900,38 @@ stage_kde_wayland_seat_probe() {
         -o "${out}" ${cflags} "${src}" ${libs}
 }
 
+stage_kde_wayland_registry_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-wayland-registry-probe.c"
+    local out="${STAGE}/bin/kde-wayland-registry-probe"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-wayland-registry-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; cannot build kde-wayland-registry-probe" >&2
+        exit 1
+    fi
+
+    cflags="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags wayland-client
+    )"
+    libs="$(
+        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs wayland-client
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib \
+        -o "${out}" ${cflags} "${src}" ${libs}
+}
+
 stage_kde_abi_overrides() {
     local dir="${STAGE}/opt/xv6-kde-abi-libs"
     local cc_bin="${CC:-cc}"
@@ -982,6 +1014,7 @@ stage_kde_session_launchers() {
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
         "${STAGE}/bin/kde-unix-socket-probe"
     stage_kde_wayland_seat_probe
+    stage_kde_wayland_registry_probe
     stage_kde_drm_probe
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-process-probe.c" \
         "${STAGE}/bin/kde-process-probe"
