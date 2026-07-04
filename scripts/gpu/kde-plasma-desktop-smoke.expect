@@ -188,7 +188,7 @@ set chromium_video_egl_platform [expr {[info exists env(KDE_SMOKE_CHROMIUM_EGL_P
 set chromium_video_extra_flags [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_EXTRA_FLAGS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_EXTRA_FLAGS) : ""}]
 set chromium_video_simdutf_force_implementation [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_SIMDUTF_FORCE_IMPLEMENTATION)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_SIMDUTF_FORCE_IMPLEMENTATION) : ""}]
 set chromium_video_kprofile [env_bool KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE 0]
-set chromium_video_kprofile_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE_SECONDS) : "35"}]
+set chromium_video_kprofile_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_KPROFILE_SECONDS) : "40"}]
 set chromium_mesa_extension_override [expr {[info exists env(KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE)] ? $env(KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE) : ""}]
 set chromium_video_url ""
 set chromium_video_proof_mode "video"
@@ -297,9 +297,13 @@ if {![string is integer -strict $chromium_video_wait_for_playback_seconds] ||
 if {$chromium_video_wait_for_playback_seconds > 120} {
     set chromium_video_wait_for_playback_seconds 120
 }
+set chromium_video_kprofile_min_seconds [expr {12 + int(($chromium_video_startup_ms + 999) / 1000) + 15 + 5}]
+if {$chromium_video_kprofile_min_seconds < 40} {
+    set chromium_video_kprofile_min_seconds 40
+}
 if {![string is integer -strict $chromium_video_kprofile_seconds] ||
-    $chromium_video_kprofile_seconds < 5} {
-    set chromium_video_kprofile_seconds 35
+    $chromium_video_kprofile_seconds < $chromium_video_kprofile_min_seconds} {
+    set chromium_video_kprofile_seconds $chromium_video_kprofile_min_seconds
 }
 if {$chromium_video_kprofile_seconds > 180} {
     set chromium_video_kprofile_seconds 180
