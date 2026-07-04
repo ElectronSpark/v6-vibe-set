@@ -5,9 +5,10 @@ R5 root-caused + fixed, P2 ordered-pageflip default landed, Q2 real-GL
 runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
 gated, N2 ext4 default promotion attempted but NOT accepted after a
 default-on KWin #GP rerun; later N2 ON-arm kernel #PF classified and
-opt-in diagnostics landed; kprofile measurement validity fixed. All
-verbose evidence chains moved to the history file and git log; this file
-holds current status, queue, rules, and compact lane conclusions only.)
+opt-in diagnostics landed; kprofile measurement validity fixed; N3 R9
+dry-run harness blocker classified. All verbose evidence chains moved to
+the history file and git log; this file holds current status, queue,
+rules, and compact lane conclusions only.)
 
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
@@ -138,7 +139,23 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   nullptr payload bug found by R5 forensics (same input area). Harness
   ready: `scripts/gpu/r9-cursor-contract-probe.expect` (source-only,
   startup-injected probe + debugfs retrieval; do NOT drive it over the
-  interactive serial shell).
+  interactive serial shell). 2026-07-04 owner run started from clean
+  top/kernel/user/ports status and no stale QEMU/smoke processes, but the
+  required dry-run
+  `R9_CURSOR_CONTRACT_DRY_RUN=1 timeout 60 expect scripts/gpu/r9-cursor-contract-probe.expect`
+  exited 124 with no stdout before the harness printed its expected
+  `R9-CURSOR-CONTRACT-DRY-RUN-PASS` line. Artifacts:
+  `build-x86_64/r9-cursor-contract-probe-history/20260704T192429Z/`.
+  The outdir contains only the copied `r9-kde-plasma.fs.img` plus
+  host-side generated `guest-r9-run*.sh`; there is no `startup.r9`,
+  `qemu-dry-run.txt`, `STATUS.txt`, guest status/output, or `r9-lines.txt`,
+  and read-only `debugfs` confirmed `/r9-run.sh` was not injected into the
+  copied image. Classification: pre-QEMU harness setup/injection timeout,
+  before any `phase=armed` or input evidence. Real R9 probe was not run;
+  no raw/EVIOCGABS/libinput/transformed coordinate contract result exists
+  from this attempt. Next N3 slice should fix or instrument the harness
+  setup/debugfs injection path first, then rerun the dry-run before touching
+  evdev, libinput, virtio-input, or compositor code.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
   Implement both together, one battery.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
