@@ -515,8 +515,13 @@ the reducer; and preserve destination BASE/MAX_LEVEL semantics.
 Pre-implementation reducer hardening for `mesacopytexture` now sharpens the
 offline proof surface before the real Mesa work: it keeps missing extension/proc
 as rc 77, rejects software renderers, broadens conversion/error/level/subcopy
-coverage, and leaves only genuinely optional target fixtures as SKIP. Verified
-offline with `git -C ports diff --check`, `port-wayland-mesacopytexture-install`,
+coverage, adds guarded external EGLImage/OES and destination-format roundtrip
+fixtures, checks destination BASE/MAX_LEVEL invariance for level-1 copies,
+expects rectangle targets to fail with `GL_INVALID_ENUM` when unsupported, and
+aligns same-texture/same-level subcopy with ANGLE's invalid-operation
+validation. Unsupported GL/EGL capabilities still SKIP instead of false-failing.
+Verified offline with `git -C ports diff --check`,
+`cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
 and a host reducer run returning rc 77 on missing `GL_CHROMIUM_copy_texture`;
 this is not runtime default-Chromium proof and does not implement Mesa semantics.
 Remaining ladder before runtime default-Chromium proof:
