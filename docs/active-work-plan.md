@@ -57,7 +57,7 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | After the optional-audio update, no-Chromium liveness passes and Q2 reaches pre-Chromium liveness plus Chromium launch, but plasmashell KCrash/session teardown recurs around launch; Chromium exits after Wayland `Connection refused` before renderer/GPU roles appear | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 is blocked by delayed no-Chromium Plasma teardown, now reproduced before any synthetic client or Chromium launch: plasmashell KCrash/Wayland Bad FD after initial liveness, no renderer/GPU admission evidence | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -883,6 +883,34 @@ the host smoke both report
 `26.2.0-devel`. One kernel anomaly remains in that Q2 run:
 `slab_alloc: repairing corrupt freelist cache='rcu_head_cache' ...`; correlate
 any recurrence with the bounded-open R3 owner-history diagnostics.
+
+Follow-up diagnostics on 2026-07-04 keep the classification on the session
+side, not Chromium. The harness now preserves `/kde-plasmashell-crash-capture.log`,
+per-label liveness logs, optional `/core.PID` artifacts, a delayed
+pre-Chromium liveness gate, and a no-Chromium
+`kde-wayland-client-liveness` reducer. Build refresh passed after those changes.
+The first synthetic-client attempt exposed only the known long serial-command
+truncation hazard and is archived at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T130109Z-kde-wayland-client-liveness-start-timeout-harness-command/`.
+After moving client control into `/kwcl.sh`, the same reducer failed before
+launching the synthetic Wayland client, at delayed liveness:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T130310Z-kde-wayland-client-liveness-delayed-plasmashell-kcrash/`.
+The vanilla no-Chromium liveness reducer also now catches the same class at its
+late roundtrip:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T130425Z-kde-wayland-liveness-late-plasmashell-kcrash/`.
+
+Crash evidence from those runs: initial liveness and the standalone Wayland seat
+probe pass, then the delayed/late liveness returns rc 2 after KCrash recursion 2
+for `plasmashell`, fatal Wayland `Bad file descriptor`, and wrapper exit records
+around 7.2-7.6s lifetime. The plasma log shows notification/system-tray QML
+warnings immediately before the crash, including StatusNotifierItem registration
+and a system-tray `compactRepresentationItem` null read. Passive crash capture
+records `config capture=1`, the plasmashell pid, live `/proc` snapshots through
+the failure, render-node fds such as `/dev/dri/renderD128`, and `wait_done`
+with raw exit status 256. `KDE_DEBUG=1` did not bypass KCrash in the targeted
+disable-KCrash run, and core capture remains opt-in. Do not spend another Q2
+proof run until this no-Chromium delayed plasmashell crash is fixed or a stronger
+stack/core path is enabled.
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 

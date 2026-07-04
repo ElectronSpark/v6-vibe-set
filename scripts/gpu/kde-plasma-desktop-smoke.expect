@@ -26,6 +26,7 @@ set guest_host_x11_present_trace_log "/host-gui-host-x11-present-trace.log"
 set guest_fbstat_log "/kde-fbstat.log"
 set guest_host_egl_gbm_log "/host-gui-host-egl-gbm-gl-smoke.log"
 set guest_host_egl_gbm_status "/host-gui-host-egl-gbm-gl-smoke.status"
+set guest_host_wlegl_smoke_log "/tmp/host-gui-host-wlegl-smoke.log"
 set guest_wayland_chromium_log "/host-gui-wayland-chromium.log"
 set guest_wayland_chromium_compat_log "/tmp/host-gui-wayland-chromium.log"
 set guest_chrome_debug_log "/chrome_debug.log"
@@ -33,6 +34,7 @@ set guest_chrome_debug_compat_log "/tmp/chrome_debug.log"
 set guest_kwin_alloc_trace_log "/kde-kwin-alloc-trace.log"
 set guest_kde_session_kwin_log "/kde-session-kwin.log"
 set guest_kde_session_plasma_log "/kde-session-plasma-child.log"
+set guest_plasmashell_crash_capture_log "/kde-plasmashell-crash-capture.log"
 set guest_kde_audio_status_log "/kde-audio-status.log"
 set guest_kde_network_sni_log "/kde-network-status-sni.log"
 set guest_pre_kwin_libinput_log "/kde-pre-kwin-libinput.log"
@@ -47,6 +49,7 @@ set guest_kde_preflight_runner_status "/kspr.status"
 set guest_kde_preflight_ready_log "/kspr-ready.log"
 set guest_session_liveness_log "/kde-session-liveness-before-chromium.log"
 set guest_session_liveness_script "/kslc.sh"
+set guest_wayland_client_liveness_script "/kwcl.sh"
 set guest_chromium_egl_trace_log "/chromium-egl-trace.log"
 set guest_chromium_process_evidence_log "/kde-chromium-process-evidence.log"
 set guest_chromium_launch_probe_log "/kde-chromium-launch-probe.log"
@@ -83,8 +86,10 @@ set chrome_debug_log "$outdir/chrome_debug.log"
 set kwin_alloc_trace_log "$outdir/kde-kwin-alloc-trace.log"
 set kde_session_kwin_log "$outdir/kde-session-kwin.log"
 set kde_session_plasma_log "$outdir/kde-session-plasma-child.log"
+set plasmashell_crash_capture_log "$outdir/kde-plasmashell-crash-capture.log"
 set kde_audio_status_log "$outdir/kde-audio-status.log"
 set kde_network_sni_log "$outdir/kde-network-status-sni.log"
+set host_wlegl_smoke_log "$outdir/host-gui-host-wlegl-smoke.log"
 set pre_kwin_libinput_log "$outdir/kde-pre-kwin-libinput.log"
 set kwin_loader_ifunc_log "$outdir/kde-kwin-loader-ifunc.log"
 set qtqml_ifunc_log "$outdir/kde-qtqml-ifunc-startup.log"
@@ -201,6 +206,9 @@ set chromium_video_url ""
 set chromium_video_proof_mode "video"
 set chromium_video_limitation ""
 set chromium_video_final_sync_status "not-run"
+set pre_chromium_liveness_delay_seconds [expr {[info exists env(KDE_SMOKE_PRE_CHROMIUM_LIVENESS_DELAY_SECONDS)] ? $env(KDE_SMOKE_PRE_CHROMIUM_LIVENESS_DELAY_SECONDS) : ($chromium_launch_only ? "5" : "0")}]
+set wayland_client_liveness_delay_seconds [expr {[info exists env(KDE_SMOKE_WAYLAND_CLIENT_LIVENESS_DELAY_SECONDS)] ? $env(KDE_SMOKE_WAYLAND_CLIENT_LIVENESS_DELAY_SECONDS) : "5"}]
+set wayland_client_liveness_runtime_seconds [expr {[info exists env(KDE_SMOKE_WAYLAND_CLIENT_LIVENESS_RUNTIME_SECONDS)] ? $env(KDE_SMOKE_WAYLAND_CLIENT_LIVENESS_RUNTIME_SECONDS) : "5"}]
 
 if {![string is integer -strict $chromium_video_warmup_seconds] ||
     $chromium_video_warmup_seconds < 1} {
@@ -304,6 +312,27 @@ if {![string is integer -strict $chromium_video_wait_for_playback_seconds] ||
 if {$chromium_video_wait_for_playback_seconds > 120} {
     set chromium_video_wait_for_playback_seconds 120
 }
+if {![string is integer -strict $pre_chromium_liveness_delay_seconds] ||
+    $pre_chromium_liveness_delay_seconds < 0} {
+    set pre_chromium_liveness_delay_seconds 0
+}
+if {$pre_chromium_liveness_delay_seconds > 60} {
+    set pre_chromium_liveness_delay_seconds 60
+}
+if {![string is integer -strict $wayland_client_liveness_delay_seconds] ||
+    $wayland_client_liveness_delay_seconds < 0} {
+    set wayland_client_liveness_delay_seconds 5
+}
+if {$wayland_client_liveness_delay_seconds > 60} {
+    set wayland_client_liveness_delay_seconds 60
+}
+if {![string is integer -strict $wayland_client_liveness_runtime_seconds] ||
+    $wayland_client_liveness_runtime_seconds < 1} {
+    set wayland_client_liveness_runtime_seconds 5
+}
+if {$wayland_client_liveness_runtime_seconds > 60} {
+    set wayland_client_liveness_runtime_seconds 60
+}
 set chromium_video_kprofile_min_seconds [expr {12 + int(($chromium_video_startup_ms + 999) / 1000) + 15 + 5}]
 if {$chromium_video_kprofile_min_seconds < 40} {
     set chromium_video_kprofile_min_seconds 40
@@ -342,11 +371,12 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$kde_audio_status_log' '$kde_network_sni_log' '$pre_kwin_libinput_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$session_liveness_log' '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$host_wlegl_smoke_log' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$plasmashell_crash_capture_log' '$kde_audio_status_log' '$kde_network_sni_log' '$pre_kwin_libinput_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$session_liveness_log' '$outdir'/kde-session-liveness-*.log '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set host_egl_gbm_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-egl-gbm-gl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
+set host_wlegl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-wlegl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set x11_egl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x11-egl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set x11_dri3_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-x11-dri3-present-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 catch { exec sh -c "debugfs -w -R 'rm $guest_before_ppm' '$tmpimg' >/dev/null 2>&1" }
@@ -362,6 +392,11 @@ catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_log' '$tmpimg' >/dev/n
 catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_compat_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_alloc_trace_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kde_audio_status_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_plasmashell_crash_capture_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_host_wlegl_smoke_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm /tmp/host-wlegl-smoke.pid' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm /tmp/host-wlegl-smoke-exit' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm /tmp/host-wlegl-smoke-toggle' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_pre_kwin_libinput_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_loader_ifunc_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_loader_ifunc_script' '$tmpimg' >/dev/null 2>&1" }
@@ -374,6 +409,7 @@ catch { exec sh -c "debugfs -w -R 'rm $guest_kde_preflight_runner_status' '$tmpi
 catch { exec sh -c "debugfs -w -R 'rm $guest_kde_preflight_ready_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_session_liveness_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_session_liveness_script' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_wayland_client_liveness_script' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_egl_trace_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_process_evidence_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_launch_probe_log' '$tmpimg' >/dev/null 2>&1" }
@@ -467,6 +503,7 @@ if {[info exists env(KDE_SMOKE_AGENT)]} {
           $kde_smoke_reducer eq "chromium-video" ||
           $kde_smoke_reducer eq "kde-ready" ||
           $kde_smoke_reducer eq "kde-wayland-liveness" ||
+          $kde_smoke_reducer eq "kde-wayland-client-liveness" ||
           $kde_smoke_reducer eq "pre-kwin-libinput"} {
     set kde_smoke_agent "0"
 } else {
@@ -502,6 +539,19 @@ if {[env_bool KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE 0] ||
 }
 if {$pre_kwin_libinput_probe_only} {
     append qemu_append " kde_pre_kwin_libinput_probe_only=1"
+}
+if {[env_bool KDE_SMOKE_PLASMASHELL_CRASH_CAPTURE 1]} {
+    append qemu_append " kde_plasmashell_crash_capture=1"
+}
+set plasmashell_disable_kcrash_default [expr {
+    ($kde_smoke_reducer eq "chromium-video" && $chromium_launch_only eq "1") ||
+    $kde_smoke_reducer eq "kde-wayland-client-liveness"
+}]
+if {[env_bool KDE_SMOKE_PLASMASHELL_DISABLE_KCRASH $plasmashell_disable_kcrash_default]} {
+    append qemu_append " kde_plasmashell_disable_kcrash=1"
+}
+if {[env_bool KDE_SMOKE_PLASMASHELL_CORE 0]} {
+    append qemu_append " kde_plasmashell_core=1"
 }
 if {$chromium_available} {
     append qemu_append " kde_smoke_require_chromium=1"
@@ -7278,6 +7328,18 @@ proc dump_optional_guest_artifact {guest_path host_path} {
     return 0
 }
 
+proc dump_guest_core_artifacts {} {
+    global tmpimg outdir
+
+    set listing ""
+    catch { set listing [exec sh -c "debugfs -R 'ls -p /' '$tmpimg' 2>/dev/null || true"] }
+    foreach line [split $listing "\n"] {
+        if {[regexp {/[0-9]+/[0-7]+/[0-9]+/[0-9]+/(core\.[0-9]+)(/|$)} $line -> core_name]} {
+            dump_optional_guest_artifact "/$core_name" "$outdir/$core_name"
+        }
+    }
+}
+
 proc read_guest_artifact_text {guest_path text_var} {
     global tmpimg outdir
     upvar 1 $text_var text
@@ -10204,7 +10266,7 @@ proc stage_session_liveness_script {} {
     puts $fh {    echo 'session_liveness_before_chromium sockets begin'}
     puts $fh {    ls /dev/shm/xdg-runtime-root /dev/shm/xdg-runtime-root/wayland-* /tmp/.X11-unix /tmp/.X11-unix/* 2>&1 || true}
     puts $fh {    echo 'session_liveness_before_chromium sockets end'}
-    puts $fh {    for log_file in /kde-session-kwin.log /kde-session-plasma-child.log /kde-audio-status.log /kde-network-status-sni.log /kspr.log /kspr.status /kspr-ready.log; do}
+    puts $fh {    for log_file in /kde-session-kwin.log /kde-session-plasma-child.log /kde-plasmashell-crash-capture.log /kde-audio-status.log /kde-network-status-sni.log /kspr.log /kspr.status /kspr-ready.log; do}
     puts $fh {        echo "session_liveness_before_chromium guest_log=$log_file begin"}
     puts $fh {        sed -n '1,260p' "$log_file" 2>&1 || true}
     puts $fh {        echo "session_liveness_before_chromium guest_log=$log_file end"}
@@ -10269,6 +10331,38 @@ proc stage_session_liveness_script {} {
     close $fh
 
     exec sh -c "printf '%s\n' 'rm $guest_session_liveness_script' 'write $host_script $guest_session_liveness_script' 'rm $guest_session_liveness_log' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+}
+
+proc stage_wayland_client_liveness_script {} {
+    global tmpimg outdir guest_wayland_client_liveness_script
+    global guest_host_wlegl_smoke_log
+
+    set host_script "$outdir/kde-wayland-client-liveness.sh.host"
+    set fh [open $host_script w]
+    puts $fh "#!/bin/sh"
+    puts $fh "log=$guest_host_wlegl_smoke_log"
+    puts $fh {case "${1:-}" in}
+    puts $fh {  clear)}
+    puts $fh {    rm -f "$log" /tmp/host-wlegl-smoke.pid /tmp/host-wlegl-smoke-exit /tmp/host-wlegl-smoke-toggle}
+    puts $fh {    ;;}
+    puts $fh {  launch)}
+    puts $fh {    /bin/host-wlegl-smoke &}
+    puts $fh {    ;;}
+    puts $fh {  status)}
+    puts $fh {    grep -E 'host-wlegl-smoke: (ready frame=|egl ready|wl_display_connect failed|missing globals|configure dispatch failed|wl_egl_window_create failed|egl[A-Za-z0-9]+ failed)' "$log" 2>/dev/null || true}
+    puts $fh {    ;;}
+    puts $fh {  stop)}
+    puts $fh {    echo 1 > /tmp/host-wlegl-smoke-exit}
+    puts $fh {    sync}
+    puts $fh {    ;;}
+    puts $fh {  *)}
+    puts $fh {    echo "usage: $0 {clear|launch|status|stop}" >&2}
+    puts $fh {    exit 2}
+    puts $fh {    ;;}
+    puts $fh {esac}
+    close $fh
+
+    exec sh -c "printf '%s\n' 'rm $guest_wayland_client_liveness_script' 'write $host_script $guest_wayland_client_liveness_script' | debugfs -w '$tmpimg' >/dev/null 2>&1"
 }
 
 proc stage_kde_preflight_runner_script {} {
@@ -11060,6 +11154,7 @@ proc finish {code label} {
     global guest_fbstat_log fbstat_log
     global guest_host_egl_gbm_log host_egl_gbm_log
     global guest_host_egl_gbm_status host_egl_gbm_status
+    global guest_host_wlegl_smoke_log host_wlegl_smoke_log
     global guest_wayland_chromium_log guest_wayland_chromium_compat_log
     global guest_chrome_debug_log guest_chrome_debug_compat_log
     global guest_kwin_alloc_trace_log guest_kwin_loader_ifunc_log
@@ -11075,6 +11170,7 @@ proc finish {code label} {
     global guest_chromium_video_rela_preprobe_status
     global wayland_chromium_log chrome_debug_log kwin_alloc_trace_log
     global guest_kde_session_kwin_log guest_kde_session_plasma_log
+    global guest_plasmashell_crash_capture_log plasmashell_crash_capture_log
     global guest_kde_audio_status_log guest_kde_network_sni_log
     global guest_pre_kwin_libinput_log
     global kde_session_kwin_log kde_session_plasma_log kde_audio_status_log
@@ -11116,6 +11212,7 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_fbstat_log $fbstat_log
     dump_optional_guest_artifact $guest_host_egl_gbm_log $host_egl_gbm_log
     dump_optional_guest_artifact $guest_host_egl_gbm_status $host_egl_gbm_status
+    dump_optional_guest_artifact $guest_host_wlegl_smoke_log $host_wlegl_smoke_log
     dump_optional_guest_artifact $guest_wayland_chromium_log $wayland_chromium_log
     if {![guest_artifact_real_file $wayland_chromium_log]} {
         dump_optional_guest_artifact $guest_wayland_chromium_compat_log $wayland_chromium_log
@@ -11127,6 +11224,7 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_kwin_alloc_trace_log $kwin_alloc_trace_log
     dump_optional_guest_artifact $guest_kde_session_kwin_log $kde_session_kwin_log
     dump_optional_guest_artifact $guest_kde_session_plasma_log $kde_session_plasma_log
+    dump_optional_guest_artifact $guest_plasmashell_crash_capture_log $plasmashell_crash_capture_log
     dump_optional_guest_artifact $guest_kde_audio_status_log $kde_audio_status_log
     dump_optional_guest_artifact $guest_kde_network_sni_log $kde_network_sni_log
     dump_optional_guest_artifact $guest_pre_kwin_libinput_log $pre_kwin_libinput_log
@@ -11137,6 +11235,7 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_kde_preflight_runner_status $kde_preflight_runner_status
     dump_optional_guest_artifact $guest_kde_preflight_ready_log $kde_preflight_ready_log
     dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
+    dump_guest_core_artifacts
     dump_optional_guest_artifact $guest_chromium_process_evidence_log $chromium_process_evidence_log
     dump_optional_guest_artifact $guest_chromium_launch_probe_log $chromium_launch_probe_log
     if {![file exists $role_probe_log] || [file size $role_probe_log] == 0} {
@@ -11917,7 +12016,7 @@ proc run_wayland_seat_probe {} {
 
 proc run_session_liveness_probe {label} {
     global timeout guest_session_liveness_log session_liveness_log
-    global guest_session_liveness_script
+    global guest_session_liveness_script outdir
 
     set old_timeout $timeout
     sync_prompt
@@ -11929,6 +12028,9 @@ proc run_session_liveness_probe {label} {
             set timeout $old_timeout
             optional_prompt
             dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
+            set safe_label $label
+            regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
+            catch { file copy -force $session_liveness_log "$outdir/kde-session-liveness-$safe_label.log" }
             set log_text ""
             if {[file exists $session_liveness_log]} {
                 set log_text [read_text_file $session_liveness_log]
@@ -11942,16 +12044,25 @@ proc run_session_liveness_probe {label} {
         -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
             set timeout $old_timeout
             dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
+            set safe_label $label
+            regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
+            catch { file copy -force $session_liveness_log "$outdir/kde-session-liveness-$safe_label.log" }
             finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-crash"
         }
         timeout {
             set timeout $old_timeout
             dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
+            set safe_label $label
+            regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
+            catch { file copy -force $session_liveness_log "$outdir/kde-session-liveness-$safe_label.log" }
             finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-timeout"
         }
         eof {
             set timeout $old_timeout
             dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
+            set safe_label $label
+            regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
+            catch { file copy -force $session_liveness_log "$outdir/kde-session-liveness-$safe_label.log" }
             finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL $label-eof"
         }
     }
@@ -11987,6 +12098,145 @@ proc run_optional_chromium_probe {} {
     }
     set timeout $old_timeout
     optional_prompt
+}
+
+proc run_kde_wayland_client_liveness_reducer {} {
+    global timeout host_wlegl_available guest_host_wlegl_smoke_log
+    global host_wlegl_smoke_log wayland_client_liveness_delay_seconds
+    global wayland_client_liveness_runtime_seconds
+    global guest_wayland_client_liveness_script
+
+    if {!$host_wlegl_available} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-host-wlegl-missing"
+    }
+
+    run_session_liveness_probe "kde-wayland-client-liveness-before"
+    if {$wayland_client_liveness_delay_seconds > 0} {
+        sleep $wayland_client_liveness_delay_seconds
+        run_session_liveness_probe "kde-wayland-client-liveness-delayed-${wayland_client_liveness_delay_seconds}s"
+    }
+
+    set old_timeout $timeout
+    sync_prompt
+    set timeout 30
+    set clear_marker "KWCLCLEAR"
+    send "/bin/sh $guest_wayland_client_liveness_script clear; echo $clear_marker\r"
+    expect {
+        -re [async_marker_re $clear_marker] {
+            set timeout $old_timeout
+            optional_prompt
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|kde-exception-fatal-summary|pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
+            set timeout $old_timeout
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-clear-crash"
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-clear-timeout"
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-clear-eof"
+        }
+    }
+
+    sync_prompt
+    set timeout 30
+    set start_marker "KWCLSTART"
+    send "/bin/sh $guest_wayland_client_liveness_script launch; echo $start_marker\r"
+    expect {
+        -re [async_marker_re $start_marker] {
+            set timeout $old_timeout
+            optional_prompt
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|kde-exception-fatal-summary|pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
+            set timeout $old_timeout
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-launch-crash"
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-start-timeout"
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-start-eof"
+        }
+    }
+
+    set ready 0
+    set fail_line ""
+    set deadline [expr {[clock seconds] + 60}]
+    while {[clock seconds] < $deadline && !$ready} {
+        set timeout 8
+        set poll_marker "KWCLPOLL"
+        send "/bin/sh $guest_wayland_client_liveness_script status; echo $poll_marker\r"
+        expect {
+            -re {host-wlegl-smoke: ready frame=[^\r\n]*} {
+                set ready 1
+                exp_continue
+            }
+            -re {host-wlegl-smoke: (wl_display_connect failed|missing globals|configure dispatch failed|wl_egl_window_create failed|egl[A-Za-z0-9]+ failed)[^\r\n]*} {
+                set fail_line $expect_out(0,string)
+                exp_continue
+            }
+            -re [marker_re $poll_marker] {
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|kde-exception-fatal-summary|pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
+                set timeout $old_timeout
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-ready-crash"
+            }
+            timeout {
+            }
+            eof {
+                set timeout $old_timeout
+                finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-ready-eof"
+            }
+        }
+        if {$fail_line ne "" && !$ready} {
+            set timeout $old_timeout
+            dump_optional_guest_artifact $guest_host_wlegl_smoke_log $host_wlegl_smoke_log
+            finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-client-fail"
+        }
+        if {!$ready} {
+            sleep 1
+        }
+    }
+    set timeout $old_timeout
+    dump_optional_guest_artifact $guest_host_wlegl_smoke_log $host_wlegl_smoke_log
+    if {!$ready} {
+        finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-ready-timeout"
+    }
+
+    sleep $wayland_client_liveness_runtime_seconds
+    run_session_liveness_probe "kde-wayland-client-liveness-post-launch"
+
+    set old_timeout $timeout
+    set timeout 30
+    set stop_marker "KWCLSTOP"
+    send "/bin/sh $guest_wayland_client_liveness_script stop; echo $stop_marker\r"
+    expect {
+        -re [async_marker_re $stop_marker] {
+            set timeout $old_timeout
+            optional_prompt
+        }
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|kde-exception-fatal-summary|pid [0-9]+ [^:\r\n]+: exception [0-9]+} {
+            set timeout $old_timeout
+            finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-stop-crash"
+        }
+        timeout {
+            puts "KDE-PLASMA-DESKTOP-SMOKE-WARN kde-wayland-client-liveness-stop-timeout-continuing"
+            set timeout $old_timeout
+            optional_prompt
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-wayland-client-liveness-stop-eof"
+        }
+    }
+    sleep 1
+    dump_optional_guest_artifact $guest_host_wlegl_smoke_log $host_wlegl_smoke_log
+    run_session_liveness_probe "kde-wayland-client-liveness-post-exit"
+    finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kde-wayland-client-liveness delay_seconds=$wayland_client_liveness_delay_seconds runtime_seconds=$wayland_client_liveness_runtime_seconds"
 }
 
 proc run_chromium_video_capture {{require_prompt 1}} {
@@ -12311,6 +12561,7 @@ proc run_chromium_video_reducer {} {
     global chromium_video_final_sync_status
     global chromium_launch_only
     global chromium_video_multiprocess
+    global pre_chromium_liveness_delay_seconds
     global guest_chromium_video_clear_script
     global guest_chromium_video_launch_script guest_chromium_video_sampler_script
     global guest_chromium_video_sampler_status_script
@@ -12354,6 +12605,10 @@ proc run_chromium_video_reducer {} {
     run_chromium_video_egl_gbm_probe
     run_chromium_video_rela_preprobe
     run_session_liveness_probe "session-liveness-before-chromium"
+    if {$pre_chromium_liveness_delay_seconds > 0} {
+        sleep $pre_chromium_liveness_delay_seconds
+        run_session_liveness_probe "session-liveness-before-chromium-delayed-${pre_chromium_liveness_delay_seconds}s"
+    }
     optional_prompt
     set timeout 30
     set launch_begin_marker "KCVBEGIN"
@@ -16643,8 +16898,12 @@ if {[kde_smoke_reducer] eq "chromium-video"} {
 }
 
 if {[kde_smoke_reducer] eq "chromium-video" ||
-    [kde_smoke_reducer] eq "kde-wayland-liveness"} {
+    [kde_smoke_reducer] eq "kde-wayland-liveness" ||
+    [kde_smoke_reducer] eq "kde-wayland-client-liveness"} {
     stage_session_liveness_script
+}
+if {[kde_smoke_reducer] eq "kde-wayland-client-liveness"} {
+    stage_wayland_client_liveness_script
 }
 
 if {[kde_smoke_reducer] eq "desktop-interaction" ||
@@ -16659,7 +16918,8 @@ stage_qtqml_ifunc_script
 if {$kde_preflight_enabled &&
     ([kde_smoke_reducer] eq "" ||
      [kde_smoke_reducer] eq "chromium-video" ||
-     [kde_smoke_reducer] eq "kde-wayland-liveness")} {
+     [kde_smoke_reducer] eq "kde-wayland-liveness" ||
+     [kde_smoke_reducer] eq "kde-wayland-client-liveness")} {
     stage_kde_preflight_runner_script
 } elseif {!$kde_preflight_enabled} {
     puts "KDE-PLASMA-DESKTOP-SMOKE-WARN kde-preflight-runner-stage-skipped preflight=disabled"
@@ -16803,6 +17063,13 @@ if {[kde_smoke_reducer] eq "kde-wayland-liveness"} {
     sleep 5
     run_session_liveness_probe "kde-wayland-liveness-late-roundtrip"
     finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kde-wayland-liveness"
+}
+
+if {[kde_smoke_reducer] eq "kde-wayland-client-liveness"} {
+    wait_for_kde_session_ready
+    run_kwin_loader_ifunc_check
+    run_qtqml_ifunc_startup_check
+    run_kde_wayland_client_liveness_reducer
 }
 
 if {[kde_smoke_reducer] eq "desktop-interaction-latency"} {

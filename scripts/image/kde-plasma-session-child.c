@@ -1,4 +1,6 @@
 #define _GNU_SOURCE
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -7,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -16,6 +19,7 @@
 
 #define PLASMASHELL_IMMEDIATE_EXIT_MS 8000
 #define KDE_AUDIO_STATUS_LOG "/kde-audio-status.log"
+#define PLASMASHELL_CRASH_CAPTURE_LOG "/kde-plasmashell-crash-capture.log"
 
 static void mkdir_one(const char *path, mode_t mode)
 {
@@ -60,10 +64,72 @@ static int env_is_enabled(const char *name)
            strcasecmp(value, "no") != 0 && strcasecmp(value, "off") != 0;
 }
 
+static int flag_or_env_enabled(const char *flag, const char *env)
+{
+    return cmdline_has_flag(flag) || env_is_enabled(env);
+}
+
 static int pactl_readiness_probe_enabled(void)
 {
     return cmdline_has_flag("kde_pactl_probe=1") ||
            env_is_enabled("KDE_PACTL_READINESS_PROBE");
+}
+
+static int plasmashell_crash_capture_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = flag_or_env_enabled("kde_plasmashell_crash_capture=1",
+                                      "KDE_PLASMASHELL_CRASH_CAPTURE");
+        initialized = 1;
+    }
+    return enabled;
+}
+
+static int plasmashell_disable_kcrash_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = flag_or_env_enabled("kde_plasmashell_disable_kcrash=1",
+                                      "KDE_PLASMASHELL_DISABLE_KCRASH");
+        initialized = 1;
+    }
+    return enabled;
+}
+
+static int plasmashell_core_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = flag_or_env_enabled("kde_plasmashell_core=1",
+                                      "KDE_PLASMASHELL_CORE");
+        initialized = 1;
+    }
+    return enabled;
+}
+
+static void crash_capture_printf(const char *fmt, ...)
+{
+    FILE *fp;
+    va_list ap;
+
+    if (!plasmashell_crash_capture_enabled())
+        return;
+
+    fp = fopen(PLASMASHELL_CRASH_CAPTURE_LOG, "a");
+    if (!fp)
+        return;
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+    fputc('\n', fp);
+    fclose(fp);
 }
 
 static void audio_status(const char *fmt, ...)
@@ -164,6 +230,182 @@ static long long monotonic_ms(void)
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
+static void fprint_escaped_bytes(FILE *fp, const char *buf, ssize_t n)
+{
+    static const char hex[] = "0123456789abcdef";
+
+    for (ssize_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)buf[i];
+
+        if (c == '\0') {
+            fputs("\\0", fp);
+        } else if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7e)) {
+            fputc(c, fp);
+        } else {
+            fputs("\\x", fp);
+            fputc(hex[c >> 4], fp);
+            fputc(hex[c & 0xf], fp);
+        }
+    }
+}
+
+static void dump_proc_file_limited(FILE *fp, pid_t pid, const char *rel,
+                                   size_t limit)
+{
+    char path[512];
+    char buf[1024];
+    size_t total = 0;
+    int fd;
+
+    snprintf(path, sizeof(path), "/proc/%ld/%s", (long)pid, rel);
+    fprintf(fp, "plasmashell_crash_capture proc pid=%ld file=%s begin\n",
+            (long)pid, rel);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(fp, "open errno=%d %s\n", errno, strerror(errno));
+        fprintf(fp, "plasmashell_crash_capture proc pid=%ld file=%s end\n",
+                (long)pid, rel);
+        return;
+    }
+
+    for (;;) {
+        size_t want = sizeof(buf);
+        ssize_t n;
+
+        if (limit > 0 && total + want > limit)
+            want = limit - total;
+        if (want == 0)
+            break;
+        n = read(fd, buf, want);
+        if (n <= 0)
+            break;
+        fprint_escaped_bytes(fp, buf, n);
+        total += (size_t)n;
+        if (limit > 0 && total >= limit)
+            break;
+    }
+    if (limit > 0 && total >= limit)
+        fprintf(fp,
+                "\nplasmashell_crash_capture proc pid=%ld file=%s truncated_at=%zu\n",
+                (long)pid, rel, limit);
+    close(fd);
+    fprintf(fp, "plasmashell_crash_capture proc pid=%ld file=%s end\n",
+            (long)pid, rel);
+}
+
+static void dump_fd_targets(FILE *fp, pid_t pid)
+{
+    char dirpath[128];
+    DIR *dir;
+    struct dirent *de;
+
+    snprintf(dirpath, sizeof(dirpath), "/proc/%ld/fd", (long)pid);
+    fprintf(fp, "plasmashell_crash_capture fd pid=%ld begin\n", (long)pid);
+    dir = opendir(dirpath);
+    if (!dir) {
+        fprintf(fp, "opendir errno=%d %s\n", errno, strerror(errno));
+        fprintf(fp, "plasmashell_crash_capture fd pid=%ld end\n", (long)pid);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char linkpath[512];
+        char target[256];
+        int all_digits = 1;
+        ssize_t n;
+
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+        snprintf(linkpath, sizeof(linkpath), "/proc/%ld/fd/%s",
+                 (long)pid, de->d_name);
+        n = readlink(linkpath, target, sizeof(target) - 1);
+        if (n < 0) {
+            fprintf(fp, "fd=%s readlink_errno=%d %s\n",
+                    de->d_name, errno, strerror(errno));
+            continue;
+        }
+        target[n] = '\0';
+        fprintf(fp, "fd=%s target=%s\n", de->d_name, target);
+    }
+    closedir(dir);
+    fprintf(fp, "plasmashell_crash_capture fd pid=%ld end\n", (long)pid);
+}
+
+static void dump_task_files(FILE *fp, pid_t pid)
+{
+    char dirpath[128];
+    DIR *dir;
+    struct dirent *de;
+
+    snprintf(dirpath, sizeof(dirpath), "/proc/%ld/task", (long)pid);
+    fprintf(fp, "plasmashell_crash_capture tasks pid=%ld begin\n", (long)pid);
+    dir = opendir(dirpath);
+    if (!dir) {
+        fprintf(fp, "opendir errno=%d %s\n", errno, strerror(errno));
+        fprintf(fp, "plasmashell_crash_capture tasks pid=%ld end\n", (long)pid);
+        return;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        char rel[320];
+        int all_digits = 1;
+
+        for (const char *p = de->d_name; *p; p++) {
+            if (!isdigit((unsigned char)*p)) {
+                all_digits = 0;
+                break;
+            }
+        }
+        if (!all_digits)
+            continue;
+        snprintf(rel, sizeof(rel), "task/%s/status", de->d_name);
+        dump_proc_file_limited(fp, pid, rel, 4096);
+        snprintf(rel, sizeof(rel), "task/%s/wchan", de->d_name);
+        dump_proc_file_limited(fp, pid, rel, 1024);
+        snprintf(rel, sizeof(rel), "task/%s/syscall", de->d_name);
+        dump_proc_file_limited(fp, pid, rel, 1024);
+        snprintf(rel, sizeof(rel), "task/%s/stack", de->d_name);
+        dump_proc_file_limited(fp, pid, rel, 4096);
+    }
+    closedir(dir);
+    fprintf(fp, "plasmashell_crash_capture tasks pid=%ld end\n", (long)pid);
+}
+
+static void dump_plasmashell_snapshot(pid_t pid, const char *phase, int full)
+{
+    FILE *fp;
+
+    if (!plasmashell_crash_capture_enabled() || pid <= 0)
+        return;
+
+    fp = fopen(PLASMASHELL_CRASH_CAPTURE_LOG, "a");
+    if (!fp)
+        return;
+    fprintf(fp,
+            "plasmashell_crash_capture snapshot phase=%s pid=%ld full=%d monotonic_ms=%lld\n",
+            phase, (long)pid, full, monotonic_ms());
+    dump_proc_file_limited(fp, pid, "comm", 1024);
+    dump_proc_file_limited(fp, pid, "cmdline", 8192);
+    dump_proc_file_limited(fp, pid, "status", 8192);
+    dump_proc_file_limited(fp, pid, "stat", 4096);
+    dump_proc_file_limited(fp, pid, "wchan", 1024);
+    dump_proc_file_limited(fp, pid, "syscall", 2048);
+    dump_proc_file_limited(fp, pid, "stack", 8192);
+    dump_fd_targets(fp, pid);
+    if (full)
+        dump_proc_file_limited(fp, pid, "maps", 65536);
+    dump_task_files(fp, pid);
+    fprintf(fp, "plasmashell_crash_capture snapshot phase=%s pid=%ld end\n",
+            phase, (long)pid);
+    fclose(fp);
+}
+
 static pid_t spawn_plasmashell(char *const argv[])
 {
     pid_t pid = fork();
@@ -174,6 +416,13 @@ static pid_t spawn_plasmashell(char *const argv[])
         return -1;
     }
     if (pid == 0) {
+        if (plasmashell_disable_kcrash_enabled())
+            setenv("KDE_DEBUG", "1", 1);
+        if (plasmashell_core_enabled()) {
+            struct rlimit core = { RLIM_INFINITY, RLIM_INFINITY };
+
+            setrlimit(RLIMIT_CORE, &core);
+        }
         execv(argv[0], argv);
         fprintf(stderr,
                 "kde-plasma-session-child: exec plasmashell failed: %s\n",
@@ -182,28 +431,57 @@ static pid_t spawn_plasmashell(char *const argv[])
     }
     fprintf(stderr, "kde-plasma-session-child: plasmashell pid=%ld\n",
             (long)pid);
+    crash_capture_printf("plasmashell_crash_capture spawn pid=%ld capture=1 disable_kcrash=%d core=%d",
+                         (long)pid, plasmashell_disable_kcrash_enabled(),
+                         plasmashell_core_enabled());
+    dump_plasmashell_snapshot(pid, "spawn", 1);
     return pid;
 }
 
 static int wait_for_plasmashell_logged(char *const argv[])
 {
     long long start_ms = monotonic_ms();
+    long long next_snapshot_ms = start_ms + 1000;
     long long lifetime_ms;
     int status;
+    int snapshot_count = 0;
     pid_t pid = spawn_plasmashell(argv);
 
     if (pid < 0)
         return 127;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
+    for (;;) {
+        pid_t got = waitpid(pid, &status, WNOHANG);
+        long long now_ms;
+
+        if (got == pid)
+            break;
+        if (got < 0) {
+            if (errno == EINTR)
+                continue;
             fprintf(stderr,
                     "kde-plasma-session-child: wait plasmashell: %s\n",
                     strerror(errno));
+            crash_capture_printf("plasmashell_crash_capture wait_error pid=%ld errno=%d %s",
+                                 (long)pid, errno, strerror(errno));
             return 127;
         }
+        now_ms = monotonic_ms();
+        if (plasmashell_crash_capture_enabled() && now_ms >= next_snapshot_ms) {
+            char phase[32];
+
+            snprintf(phase, sizeof(phase), "live-%03d", snapshot_count);
+            dump_plasmashell_snapshot(pid, phase,
+                                      (snapshot_count % 4) == 0);
+            snapshot_count++;
+            next_snapshot_ms = now_ms + 1000;
+        }
+        usleep(100000);
     }
 
     lifetime_ms = monotonic_ms() - start_ms;
+    crash_capture_printf("plasmashell_crash_capture wait_done pid=%ld raw_status=%d lifetime_ms=%lld snapshots=%d",
+                         (long)pid, status, lifetime_ms, snapshot_count);
+    dump_plasmashell_snapshot(pid, "post-wait", 0);
     if (WIFEXITED(status)) {
         fprintf(stderr,
                 "kde-plasma-session-child: plasmashell exited status=%d lifetime_ms=%lld immediate=%d\n",
@@ -525,6 +803,12 @@ int main(void)
     signal(SIGCHLD, SIG_DFL);
     set_kde_env();
     unlink(KDE_AUDIO_STATUS_LOG);
+    if (plasmashell_crash_capture_enabled()) {
+        unlink(PLASMASHELL_CRASH_CAPTURE_LOG);
+        crash_capture_printf("plasmashell_crash_capture config capture=1 disable_kcrash=%d core=%d",
+                             plasmashell_disable_kcrash_enabled(),
+                             plasmashell_core_enabled());
+    }
     fprintf(stderr, "kde-plasma-session-child: starting Plasma services\n");
 
     run_optional(dbus_env, 1, 5000);
