@@ -110,11 +110,27 @@ Active queue, in order:
   staged-library host `mesacopytexture` rc 0 on non-software renderer
   `D3D12 (Intel(R) UHD Graphics)`,
   `cmake --build build-x86_64/ports --target port-wayland-mesaanglepassthrough-install -j2`,
-  and staged-library host `mesaanglepassthrough` rc 0. No QEMU/VM runtime
-  proof yet.
-  Next: refresh the rootfs, verify the actual image library choice, and run the
-  batched runtime Chromium gate unless another offline gap is found; keep the
-  `rootfs-generated-overlays/kde-runtime` overlay Mesa-copy caveat in mind.
+  and staged-library host `mesaanglepassthrough` rc 0. Rootfs/image proof
+  passed 2026-07-04 offline/no-QEMU on `build-x86_64/fs.img` (mtime
+  `2026-07-04 05:33:02 -0400`): debugfs/extraction found `/lib/libGLESv2.so.2.0.0`,
+  `/lib/libEGL.so.1.0.0`, `/lib/libgallium-26.2.0-devel.so`,
+  `/bin/mesacopytexture`, and `/bin/mesaanglepassthrough`; extracted image
+  strings/symbols contain `GL_CHROMIUM_copy_texture`,
+  `CopyTextureCHROMIUM`, `CopySubTextureCHROMIUM`,
+  `GL_ANGLE_webgl_compatibility`,
+  `EGL_ANGLE_create_context_webgl_compatibility`, and
+  `GetUniformfvRobustANGLE`. The Chromium image symlinks
+  `/opt/host-gui/wayland-chromium/chrome-linux64/libEGL.so` and
+  `libGLESv2.so` point to `/lib`, the Chromium launcher puts `/lib` before
+  `/usr/lib`, and the KDE/Chromium GL driver paths put `/lib/dri` before the
+  KDE overlay DRI directory. Overlay caveat is bounded, not blocking this
+  Q2 image proof: the generated KDE overlay has Ubuntu Mesa 25.2.8 GLX/Gallium
+  and DRI/GBM copies, and the final image retains GLX/Gallium/DRI/GBM pieces
+  under `/usr/lib/x86_64-linux-gnu`, but it has no overlay
+  `libEGL.so*`, `libGLESv2.so*`, or `libgbm.so*`; a GLX/Xwayland path may
+  still load the overlay Mesa, while the Chromium GLES/EGL Q2 path resolves to
+  the staged `/lib` Mesa. No QEMU/VM runtime proof yet; next run the batched
+  runtime Chromium gate.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
