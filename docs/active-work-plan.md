@@ -1,10 +1,12 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-04 (materialized on branch codex/host-linux-abi-shell-port-ff
-as a copy of the canonical plan; appended "M7 / Present-Path + Measurement-
-Validity Findings (2026-07-04, OFFLINE)" near the P2 lane. NOTE: the canonical
-plan also lives on codex/host-linux-abi-shell-port and origin/codex/kde-qt-
-wayland-bringup; reconcile before treating this -ff copy as authoritative).
+Last updated: 2026-07-04 (appended Q2 launch-only post-system-tray-isolation
+result on top-level `81f9e5b`; materialized on branch
+codex/host-linux-abi-shell-port-ff as a copy of the canonical plan; appended
+"M7 / Present-Path + Measurement-Validity Findings (2026-07-04, OFFLINE)" near
+the P2 lane. NOTE: the canonical plan also lives on
+codex/host-linux-abi-shell-port and origin/codex/kde-qt-wayland-bringup;
+reconcile before treating this -ff copy as authoritative).
 Prior: 2026-07-03 (added Code Review + in-VM Runtime Audit; recut Q1
 as review-informed; kernel+user Q1 commits landed).
 
@@ -57,7 +59,7 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 is blocked by delayed no-Chromium Plasma teardown, now reproduced before any synthetic client or Chromium launch: plasmashell KCrash/Wayland Bad FD after initial liveness, no renderer/GPU admission evidence | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | After system-tray isolation, Q2 gets past initial and delayed session liveness and launches the Chromium browser process, but fails before renderer/GPU admission on `No wl_shm object` / `Failed to initialize Wayland platform`; no Chromium surface evidence yet | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -965,6 +967,32 @@ failed before liveness on an existing-class `xkbcomp` #GP. Treat those as
 separate startup-race/guest-userspace blockers. Q2 remains out of scope until
 a default or explicitly documented no-Chromium liveness pass is used as the
 gate for the next Chromium run.
+
+Q2 post-system-tray-isolation launch-only gate 2026-07-04 ran exactly once on
+top-level `81f9e5b` with all bundled/software GL knobs unset:
+`env -u KDE_SMOKE_CHROMIUM_BUNDLED_GL -u KDE_SMOKE_CHROMIUM_MESA_EXTENSION_OVERRIDE -u MESA_EXTENSION_OVERRIDE -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER -u MESA_LOADER_DRIVER_OVERRIDE -u LIBGL_ALWAYS_INDIRECT QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`.
+Archive:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T134822Z-q2-chromium-launch-only-systemtray-isolated-launch-evidence-fail/`.
+Result: FAIL `status_code=8`
+`KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-launch-evidence-FAIL`.
+Preflight, initial liveness, and delayed pre-Chromium liveness all passed with
+KWin/plasmashell/Xwayland alive and Wayland roundtrips rc 0; no KCrash,
+Wayland Bad FD, KWin `#PF`, PANIC, fatal page fault, or loader-symbol
+regression appeared. Default acceleration stayed intact: KWin and host EGL
+reported Mesa/virgl on `D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU)`, fbstat
+reported `backend_opengl_submit=1` / `opengl_submit_credit=1`, and Chromium
+process env used `GALLIUM_DRIVER=virgl`, `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`,
+`LIBGL_DRIVERS_PATH=/lib/dri:/usr/lib/x86_64-linux-gnu/dri`, with
+`MESA_EXTENSION_OVERRIDE` and bundled GL unset. Chromium launcher evidence is
+real (`launcher_log=1 launcher_marker=1 launcher_child_exec=1 launcher_url=1`):
+the browser process sampled through the 18s window and later became a zombie,
+but Chrome failed Wayland platform setup with `No wl_shm object` followed by
+`Failed to initialize Wayland platform`. Post evidence reports
+`browser_seen=1 renderer_seen=0 gpu_seen=0`, no DRM/render fd, no Wayland
+surface/protocol evidence, and no Chromium ANGLE/WebGL/`GL_CHROMIUM_copy_texture`
+or robust-client clue because Chromium did not reach that layer. The next Q2
+blocker is therefore Wayland global advertisement/delivery for `wl_shm`, not
+the former system-tray liveness crash or the old missing-extension class.
 
 ## R7 — Desktop Responsiveness Composite (new lane)
 
