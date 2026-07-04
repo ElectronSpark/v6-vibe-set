@@ -4,7 +4,8 @@ Last updated: 2026-07-04 (FULL COMPACTION REWRITE after the 07-04 round:
 R5 root-caused + fixed, P2 ordered-pageflip default landed, Q2 real-GL
 runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
 gated, N2 ext4 default promotion attempted but NOT accepted after a
-default-on KWin #GP rerun, kprofile measurement validity fixed. All
+default-on KWin #GP rerun; later N2 ON-arm kernel #PF classified and
+opt-in diagnostics landed; kprofile measurement validity fixed. All
 verbose evidence chains moved to the history file and git log; this file
 holds current status, queue, rules, and compact lane conclusions only.)
 
@@ -119,9 +120,18 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   signature, but stopped on direct-read ON run 5 with a new kernel page
   fault (`cr2=0x1aafdd193 err=0x2 rip=0xffff80000039a34c`, RIP resolving
   into kernel `_rodata`) after four clean ON runs, one clean OFF run, and
-  one known OFF visible-timeout flake. `ext4_read_page_direct` stays
-  default-OFF; no promotion retry until the new ON-arm kernel fault is
-  triaged/cleared and a fresh promotion battery has zero R5-class crashes.
+  one known OFF visible-timeout flake. Read-only fault mapping classifies
+  that as corrupted control flow into `.rodata`: ASCII bytes decoded as a
+  bogus write, not NX; the `sig_trampoline` line is a symbolization
+  artifact, and the direct-read tie is still correlational. Kernel
+  `04b1ee2` landed opt-in fault/direct-read diagnostics plus a narrow
+  ON-only transient compound-node fallback guard. Two debug-ON KDE
+  active-sample runs with `ext4_read_page_direct=1
+  ext4_read_page_direct_debug=1` did not recur the kernel fault or trip an
+  invariant (`20260704T191028Z-n2-direct-read-debug-on-run1-artifact-timeout`,
+  `20260704T191406Z-n2-direct-read-debug-on-run2-pass`). The gate remains
+  default-OFF; no promotion retry until a diagnostic repeat explains the
+  fault or a fresh promotion battery has zero R5-class/kernel crashes.
   Optional second slice still exists after promotion: batch remaining
   non-sequential single-page fills (executable page-in; ~71% of fills).
 - N3 = R9 cursor out-of-range (user-visible) + the KWin LibinputBackend
@@ -378,6 +388,47 @@ matched the prior R5 KWin/QtCore signature (`kwin_wayland` #GP at
 direct-read arm produced a new kernel fault before the recommended 5x5
 could complete, so N2 default promotion remains blocked and default-OFF is
 the required state.
+
+Read-only fault mapping resolved the stop more precisely: RIP
+`0xffff80000039a34c` is image offset `0x39a34c` inside `.rodata`
+(`_rodata` range `0xffff80000035e000..0xffff8000003b7000`), adjacent to
+ASCII strings near `Operations` / `TEST: synchronize_rcu()`. Decoding
+those bytes yields a bogus write, matching `cr2=0x1aafdd193 err=0x2`
+(supervisor write to a non-present low/user-looking address), so this is
+corrupted control flow into read-only data, not an NX fault or real
+`sig_trampoline` execution. `rbp=0xbefc6cc0` was outside the expected
+kstack, so the unwind is secondary/bad; idle context is real but not a
+root cause. No stack/register evidence currently places the CPU in
+ext4/pcache/bio.
+
+Diagnostic commit kernel `04b1ee2` (`kernel: add n2 direct-read fault
+diagnostics`) makes a repeat actionable without changing defaults:
+unrecoverable x86 kernel #PF now prints current task, CR3/page-table
+identity, full registers, PTE walks for CR2/RIP/RSP/RBP in active/kernel/
+current spaces, instruction bytes when mapped, stack words when RSP is on
+the current kstack, a `.rodata` execution classifier, and an ext4 direct
+read ring dump if enabled. `ext4_read_page_direct_debug=1` adds an opt-in
+64-entry direct-read ring plus invariant checks around `bio_add_folio()`
+and `bio_await()`. The same commit also adds an ON-only guard that falls
+back for transient compound-folio node metadata while direct-read is
+enabled; this does not affect default boots because
+`ext4_read_page_direct` remains default-OFF.
+
+Bounded diagnostic validation 2026-07-04 used:
+`QEMU_APPEND_EXTRA='ext4_read_page_direct=1 ext4_read_page_direct_debug=1'`,
+`KDE_SMOKE_REDUCER=desktop-interaction-latency`,
+`KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE=1`, `QEMU_AUDIO_BACKEND=none`, and
+the software/bundled GL fallback env unset. Kernel build PASS
+(`cmake --build build-x86_64 --target kernel -j2`). Run 1 archived
+`20260704T191028Z-n2-direct-read-debug-on-run1-artifact-timeout`: known
+artifact-timeout class, no kernel #PF/panic/invariant dump markers, cmdline
+proved both direct-read tokens. Run 2 archived
+`20260704T191406Z-n2-direct-read-debug-on-run2-pass`: status code 0 /
+`KDE-PLASMA-DESKTOP-SMOKE-DONE`, cmdline proved both direct-read tokens,
+and log search found no `KERNEL PAGE FAULT`, `kernel-pf-context`,
+`ext4-direct-read`, invariant, or panic markers. No explicit-off control
+was run in this diagnostic slice because the ON-arm fault did not recur in
+the two bounded ON runs.
 
 ### Q2 / R8 — Chromium real GL: DONE (validated 2026-07-04)
 
