@@ -156,6 +156,26 @@ Lane bullets (context for the queue above):
   `KDE_LIBINPUT_PROBE_R9_CURSOR=1`) that records EVIOCGABS, raw evdev,
   `/dev/mouse`, and libinput transformed-coordinate samples without
   changing launcher/session defaults.
+  2026-07-04 runtime probe attempts still did not produce cursor-contract
+  evidence. First artifact:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T040145Z-r9-cursor-contract-probe/`
+  reached KWin/plasmashell, confirmed cmdline
+  `virtio_gpu_host_cursor_only=1` and
+  `virtio_gpu_cursor_rgba_compat=1`, registered
+  `virtio_input` abs `0..32767`, and accepted five QEMU `mouse_move`
+  commands, but probe output was absent and `r9-lines.txt` was empty
+  (likely serial marker interleaving/long serial command path). Second
+  artifact:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T040926Z-r9-cursor-contract-probe-rerun/`
+  booted KDE and registered input, then injected `/r9-run.sh` but timed out
+  reacquiring an interactive shell before invoking it; no `r9_*` lines and
+  no monitor moves were captured. Conclusion: R9 runtime evidence is still
+  missing, and these failures diagnose the harness command path, not the
+  cursor. Do not run a third VM in this slice. Next attempt must avoid the
+  interactive root shell entirely (startup/service-triggered injected
+  script or existing guest-agent artifact path), write `/r9-probe-output.log`
+  and `/r9-probe.status`, retrieve them via debugfs after shutdown, and
+  inject pointer moves only after a script-generated armed marker.
 
 ## Code Review — Uncommitted Kernel Diff (2026-07-03)
 
