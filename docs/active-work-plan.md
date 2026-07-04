@@ -137,25 +137,29 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   non-sequential single-page fills (executable page-in; ~71% of fills).
 - N3 = R9 cursor out-of-range (user-visible) + the KWin LibinputBackend
   nullptr payload bug found by R5 forensics (same input area). Harness
-  ready: `scripts/gpu/r9-cursor-contract-probe.expect` (source-only,
-  startup-injected probe + debugfs retrieval; do NOT drive it over the
-  interactive serial shell). 2026-07-04 owner run started from clean
-  top/kernel/user/ports status and no stale QEMU/smoke processes, but the
-  required dry-run
+  fixed: `scripts/gpu/r9-cursor-contract-probe.expect` now batches debugfs
+  image mutation, records setup phases/failures in `STATUS.txt`, verifies
+  `/r9-run.sh` and `/etc/startup`, and avoids guest `grep -q` so the xv6
+  guest script reaches `phase=armed`. Dry-run gate passed:
   `R9_CURSOR_CONTRACT_DRY_RUN=1 timeout 60 expect scripts/gpu/r9-cursor-contract-probe.expect`
-  exited 124 with no stdout before the harness printed its expected
-  `R9-CURSOR-CONTRACT-DRY-RUN-PASS` line. Artifacts:
-  `build-x86_64/r9-cursor-contract-probe-history/20260704T192429Z/`.
-  The outdir contains only the copied `r9-kde-plasma.fs.img` plus
-  host-side generated `guest-r9-run*.sh`; there is no `startup.r9`,
-  `qemu-dry-run.txt`, `STATUS.txt`, guest status/output, or `r9-lines.txt`,
-  and read-only `debugfs` confirmed `/r9-run.sh` was not injected into the
-  copied image. Classification: pre-QEMU harness setup/injection timeout,
-  before any `phase=armed` or input evidence. Real R9 probe was not run;
-  no raw/EVIOCGABS/libinput/transformed coordinate contract result exists
-  from this attempt. Next N3 slice should fix or instrument the harness
-  setup/debugfs injection path first, then rerun the dry-run before touching
-  evdev, libinput, virtio-input, or compositor code.
+  (artifact
+  `build-x86_64/r9-cursor-contract-probe-history/20260704T194831Z/`,
+  `qemu-dry-run.txt` present, `/r9-run.sh` verified in the copied image).
+  Real probe ran uninterrupted and failed after arming/injection:
+  `timeout 420 expect scripts/gpu/r9-cursor-contract-probe.expect` exited
+  21 with `bad-final-status` (artifact
+  `build-x86_64/r9-cursor-contract-probe-history/20260704T195436Z/`).
+  It reached `armed_pid=58`, sent all five monitor `mouse_move` commands,
+  and extracted guest evidence. Coordinate contract result is now an input
+  stack blocker rather than a harness blocker: `/dev/input/event1` reports
+  ABS_X/ABS_Y with min=0 max=65535 value=32767 resolution=16, but udev
+  input enumeration returns count=0, libinput fails seat setup with
+  `r9_libinput_status rc=-1 errno=93 reason=assign_seat_failed`, no
+  libinput/evdev ABS samples are collected, and `/dev/mouse` samples clamp
+  or repeat at x=127 y=127 after the initial 0,0 sample. Next N3 slice:
+  fix the input discovery/libinput seat path first, then retest raw ABS and
+  cursor transform; do not revisit setup injection unless the harness
+  `STATUS.txt` says setup failed.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
   Implement both together, one battery.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
@@ -550,11 +554,17 @@ User-visible: pointer does not track the host mouse. Triage order: (1)
 EVIOCGABS absinfo vs the virtio tablet's 0..32767 (source audit says the
 raw path normalizes to 0..65535 — verify at runtime); (2) raw ABS values
 at screen edges vs host pointer; (3) cursor-plane transform under
-`virtio_gpu_host_cursor_only=1`. Probe machinery is READY and source-only:
-`scripts/gpu/r9-cursor-contract-probe.expect` (startup-injected
-`/r9-run.sh`, debugfs polling, monitor `mouse_move` after `phase=armed`) —
-do NOT drive the probe over the interactive serial shell (two runs burned).
-Include the LibinputBackend nullptr payload fix here.
+`virtio_gpu_host_cursor_only=1`. Probe machinery is now harness-fixed and
+source-only: `scripts/gpu/r9-cursor-contract-probe.expect`
+(startup-injected `/r9-run.sh`, debugfs polling, monitor `mouse_move` after
+`phase=armed`) — do NOT drive the probe over the interactive serial shell.
+Dry-run `20260704T194831Z` passed with `qemu-dry-run.txt` and verified
+in-image `/r9-run.sh`; real probe `20260704T195436Z` reached armed and
+sent all five monitor moves, then failed because udev input enumeration was
+empty and libinput seat assignment failed (`errno=93`). Event1 already
+reports ABS_X/ABS_Y 0..65535 through EVIOCGABS, so the next implicated
+layer is input discovery/libinput seat plumbing before deeper cursor-plane
+transform work. Include the LibinputBackend nullptr payload fix here.
 
 ## Verification Gates
 

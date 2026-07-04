@@ -24,6 +24,10 @@ set guest_sh "$outdir/guest-r9-run.sh"
 set guest_bash "$outdir/guest-r9-run-bash.sh"
 set startup_orig "$outdir/startup.orig"
 set startup_new "$outdir/startup.r9"
+set startup_verify "$outdir/startup.injected"
+set r9_run_verify "$outdir/r9-run.injected"
+set debugfs_cmds "$outdir/debugfs-setup.commands"
+set debugfs_log "$outdir/debugfs-setup.log"
 set qemu_dry_run_log "$outdir/qemu-dry-run.txt"
 set monitor_log "$outdir/qemu-monitor-command.log"
 set status_log "$outdir/r9-probe.status"
@@ -45,6 +49,16 @@ proc env_bool {name default} {
     if {$value eq "0" || $value eq "false" || $value eq "no" ||
         $value eq "off" || $value eq ""} {
         return 0
+    }
+    return $default
+}
+
+proc env_int {name default} {
+    if {![info exists ::env($name)] || $::env($name) eq ""} {
+        return $default
+    }
+    if {[string is integer -strict $::env($name)] && $::env($name) > 0} {
+        return $::env($name)
     }
     return $default
 }
@@ -73,6 +87,24 @@ proc artifact_note {text} {
     append_text_file $summary_log "$text\n"
 }
 
+proc setup_fail {code reason {detail ""}} {
+    global outdir summary_log debugfs_cmds debugfs_log startup_new
+
+    set detail [string map {\n { } \r { }} $detail]
+    artifact_note "label=R9-CURSOR-CONTRACT-SETUP-FAIL"
+    artifact_note "result=FAIL"
+    artifact_note "reason=$reason"
+    if {$detail ne ""} {
+        artifact_note "detail=$detail"
+    }
+    artifact_note "outdir=$outdir"
+    artifact_note "debugfs_commands=$debugfs_cmds"
+    artifact_note "debugfs_log=$debugfs_log"
+    artifact_note "startup=$startup_new"
+    puts "\nR9-CURSOR-CONTRACT-SETUP-FAIL reason=$reason outdir=$outdir status=$summary_log"
+    exit $code
+}
+
 proc debugfs_dump_file {image guest host} {
     catch { file delete -force $host }
     set rc [catch {
@@ -95,15 +127,17 @@ proc debugfs_read_guest {image guest host} {
     return [read_text_file $host]
 }
 
-proc remove_guest_r9_files {image} {
+proc guest_root_r9_files {image} {
     set listing ""
     catch { set listing [exec debugfs -R "ls -p /" $image 2>@1] }
+    set files {}
     foreach line [split $listing "\n"] {
         if {[regexp {^/[^/]*/[^/]*/[^/]*/[^/]*/([^/]*)/} $line -> name] &&
             [string match "r9-*" $name]} {
-            catch { exec debugfs -w -R "rm /$name" $image >/dev/null 2>@1 }
+            lappend files "/$name"
         }
     }
+    return [lsort -unique $files]
 }
 
 proc generate_guest_scripts {} {
@@ -135,7 +169,7 @@ proc generate_guest_scripts {} {
     puts $fh {i=0}
     puts $fh {while [ "$i" -lt 120 ]; do}
     puts $fh {    /bin/kde-process-probe > "$PROCESS_LOG" 2>&1}
-    puts $fh {    if /bin/grep -q 'status=PASS' "$PROCESS_LOG"; then}
+    puts $fh {    if /bin/grep 'status=PASS' "$PROCESS_LOG" >/dev/null 2>&1; then}
     puts $fh {        ready=1}
     puts $fh {        break}
     puts $fh {    fi}
@@ -170,13 +204,10 @@ proc generate_guest_scripts {} {
 }
 
 proc inject_guest_setup {} {
-    global tmpimg guest_sh guest_bash startup_orig startup_new
+    global tmpimg guest_sh guest_bash startup_orig startup_new startup_verify
+    global r9_run_verify debugfs_cmds debugfs_log
 
-    remove_guest_r9_files $tmpimg
-    catch { exec debugfs -w -R "rm /r9-run.sh" $tmpimg >/dev/null 2>@1 }
-    catch { exec debugfs -w -R "rm /r9-run-bash.sh" $tmpimg >/dev/null 2>@1 }
-    exec debugfs -w -R "write $guest_sh /r9-run.sh" $tmpimg >/dev/null 2>@1
-    exec debugfs -w -R "write $guest_bash /r9-run-bash.sh" $tmpimg >/dev/null 2>@1
+    artifact_note "phase=setup-read-startup"
 
     set startup_text ""
     set dump [debugfs_dump_file $tmpimg "/etc/startup" $startup_orig]
@@ -200,8 +231,48 @@ proc inject_guest_setup {} {
         error "/etc/startup would exceed init's 1023-byte read limit after R9 append"
     }
     write_text_file $startup_new $startup_text
-    catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
-    exec debugfs -w -R "write $startup_new /etc/startup" $tmpimg >/dev/null 2>@1
+
+    set fh [open $debugfs_cmds w]
+    foreach path [guest_root_r9_files $tmpimg] {
+        puts $fh "rm $path"
+    }
+    puts $fh "rm /etc/startup"
+    puts $fh "write $guest_sh /r9-run.sh"
+    puts $fh "write $guest_bash /r9-run-bash.sh"
+    puts $fh "write $startup_new /etc/startup"
+    puts $fh "stat /r9-run.sh"
+    puts $fh "stat /r9-run-bash.sh"
+    puts $fh "stat /etc/startup"
+    close $fh
+
+    set setup_timeout [env_int R9_CURSOR_SETUP_TIMEOUT_SECONDS 45]
+    artifact_note "phase=debugfs-inject"
+    artifact_note "debugfs_timeout_seconds=$setup_timeout"
+    set log_fh [open $debugfs_log w]
+    set rc [catch {
+        exec timeout $setup_timeout debugfs -w -f $debugfs_cmds $tmpimg >@ $log_fh 2>@ $log_fh
+    } err]
+    close $log_fh
+    if {$rc != 0} {
+        setup_fail 11 "debugfs-inject-failed" $err
+    }
+
+    artifact_note "phase=verify-injection"
+    if {![lindex [debugfs_dump_file $tmpimg "/r9-run.sh" $r9_run_verify] 0]} {
+        setup_fail 12 "missing-r9-run-after-inject"
+    }
+    if {![lindex [debugfs_dump_file $tmpimg "/etc/startup" $startup_verify] 0]} {
+        setup_fail 12 "missing-startup-after-inject"
+    }
+    set injected_run [read_text_file $r9_run_verify]
+    set injected_startup [read_text_file $startup_verify]
+    if {$injected_run ne [read_text_file $guest_sh]} {
+        setup_fail 12 "r9-run-content-mismatch"
+    }
+    if {![regexp {(?m)^/bin/sh /r9-run\.sh$} $injected_startup]} {
+        setup_fail 12 "startup-missing-r9-entry"
+    }
+    artifact_note "phase=setup-complete"
 }
 
 proc configure_qemu_env {} {
@@ -436,18 +507,40 @@ if {![file exists $fsimg]} {
 }
 
 catch { file delete -force $monitor $runlog $qemu_dry_run_log $monitor_log }
+catch { file delete -force $debugfs_cmds $debugfs_log $startup_verify $r9_run_verify }
 catch { file delete -force $status_log $output_log $cmdline_log $process_log $r9_lines $summary_log }
-exec cp $fsimg $tmpimg
-generate_guest_scripts
-inject_guest_setup
+
+artifact_note "phase=copy-image"
+if {[catch { exec cp $fsimg $tmpimg } err]} {
+    setup_fail 10 "copy-image-failed" $err
+}
+
+artifact_note "phase=generate-guest-scripts"
+if {[catch { generate_guest_scripts } err]} {
+    setup_fail 10 "generate-guest-scripts-failed" $err
+}
+
+if {[catch { inject_guest_setup } err]} {
+    setup_fail 11 "setup-exception" $err
+}
 configure_qemu_env
 
 set dry_run [expr {[env_bool R9_CURSOR_CONTRACT_DRY_RUN 0] ||
                    [env_bool R9_CURSOR_PROBE_DRY_RUN 0] ||
                    [env_bool QEMU_DRY_RUN 0]}]
 if {$dry_run} {
-    run_qemu_dry_run
+    if {[catch { run_qemu_dry_run } err]} {
+        artifact_note "label=R9-CURSOR-CONTRACT-DRY-RUN-FAIL"
+        artifact_note "result=FAIL"
+        artifact_note "reason=qemu-dry-run-failed"
+        artifact_note "detail=[string map {\n { } \r { }} $err]"
+        artifact_note "outdir=$outdir"
+        artifact_note "qemu_dry_run=$qemu_dry_run_log"
+        puts "\nR9-CURSOR-CONTRACT-DRY-RUN-FAIL outdir=$outdir qemu_dry_run=$qemu_dry_run_log"
+        exit 13
+    }
     artifact_note "label=R9-CURSOR-CONTRACT-DRY-RUN-PASS"
+    artifact_note "result=PASS"
     artifact_note "outdir=$outdir"
     artifact_note "tmpimg=$tmpimg"
     artifact_note "qemu_dry_run=$qemu_dry_run_log"
