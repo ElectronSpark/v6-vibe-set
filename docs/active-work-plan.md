@@ -55,7 +55,7 @@ run without a desktop. See "Runtime Audit" below for the last reproduction.
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
 | M7 | `presentedFPS` (60fps video) | Chromium-video reducer (currently blocked) | 27.2 | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
-| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is still inconclusive: two 2026-07-04 launch-only attempts failed before Chromium due to the deterministic KWin/libinput loader ABI blocker, now repaired offline and awaiting a no-fallback runtime rerun | PASS |
+| M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | Q2 default-Mesa runtime gate is still blocked before Chromium: the post-libinput-symbol repair rerun cleared the old gesture symbol failure, but exposed the next KWin loader ABI miss in the staged KDE `libinput.so.10` -> `udev_device_get_udev@LIBUDEV_183` | PASS |
 
 Fork-safety gate for any syscall/scheduler/TLB change: `forktest`,
 `clonetest`, `cowtest` all pass in the same boot (`forktest` `rc=1` with
@@ -163,8 +163,22 @@ Active queue, in order:
   `LIBINPUT_0.20.0`, and `readelf -V` shows the `LIBINPUT_0.20.0` version
   definition. Host-side `ldd -r` with the extracted library first resolved
   `libinput.so.10` to the extracted copy and reported no
-  `libinput_event_get_gesture_event` unresolved symbol. M9 remains blocked on
-  a clean desktop-start boot for the Q2 Chromium signal.
+  `libinput_event_get_gesture_event` unresolved symbol. Post-repair runtime
+  gate 2026-07-04, default Mesa path/no bundled or extension overrides,
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=chromium-video
+  KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1 scripts/gpu/kde-plasma-desktop-smoke.expect`,
+  archive
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T095905Z-q2-post-libinput-repair-chromium-launch-only/`,
+  still failed before KDE readiness/Chromium launch with
+  `KDE-PLASMA-DESKTOP-SMOKE-FAIL kde-session-startup-retry`. This is not the
+  repaired `libinput_event_get_gesture_event@LIBINPUT_0.20.0` miss and not a
+  Chromium/Mesa-extension result: `kde-session-kwin.log` now shows
+  `/opt/xv6-kde-abi-libs/libinput.so.10: undefined symbol:
+  udev_device_get_udev, version LIBUDEV_183`; post evidence ends
+  `status=FAIL reason=not-launched`, with Chromium process counts zero and
+  `chromium_mesa_extension_override=""`. Per the loader-recurrence guardrail,
+  no rerun was attempted. M9 remains blocked on the next KDE ABI-libs loader
+  repair, then a clean desktop-start boot for the Q2 Chromium signal.
 - Q3 = R9 cursor out-of-range triage (user-visible; triage chain in the
   R9 note below).
 - Q4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) — M2 is at
