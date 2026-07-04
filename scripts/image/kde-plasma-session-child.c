@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -114,6 +115,13 @@ static int plasmashell_core_enabled(void)
     return enabled;
 }
 
+static const char *env_or_unset(const char *name)
+{
+    const char *value = getenv(name);
+
+    return value ? value : "(unset)";
+}
+
 static void crash_capture_printf(const char *fmt, ...)
 {
     FILE *fp;
@@ -130,6 +138,56 @@ static void crash_capture_printf(const char *fmt, ...)
     va_end(ap);
     fputc('\n', fp);
     fclose(fp);
+}
+
+static void configure_plasmashell_crash_debug(void)
+{
+    struct rlimit core;
+    int disable_kcrash = plasmashell_disable_kcrash_enabled();
+    int core_enabled = plasmashell_core_enabled();
+    int prctl_rc = 0;
+    int prctl_errno = 0;
+    int setrlimit_rc = 0;
+    int setrlimit_errno = 0;
+    int getrlimit_rc;
+
+    if (disable_kcrash) {
+        setenv("KDE_DEBUG", "1", 1);
+        setenv("KCRASH_DUMP_ONLY", "1", 1);
+        /*
+         * plasmashell uses KCrash's auto-restart flag.  KDE_DEBUG disables
+         * DrKonqi, but KCRASH_AUTO_RESTARTED is what delays the restart
+         * handler long enough for startup crashes to reach the kernel.
+         */
+        setenv("KCRASH_AUTO_RESTARTED", "1", 1);
+    }
+
+    if (core_enabled) {
+        if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) < 0) {
+            prctl_rc = -1;
+            prctl_errno = errno;
+        }
+        core.rlim_cur = RLIM_INFINITY;
+        core.rlim_max = RLIM_INFINITY;
+        if (setrlimit(RLIMIT_CORE, &core) < 0) {
+            setrlimit_rc = -1;
+            setrlimit_errno = errno;
+        }
+    }
+
+    memset(&core, 0, sizeof(core));
+    getrlimit_rc = getrlimit(RLIMIT_CORE, &core);
+    crash_capture_printf(
+        "plasmashell_crash_capture child_setup disable_kcrash=%d core=%d "
+        "prctl_dumpable_rc=%d prctl_dumpable_errno=%d "
+        "setrlimit_rc=%d setrlimit_errno=%d getrlimit_rc=%d "
+        "rlimit_core_cur=%llu rlimit_core_max=%llu "
+        "KDE_DEBUG=%s KCRASH_DUMP_ONLY=%s KCRASH_AUTO_RESTARTED=%s",
+        disable_kcrash, core_enabled, prctl_rc, prctl_errno, setrlimit_rc,
+        setrlimit_errno, getrlimit_rc, (unsigned long long)core.rlim_cur,
+        (unsigned long long)core.rlim_max, env_or_unset("KDE_DEBUG"),
+        env_or_unset("KCRASH_DUMP_ONLY"),
+        env_or_unset("KCRASH_AUTO_RESTARTED"));
 }
 
 static void audio_status(const char *fmt, ...)
@@ -392,6 +450,7 @@ static void dump_plasmashell_snapshot(pid_t pid, const char *phase, int full)
             phase, (long)pid, full, monotonic_ms());
     dump_proc_file_limited(fp, pid, "comm", 1024);
     dump_proc_file_limited(fp, pid, "cmdline", 8192);
+    dump_proc_file_limited(fp, pid, "environ", 32768);
     dump_proc_file_limited(fp, pid, "status", 8192);
     dump_proc_file_limited(fp, pid, "stat", 4096);
     dump_proc_file_limited(fp, pid, "wchan", 1024);
@@ -416,13 +475,7 @@ static pid_t spawn_plasmashell(char *const argv[])
         return -1;
     }
     if (pid == 0) {
-        if (plasmashell_disable_kcrash_enabled())
-            setenv("KDE_DEBUG", "1", 1);
-        if (plasmashell_core_enabled()) {
-            struct rlimit core = { RLIM_INFINITY, RLIM_INFINITY };
-
-            setrlimit(RLIMIT_CORE, &core);
-        }
+        configure_plasmashell_crash_debug();
         execv(argv[0], argv);
         fprintf(stderr,
                 "kde-plasma-session-child: exec plasmashell failed: %s\n",

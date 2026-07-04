@@ -375,6 +375,8 @@ static void seed_kde_config(void)
         "XDG_VIDEOS_DIR=\"/root/Videos\"\n";
     char kactivitymanagerdrc[512];
     char plasma_appletsrc[4096];
+    const char *systemtray_block = "";
+    const char *applet_order = "3;4;5;6;8;9";
     static const char kactivitymanagerdrc_fmt[] =
         "[activities]\n"
         "%s=Desktop\n"
@@ -420,6 +422,17 @@ static void seed_kde_config(void)
         "Command=/bin/bash\n"
         "Name=Shell\n"
         "Parent=FALLBACK/\n";
+    static const char plasma_systemtray_block[] =
+        "[Containments][2][Applets][7]\n"
+        "immutability=1\n"
+        "plugin=org.kde.plasma.systemtray\n"
+        "\n"
+        "[Containments][2][Applets][7][Configuration][General]\n"
+        "extraItems=\n"
+        "hiddenItems=\n"
+        "knownItems=xv6-network-status\n"
+        "shownItems=xv6-network-status\n"
+        "\n";
     static const char plasma_appletsrc_fmt[] =
         "[Containments][1]\n"
         "activityId=%s\n"
@@ -468,16 +481,7 @@ static void seed_kde_config(void)
         "immutability=1\n"
         "plugin=org.kde.plasma.marginsseparator\n"
         "\n"
-        "[Containments][2][Applets][7]\n"
-        "immutability=1\n"
-        "plugin=org.kde.plasma.systemtray\n"
-        "\n"
-        "[Containments][2][Applets][7][Configuration][General]\n"
-        "extraItems=\n"
-        "hiddenItems=\n"
-        "knownItems=xv6-network-status\n"
-        "shownItems=xv6-network-status\n"
-        "\n"
+        "%s"
         "[Containments][2][Applets][8]\n"
         "immutability=1\n"
         "plugin=org.kde.plasma.digitalclock\n"
@@ -487,12 +491,26 @@ static void seed_kde_config(void)
         "plugin=org.kde.plasma.showdesktop\n"
         "\n"
         "[Containments][2][General]\n"
-        "AppletOrder=3;4;5;6;7;8;9\n";
+        "AppletOrder=%s\n";
+
+    if (cmdline_has_flag("kde_plasma_systemtray=1")) {
+        systemtray_block = plasma_systemtray_block;
+        applet_order = "3;4;5;6;7;8;9";
+    } else if (cmdline_has_flag("kde_plasma_systemtray=0")) {
+        fprintf(stderr,
+                "kde-session: Plasma system tray applet disabled by "
+                "kde_plasma_systemtray=0\n");
+    } else {
+        fprintf(stderr,
+                "kde-session: Plasma system tray applet disabled by default; "
+                "enable with kde_plasma_systemtray=1\n");
+    }
 
     snprintf(kactivitymanagerdrc, sizeof(kactivitymanagerdrc),
              kactivitymanagerdrc_fmt, activity_id, activity_id, activity_id);
     snprintf(plasma_appletsrc, sizeof(plasma_appletsrc),
-             plasma_appletsrc_fmt, activity_id, activity_id);
+             plasma_appletsrc_fmt, activity_id, activity_id, systemtray_block,
+             applet_order);
 
     write_config_file("/dev/shm/kde-config/kwinrc", kwinrc);
     write_config_file("/dev/shm/kde-config/kdeglobals", kdeglobals);
@@ -1520,6 +1538,12 @@ static pid_t maybe_spawn_network_status_sni(void)
 
     if (cmdline_has_flag("kde_network_status_sni=0"))
         return -1;
+    if (!cmdline_has_flag("kde_network_status_sni=1")) {
+        fprintf(stderr,
+                "kde-session: network status SNI disabled by default; "
+                "enable with kde_network_status_sni=1\n");
+        return -1;
+    }
     if (!is_executable(argv[0])) {
         fprintf(stderr, "kde-session: network status SNI unavailable\n");
         return -1;

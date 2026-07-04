@@ -912,6 +912,60 @@ disable-KCrash run, and core capture remains opt-in. Do not spend another Q2
 proof run until this no-Chromium delayed plasmashell crash is fixed or a stronger
 stack/core path is enabled.
 
+2026-07-04 follow-up: the crash capture path now programs the intended
+plasmashell debug environment when requested (`KDE_DEBUG=1`,
+`KCRASH_DUMP_ONLY=1`, `KCRASH_AUTO_RESTARTED=1`), logs the `prctl`/`setrlimit`
+result, dumps the child environment, and the harness preserves KCrash metadata
+INI files when present. A targeted core run with
+`KDE_SMOKE_PLASMASHELL_DISABLE_KCRASH=1 KDE_SMOKE_PLASMASHELL_CORE=1` still did
+not yield a `/core.PID`; it is archived at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T132515Z-kde-wayland-liveness-kcrash-core-diagnostic/`.
+It did, however, force the fault out of DrKonqi and captured a kernel-side
+plasmashell exception dump: `cr2=0x8`, `rip=0x7ffffe51496f` in
+`/usr/lib/x86_64-linux-gnu/libQt5WaylandClient.so.5`, with
+`org.kde.plasma.private.systemtray.so`, `org.kde.plasma.systemtray.so`, and
+`org.kde.plasma.notifications.so` loaded in the VMA set. No guest or host core
+was present after the run.
+
+The narrow component isolation points at Plasma's StatusNotifier/system-tray
+startup path. A no-Chromium SNI-off control
+(`QEMU_APPEND_EXTRA='kde_network_status_sni=0'`) passed once at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T132233Z-kde-wayland-liveness-sni-off-pass/`,
+but a rebuilt default with the artificial network SNI provider disabled still
+hit the same fatal plasmashell KCrash after the system-tray
+`compactRepresentationItem` null read:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T132953Z-kde-wayland-liveness-sni-default-off-kcrash-fail/`.
+That means the artificial SNI item is a destabilizer, not the complete root
+cause. The session now disables the artificial network SNI provider by default
+and keeps it opt-in with `kde_network_status_sni=1`.
+
+A reversible applet isolation knob then omitted only
+`org.kde.plasma.systemtray` from
+`plasma-org.kde.plasma.desktop-appletsrc`. With
+`QEMU_APPEND_EXTRA='kde_plasma_systemtray=0'`, the no-Chromium liveness reducer
+passed at
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T134223Z-kde-wayland-liveness-systemtray-off-pass/`:
+initial and late liveness returned rc 0, KWin kept `wayland-0` alive, and GPU
+evidence stayed on the default virgl/Mesa path
+(`OpenGL renderer string: virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`,
+`GALLIUM_DRIVER=virgl`, `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`). That run
+still logged a recoverable plasmashell KCrash and ended with two plasmashell
+processes, so the system tray applet should be treated as the fatal-liveness
+trigger rather than proof that all plasmashell crash causes are gone. The
+session config now omits the system tray by default and keeps it opt-in with
+`kde_plasma_systemtray=1`.
+
+Two no-override default reruns after making tray/SNI opt-in did not reproduce
+the fatal system-tray KCrash, but also did not produce a clean default pass:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T133810Z-kde-wayland-liveness-default-tray-off-roundtrip-race/`
+failed because the first liveness `wl_display_sync` timed out while KWin was
+running and roles were already PASS, and
+`build-x86_64/kde-plasma-desktop-smoke-history/20260704T133950Z-kde-wayland-liveness-default-tray-off-xkbcomp-gp/`
+failed before liveness on an existing-class `xkbcomp` #GP. Treat those as
+separate startup-race/guest-userspace blockers. Q2 remains out of scope until
+a default or explicitly documented no-Chromium liveness pass is used as the
+gate for the next Chromium run.
+
 ## R7 — Desktop Responsiveness Composite (new lane)
 
 Why this lane exists: after the P0 idle-pull fix the user still reported a

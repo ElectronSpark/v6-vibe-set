@@ -7340,6 +7340,19 @@ proc dump_guest_core_artifacts {} {
     }
 }
 
+proc dump_guest_kcrash_metadata_artifacts {} {
+    global tmpimg outdir
+
+    set metadata_dir "/dev/shm/kde-cache/kcrash-metadata"
+    set listing ""
+    catch { set listing [exec sh -c "debugfs -R 'ls -p $metadata_dir' '$tmpimg' 2>/dev/null || true"] }
+    foreach line [split $listing "\n"] {
+        if {[regexp {/[0-9]+/[0-7]+/[0-9]+/[0-9]+/([^/]+\.ini)(/|$)} $line -> metadata_name]} {
+            dump_optional_guest_artifact "$metadata_dir/$metadata_name" "$outdir/kcrash-metadata-$metadata_name"
+        }
+    }
+}
+
 proc read_guest_artifact_text {guest_path text_var} {
     global tmpimg outdir
     upvar 1 $text_var text
@@ -11236,6 +11249,7 @@ proc finish {code label} {
     dump_optional_guest_artifact $guest_kde_preflight_ready_log $kde_preflight_ready_log
     dump_optional_guest_artifact $guest_session_liveness_log $session_liveness_log
     dump_guest_core_artifacts
+    dump_guest_kcrash_metadata_artifacts
     dump_optional_guest_artifact $guest_chromium_process_evidence_log $chromium_process_evidence_log
     dump_optional_guest_artifact $guest_chromium_launch_probe_log $chromium_launch_probe_log
     if {![file exists $role_probe_log] || [file size $role_probe_log] == 0} {
