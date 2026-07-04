@@ -96,8 +96,11 @@ Active queue, in order:
   `GL_KHR_debug` already existed. Offline verification passed:
   `git diff --check`, `git -C ports/mesa/src diff --check`, and
   `cmake --build build-x86_64/ports --target port-mesa -j2`; no QEMU/VM yet.
+  A later offline `GL_CHROMIUM_copy_texture` attempt was rejected as
+  semantically incomplete and removed; do not count or revive that code.
   Remaining ladder before runtime default-Chromium proof:
-  `GL_CHROMIUM_copy_texture` real semantics/dispatch,
+  `GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
+  transform/conversion support,
   `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
   global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
   Non-blocking first-slice gap: `GetUniform*RobustANGLE` length remains
@@ -497,8 +500,11 @@ and robust get/readpixels/texture-upload wrappers with error-output hygiene.
 `GL_KHR_debug` already existed. Offline verification passed (`git diff
 --check`, `git -C ports/mesa/src diff --check`, and `cmake --build
 build-x86_64/ports --target port-mesa -j2`); no QEMU/VM runtime proof yet.
+A later offline `GL_CHROMIUM_copy_texture` attempt was rejected as
+semantically incomplete and removed; do not count or revive that code.
 Remaining ladder before runtime default-Chromium proof:
-`GL_CHROMIUM_copy_texture` real semantics/dispatch,
+`GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
+transform/conversion support,
 `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
 global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
 The known non-blocking first-slice gap is `GetUniform*RobustANGLE` length:
