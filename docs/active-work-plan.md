@@ -216,7 +216,17 @@ Active queue, in order:
 - Q5 = R5 flake-rate reduction: the KWin startup crash family is now the
   main gate polluter and blocked the 2026-07-04 post-KDE-ABI-closure M9 retry
   after the single allowed rerun. Root-cause or bound it; it blocks R6 step 2
-  and the next meaningful Q2/M9 runtime classification.
+  and the next meaningful Q2/M9 runtime classification. Offline R5 preflight
+  added 2026-07-04: `scripts/gpu/kde-abi-closure-preflight.sh` extracts
+  `build-x86_64/fs.img` into a temp root, validates KWin/libkwin plus
+  `/opt/xv6-kde-abi-libs` and the libinput/libudev/libevdev/libmtdev/libwacom
+  closure with image-like `LD_LIBRARY_PATH`, `readelf -V`, `objdump -T`, and
+  `ldd -r`, and currently passes for
+  `libinput_event_get_gesture_event@LIBINPUT_0.20.0` and
+  `udev_device_get_udev@LIBUDEV_183`. No new guest reducer was added because
+  `/bin/kde-libinput-probe` is already staged and directly exercises
+  `udev_new`, `libinput_udev_create_context`, and
+  `libinput_udev_assign_seat("seat0")`.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
