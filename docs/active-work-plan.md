@@ -96,8 +96,13 @@ Active queue, in order:
   `GL_KHR_debug` already existed. Offline verification passed:
   `git diff --check`, `git -C ports/mesa/src diff --check`, and
   `cmake --build build-x86_64/ports --target port-mesa -j2`; no QEMU/VM yet.
-  A later offline `GL_CHROMIUM_copy_texture` attempt was rejected as
-  semantically incomplete and removed; do not count or revive that code.
+  A later offline `GL_CHROMIUM_copy_texture` attempt built and passed the
+  hardened reducer on host staged Mesa, then was removed because it still
+  over-advertised support and used an observable nonzero-level texture
+  workaround. Blockers before advertising it: gate rectangle behavior on real
+  texture-rectangle support; add an honest `samplerExternalOES`/transform path
+  before external-source support; cover the broader spec format/type matrix
+  beyond the reducer; and preserve destination BASE/MAX_LEVEL semantics.
   Remaining ladder before runtime default-Chromium proof:
   `GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
   transform/conversion support,
@@ -500,8 +505,13 @@ and robust get/readpixels/texture-upload wrappers with error-output hygiene.
 `GL_KHR_debug` already existed. Offline verification passed (`git diff
 --check`, `git -C ports/mesa/src diff --check`, and `cmake --build
 build-x86_64/ports --target port-mesa -j2`); no QEMU/VM runtime proof yet.
-A later offline `GL_CHROMIUM_copy_texture` attempt was rejected as
-semantically incomplete and removed; do not count or revive that code.
+A later offline `GL_CHROMIUM_copy_texture` attempt built and passed the
+hardened reducer on host staged Mesa, then was removed because it still
+over-advertised support and used an observable nonzero-level texture workaround.
+Blockers before advertising it: gate rectangle behavior on real
+texture-rectangle support; add an honest `samplerExternalOES`/transform path
+before external-source support; cover the broader spec format/type matrix beyond
+the reducer; and preserve destination BASE/MAX_LEVEL semantics.
 Pre-implementation reducer hardening for `mesacopytexture` now sharpens the
 offline proof surface before the real Mesa work: it keeps missing extension/proc
 as rc 77, rejects software renderers, broadens conversion/error/level/subcopy
