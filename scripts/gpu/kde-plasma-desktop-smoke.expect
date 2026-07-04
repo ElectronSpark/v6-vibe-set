@@ -12452,6 +12452,58 @@ proc drain_crash_diagnostics {{seconds 4}} {
     set timeout $old_timeout
 }
 
+proc wait_chromium_video_kprofile_done {} {
+    global timeout chromium_video_kprofile chromium_video_kprofile_seconds
+    global guest_chromium_launch_probe_log
+
+    if {$chromium_video_kprofile ne "1"} {
+        return
+    }
+    # kprofile prints its whole report only after the profiled child
+    # exits (its --timeout-ms SIGTERM fires kprofile_seconds after
+    # launch, plus TERM->KILL escalation).  Without this wait the
+    # harness reaches sync/teardown first and the probe log stays
+    # empty (observed 2026-07-04).  kprofile's final output line is
+    # "exec_ms <n>"; poll for it with a short guest command (serial
+    # line-length limit) until the kprofile window plus escalation
+    # slack has passed.
+    set old_timeout $timeout
+    set wait_seconds [expr {$chromium_video_kprofile_seconds + 30}]
+    if {$wait_seconds > 240} {
+        set wait_seconds 240
+    }
+    set deadline [expr {[clock seconds] + $wait_seconds}]
+    set marker "KCVPWAIT"
+    while {[clock seconds] < $deadline} {
+        set saw_done 0
+        set timeout 8
+        send "grep exec_ms $guest_chromium_launch_probe_log; echo $marker\r"
+        expect {
+            -re {exec_ms +[0-9]+} {
+                set saw_done 1
+                exp_continue
+            }
+            -re [marker_re $marker] {
+            }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 4 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-kprofile-completion-crash"
+            }
+            timeout {
+            }
+            eof { finish 5 "KDE-PLASMA-DESKTOP-SMOKE-FAIL chromium-video-kprofile-completion-eof" }
+        }
+        if {$saw_done} {
+            set timeout $old_timeout
+            optional_prompt
+            return
+        }
+        sleep 2
+    }
+    set timeout $old_timeout
+    puts "KDE-PLASMA-DESKTOP-SMOKE-WARN chromium-video-kprofile-wait-timeout"
+    optional_prompt
+}
+
 proc wait_chromium_video_sampler_done {} {
     global timeout guest_chromium_video_sampler_status_script
     global guest_chromium_video_sampler_log chromium_video_fast_census_ms
@@ -12764,6 +12816,7 @@ proc run_chromium_video_reducer {} {
         }
     }
     wait_chromium_video_sampler_done
+    wait_chromium_video_kprofile_done
     capture_fbstat_stats
     set timeout 20
     set sync_done_marker "KCVSYNCDONE"

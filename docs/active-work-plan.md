@@ -57,7 +57,7 @@ audio path; non-audio KDE/Chromium gates may run with `QEMU_AUDIO_BACKEND=none`.
 | M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1958ms independent verification pass 2026-07-03 (was 1888ms R8 pass; the 2386ms P1-gate reading was noise — M4 is genuinely under target) | < 2000ms (Linux same-host ref: 260-510ms) |
 | M5 | `first_visible_ms` | same | 12972ms independent verification pass 2026-07-03 (8632-14623ms band) | < 15000ms |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B recipe (P2 step 1) | 100 baseline / 118-125 ordered | ordered default with no desktop regression |
-| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | Launch-only Q2 now reaches perf-video and records `presentedFPS=39.8`, but full non-launch-only M7 was not retried and remains below target/unpromoted | >= 55 |
+| M7 | `presentedFPS` (60fps video) | Chromium-video reducer | FIRST VALID full-window reading 2026-07-04 (kprofile mode, wait-fix run `20260704T144500Z-q0-kprofile-wait-fix-first-valid-m7-window`): `presentedFPS=36.8 decodedFPS=61.9 dropPct=52.4 speed=0.983 advanced=15.16` — decode keeps 60fps pace, present path is the ceiling (fbstat: 475/475 page flips software_blit, native_present_credit=0) | >= 55 |
 | M8 | Idle-desktop host CPU | `ps -o pcpu= -p <qemu pid>` 3 samples, 30s+ after desktop ready, no apps launched | Borderline RED in the Q1 attribution run: 10s host-thread deltas were 106.3% then 101.2%, lifetime `ps pcpu` 128->119%; CPU was on the six vCPU threads, not GTK/virgl/helper threads. Track as R7c/M8 vCPU/KVM idle-cadence follow-up; do not claim Q1 makes M8 green. | < 100% |
 | M9 | Chromium window visible | `KDE_SMOKE_REDUCER=chromium-video KDE_SMOKE_CHROMIUM_LAUNCH_ONLY=1` | PASS 2026-07-04 after the `wl_shm` fix: pre-Chromium registry probe sees/binds `wl_shm` and creates a tiny shm buffer; Q2 launch-only finishes `status_code=0`, Chromium sampler PASS | PASS |
 
@@ -2210,6 +2210,44 @@ prints CPU busy/total in scheduler HZ ticks and labels pgroup data as
 process-group-only with no descendant tracking; the ext4 readahead counter is
 fed by successful read readahead BIO submission instead of mmap writeback.
 Validation remains offline-only until build/parser checks pass.
+
+Q0 in-VM validation (2026-07-04, two chromium-video kprofile runs):
+
+- Attempt 1 exposed a Q0 follow-on harness gap: nothing waits for the
+  kprofile job (kprofile prints its whole report only at exit), so with the
+  new 40s budget the harness reached sync/teardown first and
+  `/kde-chromium-launch-probe.log` was empty (0 bytes host-side AND in-image
+  via debugfs). With the old 24s budget the report only landed by luck inside
+  the sampler window. Archived:
+  `20260704T143700Z-q0-kprofile-wait-gap-empty-probe-log-fail`.
+- Fix: `wait_chromium_video_kprofile_done` in the smoke harness — polls
+  `grep exec_ms <probe log>` (kprofile's final output line; short command for
+  the serial line limit) with a `kprofile_seconds+30` deadline, called between
+  `wait_chromium_video_sampler_done` and `capture_fbstat_stats`.
+- Attempt 2 (wait-fix) PASSED the measurement: full 10.5KB kprofile report,
+  8 wait polls, no wait-timeout warn, video played to `ended` (media 16.0s).
+  First VALID full-window M7 numbers (see Scoreboard M7). Q0 fix status:
+  timeout budget GOOD (window fully covered; `kprofile_timeout_hit=1` is
+  EXPECTED in browser workloads — Chromium never exits on its own, kprofile
+  always SIGTERMs at the deadline); pgroup labels GOOD; readahead counter
+  GOOD and meaningful (9602/33694 fills = 28.5% via readahead; 71.5% of
+  fills still synchronous at ~0.86ms/call, `read_page_ms=29016` — P3
+  hypothesis reconfirmed with a trustworthy counter).
+- REMAINING Q0 DEFECT (offline fix, no VM needed): `cpu_busy_ms=654934` /
+  `cpu_total_ms=1042089` exceed wall*6CPUs (~205k) by ~5.1x. Root cause:
+  `sched.c scheduler_yield` increments `busy/total_ticks` on EVERY scheduler
+  invocation, not per timer tick (the in-code comment "every call is one
+  timer tick" is false under load). No constant HZ converts these to time;
+  only the busy/total RATIO is meaningful (62.8% this run). Fix kprofile to
+  print `cpu_busy_ratio_pct` + raw invocation counts, or rename fields to
+  `*_sched_ticks` and drop the ms conversion.
+- Jiffies-loss caveat reconfirmed: kernel `elapsed_ms=34201` vs 40000ms wall
+  = ~14.5% BSP tick loss under load (matches the Scoreboard rule).
+- Parser follow-up (offline): the updated perf-video page emits
+  `PERF-VIDEO metrics/RESULT` lines (no `tick` lines); post-evidence parsed
+  `tick_count=0`/`result_fail_count=1` and missed rvfc fields. Teach the
+  post-evidence parser the new format against the archived run.
+- Archived: `20260704T144500Z-q0-kprofile-wait-fix-first-valid-m7-window`.
 
 ## P3 — Ext4 Read-Path Serialization (candidate perf lane)
 
