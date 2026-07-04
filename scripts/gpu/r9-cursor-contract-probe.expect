@@ -154,6 +154,7 @@ proc generate_guest_scripts {} {
     puts $fh {OUTPUT=/r9-probe-output.log}
     puts $fh {PROCESS_LOG=/r9-process-probe.log}
     puts $fh {CMDLINE=/r9-cmdline.txt}
+    puts $fh {export LD_LIBRARY_PATH=/opt/xv6-kde-abi-libs:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib:/lib}
     puts $fh {}
     puts $fh "write_status() {"
     puts $fh {    echo "$*" > "$STATUS_TMP"}

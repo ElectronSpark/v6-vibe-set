@@ -145,21 +145,19 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   (artifact
   `build-x86_64/r9-cursor-contract-probe-history/20260704T194831Z/`,
   `qemu-dry-run.txt` present, `/r9-run.sh` verified in the copied image).
-  Real probe ran uninterrupted and failed after arming/injection:
-  `timeout 420 expect scripts/gpu/r9-cursor-contract-probe.expect` exited
-  21 with `bad-final-status` (artifact
-  `build-x86_64/r9-cursor-contract-probe-history/20260704T195436Z/`).
-  It reached `armed_pid=58`, sent all five monitor `mouse_move` commands,
-  and extracted guest evidence. Coordinate contract result is now an input
-  stack blocker rather than a harness blocker: `/dev/input/event1` reports
-  ABS_X/ABS_Y with min=0 max=65535 value=32767 resolution=16, but udev
-  input enumeration returns count=0, libinput fails seat setup with
-  `r9_libinput_status rc=-1 errno=93 reason=assign_seat_failed`, no
-  libinput/evdev ABS samples are collected, and `/dev/mouse` samples clamp
-  or repeat at x=127 y=127 after the initial 0,0 sample. Next N3 slice:
-  fix the input discovery/libinput seat path first, then retest raw ABS and
-  cursor transform; do not revisit setup injection unless the harness
-  `STATUS.txt` says setup failed.
+  Real probe `20260704T200703Z` now PASS after making the standalone R9
+  runner use the KDE session ABI library path
+  (`/opt/xv6-kde-abi-libs` first). Root cause for the `20260704T195436Z`
+  failure was the probe's default RUNPATH preferring the host
+  `/usr/lib/x86_64-linux-gnu` libinput/libudev stack; udev enumeration was
+  empty and libinput failed monitor/seat setup. New evidence: udev input
+  enumeration returns count=2 for event0/event1 with `seat` tags and
+  `ID_SEAT=seat0`, libinput reports `reason=ready fd=6`, then drains
+  18 libinput events but zero absolute samples; `/dev/mouse` still repeats
+  x=127 y=127 after the initial 0,0 sample. Next N3 slice is coordinate/event
+  sampling only: compare raw evdev reads/libinput event types against monitor
+  moves and `/dev/mouse`; do not reopen image injection or seat plumbing unless
+  `STATUS.txt` or `r9-lines.txt` regresses.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
   Implement both together, one battery.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
@@ -558,13 +556,16 @@ at screen edges vs host pointer; (3) cursor-plane transform under
 source-only: `scripts/gpu/r9-cursor-contract-probe.expect`
 (startup-injected `/r9-run.sh`, debugfs polling, monitor `mouse_move` after
 `phase=armed`) — do NOT drive the probe over the interactive serial shell.
-Dry-run `20260704T194831Z` passed with `qemu-dry-run.txt` and verified
-in-image `/r9-run.sh`; real probe `20260704T195436Z` reached armed and
-sent all five monitor moves, then failed because udev input enumeration was
-empty and libinput seat assignment failed (`errno=93`). Event1 already
-reports ABS_X/ABS_Y 0..65535 through EVIOCGABS, so the next implicated
-layer is input discovery/libinput seat plumbing before deeper cursor-plane
-transform work. Include the LibinputBackend nullptr payload fix here.
+Dry-run `20260704T200628Z` passed with `qemu-dry-run.txt` after the R9
+runner inherited the KDE ABI library path. Real probe `20260704T200703Z`
+reached `armed_pid=57`, sent all five monitor moves, and passed discovery:
+udev enumerated event0/event1 (`count=2`) and libinput assigned `seat0`
+(`r9_libinput_status rc=0 errno=0 reason=ready fd=6`). Remaining blocker is
+now the coordinate/event layer: libinput reported 18 events but
+`absolute_samples=0`, evdev collected no raw ABS samples during the monitor
+moves despite EVIOCGABS reporting 0..65535 metadata, and `/dev/mouse` still
+clamped/repeated x=127 y=127. Include the LibinputBackend nullptr payload fix
+here.
 
 ## Verification Gates
 
