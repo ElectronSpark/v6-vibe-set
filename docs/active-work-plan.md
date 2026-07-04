@@ -301,8 +301,20 @@ Active queue, in order:
   launch marker. The probe now enumerates both input devices and reaches
   `r9_libinput_status rc=0 errno=0 reason=ready fd=6`; `r9_summary` ends
   `result=PASS`. This closes the deterministic `assign_seat_failed` pre-KWin
-  blocker. The historical KWin `QObject::moveToThread(QThread*)+0x15` crash was
-  not rerun in this reducer and remains a separate R5/KWin startup lane.
+  blocker. Follow-up KWin-enabled KDE-ready verification after the
+  libudev/input seat fix passed with Chromium out of scope:
+  `QEMU_AUDIO_BACKEND=none KDE_SMOKE_REDUCER=kde-ready KDE_SMOKE_PRE_KWIN_LIBINPUT_PROBE=1 scripts/gpu/kde-plasma-desktop-smoke.expect`.
+  Archive:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260704T111041Z-r5-kde-ready-post-libudev-input-seat-fix/`.
+  Status is `status_code=0`
+  `KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=kde-ready`; the probe again reports
+  `r9_libinput_status rc=0 errno=0 reason=ready fd=6` and
+  `r9_summary ... result=PASS`. `run.log` shows virgl render-node setup,
+  `launching KWin attempt=1`, `Xwayland is running`, and
+  `KWin and plasmashell are running`; there are no attempt-2/retry markers.
+  `kde-session-kwin.log` and `kde-plasma-kwin-crash-regression.txt` are empty,
+  so the previous `QObject::moveToThread(QThread*)+0x15`/`#PF` signature did
+  not reproduce in this single readiness run. Chromium/M9 remains untested.
 - Q6 = R2 (PCID corruption reducer, then guarded default retry).
 - Q7 = R6 step 2 retry (P2 ordered-pageflip default flip) after Q5.
 - Tracked follow-up after Q1: R7c/M8 vCPU/KVM idle-cadence work now has
