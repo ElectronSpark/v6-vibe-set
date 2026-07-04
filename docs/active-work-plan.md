@@ -93,19 +93,16 @@ Active queue, in order:
   ANGLE dispatch, requestable-extension empty-list semantics,
   `CLIENT_ARRAYS` false and bind-generates true getters, and robust
   get/readpixels/texture-upload wrappers with error-output hygiene.
-  `GL_KHR_debug` already existed. Offline verification passed:
-  `git diff --check`, `git -C ports/mesa/src diff --check`, and
-  `cmake --build build-x86_64/ports --target port-mesa -j2`; no QEMU/VM yet.
-  A later offline `GL_CHROMIUM_copy_texture` attempt built and passed the
-  hardened reducer on host staged Mesa, then was removed because it still
-  over-advertised support and used an observable nonzero-level texture
-  workaround. Blockers before advertising it: gate rectangle behavior on real
-  texture-rectangle support; add an honest `samplerExternalOES`/transform path
-  before external-source support; cover the broader spec format/type matrix
-  beyond the reducer; and preserve destination BASE/MAX_LEVEL semantics.
+  `GL_KHR_debug` already existed. Mesa commit
+  `a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
+  `GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
+  copy/conversion paths. Offline verification passed:
+  `git -C ports/mesa/src diff --check`,
+  `cmake --build build-x86_64/ports --target port-mesa -j2`,
+  `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
+  and staged-library host `mesacopytexture` rc 0 on non-software renderer
+  `D3D12 (Intel(R) UHD Graphics)`. No QEMU/VM runtime proof yet.
   Remaining ladder before runtime default-Chromium proof:
-  `GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
-  transform/conversion support,
   `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
   global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
   Non-blocking first-slice gap: `GetUniform*RobustANGLE` length remains
@@ -502,31 +499,24 @@ first-slice GLES2 Gallium advertisement/dispatch/query support for
 `xv6_angle_passthrough.c`, GLES-only ANGLE dispatch, requestable-extension
 empty-list semantics, `CLIENT_ARRAYS` false and bind-generates true getters,
 and robust get/readpixels/texture-upload wrappers with error-output hygiene.
-`GL_KHR_debug` already existed. Offline verification passed (`git diff
---check`, `git -C ports/mesa/src diff --check`, and `cmake --build
-build-x86_64/ports --target port-mesa -j2`); no QEMU/VM runtime proof yet.
-A later offline `GL_CHROMIUM_copy_texture` attempt built and passed the
-hardened reducer on host staged Mesa, then was removed because it still
-over-advertised support and used an observable nonzero-level texture workaround.
-Blockers before advertising it: gate rectangle behavior on real
-texture-rectangle support; add an honest `samplerExternalOES`/transform path
-before external-source support; cover the broader spec format/type matrix beyond
-the reducer; and preserve destination BASE/MAX_LEVEL semantics.
-Pre-implementation reducer hardening for `mesacopytexture` now sharpens the
-offline proof surface before the real Mesa work: it keeps missing extension/proc
-as rc 77, rejects software renderers, broadens conversion/error/level/subcopy
-coverage, adds guarded external EGLImage/OES and destination-format roundtrip
-fixtures, checks destination BASE/MAX_LEVEL invariance for level-1 copies,
-expects rectangle targets to fail with `GL_INVALID_ENUM` when unsupported, and
-aligns same-texture/same-level subcopy with ANGLE's invalid-operation
-validation. Unsupported GL/EGL capabilities still SKIP instead of false-failing.
-Verified offline with `git -C ports diff --check`,
+`GL_KHR_debug` already existed. Mesa commit
+`a7eeaa2afca042d58d32de9314558e2639057f8c` now adds GLES-only
+`GL_CHROMIUM_copy_texture` advertisement/dispatch plus shader/blit-based
+copy/conversion paths for Chromium's offline reducer surface. Verification
+passed with `git -C ports/mesa/src diff --check`,
+`cmake --build build-x86_64/ports --target port-mesa -j2`,
 `cmake --build build-x86_64/ports --target port-wayland-mesacopytexture-install -j2`,
-and a host reducer run returning rc 77 on missing `GL_CHROMIUM_copy_texture`;
-this is not runtime default-Chromium proof and does not implement Mesa semantics.
+and staged-library host `mesacopytexture` rc 0 on non-software renderer
+`D3D12 (Intel(R) UHD Graphics)`. No QEMU/VM runtime proof yet.
+`mesacopytexture` remains the focused offline proof surface: it keeps missing
+extension/proc as rc 77, rejects software renderers, broadens
+conversion/error/level/subcopy coverage, adds guarded external EGLImage/OES and
+destination-format roundtrip fixtures, checks destination BASE/MAX_LEVEL
+invariance for level-1 copies, expects rectangle targets to fail with
+`GL_INVALID_ENUM` when unsupported, and aligns same-texture/same-level subcopy
+with ANGLE's invalid-operation validation. Unsupported GL/EGL capabilities still
+SKIP instead of false-failing.
 Remaining ladder before runtime default-Chromium proof:
-`GL_CHROMIUM_copy_texture` real shader/blit-based semantics/dispatch with
-transform/conversion support,
 `GL_ANGLE_webgl_compatibility` safe context-specific semantics (not a blind
 global string flip), and full `GL_ANGLE_robust_client_memory` conformance.
 The known non-blocking first-slice gap is `GetUniform*RobustANGLE` length:
