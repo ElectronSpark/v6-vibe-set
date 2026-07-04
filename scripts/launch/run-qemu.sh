@@ -111,6 +111,7 @@ QEMU_AUDIO="${QEMU_AUDIO:-virtio}"
 QEMU_AUDIO_STREAMS="${QEMU_AUDIO_STREAMS:-1}"
 QEMU_AUDIO_BACKEND="${QEMU_AUDIO_BACKEND:-auto}"
 QEMU_AUDIO_ID="${QEMU_AUDIO_ID:-xv6snd0}"
+QEMU_AUDIO_WAV_PATH="${QEMU_AUDIO_WAV_PATH:-}"
 QEMU_NETSURF="${QEMU_NETSURF:-auto}"
 QEMU_GPU="${QEMU_GPU:-auto}"
 QEMU_GDB="${QEMU_GDB:-0}"
@@ -336,6 +337,14 @@ resolve_qemu_audio_backend() {
 
         if [[ "${DISPLAY_MODE}" == "nographic" ]]; then
                 QEMU_AUDIO_BACKEND="none"
+                return 0
+        fi
+
+        if host_is_wsl && qemu_audio_backend_available wav; then
+                if [[ -z "${QEMU_AUDIO_WAV_PATH}" ]]; then
+                        QEMU_AUDIO_WAV_PATH="/tmp/xv6-qemu-audio.$$.$(date -u +%Y%m%dT%H%M%SZ).wav"
+                fi
+                QEMU_AUDIO_BACKEND="wav,path=${QEMU_AUDIO_WAV_PATH}"
                 return 0
         fi
 
@@ -635,7 +644,11 @@ case "${ARCH}" in
                 resolve_qemu_audio_backend
                 case "${QEMU_AUDIO}" in
                         virtio)
-                                echo "run-qemu: using ${QEMU_AUDIO_BACKEND} audio backend for virtio-sound" >&2
+                                if [[ "${QEMU_AUDIO_BACKEND}" == wav,path=* ]]; then
+                                        echo "run-qemu: WSLg PulseAudio rejects QEMU stream controls; using WAV audio sink ${QEMU_AUDIO_WAV_PATH}" >&2
+                                else
+                                        echo "run-qemu: using ${QEMU_AUDIO_BACKEND} audio backend for virtio-sound" >&2
+                                fi
                                 AUDIO_ARGS=(-audiodev "${QEMU_AUDIO_BACKEND},id=${QEMU_AUDIO_ID}"
                                             -device "virtio-sound-pci,audiodev=${QEMU_AUDIO_ID},streams=${QEMU_AUDIO_STREAMS}")
                                 ;;
