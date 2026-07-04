@@ -6,9 +6,11 @@ runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
 gated, N2 ext4 default promotion attempted but NOT accepted after a
 default-on KWin #GP rerun; later N2 ON-arm kernel #PF classified and
 opt-in diagnostics landed; kprofile measurement validity fixed; N3 R9
-coordinate and visible cursor probes passed. All verbose evidence chains moved to
-the history file and git log; this file holds current status, queue,
-rules, and compact lane conclusions only.)
+coordinate and visible cursor probes passed; cleanup removed stale ignored
+proof images; N4/P1 cpumask+CR0 and CR0-only attempts stopped/reverted with
+no landing. All verbose evidence chains moved to the history file and git
+log; this file holds current status, queue, rules, and compact lane
+conclusions only.)
 
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
@@ -61,8 +63,8 @@ default-off (`kde_pactl_probe=1` to re-enable); non-audio gates run with
 | # | Metric | How measured | Current (2026-07-04) | Goal |
 |---|--------|--------------|----------------------|------|
 | M1 | YouTube-freeze survival | P0 repro recipe, 15 min, 3 runs | 3/3 responsive clean (2026-07-03 battery); P0 closed | 3/3 clean |
-| M2 | Guest `getpid_ns` | `syscalltlb 2000` nographic | 1.65-1.94us (P1 2a/2b landed) | < 1.5us (P1 2c/2d = N4) |
-| M3 | `tlb_amplification_ns` (1024 pg) | same | noisy 2.7-3.7us band | 0 on default boot |
+| M2 | Guest `getpid_ns` | `syscalltlb 2000` nographic | accepted baseline 1.65-1.94us (P1 2a/2b landed); N4 stopped/reverted after clean CR0-only rerun failed at 1973/2102/1925/2185ns | < 1.5us (requires a different P1 approach) |
+| M3 | `tlb_amplification_ns` (1024 pg) | same | accepted baseline noisy 2.7-3.7us band; clean CR0-only N4 rerun failed at 4504ns | 0 on default boot |
 | M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1883-2144 band across the 07-04 batteries (best 1883 post-R5-fix) | < 2000 |
 | M5 | `first_visible_ms` | same | 11471-13850 band | < 15000 |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B | 118-125 ordered, now DEFAULT-ON | done (was: ordered default) |
@@ -172,8 +174,15 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260704T205909Z-r9-visible-chromium-launch-only-pass`.
   Remaining N3 work is the later/secondary KWin LibinputBackend nullptr
   payload unless a startup/input crash reproduces under the visible probe.
-- N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us.
-  Implement both together, one battery.
+- N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us:
+  ATTEMPTED + STOPPED/REVERTED 2026-07-04. Full cpumask+CR0 built but
+  nographic stopped at `forktest` timeout
+  (`build-x86_64/desktop-bottleneck-profile/20260704T213831Z-n4-p1-runtime-verification-nographic/`).
+  The cpumask half is the likely culprit (sticky/over-inclusive fanout into
+  fork/COW/TLB synchronous shootdowns); CR0.TS shadow is lower suspicion but
+  was still insufficient. Cpumask was backed out; CR0-only passed functional
+  nographic twice, but failed acceptance metrics, so it was reverted. N4/P1
+  is not landed; next action requires a different approach.
 - N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
   threads at 85-130%). Host-side attribution done; next is guest tick/timer
   cadence reduction (relates to N7).
@@ -328,12 +337,30 @@ then from serial:
 liveness (`ALIVE_n` commands must EXECUTE). Evidence:
 `build-x86_64/yt-mainpage-freeze-repro/`.
 
-### P1 — Syscall overhead (M2/M3): steps 2c/2d OPEN (= N4)
+### P1 — Syscall overhead (M2/M3): N4 stopped/reverted
 
-2a (FS_BASE cache) + 2b (trapframe direct) landed; M2 1.65-1.94us.
-Remaining identified fixed costs: 2c cpumask atomics skip, 2d CR0.TS
-shadow. Implement together, one battery; then step 3 (gated default flip)
-per Guardrails. CR-3 (%fs selector reload) is the latent ABI follow-up.
+2a (FS_BASE cache) + 2b (trapframe direct) landed; accepted baseline M2
+1.65-1.94us and M3 noisy 2.7-3.7us. N4 attempted 2026-07-04 but did not
+land. Full patch = cpumask hot-path skip + CR0.TS shadow; it built, then
+nographic stopped at `forktest` timeout in
+`build-x86_64/desktop-bottleneck-profile/20260704T213831Z-n4-p1-runtime-verification-nographic/`.
+Analysis: cpumask sticky/over-inclusive behavior likely caused fork/COW/TLB
+synchronous shootdown fanout/stall; CR0.TS shadow is lower suspicion.
+
+Recovery: cpumask half backed out. CR0-only passed functional nographic in
+`build-x86_64/desktop-bottleneck-profile/20260704T215704Z-n4-p1-cr0only-nographic-gate-resync/`
+but missed acceptance (`getpid_ns=1739`, M3=4818). Clean rerun
+`build-x86_64/desktop-bottleneck-profile/20260704T220417Z-n4-p1-cr0only-clean-nographic-gate/`
+again passed functional nographic but failed metrics: M2
+1973/2102/1925/2185ns, M3 1024-page 4504ns. CR0-only patch reverted; final
+repo state was clean; N4/P1 is not landed. Saved patches:
+`/tmp/n4-p1-current-20260704T215021Z.patch`,
+`/tmp/n4-p1-cr0only-final-20260704T220032Z.patch`,
+`/tmp/n4-p1-cr0only-current-20260704T220245Z.patch`, and artifact copy
+`build-x86_64/desktop-bottleneck-profile/20260704T220417Z-n4-p1-cr0only-clean-nographic-gate/saved-cr0only.patch`.
+Next action: choose a different P1 approach that accounts for fork/COW/TLB
+fanout risk; do not mark N4 passing from these runs. CR-3 (%fs selector
+reload) remains the latent ABI follow-up.
 
 ### P2 — Ordered page flip: steps 1-2 DONE, step 3 = N1
 
@@ -468,7 +495,8 @@ the two bounded ON runs.
 History: "window not visible" was never renderer admission (exonerated);
 a real Mesa EGL attr-order bug was fixed (`5e3f4bebe`); the default-path
 blocker was Chromium 150's passthrough decoder requiring the ANGLE
-extension ladder. Direction settled by the user: REAL GL — no
+extension ladder. Direction settled by the user: do not skip GPU
+acceleration. Current accepted GPU path is classic KVM/virgl real GL; no
 software/bundled fallback.
 Implementation (all in `ports/mesa/src`, HEAD `fb2724503`):
 `xv6_angle_passthrough.c` + GLES dispatch for
@@ -648,6 +676,13 @@ plumbing, or kernel signed-16 storage without new contradictory evidence.
 - `build-x86_64/syscall-tlb-proof/`, `build-x86_64/pageflip-ordered-ab-proof/`,
   `build-x86_64/desktop-bottleneck-profile/`,
   `build-x86_64/r5-kwin-startup-classification/`.
+- Cleanup note 2026-07-04: deleted stale ignored `build_x86_64/` (~68G) and
+  18 archived scratch `*.fs.img` files from old proof-history directories
+  (~149M). Preserved `build-x86_64/fs.img`,
+  `build-x86_64/kde-plasma-desktop-smoke/kde-plasma.fs.img`, current Q2
+  real-GL evidence, N2 diagnostics, N3 R9 cursor/visible evidence, and the
+  robust P1 nographic archive. Top/kernel/user/ports/mesa were clean after
+  cleanup.
 - `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md` —
   full pre-compaction plans (2026-07-02 and 2026-07-04 snapshots) with
   every evidence chain.
