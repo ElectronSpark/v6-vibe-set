@@ -207,12 +207,40 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   count+claim transitions under q->lock; tear-proof slot release
   (body-wipe first, RELEASE-store pending last); all mutexes
   initialized. These closed latent races that exist even in default
-  mode. UNLOCKED-WAIT REMAINS DEFAULT-OFF; do not re-attempt without
-  the B2+B3 redesign. Expected payoff unchanged (presents 8.6 ->
-  ~1.5ms). EXCLUDE unlocked_wait=1 runs from R5 closure. Review NITs
-  for the redesigner: __atomic loads for pending/fence_id readers,
-  -1 vs -EAGAIN conflation in post_prepared when reserve returns NULL,
-  mixed_async completion_init outside q->lock (pre-existing).
+  mode.
+  2026-07-05 ATTEMPT 5 — B2/B3 REDESIGN LANDED (kernel 043e88a), M7
+  JUMPED TO 51 IN DEFAULT MODE; UNLOCKED-WAIT STILL NO-GO:
+  Redesign (subagent-implemented, adversarially reviewed GO with 4
+  findings incorporated): TOTAL reaper (sync in-flight record
+  sync_inflight/sync_done/sync_stale under q->lock; only id==0 is a
+  sync completion; unknown ids warn-consumed; mixed_async's bespoke
+  third reaper deleted — sync post/wait shared via
+  virtio_gpu_sync_post/sync_wait_done); sync posts PARK while
+  sync_stale>0 (no desc[0,3) rewrite while device owes a stale element
+  — closes misattribution AND double-execution); slot state machine
+  FREE->CLAIMED->POSTED->FREE + ABANDONED quarantine (abort abandons
+  only POSTED, never frees device-reachable memory; reaper frees
+  ABANDONED on used-element arrival and records fences monotonically
+  into last_fence); movement-based progress (used->idx +
+  async_retire_seq snapshots; reap+recheck before abort); async
+  capacity clamped to negotiated qsize ((qsize-8)/4).
+  Battery: probe 5/5 PASS default boot; kde-ready DONE clean.
+  A/B (chromium-video): CONTROL (default mode, unlocked-wait OFF)
+  presentedFPS=51.0 decodedFPS=61.4 dropPct=9.07 — UP from the
+  43.9-44.8 band; the default-mode redesign itself (total reaper, no
+  bulk-swallow, shared sync path) plus the N5 poll promotion moved M7
+  ~+7fps. TREATMENT (virtio_gpu_submit_unlocked_wait=1) FAILED
+  session-liveness-before-chromium: GLOBAL desktop stall at t~147s —
+  every polling thread parked simultaneously (poll-stuck dumps show
+  68-73s parks all starting together), NO panic/corruption/refused
+  lines. Hypothesis: op_lock convoy — a sync waiter (fenced sync
+  deferred by virgl behind ongoing async retires) holds op_lock through
+  repeated fresh 5s movement windows (review finding #8: no cumulative
+  deadline on sync_wait_done), blocking every present. Memory-safe but
+  a liveness regression. UNLOCKED-WAIT REMAINS OPT-IN/PARKED; next
+  attempt needs a cumulative sync-wait deadline + investigation of the
+  t~147s stall from archive n1ab-unlocked.log (scratchpad). EXCLUDE
+  unlocked_wait=1 runs from R5 closure.
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
