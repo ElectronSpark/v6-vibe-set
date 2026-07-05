@@ -406,11 +406,26 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   fixed before pts fds could ever be flagged notify-backed; signalfd is
   a stub (poll always 0); unconnected AF_UNIX DGRAM sendto delivery is
   unimplemented (sendto rejects addresses, sendmsg ignores msg_name).
-  REMAINING GATE BEFORE RE-FLIPPING DEFAULTS: INTERACTIVE validation
-  round 2 with the user (FM24a) on the evdev-fixed kernel, GL-pipeline
-  KDE boot, both gates forced ON — desktop responsiveness + konsole +
-  video. Only after a human confirms responsiveness may the defaults be
-  flipped back ON.
+  2026-07-05 ROUND 2 VALIDATION + PROMOTION (kernel b231117): the
+  evdev-fixed gates-ON KDE session ran with working input across
+  multiple real interaction bursts (stuck-poller telemetry: the
+  libinput thread woke on every burst; no thread re-froze), and the
+  user moved work forward on that basis. BOTH GATES ARE DEFAULT-ON
+  again (opt-out poll_notify_full_wait=0 / af_unix_poll_notify_full_wait=0).
+  Validation chain on the promoted kernel: 5-test poll-notify-probe
+  PASS on a default boot (gates active by default, diagnostic armed);
+  kde-ready smoke DONE clean. CAVEAT: the desktop-interaction-latency
+  visibility reducer FAILED IDENTICALLY with gates ON and OFF from the
+  agent's headless shell (no screendump artifacts were ever written) —
+  an environment limitation, not a flip regression; treat that reducer
+  as runnable only from a display-attached session. The stuck-poller
+  diagnostic stays active whenever the gate is on (zero cost
+  otherwise) and is the standing tripwire for any remaining
+  lost-notify class: `poll-stuck:` on serial names the fd classes.
+  NEXT for N5: M8 idle-cadence payoff measurement on a GL boot
+  (expected large drop in poll-timeout churn / idle wakeups), then the
+  PTY slave notify fix lane (audit findings above) as follow-up
+  hardening.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
