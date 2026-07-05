@@ -562,10 +562,23 @@ race-free, priorities, tick preemption of USER mode. AMPLIFIER for
 the 1.4s clusters: printf = synchronous UART busy-wait under global
 pr.lock with IRQs off (printf.c:135, uart.c:261-273) — log bursts
 serialize CPUs machine-wide.
-FIXES (in flight): (1) IRQ-exit kernel preemption behind
+FIXES LANDED (kernel f89b60b, battery green: probe 5/5, kde-ready
+DONE, zero assertions): (1) IRQ-exit kernel preemption behind
 kernel_preempt=1 default-on; (2) async console (klog ring + drain,
 panic-synchronous fallback) behind console_async=1 default-on;
-(3) later: cond_resched checkpoints; wake-list re-placement (minor).
+(3) preemption-safe per-CPU asserts: 11 rwsem/mutex/semaphore debug
+asserts sampled mycpu()->spin_depth with IF=1 — with migration now
+possible at any IF=1 instruction they could read ANOTHER CPU's
+counter and false-panic (first battery caught it: rwsem assert in
+kded5 rseq user-return); spin_depth_snapshot() samples under
+push_off; wakeup-path assertion wrapped; scheduler_yield preamble
+pinned. STILL OPEN in this lane: cond_resched checkpoints (belt and
+braces), wake-list re-placement (minor), RISKY-3 accounting inflation
+(each IRQ-exit preempt re-runs __do_timer_tick + counts a tick —
+utilization/EEVDF slice skew, correctness OK), RISKY-4 console
+cross-stream ordering (smoke scripts keying on kernel-vs-app serial
+ordering may flake; console_async=0 to bisect). A/B flags:
+kernel_preempt=0, console_async=0.
 GPU/fence/input chains were verified healthy first (owner-trace
 retire 60s->2-13ms after e84e243+d32209f) — interactive latency
 remaining after those fixes is THIS lane.
