@@ -154,23 +154,37 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   `20260705T012000Z-n1n5-video-unlocked-wait-on` (panic),
   `20260705T014000Z-n1n5-video-unlocked-wait-off-control` (clean 44.8),
   `20260705T021500Z-n1n5-corrected-defaults-kde-active-sample` (DONE).
-  NEXT N1 STEP (SHARPENED by the failed first rework, 2026-07-05): the
-  waiter-serialize mutex landed in virtio_gpu_async_wait_progress (fixes
-  the double-completion_init corruption) but the opt-in retest STILL
-  panicked — now a kernel exception inside mutex_lock reached from the
-  SYNC submit path (resource_create -> submit_internal), archive
-  `20260705T030000Z-n1-tq-rework-unlocked-wait-optin-video`. Root cause
-  class: `q->pending_completion` accesses were historically serialized
-  by op_lock itself; the unlocked waiter writes it under only q->lock
-  while sync-path readers/writers touch it under op_lock -> dangling/
-  torn completion pointer, IRQ complete_all on garbage. The REAL rework:
-  (1) every pending_completion read/write under q->lock, (2) completion
-  lifetime guarantees across timeout/abort (sync waiters' stack
-  completions must be unhooked under q->lock before return),
-  (3) then re-A/B via `virtio_gpu_submit_unlocked_wait=1`. Expect
-  bo_present_virtio avg ~1.5ms and presentedFPS toward the host-retire
-  bound. Two failed attempts recorded — do NOT retry without the full
-  locking audit. Routes b-copy-reduction and rutabaga unchanged.
+  N1 UNLOCKED-WAIT: THREE ATTEMPTS, LANE PARKED 2026-07-05 with the full
+  rework scope now mapped. Attempt log (all archived):
+  (1) default-on: PANIC tq_remove — concurrent completion_init on the
+  shared g->async_wait; FIXED by the waiter-serialize mutex (landed).
+  (2) opt-in: kernel exception in mutex_lock — MY BUG: the new mutex was
+  never mutex_init'ed (this kernel's mutex_t/tq_t REQUIRES init —
+  zero-init leaves broken list heads; op_lock inits at
+  virtio_gpu_scanout.c:837). FIXED (init landed). The earlier
+  "pending_completion torn pointer" theory was WRONG — the sync path is
+  verifiably q->lock-disciplined (audited: submit_internal sets/clears
+  pending_completion under spin_lock_irqsave(&q->lock)).
+  (3) opt-in with both fixes: NO kernel panic, but kwin_wayland #GP at
+  libc.so.6 file_off 0x9fff4 — a CANONICAL R5-family site
+  (pthread_mutex_lock+4). Mechanism hypothesis: the retry loop performs
+  the first-ever async REAP without op_lock held
+  (make_room -> reap_completed); a racy reap can signal completion
+  early / double-process a used-ring entry, so the HOST DMAs into guest
+  frames already recycled -> foreign bytes in another process's fresh
+  pages (the R5 corruption shape WITHOUT the R5 kernel bug). Cannot yet
+  exclude a first residual R5-class observation, but the timing (first
+  working unlocked-wait run after 17+ clean launches) points at the
+  change. Archive `20260705T040000Z-n1-mutexinit-unlocked-wait-optin-video`.
+  FULL REWORK SCOPE for whoever resumes: (a) single-consumer async reap
+  discipline — used_idx advance + slot retire must be atomic under
+  q->lock and safe against concurrent reapers (unlocked waiter, sync
+  drain under op_lock, IRQ); (b) the waiter-serialize mutex (landed);
+  (c) completion lifetime across timeout/abort; (d) re-A/B opt-in, and
+  EXCLUDE unlocked_wait=1 runs from R5 statistical closure. Expected
+  payoff unchanged: presents 8.6 -> ~1.5ms, M7 toward the host-retire
+  bound. Shipped defaults remain safe: depth 60 + poll ON +
+  unlocked-wait OFF.
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
