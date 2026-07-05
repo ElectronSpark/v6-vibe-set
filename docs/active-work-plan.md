@@ -69,7 +69,7 @@ default-off (`kde_pactl_probe=1` to re-enable); non-audio gates run with
 | M5 | `first_visible_ms` | same | 11471-13850 band | < 15000 |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B | 118-125 ordered, now DEFAULT-ON | done (was: ordered default) |
 | M7 | `presentedFPS` (60fps video) | chromium-video kprofile, KPROFILE_SECONDS=90 | 44.2 real GL + ordered pageflip (arc 07-04: 36.8 -> 42.9 -> 44.2; dropPct 29.6; decode 61.5 keeps pace). Sole remaining ceiling: software-blit scanout — every flip copies, native_present_credit=0 | >= 55 (N1) |
-| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta (NOT lifetime ps pcpu) | GREEN 2026-07-05: 48/40/44% idle after the poll notify fast-path default (was 85-130% borderline-red; the 10ms-slicing churn was converting idle-halt ticks into busy rescans). Measured post-settle on the shipped defaults | < 100% (MET) |
+| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta (NOT lifetime ps pcpu) | GREEN 2026-07-05: 57-64% on shipped defaults (global poll notify fast-path ON; AF_UNIX half REVERTED after a user-visible interactive hang; both-flags reading was 44%). Was 85-130% borderline-red | < 100% (MET) |
 | M9 | Chromium window visible | chromium-video launch-only reducer | PASS on the DEFAULT path with REAL hardware GL (2026-07-04): zero missing-GL fatals, zero software fallbacks, GPU errors 0 | PASS (holds; guard in every battery) |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: `forktest`
@@ -309,6 +309,17 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   poll defaults ON). M8 idle spot-check is the remaining payoff
   measurement (next battery). Residual 366/s = fd classes still
   requiring rescan + real deadlines; re-attribute only if M8 stays red.
+  2026-07-05 M8 PAYOFF + PARTIAL REVERT: both-flags idle measured 44%,
+  but a real interactive session then HUNG (Wayland clients
+  unresponsive; dbus client auth timeout) — consistent with a missed
+  AF_UNIX readiness notify; the injected-input batteries had not caught
+  it (timer traffic masks lost socket wakeups). AF_UNIX half reverted
+  to default-off (kernel e6e3dab); shipped defaults re-measured 57-64%
+  — M8 stays GREEN; KDE gate on the reverted kernel DONE clean.
+  OPTIONAL FOLLOW-UP (~15-20% more idle headroom): audit the AF_UNIX
+  poll-notify hooks for complete transition coverage (data/EOF/hangup/
+  connect/credentials), then re-A/B af_unix_poll_notify_full_wait=1
+  WITH an interactive input check, not only injected-input reducers.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
@@ -450,6 +461,11 @@ Check BEFORE declaring any gate failed or hypothesis confirmed.
     libs: a probe's default RUNPATH preferred the host
     /usr/lib/x86_64-linux-gnu stack and silently broke udev/libinput
     enumeration.
+24a. Injected-input reducers do NOT prove interactive responsiveness:
+    the AF_UNIX poll-notify default passed the desktop-interaction
+    battery yet hung a real interactive session (timer traffic masks
+    lost socket wakeups). Wakeup-semantics changes need an interactive
+    (human or QMP raw-input) check before default promotion.
 24. Single-waiter wait-queue invariants: paths that historically ran
     under a big lock (e.g. virtio_gpu_wait_for_used under op_lock) may
     implicitly assume at most ONE waiter on their tq; allowing
