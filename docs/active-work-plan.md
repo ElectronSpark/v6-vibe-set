@@ -368,10 +368,49 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   RESULT=PASS 3/3 on a default (gates-OFF) boot — failing-then-passing
   reducer complete. (Probe note: pipe reader must treat read()==0 as
   EOF-after-writer-exit, not error.)
+  2026-07-05 ROUND 1 INTERACTIVE: STILL FROZEN ("no response") — the
+  three producer fixes were necessary but not sufficient.
+  STUCK-POLLER DIAGNOSTIC (landed, on whenever poll_notify_full_wait=1):
+  notify-backed full waits with timeout<0 or >=5s register a park entry
+  (pid/comm/fd classes captured in the poller's own context, unix paths
+  included); any other blocking poller dumps entries parked >10s
+  (re-dump every 30s so frozen-forever is distinguishable from
+  wake-and-repark). Live KDE dumps isolated the culprit: KWin's
+  libinput-connec thread, poll(-1) on {eventfd, epoll-fd}, parked in
+  ONE episode from t=39s for the whole session — input dead, rendering
+  alive (KWin/plasmashell main loops never appeared: healthy).
+  Reducer tests 4 (poll parked ON an epoll fd, pipe producer) and
+  5 (cross-process eventfd) both PASS gates-ON → generic
+  epoll-propagation and eventfd links are sound.
+  ROOT CAUSE #4 (THE interactive killer), FIXED in dev/evdev.c:
+  kqueue attach/notify LIST MISMATCH. knote_read/write_attach prefers
+  the per-open FILE knote list whenever f->ops->poll exists; evdev
+  installs evdev_file_ops (with .poll) via cdev.ops.open_file, so
+  epoll/poll knotes for /dev/input/eventN land on the FILE list. But
+  evdev's producer notify() only called cdev_knote_notify(&st->cdev)
+  — the CDEV list, which stays empty. Input readiness therefore NEVER
+  produced a kqueue wakeup; default mode was saved by epoll's 20ms
+  rescan, gate-ON full wait froze input forever. Fix: evdev_client
+  keeps its open vfs_file (set in open_file, protected by st->lock);
+  notify() snapshots client files under st->lock (vfs_fdup) and fires
+  vfs_file_knote_notify(EVFILT_READ) after unlock (kqueue_wait holds
+  kq->lock while calling ops->poll which takes st->lock — notifying
+  under st->lock would ABBA). AUDIT THE SAME MISMATCH ELSEWHERE: any
+  cdev whose open_file installs poll-bearing file ops but whose
+  producer only calls cdev_knote_notify (check ps2kbd/ps2mouse generic
+  cdev wrapper path, ttys).
+  Related audit findings (separate lane, rescan-masked today, NOT the
+  gate killer): PTY slave-side readiness is structurally un-notifiable
+  (pty_pair has no slave file pointer; tty_input commit points
+  tty.c:403/421/378 and pty_slave_hangup only tq_wakeup) — must be
+  fixed before pts fds could ever be flagged notify-backed; signalfd is
+  a stub (poll always 0); unconnected AF_UNIX DGRAM sendto delivery is
+  unimplemented (sendto rejects addresses, sendmsg ignores msg_name).
   REMAINING GATE BEFORE RE-FLIPPING DEFAULTS: INTERACTIVE validation
-  with the user (FM24a) on a GL-pipeline KDE boot with both gates
-  forced ON — desktop responsiveness + konsole + video. Only after a
-  human confirms responsiveness may the defaults be flipped back ON.
+  round 2 with the user (FM24a) on the evdev-fixed kernel, GL-pipeline
+  KDE boot, both gates forced ON — desktop responsiveness + konsole +
+  video. Only after a human confirms responsiveness may the defaults be
+  flipped back ON.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is

@@ -31,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
@@ -249,6 +251,85 @@ static void test_inotify_multi_watcher(void)
     report("inotify-multi-watcher", ok, "deadlock-or-error");
 }
 
+/* ── test 4: poll() parked ON an epoll fd (KWin libinput-thread shape) ─ */
+static void test_epoll_in_poll(void)
+{
+    int fds[2];
+    if (pipe(fds) < 0) {
+        report("epoll-in-poll", 0, "pipe");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(fds[1]);
+        alarm(WATCHDOG_SECS);
+        int epfd = epoll_create1(0);
+        if (epfd < 0)
+            _exit(2);
+        struct epoll_event ev = {.events = EPOLLIN, .data.fd = fds[0]};
+        if (epoll_ctl(epfd, EPOLL_CTL_ADD, fds[0], &ev) < 0)
+            _exit(3);
+        /* the frozen desktop shape: blocking poll ON the epoll fd */
+        struct pollfd p = {.fd = epfd, .events = POLLIN};
+        if (poll(&p, 1, -1) < 0)
+            _exit(4);
+        struct epoll_event out[4];
+        if (epoll_wait(epfd, out, 4, 0) < 1)
+            _exit(5);
+        char c;
+        if (read(fds[0], &c, 1) != 1)
+            _exit(6);
+        _exit(0);
+    }
+
+    close(fds[0]);
+    struct timespec ts = {0, 300 * 1000 * 1000};
+    nanosleep(&ts, NULL); /* let the child park in poll(epfd) first */
+    if (write(fds[1], "x", 1) != 1) {
+        report("epoll-in-poll", 0, "write");
+        kill(pid, SIGKILL);
+        return;
+    }
+    int ok = wait_child(pid, WATCHDOG_SECS + 3, "epoll-in-poll") == 0;
+    close(fds[1]);
+    report("epoll-in-poll", ok, "deadlock-or-error");
+}
+
+/* ── test 5: cross-process eventfd wakeup via poll(-1) ───────────────── */
+static void test_eventfd_cross_process(void)
+{
+    int efd = eventfd(0, 0);
+    if (efd < 0) {
+        report("eventfd-cross-process", 0, "eventfd");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        alarm(WATCHDOG_SECS);
+        struct pollfd p = {.fd = efd, .events = POLLIN};
+        if (poll(&p, 1, -1) < 0)
+            _exit(2);
+        uint64_t v = 0;
+        if (read(efd, &v, sizeof(v)) != sizeof(v) || v == 0)
+            _exit(3);
+        _exit(0);
+    }
+
+    struct timespec ts = {0, 300 * 1000 * 1000};
+    nanosleep(&ts, NULL); /* let the child park in poll(efd) first */
+    uint64_t one = 1;
+    if (write(efd, &one, sizeof(one)) != sizeof(one)) {
+        report("eventfd-cross-process", 0, "write");
+        kill(pid, SIGKILL);
+        return;
+    }
+    int ok = wait_child(pid, WATCHDOG_SECS + 3, "eventfd-cross") == 0;
+    close(efd);
+    report("eventfd-cross-process", ok, "deadlock-or-error");
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -256,6 +337,8 @@ int main(void)
     test_pipe_blocking_write();
     test_timerfd_repeat();
     test_inotify_multi_watcher();
+    test_epoll_in_poll();
+    test_eventfd_cross_process();
     printf("POLL-NOTIFY-PROBE: RESULT=%s failures=%d\n",
            g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;
