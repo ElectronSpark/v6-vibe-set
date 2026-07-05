@@ -154,12 +154,23 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   `20260705T012000Z-n1n5-video-unlocked-wait-on` (panic),
   `20260705T014000Z-n1n5-video-unlocked-wait-off-control` (clean 44.8),
   `20260705T021500Z-n1n5-corrected-defaults-kde-active-sample` (DONE).
-  NEXT N1 STEP: make the used-ring wait multi-waiter-safe (audit
-  virtio_gpu_wait_for_used + its tq usage; wake-all or per-waiter
-  completion), then re-A/B the unlocked wait via
-  `virtio_gpu_submit_unlocked_wait=1` — expect bo_present_virtio avg
-  ~1.5ms and presentedFPS toward the host-retire bound. Routes
-  b-copy-reduction and rutabaga unchanged (dead / fail-closed).
+  NEXT N1 STEP (SHARPENED by the failed first rework, 2026-07-05): the
+  waiter-serialize mutex landed in virtio_gpu_async_wait_progress (fixes
+  the double-completion_init corruption) but the opt-in retest STILL
+  panicked — now a kernel exception inside mutex_lock reached from the
+  SYNC submit path (resource_create -> submit_internal), archive
+  `20260705T030000Z-n1-tq-rework-unlocked-wait-optin-video`. Root cause
+  class: `q->pending_completion` accesses were historically serialized
+  by op_lock itself; the unlocked waiter writes it under only q->lock
+  while sync-path readers/writers touch it under op_lock -> dangling/
+  torn completion pointer, IRQ complete_all on garbage. The REAL rework:
+  (1) every pending_completion read/write under q->lock, (2) completion
+  lifetime guarantees across timeout/abort (sync waiters' stack
+  completions must be unhooked under q->lock before return),
+  (3) then re-A/B via `virtio_gpu_submit_unlocked_wait=1`. Expect
+  bo_present_virtio avg ~1.5ms and presentedFPS toward the host-retire
+  bound. Two failed attempts recorded — do NOT retry without the full
+  locking audit. Routes b-copy-reduction and rutabaga unchanged.
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
