@@ -532,6 +532,18 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   accrued; count every future battery), R3 recurrence watch (rcu_head
   double-free may share the R5 root cause — one `slab_alloc: repairing
   corrupt freelist cache='rcu_head_cache'` line was seen 07-04 pre-R5-fix).
+FS-churn attribution 2026-07-05 (vfs_trace_all=1 video boot, 4,477
+opens traced): the ~370 opens/s from the kprofile window is MOSTLY
+MEASUREMENT MACHINERY — kde-process-probe /proc scans (684) + the
+harness samplers/kde-session scripts (826) dominate; among real
+desktop processes kwin_wayland leads (1,399) and its churn is
+repeated GL/GLX dlopen SEARCH-PATH PROBING (~180 opens across 26
+rounds of libGLX.so.1/libGL.so.1 over 10+ path variants — consistent
+with ext4_lookup_enoent being 86% of driver lookups). In a live
+session without the harness the background churn is far lower.
+VERDICT: not the interactive-slowness culprit; keep as a minor
+optimization note (dlopen path-scan caching or a slimmer ld search
+path for kwin would cut the ENOENT storms).
 Recommended execution order: (1) N1 IMPLEMENTATION slice (op_lock/
 make-room fix + ring depth; attribution DONE, see entry); (2) N5 poll
 fast-path promotion battery (92% churn collapse proven; M8 payoff
