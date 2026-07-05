@@ -423,9 +423,18 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   otherwise) and is the standing tripwire for any remaining
   lost-notify class: `poll-stuck:` on serial names the fd classes.
   NEXT for N5: M8 idle-cadence payoff measurement on a GL boot
-  (expected large drop in poll-timeout churn / idle wakeups), then the
-  PTY slave notify fix lane (audit findings above) as follow-up
-  hardening.
+  (expected large drop in poll-timeout churn / idle wakeups) — DEFERRED
+  per user (2026-07-05): interactive freeze is gone but the desktop
+  still "responds slowly" → the standing R7/M4 perf lane is now the
+  priority, N1 unlocked-wait redesign in progress.
+  PTY SLAVE NOTIFY LANDED (kernel d88108b): pty_pair.slave_files[4]
+  registry; master-write → slave EVFILT_READ + echo → master notify;
+  master-close hangup → raw_wait wake + slave POLLHUP notify; last
+  slave close → master EOF notify. pts fds remain rescan-class (NOT
+  notify-backed) until the ioctl-driven readability transitions
+  (termios canon/raw flips, TIOCSTI-style injection) are audited; the
+  notify already wakes kqueue waiters instantly instead of at the next
+  10ms rescan boundary (keystroke latency win).
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
