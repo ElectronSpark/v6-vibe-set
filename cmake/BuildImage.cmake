@@ -108,6 +108,7 @@ set(_rootfs_image_sources
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-kwriteconfig-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-trash-stat-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-unix-socket-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/poll-notify-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-libinput-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-drm-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-wayland-seat-probe.c

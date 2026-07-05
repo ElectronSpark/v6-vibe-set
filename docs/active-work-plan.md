@@ -332,6 +332,46 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   default non-GL virtio-gpu-primary path shows the boot gradient and
   never presents KWin output (own issue — track separately if the
   non-GL path is meant to work).
+  2026-07-05 AUDIT + PRODUCER FIXES: consumer side (kqueue wait path)
+  audited SAFE — triple level re-poll (register-time ops->event
+  kqueue.c:1143, wait-entry rescan :1310, post-wait __vfs_poll_scan
+  vfs_syscall.c:5133); timeout=-1 full-wait = tq_wait with no timer
+  (kqueue.c:1497), so any lost PRODUCER notify = freeze-forever.
+  Producer audit found 3 lost-notify defects; all 3 FIXED:
+  (1) timerfd.c timer-IRQ deferral: on queue_work failure the old code
+      cleared work_pending AND set armed=false — dropped the notify and
+      permanently killed repeating timers. Now: wq==NULL (boot) drops
+      cleanly; queue_work-failure leaves notify_pending/armed intact
+      (the running worker's re-check loop consumes them) and clears
+      only work_pending so the next expiry re-attempts.
+  (2) pipe.c blocking write: with the ring full, write() parked in
+      __pipe_wait_reader WITHOUT ever firing the EVFILT_READ knote
+      (the only notify was at end-of-write, unreachable while
+      blocked) — a poll-only reader deadlocked against the blocked
+      writer. Now the writable==0 branch fires
+      vfs_file_knote_notify(read_file, EVFILT_READ) (writer_lock
+      fdup protocol, notify outside the lock) before waiting.
+  (3) vfs_syscall.c inotify_emit_locked: only the FIRST matching
+      watcher's fd was knote-notified per event; 2nd+ inotify fds
+      polling the same inode never woke. Now an inotify_notify_set
+      (bounded 8, pointer-deduped, overflow logged) collects ALL
+      queued watcher files; callers fire the whole set outside the
+      global lock.
+  Reducer: /bin/poll-notify-probe (scripts/image/poll-notify-probe.c,
+  staged into the image) — 3 tests under poll_notify_full_wait=1 with
+  15s watchdogs. Pre-fix kernel: pipe-blocking-write FAIL (reproduced
+  the deadlock exactly); timerfd passes pre-fix (its defect is a rare
+  queue_work race, kept as regression cover); inotify passes pre-fix
+  only because truncate/write/close emit a multi-event cascade and the
+  first watcher exits between events (single-event gap still real).
+  Post-fix: probe RESULT=PASS 3/3 with BOTH gates forced ON, and
+  RESULT=PASS 3/3 on a default (gates-OFF) boot — failing-then-passing
+  reducer complete. (Probe note: pipe reader must treat read()==0 as
+  EOF-after-writer-exit, not error.)
+  REMAINING GATE BEFORE RE-FLIPPING DEFAULTS: INTERACTIVE validation
+  with the user (FM24a) on a GL-pipeline KDE boot with both gates
+  forced ON — desktop responsiveness + konsole + video. Only after a
+  human confirms responsiveness may the defaults be flipped back ON.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is

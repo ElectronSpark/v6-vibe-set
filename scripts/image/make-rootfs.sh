@@ -1013,6 +1013,8 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kwin-global-slot-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-unix-socket-probe.c" \
         "${STAGE}/bin/kde-unix-socket-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/poll-notify-probe.c" \
+        "${STAGE}/bin/poll-notify-probe"
     stage_kde_wayland_seat_probe
     stage_kde_wayland_registry_probe
     stage_kde_drm_probe
