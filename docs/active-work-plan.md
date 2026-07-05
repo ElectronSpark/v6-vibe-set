@@ -136,16 +136,30 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   archived `20260705T003500Z-n1-instrumented-run-trace-perturbed-*`) —
   its structural reads (make_room_depth_max pinned at 32, retire sums
   >> lock_wait) are consistent; use submit_trace ALONE if re-run.
-  NEXT N1 IMPLEMENTATION SLICE (kernel, gated, revert-ready):
-  (a) stop holding op_lock across the make-room stall in ctx_submit
-  (reserve ring space before lock, or release-and-reacquire around
-  virtio_gpu_async_make_room — preserve submit ordering vs flip via
-  queue position, same invariant the ordered-pageflip path uses);
-  (b) raise the async ring depth 32 -> 128 to absorb host retire jitter.
-  Validate with the standard battery + one 90s video kprofile; expect
-  bo_present_virtio avg to approach ~1.5ms and presentedFPS to rise
-  toward the host-retire bound. Route (b-copy-reduction) stays dead;
-  rutabaga route unchanged (fail-closed on this host).
+  N1 IMPLEMENTATION SLICE — PARTIAL LANDING 2026-07-05:
+  (a) LANDED: async ring depth 32 -> 60 (60 is the hard descriptor-table
+  ceiling: ctrl queue NUM=256 descs, slots use 8 + n*4). Validated by the
+  same-binary control video run (clean full window, presentedFPS=44.8)
+  and the corrected-defaults KDE gate (DONE, M4 2263 / M5 11218).
+  Depth alone moves M7 only marginally (44.8 vs 43.9-44.2 band).
+  (b) BLOCKED, default-OFF: the op_lock unlocked-wait retry loop
+  (`virtio_gpu_submit_unlocked_wait`, mechanism landed opt-in) hit
+  `PANIC thread_queue.c:213 tq_remove: queue is empty` in 2/2 default-on
+  GUI runs: releasing op_lock across the make-room stall allows MULTIPLE
+  concurrent waiters on the used-ring wait queue, and the
+  virtio_gpu_wait_for_used sleep/wake path implicitly assumed at most
+  one waiter (it only ever ran under op_lock). Bisect conclusive: the
+  opt-out control with depth 60 + poll defaults ran clean. Archives:
+  `20260705T010000Z-n1n5-defaults-kde-active-sample` (panic),
+  `20260705T012000Z-n1n5-video-unlocked-wait-on` (panic),
+  `20260705T014000Z-n1n5-video-unlocked-wait-off-control` (clean 44.8),
+  `20260705T021500Z-n1n5-corrected-defaults-kde-active-sample` (DONE).
+  NEXT N1 STEP: make the used-ring wait multi-waiter-safe (audit
+  virtio_gpu_wait_for_used + its tq usage; wake-all or per-waiter
+  completion), then re-A/B the unlocked wait via
+  `virtio_gpu_submit_unlocked_wait=1` — expect bo_present_virtio avg
+  ~1.5ms and presentedFPS toward the host-retire bound. Routes
+  b-copy-reduction and rutabaga unchanged (dead / fail-closed).
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
@@ -232,12 +246,16 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   `20260704T231500Z-*-baseline` vs
   `20260705T001500Z-poll-notify-full-wait-video-ab-92pct-collapse`.
   The flags also have prior 07-01 KDE passes.
-  NEXT N5 STEP: promotion battery per Guardrails — KDE active-sample
-  ON-arm + explicit-off control + M8 idle spot-check (the expected
-  payoff row), then default-flip the two gates in kernel code
-  (revert-ready). Residual 366/s timed-out waits afterward = the H2
-  residual (fd classes still requiring rescan) + real timer deadlines;
-  re-attribute only if M8 stays red after promotion.
+  N5 PROMOTION LANDED 2026-07-05: both gates default-ON in kernel code
+  (opt-outs `poll_notify_full_wait=0` / `af_unix_poll_notify_full_wait=0`).
+  Validated within the N1/N5 battery: nographic fork/clone/cow PASS,
+  clean full video window (44.8fps), corrected-defaults KDE
+  active-sample DONE (M4 2263 / M5 11218, zero crash markers) — the two
+  battery panics were bisected to the (now default-off) N1
+  unlocked-wait change, NOT the poll flip (the clean control ran with
+  poll defaults ON). M8 idle spot-check is the remaining payoff
+  measurement (next battery). Residual 366/s = fd classes still
+  requiring rescan + real deadlines; re-attribute only if M8 stays red.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
@@ -379,6 +397,14 @@ Check BEFORE declaring any gate failed or hypothesis confirmed.
     libs: a probe's default RUNPATH preferred the host
     /usr/lib/x86_64-linux-gnu stack and silently broke udev/libinput
     enumeration.
+24. Single-waiter wait-queue invariants: paths that historically ran
+    under a big lock (e.g. virtio_gpu_wait_for_used under op_lock) may
+    implicitly assume at most ONE waiter on their tq; allowing
+    concurrent waiters panics `tq_remove: queue is empty`
+    (thread_queue.c:213). Audit tq usage before lock-scope reductions.
+    Also: a harness `prompt-sync-timeout` label can MASK a kernel panic
+    — always grep the archived run.log for PANIC/IPI_REASON_CRASH
+    before classifying as harness flake.
 
 ## Guardrails
 
