@@ -69,7 +69,7 @@ default-off (`kde_pactl_probe=1` to re-enable); non-audio gates run with
 | M5 | `first_visible_ms` | same | 11471-13850 band | < 15000 |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B | 118-125 ordered, now DEFAULT-ON | done (was: ordered default) |
 | M7 | `presentedFPS` (60fps video) | chromium-video kprofile, KPROFILE_SECONDS=90 | 44.2 real GL + ordered pageflip (arc 07-04: 36.8 -> 42.9 -> 44.2; dropPct 29.6; decode 61.5 keeps pace). Sole remaining ceiling: software-blit scanout — every flip copies, native_present_credit=0 | >= 55 (N1) |
-| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta (NOT lifetime ps pcpu) | borderline 85-130% band; owner evidence = vCPU/KVM idle wake cadence (guest PCs in arch_idle_halt), not a spinner | < 100% (N5) |
+| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta (NOT lifetime ps pcpu) | GREEN 2026-07-05: 48/40/44% idle after the poll notify fast-path default (was 85-130% borderline-red; the 10ms-slicing churn was converting idle-halt ticks into busy rescans). Measured post-settle on the shipped defaults | < 100% (MET) |
 | M9 | Chromium window visible | chromium-video launch-only reducer | PASS on the DEFAULT path with REAL hardware GL (2026-07-04): zero missing-GL fatals, zero software fallbacks, GPU errors 0 | PASS (holds; guard in every battery) |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: `forktest`
