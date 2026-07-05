@@ -544,6 +544,31 @@ session without the harness the background churn is far lower.
 VERDICT: not the interactive-slowness culprit; keep as a minor
 optimization note (dlopen path-scan caching or a slimmer ld search
 path for kwin would cut the ENOENT storms).
+NEW LANE P0-PREEMPT (2026-07-05, THE systemic desktop-slowness root
+cause — supersedes per-subsystem latency lanes for R7):
+MEASURED: wake-to-run trace (kde_wake_to_run_trace=<ms> +
+wake_to_run_trace_all=1, gate-cache aliasing bug fixed in
+kde_ready_trace.c — each cmdline gate now has its own cache) showed
+kernel threads (rcu_cb/N pinned, tty_input) taking 50-500ms routinely
+and 1.4s in clusters from wakeup to first run on a live desktop.
+AUDIT (verified with file:line): the kernel is FULLY COOPERATIVE in
+kernel mode. NEEDS_RESCHED is set by ticks/IPIs/wakeups but honored
+ONLY at return-to-user (trap.c:977) and the idle loop
+(start_kernel.c:229). Kernel-mode trap epilogue (trap.c:2469-2474)
+irets straight back; zero cond_resched sites exist. Any long syscall
+or kthread batch holds its CPU until voluntary yield. VERIFIED-OK:
+wakeup enqueue + idle kick + IPIs (sched.c:426-596), sti;hlt idle
+race-free, priorities, tick preemption of USER mode. AMPLIFIER for
+the 1.4s clusters: printf = synchronous UART busy-wait under global
+pr.lock with IRQs off (printf.c:135, uart.c:261-273) — log bursts
+serialize CPUs machine-wide.
+FIXES (in flight): (1) IRQ-exit kernel preemption behind
+kernel_preempt=1 default-on; (2) async console (klog ring + drain,
+panic-synchronous fallback) behind console_async=1 default-on;
+(3) later: cond_resched checkpoints; wake-list re-placement (minor).
+GPU/fence/input chains were verified healthy first (owner-trace
+retire 60s->2-13ms after e84e243+d32209f) — interactive latency
+remaining after those fixes is THIS lane.
 Recommended execution order: (1) N1 IMPLEMENTATION slice (op_lock/
 make-room fix + ring depth; attribution DONE, see entry); (2) N5 poll
 fast-path promotion battery (92% churn collapse proven; M8 payoff
