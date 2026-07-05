@@ -69,7 +69,7 @@ default-off (`kde_pactl_probe=1` to re-enable); non-audio gates run with
 | M5 | `first_visible_ms` | same | 11471-13850 band | < 15000 |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B | 118-125 ordered, now DEFAULT-ON | done (was: ordered default) |
 | M7 | `presentedFPS` (60fps video) | chromium-video kprofile, KPROFILE_SECONDS=90 | 44.2 real GL + ordered pageflip (arc 07-04: 36.8 -> 42.9 -> 44.2; dropPct 29.6; decode 61.5 keeps pace). Sole remaining ceiling: software-blit scanout — every flip copies, native_present_credit=0 | >= 55 (N1) |
-| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta (NOT lifetime ps pcpu) | GREEN 2026-07-05: 57-64% on shipped defaults (global poll notify fast-path ON; AF_UNIX half REVERTED after a user-visible interactive hang; both-flags reading was 44%). Was 85-130% borderline-red | < 100% (MET) |
+| M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta on a GL-pipeline boot (non-GL boots never present — invalid for M8) | UNMEASURED-VALID: the 2026-07-05 44%/57-64% readings were doubly invalid (non-GL boots with zero presentation AND poll flags since fully reverted for interactive hangs). Historical band 85-130%. Re-measure with the documented GL recipe on shipped defaults | < 100% |
 | M9 | Chromium window visible | chromium-video launch-only reducer | PASS on the DEFAULT path with REAL hardware GL (2026-07-04): zero missing-GL fatals, zero software fallbacks, GPU errors 0 | PASS (holds; guard in every battery) |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: `forktest`
@@ -316,10 +316,22 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   it (timer traffic masks lost socket wakeups). AF_UNIX half reverted
   to default-off (kernel e6e3dab); shipped defaults re-measured 57-64%
   — M8 stays GREEN; KDE gate on the reverted kernel DONE clean.
-  OPTIONAL FOLLOW-UP (~15-20% more idle headroom): audit the AF_UNIX
-  poll-notify hooks for complete transition coverage (data/EOF/hangup/
-  connect/credentials), then re-A/B af_unix_poll_notify_full_wait=1
-  WITH an interactive input check, not only injected-input reducers.
+  2026-07-05 FULL REVERT: the GLOBAL half then also froze a real
+  interactive desktop (AF_UNIX already off; user A/B with both flags
+  forced off restored the known-slow-but-working baseline, video
+  unaffected in both). BOTH poll notify full-wait gates are back to
+  default-OFF/opt-in. The 92% churn reduction is real but UNSHIPPABLE
+  until the notify delivery hooks (eventfd/pipe/timerfd/kqueue wakeup
+  paths) are audited for complete transition coverage and validated
+  INTERACTIVELY (Failure Mode 24a — injected-input batteries pass while
+  interactive sessions hang). N5 lane REOPENED with that audit as the
+  path; M8 also needs a first VALID measurement (GL-pipeline boot —
+  the 07-05 readings were taken on non-GL boots that never present).
+  Additional methodology lesson: M8/interactive checks must use the
+  documented GL recipe (QEMU_GPU=virtio-vga-gl-primary ...); the
+  default non-GL virtio-gpu-primary path shows the boot gradient and
+  never presents KWin output (own issue — track separately if the
+  non-GL path is meant to work).
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
