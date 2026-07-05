@@ -237,10 +237,30 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   deferred by virgl behind ongoing async retires) holds op_lock through
   repeated fresh 5s movement windows (review finding #8: no cumulative
   deadline on sync_wait_done), blocking every present. Memory-safe but
-  a liveness regression. UNLOCKED-WAIT REMAINS OPT-IN/PARKED; next
-  attempt needs a cumulative sync-wait deadline + investigation of the
-  t~147s stall from archive n1ab-unlocked.log (scratchpad). EXCLUDE
-  unlocked_wait=1 runs from R5 closure.
+  a liveness regression. EXCLUDE unlocked_wait=1 runs from R5 closure.
+  2026-07-05 ATTEMPT 6 (kernel a199ed6): cumulative wait-window cap
+  LANDED — every movement-renewal loop (sync park, sync wait, both
+  drains, make_room) now bounds TOTAL wall time at one
+  virtio_gpu_irq_wait_ms window; movement renews the retry, never the
+  deadline. In default mode this exactly restores the historical
+  single-window failure deadline. Battery green (probe 5/5, kde-ready
+  DONE). Treatment rerun: NO permanent stall, no panic/abort/refused —
+  but STILL NO-GO: session limps (WaylandEventThr parked 130s, 72s
+  park clusters during Chromium launch) and perf-video never reports
+  start (FAIL chromium-video-perf-start-missing). With the harness's
+  irq_wait_ms=60000, each wedge decision under unlocked-wait costs up
+  to a 60s bounded op_lock hold, and something under unlocked-wait
+  still makes a sync completion go genuinely missing (root cause NOT
+  found — candidates: a lost sync_done signal race the review missed,
+  or virgl withholding id-0 behind foreign async streams).
+  VERDICT: lane PARKED as diminishing-returns — the default-mode
+  redesign already moved M7 44->51 and the remaining gap to 60 is
+  host-retire (H1) bound; two post-redesign attempts failed on
+  liveness. Reopen conditions: (a) root-cause the missing sync
+  completion from archive n1ab-unlocked-a6.log (scratchpad), AND
+  (b) cut the interactive wedge-decision cost (per-context sync budget
+  or irq_wait_ms tiering) so one missing completion cannot cost 60s of
+  op_lock.
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
