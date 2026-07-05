@@ -111,13 +111,41 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   define and wire `VIRTIO_GPU_CMD_SET_SCANOUT_BLOB`, carry blob resource
   format/stride/modifier metadata through the fb/KMS present path, add
   gfxstream/cross-domain capset admission only with a real contract, and
-  add native/blob present counters. Route (b) remains low payoff unless
-  new evidence contradicts `bo_present_copy_ticks=0` and
-  `virtio_present_copy_calls=0`. NEXT N1 STEP: an ATTRIBUTION slice, not
-  building — the "software-blit scanout" theory conflicts with those
-  zero copy counters, so measure where classic-virgl present time
-  actually goes (offline from fbstat/kprofile archives first, then at
-  most one instrumented run) before writing any present-path code.
+  add native/blob present counters.
+  ATTRIBUTION SLICE DONE 2026-07-04/05 — the M7 causal chain is NAMED:
+  (1) "software_blit" is a classification label (the not-nouveau-native
+  bucket, fb_kms_atomic.c:411); blit_bytes is a pre-branch nominal
+  counter; the hot path is genuinely zero-copy (copy_ticks=0) and
+  per-frame fence waits are zero. The old software-blit-ceiling theory
+  is DEAD.
+  (2) ROOT (H1): host GL retire back-pressure — guest GL submits stall
+  in virtio_gpu_async_make_room when the depth-32 ctrl ring fills,
+  waiting on QEMU/WSL-D3D12 used-ring retirement (268-354 stalls/run,
+  1.5-2.2s total; stalls only on submit_3d, never flush).
+  (3) CONVERTER (H2): the stalled ctx_submit HOLDS the single shared
+  op_lock across its stall (virtio_gpu_user.c:338->413), so KWin's
+  page-flip present (op_lock(PAGE_FLIP), virtio_gpu_scanout.c:1516)
+  blocks behind it: bo_present_virtio avg 8.6ms/present (vs 1.45ms
+  unblocked "last" value) -> flip-complete late -> KWin frame callback
+  ~45Hz -> Chromium paced to ~44fps, dropPct ~28. Cadence is mono-modal
+  ~22.7ms (throughput limiter), not vsync-beat bimodal.
+  Evidence: `20260704T231500Z-kprofile-video-current-default-baseline`
+  fbstat/qemu-trace + the 44.2/42.9 archives; full chain in the
+  attribution report (history file/git). An instrumented run with all
+  four perf flags was TRACE-PERTURBED to 5.3fps (Failure Mode 9;
+  archived `20260705T003500Z-n1-instrumented-run-trace-perturbed-*`) —
+  its structural reads (make_room_depth_max pinned at 32, retire sums
+  >> lock_wait) are consistent; use submit_trace ALONE if re-run.
+  NEXT N1 IMPLEMENTATION SLICE (kernel, gated, revert-ready):
+  (a) stop holding op_lock across the make-room stall in ctx_submit
+  (reserve ring space before lock, or release-and-reacquire around
+  virtio_gpu_async_make_room — preserve submit ordering vs flip via
+  queue position, same invariant the ordered-pageflip path uses);
+  (b) raise the async ring depth 32 -> 128 to absorb host retire jitter.
+  Validate with the standard battery + one 90s video kprofile; expect
+  bo_present_virtio avg to approach ~1.5ms and presentedFPS to rise
+  toward the host-retire bound. Route (b-copy-reduction) stays dead;
+  rutabaga route unchanged (fail-closed on this host).
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
@@ -187,9 +215,29 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   was still insufficient. Cpumask was backed out; CR0-only passed functional
   nographic twice, but failed acceptance metrics, so it was reverted. N4/P1
   is not landed; next action requires a different approach.
-- N5 = M8 idle cadence: vCPU/KVM idle wake churn (guest halted, host vCPU
-  threads at 85-130%). Host-side attribution done; next is guest tick/timer
-  cadence reduction (relates to N7).
+- N5 = M8 idle cadence: MAJOR LEAD LANDED 2026-07-04/05. The 4,500/s
+  poll-timeout churn is a KERNEL POLICY ARTIFACT: every blocking poll is
+  sliced into 10ms rescan iterations (POLL_RESCAN_MS=10,
+  vfs_syscall.c:5051) because the notify-backed full-wait fast path is
+  default-OFF (`poll_notify_full_wait`, plus separate
+  `af_unix_poll_notify_full_wait`; gates at vfs_syscall.c:3957-3985).
+  Proof: rescan==timeout+ready exactly; mean timed wait 10.0006ms;
+  ~43 slices per blocking poll whose real dwell is ~135ms; each expiry
+  pays a DOUBLE full fd-set walk (kqueue rescan + vfs poll scan),
+  converting idle-halt ticks into busy-rescan ticks.
+  A/B with the existing flags ON (video kprofile, same window):
+  timeouts 351,838 -> 29,062 (-92%), rescans -92%, notify mean wait
+  9.94ms -> 23.3ms (real deadlines), app blocking behavior unchanged,
+  M7 unchanged (44.0), zero crash markers. Archives:
+  `20260704T231500Z-*-baseline` vs
+  `20260705T001500Z-poll-notify-full-wait-video-ab-92pct-collapse`.
+  The flags also have prior 07-01 KDE passes.
+  NEXT N5 STEP: promotion battery per Guardrails — KDE active-sample
+  ON-arm + explicit-off control + M8 idle spot-check (the expected
+  payoff row), then default-flip the two gates in kernel code
+  (revert-ready). Residual 366/s timed-out waits afterward = the H2
+  residual (fd classes still requiring rescan) + real timer deadlines;
+  re-attribute only if M8 stays red after promotion.
 - N6 = R2 PCID stale-TLB lane: RESOLVED 2026-07-04 — retest DONE, lane
   retired as a corruption lane, default stays OFF for perf reasons.
   (a) Safety: offline audit (GO) verified every noflush-specific hazard is
@@ -223,10 +271,10 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   accrued; count every future battery), R3 recurrence watch (rcu_head
   double-free may share the R5 root cause — one `slab_alloc: repairing
   corrupt freelist cache='rcu_head_cache'` line was seen 07-04 pre-R5-fix).
-Recommended execution order: (1) N1 attribution slice; (2) N7 tick-loss
-fix (measurement trust + late timer fires; feeds M7 pacing and N5; timer
-hot path -> full battery + M2/M3 within noise); (3) N6 DONE 2026-07-04
-(resolved, see its entry); (4) N5 M8 idle cadence; (5) N2 retry ONLY after its fault
+Recommended execution order: (1) N1 IMPLEMENTATION slice (op_lock/
+make-room fix + ring depth; attribution DONE, see entry); (2) N5 poll
+fast-path promotion battery (92% churn collapse proven; M8 payoff
+expected); (3) N7 tick-loss fix; (4) N6 DONE; (5) N2 retry ONLY after its fault
 diagnosis gate; (6) N3 residual LibinputBackend nullptr; (7) a NEW P1
 approach for M2 <1.5us (N4 cpumask/CR0.TS is dead: the cpumask half
 stalls forktest, CR0-only missed targets — do not re-apply the saved
