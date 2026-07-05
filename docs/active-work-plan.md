@@ -508,10 +508,26 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   implement INVPCID-based per-PCID single-page/range flushes (CPUID
   check + fallback), then rerun this exact A/B; only promote if M4/M5
   hold within noise. R5 closure accrual from this battery: +3 (12/30+).
-- N7 = timer tick loss (~14% under load): fix jiffies advancement
-  (TSC-compensate or any-CPU advance). Fixes measurement trust AND late
-  timer fires (frame pacing). Gate: nographic + KDE battery + M2/M3 within
-  noise (touches the timer hot path).
+- N7 = timer tick loss: LANDED 2026-07-05 (kernel 4bda525).
+  Discovery during implementation: the sched_timer wheel was ALREADY
+  TSC-driven (sched_timer_refresh_ms absolute-ms expiry) — sleep_ms/
+  timerfd/tq deadlines never lost time; the 14% loss bit ONLY the
+  get_jiffs() consumers (uptime, poll/ppoll deadline arithmetic,
+  itimer bookkeeping, lwip timers, cache aging), which ran slow and
+  diverged from the wheel clock. Fix: get_jiffs() derives ms from the
+  calibrated TSC (rounded mult, ~0.2ppm vs the wheel) behind an
+  advance-only CAS-max clamp (monotonic across CPUs, one CAS/ms, no
+  locks); BSP tick accounts the full elapsed span; kstats v9 adds
+  timer_bsp_ticks_total + timer_jiffies_tsc_comp_ms_total. Gate:
+  TSC>=1MHz AND (InvTSC bit OR hypervisor bit — QEMU does not
+  advertise InvTSC; first battery caught the gate disabling the fix,
+  boot line is the proof: '[x86] jiffies: TSC-compensated
+  (mult=1624)'). Opt-out timer_tsc_jiffies=0 for A/B. Adversarially
+  reviewed (GO; 3 RISKY fixes incorporated). Battery: probe 5/5 PASS,
+  kde-ready DONE clean. Note for measurement lanes: guest uptime and
+  all jiffies-based rates now run ~16% faster under load than old
+  archives — do not compare raw jiffies-derived counters across the
+  boundary without normalizing.
 - Continuous: R5 statistical closure (9/30+ clean attempt-1 KWin launches
   accrued; count every future battery), R3 recurrence watch (rcu_head
   double-free may share the R5 root cause — one `slab_alloc: repairing
