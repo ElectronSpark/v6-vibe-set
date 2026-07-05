@@ -579,6 +579,22 @@ utilization/EEVDF slice skew, correctness OK), RISKY-4 console
 cross-stream ordering (smoke scripts keying on kernel-vs-app serial
 ordering may flake; console_async=0 to bisect). A/B flags:
 kernel_preempt=0, console_async=0.
+2026-07-05 POST-LANDING VERDICT: wake-to-run tails collapsed (1.4s
+clusters gone; residual periodic ~200-400ms pairs on rcu_cb/0 +
+tty_input, follow-up: FIFO-class placement has no idle-pull;
+open item). BUT the USER reports 'improvement is not obvious' for the
+seconds-scale hover/tooltip/menu latency — with every kernel path now
+measured at ms scale, the seconds are manufactured ABOVE the kernel.
+ACTIVE HYPOTHESIS (matches ghost-stale-frame corruption exactly):
+KWin's frame clock gets broken timing inputs from our DRM layer —
+page-flip events complete INSTANTLY in the ioctl with synthetic
+predicted-vblank timestamps (fb_kms_atomic.c:380-440,
+gpu_kms_monotonic_ns = raw TSC ns which may not match userspace
+CLOCK_MONOTONIC domain; DRM_CAP_TIMESTAMP_MONOTONIC claim unverified),
+and scanout may lag reported flips by many frames via the virtio
+present path (buffer-age lies -> ghost partial composites). Audit in
+flight; deliverable = defect ranking + fix directions + one-boot
+confirmation experiment.
 GPU/fence/input chains were verified healthy first (owner-trace
 retire 60s->2-13ms after e84e243+d32209f) — interactive latency
 remaining after those fixes is THIS lane.
