@@ -176,15 +176,43 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   exclude a first residual R5-class observation, but the timing (first
   working unlocked-wait run after 17+ clean launches) points at the
   change. Archive `20260705T040000Z-n1-mutexinit-unlocked-wait-optin-video`.
-  FULL REWORK SCOPE for whoever resumes: (a) single-consumer async reap
-  discipline — used_idx advance + slot retire must be atomic under
-  q->lock and safe against concurrent reapers (unlocked waiter, sync
-  drain under op_lock, IRQ); (b) the waiter-serialize mutex (landed);
-  (c) completion lifetime across timeout/abort; (d) re-A/B opt-in, and
-  EXCLUDE unlocked_wait=1 runs from R5 statistical closure. Expected
-  payoff unchanged: presents 8.6 -> ~1.5ms, M7 toward the host-retire
-  bound. Shipped defaults remain safe: depth 60 + poll ON +
-  unlocked-wait OFF.
+  ATTEMPT 4 (2026-07-05): the single-consumer reap discipline was
+  IMPLEMENTED and adversarially REVIEWED before any boot — the review
+  returned NO-GO for unlocked-wait and convicted three blockers the
+  implementation had missed, saving the VM run:
+  - B1 (FIXED, landed): virtio_gpu_submit_mixed_async is a THIRD reaper
+    (retire + plain async_count-- on ctx_submit's own attach path); now
+    routed through the reap mutex with a q->lock'd decrement.
+  - B2 (REDESIGN REQUIRED): the reap loop consumes used elements it
+    cannot map — including id 0, every SYNC command's descriptor head.
+    That discard was only safe because op_lock historically excluded
+    reap/sync concurrency. An unlocked reaper steals sync completions ->
+    5s timeouts + spurious context failures (exposure amplified by
+    submit depth-for-reason default 1). Fix direction: sync commands
+    through ring slots, or completion-by-response-content instead of
+    used-idx occupancy.
+  - B3 (REDESIGN REQUIRED): abort_all from an unlocked make_room can
+    free slots mid-fill/mid-post of an op_lock'd poster -> descriptors
+    published over freed memory -> host DMA corruption (the exact class
+    under investigation). Fix needs a claim/fill handshake or abort
+    taking op_lock — which inverts op_lock->reap order from sync-drain
+    callers; not a one-liner.
+  - RISK: wait_progress detects progress by used-ring OCCUPANCY, not
+    MOVEMENT; any concurrent consumer erases the evidence and a healthy
+    queue can be aborted after the 5s limit. Fix: snapshot-compare
+    used->idx.
+  LANDED from attempt 4 (default-safe hardening, battery green:
+  nographic PASS, KDE DONE M4 2027/M5 11785, zero panics):
+  async_reap_serialize on all three reapers + abort; reserve/reap/abort
+  count+claim transitions under q->lock; tear-proof slot release
+  (body-wipe first, RELEASE-store pending last); all mutexes
+  initialized. These closed latent races that exist even in default
+  mode. UNLOCKED-WAIT REMAINS DEFAULT-OFF; do not re-attempt without
+  the B2+B3 redesign. Expected payoff unchanged (presents 8.6 ->
+  ~1.5ms). EXCLUDE unlocked_wait=1 runs from R5 closure. Review NITs
+  for the redesigner: __atomic loads for pending/fence_id readers,
+  -1 vs -EAGAIN conflation in post_prepared when reserve returns NULL,
+  mixed_async completion_init outside q->lock (pre-existing).
 - N2 = P3 promotion: attempted 2026-07-04, NOT accepted. The default-on
   guarded battery had static/build/nographic PASS, one KDE active-sample
   PASS, explicit-off control PASS after one known visible-timeout flake,
