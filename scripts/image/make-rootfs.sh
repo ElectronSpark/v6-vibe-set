@@ -1677,6 +1677,66 @@ stage_mesa_runtime
 compile_gsettings_schemas "${STAGE}"
 compile_fontconfig_cache "${STAGE}"
 
+# Optional (default-off) dynamic-linker cache bake.  The default image ships no
+# /etc/ld.so.cache and no multiarch /etc/ld.so.conf, so glibc's ld.so falls back
+# to linear directory probing (~3.7k ENOENT opens per Konsole launch).  When
+# XV6_ROOTFS_LDSOCACHE=1, generate a multiarch ld.so.conf plus ld.so.cache inside
+# the STAGE so a later A/B experiment can measure the launch-path savings.  This
+# whole block is gated: with the var unset/0 the staged image is unchanged.
+if [ "${XV6_ROOTFS_LDSOCACHE:-0}" = "1" ]; then
+    LDCONFIG_BIN=""
+    for ldconfig_candidate in /usr/sbin/ldconfig /sbin/ldconfig; do
+        if [[ -x "${ldconfig_candidate}" ]]; then
+            LDCONFIG_BIN="${ldconfig_candidate}"
+            break
+        fi
+    done
+    if [[ -z "${LDCONFIG_BIN}" ]]; then
+        LDCONFIG_BIN="$(command -v ldconfig || true)"
+    fi
+
+    if [[ -z "${LDCONFIG_BIN}" || ! -x "${LDCONFIG_BIN}" ]]; then
+        echo "make-rootfs: ldconfig not found; skipping ld.so.cache" >&2
+    else
+        # 1. Multiarch search config so the cache covers the real lib dirs.
+        mkdir -p "${STAGE}/etc/ld.so.conf.d"
+        cat > "${STAGE}/etc/ld.so.conf.d/xv6-multiarch.conf" <<'EOF'
+/usr/local/lib
+/usr/lib/x86_64-linux-gnu
+/lib/x86_64-linux-gnu
+/usr/lib
+/lib
+EOF
+        if [[ ! -f "${STAGE}/etc/ld.so.conf" ]]; then
+            echo 'include /etc/ld.so.conf.d/*.conf' > "${STAGE}/etc/ld.so.conf"
+        elif ! grep -q '^include /etc/ld.so.conf.d/\*\.conf$' "${STAGE}/etc/ld.so.conf"; then
+            echo 'include /etc/ld.so.conf.d/*.conf' >> "${STAGE}/etc/ld.so.conf"
+        fi
+
+        # 2. Build the cache treating STAGE as root, without touching symlinks.
+        "${LDCONFIG_BIN}" -X -r "${STAGE}" || true
+
+        if [[ ! -s "${STAGE}/etc/ld.so.cache" ]]; then
+            echo "make-rootfs: warning: ldconfig produced no non-empty /etc/ld.so.cache; skipping ld.so.cache bake" >&2
+        else
+            # 3. Emit evidence alongside the output image (e.g. build-x86_64).
+            ldso_out_dir="${OUT%/*}"
+            [[ "${ldso_out_dir}" == "${OUT}" ]] && ldso_out_dir="."
+            cp -a "${STAGE}/etc/ld.so.cache" "${ldso_out_dir}/ld.so.cache-baked" || true
+            if ! "${LDCONFIG_BIN}" -p -C "${STAGE}/etc/ld.so.cache" \
+                    > "${ldso_out_dir}/ld.so.cache-listing.txt" 2>/dev/null; then
+                "${LDCONFIG_BIN}" -r "${STAGE}" -p \
+                    > "${ldso_out_dir}/ld.so.cache-listing.txt" 2>/dev/null || true
+            fi
+            ldso_entries="$(( $(wc -l < "${ldso_out_dir}/ld.so.cache-listing.txt" 2>/dev/null || echo 1) - 1 ))"
+            if (( ldso_entries < 0 )); then
+                ldso_entries=0
+            fi
+            echo "make-rootfs: baked ld.so.cache (${ldso_entries} entries) into image"
+        fi
+    fi
+fi
+
 if [[ "${SIZE_MB}" == "auto" ]]; then
     stage_kib="$(du -sk "${STAGE}" | awk '{print $1}')"
     # ext4 -d needs room for metadata, directories, and future runtime writes.

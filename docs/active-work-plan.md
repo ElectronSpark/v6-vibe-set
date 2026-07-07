@@ -253,6 +253,245 @@ evidence. The stub-attempt-1 wireplumber #GP (ASCII `"lumber-0"` in rbx) is
 filed as a CONTINUOUS-R5-WATCH datapoint at `...-fixturev2-SESSION-CRASH`.
 No commit/push, no default flips, dirty worktree preserved.
 
+2026-07-07 ld.so.cache A/B (this session) — VERDICT: correctness/cleanliness
+win, NOT an M4 responsiveness lever. Grounding: the image ships NO
+`/etc/ld.so.cache` and NO multiarch `/etc/ld.so.conf`, forcing ld.so into
+linear dir probing. Added an OPT-IN gated `ldconfig` step to
+`scripts/image/make-rootfs.sh` (`XV6_ROOTFS_LDSOCACHE=1`, default OFF,
+post-overlay/pre-mkfs; bakes multiarch `ld.so.conf.d` + `ld.so.cache`,
+emits entry-count evidence) — DEFAULT NOT FLIPPED, `make-rootfs.sh` change
+left dirty/uncommitted. Built a cached treatment image (1352 entries incl
+Qt5/KF5) and ran control(no-cache) vs treatment(cached) direct-launch-only
+kprofile, N=2/arm, all real GL / PASS / no crash / no lingering QEMU;
+default fs.img restored to no-cache after. RESULT: cache IS consulted
+(`/etc/ld.so.cache` ENOENT 6->0) and cut syscalls structurally — sys_openat
+-17%/-23% (cold/warm), ext4_lookup_enoent -36%/-51% (4551->3790 cold,
+3996->2543) — reproducible both reps/both phases. BUT konsole_wait_ms FLAT:
+control cold 1488/1492 warm 1189/1298 vs treatment cold 1498/1493 warm
+1178/1192 (deltas within noise). Why: openat time saved is only ~50-67ms of
+kernel `sys_openat_ms` out of ~1200-1500ms wait; userpc CPU rollup unchanged
+(relocation+lookup_hash ~37%, mmap_open/path-search 1-3% and flat). Residual
+ENOENT is `LD_LIBRARY_PATH` probing `/opt/xv6-kde-abi-libs` first (146
+probes) which the cache cannot short-circuit; trimming LD_LIBRARY_PATH would
+recover it but is also syscall-cleanliness, not readiness. Archives:
+`20260707T17{1835,1942}Z-ldsocache-control-rep{1,2}` /
+`20260707T17{2337,2447}Z-ldsocache-treatment-rep{1,2}`; cache evidence in
+`kde-plasma-desktop-smoke-history/ldsocache-experiment-evidence/`. LANE
+CONCLUSION: ld.so.cache joins single-library trims + XDG + hwcaps as a
+map/syscall-churn cleanup with NO konsole_wait_ms effect — EMPIRICALLY
+confirming the M4 bottleneck is loader relocation+symbol-hash-lookup CPU
+over the ~219-object Qt/KF5 closure, not I/O or path search. The only
+remaining lever that touches that CPU cost is zygote/preload (fork WITHOUT
+execve so relocations are inherited COW) — but konsole is not a
+kdeinit-loadable module (`libkdeinit5_konsole.so` absent), so it needs
+konsole rebuilt as a loadable module or a bespoke preloader (high effort,
+uncertain payoff), or relinking the closure (infeasible for prebuilt distro
+libs). Cheap guardrail-respecting M4 levers are now EXHAUSTED. Optional
+follow-up: ship ld.so.cache (+ LD_LIBRARY_PATH trim) as a default via the
+full battery IF a syscall-cleanliness win is wanted on its own merits — but
+it is not a responsiveness fix. No commit/push, no default flips, dirty
+worktree preserved.
+
+2026-07-07 GAP-TO-LINUX ATTRIBUTION (offline, from existing ldsocache
+archives) — MAJOR REFRAME: the M4 launch cost is NOT dominated by userspace
+loader compute; it is dominated by KERNEL VFS/ext4-lookup + page-fault cost.
+Evidence from the direct-launch kprofile counter dumps (control warm/cold):
+`sys_openat_ms=566/643` over `sys_openat_calls=4369/4559` = ~130-141us PER
+openat (~50-100x native's ~1-3us), i.e. ~566ms of kernel openat time = ~40%
+of the 1189ms warm konsole_wait (`sys_openat_lookup_ms=285/341`,
+~65-75us/lookup — the ext4/lwext4 directory-walk + ENOENT-probe path).
+Plus `vm_file_faults=40140/40469` page faults per launch, of which only
+~3134 hit ext4 (`ext4_fault_calls`, `ext4_fault_ms=28-39` = tiny I/O), so
+~37k are MINOR (cached) faults whose per-fault guest trap+handler cost is
+uncounted. `sys_poll_*_ms` (poll_blocking 24k-113k ms) is BLOCKING wall
+time (idle waiting), NOT CPU — excluded. Warm phase breakdown: konsole
+spends 0->754ms just reaching PTY-open (pre-PTY Qt/KF5/loader+fault storm)
+out of 1189ms. CRITICAL METHOD NOTE: the prior "~half ld-linux
+relocation/lookup" attribution was USER-PC sampling = USERSPACE-ONLY; ticks
+landing in kernel mode (openat, fault handler) are not user-PC-sampled, so
+that breakdown UNDERCOUNTS kernel VFS/fault time. True picture: a large
+share of wall-time is kernel VFS/ext4-lookup + minor-fault handling that
+runs ~50-100x costlier per-op than native Linux, amplified by the launch's
+~4.4k opens + ~40k faults. THIS is why xv6 (~1.2s warm) is 4-6x slower than
+a native Linux VM (~0.3s) at the SAME loader work over the SAME closure:
+not the loader algorithm, not loader config, but per-syscall/per-fault
+guest cost. LANE PIVOT: the M4 responsiveness lever is now firmly the
+KERNEL syscall/VFS/fault path — ext4/lwext4 openat-lookup cost per call
+(P3 territory, partially landed) and the minor-page-fault handler cost
+(M2/M3 syscall/TLB territory), and/or cutting the storm size (fewer opens:
+LD_LIBRARY_PATH trim + cache; fewer faults: prefault/zygote).
+MICROBENCH QUANTIFIED (nographic, KVM; getpid_ns 1659-1914 matches M2
+1.65-1.94us, tlb_amplification 3075/3094 @1024pg matches M3 band => bench
+sane): per-bare-syscall ~1.7us; per-minor-fault ~3-5us central (bounded
+[1.7us bare-trap, 8.8us = measured ext4_fault_ms 28/3186]; no direct
+per-fault microbench exists in-repo -- mmaptest/mmapbigfile are correctness
+only). Storm arithmetic per warm launch (~37,283 minor faults = 40469-3186):
+openat 4369x130us = 566ms (measured) + minor-faults 37283x(3-5us) =
+112-186ms + ext4 I/O 28ms = KERNEL SUBTOTAL ~706-780ms = 59-66% of the
+1189ms warm konsole_wait (>55% even at the 1.7us low bound), and that
+EXCLUDES all other launch syscalls (read/close/stat/mmap, each ~1.7us +
+TLB-amp). Same storm on native Linux ~30-60ms (dcache openat ~1-5us, minor
+fault ~0.5-1us), so xv6's kernel-side EXCESS ~650-720ms is the MAJORITY of
+the ~890ms gap (1189-300). VERDICT: kernel syscall+fault cost is FIRST-ORDER
+-- the dominant reason xv6 app-launch is 4-6x slower than native. Single
+biggest amplifier: openat at ~130us/call (~26-130x native), 566ms alone, of
+which sys_openat_lookup_ms=285ms is ext4/lwext4 directory-walk+ENOENT probe
+(P3/ext4 lane). Userspace loader compute is at most secondary (~400-480ms
+residual, much itself syscall/fault wait). HIGHEST-LEVERAGE M4 TARGETS, in
+order: (1) openat/VFS ext4-lookup cost per call (P3 read-path already cut
+fault I/O ~50%; the LOOKUP path -- dir-walk + negative-lookup caching -- is
+the next slice); (2) minor-page-fault handler cost (M2/M3 trap/TLB/pcache
+radix path); (3) shrink the storm (LD_LIBRARY_PATH trim to cut ~4.4k->fewer
+opens; prefault/zygote to cut faults). Loader-config levers (ld.so.cache,
+single-lib trims) are CLOSED as non-responsive. No commit/push, no default
+flips, dirty worktree preserved.
+
+2026-07-07 M4 SLICE IN PROGRESS (kernel, gated, NOT yet validated) —
+negative-dentry-cache honor fix. Source scout found: xv6 VFS already has a
+full positive+negative dcache (`kernel/kernel/vfs/dcache.c`, committed
+8299114) with seq-based invalidation wired into all 8 VFS mutations, BUT the
+consumer `vfs_ilookup` (`kernel/kernel/vfs/inode.c:642`) only early-returns
+on 0/-ENOMEM, so a negative HIT (`-ENOENT`) falls through and re-walks ext4
+under the per-mount esb mutex anyway -- the cache DETECTS but does not AVOID
+(explains why warm ext4_lookup_enoent stays ~3685). Fix (UNCOMMITTED kernel
+working tree, gate `vfs_neg_dcache=1` DEFAULT OFF): honor the `-ENOENT`
+negative hit + `sb->valid` guard on the negative branch. Adversarial review
+= NO-GO until 2 gate-ON false-negative blockers fixed: (B1)
+`__vfs_dcache_bump_dir_seq` called AFTER `vfs_iunlock` in all 8 mutation
+sites -> commit-visible-before-bump window returns stale negatives; fix =
+move bump inside the lock (also fixes a pre-existing positive-stale bug).
+(B2) procfs/sysfs/devtmpfs expose names without bumping seq -> stale
+`/proc/<pid>` negatives; fix = per-sb no-neg-dcache flag, skip store+honor
+for synthetic sb. Plus should-fix: xv6fs_lookup caches transient block-read
+errors as ENOENT (ext4 clean). Blocker fixes being applied; then RE-REVIEW
+before boot, then gated A/B (microbench + warm konsole kprofile: expect
+ext4_lookup_enoent down, vfs_lookup_negative_hits up, sys_openat_lookup_ms
+~285->~110, konsole_wait_ms ~-170ms) + regression battery (fork/clone/cow
+nographic + KDE active-sample). FIRST M4 lever targeting real kernel
+critical-path time. No commit/push, no default flips.
+VALIDATION RESULT (2026-07-07): re-review returned GO but the boot DISPROVED
+it — gate-ON (`vfs_neg_dcache=1`) PANICS at boot:
+`kernel/kernel/proc/thread.c:468 init_entry: exec /bin/init failed` (exec
+returned -1) ~14s uptime, before KDE. Gate-OFF (`vfs_neg_dcache=0`, SAME
+kernel) booted clean (crash=0, baseline counters ext4_lookup_enoent
+~3986/3693, konsole_wait 1491/1192) -- so the bump-inside-lock reorder is
+safe, but HONORING negatives yields a FALSE NEGATIVE for /bin/init (a
+boot-critical existing file reported missing). Failure class the two reviews
+missed: boot/mount/early-VFS ordering (a negative cached before the file is
+visible, or across a mount, honored later). Archives:
+`20260707T192438Z-negdcache-control-rep1` (gate-off, qtquick-accel-policy
+FAIL but crash=0 -- likely GL flake, counters valid) and
+`20260707T192626Z-negdcache-treatment-rep1` (gate-on, launch-crash, 7 crash
+markers, PANIC init_entry). Default remains SAFE (gate default-OFF, no flip).
+Root-cause in progress; classify QUICK-FIX (invalidate negatives across
+mount / don't cache against not-ready root) vs DEEP model gap => if deep,
+PARK negative-honor and keep only the bump-inside-lock fix (which is a
+genuine pre-existing positive-cache-stale race fix and passed gate-OFF).
+No commit/push, no default flips.
+ROOT CAUSE = QUICK-FIX (sentinel overload, NOT stale cache): `..` symlink
+resolution. `__vfs_dcache_lookup` returned `-ENOENT` for FOUR cases
+(bad-args, ".", "..", genuine negative hit); the gate made `-ENOENT`
+load-bearing, so honoring the ".." sentinel broke ".." resolution -> the
+`/lib64/ld-linux-x86-64.so.2 -> ../lib/...` symlink failed -> exec failed ->
+init panic. FIX (landed in kernel working tree): dcache.c returns `-EAGAIN`
+for the 3 sentinel/fall-through cases so `-ENOENT` UNIQUELY means genuine
+negative hit; single caller vfs_ilookup treats -EAGAIN as a miss. Nographic
+re-verify: gate-ON now boots to userspace (root:/# shell, no PANIC),
+gate-OFF clean. KDE A/B RE-RUN (fixed kernel, real virgl/D3D12 GL held,
+LIBGL_ALWAYS_SOFTWARE=0): treatment `crash=0` (fix holds under full desktop).
+MECHANISM PROVEN (deterministic) BUT NO RELIABLE M4 WIN (N=2, corrected):
+ext4_lookup_enoent warm is DETERMINISTICALLY 194 in treatment (both reps
+identical) vs control 3685/5236 = -95%; sys_openat_lookup_ms warm 338/330 ->
+238/285 = ~-70..-100ms consistently. BUT konsole_wait_ms did NOT reliably
+improve: cold control 1496/1488 vs treatment 1299/1600 (mean delta -42ms
+with a +-300ms spread; the rep2 -197ms did NOT reproduce -- rep3 was
++112ms), warm control 1195/1190 vs treatment 1190/1186 (flat). The N=1
+-197ms "win" was a lucky draw, same 1x1 trap as the QtMM cold-cache artifact.
+Archives `20260707T195026Z/195127Z-negdcache-{control,treatment}-rep2` and
+`.../rep3`. KEY REFINEMENT: the saved openat/lookup kernel time (~100ms,
+real) is LARGELY OFF the serial critical-path-to-shell-ready -- it happens
+in parallel across konsole's many threads/processes -- so cutting it does
+NOT proportionally cut konsole_wait_ms. This corrects the gap-attribution
+takeaway: sys_openat_ms being ~40% of total launch TIME does NOT mean it is
+40% of the serial critical path; much of the syscall/fault cost is parallel.
+So the neg-dcache honor JOINS ld.so.cache/XDG/single-lib trims: a real,
+deterministic structural syscall-churn reduction with NO reliable
+konsole_wait_ms effect. The change itself is a correct, valuable VFS fix
+(the negative cache was built but non-functional; plus the bump-inside-lock
+fixes a pre-existing positive-stale race), worth keeping as gated opt-in, but
+NOT an M4 lever and NOT default-promoted (also blocked by the eviction/
+no-flush residual: lookup_seq resets to 0 on inode eviction, dcache not
+flushed on evict/unmount). NOTE: all 4 runs failed qtquick-accel-policy
+(plasmashell QtQuick -> SOFTWARE backend) while the GPU renderer stayed real
+virgl/D3D12; does not affect the konsole QWidget metric, identical both arms;
+appeared on this kernel but not earlier ldso runs (likely host-WSL-GL drift,
+separate issue). BIGGER IMPLICATION FOR M4: since even the kernel-syscall
+lever doesn't move konsole_wait_ms, the SERIAL critical path to shell-ready
+(relocation of first-needed libs + Qt init before PTY open, ~0-754ms pre-PTY
+window) is the real limiter -- reducing PARALLEL syscall/fault cost won't
+help; only cutting the SERIAL relocation/init chain (zygote/preload, or
+fewer serial dependencies) would. No commit/push, no default flips.
+
+2026-07-07 PIVOTAL MEASUREMENT (LD_DEBUG=statistics on konsole main pid,
+real KVM+virgl GL) -- THE LOADER IS NOT THE M4 BOTTLENECK; Qt/KF5 APP INIT
+IS. glibc runtime-linker stats for konsole main (219 .so, warm, reproduced
+within 3%): total startup in dynamic loader = 57.7M TSC cycles @2688MHz =
+~21.5ms; time for relocation 32.2M cyc = ~12ms (40,885 symbol relocs, 34,472
+= 84% from lookup cache, 141,292 relative relocs = 182k eager; ~45k
+JUMP_SLOT PLT relocs deferred by lazy binding); time to load objects ~8.5ms.
+=> ld.so pre-main total ~22ms = ~3% of the ~754ms pre-PTY serial window.
+The remaining ~730ms (~97%) is Qt/KF5 APPLICATION INIT after the loader
+hands control to main() and before konsole opens the PTY (Qt plugin dlopen,
+QML/scenegraph + EGL/Wayland/virgl context bring-up, DBus, theming/icons/
+fonts, KConfig/KIO). THIS OVERTURNS THE ENTIRE N8 PREMISE: every lever this
+session (XDG, hwcaps, single-lib stubs incl QtMM, ld.so.cache, neg-dcache
+lookup honor) targeted the dynamic LOADER, which is only ~3% of the serial
+path -- so of course none moved konsole_wait_ms. The earlier "~half ld-linux
+relocation/lookup" user-PC reading was AGGREGATE across all threads/procs +
+plugin-dlopen-during-Qt-init (PC in ld.so but charged to app time), NOT the
+~22ms serial pre-main relocation. Archive of the LD_DEBUG run + stats files
+in scratchpad; fs.img restored (konsole wrapper removed), no lingering qemu,
+real GL held (virgl D3D12 NVIDIA). NEW M4 DIRECTION: the target is Qt/KF5
+init reduction on konsole's SERIAL pre-PTY path. Next measurement: break
+down the ~730ms Qt-init window (serial syscalls openat/read/dlopen [sys_openat_ms
+was ~566ms/launch -- likely mostly Qt-init config/plugin/font opens, serial],
+minor faults, DBus/poll waits, vs compute) to find the biggest serial
+component. Candidate levers (all app/framework-level, NOT loader): prune Qt
+plugin scanning/QT_PLUGIN_PATH, cut config/theme/icon/font file opens
+(caching), reduce DBus round-trips, or -- since each xv6 openat is ~130us
+(~50-100x native, ext4-lookup-bound) and Qt init does thousands SERIALLY --
+reduce per-openat/per-read kernel cost or the serial op COUNT. This is the
+first correct localization of the true M4 bottleneck. No commit/push, no
+default flips.
+
+2026-07-07 QT-INIT SERIAL DECOMPOSITION (kernel-accounted pre-PTY poll
+attribution + dlopen/wayland trace, real virgl GL, instrumentation
+non-perturbing: warm konsole_wait 1420 == shipped median) -- THE M4
+BOTTLENECK IS COMPOSITOR/VIRGL ROUND-TRIP WAIT, and it is THE SAME ROOT
+CAUSE AS M7. Warm pre-PTY window ~984ms split:
+konsole_prepty_poll_total_ms=595 (~60%) = BLOCKING WAIT on round-trips:
+Wayland compositor roundtrips 408ms (14 calls, ~29ms each -- native is <1ms;
+each is guest->QEMU->host-D3D12->reply virgl latency; konsole cannot create
+its window / open the PTY until xdg-surface configure returns) + QDBus
+roundtrips 187ms (22 calls, ~8.5ms). dlopen plugin storm 149ms (~15%, 64
+dlopens) dominated by IMAGE-CODEC plugins a terminal never needs: kimg_avif
+45ms(!), kimg_exr 11ms, kimg_jxl 9ms, kimg_heif/raw ~2-5ms => avif/jxl/exr/
+heif/raw ~70-100ms; plus KDEPlasmaPlatformTheme 16ms, qt-wayland-egl 10ms,
+breeze 8ms. Residual ~23% = Qt/KF5 compute + initial-closure reloc (~22ms) +
+minor faults. The ~566ms/launch sys_openat_ms is WHOLE-LAUNCH multi-process,
+runs largely PARALLEL and is mostly OFF this serial path (explains the
+neg-dcache null result). VERDICT: the biggest M4 lever is the SAME as M7 --
+reduce virgl round-trip latency and/or the count of synchronous Wayland
+roundtrips in Qt-Wayland client init (GPU/compositor path, N1/M7 territory,
+NOT the loader which is confirmed ~15% and off the WAIT path). SECONDARY
+CHEAP WIN: prune the imageformats plugin scan for konsole (avif/jxl/exr/heif/
+raw ~70-100ms reclaim, zero function loss for a terminal). M4 lever ladder,
+final: (1) virgl round-trip latency / fewer synchronous Wayland roundtrips
+(~41%, hard, unifies with M7); (2) DBus roundtrip reduction (~19%); (3)
+imageformats-plugin prune (~10%, cheap/safe/measurable); loader levers CLOSED
+(~3% initial + ~15% dlopen, and dlopen is mostly the imageformats storm =
+lever 3). No commit/push, no default flips.
+
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
 append-only in
