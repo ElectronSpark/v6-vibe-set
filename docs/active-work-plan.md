@@ -492,6 +492,63 @@ imageformats-plugin prune (~10%, cheap/safe/measurable); loader levers CLOSED
 (~3% initial + ~15% dlopen, and dlopen is mostly the imageformats storm =
 lever 3). No commit/push, no default flips.
 
+2026-07-07 VIRGL/COMPOSITOR LANE OPENED (unifies M4 app-launch + M7 video
+under one root cause: guest<->host GL round-trip cost). Session artifacts
+COMMITTED (kernel 0cf817d gated neg-dcache; top fd38f5e ld.so.cache gate +
+findings; 3 commits ahead of origin, UNPUSHED). The ~408ms/14-roundtrip
+Wayland WAIT is the top M4 lever; FIRST diagnostic (in progress, offline
+from the existing wayland-trace): disambiguate WHY each roundtrip is ~29ms --
+(H-A) raw virgl round-trip latency (guest->QEMU->host-D3D12->reply; = N1
+lane's host-GL-retire back-pressure) vs (H-B) KWIN FRAME-CLOCK GATING (kwin
+dispatches Wayland client events only at its ~30Hz frame boundary, so each
+sync waits ~1 frame ~= 29-33ms; matches the parked "KWin frame-clock
+hypothesis"). The 29ms ~= one 30Hz frame is suggestive of H-B. Fixes differ:
+H-A -> kernel virtio-gpu/virgl round-trip path (hard, N1); H-B -> make kwin
+service Wayland protocol events off the frame clock / immediate socket
+dispatch (kwin event-loop, potentially far more tractable and would speed
+EVERY app launch + interaction). Next: confirm H-A vs H-B, then scope the
+matching fix. Cheap parallel win still available: imageformats-plugin prune.
+No commit/push beyond the 3 landed, no default flips.
+
+2026-07-07 ROOT CAUSE FOUND (decisive, reproduced in both current archives)
+= VERDICT H-B, NOT H-A. Client-side per-phase Wayland trace: pure protocol
+roundtrip (registry/globals wl_display.sync) = ~1ms (transport FAST; raw
+virgl round-trip latency REFUTED). The slow waits are ONLY the
+frame/repaint-scheduled ones: first xdg-configure 12-71ms, frame-callback
+58-139ms. Presents during bring-up are SECONDS apart, not a 30Hz clock.
+SMOKING GUN in kde-session-kwin.log (both negdcache rep2 arms):
+`kwin_scene_opengl: Creating the OpenGL rendering failed: "Could not create
+gbm device"` then `"Could not initialize egl"`; `kwin_wayland_drm: Atomic
+Mode Setting disabled on GPU /dev/dri/card0 because of cursor offset issues
+in virtual machines`; `kwin_wayland_drm: Failed to find a working setup for
+new outputs!`. So KWIN RUNS ON A DEGRADED NON-ATOMIC/NON-VSYNC DRM OUTPUT
+PATH: output-side GBM/EGL init fails + atomic modeset disabled (VM
+cursor-offset heuristic), so kwin's RenderLoop has NO present-completion/
+vblank clock and free-runs on a coarse fallback timer -- every newly-mapped
+surface waits several idle->schedule->render->present cycles (68-136ms) for
+its first frame. THIS is the true bottleneck and it UNIFIES M4 (each konsole
+init = ~14 frame-gated roundtrips), M7 (no vsync/present clock), R9 (the
+atomic-disable trigger), and general interaction latency. LEVERS ordered:
+(1) fix kwin's output DRM/KMS path so it gets a real present clock --
+investigate WHY "Could not create gbm device"/"Could not initialize egl"
+(kwin output GBM/EGL backend on the guest virtio-gpu DRM node) AND the VM
+cursor-offset atomic-disable (virtio-gpu cursor plane, R9); atomic modeset +
+proper vblank speeds EVERYTHING. Lives in the guest virtio-gpu DRM/KMS/GBM/
+EGL present+cursor path (kernel + mesa) + possibly a kwin RenderLoop
+fallback-tick fix. (2) interim: give kwin RenderLoop a ~60Hz software present
+tick instead of the coarse fallback. (3) cheap parallel: imageformats prune
+(~70-100ms). RESIDUAL to settle with a kwin-SIDE trace (next boot): pure
+scheduling (fix RenderLoop) vs per-repaint virgl-fence stall (fix kernel
+virgl fence) -- LD_PRELOAD kwin_wayland timestamping libwayland-server
+dispatch + xdg_surface.configure + wl_surface.frame sends +
+RenderLoop::scheduleRepaint + virtio-gpu pageflip/fence completion. NET
+SESSION RESULT: "desktop feels slow" is now a precise UNIFYING root cause --
+kwin has no vsync/present clock because the guest virtio-gpu DRM output path
+(GBM/EGL/atomic/cursor) is degraded; ALL prior loader/syscall/lookup lanes
+were off-target. Redirects+unifies N1/M7/R9/M4 into ONE lane: the guest
+virtio-gpu DRM present+cursor path. No commit/push beyond the 3 landed, no
+default flips.
+
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
 append-only in
