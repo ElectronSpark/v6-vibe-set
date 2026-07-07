@@ -13,6 +13,8 @@ __pycache__/
 /musl-xv6/
 /tmp/
 /config-temp/
+# Generated pointer into the (ignored) build tree — build state, not source
+/build_x86_64_last_control_archive.path
 /fs.img
 *.log
 *.gb

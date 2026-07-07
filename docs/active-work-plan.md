@@ -1,16 +1,257 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-04 (FULL COMPACTION REWRITE after the 07-04 round:
-R5 root-caused + fixed, P2 ordered-pageflip default landed, Q2 real-GL
+Last updated: 2026-07-07 (current N8 branch has a completed Qt5Multimedia
+opt-in A/B probe, plus a full desktop-interaction kprofile PASS after bounded
+guest mouse and clean `LD_BIND_NOW` removal:
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000224Z-n8-guest-input-full-interaction-kprofile`.
+It was `direct-launch-only=0`, active sample, bounded guest input
+(`input_source=guest`, `monitor_path=disabled`, `host_cursor_sync_ms=0`,
+bounded coordinates), hover PASS (`first_changed_ms=923`, diff 300), and
+app/kprofile PASS (`konsole_wait_ms=1507`, `kprofile_timeout_hit=0`,
+userpc stored=631/drop=0). KVM + virgl stayed real-GL with no software
+fallback, and `LD_BIND_NOW` is absent from source, refreshed fs image, and
+exact smoke tmp image. Newer N3/R9 guest-mouseinject proof
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T005222Z-n3-guest-mouseinject-kprofile-proof`
+validates normal desktop reducers in
+`scripts/gpu/kde-plasma-desktop-smoke.expect`: forced guest input,
+monitor path disabled, host cursor sync off, guest cursor mode, pre-hover
+taskbar/desktop settle, hover/app launch PASS, no lingering QEMU, and clean
+diff check. Later user inspection still saw the cursor leave the VM; root
+cause split is smoke harness vs normal launcher. The smoke harness now
+records guest-only pointer evidence (`input_policy=guest-only`,
+`pointer_injection=guest-mouseinject`, `host_cursor_sync=disabled`,
+`qemu_monitor_input=0`; HMP/QMP input diagnostic-only), while
+`scripts/launch/launch-gui.sh` defaults `QEMU_GTK_CURSOR_MODE=guest` and
+`QEMU_GTK_SHOW_CURSOR=off` with overrides preserved. Post-patch validation
+PASS
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T024621Z-n3-n8-guest-cursor-postpatch-kprofile`
+supersedes invalid kprofile attempt `20260707T024333Z` (`probe_rc=1`):
+pre/post QEMU scans empty; command proves `-enable-kvm`, virtio-vga-gl,
+GTK `show-cursor=off`, no `virtio_gpu_host_cursor_only=1`; renderer is real
+virgl (D3D12 NVIDIA GeForce RTX 4060 Laptop GPU), software fallback envs
+unset; guest-only proof has `input_source=guest`, `input_policy=guest-only`,
+`pointer_injection=guest-mouseinject`, `host_cursor_sync=disabled`,
+`qemu_monitor_input=0`; bounded `/bin/mouseinject 11016 64223 0` on
+1280x800/workarea 0,0-1279,799 hit guest pixel 215,783; hover PASS
+`first_changed_ms=1048`; app/kprofile PASS (`konsole_wait_ms=2816`,
+app-launch `elapsed_ms=4159`, `kprofile_elapsed_ms=3616`,
+`kprofile_timeout_hit=0`, userpc 1052/0);
+crash scan 0, scoped diff-check passed, scratch image deleted/no `*.img`.
+M9 Chromium launch-only guard also passed at
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000512Z-n8-m9-chromium-launch-only-real-gl`:
+`browser_seen`, render/drm fds, `gpu_init_error_count=0`, `fault_count=0`,
+real GL env/renderer held, and no lingering QEMU. Offline branch scouts say to
+avoid glibc/ELF-loader surgery: the loader hotspot is real and repeatable but
+too ABI-sensitive; follow-up hwcaps/`LD_LIBRARY_PATH` probes were
+measurement-only. XDG path-pruning A/B delta was
+limited to `XDG_DATA_DIRS`/`XDG_CONFIG_DIRS` defaults relative to its pre-edit
+control, but the broader dirty worktree/scoped files still contain prior N8
+helper/harness edits, so do not read raw `git diff` breadth as XDG-only; preedit
+archive
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T001509Z-n8-xdg-paths-preedit-direct-launch-kprofile`
+and pruned archive
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T002116Z-n8-xdg-paths-pruned-direct-launch-kprofile`.
+It reduced lookup churn (ENOENT cold/warm 2816/2396 -> 2658/2228,
+`ext4_lookup_enoent` 2124/1848 -> 1973/1681,
+`kubuntu-default-settings` 73/70 -> 0/0, `/usr/local/share` 2/2 -> 0/0,
+local 97/94 -> 7/1) but did not improve readiness beyond noise:
+`konsole_wait_ms` 1389/1298 -> 1399/1317, prompt 1541/1613 -> 1511/1558,
+loader share stayed ~43-46%, and top symbols remained dynamic-loader work.
+Post-verifier archive-local cheap evidence in the pruned archive:
+`post-verify-rootfs-refresh.log` (rootfs-refresh rc=0),
+`post-verify-qemu-pgrep.log` (no `qemu-system`; an initial self-match wrapper
+attempt is retained as `post-verify-qemu-pgrep.selfmatch-superseded.log`),
+`post-verify-xdg-rg.log` (old defaults absent/current defaults present), and
+`post-verify-git-diff-check.log` (scoped `git diff --check`).
+Loader/env measurement-only matrix used a temporary hook that was applied and
+reverted exactly (`/tmp/xv6-worker-h/worker-h-temp-hook-only.diff`), restored
+touched-file diff, passed user and rootfs-refresh builds, and left no lingering
+QEMU. Valid KVM + virgl real-GL/no-software-fallback archives are
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T011159Z-n8-loader-env-control-direct-launch-kprofile`,
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T011412Z-n8-loader-env-hwcaps-mask0-direct-launch-kprofile`,
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T011905Z-n8-loader-env-ldpath-opt-last-direct-launch-kprofile`,
+and
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T012101Z-n8-loader-env-ldpath-last-hwcaps-mask0-direct-launch-kprofile`;
+the visible-timeout
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T011622Z-n8-loader-env-ldpath-opt-last-direct-launch-kprofile`
+was invalid and rerun. Decision: do not promote hwcaps masking or
+`LD_LIBRARY_PATH` reorder as an N8 responsiveness fix; current evidence says
+M4 is dynamic-loader relocation/symbol work proper, not XDG, hwcaps, or simple
+`/opt` path search. Offline loader-category attribution is now complete with
+99.59-100% symbolization: relocation + lookup/hash proper dominate, while
+mmap/open/path search is secondary, so the next N8 step stays offline/source
+level until there is a concrete change to validate.
+Branch decision: accept XDG pruning only as a minor reversible lookup-churn
+cleanup, not an M4 responsiveness fix; continue N8 with deeper loader
+relocation/lookup attribution or targeted probe design, then boot only to
+validate a concrete change. Libimobiledevice no-device shim A/B also closed
+no-promote: it removed libssl/libcrypto from Konsole maps but did not improve
+readiness. N8 static scout decision: Konsole direct closure is ~134 objects,
+~227,504 relocations, ~43,056 undefined dynsyms; top contributors include
+Qt5Widgets 23,205, Qt5Quick 20,618, gallium 18,275, crypto 18,081, Qt5Qml
+12,089, KIOWidgets 5,370, konsoleprivate 4,833, Qt5Multimedia 3,485, Solid
+3,488. N8 NewStuff opt-in SONAME-stub initial + repeat A/B completed with no
+default flip: exact 8-symbol KNS/KNSCore ABI surface from libkonsoleprivate
+only, real NewStuff maps replaced by shim maps, and KVM+virgl real GL held.
+Review says default env-absent paths are safe/no persistent rootfs effect, but
+the C `set_kde_env` gate is probe-wide when
+`KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB=1`; the harness currently scopes staging
+to Konsole-only direct-launch. Repeat weakly supports opt-in candidate only:
+warm wait/prompt/direct/kprofile improved
+1414/1674/2551/2049 -> 1297/1547/2396/1823, but cold was mixed and
+openat/ENOENT worsened. Qt5Multimedia gated probe review (2026-07-07): keep
+as scratch opt-in; no-go/revert is not warranted, but adjust before stronger
+validation or promotion. Its gate is cleaner than NewStuff: when
+`KDE_APP_LAUNCH_PROBE_QTMM_STUB=1`, only the forked Konsole child/subtree gets
+the shim `LD_LIBRARY_PATH`; the parent `LD_LIBRARY_PATH` is unchanged, siblings
+(terminal/dolphin/kate/kwrite/chromium) do not inherit it, and Chromium-only
+or sample paths return before this path. Env-absent defaults have no
+persistent rootfs/LD path, staging writes only the temp image, and
+`LD_BIND_NOW` removal is unrelated/default no-shim. Proof is enough for a
+narrow opt-in candidate only: six `Qt_5` QMedia imports from
+`libkonsoleprivate`, no Qt5MultimediaWidgets, six-export SONAME shim, and A/B
+archives
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T035129Z-qtmm-control-direct-launch-kprofile`
+/
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T035327Z-qtmm-stub-direct-launch-kprofile`
+show cold/warm direct deltas -803ms/-303ms with timeout 0. Weaknesses: shim
+is still `/tmp`-sourced/built, load-only and not call-safe, call logging was
+readiness-window/capped only, and full uncapped maps are missing. Next:
+convert QtMM shim to a repo-reproducible opt-in fixture, then repeat/control
+with full maps and final post-teardown call log before active-sample,
+durable, or default consideration; keep NewStuff as weaker/mixed opt-in.
+No glibc/ELF-loader surgery or default flips; always require kprofile metrics
+and KVM + virgl real GL/no software fallback.
+No commit/push yet. 07-04 compaction baseline: R5
+root-caused + fixed, P2 ordered-pageflip default landed, Q2 real-GL
 runtime-validated with the first default-path M9 PASS, P3 ext4 slice landed
-gated, N2 ext4 default promotion attempted but NOT accepted after a
-default-on KWin #GP rerun; later N2 ON-arm kernel #PF classified and
-opt-in diagnostics landed; kprofile measurement validity fixed; N3 R9
-coordinate and visible cursor probes passed; cleanup removed stale ignored
-proof images; N4/P1 cpumask+CR0 and CR0-only attempts stopped/reverted with
-no landing. All verbose evidence chains moved to the history file and git
-log; this file holds current status, queue, rules, and compact lane
-conclusions only.)
+gated, N2 ext4 default promotion attempted but NOT accepted, N3 R9 coordinate
+and visible cursor probes passed, and N4/P1 cpumask+CR0/CR0-only attempts
+stopped/reverted with no landing. All verbose evidence chains moved to the
+history file and git log; this file holds current status, queue, rules, and
+compact lane conclusions only.)
+
+2026-07-07 new-session handoff: user is launching a new session; this is the
+handoff state. Audit found no live QEMU/kprofile/KDE smoke processes, so no
+running VM cleanup is currently needed. Preserve the dirty workspace; no
+commit/push unless explicitly requested. Qt5Multimedia repo-reproducible
+opt-in fixture work is partially staged but incomplete: untracked
+`scripts/image/build-qtmm-shim.sh`, `scripts/image/xv6-qtmm-shim.c`, and
+`scripts/image/xv6-qtmm-shim.map`; `scripts/gpu/kde-plasma-desktop-smoke.expect`
+has QtMM staging/final-call-log/full-map support; last pointer
+`build_x86_64_last_control_archive.path` points to
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T043906Z-n8-qtmm-repro-control-direct-launch-kprofile`;
+later qtmm-repro-control runs are control-only failures/status 8; no matching
+stub repeat or `*qtmm-final-call-log.txt` was found. Current authoritative
+next action: first audit/finish-or-discard the partial QtMM fixture state,
+then produce a repo-owned reproducible opt-in QtMM shim fixture and rerun
+control/stub direct-launch kprofile with full uncapped maps and final
+call-log. Requirements: KVM+virgl real GL/no software fallback, timeout 0,
+userpc drops 0 when collected, app probe PASS, no crashes, no lingering QEMU;
+keep all shims opt-in, with no default flips and no glibc/ELF-loader surgery.
+Cleanup context: big cleanup already reclaimed ~459.6 GiB, but old generated
+leftovers are cleanup candidates only after preserving current evidence
+(known examples: old guest-mouseinject history image, old clock-domain smoke
+image dir, `build-x86_64/qtmm-shim-check`).
+
+2026-07-07 orchestrator audit (this session, decision recorded): the QtMM
+repo-reproducible fixture is ALREADY materially in place, not merely partial.
+Repo-owned `scripts/image/xv6-qtmm-shim.c` (6 `Qt_5` QMedia exports, raw
+syscalls/`nostdlib`, per-call `/tmp/xv6-qtmm-shim-calls.log` logging tagged
+`risk=unsafe_load_only`), `scripts/image/xv6-qtmm-shim.map`
+(exactly 6 globals, `local:*`), and reproducible
+`scripts/image/build-qtmm-shim.sh` (`SOURCE_DATE_EPOCH=0`,
+`--build-id=none`, `--no-undefined`, SONAME + forbidden-NEEDED guards,
+sha256/readelf/nm proof emit) all exist. The harness
+`scripts/gpu/kde-plasma-desktop-smoke.expect` already wires
+`stage_qtmm_stub_shim_if_enabled` (builds via the repo helper, stages to
+`/opt/xv6-kde-abi-libs/qt5multimedia-shim/libQt5Multimedia.so.5`), full
+uncapped maps (`KDE_INTERACTION_DIRECT_LAUNCH_FULL_MAPS_LOG`), and the
+post-teardown final call log (`*.qtmm-final-call-log.txt`,
+`kde_direct_launch_qtmm_call_log`). ROOT CAUSE of the 4 interrupted
+`20260707T04{2949,3305,3727,3906}Z-n8-qtmm-repro-control` runs: all
+`status_code=8` = `sample_desktop-interaction-visible_1-artifact-timeout`
+(all-black fb `nonzero=0` at the visible-sample stage) = Failure Mode 19
+visible/artifact-timeout flake, NOT a fixture defect — they carried the
+flaky `desktop-interaction-latency` visible reducer instead of
+direct-launch-only mode. Decision: fixture audited essentially complete;
+next is offline build/validate of the fixture, then a control+stub
+DIRECT-LAUNCH-ONLY kprofile A/B (skip the flaky visible stage) with full
+maps + final call-log, requiring real GL, timeout 0, userpc drop 0, app
+PASS, no crash, no lingering QEMU. CONFIRMED PASSING RECIPE (from the
+035327Z stub / 035129Z control that predate this fixture):
+`KDE_SMOKE_INTERACTION_DIRECT_LAUNCH_ONLY=1`, `direct_launch_repeats=2`,
+`KDE_SMOKE_INTERACTION_ACTIVE_SAMPLE=1`, `input_source=guest`,
+`QEMU_GPU=virtio-vga-gl-primary`, `USE_KVM=1`,
+`KDE_SMOKE_REDUCER=desktop-interaction-latency`,
+`KDE_APP_LAUNCH_PROBE_QTMM_STUB` 0=control / 1=stub.
+
+2026-07-07 A/B run progress (this session): offline fixture build GO
+(deterministic sha256 `c0f2b707ce14c2bca305d164842cf8597d47cabe1468703575a5147e6138e77a`,
+SONAME `libQt5Multimedia.so.5`, 6 `Qt_5` exports, no DT_NEEDED,
+`git diff --check` clean, `.c`<->`.map` 1:1). CONTROL arm
+(`QTMM_STUB=0`, direct-launch-only) PASSED: archive
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T0529Z-qtmm-repro-control-direct-launch-kprofile-fixturev2`
+(status_code=0 DONE, real GL D3D12/virgl/renderD128 no-software, both
+direct-launch probes `result=PASS probe_rc=0` cold/warm 18180/15341ms,
+full-maps + `qtmm-final-call-log status=ABSENT` correct for no-shim, zero
+crash markers). STUB attempt 1 CRASHED at session-readiness BEFORE
+Konsole/shim reached: `pid 68 wireplumber: exception 13 (#GP) rip=0x7fffff666364`,
+status_code=3 `kde-session-ready-crash`; shim built OK (repo-helper sha256
+matched, staged) and real GL held, but no full-maps/per-probe output.
+Classification: shim-INDEPENDENT session-startup crash (wireplumber/PipeWire
+does not load the Konsole-scoped shim `LD_LIBRARY_PATH`; control + prior
+035327Z stub both passed clean); `rbx=0x302d7265626d756c` = ASCII `"lumber-0"`
+= R5-family foreign-bytes-in-register signature shape => candidate
+CONTINUOUS-R5-WATCH datapoint, not a QtMM regression. Evidence preserved:
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T0532Z-qtmm-repro-stub-direct-launch-kprofile-fixturev2-SESSION-CRASH`.
+Bounded stub rerun PASSED (crash was an independent flake): archive
+`build-x86_64/kde-plasma-desktop-smoke-history/20260707T0536Z-qtmm-repro-stub-direct-launch-kprofile-fixturev2`
+(status_code=0 DONE, both direct-launch probes `result=PASS probe_rc=0`,
+real GL held, no crash markers, no lingering QEMU).
+A/B RESULT — DURABLE-CANDIDATE PROOF ACHIEVED (repo-reproducible fixture,
+all gates met). konsole_wait_ms cold/warm: control 5920/2885 -> stub
+2094/2032 (delta -3826ms ~65% cold, -853ms ~30% warm); bash-prompt
+6357/3166 -> 2210/2365; kprofile_elapsed 16720/13102 -> 9553/9907;
+kprofile_cpu_busy_ms 105194/86923 -> 65673/67201; userpc stored
+3869/3053 -> 1743/1869, dropped 0 in all four; kprofile_timeout_hit=0 all;
+sys_openat 5917/5060 -> 4902/4776 (ext4 ENOENT +237 both, minor). MAP
+CONTRAST PROVEN: control maps real `/usr/lib/x86_64-linux-gnu/libQt5Multimedia.so.5`
++ `libpulse.so.0`/`libpulsecommon-16.1.so`; stub maps only
+`/opt/xv6-kde-abi-libs/qt5multimedia-shim/libQt5Multimedia.so.5` with real
+Qt5Multimedia + entire libpulse/pulsecommon closure ABSENT (unique .so
+219 -> 208, -11 objects). CALL-SAFETY: stub final-call-log `status=ABSENT`
+cold+warm => shim is LOAD-ONLY (6 fake QMedia bodies never invoked; ABI risk
+not exercised in this path). Provenance PASS (repo-helper build/stage logs,
+sha256 `c0f2b707...` match, SONAME + 6 exports + no NEEDED). Both arms real
+GL (virgl/renderD128/D3D12 NVIDIA, no software fallback), app PASS, zero
+crash markers, no lingering QEMU. REPEAT-N SWEEP (N=3/temperature) OVERTURNS THE 1x1 COLD WIN. Ran 2 more
+interleaved runs per arm (all real GL D3D12/virgl, 0 software hits, DONE,
+0 crash markers, no lingering QEMU). Archives:
+`20260707T0548...T0552Z-qtmm-repro-sweep-{stub,control}-rep{2,3}-fixturev2`.
+konsole_wait_ms cold/warm matrix (control rep1 5920/2885 was a first-boot
+cold-cache OUTLIER): control cold [5920,1504,1593] median 1593, warm
+[2885,1420,1199] median 1420; stub cold [2094,1897,1495] median 1897, warm
+[2032,1187,1553] median 1553. MEDIAN delta stub-control = +304ms cold,
++133ms warm (stub marginally SLOWER); excluding the first-boot control
+outlier, control cold mean 1548 vs stub 1696. CONCLUSION: the dramatic
+-3826ms 1x1 cold "win" was a cold-cache artifact of the control's first
+boot; once host-cache state is controlled, the QtMM load-only stub shows NO
+reliable konsole_wait_ms improvement (within run-to-run noise, if anything
+marginally slower). DECISION: the repo-reproducible opt-in QtMM fixture is
+VALIDATED and SAFE (deterministic build, map replacement proven, load-only
+/ ABI-risk-not-exercised, all gates green) and stays as a repo-owned opt-in
+via `KDE_APP_LAUNCH_PROBE_QTMM_STUB=1`, but it is NOT a demonstrated M4
+responsiveness win and is NOT promoted to active-sample/default. QtMM thus
+JOINS the other single-library trims (XDG, hwcaps, libimobiledevice,
+NewStuff) that reduce map/lookup churn but do not move readiness beyond
+noise — reinforcing that the M4 bottleneck is dynamic-loader
+relocation+lookup/hash proper across the whole Qt/KF5 closure, not any one
+trimmable library. NewStuff remains the weaker/mixed opt-in; no further
+single-library-stub trims are worth pursuing as M4 fixes without new
+evidence. The stub-attempt-1 wireplumber #GP (ASCII `"lumber-0"` in rbx) is
+filed as a CONTINUOUS-R5-WATCH datapoint at `...-fixturev2-SESSION-CRASH`.
+No commit/push, no default flips, dirty worktree preserved.
 
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
@@ -26,10 +267,13 @@ sibling copies on `codex/host-linux-abi-shell-port` /
 
 ## Mission
 
-Make the KDE/Chromium desktop on x86_64 KVM+virgl stable and responsive.
-Current posture: correctness lanes (P0 freeze, R5 corruption) are fixed or
-closed; the remaining work is performance (M7 video path, M2 syscall cost,
-M8 idle CPU), user-visible input (R9), and statistical closure.
+Make the KDE/Chromium desktop on x86_64 KVM+virgl stable and responsive,
+with the current primary target being desktop responsiveness that approaches
+a comparable Linux VM on the same host/class. Correctness lanes (P0 freeze,
+R5 corruption) are fixed or closed; smoke PASS alone is not acceptance. The
+remaining work is kprofile-driven app-launch/input responsiveness,
+performance (M7 video path, M2 syscall cost, M8 idle CPU), user-visible input
+(R9), and statistical closure.
 
 ## Scoreboard — Measurements and Goals
 
@@ -55,31 +299,425 @@ Measurement validity rules:
   under load); only the busy/total RATIO is meaningful. pgroup fields are
   process-group-only (zygote children escape). kprofile's exec takes
   absolute paths only; guest /bin/sh does not glob (use /bin/bash).
+- Plasma responsiveness work MUST invoke kprofile as the metric source after
+  every responsiveness iteration/fix/trace, and compare toward Linux-like
+  behavior on a comparable same-host/class VM rather than merely beating old
+  xv6 smoke thresholds. Acceptance records kprofile elapsed/timeout,
+  app-launch latency, Konsole shell readiness, pre-PTY timing, phase-log
+  `konsole_wait_ms`, `cpu_busy/total_ms` ratio,
+  `pgroup_cpu_runtime_ms`, `sys_poll`/`sys_ppoll`/`sys_openat`,
+  `sys_poll_blocking`, `sys_poll_wait_notify`, app-probe PASS, eventfd fd
+  attribution and user-PC/module attribution when relevant, interaction
+  coverage such as hover/app launch, and mandatory KVM + virgl + real GL proof.
+  Software/llvmpipe fallback is invalid. Visual proof supplements the metrics;
+  subjective observation alone is not acceptance.
 
 Audio: host audio is NOT a readiness prerequisite. `pactl` probes are
 default-off (`kde_pactl_probe=1` to re-enable); non-audio gates run with
 `QEMU_AUDIO_BACKEND=none`.
 
-| # | Metric | How measured | Current (2026-07-04) | Goal |
+| # | Metric | How measured | Current (2026-07-07) | Goal |
 |---|--------|--------------|----------------------|------|
 | M1 | YouTube-freeze survival | P0 repro recipe, 15 min, 3 runs | 3/3 responsive clean (2026-07-03 battery); P0 closed | 3/3 clean |
 | M2 | Guest `getpid_ns` | `syscalltlb 2000` nographic | accepted baseline 1.65-1.94us (P1 2a/2b landed); N4 stopped/reverted after clean CR0-only rerun failed at 1973/2102/1925/2185ns | < 1.5us (requires a different P1 approach) |
 | M3 | `tlb_amplification_ns` (1024 pg) | same | accepted baseline noisy 2.7-3.7us band; clean CR0-only N4 rerun failed at 4504ns | 0 on default boot |
-| M4 | `konsole_wait_ms` | KDE desktop-interaction reducer | 1883-2144 band across the 07-04 batteries (best 1883 post-R5-fix) | < 2000 |
-| M5 | `first_visible_ms` | same | 11471-13850 band | < 15000 |
+| M4 | `konsole_wait_ms` | KDE desktop-interaction/kprofile | N=3 shipped-default direct-launch kprofile (2026-07-07): konsole_wait_ms warm median 1420 (~1310 excl first-boot cold-cache outlier), cold median 1593 (~1549 excl); all gates green (real GL, timeout 0, userpc drop 0, app PASS, no crash); user-PC attribution ~half ld-linux (lookup_hash 17-20% + relocation 17-18%), ~12% libc, ~16-20% Qt5, loader-share ~63-66% of symbolized loader/libc/xv6, 219-`.so` closure, ~4.3-4.5k openat/~3.7k ENOENT per launch; top symbols `_dl_new_hash`/`resolve_map`/`check_match` | converge toward comparable Linux VM behavior |
+| M5 | `first_visible_ms` | same | 6473 in clean N8 LD_BIND_NOW-off proof; direct-launch prompt 1508/1429 | < 15000 |
 | M6 | `mesakmsgl` direct-KMS FPS | pageflip A/B | 118-125 ordered, now DEFAULT-ON | done (was: ordered default) |
-| M7 | `presentedFPS` (60fps video) | chromium-video kprofile, KPROFILE_SECONDS=90 | 44.2 real GL + ordered pageflip (arc 07-04: 36.8 -> 42.9 -> 44.2; dropPct 29.6; decode 61.5 keeps pace). Sole remaining ceiling: software-blit scanout — every flip copies, native_present_credit=0 | >= 55 (N1) |
+| M7 | `presentedFPS` (60fps video) | chromium-video kprofile, KPROFILE_SECONDS=90 | 51.0 default after total-reaper redesign; native_present_credit remains 0 and native-present is NOT solved. This is not the current app-launch bottleneck | >= 55 (N1) |
 | M8 | Idle-desktop host CPU | 10s `/proc/$pid/stat` utime+stime delta on a GL-pipeline boot (non-GL boots never present — invalid for M8) | UNMEASURED-VALID: the 2026-07-05 44%/57-64% readings were doubly invalid (non-GL boots with zero presentation AND poll flags since fully reverted for interactive hangs). Historical band 85-130%. Re-measure with the documented GL recipe on shipped defaults | < 100% |
-| M9 | Chromium window visible | chromium-video launch-only reducer | PASS on the DEFAULT path with REAL hardware GL (2026-07-04): zero missing-GL fatals, zero software fallbacks, GPU errors 0 | PASS (holds; guard in every battery) |
+| M9 | Chromium window visible | chromium-video launch-only reducer | PASS (2026-07-07 M9 launch-only guard): `browser_seen`, render/drm fds, `gpu_init_error_count=0`, `fault_count=0`, real GL env/renderer, no lingering QEMU | PASS (holds; guard in every battery) |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: `forktest`
 (rc=1 "fork claimed to work N times!" = known exhaustion signature),
 `clonetest` rc=0, `cowtest` rc=0, same boot.
 
-## Work Order — Current Queue (recut 2026-07-04 post-round)
+## Current Plasma Responsiveness / kprofile Status (2026-07-07)
+
+- Current accepted N8 workflow proof is the full desktop-interaction kprofile
+  PASS at
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000224Z-n8-guest-input-full-interaction-kprofile`.
+  It ran with `direct-launch-only=0` as an active sample, using bounded guest
+  `/bin/mouseinject` for normal input (`input_source=guest`,
+  `monitor_path=disabled`, `host_cursor_sync_ms=0`, bounded coordinates).
+  Hover passed (`first_changed_ms=923`, diff 300); app/kprofile passed with
+  `konsole_wait_ms=1507`, `kprofile_timeout_hit=0`, and userpc stored=631,
+  dropped=0. KVM + virgl real GL held with no software fallback, and
+  `LD_BIND_NOW` is absent from source, refreshed fs image, and the exact smoke
+  tmp image.
+- Current N3/R9 guest-mouseinject proof is archived at
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T005222Z-n3-guest-mouseinject-kprofile-proof`.
+  `scripts/gpu/kde-plasma-desktop-smoke.expect` now forces normal desktop
+  reducers to guest input (`input_source=guest`), `monitor_path=disabled`,
+  `host_cursor_sync=0`, `QEMU_GTK_CURSOR_MODE=guest`, and
+  `QEMU_GTK_SHOW_CURSOR=off`; HMP/QEMU monitor mouse movement is
+  diagnostic-only and disabled for normal reducers. Pre-hover waits for
+  taskbar/desktop settle by default: 3000ms plus 3 stable framebuffer samples.
+  PASS proof: `status_code=0`, KVM + virgl real GL/no software fallback,
+  `cursor_owner=guest-forced-normal-interaction`, bounds
+  `framebuffer=1280x800 workarea=0,0-1279,799`, settle
+  `elapsed_ms=4711 stable_count=3`, `/bin/mouseinject 11016 64223 0`,
+  `host_cursor_sync_enabled=0`, `host_cursor_sync_ms=0`,
+  `status=changed first_changed_ms=986`, app launch PASS with
+  `konsole_wait_ms=1508`, `kprofile_timeout_hit=0`, userpc stored=602
+  dropped=0, no lingering QEMU, and clean diff check. Follow-up after user
+  visual inspection split the issue into smoke harness vs normal launcher:
+  normal desktop-interaction/direct-launch smoke paths are guest-only pointer
+  injection with `input_policy=guest-only`,
+  `pointer_injection=guest-mouseinject`, `host_cursor_sync=disabled`, and
+  `qemu_monitor_input=0`; monitor/HMP/QMP input is diagnostic-only.
+  `scripts/launch/launch-gui.sh` now defaults `QEMU_GTK_CURSOR_MODE=guest`
+  and `QEMU_GTK_SHOW_CURSOR=off` while preserving overrides. Post-patch full
+  validation PASS:
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T024621Z-n3-n8-guest-cursor-postpatch-kprofile`.
+  Earlier `20260707T024333Z` was invalid kprofile usage (`probe_rc=1`) and
+  superseded. Proof: pre/post QEMU scans empty; qemu command had
+  `-enable-kvm`, `virtio-vga-gl`, GTK `show-cursor=off`, and no
+  `virtio_gpu_host_cursor_only=1`; renderer real virgl (D3D12 NVIDIA
+  GeForce RTX 4060 Laptop GPU); software fallback envs unset; guest cursor
+  proof `input_source=guest`, `input_policy=guest-only`,
+  `pointer_injection=guest-mouseinject`, `host_cursor_sync=disabled`,
+  `qemu_monitor_input=0`; bounded `/bin/mouseinject 11016 64223 0`,
+  framebuffer 1280x800, workarea 0,0-1279,799, guest pixel 215,783; hover
+  PASS `first_changed_ms=1048`; app/kprofile PASS
+  (`konsole_wait_ms=2816`, app-launch `elapsed_ms=4159`,
+  `kprofile_elapsed_ms=3616`, `kprofile_timeout_hit=0`, userpc 1052/0);
+  crash scan 0; scoped diff-check passed for
+  `scripts/gpu/kde-plasma-desktop-smoke.expect` and
+  `scripts/launch/launch-gui.sh`; scratch image deleted/no `*.img` in
+  archive. The live N8 responsiveness bottleneck remains
+  Konsole/app-launch readiness/loader work, not mouse bounds.
+- Chromium M9 launch-only guard PASS is archived at
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000512Z-n8-m9-chromium-launch-only-real-gl`.
+  It saw the browser plus render/drm fds, `gpu_init_error_count=0`,
+  `fault_count=0`, real GL env/renderer held, and no lingering QEMU.
+- XDG path-pruning A/B experiment delta was limited to `XDG_DATA_DIRS` and
+  `XDG_CONFIG_DIRS` defaults relative to its pre-edit control. Caveat: the
+  same scoped files in the current dirty worktree also carry prior N8
+  helper/harness edits, so the raw worktree is not an XDG-only patch. Preedit:
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T001509Z-n8-xdg-paths-preedit-direct-launch-kprofile`;
+  pruned:
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T002116Z-n8-xdg-paths-pruned-direct-launch-kprofile`.
+  It reduced cold/warm ENOENT totals 2816/2396 -> 2658/2228 and
+  `ext4_lookup_enoent` 2124/1848 -> 1973/1681. Specific churn wins:
+  `kubuntu-default-settings` 73/70 -> 0/0, `/usr/local/share` 2/2 -> 0/0,
+  local 97/94 -> 7/1. Readiness did not improve beyond noise:
+  `konsole_wait_ms` 1389/1298 -> 1399/1317, prompt 1541/1613 -> 1511/1558;
+  loader share stayed ~43-46% and top symbols remained dynamic-loader work.
+  Post-verifier cheap evidence was archived in the pruned directory:
+  `post-verify-rootfs-refresh.log` (rootfs-refresh rc=0, `fs.img` refreshed),
+  `post-verify-qemu-pgrep.log` (no lingering `qemu-system`; superseded
+  self-match pgrep attempt retained separately), `post-verify-xdg-rg.log`
+  (old XDG defaults absent/current defaults present), and
+  `post-verify-git-diff-check.log` (scoped `git diff --check`).
+- Offline branch scouts concluded to avoid glibc/ELF loader surgery. The
+  loader hotspot remains real and repeatable, but too ABI-sensitive for the
+  next branch. Follow-up hwcaps/`LD_LIBRARY_PATH` probes were
+  measurement-only; IFUNC remains only a possible measurement probe if useful.
+- Loader/env measurement-only matrix completed with no permanent hook,
+  default, or env change: the temporary hook was applied and reverted exactly
+  from `/tmp/xv6-worker-h/worker-h-temp-hook-only.diff`, touched-file diff was
+  restored, user and rootfs-refresh builds passed, and no QEMU lingered.
+  Valid KVM + virgl real-GL/no-software-fallback archives: control
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T011159Z-n8-loader-env-control-direct-launch-kprofile`;
+  hwcaps-mask0
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T011412Z-n8-loader-env-hwcaps-mask0-direct-launch-kprofile`;
+  ldpath-opt-last
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T011905Z-n8-loader-env-ldpath-opt-last-direct-launch-kprofile`;
+  ldpath-last+hwcaps
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T012101Z-n8-loader-env-ldpath-last-hwcaps-mask0-direct-launch-kprofile`.
+  Invalid visible-timeout archive, rerun passed:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T011622Z-n8-loader-env-ldpath-opt-last-direct-launch-kprofile`.
+  Control: wait 1297/1196, prompt 1510/1431, CPU ratio .546/.563, pgroup
+  839/845, userpc 437/0 and 525/0, loader share .416/.465, ext4 ENOENT
+  1980/1679, openat 2467/2355, `/opt` rows 145/145, glibc-hwcaps 66/66.
+  hwcaps-mask0: wait 1395/1317, prompt 1608/1545, loader .429/.430, ext4
+  ENOENT 2020/1679, `/opt` 145/145, glibc-hwcaps 66/66; no improvement and
+  masking did not reduce hwcaps path rows here. ldpath-opt-last: wait
+  1489/1187, prompt 1600/1428, loader .415/.427, ext4 ENOENT 1793/1430,
+  openat 2288/2106, `/opt` rows 28/0, glibc-hwcaps 84/90; cuts lookup churn
+  but cold readiness worsened, no stable M4 win, loader remains top module.
+  ldpath-last+hwcaps: wait 1402/1051, prompt 1538/1301, loader .414/.433,
+  ext4 ENOENT 1726/1428, openat 2177/1956, `/opt` rows 20/0, glibc-hwcaps
+  84/90; best warm number, but small repeat count/no clean cold win, still
+  loader top.
+- Offline loader-category attribution completed without a VM boot, commit, or
+  push. `scripts/gpu/kprofile-userpc-phase-attribution.py` now preserves
+  existing rows and adds `category=<...>` on `direct-launch-phase-symbol`
+  rows plus `direct-launch-phase-loader-category` rollups. Verifiers:
+  `python3 -m py_compile scripts/gpu/kprofile-userpc-phase-attribution.py`,
+  `git diff --check -- scripts/gpu/kprofile-userpc-phase-attribution.py`, and
+  `git diff --no-index --check` because the script is untracked. Reports:
+  `n8-loader-category-attribution-01-cold.txt` and
+  `n8-loader-category-attribution-02-warm.txt` in each valid loader/env
+  archive above. Compact LTP/category matrix: control cold 388 samples
+  (loader/libc/xv6 169/37/2; relocation 65, 16.75%; lookup 63; mmap/open 14),
+  control warm 472 (232/56/2; lookup_hash 95, 20.13%; relocation 82;
+  mmap/open 13), hwcaps cold 389 (177/46/2; lookup_hash 71, 18.25%;
+  relocation 67; mmap/open 5), hwcaps warm 441 (198/64/1; relocation 78,
+  17.69%; lookup 72; mmap/open 5), ldpath cold 388 (174/43/0; relocation 66,
+  17.01%; lookup 60; mmap/open 16), ldpath warm 380 (177/37/5; relocation 69,
+  18.16%; lookup 62; mmap/open 4), combined cold 383 (162/51/1; relocation 77,
+  20.10%; lookup 58; mmap/open 2), combined warm 369 (171/42/1;
+  relocation/lookup tie 69, 18.70%; mmap/open 6). Backing symbols include
+  `_dl_new_hash`, `do_lookup_x`, `check_match`, `resolve_map`,
+  `elf_machine_rela_relative`, `elf_dynamic_do_Rela`,
+  `_dl_map_object_from_fd`, `strcmp`, and `__memset_avx2_unaligned_erms`.
+  Symbolization coverage was 99.59-100%.
+- Libimobiledevice no-device shim A/B is complete and no-promote. ABI scout
+  was safely small: `libKF5Solid.so.5.115.0` imports exactly 10 `Base`
+  symbols from `libimobiledevice-1.0.so.6`
+  (`idevice_event_subscribe`, `idevice_event_unsubscribe`,
+  `idevice_get_device_list`, `idevice_device_list_free`, `idevice_new`,
+  `idevice_free`, `lockdownd_client_new`, `lockdownd_client_free`,
+  `lockdownd_get_device_name`, `lockdownd_get_value`). A temporary opt-in
+  no-device shim was built/used and the repo hook reverted; saved artifacts:
+  `/tmp/xv6-worker-o/worker-o-temp-fsimg-hook.patch`,
+  `/tmp/xv6-worker-o/xv6-libimobiledevice-nodevice-shim.c`, `.map`, and
+  `libimobiledevice-1.0.so.6`. Verifiers passed: rootfs-refresh,
+  `git diff --check -- scripts/gpu/kde-plasma-desktop-smoke.expect`,
+  `python3 -m py_compile scripts/gpu/kprofile-userpc-phase-attribution.py`,
+  readelf SONAME/libc-only NEEDED/exactly-10-exports proof, no lingering
+  QEMU, KVM + virgl real GL in run logs and qtquick accel policy, no software
+  fallback, and clean crash-marker scan. Archives: control
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T020310Z-n8-libimobiledevice-control-direct-launch-kprofile`;
+  shim
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T020424Z-n8-libimobiledevice-nodevice-shim-direct-launch-kprofile`.
+  Compact metrics:
+  | run | wait | prompt | timeout | userpc | CPU | pgroup | openat | ENOENT | loader | categories |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+  | control PASS | 1983/1208 | 2199/1519 | 0/0 | 579/0, 499/0 | .533/.546 | 1229/857 | 2617/2368 | 1979/1681 | 38.35%/38.90% | reloc/lookup/mmap 78/75/9, 66/64/11 |
+  | shim PASS | 2085/1211 | 2302/1521 | 0/0 | 606/0, 482/0 | .524/.572 | 1301/849 | 2584/2306 | 1961/1678 | 42.99%/47.20% | reloc/lookup/mmap 82/93/8, 81/76/7 |
+  Control maps had imobiledevice+ssl+crypto; shim maps had the imobiledevice
+  shim and ssl/crypto gone. Shim call evidence:
+  `kde-session-plasma-child.log` showed `idevice_event_subscribe`,
+  `idevice_get_device_list result_count=0`, and
+  `idevice_device_list_free`; Konsole logs showed the shim loaded.
+- NewStuff opt-in SONAME-stub initial + repeat/control are complete
+  (2026-07-07), gated only by `KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB=1`; no
+  default flip. Review: env-absent paths are default-safe with no persistent
+  rootfs effect, and default desktop/Plasma/Chromium normal paths are
+  unaffected. Caveat: C-side `set_kde_env` in
+  `scripts/image/kde-app-launch-probe.c` is probe-wide when the env is set,
+  while `scripts/gpu/kde-plasma-desktop-smoke.expect` currently scopes staging
+  and export to the Konsole-only direct-launch probe. The shim is staged from
+  `/tmp/xv6-newstuff-shim/` into the tmp image; current minimal patch is
+  `/tmp/xv6-newstuff-shim/newstuff-probe-gate.patch` touching
+  `scripts/image/kde-app-launch-probe.c` and
+  `scripts/gpu/kde-plasma-desktop-smoke.expect`. If promoted, add
+  repo-owned shim source/map/build,
+  tighten or clearly document the Konsole-only gate, and do not commit whole
+  dirty files blindly.
+  ABI audit: exactly 8 direct KNS/KNSCore imports, all from
+  `libkonsoleprivate.so.1`; `konsole` and `libkonsoleapp` import none.
+  Required shadow SONAMEs are `libKF5NewStuffWidgets.so.5` and
+  `libKF5NewStuffCore.so.5`; the shim exports only `KNSWidgets::Button` ctor,
+  `setConfigFile`, `dialogFinished`, `staticMetaObject`, and
+  `KNSCore::EntryInternal` `name`/`installedFiles`/`uninstalledFiles`/`status`.
+  ABI risk remains: fake `staticMetaObject`, no real QObject construction,
+  vtable, or destructor coverage, no-op methods, and empty Qt returns.
+  Previous and repeat runs did not call-cover risky bodies because shim call
+  log was absent or explicitly absent-expected.
+  Initial archives:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T030649Z-n8-newstuff-control-direct-launch-kprofile`
+  and
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T030825Z-n8-newstuff-stub-direct-launch-kprofile`;
+  warm direct/kprofile improved 3153/2541 -> 2363/1968 while cold moved only
+  slightly positive. Repeat archives: control
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T031947Z-n8-newstuff-repeat-control-direct-launch-kprofile`;
+  stub
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T032139Z-n8-newstuff-repeat-stub-direct-launch-kprofile`.
+  Repeat wait/prompt/direct/kprofile: cold 1776/1995/2710/2220 ->
+  1747/1857/2847/2209 (deltas -29/-138/+137/-11); warm
+  1414/1674/2551/2049 -> 1297/1547/2396/1823
+  (deltas -117/-127/-155/-226). `kprofile_timeout_hit=0` and userpc dropped=0
+  in all four; stored samples control 546/557, stub 528/548. CPU/pgroup was
+  roughly flat to slightly better, but openat/ENOENT worsened: control
+  2594/1975 and 2343/1703; stub 2819/2220 and 2601/1923. Loader categories
+  were mixed: warm relocation/mmap 91/14 -> 70/9, but lookup 83 -> 95; cold
+  neutral/mixed.
+  Real GL held (KVM, virgl D3D12 NVIDIA RTX 4060, no llvmpipe/softpipe,
+  fallback envs unset). Maps show control real `libKF5NewStuff*.so.5` and
+  treatment shim only; warm control had Qt5Qml/Qt5Quick maps, warm stub did
+  not in the capped snapshot, and full uncapped live maps were not collected;
+  `maps-artifact-limitation.txt` was added. Treatment archive has shim
+  checksum/readelf/SONAME/export proof plus explicit call-log
+  absent-expected. Crash scan clean, no lingering QEMU, no scratch images.
+  Decision: repeat weakly supports keeping NewStuff as an opt-in promotion
+  candidate, but does NOT justify durable/default promotion. Warm improvement
+  repeated but smaller; cold was mixed; VFS/open counts worsened. Before
+  further promotion, tighten the C gate to Konsole-only or document it
+  clearly.
+- Qt5Multimedia gated probe review (2026-07-07): keep as scratch opt-in; no
+  default flip, and no-go/revert is not warranted, but adjust before stronger
+  validation or promotion. Gate
+  `KDE_APP_LAUNCH_PROBE_QTMM_STUB=1` is cleaner than NewStuff: the shim
+  `LD_LIBRARY_PATH` is scoped to the forked Konsole child/process subtree, the
+  parent `LD_LIBRARY_PATH` is unchanged, terminal/dolphin/kate/kwrite/chromium
+  siblings do not inherit it, and Chromium-only/sample paths return before
+  this path.
+  NewStuff remains probe-wide when armed via `set_kde_env`. Env-absent paths
+  have no persistent default/rootfs LD path; staging writes only the temp
+  image. Startup `LD_BIND_NOW` removal is unrelated/default no-shim.
+  A/B archives:
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T035129Z-qtmm-control-direct-launch-kprofile`
+  and
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260707T035327Z-qtmm-stub-direct-launch-kprofile`;
+  cold direct/helper/kprofile/wait/prompt moved
+  3821/3733/3030/2335/2448 -> 3018/2962/2239/1776/1994; warm moved
+  2960/2876/2357/1630/2053 -> 2657/2593/2071/1418/1736; timeout stayed 0 and
+  real KVM + virgl GL held. Load-only symbols/version/SONAME are enough for
+  observed imports: exactly six `Qt_5` QMedia imports from
+  `libkonsoleprivate.so.1`, no direct `libQt5MultimediaWidgets`, six exports,
+  SONAME `libQt5Multimedia.so.5`, no DT_NEEDED, checksum
+  `93ec68fb8cde4eca15638aa6a8341b06e78f21a3acf6ce063ea5eb8af4229018`.
+  Weaknesses: shim is still only `/tmp` source/built; durable opt-in needs
+  repo-owned source plus version script, reproducible build/stage, and
+  archived source/map/build/checksums/readelf proof. It is not call-safe:
+  fake `QMediaPlayer` is not a `QObject`, `QMediaContent` layout/ref state is
+  uninitialized, and later media calls/`deleteLater`/signal-slot paths are
+  high-risk/no-go. Call logging was limited to the readiness window/capped
+  output; next repeat must archive the final call log after teardown. Proof is
+  sufficient for a narrow opt-in candidate, not durable/default; missing full
+  uncapped maps must prove Qt5Multimedia/libpulse/tail absence in stub and
+  real presence in control. Next action: convert QtMM shim to a
+  repo-reproducible opt-in fixture, then repeat/control with full maps and
+  final call-log before any broader active-sample or durable consideration;
+  keep NewStuff as the weaker/mixed opt-in candidate.
+- Branch decision: accept XDG pruning as a minor reversible lookup-churn
+  cleanup, not an M4 responsiveness fix; do not promote hwcaps masking or
+  `LD_LIBRARY_PATH` reorder, libimobiledevice/crypto-chain trimming, or
+  NewStuff by default as an N8 responsiveness fix yet. LD path-last may stay a
+  future minor lookup-churn
+  cleanup candidate only after stronger repeat/control, but current evidence
+  says the M4 bottleneck is dynamic-loader relocation + lookup/hash proper,
+  Qt/KF5/QML/KIO or Konsole-private contributors, not XDG, hwcaps, simple
+  mmap/open/`/opt` path search, or the libimobiledevice crypto chain.
+  Static scout decision: Konsole direct closure is ~134 objects, ~227,504
+  relocations, and ~43,056 undefined dynsyms; top contributors include
+  libQt5Widgets ~23,205, libQt5Quick ~20,618, libgallium ~18,275, libcrypto
+  ~18,081, libQt5Qml ~12,089, libKF5KIOWidgets ~5,370,
+  libkonsoleprivate ~4,833, libQt5Multimedia ~3,485, and libKF5Solid ~3,488.
+  NewStuff remains an opt-in promotion candidate only after initial + repeat
+  A/B: real NewStuff maps were replaced by shim maps with the exact 8-symbol
+  KNS/KNSCore surface, warm improvement repeated but smaller, cold was mixed,
+  and openat/ENOENT worsened. Review also found the env-armed C gate is
+  probe-wide and the ABI risk was not call-covered. QtMM is a cleaner gated
+  scratch opt-in: `KDE_APP_LAUNCH_PROBE_QTMM_STUB=1` scopes the shim
+  `LD_LIBRARY_PATH` to the forked Konsole child/process subtree, leaves the
+  parent `LD_LIBRARY_PATH` and sibling apps untouched, and has no persistent
+  default/rootfs LD path when absent. Its A/B replaced real Qt5Multimedia/Pulse
+  maps with the six-symbol shim for Konsole direct-launch, direct time improved
+  by -803ms cold / -303ms warm, `kprofile_timeout_hit=0`, and real KVM +
+  virgl GL held. Do not default-promote it yet: the shim is `/tmp`-only, map
+  snapshots are capped, final post-teardown call logs are missing, and
+  load-only coverage is not call-safe.
+  KIO direct edge is entangled/no-go; Solid/crypto no-go follows the prior
+  libimobiledevice shim result; Gallium/GL no-go because real GL is mandatory.
+  Next N8 action is to convert QtMM to a repo-reproducible opt-in fixture,
+  then repeat/control with full maps and final call-log before active-sample,
+  durable, or default consideration; keep NewStuff as the weaker/mixed opt-in
+  candidate.
+  No glibc/ELF-loader surgery or default flips; keep
+  kprofile, KVM + virgl real GL, and no software fallback as validation gates.
+  Do not spend the next branch on generic GPU/hover/syscall work unless a
+  guardrail fails. Mouse/cursor follow-up does not change this: next action is
+  still kprofile-driven Konsole/app-launch responsiveness with KVM + virgl
+  real GL; manual/user inspection can relaunch via
+  `scripts/launch/launch-gui.sh` using guest cursor defaults. No commit/push
+  yet.
+- Background N8 proofs still relevant for context: clean `LD_BIND_NOW` direct
+  replay
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260706T231950Z-n8-ld-bind-now-off-clean-startup-direct-launch-kprofile`
+  superseded the stale-startup-contaminated
+  `20260706T225715Z-n8-ld-bind-now-off-direct-launch-kprofile`; attribution
+  fix proof remains
+  `build-x86_64/kde-plasma-desktop-smoke-history/20260706T182619Z-n8-exec-opened-path-userpc-maps-validation/`;
+  clock-domain proof remains
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-clock-domain-uptime-20260706-1538`.
+  Existing commit-hygiene caveat:
+  `scripts/image/konsole-wayland-event-trace-preload.c` is currently
+  untracked, so later commit hygiene must account for it before relying on
+  CMake/rootfs dependencies in a commit.
+- Retired/background N8 evidence, including older artifacts, raw tables,
+  flaky/failed attempts, reducer details, and raw attribution rows, belongs in
+  the history file and archived proof directories, not this live plan.
+
+## Work Order — Current Queue (recut 2026-07-07 addendum)
 
 The 07-03 Q1-Q7 queue is RETIRED: Q1 landed, Q2 runtime-validated (real
-GL), Q5 root-caused+fixed, Q7 landed. New queue:
+GL), Q5 root-caused+fixed, Q7 landed. New queue; current next action is
+N8:
+
+- N8 = Linux-like Plasma responsiveness (CURRENT NEXT ACTION,
+  kprofile-driven): current branch starts from the full desktop-interaction
+  PASS
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000224Z-n8-guest-input-full-interaction-kprofile`
+  plus the Chromium M9 real-GL guard PASS
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T000512Z-n8-m9-chromium-launch-only-real-gl`.
+  Bounded guest input, hover, app launch, clean `LD_BIND_NOW` absence, userpc
+  no-drop storage, KVM + virgl real GL, and no lingering QEMU are proven.
+  XDG path pruning is accepted only as minor reversible lookup-churn cleanup:
+  its A/B experiment delta is XDG-defaults-only relative to the pre-edit
+  control, while the wider dirty helper/harness files still include prior N8
+  edits. It reduced ENOENT/local/default-settings misses but did not move
+  `konsole_wait_ms` beyond noise, and loader share stayed ~43-46%. The pruned
+  archive now includes post-verifier static/rootfs/no-lingering-QEMU evidence.
+  Completed measurement-only hwcaps/`LD_LIBRARY_PATH` matrix was
+  no-go/no-promotion: hwcaps masking did not help, LD path-last cut lookup
+  churn but did not produce a stable M4 win, and loader remained the top
+  module. Offline loader-category attribution now says relocation plus
+  lookup/hash proper dominate, while mmap/open/path search is secondary.
+  Libimobiledevice no-device shim A/B was also no-go/no-promotion: ABI surface
+  was exactly 10 imported `Base` symbols, the temporary shim removed
+  libssl/libcrypto from Konsole direct-launch maps, but cold readiness
+  worsened and warm stayed flat. Do not pursue libimobiledevice/crypto-chain
+  trimming as an M4 fix unless new evidence appears. NewStuff opt-in initial +
+  repeat A/B are complete, no default flip: the gate is
+  `KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB=1`, direct Konsole ABI surface is exactly
+  8 KNS/KNSCore imports from `libkonsoleprivate.so.1`, real NewStuff maps were
+  replaced by shim maps, and real GL held. Initial warm
+  wait/prompt/direct/kprofile moved 1914/2131/3153/2541 ->
+  1403/1642/2363/1968; repeat control/stub archives are
+  `20260707T031947Z-n8-newstuff-repeat-control-direct-launch-kprofile` and
+  `20260707T032139Z-n8-newstuff-repeat-stub-direct-launch-kprofile`, with warm
+  1414/1674/2551/2049 -> 1297/1547/2396/1823 but mixed cold
+  1776/1995/2710/2220 -> 1747/1857/2847/2209 and worse openat/ENOENT.
+  Review found env-absent paths default-safe/no persistent rootfs effect, but
+  the env-armed C gate is probe-wide while the harness scopes it to
+  Konsole-only direct-launch; ABI risk remains uncalled because the shim call
+  log is absent/absent-expected. Treat NewStuff as opt-in candidate only, not a
+  durable/default promotion. Qt5Multimedia review conclusion: keep as gated
+  scratch opt-in; no-go/revert is not warranted, but adjust before stronger
+  validation or promotion. `KDE_APP_LAUNCH_PROBE_QTMM_STUB=1` is cleaner than
+  NewStuff because the shim `LD_LIBRARY_PATH` is scoped to the forked Konsole
+  child/subtree; parent `LD_LIBRARY_PATH` is unchanged; terminal, dolphin,
+  kate, kwrite, and chromium siblings do not inherit it; Chromium-only/sample
+  paths return earlier; env-absent default/rootfs paths are clean; and staging
+  writes only the temp image.
+  Startup `LD_BIND_NOW` removal is unrelated/default no-shim. A/B archives
+  `20260707T035129Z-qtmm-control-direct-launch-kprofile` and
+  `20260707T035327Z-qtmm-stub-direct-launch-kprofile` show cold/warm direct
+  deltas -803ms/-303ms, timeout 0, real GL held, and load-only ABI proof for
+  the six observed QMedia imports. Not durable/default yet: shim source/build
+  is still `/tmp` only, repo-owned source/version script and reproducible
+  build/stage are missing, maps are capped, final post-teardown call log is
+  missing, and fake `QMediaPlayer`/`QMediaContent` state makes later media,
+  `deleteLater`, or signal-slot paths high-risk/no-go. Next N8 action is to
+  convert QtMM into a repo-reproducible opt-in fixture and repeat/control with
+  full maps proving Qt5Multimedia/libpulse/tail absence in stub and real
+  presence in control plus final call-log before broader active-sample or
+  durable consideration; keep NewStuff as the weaker/mixed opt-in. KIO is
+  entangled, Solid/crypto no-go by prior shim, and Gallium/GL no-go because
+  real GL is mandatory. Do not do glibc or ELF-loader surgery or default flips
+  next; boot only to validate a concrete change. Acceptance loop: every
+  responsiveness iteration/fix/trace uses kprofile, preserves durable raw logs
+  and app/hover proof as relevant, requires app probe PASS,
+  `kprofile_timeout_hit=0`, virgl renderer/no software fallback, user-PC
+  samples without drops when collected, maps/module attribution when relevant,
+  and no regression of `cpu_busy/total_ms`, `pgroup_cpu_runtime_ms`, R5/R3
+  watches, or GPU fallback rejection. Keep `poll_stuck_trace=1`
+  diagnostic-only unless collecting stuck-poller evidence. No commit/push yet.
 
 - N1 = M7 present path (P2 step 3): the last M7 blocker. All flips are
   software_blit copies. Decision slice result 2026-07-04: route (a) is
@@ -319,6 +957,18 @@ GL), Q5 root-caused+fixed, Q7 landed. New queue:
   `build-x86_64/kde-plasma-desktop-smoke-history/20260704T210241Z-r9-visible-desktop-interaction-pass`
   and
   `build-x86_64/kde-plasma-desktop-smoke-history/20260704T205909Z-r9-visible-chromium-launch-only-pass`.
+  2026-07-07 follow-up proof
+  `/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-history/20260707T005222Z-n3-guest-mouseinject-kprofile-proof`
+  validated the normal KDE desktop-interaction reducers in
+  `scripts/gpu/kde-plasma-desktop-smoke.expect`: forced guest input,
+  disabled monitor path/host cursor sync, guest cursor mode, diagnostic-only
+  HMP movement, and pre-hover settle (3000ms plus 3 stable framebuffer
+  samples). PASS proof included KVM + virgl real GL/no software fallback,
+  bounded pointer frame/work area, `/bin/mouseinject 11016 64223 0`, hover
+  `status=changed first_changed_ms=986`, app launch PASS with
+  `konsole_wait_ms=1508`, `kprofile_timeout_hit=0`, userpc stored=602
+  dropped=0, no lingering QEMU, and clean diff check. N8 remains limited by
+  Konsole/app-launch readiness and loader work, not mouse bounds.
   Remaining N3 work is the later/secondary KWin LibinputBackend nullptr
   payload unless a startup/input crash reproduces under the visible probe.
 - N4 = P1 steps 2c/2d (cpumask atomics skip, CR0.TS shadow) for M2 <1.5us:
@@ -583,26 +1233,19 @@ kernel_preempt=0, console_async=0.
 clusters gone; residual periodic ~200-400ms pairs on rcu_cb/0 +
 tty_input, follow-up: FIFO-class placement has no idle-pull;
 open item). BUT the USER reports 'improvement is not obvious' for the
-seconds-scale hover/tooltip/menu latency — with every kernel path now
-measured at ms scale, the seconds are manufactured ABOVE the kernel.
-ACTIVE HYPOTHESIS (matches ghost-stale-frame corruption exactly):
-KWin's frame clock gets broken timing inputs from our DRM layer —
-page-flip events complete INSTANTLY in the ioctl with synthetic
-predicted-vblank timestamps (fb_kms_atomic.c:380-440,
-gpu_kms_monotonic_ns = raw TSC ns which may not match userspace
-CLOCK_MONOTONIC domain; DRM_CAP_TIMESTAMP_MONOTONIC claim unverified),
-and scanout may lag reported flips by many frames via the virtio
-present path (buffer-age lies -> ghost partial composites). Audit in
-flight; deliverable = defect ranking + fix directions + one-boot
-confirmation experiment.
-GPU/fence/input chains were verified healthy first (owner-trace
-retire 60s->2-13ms after e84e243+d32209f) — interactive latency
-remaining after those fixes is THIS lane.
-Recommended execution order: (1) N1 IMPLEMENTATION slice (op_lock/
-make-room fix + ring depth; attribution DONE, see entry); (2) N5 poll
-fast-path promotion battery (92% churn collapse proven; M8 payoff
-expected); (3) N7 tick-loss fix; (4) N6 DONE; (5) N2 retry ONLY after its fault
-diagnosis gate; (6) N3 residual LibinputBackend nullptr; (7) a NEW P1
+seconds-scale hover/tooltip/menu latency.
+2026-07-06 KPROFILE REFINEMENT: after QtQuick GL fallback rejection,
+active visibility sampling, and prompt-safe `poll-stuck:` gating, the
+corrected kprofile artifacts identify the current user-visible bottleneck
+as Konsole shell readiness/app-launch wait, especially pre-PTY
+poll/ppoll waits. The earlier DRM/frame-clock/ghost-frame idea remains a
+parked visual-cadence suspicion, not the active top bottleneck. GPU/fence/
+input chains remain guardrails, and no native-present credit is implied.
+Recommended execution order: (1) N8 Linux-like Plasma responsiveness
+(Konsole/poll readiness, kprofile-driven); (2) N1 M7 present-path work
+only if the video/FPS lane is resumed; (3) N5/M8 idle payoff after the
+responsiveness bottleneck is reduced; (4) N2 retry ONLY after its fault
+diagnosis gate; (5) N3 residual LibinputBackend nullptr; (6) a NEW P1
 approach for M2 <1.5us (N4 cpumask/CR0.TS is dead: the cpumask half
 stalls forktest, CR0-only missed targets — do not re-apply the saved
 patches; find a different cost).
@@ -1078,6 +1721,18 @@ the KWin LibinputBackend nullptr payload here as later/secondary unless this
 probe reproduces a startup/input crash. Do not reopen image injection, seat
 plumbing, or kernel signed-16 storage without new contradictory evidence.
 
+Follow-up 2026-07-06: user visual inspection still saw the cursor leave the
+VM window, so the prior guest-input/visible probes were not sufficient for
+normal desktop-interaction acceptance. The smoke harness now forces bounded
+guest `/bin/mouseinject` against the settled framebuffer/workarea, disables
+normal monitor/host cursor sync, and keeps monitor diagnostics opt-in only.
+Focused KVM+virgl real-GL/no-software-fallback validation PASS:
+`/home/es/xv6-os/build-x86_64/kde-plasma-desktop-smoke-guest-input-20260706.tar.gz`
+with `input_source=guest`, `cursor_owner=guest-forced-normal-interaction`,
+`monitor_path=disabled`, `host_cursor_sync_enabled=0`, `pointer-bounds PASS`,
+bounded guest pixel coordinates, `/bin/mouseinject` command proof, and
+`host_cursor_sync_ms=0`. No commit/push yet.
+
 ## Verification Gates
 
 - Static: `git diff --check` in every repo level.
@@ -1115,6 +1770,13 @@ plumbing, or kernel signed-16 storage without new contradictory evidence.
   real-GL evidence, N2 diagnostics, N3 R9 cursor/visible evidence, and the
   robust P1 nographic archive. Top/kernel/user/ports/mesa were clean after
   cleanup.
+- Cleanup note 2026-07-07: removed 56 files and 25 dirs, reclaiming
+  493,419,025,760 bytes (~459.6 GiB). Preserved `build-x86_64/fs.img`,
+  `build-x86_64/kde-plasma-desktop-smoke/kde-plasma.fs.img`,
+  `rootfs-generated-overlays`, `host-gui-runtime`, `kde-noble-plasma`, current
+  20260707 proof dirs/logs/screenshots, and named evidence dirs. Old history
+  scratch images and extra mouseinject `.fs.img` files are gone; no tracked
+  source `D` entries.
 - `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md` —
   full pre-compaction plans (2026-07-02 and 2026-07-04 snapshots) with
   every evidence chain.
