@@ -72,6 +72,7 @@ set(_rootfs_image_sources
 			${CMAKE_SOURCE_DIR}/scripts/image/xv6-ifunc-memcpy-shim.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-qtqml-ifunc-startup-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kwin-alloc-trace-preload.c
+			${CMAKE_SOURCE_DIR}/scripts/image/konsole-wayland-event-trace-preload.c
 			${CMAKE_SOURCE_DIR}/scripts/image/wayland-chromium-launcher.c
 			${CMAKE_SOURCE_DIR}/scripts/image/xv6-login1-shim.c
 			${CMAKE_SOURCE_DIR}/scripts/image/xv6-bluez-shim.c

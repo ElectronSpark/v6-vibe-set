@@ -1,0 +1,10 @@
+Qt_5 {
+    global:
+        _ZN12QMediaPlayer4playEv;
+        _ZN13QMediaContentC1Ev;
+        _ZN12QMediaPlayer8setMediaERK13QMediaContentP9QIODevice;
+        _ZN13QMediaContentD1Ev;
+        _ZN12QMediaPlayerC1EP7QObject6QFlagsINS_4FlagEE;
+        _ZNK12QMediaPlayer11mediaStreamEv;
+    local: *;
+};

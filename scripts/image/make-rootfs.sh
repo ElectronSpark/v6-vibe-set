@@ -977,6 +977,15 @@ EOF
             -o "${dir}/kwin-alloc-trace-preload.so" \
             "${REPO_ROOT}/scripts/image/kwin-alloc-trace-preload.c" -ldl
     fi
+    if [[ -f "${REPO_ROOT}/scripts/image/konsole-wayland-event-trace-preload.c" ]]; then
+        if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+            echo "make-rootfs: ${cc_bin} not found; cannot build Konsole Wayland event trace preload" >&2
+            exit 1
+        fi
+        "${cc_bin}" -O2 -Wall -Wextra -fPIC -shared \
+            -o "${dir}/konsole-wayland-event-trace-preload.so" \
+            "${REPO_ROOT}/scripts/image/konsole-wayland-event-trace-preload.c" -ldl
+    fi
 }
 
 stage_kde_session_launchers() {
@@ -1015,6 +1024,8 @@ stage_kde_session_launchers() {
         "${STAGE}/bin/kde-unix-socket-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/poll-notify-probe.c" \
         "${STAGE}/bin/poll-notify-probe"
+    stage_plain_image_program "${REPO_ROOT}/scripts/image/qprocess-sigchld-pipe-reducer.c" \
+        "${STAGE}/bin/qprocess-sigchld-pipe-reducer"
     stage_kde_wayland_seat_probe
     stage_kde_wayland_registry_probe
     stage_kde_drm_probe

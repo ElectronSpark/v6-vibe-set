@@ -42,9 +42,9 @@ static void set_kde_env(void)
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
     setenv("XDG_DATA_HOME", "/dev/shm/kde-data", 1);
     setenv("XDG_STATE_HOME", "/dev/shm/kde-state", 1);
-    setenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share:/share", 1);
+    setenv("XDG_DATA_DIRS", "/usr/share:/share", 1);
     setenv("XDG_CONFIG_DIRS",
-           "/etc/xdg:/usr/share/kubuntu-default-settings/kf5-settings", 1);
+           "/etc/xdg", 1);
     setenv("XDG_CURRENT_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_TYPE", "wayland", 1);

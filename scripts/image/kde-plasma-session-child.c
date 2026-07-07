@@ -767,8 +767,8 @@ static void set_kde_env(void)
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
     setenv("XDG_DATA_HOME", "/dev/shm/kde-data", 1);
     setenv("XDG_STATE_HOME", "/dev/shm/kde-state", 1);
-    setenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share:/share", 1);
-    setenv("XDG_CONFIG_DIRS", "/etc/xdg:/usr/share/kubuntu-default-settings/kf5-settings", 1);
+    setenv("XDG_DATA_DIRS", "/usr/share:/share", 1);
+    setenv("XDG_CONFIG_DIRS", "/etc/xdg", 1);
     setenv("XDG_CURRENT_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_TYPE", "wayland", 1);
@@ -781,6 +781,10 @@ static void set_kde_env(void)
     setenv("KWIN_COMPOSE", "O2ES", 1);
     setenv("KWIN_OPENGL_INTERFACE", "egl", 1);
     setenv("QT_QPA_PLATFORM", "wayland", 1);
+    setenv("EGL_PLATFORM", "wayland", 1);
+    setenv("QT_WAYLAND_CLIENT_BUFFER_INTEGRATION", "wayland-egl", 1);
+    setenv("QSG_RHI_BACKEND", "opengl", 1);
+    setenv("QSG_INFO", "1", 0);
     setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:abstract=xv6_system_bus", 0);
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=xv6_session_bus", 0);
     setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1);
@@ -795,12 +799,24 @@ static void set_kde_env(void)
            0);
     setenv("LIBGL_DRIVERS_PATH", "/lib/dri:/usr/lib/x86_64-linux-gnu/dri", 1);
     setenv("GBM_BACKENDS_PATH", "/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm", 1);
+    setenv("LIBGL_ALWAYS_SOFTWARE", "0", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "virtio_gpu", 0);
     setenv("GALLIUM_DRIVER", "virgl", 0);
     setenv("PIPEWIRE_RUNTIME_DIR", "/dev/shm/xdg-runtime-root", 1);
     setenv("PIPEWIRE_NO_RT", "1", 1);
     setenv("PULSE_COOKIE", "/dev/shm/kde-config/pulse/cookie", 1);
     setenv("PULSE_SERVER", "unix:/dev/shm/xdg-runtime-root/pulse/native", 1);
+    fprintf(stderr,
+            "kde-plasma-session-child: graphics EGL_PLATFORM=%s "
+            "QT_WAYLAND_CLIENT_BUFFER_INTEGRATION=%s QSG_RHI_BACKEND=%s "
+            "LIBGL_ALWAYS_SOFTWARE=%s MESA_LOADER_DRIVER_OVERRIDE=%s "
+            "GALLIUM_DRIVER=%s\n",
+            env_or_unset("EGL_PLATFORM"),
+            env_or_unset("QT_WAYLAND_CLIENT_BUFFER_INTEGRATION"),
+            env_or_unset("QSG_RHI_BACKEND"),
+            env_or_unset("LIBGL_ALWAYS_SOFTWARE"),
+            env_or_unset("MESA_LOADER_DRIVER_OVERRIDE"),
+            env_or_unset("GALLIUM_DRIVER"));
     seed_pulse_cookie();
 }
 
@@ -831,12 +847,17 @@ int main(void)
         "KWIN_COMPOSE",
         "KWIN_OPENGL_INTERFACE",
         "QT_QPA_PLATFORM",
+        "EGL_PLATFORM",
+        "QT_WAYLAND_CLIENT_BUFFER_INTEGRATION",
+        "QSG_RHI_BACKEND",
+        "QSG_INFO",
         "DBUS_SYSTEM_BUS_ADDRESS",
         "DBUS_SESSION_BUS_ADDRESS",
         "PATH",
         "LD_LIBRARY_PATH",
         "LIBGL_DRIVERS_PATH",
         "GBM_BACKENDS_PATH",
+        "LIBGL_ALWAYS_SOFTWARE",
         "MESA_LOADER_DRIVER_OVERRIDE",
         "GALLIUM_DRIVER",
         "PIPEWIRE_RUNTIME_DIR",

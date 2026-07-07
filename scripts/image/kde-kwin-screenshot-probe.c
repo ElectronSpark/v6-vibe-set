@@ -321,7 +321,7 @@ int main(void)
     if (!getenv("DBUS_SESSION_BUS_ADDRESS"))
         setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=xv6_session_bus", 1);
     if (!getenv("XDG_DATA_DIRS"))
-        setenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share:/share", 1);
+        setenv("XDG_DATA_DIRS", "/usr/share:/share", 1);
 
     bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
     if (!bus) {

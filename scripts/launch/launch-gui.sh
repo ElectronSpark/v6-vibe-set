@@ -14,10 +14,13 @@ FSIMG="${FSIMG:-${BUILD_DIR}/fs.img}"
 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
 QEMU_GPU="${QEMU_GPU:-virtio-vga-gl-primary}"
 QEMU_APPEND="${QEMU_APPEND:-root=/dev/disk0 netsurf=0 webkit=0}"
+QEMU_GTK_CURSOR_MODE="${QEMU_GTK_CURSOR_MODE:-guest}"
+QEMU_GTK_SHOW_CURSOR="${QEMU_GTK_SHOW_CURSOR:-off}"
 AUTO_BUILD="${AUTO_BUILD:-0}"
 export DISPLAY_MODE
 export QEMU_GPU
 export QEMU_APPEND
+export QEMU_GTK_CURSOR_MODE QEMU_GTK_SHOW_CURSOR
 
 newer_than_fsimg() {
     local path

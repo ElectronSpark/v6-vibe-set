@@ -570,8 +570,8 @@ static void set_kde_env(void)
     setenv("XDG_CONFIG_HOME", "/dev/shm/kde-config", 1);
     setenv("XDG_DATA_HOME", "/dev/shm/kde-data", 1);
     setenv("XDG_STATE_HOME", "/dev/shm/kde-state", 1);
-    setenv("XDG_DATA_DIRS", "/usr/local/share:/usr/share:/share", 1);
-    setenv("XDG_CONFIG_DIRS", "/etc/xdg:/usr/share/kubuntu-default-settings/kf5-settings", 1);
+    setenv("XDG_DATA_DIRS", "/usr/share:/share", 1);
+    setenv("XDG_CONFIG_DIRS", "/etc/xdg", 1);
     setenv("XDG_CURRENT_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_DESKTOP", "KDE", 1);
     setenv("XDG_SESSION_TYPE", "wayland", 1);
@@ -599,6 +599,7 @@ static void set_kde_env(void)
            0);
     setenv("LIBGL_DRIVERS_PATH", "/lib/dri:/usr/lib/x86_64-linux-gnu/dri", 1);
     setenv("GBM_BACKENDS_PATH", "/lib/gbm:/usr/lib/x86_64-linux-gnu/gbm", 1);
+    setenv("LIBGL_ALWAYS_SOFTWARE", "0", 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "virtio_gpu", 0);
     setenv("GALLIUM_DRIVER", "virgl", 0);
     setenv("PULSE_COOKIE", "/dev/shm/kde-config/pulse/cookie", 1);
