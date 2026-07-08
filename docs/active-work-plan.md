@@ -734,8 +734,33 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   sync budget / irq_wait_ms tiering) is the only salvageable piece and is
   ORTHOGONAL — it also bounds a stuck workqueue present, so do (b) as a general
   robustness fix decoupled from unlocked-wait. M7=51.
-- U8 (M8, deferred): idle-cadence payoff measurement on a GL boot; N5
-  poll-notify full-wait gates are default-ON after the evdev fix.
+- U8 (M8) — MEASURED 2026-07-08 (FIRST VALID reading; GOAL MET, large
+  margin): idle-desktop host-CPU on a real-GL boot with the N5 poll-notify
+  full-wait gates default-ON (evdev fix). Recipe: `launch-gui.sh USE_KVM=1
+  QEMU_GPU=virtio-vga-gl-primary` (detached, serial captured). Validity gates
+  all green: real virgl via WSL D3D12 (NVIDIA) — virgl capsets ready, virgl
+  3D scanout, renderD128 = "virgl render node OpenGL", 0 llvmpipe/swrast;
+  presentation ACTIVE (8 `virtio_gpu: page-flip present` lines — boot/settle
+  burst then a t=80s burst; kwin 5.27 is repaint-on-damage so a fully static
+  idle screen then stops flipping, which is the genuine idle condition);
+  session-ready `KWin and plasmashell are running`; 0 crash markers; booted
+  cmdline has 0 N5 opt-out tokens (poll_notify_full_wait / af_unix_...=0),
+  confirming both gates ON. METHOD: `/proc/<qemu-pid>/stat` utime+stime delta
+  over three consecutive 10s windows, CPU%=delta_ticks/(10*CLK_TCK)*100,
+  CLK_TCK=100. READINGS: 13.7% / 13.6% / 13.9%, MEAN 13.7%. Cross-check: a
+  4th window's process-stat delta (13.1%) equals the sum of all 31
+  per-thread deltas (13.2%) — /proc/PID/stat correctly aggregates the 6 vCPU
+  threads, so 13.7% is directly comparable to the historical thread-summed
+  85-130% band. ps lifetime pcpu 24.6% (amortizes the boot+settle spike;
+  instantaneous idle ~13-14%). VERDICT vs GOAL <100%: PASS with wide margin;
+  vs historical 85-130% band: FAR BELOW — this is the N5 payoff (idle no
+  longer busy-spins poll rescans; vCPUs halt at idle). 1 boot, clean
+  shutdown, no lingering qemu. Archive:
+  `kde-plasma-desktop-smoke-history/20260708T201747Z-u8-m8-idle-cpu-gl/`
+  (run.log, gl-presentation-proof.txt, m8-readings.txt, debugcon.log,
+  qemu-proc-stat-final.txt). NOTE: the 07-05 44%/57-64% readings are
+  superseded — they were non-GL boots that never presented; this is the
+  first reading on a GL boot with confirmed active presentation.
 - U9 (N2, blocked): ext4 direct-read default promotion — needs the kernel
   page-fault diagnosis (cr2=0x1aafdd193 into _rodata) explained first.
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
@@ -762,8 +787,12 @@ tests; guest matrix pending drmiftest validator refresh — enumerated).
 U6 DONE (H2: two pre-existing umount/mount bugs found+fixed by the
 reducer; dcache substrate correct). U7 CLOSED-SUPERSEDED by async-present
 (id-0-withheld convoy now bounded to one deferred event; per-context sync
-budget survives as orthogonal robustness item). U8-U11 parked per recorded
-conditions. U12 (push, ~9 commits ahead) awaits explicit user approval.
+budget survives as orthogonal robustness item). U8 DONE-measured 2026-07-08:
+M8 idle host CPU = 13.7% mean on a real-GL boot with N5 gates default-ON
+(first VALID reading; goal <100% MET with wide margin; far below the 85-130%
+historical band = the N5 poll-notify full-wait payoff). U9-U11 parked per
+recorded conditions. U12 (push, ~9 commits ahead) awaits explicit user
+approval.
 
 ## Landed opt-in gates (all default-OFF unless noted)
 
@@ -859,7 +888,7 @@ conditions. U12 (push, ~9 commits ahead) awaits explicit user approval.
 | M5 | first_visible_ms | ~6.2-6.6s (clean guiperf N=4) | <15000 |
 | M6 | mesakmsgl FPS | 118-125 (ordered default); ~60 by design under vblank-paced gate | done |
 | M7 | presentedFPS | 51.0 | >=55 (U7) |
-| M8 | idle host CPU | unmeasured-valid | <100% (U8) |
+| M8 | idle host CPU | 13.7% mean (13.7/13.6/13.9, 3x10s /proc/stat delta) on a real-GL boot, N5 gates default-ON — FIRST VALID reading 2026-07-08 (U8); far below the 85-130% historical band = N5 poll-notify payoff | <100% (MET) |
 | M9 | Chromium visible | PASS guard | hold |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: forktest (rc=1
