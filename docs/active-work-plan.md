@@ -549,6 +549,156 @@ were off-target. Redirects+unifies N1/M7/R9/M4 into ONE lane: the guest
 virtio-gpu DRM present+cursor path. No commit/push beyond the 3 landed, no
 default flips.
 
+2026-07-07 PRESENT-CLOCK LANE DIAGNOSIS COMPLETE (opus worker, 1 boot,
+fs.img restored, no lingering qemu, real GL held: kwin recovered to virgl
+D3D12 on its 3rd output attempt). Q1a GBM/EGL fail chain: TRANSIENT
+first-attempt failure, recovers on retry -- root cause is `drmGetDevice2`
+returning no device info (node=-1; xv6 DRM node exposes no PCI/sysfs
+topology), so Mesa uses a fragile metadata-less fallback (local mesa patch,
+driver name `virtio_gpu` at kernel fb_drm_core_kms.c:617) that loses a
+readiness race on attempt 1-2. DRM ioctl surface is NOT the gap (GET_CAP
+incl DUMB/PRIME/atomic fb_drm_core_kms.c:694, CREATE/MAP/DESTROY_DUMB
+fb_drm_dispatch.c:670, PRIME :518, ADDFB2+modifiers). Fix = provide
+drmGetDevice2 metadata (PCI bus/vendor/device) for card0. Q1b atomic-disable:
+image kwin is 5.27.11; `isVirtualMachine()` driver-name match disables AMS
+UNCONDITIONALLY in 5.27 (the CURSOR_PLANE_HOTSPOT-cap rescue is 6.x-only;
+NO force-atomic env exists in 5.27) -- while the kernel ALREADY accepts the
+hotspot cap (drm_core.c:148, commit 1c2113c), exposes PRIMARY+CURSOR planes
+(fb_drm_core_kms.c:360-362), delivers hotspot (fb_drm_kms_properties.c:475),
+advertises DRM_CLIENT_CAP_ATOMIC (drm_core.c:145). So atomic is unreachable
+on kwin 5.27 regardless; ALSO the kernel atomic path queues NO
+DRM_MODE_PAGE_FLIP_EVENT (fb_kms_atomic.c:441-689) while legacy does
+(:388-434) -- must be fixed before atomic is ever viable. Q2 TRACE VERDICT:
+SCHEDULE-DOMINATED. kwin (legacy path confirmed: 32 PAGEFLIP, 26 CURSOR, 0
+ATOMIC ioctls) has per-present cost only 0.4-1.7ms damage / 5-27ms full,
+but inter-repaint idle gaps 30-530ms (2-32 vblanks) exactly when new
+surfaces appear; legacy flip-complete is delivered SYNCHRONOUSLY in the
+ioctl with a grid-snapped <=16ms-stale timestamp (fb_kms_atomic.c:403-434),
+so RenderLoop free-runs with no real phase. BONUS AMPLIFIER: CURSOR ioctls
+block up to 32ms (synchronous virtio_gpu_user_set_cursor) = direct hover
+latency. IMPLEMENTATION SLICES (ordered): (1) pace legacy flip-complete
+events to the synthetic-vblank edge (defer queue+notify to the next 60Hz
+tick using existing gpu_kms_vblank_period_ns fb_drm_core_kms.c:1071,
+gpu_kms_sample_vblank_locked :1274, gpu_drm_event_queue_locked/notify_read
+:1194/:1164 + a periodic flush) => real phase-accurate present clock for
+kwin RenderLoop; GATED default-off, then A/B konsole_wait_ms + frame-callback
+latency. (2) add PAGE_FLIP_EVENT queuing to gpu_drm_mode_atomic (mirror
+:388-434) -- contained, unblocks future kwin 6.x atomic. (3) async cursor
+updates so MODE_CURSOR/CURSOR2 never block 32ms => hover latency win.
+Start slice 1. No commit/push beyond the 4 landed, no default flips.
+SLICE 1 IMPLEMENTED + REVIEWED (2026-07-07, kernel working tree,
+UNCOMMITTED): gate `virtio_gpu_vblank_paced_flip` DEFAULT OFF; legacy
+DRM_MODE_PAGE_FLIP_EVENT delivery deferred to the next synthetic-vblank
+edge via sched_timer -> workqueue callback (kthread context; fb_state.lock
+spinlock-safe); event carries phase-accurate edge seq/ts; flip work itself
+unchanged; kvmalloc/arm-failure paths fall back to synchronous delivery;
+counters kms_flips_paced_total / kms_paced_delay_us_total /
+kms_paced_dropped_total APPENDED at end of fb_gpu_stats (append-only ABI).
+Adversarial review = GO: UAF-free teardown (owner re-resolved by monotonic
+id under fb_state.lock; gpu_fops_release clears drm_event_file + drains
+before kvfree), timer arm atomic (no double-delivery), no interaction with
+ordered-pageflip, timestamps monotonic, gate-off byte-identical runtime.
+Review fixes applied: F2 stats fields moved to struct END (mid-struct
+insertion would have overflowed the OLD in-image fbstat by 24 bytes on
+copyout and shifted all later offsets); F1 kms_paced_dropped_total on the
+(unreachable-today) drop paths since one silent lost flip-complete =
+permanently frozen kwin (sched_timer queue_work-failure drop documented,
+sched_timer.c untouched). Nographic boot-check PASS both gate states.
+STALE-BINARY HAZARD NOTED: FB_GPU_GET_STATS copies out sizeof(kernel
+struct) unconditionally (fb_device_ioctl.c:2530) -> the appended fields
+still write 24 bytes past OLD guest binaries in plain-stats mode; the
+direct-launch reducer is SAFE (fbstat sample-current dispatches at
+main():1051 BEFORE the GET_STATS call :1097; capture_fbstat_stats not
+invoked in direct-launch-only), but VIDEO-lane reducers call plain fbstat
+(capture_fbstat_stats :15036/:17480) -> REBUILD user tools + refresh image
+before any fbstat-stats-based lane runs on this kernel. KDE A/B in flight:
+control vs QEMU_APPEND_EXTRA=virtio_gpu_vblank_paced_flip=1, comparing
+konsole_wait_ms + run.log page-flip cadence (engagement proof: paced =>
+vsync-spaced flips) + crash greps; M6 under gate reads ~60 by design.
+SLICE 1 VERDICT (traced A/B, 2 boots, fs.img restored, no lingering qemu)
+= MECHANISM WORKS, NOT A RESPONSIVENESS WIN, VERDICT (ii). ENGAGEMENT
+UNAMBIGUOUS: all kwin flips carry DRM_MODE_PAGE_FLIP_EVENT (flags=0x1);
+gate ON submit->event-read median 17016us with 25/28 in 16336-17771us =
+exactly one synthetic vblank (gate OFF: ~9.6ms); kwin provably gates its
+flip pipeline on the event (event-read -> next flip submit in 445-518us);
+burst cadence quantized to ~one-vblank+repaint. EFFECT ON GAPS: NONE --
+inter-flip gap median 91.2ms OFF vs 94.2ms ON, >300ms gaps 9/31 vs 8/27,
+multi-second idles persist BOTH arms. ROOT INSIGHT: the 30ms-10s gaps are
+DAMAGE-ARRIVAL gaps (kwin idles because no client committed anything), not
+a missing kwin clock; kwin 5.27 legacy RenderLoop = repaint-on-damage,
+flip-event-gated under continuous damage. konsole_wait: paced arm cold
+slightly better / WARM consistently ~+250ms WORSE across both A/Bs --
+mechanistically plausible cost (+7ms/round-trip event delay x tens of
+launch round trips). DECISION: keep `virtio_gpu_vblank_paced_flip` as
+OPT-IN vsync-semantics infrastructure (correct paced cadence, may matter
+for M7/tearing), DO NOT promote (no first-frame win + small warm cost).
+NEXT LEVERS (from the same traces): (a) client-side commit latency after
+frame-callback receipt (konsole side; co-enable client+kwin traces in one
+boot to split); (b) ASYNC CURSOR = highest-confidence kernel win -- CURSOR
+ioctl blocks the kwin compositor thread 17-36ms in EVERY traced run (30.7/
+35.7/17.0/32.3ms across 3 sessions; synchronous virtio_gpu_user_set_cursor)
+=> slice 3 now promoted to CURRENT ACTION, direct hover-latency lever;
+(c) plugin/imageformats prune still queued (~70-100ms dlopen). No
+commit/push, no default flips; slice-1 kernel diff stays uncommitted
+pending the lane's consolidated landing decision.
+SLICE 3 (ASYNC CURSOR) IMPLEMENTED + REVIEWED GO (2026-07-08, kernel
+working tree, UNCOMMITTED): gate `virtio_gpu_async_cursor` DEFAULT OFF.
+Root cause of the 17-36ms compositor-thread stalls = cursor IMAGE upload's
+fenced TRANSFER_TO_HOST_2D on the ctrl queue inside the ioctl
+(virtio_gpu_user_set_cursor -> virtio_gpu_resource_transfer_2d_fenced,
+virtio_gpu_resource.c:732); cursor MOVES were already async on the cursor
+virtqueue. Design: single-slot latest-wins coalescing (caller pixels
+memcpy'd into a fixed 64x64 in-struct slot before ioctl returns), max_active
+=1 workqueue worker runs the fenced upload off-thread into the existing
+16-slot rotating cursor resource ring (fence intact = R5-safe), leaf
+cursor_async_lock, sync fallback when gate off/wq missing. Counters
+cursor_async_{submits,coalesced,errors}_total APPENDED at end of
+fb_gpu_stats. Adversarial review GO: lost-kick protocol airtight
+(clear-flag-then-recheck under the same lock), no host-reads-rewritten
+resource, no deadlock/IRQ violation, gate-OFF byte-identical, no slice-1
+interaction. Non-gating follow-ups: fix misleading max_active comment (the
+single-instance guarantee actually comes from single-work-item + manager
+dispatch throttle, min_active clamps to 2 threads), remove dead
+cursor_async_inflight field. Nographic boot-check PASS both gates.
+VALIDATION IN FLIGHT: hover A/B (full desktop-interaction reducer,
+first_changed_ms, gate off/on + kwin CURSOR-ioctl duration trace, expect
+17-36ms -> <1ms) + r9-cursor-visible-probe gate-ON as the mandatory
+correctness gate. Stale-fbstat hazard: only `fbstat sample-current` is safe
+on this kernel; plain stats mode needs a rebuilt fbstat.
+SLICE 3 VALIDATION VERDICT (2026-07-08, 4 boots incl 1 FM19 rerun):
+CORRECTNESS GO, PERFORMANCE NOT DEMONSTRATED. Gate-ON full session clean:
+cursor_async submits/coalesced/errors = 10/0/0 with kms_cursor_uploads=10
+(100% of image uploads asynced, zero failures), crash grep 0 both arms,
+real GL held (kwin virgl D3D12), R9 cursor-visible probe PASS gate-ON
+(evdev/libinput ABS samples, cursor-plane traces at 0,0/640,400/1279,799,
+cursor_upload_visible=1, no KWin crash) -- async path does not corrupt/
+freeze/garble. BUT hover medians gate-ON ~40% SLOWER (1544 vs 1090ms, n=1
+each; konsole_wait cold wash 1504 vs 1493) -- cannot call regression at n=1
+in a degraded environment, but NO win demonstrated. Arithmetic: only ~10
+uploads/session x 17-36ms = 170-360ms total spread across a session, so the
+theoretical hover win was small. CURSOR-ioctl histogram not collected (no
+ioctl-timing shim in tree; the alloc-trace preload is a malloc tracer --
+the prior traces used worker-built shims). Archives:
+`20260708T032034Z-asynccursor-off-hover`, `20260708T032442Z-asynccursor-on-hover`,
+FM19-discarded `20260708T031515Z-...-attempt1-visible-timeout`, R9 probe
+`build-x86_64/r9-cursor-visible-probe-history/20260708T032452Z`.
+ENVIRONMENT FINDING (measurement-validity blocker + real degradation):
+plasmashell EGL broken environment-wide SINCE 20260707T1924Z -- `egl:
+failed to create dri2 screen` -> QtQuick software fallback (the
+qtquick-accelerated-path-policy FAIL label on every run since, both arms,
+all campaigns) while kwin keeps real virgl GL. Same kernel passed before
+19:24Z => host-WSL-GL drift, NOT a kernel change. Adds large hover-path
+variance + is itself a responsiveness hit. RECOMMEND: `wsl --shutdown` /
+host GL reset before further measurement campaigns; re-baseline after.
+DELIBERATE tree delta kept: user/programs/fbstat/fbstat.c +4 lines printing
+the cursor_async counters (needed because old fbstat would be overflowed by
+the grown stats struct). LANE PATTERN NOTE: three kernel slices (neg-dcache,
+vblank pacing, async cursor) all mechanically proven, none moved user-facing
+latency -- remaining identified levers are client-commit chain (konsole
+render latency after frame-callback), imageformats prune, and now FIXING THE
+plasmashell EGL/dri2 environment. Slices stay gated default-OFF; land as
+opt-in infrastructure.
+
 Single-plan rule: this is the only live plan file. Verbose pre-compaction
 records (including the full 2026-07-04 pre-rewrite plan) are preserved
 append-only in
