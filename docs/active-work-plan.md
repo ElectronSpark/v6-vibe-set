@@ -690,6 +690,48 @@ all campaigns) while kwin keeps real virgl GL. Same kernel passed before
 19:24Z => host-WSL-GL drift, NOT a kernel change. Adds large hover-path
 variance + is itself a responsiveness hit. RECOMMEND: `wsl --shutdown` /
 host GL reset before further measurement campaigns; re-baseline after.
+2026-07-08 EGL-REGRESSION BISECT UPDATE: host reboot + WSL update did NOT
+cure it (postreboot rebaseline `20260708T041535Z`: 8 dri2 fails, 16
+violations, kwin real GL, konsole_wait 2280/1050, crash 0). KERNEL
+EXONERATED by verified-swap bisect: pre-neg-dcache kernel 934cf6f (27MB,
+swapped in with sha-verified backup/restore, archive
+`20260708T135432Z-bisect2-prenegdcache-kernel`) STILL fails 8/16 => the
+neg-dcache/vblank/async-cursor commits are NOT the cause. (First bisect
+attempt `20260708T135122Z` was INVALID -- harness hardcodes the kernel path
+at kde-plasma-desktop-smoke.expect:6 and ignores KERNEL env; lesson
+recorded.) FAILURE SHAPE: failing runs show plasmashell dri2 fail x4 +
+`Failed to initialize EGL display 3001`, then a LATER instance succeeds
+with identical GL_EXTENSIONS to passing runs => same first-attempt
+readiness-race class as kwin's GBM/EGL retry (mesa drmGetDevice2
+metadata-less fallback). Remaining changed artifact at the 19:24Z boundary:
+fs.img REBUILT 17:52Z (fresh mkfs => different inode/block layout =>
+shifted cold-read timing, persists across reboots). HYPOTHESIS TEST IN
+FLIGHT: rebuild fs.img again + one boot (`*-imglayout-rebuild-egl-test`);
+if dri2 failures vanish/change => image-layout-sensitive startup race
+confirmed; durable fix = make plasmashell/Qt-Wayland EGL init robust
+(retry/readiness gate in the session launcher) and/or the drmGetDevice2
+metadata fix from the kwin lane (removes the fragile mesa fallback for ALL
+clients). If still 8 fails => deeper persistent guest/host state, continue
+triage.
+HYPOTHESIS CONFIRMED + ENVIRONMENT RESTORED (2026-07-08): fresh fs.img
+rebuild => `20260708T135835Z-imglayout-rebuild-egl-test` status DONE,
+qtquick violations 0, plasmashell dri2 fails 0 (real GL restored),
+konsole_wait 1492/1194 (healthy band), crash 0, no lingering qemu. VERDICT:
+the plasmashell EGL regression was an IMAGE-LAYOUT-SENSITIVE first-attempt
+EGL-init race (fresh mkfs shifts inode/block layout => cold-read timing =>
+mesa's fragile drmGetDevice2-metadata-less fallback loses its readiness
+race deterministically for that layout; persists across reboots because
+it's baked into the image). Not kernel (bisect-exonerated), not host.
+IMPLICATIONS: (1) every fs.img rebuild is a dice-roll on this race until
+the fragile path is fixed -- the DURABLE fix is the drmGetDevice2 device-
+metadata support in the guest DRM node (Q1a of the kwin lane) and/or an
+EGL-init retry/readiness gate in the session launcher; treat a sudden
+qtquick-accel-policy FAIL streak after an image rebuild as THIS signature
+(rebuild again to confirm, don't chase kernels). (2) Measurements between
+20260707T1924Z and 20260708T1358Z carry plasmashell-software contamination
+(symmetric per A/B; konsole QWidget metrics largely unaffected).
+(3) Environment is now CLEAN for the queued campaigns: async-cursor hover
+re-A/B (n>=2), client-commit-chain trace, imageformats prune.
 DELIBERATE tree delta kept: user/programs/fbstat/fbstat.c +4 lines printing
 the cursor_async counters (needed because old fbstat would be overflowed by
 the grown stats struct). LANE PATTERN NOTE: three kernel slices (neg-dcache,
