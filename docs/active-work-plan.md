@@ -281,6 +281,73 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   GL-composite cost or event-read starvation, pivot to EVTREAD data; (7) after
   the solo gate is proven, A/B the composed mode (async_present=1 +
   vblank_paced_flip=1): expect edge-paced events with the cadence win retained.
+  A/B VERDICT 2026-07-08 (gated ASYNC-PRESENT, DECISIVE — MECHANISM WIN + KILL
+  CRITERION TRIGGERED, responsiveness NULL): CONTROL x2 (kde_kwin_ioctl_trace=1)
+  vs TREATMENT x2 (+virtio_gpu_async_present=1), full desktop-interaction reducer
+  (guiperf phase-1 recipe), kwin ioctl-trace shim armed both arms, both tokens
+  verified in booted cmdline. Kernel rebuilt from committed d052c5d; fs.img
+  refreshed via `ninja rootfs-refresh` (correct overlay set baked by cmake:
+  host-gui:webkit-media:kde-runtime:gameboy-roms:gpup-umd); debugfs-verified
+  kwin_wayland + kwin-ioctl-trace-preload.so + /bin/dcachetest baked. 4 boots,
+  crash 0, no lingering qemu, tree clean. Archives:
+  `kde-plasma-desktop-smoke-history/20260708T200049Z-asyncpresent-control-rep1`,
+  `...T200250Z-...-control-rep2`, `...T200444Z-...-treatment-rep1`,
+  `...T200637Z-...-treatment-rep2`.
+  EVTREAD BLIND SPOT CONFIRMED CLOSED: shim banner shows classify-on-first-ioctl
+  seeding fds 19/20/21 (DRMFD_SEEDED via=ioctl); 117-119 EVTREAD +
+  117-119 FLIP_COMPLETE lines captured in EVERY run (vs ZERO in the U2-split
+  archive). proc_seeded_fds=0 (constructor scan seeded nothing here), ioctl
+  classify is the mechanism that fired.
+  A/B TABLE (control r1/r2 -> treatment r1/r2):
+    - engagement PROOF (shim): PAGE_FLIP duration_us MEDIAN 925/1017 -> 73/64;
+      loaded-burst MAX 24398/22961us (18-24ms class) -> 650/425us; loaded-burst
+      top5 18.3-24.4ms -> 156-650us. Async completion path proven: EVTREAD
+      since_submit_us MEDIAN 531/585 -> 3056/2396 (completion now delivered on
+      fence-retire ~2.4-3ms AFTER the ~64us flip return, not inline). 1:1
+      PAGE_FLIP:FLIP_COMPLETE, every flip ret=0 errno=0 => present_async_errors
+      effectively 0 (fbstat counters NOT capturable in this reducer, same as U4;
+      the shim duration collapse + 1:1 completion is the engagement proof of
+      record).
+    - PAGE_FLIP loaded duration 10-26ms -> <2ms: MET/EXCEEDED (treatment
+      loaded-burst max 425-650us, well under 2ms).
+    - cadence gap_us (active 10-120ms) MEDIAN 32574/34345 -> 37021/33135;
+      p90 71126/72414 -> 72683/62816. UNCHANGED (target 16-20ms NOT MET).
+    - konsole frame-callback wait / kwin schedule (inferred from cadence, which
+      is unchanged): NOT MET.
+    - konsole_wait_ms WARM 1191/1192 -> 1186/1202 (dead flat); COLD 1774/1507 ->
+      1506/1505 (control r1 1774 is the high outlier; within the settled cold
+      band + op-caution-4 noise). NO M4 win.
+    - hover first_changed_visual_ms MEDIAN 448/460 -> 442/416 (overlapping, noise).
+    - M5 first_visible_ms 10454/6573 -> 6292/6493 (control r1 outlier; treatment
+      inside the 6.2-6.6s band; within noise, no regression).
+    GUARDRAILS ALL GREEN: real GL virgl(D3D12) both arms, qtquick 0 violations,
+    crash 0, no image-layout race (the single `failed to create dri2 screen` is
+    the host GTK/EGL warning at run.log:6 pre-guest-boot, present in CONTROL too;
+    guest plasma-child dri2 fail = 0 both arms, op-caution-2 NOT triggered, no
+    rebuild needed). TEARING GUARDRAIL PASS: direct-launch-diff = 1001730
+    (byte-identical) in ALL FOUR runs = the settled baseline; input-diff 0 in
+    both treatment reps; treatment vs control direct-launch screenshots
+    pixel-identical in layout (only the wall-clock differs) — NO new visual
+    corruption class (no torn/garbled frames).
+  VERDICT: the synchronous-present cost IS on the PAGE_FLIP ioctl and this slice
+  removes it cleanly and safely (24ms->0.65ms, no tearing, no errors) — but that
+  cost is NOT what gates the RenderLoop cadence. This is EXACTLY kill-criterion
+  (6): duration_us drops ~99% while gap_us / frame-callback / konsole_wait / hover
+  are all unchanged within noise (honest n=2). CONTRADICTS the plan's OFFLINE
+  root-cause hypothesis that the 67ms cadence is expectedCompositingTime-bound
+  (synchronous flip inflating it) — with per-flip present now ~64us ioctl +
+  ~3ms fenced completion (both << 16.67ms vblank), the cadence did not tighten,
+  so expectedCompositingTime is NOT the cadence driver. PIVOT (EVTREAD data
+  captured): the residual damage->repaint schedule latency is bound by something
+  OTHER than present ioctl cost — candidates are kwin RenderLoop scheduling /
+  damage-arrival timing, client GL render/glFinish on the plasmashell context, or
+  vblank-event phase/count. Event-read starvation is NOT the cause (117:117
+  completions, all read back; median delivery ~2.4-3ms). PROMOTION: NONE — no
+  responsiveness win, so no default-on justification (keep gated default-OFF,
+  same posture as vblank-paced and async-cursor). The correctness/tearing result
+  is clean, so the gate is a safe standing opt-in; the composed-mode A/B (step 7,
+  async_present + vblank_paced) is now moot for responsiveness since the solo
+  cadence null removes the premise, and is deferred unless the pivot reopens it.
 - U3 (DONE 2026-07-08 — opt-in gate landed, A/B PASS all criteria): Qt
   imageformats prune for konsole. Gate
   `KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS=1` (default 0 = byte-identical)
@@ -637,9 +704,36 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
     KCrash/SIGSEGV/Segmentation in crash capture or session logs), no
     lingering qemu. After validation, neg-dcache default-on can be
     reconsidered (substrate now in place).
-- U7 (M7, parked with reopen conditions): native present / unlocked-wait —
-  reopen only after (a) root-causing the missing sync completion
-  (n1ab-unlocked-a6.log) AND (b) cutting the wedge-decision cost. M7=51.
+- U7 (M7, parked; reopen-(a) FORENSICS DONE 2026-07-08 OFFLINE — verdict
+  SUPERSEDE, do not reopen for unlocked-wait): native present / unlocked-wait.
+  Writeup: scratchpad u7a-sync-completion-forensics.md. n1ab-unlocked-a6.log is
+  GONE; surviving console copy build-x86_64/n1ab-unlocked-stall-archive.log has
+  NO kernel printfs (debugcon-only), so (i)/(ii) is unresolvable from evidence
+  and is settled by source audit + a decisive-experiment spec. (i) LOST-SIGNAL
+  RACE = LOW/not root cause: audited every sync_done/sync_inflight/sync_stale
+  transition in virtio_gpu.c (reap :3642/:3661-3683, sync_wait_done :2643,
+  sync_post :2571, IRQ :2283) — sync_done set under q->lock+RELEASE / read
+  ACQUIRE, reinit under q->lock before each reap, single-reaper via
+  async_reap_serialize, FM24 closed (sync uses PRIVATE per-call `done`; shared
+  async_wait single-waiter via async_wait_serialize). No live lost-wakeup
+  window. (ii) VIRGL WITHHOLDS id-0 BEHIND FOREIGN ASYNC = LEADING:
+  submit_mixed_async (:2798) posts id-0 with foreign async still in the FIFO
+  ctrl ring; unlocked-wait's op_lock release (virtio_gpu_user.c:449-479) admits
+  cross-context interleaving default mode forbids, so id-0 sits behind a
+  slow/blocked foreign fence; head-of-line FIFO retire + the op_lock-holding
+  sync waiter (irq_wait_ms=60000, wait_window_ms :2509) => one withheld id-0 =
+  60s op_lock hold = every present parks = the simultaneous 67-73s all-thread
+  stall in the archive. OVERLAP vs async-present (U2): async-present STRICTLY
+  DOMINATES — it does NOT remove the op_lock convoy (present-copy still
+  op_lock+drain+sync) but moves it to the fb-present workqueue, so a withheld
+  id-0 delays ONE flip event instead of freezing kwin's event loop => the
+  global-park failure that killed unlocked-wait cannot recur, and M7 paces on
+  vblank. RECOMMENDATION: close U7 as superseded if the U2 async-present A/B
+  lands M7>=55; only reopen the residual if async-present is validated and
+  M7<55 (via workqueue/pacing, NOT op_lock release). Reopen cond (b) (per-ctx
+  sync budget / irq_wait_ms tiering) is the only salvageable piece and is
+  ORTHOGONAL — it also bounds a stuck workqueue present, so do (b) as a general
+  robustness fix decoupled from unlocked-wait. M7=51.
 - U8 (M8, deferred): idle-cadence payoff measurement on a GL boot; N5
   poll-notify full-wait gates are default-ON after the evdev fix.
 - U9 (N2, blocked): ext4 direct-read default promotion — needs the kernel
@@ -648,6 +742,28 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
   explicit user approval.
+
+## LANE STATUS ROLL-UP (2026-07-08 end-of-execution)
+
+U1 DONE (metadata retired + gated EGL readiness probe). U2 DONE-measured:
+kwin schedule latency ~96% of frame-callback waits; async-present slice
+implemented+reviewed+A/B'd -> MECHANISM WIN (flip ioctl 24ms->0.65ms, no
+tearing) but RESPONSIVENESS NULL (cadence/konsole_wait/hover flat, n=2) =
+kill criterion; the ~33-67ms cadence is NOT present-cost bound. Residual
+bottleneck is INSIDE prebuilt kwin 5.27's RenderLoop scheduling +
+damage-arrival behavior (kwin unpatched: prebuilt binary, no ports build).
+Kernel-side leverage on M4 is now essentially exhausted: four mechanically
+proven slices (neg-dcache, vblank pacing, async cursor, async present) all
+metric-null. Remaining M4 ideas are framework-level (kwin 6.x with AMS via
+U5's atomic events; or session-level compositor alternatives) — outside
+current guardrails. U3 DONE (dlopen 64->28, gated). U4 DONE (engagement
+proven, no hover win; shim repo-owned + EVTREAD fixed). U5 DONE (kernel +
+tests; guest matrix pending drmiftest validator refresh — enumerated).
+U6 DONE (H2: two pre-existing umount/mount bugs found+fixed by the
+reducer; dcache substrate correct). U7 CLOSED-SUPERSEDED by async-present
+(id-0-withheld convoy now bounded to one deferred event; per-context sync
+budget survives as orthogonal robustness item). U8-U11 parked per recorded
+conditions. U12 (push, ~9 commits ahead) awaits explicit user approval.
 
 ## Landed opt-in gates (all default-OFF unless noted)
 
