@@ -21,6 +21,8 @@
     "/usr/lib/x86_64-linux-gnu/libKF5Codecs.so.5:" \
     "/usr/lib/x86_64-linux-gnu/libpcre2-16.so.0"
 #define KWIN_ALLOC_TRACE_LOG "/kde-kwin-alloc-trace.log"
+#define KWIN_IOCTL_TRACE_PRELOAD "/opt/xv6-kde-abi-libs/kwin-ioctl-trace-preload.so"
+#define KWIN_IOCTL_TRACE_LOG "/kde-kwin-ioctl-trace.log"
 #define KWIN_SESSION_LOG "/kde-session-kwin.log"
 #define PLASMA_SESSION_LOG "/kde-session-plasma-child.log"
 #define NETWORK_SNI_LOG "/kde-network-status-sni.log"
@@ -763,6 +765,24 @@ static int kwin_alloc_trace_enabled(void)
     return enabled;
 }
 
+static int kwin_ioctl_trace_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = cmdline_has_flag("kde_kwin_ioctl_trace=1") &&
+                  access(KWIN_IOCTL_TRACE_PRELOAD, R_OK) == 0;
+        initialized = 1;
+        if (cmdline_has_flag("kde_kwin_ioctl_trace=1")) {
+            fprintf(stderr, "kde-session: KWin ioctl trace %s path=%s log=%s\n",
+                    enabled ? "enabled" : "unavailable",
+                    KWIN_IOCTL_TRACE_PRELOAD, KWIN_IOCTL_TRACE_LOG);
+        }
+    }
+    return enabled;
+}
+
 static int kwin_ld_preload_mode(void)
 {
     static int initialized;
@@ -795,14 +815,16 @@ static pid_t spawn_kwin_child(char *const argv[], int attempt)
 {
     const char *old_preload = getenv("LD_PRELOAD");
     char old_preload_buf[1024];
-    char trace_preload[1280];
+    char base_preload[1408];
+    char trace_preload[1792];
     char attempt_buf[32];
     int had_preload = old_preload != NULL;
     int preload_mode = kwin_ld_preload_mode();
     int alloc_trace = kwin_alloc_trace_enabled();
+    int ioctl_trace = kwin_ioctl_trace_enabled();
     pid_t pid;
 
-    if (preload_mode == 0 && !alloc_trace)
+    if (preload_mode == 0 && !alloc_trace && !ioctl_trace)
         return spawn_child_logged(argv, KWIN_SESSION_LOG);
 
     if (old_preload)
@@ -810,20 +832,34 @@ static pid_t spawn_kwin_child(char *const argv[], int attempt)
     else
         old_preload_buf[0] = '\0';
 
+    /* Build the base preload tail (existing alloc-trace/compat/inherit logic). */
     if (alloc_trace && old_preload_buf[0] && preload_mode == 0) {
-        snprintf(trace_preload, sizeof(trace_preload), "%s:%s",
+        snprintf(base_preload, sizeof(base_preload), "%s:%s",
                  KWIN_ALLOC_TRACE_PRELOAD, old_preload_buf);
     } else if (alloc_trace && preload_mode == 1) {
-        snprintf(trace_preload, sizeof(trace_preload), "%s:%s",
+        snprintf(base_preload, sizeof(base_preload), "%s:%s",
                  KWIN_ALLOC_TRACE_PRELOAD, KWIN_COMPAT_PRELOAD);
     } else if (alloc_trace) {
-        snprintf(trace_preload, sizeof(trace_preload), "%s",
+        snprintf(base_preload, sizeof(base_preload), "%s",
                  KWIN_ALLOC_TRACE_PRELOAD);
     } else if (preload_mode == 1) {
-        snprintf(trace_preload, sizeof(trace_preload), "%s",
+        snprintf(base_preload, sizeof(base_preload), "%s",
                  KWIN_COMPAT_PRELOAD);
+    } else if (preload_mode == 0 && old_preload_buf[0]) {
+        snprintf(base_preload, sizeof(base_preload), "%s", old_preload_buf);
     } else {
-        trace_preload[0] = '\0';
+        base_preload[0] = '\0';
+    }
+
+    /* Prepend the ioctl trace preload if enabled (composes with the above). */
+    if (ioctl_trace && base_preload[0]) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s:%s",
+                 KWIN_IOCTL_TRACE_PRELOAD, base_preload);
+    } else if (ioctl_trace) {
+        snprintf(trace_preload, sizeof(trace_preload), "%s",
+                 KWIN_IOCTL_TRACE_PRELOAD);
+    } else {
+        snprintf(trace_preload, sizeof(trace_preload), "%s", base_preload);
     }
 
     if (trace_preload[0]) {
@@ -836,6 +872,9 @@ static pid_t spawn_kwin_child(char *const argv[], int attempt)
         setenv("KWIN_ALLOC_TRACE_LOG", KWIN_ALLOC_TRACE_LOG, 1);
         setenv("KWIN_ALLOC_TRACE_ATTEMPT", attempt_buf, 1);
     }
+    if (ioctl_trace) {
+        setenv("KWIN_IOCTL_TRACE_LOG", KWIN_IOCTL_TRACE_LOG, 1);
+    }
     pid = spawn_child_logged(argv, KWIN_SESSION_LOG);
     if (had_preload)
         setenv("LD_PRELOAD", old_preload_buf, 1);
@@ -843,6 +882,7 @@ static pid_t spawn_kwin_child(char *const argv[], int attempt)
         unsetenv("LD_PRELOAD");
     unsetenv("KWIN_ALLOC_TRACE_LOG");
     unsetenv("KWIN_ALLOC_TRACE_ATTEMPT");
+    unsetenv("KWIN_IOCTL_TRACE_LOG");
     return pid;
 }
 

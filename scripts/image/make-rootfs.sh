@@ -868,6 +868,46 @@ stage_kde_drm_probe() {
         -o "${out}" "${src}" -ldrm
 }
 
+stage_kde_egl_readiness_probe() {
+    local src="${REPO_ROOT}/scripts/image/kde-egl-readiness-probe.c"
+    local out="${STAGE}/bin/kde-egl-readiness-probe"
+    local cc_bin="${CC:-cc}"
+    local pcdir="${SYSROOT}/lib/pkgconfig"
+    local cflags libs
+
+    [[ -f "${src}" ]] || return 0
+    if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+        echo "make-rootfs: ${cc_bin} not found; cannot build kde-egl-readiness-probe" >&2
+        exit 1
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "make-rootfs: pkg-config not found; skipping kde-egl-readiness-probe" >&2
+        return 0
+    fi
+    if ! PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+         PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+         pkg-config --exists egl glesv2 gbm gl >/dev/null 2>&1; then
+        echo "make-rootfs: EGL/GLES/GBM dev files missing; skipping kde-egl-readiness-probe" >&2
+        return 0
+    fi
+
+    cflags="$(
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --cflags egl glesv2 gbm gl
+    )"
+    libs="$(
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+            pkg-config --libs egl glesv2 gbm gl
+    )"
+
+    mkdir -p "${STAGE}/bin"
+    # shellcheck disable=SC2086
+    "${cc_bin}" -O2 -Wall -Wextra -Wl,-rpath,/lib \
+        -o "${out}" ${cflags} "${src}" ${libs} -Wl,--allow-shlib-undefined
+}
+
 stage_kde_wayland_seat_probe() {
     local src="${REPO_ROOT}/scripts/image/kde-wayland-seat-probe.c"
     local out="${STAGE}/bin/kde-wayland-seat-probe"
@@ -977,6 +1017,15 @@ EOF
             -o "${dir}/kwin-alloc-trace-preload.so" \
             "${REPO_ROOT}/scripts/image/kwin-alloc-trace-preload.c" -ldl
     fi
+    if [[ -f "${REPO_ROOT}/scripts/image/kwin-ioctl-trace-preload.c" ]]; then
+        if ! command -v "${cc_bin}" >/dev/null 2>&1; then
+            echo "make-rootfs: ${cc_bin} not found; cannot build KWin ioctl trace preload" >&2
+            exit 1
+        fi
+        "${cc_bin}" -O2 -Wall -Wextra -fPIC -shared \
+            -o "${dir}/kwin-ioctl-trace-preload.so" \
+            "${REPO_ROOT}/scripts/image/kwin-ioctl-trace-preload.c" -ldl
+    fi
     if [[ -f "${REPO_ROOT}/scripts/image/konsole-wayland-event-trace-preload.c" ]]; then
         if ! command -v "${cc_bin}" >/dev/null 2>&1; then
             echo "make-rootfs: ${cc_bin} not found; cannot build Konsole Wayland event trace preload" >&2
@@ -1029,6 +1078,7 @@ stage_kde_session_launchers() {
     stage_kde_wayland_seat_probe
     stage_kde_wayland_registry_probe
     stage_kde_drm_probe
+    stage_kde_egl_readiness_probe
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-process-probe.c" \
         "${STAGE}/bin/kde-process-probe"
     stage_plain_image_program "${REPO_ROOT}/scripts/image/kde-pgroup-kill-probe.c" \

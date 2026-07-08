@@ -22,6 +22,30 @@
 #define KDE_AUDIO_STATUS_LOG "/kde-audio-status.log"
 #define PLASMASHELL_CRASH_CAPTURE_LOG "/kde-plasmashell-crash-capture.log"
 
+/*
+ * U1 residual: EGL/DRI2 readiness gate (see docs/active-work-plan.md).
+ *
+ * Right after an fs.img rebuild the FIRST EGL/DRI2 screen creation on the
+ * virtio-gpu/virgl render node can fail transiently. kwin recovers via its own
+ * output-init retry (1-3x); plasmashell's Qt-Wayland EGL init has no retry and
+ * drops to the QtQuick software backend ("failed to create dri2 screen" x4 +
+ * "Failed to initialize EGL display 3001"). This gate runs a tiny standalone
+ * probe that reproduces the failing operation and retries it until the virgl
+ * DRI2 screen substrate can be created, THEN exec's plasmashell -- so
+ * plasmashell no longer races kwin's output-init retry. It never wedges the
+ * session: after the retry budget it proceeds anyway (plasmashell keeps its
+ * pre-existing software fallback + KCrash-restart safety net).
+ *
+ * Default OFF (opt-in) per the guardrails: the probe forks a fresh process that
+ * dlopens mesa, which is not a provably ~0 cost on the no-race path, so it is
+ * not un-gated. Enable with cmdline kde_plasmashell_egl_ready_gate=1 or env
+ * KDE_PLASMASHELL_EGL_READY_GATE=1.
+ */
+#define KDE_EGL_READINESS_PROBE_BIN "/bin/kde-egl-readiness-probe"
+#define KDE_EGL_READINESS_MAX_ATTEMPTS 10
+#define KDE_EGL_READINESS_BACKOFF_MS 200
+#define KDE_EGL_READINESS_ATTEMPT_TIMEOUT_MS 8000
+
 static void mkdir_one(const char *path, mode_t mode)
 {
     if (mkdir(path, mode) < 0 && errno != EEXIST)
@@ -820,6 +844,108 @@ static void set_kde_env(void)
     seed_pulse_cookie();
 }
 
+static int egl_readiness_gate_enabled(void)
+{
+    static int initialized;
+    static int enabled;
+
+    if (!initialized) {
+        enabled = flag_or_env_enabled("kde_plasmashell_egl_ready_gate=1",
+                                      "KDE_PLASMASHELL_EGL_READY_GATE");
+        initialized = 1;
+    }
+    return enabled;
+}
+
+/*
+ * Run the readiness probe once. Returns 1 if the probe exited 0 (a working
+ * DRI2/virgl screen could be created right now), 0 otherwise (including probe
+ * missing / fork failure / timeout, all treated as "not ready yet").
+ */
+static int run_egl_readiness_probe_once(void)
+{
+    char *argv[] = { (char *)KDE_EGL_READINESS_PROBE_BIN, NULL };
+    pid_t pid;
+    int status = 0;
+    int waited_ms = 0;
+
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr,
+                "kde-plasma-session-child: egl-readiness-gate fork failed: %s\n",
+                strerror(errno));
+        return 0;
+    }
+    if (pid == 0) {
+        /* Fold probe stdout into the plasma-child log (stderr) for grep. */
+        dup2(STDERR_FILENO, STDOUT_FILENO);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+
+    for (;;) {
+        pid_t got = waitpid(pid, &status, WNOHANG);
+
+        if (got == pid)
+            break;
+        if (got < 0) {
+            if (errno == EINTR)
+                continue;
+            return 0;
+        }
+        if (waited_ms >= KDE_EGL_READINESS_ATTEMPT_TIMEOUT_MS) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            fprintf(stderr,
+                    "kde-plasma-session-child: egl-readiness-gate probe "
+                    "timed out after %dms\n", waited_ms);
+            return 0;
+        }
+        usleep(100000);
+        waited_ms += 100;
+    }
+
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static void run_egl_readiness_gate(void)
+{
+    long long start_ms;
+
+    if (!egl_readiness_gate_enabled())
+        return;
+
+    if (access(KDE_EGL_READINESS_PROBE_BIN, X_OK) != 0) {
+        fprintf(stderr,
+                "kde-plasma-session-child: egl-readiness-gate status=SKIP "
+                "reason=probe-missing path=%s\n", KDE_EGL_READINESS_PROBE_BIN);
+        return;
+    }
+
+    start_ms = monotonic_ms();
+    for (int attempt = 1; attempt <= KDE_EGL_READINESS_MAX_ATTEMPTS; attempt++) {
+        if (run_egl_readiness_probe_once()) {
+            fprintf(stderr,
+                    "kde-plasma-session-child: egl-readiness-gate status=READY "
+                    "attempt=%d elapsed_ms=%lld\n",
+                    attempt, monotonic_ms() - start_ms);
+            return;
+        }
+        fprintf(stderr,
+                "kde-plasma-session-child: egl-readiness-gate status=RETRY "
+                "attempt=%d/%d elapsed_ms=%lld backoff_ms=%d\n",
+                attempt, KDE_EGL_READINESS_MAX_ATTEMPTS,
+                monotonic_ms() - start_ms, KDE_EGL_READINESS_BACKOFF_MS);
+        if (attempt < KDE_EGL_READINESS_MAX_ATTEMPTS)
+            usleep((useconds_t)KDE_EGL_READINESS_BACKOFF_MS * 1000);
+    }
+
+    fprintf(stderr,
+            "kde-plasma-session-child: egl-readiness-gate status=TIMEOUT "
+            "attempts=%d elapsed_ms=%lld proceeding=1\n",
+            KDE_EGL_READINESS_MAX_ATTEMPTS, monotonic_ms() - start_ms);
+}
+
 int main(void)
 {
     char *dbus_env[] = {
@@ -896,6 +1022,8 @@ int main(void)
     }
     run_optional(kded, 0, 0);
     run_optional(activity, 0, 0);
+
+    run_egl_readiness_gate();
 
     return wait_for_plasmashell_logged(plasmashell);
 }

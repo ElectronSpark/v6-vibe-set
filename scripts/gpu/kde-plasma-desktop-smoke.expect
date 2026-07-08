@@ -36,6 +36,7 @@ set guest_wayland_chromium_compat_log "/tmp/host-gui-wayland-chromium.log"
 set guest_chrome_debug_log "/chrome_debug.log"
 set guest_chrome_debug_compat_log "/tmp/chrome_debug.log"
 set guest_kwin_alloc_trace_log "/kde-kwin-alloc-trace.log"
+set guest_kwin_ioctl_trace_log "/kde-kwin-ioctl-trace.log"
 set guest_kde_session_kwin_log "/kde-session-kwin.log"
 set guest_kde_session_plasma_log "/kde-session-plasma-child.log"
 set guest_plasmashell_crash_capture_log "/kde-plasmashell-crash-capture.log"
@@ -94,6 +95,7 @@ set host_egl_gbm_status "$outdir/host-gui-host-egl-gbm-gl-smoke.status"
 set wayland_chromium_log "$outdir/host-gui-wayland-chromium.log"
 set chrome_debug_log "$outdir/chrome_debug.log"
 set kwin_alloc_trace_log "$outdir/kde-kwin-alloc-trace.log"
+set kwin_ioctl_trace_log "$outdir/kde-kwin-ioctl-trace.log"
 set kde_session_kwin_log "$outdir/kde-session-kwin.log"
 set kde_session_plasma_log "$outdir/kde-session-plasma-child.log"
 set plasmashell_crash_capture_log "$outdir/kde-plasmashell-crash-capture.log"
@@ -435,10 +437,10 @@ proc assert_default_launch_contract {} {
 
 assert_default_launch_contract
 
-exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$host_wlegl_smoke_log' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$plasmashell_crash_capture_log' '$kde_audio_status_log' '$kde_network_sni_log' '$pre_kwin_libinput_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$session_liveness_log' '$wayland_registry_probe_log' '$outdir'/kde-session-liveness-*.log '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$qtquick_accel_policy_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_taskbar_settled_before_hover_png' '$host_profiled_hover_after_png' '$host_direct_launch_after_png' '$host_profiled_hover_diff_png' '$host_profiled_hover_diff_txt' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
+exec sh -c "rm -f '$runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$ppm.nc.log' '$before_ppm' '$after_ppm' '$final_ppm' '$agent_log' '$agent_status' '$host_x11_egl_log' '$host_x11_present_trace_log' '$host_x11_glx_bottleneck_summary_log' '$fbstat_log' '$host_egl_gbm_log' '$host_egl_gbm_status' '$host_wlegl_smoke_log' '$wayland_chromium_log' '$chrome_debug_log' '$kwin_alloc_trace_log' '$kwin_ioctl_trace_log' '$kde_session_kwin_log' '$kde_session_plasma_log' '$plasmashell_crash_capture_log' '$kde_audio_status_log' '$kde_network_sni_log' '$pre_kwin_libinput_log' '$kwin_loader_ifunc_log' '$qtqml_ifunc_log' '$qtqml_ifunc_status' '$kde_preflight_runner_log' '$kde_preflight_runner_status' '$kde_preflight_ready_log' '$session_liveness_log' '$wayland_registry_probe_log' '$outdir'/kde-session-liveness-*.log '$chromium_egl_trace_log' '$outdir'/chromium-egl-trace.*.log '$chromium_process_evidence_log' '$chromium_launch_probe_log' '$chromium_video_post_evidence_log' '$chromium_video_frame_stats' '$chromium_video_sampler_log' '$chromium_video_sampler_status' '$chromium_video_capture_log' '$chromium_video_capture_status' '$chromium_video_rela_preprobe_log' '$chromium_video_rela_preprobe_status' '$role_probe_log' '$desktop_interaction_log' '$konsole_phase_log' '$wayland_debug_summary_log' '$prompt_sync_log' '$qtquick_accel_policy_log' '$host_cursor_sync_sh' '$host_cursor_sync_ps1' '$final_status' '$before_png' '$after_png' '$final_png' '$diff_png' '$color_metrics' '$host_startup_png' '$host_input_before_png' '$host_input_after_png' '$host_taskbar_settled_before_hover_png' '$host_profiled_hover_after_png' '$host_direct_launch_after_png' '$host_profiled_hover_diff_png' '$host_profiled_hover_diff_txt' '$host_x11_egl_png' '$host_x11_dri3_png' '$host_final_png' '$outdir'/kde-plasma-host-*.log '$outdir'/kde-interaction-sample-*.ppm '$outdir'/kde-interaction-sample-*.log '$outdir'/kde-interaction-sample-*.status '$outdir'/kde-interaction-direct-launch-*.log '$outdir'/kde-interaction-direct-launch-*.status '$outdir'/kde-interaction-activation-pty-*.log '$outdir'/kde-interaction-activation-pty-*.status '$outdir'/kde-interaction-fbstat-*.log '$outdir'/kde-interaction-fbstat-*.status '$outdir'/kde-interaction-*.timeout.log '$outdir'/chromium-video-*.ppm '$outdir'/qemu-monitor-command*.log '$outdir'/qemu-monitor-command-*.txt '$qemu_trace_events' '$qemu_trace' '$qemu_trace_summary' '$outdir/kde-plasma-input-diff.txt'"
 exec sh -c "rm -f '$taskbar_settled_before_hover_ppm' '$profiled_hover_after_ppm' '$taskbar_settled_before_hover_png' '$profiled_hover_after_png' '$profiled_hover_diff_png' '$profiled_hover_diff_txt' '$direct_launch_before_ppm' '$direct_launch_after_ppm' '$direct_launch_before_png' '$direct_launch_after_png' '$direct_launch_diff_png' '$direct_launch_diff_txt' '$direct_launch_raw_manifest'"
 exec sh -c "rm -f '$outdir/kde-preflight-startup.orig' '$outdir/kde-preflight-startup.host' '$outdir/kde-preflight-startup.final'"
-exec sh -c "rm -rf '$outdir/qtmm-shim-build'; rm -f '$outdir/qtmm-shim-build.log' '$outdir/qtmm-shim-stage.log' '$outdir'/kde-interaction-direct-launch-*.qtmm-final-call-log.txt"
+exec sh -c "rm -rf '$outdir/qtmm-shim-build'; rm -f '$outdir/qtmm-shim-build.log' '$outdir/qtmm-shim-stage.log' '$outdir/qt-minimal-imageformats-stage.log' '$outdir'/kde-interaction-direct-launch-*.qtmm-final-call-log.txt"
 exec sh -c "cat > '$qemu_trace_events' <<'EOF'\nvirtio_gpu_features\nvirtio_gpu_cmd_get_display_info\nvirtio_gpu_cmd_get_edid\nvirtio_gpu_cmd_set_scanout\nvirtio_gpu_cmd_set_scanout_blob\nvirtio_gpu_cmd_res_create_2d\nvirtio_gpu_cmd_res_create_3d\nvirtio_gpu_cmd_res_create_blob\nvirtio_gpu_cmd_res_unref\nvirtio_gpu_cmd_res_back_attach\nvirtio_gpu_cmd_res_back_detach\nvirtio_gpu_cmd_res_xfer_toh_2d\nvirtio_gpu_cmd_res_xfer_toh_3d\nvirtio_gpu_cmd_res_xfer_fromh_3d\nvirtio_gpu_cmd_res_flush\nvirtio_gpu_cmd_ctx_create\nvirtio_gpu_cmd_ctx_destroy\nvirtio_gpu_cmd_ctx_res_attach\nvirtio_gpu_cmd_ctx_res_detach\nvirtio_gpu_cmd_ctx_submit\nvirtio_gpu_update_cursor\nvirtio_gpu_fence_ctrl\nvirtio_gpu_fence_resp\nEOF"
 exec cp $fsimg $tmpimg
 
@@ -517,6 +519,48 @@ proc stage_qtmm_stub_shim_if_enabled {} {
 }
 
 stage_qtmm_stub_shim_if_enabled
+
+proc stage_qt_minimal_imageformats_if_enabled {} {
+    global tmpimg outdir
+
+    if {![env_bool KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS 0]} {
+        return
+    }
+
+    set dir "/usr/lib/x86_64-linux-gnu/qt5/plugins/imageformats"
+    set stage_log "$outdir/qt-minimal-imageformats-stage.log"
+
+    # Opt-in offline prune: remove the 18 exotic kimg_*.so imageformats plugins
+    # (avif/jxl/exr/heif/raw/hdr/ani/eps/pcx/pic/psd/qoi/ras/rgb/tga/xcf/kra/ora)
+    # from the per-run fs.img copy so QImageReader/QFactoryLoader no longer
+    # dlopen()s them at first QIcon touch. KEEP libqsvg/libqjpeg/libqico/libqgif
+    # (svg icons + belt-and-suspenders jpeg/ico/gif). A trailing ls -l captures
+    # the surviving KEEP set as evidence. Operates on $tmpimg only; the committed
+    # fs.img and overlay tree are untouched.
+    exec sh -c "printf '%s\n' \
+        'rm $dir/kimg_avif.so' \
+        'rm $dir/kimg_jxl.so' \
+        'rm $dir/kimg_exr.so' \
+        'rm $dir/kimg_heif.so' \
+        'rm $dir/kimg_raw.so' \
+        'rm $dir/kimg_hdr.so' \
+        'rm $dir/kimg_ani.so' \
+        'rm $dir/kimg_eps.so' \
+        'rm $dir/kimg_pcx.so' \
+        'rm $dir/kimg_pic.so' \
+        'rm $dir/kimg_psd.so' \
+        'rm $dir/kimg_qoi.so' \
+        'rm $dir/kimg_ras.so' \
+        'rm $dir/kimg_rgb.so' \
+        'rm $dir/kimg_tga.so' \
+        'rm $dir/kimg_xcf.so' \
+        'rm $dir/kimg_kra.so' \
+        'rm $dir/kimg_ora.so' \
+        'ls -l $dir' \
+        | debugfs -w '$tmpimg' >'$stage_log' 2>&1"
+}
+
+stage_qt_minimal_imageformats_if_enabled
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set host_egl_gbm_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-egl-gbm-gl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set host_wlegl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-wlegl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -538,6 +582,7 @@ catch { exec sh -c "debugfs -w -R 'rm $guest_wayland_chromium_compat_log' '$tmpi
 catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_chrome_debug_compat_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_alloc_trace_log' '$tmpimg' >/dev/null 2>&1" }
+catch { exec sh -c "debugfs -w -R 'rm $guest_kwin_ioctl_trace_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_kde_audio_status_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_plasmashell_crash_capture_log' '$tmpimg' >/dev/null 2>&1" }
 catch { exec sh -c "debugfs -w -R 'rm $guest_host_wlegl_smoke_log' '$tmpimg' >/dev/null 2>&1" }
@@ -1074,7 +1119,7 @@ proc write_color_metrics {diff_pixels} {
 proc chromium_guest_artifact_clear_command {} {
     global guest_wayland_chromium_log guest_wayland_chromium_compat_log
     global guest_chrome_debug_log guest_chrome_debug_compat_log
-    global guest_kwin_alloc_trace_log guest_kwin_loader_ifunc_log
+    global guest_kwin_alloc_trace_log guest_kwin_ioctl_trace_log guest_kwin_loader_ifunc_log
     global guest_qtqml_ifunc_log guest_qtqml_ifunc_status
     global guest_chromium_process_evidence_log guest_chromium_launch_probe_log
 
@@ -11791,6 +11836,10 @@ proc stage_desktop_interaction_helper_script {} {
     if {[env_bool KDE_APP_LAUNCH_PROBE_QTMM_STUB 0]} {
         set qtmm_stub_default 1
     }
+    set qt_minimal_imageformats_default 0
+    if {[env_bool KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS 0]} {
+        set qt_minimal_imageformats_default 1
+    }
 
     set host_script "$outdir/kde-desktop-interaction-helper.sh.host"
     set fh [open $host_script w]
@@ -11981,6 +12030,11 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh {        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) KDE_APP_LAUNCH_PROBE_QTMM_STUB=1 ;;}
     puts $fh {        *) KDE_APP_LAUNCH_PROBE_QTMM_STUB=0 ;;}
     puts $fh {      esac}
+    puts $fh "      : \"\${KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS:=$qt_minimal_imageformats_default}\""
+    puts $fh {      case "$KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS" in}
+    puts $fh {        1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS=1 ;;}
+    puts $fh {        *) KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS=0 ;;}
+    puts $fh {      esac}
     puts $fh {      KDE_SMOKE_DIRECT_LAUNCH_INDEX="${1:-1}"}
     puts $fh {      KDE_SMOKE_DIRECT_LAUNCH_TEMPERATURE="${2:-cold}"}
     puts $fh {      KDE_SMOKE_DIRECT_LAUNCH_REPEAT_COUNT="${3:-1}"}
@@ -12019,6 +12073,7 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "      echo \"KONSOLE_LOADER_TRACE_LIMIT=\$KONSOLE_LOADER_TRACE_LIMIT\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB=\$KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB\""
     puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_QTMM_STUB=\$KDE_APP_LAUNCH_PROBE_QTMM_STUB\""
+    puts $fh "      echo \"KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS=\$KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS\""
     puts $fh {      echo "KDE_SMOKE_DIRECT_LAUNCH_INDEX=$KDE_SMOKE_DIRECT_LAUNCH_INDEX"}
     puts $fh {      echo "KDE_SMOKE_DIRECT_LAUNCH_TEMPERATURE=$KDE_SMOKE_DIRECT_LAUNCH_TEMPERATURE"}
     puts $fh {      echo "KDE_SMOKE_DIRECT_LAUNCH_REPEAT_COUNT=$KDE_SMOKE_DIRECT_LAUNCH_REPEAT_COUNT"}
@@ -12031,6 +12086,7 @@ proc stage_desktop_interaction_helper_script {} {
     puts $fh "      export KDE_APP_LAUNCH_PROBE_KONSOLE_LOADER_TRACE KONSOLE_LOADER_TRACE_LIMIT"
     puts $fh "      export KDE_APP_LAUNCH_PROBE_NEWSTUFF_STUB"
     puts $fh "      export KDE_APP_LAUNCH_PROBE_QTMM_STUB"
+    puts $fh "      export KDE_APP_LAUNCH_PROBE_QT_MINIMAL_IMAGEFORMATS"
     puts $fh {      export KDE_SMOKE_DIRECT_LAUNCH_INDEX KDE_SMOKE_DIRECT_LAUNCH_TEMPERATURE KDE_SMOKE_DIRECT_LAUNCH_REPEAT_COUNT KDE_SMOKE_DIRECT_LAUNCH_REPEAT_DELAY_MS}
     puts $fh {      qtmm_full_maps_log="/kde-interaction-${kind}-${serial}-${label}.konsole-full-maps.log"}
     puts $fh {      qtmm_final_call_log="/kde-interaction-${kind}-${serial}-${label}.qtmm-final-call-log.txt"}
@@ -13350,7 +13406,7 @@ proc finish {code label} {
     global guest_host_wlegl_smoke_log host_wlegl_smoke_log
     global guest_wayland_chromium_log guest_wayland_chromium_compat_log
     global guest_chrome_debug_log guest_chrome_debug_compat_log
-    global guest_kwin_alloc_trace_log guest_kwin_loader_ifunc_log
+    global guest_kwin_alloc_trace_log guest_kwin_ioctl_trace_log guest_kwin_loader_ifunc_log
     global guest_qtqml_ifunc_log guest_qtqml_ifunc_status
     global guest_kde_preflight_runner_log guest_kde_preflight_runner_status
     global guest_kde_preflight_ready_log
@@ -13362,7 +13418,7 @@ proc finish {code label} {
     global guest_chromium_video_sampler_log guest_chromium_video_sampler_status
     global guest_chromium_video_rela_preprobe_log
     global guest_chromium_video_rela_preprobe_status
-    global wayland_chromium_log chrome_debug_log kwin_alloc_trace_log
+    global wayland_chromium_log chrome_debug_log kwin_alloc_trace_log kwin_ioctl_trace_log
     global guest_kde_session_kwin_log guest_kde_session_plasma_log
     global guest_plasmashell_crash_capture_log plasmashell_crash_capture_log
     global guest_kde_audio_status_log guest_kde_network_sni_log
@@ -13420,6 +13476,7 @@ proc finish {code label} {
         dump_optional_guest_artifact $guest_chrome_debug_compat_log $chrome_debug_log
     }
     dump_optional_guest_artifact $guest_kwin_alloc_trace_log $kwin_alloc_trace_log
+    dump_optional_guest_artifact $guest_kwin_ioctl_trace_log $kwin_ioctl_trace_log
     dump_optional_guest_artifact $guest_kde_session_kwin_log $kde_session_kwin_log
     dump_optional_guest_artifact $guest_kde_session_plasma_log $kde_session_plasma_log
     dump_optional_guest_artifact $guest_plasmashell_crash_capture_log $plasmashell_crash_capture_log
