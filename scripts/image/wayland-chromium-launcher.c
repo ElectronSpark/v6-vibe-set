@@ -241,6 +241,27 @@ int main(int argc, char **argv)
                  "--alsa-output-device=%s", alsa_output_device);
         append_arg(child_argv, &idx, MAX_ARGS, alsa_output_arg);
     }
+    /*
+     * Gated (default OFF): route audio output to Chromium's guaranteed-init
+     * null sink.  This guest has no working audio backend for Chromium (the
+     * PulseAudio client returns "pa_operation is nullptr" and no ALSA sink is
+     * present), so for a media element that carries an audio track the audio
+     * renderer fails to initialise (PipelineStatus::AUDIO_RENDERER_ERROR),
+     * which fails the WHOLE combined audio+video pipeline and the video never
+     * plays.  This is exactly why YouTube (VP9/AV1 video + Opus audio) presents
+     * ~0.02 fps (black player) while the local audio-less H.264 perf clip plays
+     * at ~52 fps.  --disable-audio-output makes the audio renderer init against
+     * a null sink so the pipeline proceeds and the video decodes/presents
+     * (measured ~28-29 fps for YouTube 720p60 VP9 in this stack).  Opt-in via
+     * WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT=1 until a real audio backend lands;
+     * default OFF keeps byte-identical launch behaviour.
+     */
+    {
+        const char *no_audio = getenv("WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT");
+
+        if (no_audio && strcmp(no_audio, "1") == 0)
+            append_arg(child_argv, &idx, MAX_ARGS, "--disable-audio-output");
+    }
     append_extra_flags(child_argv, &idx, MAX_ARGS, extra_flags);
 
     for (int i = 1; i < argc && idx + 1 < MAX_ARGS; i++)
