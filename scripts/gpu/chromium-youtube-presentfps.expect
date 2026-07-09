@@ -1,0 +1,265 @@
+#!/usr/bin/env expect
+# YouTube presented-FPS measurement on the KDE/kwin lane (M7 comparison vs the
+# local-file chromium-video baseline).  Boots the KDE image WITH networking,
+# launches /bin/wayland-chromium on a 60fps YouTube watch page from the serial
+# root shell, then samples fbstat page-flip counters across timed windows so
+# presented fps = delta(kms_page_flip_events)/delta(host-wall-seconds).
+#
+# Honesty: presented fps (compositor page-flips) is the only rate we can measure
+# for YouTube without in-page JS injection.  decodedFPS/dropPct require the
+# perf-video.html harness (local asset) or getVideoPlaybackQuality() JS and are
+# NOT obtainable here; playback reality is proven by advancing screendumps.
+
+set timeout 900
+set root "/home/es/xv6-os"
+set outdir [expr {[info exists env(YT_OUTDIR)] ? $env(YT_OUTDIR) : "$root/build-x86_64/chromium-youtube-m7/manual"}]
+set kernel "$root/build-x86_64/kernel/build/kernel/xv6.bin"
+set fsimg "$root/build-x86_64/fs.img"
+set vid [expr {[info exists env(YT_VIDEO_ID)] ? $env(YT_VIDEO_ID) : "aqz-KE-bpKQ"}]
+set url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
+set scratch "/tmp/xv6-yt-presentfps.fs.img"
+set monitor "/tmp/xv6-yt-presentfps.monitor.sock"
+set runlog "$outdir/run.log"
+set fbcsv "$outdir/fbstat-samples.txt"
+set statusf "$outdir/STATUS.txt"
+
+exec sh -c "mkdir -p '$outdir/screendumps'; rm -f '$runlog' '$fbcsv' '$statusf' '$monitor' '$scratch'; rm -f '$outdir'/screendumps/*"
+
+# Pace serial input: the guest UART drops/doubles chars if sent full-speed.
+# 10ms/char keeps ~40-80 char lines intact (send -s uses this).
+set send_slow {1 .010}
+
+proc af {path text} { set fh [open $path a]; puts $fh $text; close $fh }
+proc iso_now {} { return [clock format [clock seconds] -gmt true -format "%Y-%m-%dT%H:%M:%SZ"] }
+
+proc monitor_cmd {cmd {tmo 6}} {
+    global monitor
+    set safe [string map {' '\''} $cmd]
+    catch { exec sh -c "printf '%s\n' '$safe' | nc -U -w $tmo -q 0 '$monitor'" } out
+    return $out
+}
+proc screendump {label} {
+    global outdir monitor
+    set ppm "$outdir/screendumps/$label.ppm"
+    monitor_cmd "screendump $ppm" 8
+    after 500
+    set info "missing"
+    if {[file exists $ppm] && [file size $ppm] > 0} {
+        catch { exec sha256sum $ppm } sres
+        set info "size=[file size $ppm] sha16=[string range $sres 0 15]"
+    }
+    af "$outdir/screendumps/index.txt" "[iso_now] $label $info"
+    return $info
+}
+
+# Send a shell line and wait for completion.  When no explicit marker is given,
+# append a UNIQUE per-command sync marker and wait for THAT (never a stale
+# root:/# prompt) so the next command is never sent while the guest is still
+# reading this one -- that stale-prompt race caused the earlier serial
+# corruption (recho / doubled chars).
+set sync_counter 0
+proc sh_wait {line {marker ""} {wait 25}} {
+    global timeout sync_counter
+    if {$marker eq ""} {
+        incr sync_counter
+        set m "SW_DONE_$sync_counter"
+        send -s "$line; echo $m\r"
+        set marker "\\m$m\\M"
+    } else {
+        send -s "$line\r"
+    }
+    set old $timeout; set timeout $wait; set ok 0
+    expect { -re $marker { set ok 1 } timeout { set ok 0 } eof { set ok 0 } }
+    set timeout $old
+    return $ok
+}
+
+# Sample fbstat: dump the FULL stats to the serial console (always works,
+# independent of guest grep/disk-write quirks) between unique markers, and
+# parse the two cumulative present counters from the stream directly.
+# Returns "flips presents host_ms".
+proc fb_sample {tag} {
+    global timeout fbcsv
+    set flips -1; set presents -1
+    for {set try 1} {$try <= 2 && $flips < 0} {incr try} {
+        send -s "bash /fbs.sh\r"
+        set old $timeout; set timeout 25
+        expect {
+            -re "FBEND" {
+                set buf $expect_out(buffer)
+                if {[regexp {kms_page_flip_events=([0-9]+)} $buf -> m]} { set flips $m }
+                if {[regexp {bo_presents ([0-9]+)} $buf -> m]} { set presents $m }
+            }
+            timeout {}
+            eof {}
+        }
+        set timeout $old
+    }
+    set hms [clock milliseconds]
+    af $fbcsv "$tag flips=$flips presents=$presents host_ms=$hms iso=[iso_now]"
+    return [list $flips $presents $hms]
+}
+
+# ---- preflight: no stray qemu ----
+set existing [exec sh -c "pgrep -af '\[q]emu-system' || true"]
+if {$existing ne ""} { af $statusf "ABORT: qemu already running: $existing"; exit 11 }
+
+exec sh -c "cp --reflink=auto --sparse=always '$fsimg' '$scratch'"
+
+# ---- stage helper scripts OFFLINE into the image via debugfs ----
+# The serial console corrupts multi-char INPUT (dropped/doubled/inserted chars),
+# so we assemble every script here (100% reliable) and only ever issue tiny
+# `sh /X.sh` commands over serial.
+# Idempotent: a lockfile guards against a second launch, so the tiny
+# `bash /ytlaunch.sh` serial command can be RETRIED safely (retry needed
+# because that command can itself catch a corrupted char). Always echoes
+# YT_CHILD= so the driver can confirm.
+set lf [open "$outdir/ytlaunch.sh" w]
+# Guard against a second launch by checking for a LIVE chromium process (a
+# lockfile did not serialise reliably; a running process is detectable). Retries
+# spaced longer than process-start latency therefore never double-launch.
+puts $lf "if ps 2>/dev/null | grep -i chrom | grep -qv grep; then echo YTL_DUP; exit 0; fi"
+puts $lf "echo YTL_NEW"
+puts $lf "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
+puts $lf "export WAYLAND_DISPLAY=wayland-0"
+puts $lf "export WAYLAND_CHROMIUM_EXTRA_FLAGS=--autoplay-policy=no-user-gesture-required"
+puts $lf "U=\"$url\""
+puts $lf "echo YT_ACTUAL /bin/wayland-chromium \"\$U\""
+puts $lf "/bin/wayland-chromium \"\$U\" >/dev/shm/yt-host.log 2>&1 &"
+puts $lf "echo YT_CHILD=\$!"
+close $lf
+set ff [open "$outdir/fbs.sh" w]
+puts $ff "echo FBMARK"
+puts $ff "fbstat 2>&1"
+puts $ff "echo FBEND"
+close $ff
+set gf [open "$outdir/ytlogs.sh" w]
+puts $gf "echo YT_HOSTLOG_BEGIN"
+puts $gf "tail -100 /dev/shm/yt-host.log 2>/dev/null"
+puts $gf "echo YT_HOSTLOG_END"
+puts $gf "echo YT_CHROMELOG_BEGIN"
+puts $gf "tail -120 /tmp/chrome_debug.log 2>/dev/null"
+puts $gf "echo YT_CHROMELOG_END"
+puts $gf "echo YT_PS_BEGIN"
+puts $gf "ps 2>/dev/null | grep -i hrom"
+puts $gf "echo YT_PS_END"
+close $gf
+exec sh -c "printf '%s\\n' 'rm /ytlaunch.sh' 'write $outdir/ytlaunch.sh /ytlaunch.sh' 'rm /fbs.sh' 'write $outdir/fbs.sh /fbs.sh' 'rm /ytlogs.sh' 'write $outdir/ytlogs.sh /ytlogs.sh' | debugfs -w '$scratch' >/dev/null 2>&1"
+
+af "$outdir/chromium-url.txt" $url
+af "$outdir/chromium-video-id.txt" $vid
+
+set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
+set qextra "-monitor unix:$monitor,server,nowait"
+af "$outdir/qemu-launch-command.txt" "DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' bash scripts/launch/run-qemu.sh x86_64 $kernel $scratch"
+
+log_file -a $runlog
+spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND=$append QEMU_EXTRA=$qextra bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
+set qemu_pid [exp_pid]
+match_max 1000000
+
+proc finish {code label} {
+    global statusf monitor scratch outdir qemu_pid
+    af $statusf "[iso_now] $label"
+    catch { monitor_cmd "quit" 4 }
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    catch { exec kill $qemu_pid }
+    after 1500
+    # dump disk-backed fbstat files + logs
+    foreach t {idle t0 t1 t2} {
+        catch { exec sh -c "debugfs -R 'dump /ytfb_$t.txt $outdir/ytfb_$t.txt' '$scratch' >/dev/null 2>&1" }
+    }
+    catch { exec sh -c "debugfs -R 'dump /yt-chrome.log $outdir/yt-chrome.log' '$scratch' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump /yt-host.log $outdir/yt-host.log' '$scratch' >/dev/null 2>&1" }
+    catch { exec sh -c "for f in '$outdir'/screendumps/*.ppm; do [ -e \"\$f\" ] || continue; convert \"\$f\" \"\${f%.ppm}.png\" 2>/dev/null || true; done" }
+    catch { exec sh -c "rm -f '$scratch'" }
+    puts "\nRESULT $label"
+    exit $code
+}
+
+set boot_ok 0
+expect {
+    -re {root:/# } { set boot_ok 1 }
+    timeout { finish 12 "FAIL no-root-prompt" }
+    eof { finish 13 "FAIL qemu-exited-before-prompt" }
+}
+
+# KDE readiness
+set old $timeout; set timeout 260
+set kde_ok 0
+expect {
+    -re {kde-session: KWin and plasmashell are running} { set kde_ok 1 }
+    timeout { af $statusf "WARN kde-readiness-timeout-continuing" }
+    eof { finish 14 "FAIL qemu-exited-before-kde" }
+}
+set timeout $old
+af $statusf "[iso_now] boot_ok=$boot_ok kde_ok=$kde_ok"
+after 4000
+screendump "00-pre-chromium"
+
+# Idle baseline flip counter (desktop should be near-static: repaint-on-damage)
+set s_idle [fb_sample "idle"]
+set idle_flips [lindex $s_idle 0]
+if {$idle_flips < 0} { set idle_flips 5 }
+
+# Launch via the ps-guarded idempotent script, then GATE re-sends on ACTUAL
+# rendering (fbstat flip count rising >> idle) rather than serial markers.  The
+# first serial send is sometimes eaten, so we re-send only if the compositor
+# shows NO rendering; once chromium is up its page-load flip burst confirms it,
+# so we never fire a second instance (the ps-guard in ytlaunch.sh is a backup).
+sh_wait "bash /ytlaunch.sh" {YTL_} 20
+af $statusf "[iso_now] launch fired (gating on flips next)"
+set launch_ms [clock milliseconds]
+
+set started 0
+for {set p 1} {$p <= 5 && !$started} {incr p} {
+    after 45000
+    monitor_cmd "mouse_move 24576 32768"
+    monitor_cmd "mouse_button 1"
+    monitor_cmd "mouse_button 0"
+    set sp [fb_sample "probe$p"]
+    set fp [lindex $sp 0]
+    if {$fp >= 0 && $fp > [expr {$idle_flips + 100}]} {
+        set started 1
+        af $statusf "[iso_now] rendering-confirmed probe=$p flips=$fp (>idle+100)"
+    } else {
+        af $statusf "[iso_now] no-render-yet probe=$p flips=$fp; re-firing launch (ps-guard dedups)"
+        sh_wait "bash /ytlaunch.sh" {YTL_} 20
+    }
+}
+af $statusf "[iso_now] chromium_started=$started idle_flips=$idle_flips"
+
+# A little more warmup so playback (if any) is steady before the timed windows.
+after 30000
+screendump "02-steady-start"
+set s0 [fb_sample "t0"]
+
+# Window A: 60s of steady playback
+after 60000
+screendump "03-windowA-end"
+set s1 [fb_sample "t1"]
+
+# Window B: 60s more
+after 60000
+screendump "04-windowB-end"
+set s2 [fb_sample "t2"]
+
+# Emit chrome/host log tails + process list over serial (land in run.log) for
+# post-mortem media/decode/crash evidence, via the offline-staged script.
+sh_wait "bash /ytlogs.sh" {YT_PS_END} 60
+
+# Compute presented fps for both windows
+proc fps {a b} {
+    set fa [lindex $a 0]; set fb [lindex $b 0]
+    set ta [lindex $a 2]; set tb [lindex $b 2]
+    if {$fa < 0 || $fb < 0 || $tb <= $ta} { return "NA" }
+    set df [expr {$fb - $fa}]
+    set dt [expr {($tb - $ta)/1000.0}]
+    return [format "%.2f" [expr {$df/$dt}]]
+}
+set fpsA [fps $s0 $s1]
+set fpsB [fps $s1 $s2]
+af $statusf "[iso_now] presented_fps windowA=$fpsA windowB=$fpsB (kms_page_flip_events delta / host-wall seconds)"
+af $statusf "[iso_now] samples t0=$s0 t1=$s1 t2=$s2"
+
+finish 0 "DONE presented_fpsA=$fpsA presented_fpsB=$fpsB"
