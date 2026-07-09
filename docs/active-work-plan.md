@@ -1009,6 +1009,44 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   search key = the 9-byte {NULL-ptr + zero-byte} store; then rerun this
   battery — verify silent => R5 family closed. Knobs stay opt-in (full
   poison = 4K memset per free; run4/5 FM19 timeouts may include this cost).
+  ROOT-CAUSED + FIXED + VALIDATED 2026-07-09 (6 boots; kernel edits
+  UNCOMMITTED; full chain scratchpad r5class-kwin-gp-forensics.md §10). The
+  family-(c) "stale struct-thread" hypothesis REFINED away — the writer is
+  the KERNEL VM (kvmalloc-large) path, found via the search key: (D1)
+  kvm_munmap freed frames BEFORE its TLB flush (free-before-shootdown, the
+  67d7b5c class, unfixed on the kernel-VM path; kernel/mm/vm.c), and (D2)
+  kernel PTEs are GLOBAL (PTE_G) so they survive user-mode CR3 reloads,
+  while vm_remote_sfence*(kernel_vm) only shot kernel_vm->cpumask = CPUs
+  currently IN the kernel — a CPU in user mode kept a stale kernel-VA
+  translation indefinitely and later wrote through it into the freed/
+  recycled frame. Matches every observable: kvm VAs are page-aligned (page
+  offset 0x0 in 8/8 hits); the 9-byte store is a kvmalloc-object {u64;u8}
+  header clear by a thread that migrated to a stale-TLB CPU; environ/
+  cmdline/D-Bus/sockbuf kvmalloc buffers carry "/usr/lib/x86_64-linux-gnu"
+  path text (the "/x86_64-" #GP poison, 07-04+07-09); 3-73 jiffies = TLB
+  persistence; kernel-silent (TLB hit never faults); attempt-1/cold-cache =
+  max kvmalloc churn; worker_thread pid 43/44 = frequent FREER of the
+  recycled ANON frames (red herring for the writer). FIX (kernel,
+  uncommitted): arch/x86_64/mm/vm.c vm_remote_sfence/_page target
+  get_cpu_active_mask() for is_kernel VMs; kernel/mm/vm.c new
+  __kvm_unmap_range_flush_free() — batched clear(locked) -> UNLOCK ->
+  flush local+all-remote -> free, vma_free only after all spans flushed;
+  used by kvm_munmap + both kvm_mmap rollbacks; new VMA_FLAG_KVM_DYING
+  guards double-kvfree across the batching. LOCK LESSON (cost 1 boot):
+  vm_wlock(kernel_vm) is a SPINLOCK — IPI-sync-wait inside it deadlocks
+  bring-up (fix iteration 1, gate 20260709T140233Z hang); the IPI must run
+  with the lock dropped. VALIDATION: safety gate PASS
+  (20260709T141330Z-u9b-kvmfix-safety-gate2; dcachetest x3 rc0, fork/clone/
+  cow expected, crash grep 0, 0 verify fires) + 4 armed OFF-arm KDE runs
+  (20260709T142025Z/T142237Z/T142451Z/T142652Z-u9b-kvmfix-off-run1..4):
+  ALL PASS, ZERO anon_fault_verify hits 4/4 (pre-fix 8 hits/4 runs;
+  P(0|~2/run)~3e-4), real-GL both, qtquick 0, crash greps 0, konsole_wait/
+  first_visible inside the armed-baseline band (no shootdown-cost
+  regression). U9b CLOSED as "demonstrated writer channel eliminated";
+  HONEST RESIDUAL: the #GP itself (~1-in-5 OFF-arm) not re-observed in 4
+  runs — consistent but not conclusive for the tail; PCID promotion hazard
+  (user-vm cpumask completeness) STANDS, this fix covers the kernel VM
+  only. Diagnostics knobs remain opt-in.
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
