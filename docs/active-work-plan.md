@@ -937,6 +937,39 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   op-caution 7 confirmed + typeahead-flush addendum) + 10 counted A/B + 2
   FM19 reruns; exceeded the <=14 budget by 3, all on gate shakeout.
   Hygiene: no lingering qemu, tree clean except this plan update.
+- U9b (R5-class kwin #GP) — OFFLINE FORENSICS DONE 2026-07-09 (0 boots;
+  scratchpad r5class-kwin-gp-forensics.md). SITE: libQt5Core.so.5 +0x3075e5
+  = `QObjectPrivate::connectImpl` `mov 0x8(%rbx),%rdi` (base 0x7ffffd54d000,
+  IDENTICAL to the 07-04 run => low-entropy/deterministic ASLR). rbx =
+  0x2d34365f3638782f = "/x86_64-" (ld.so search-path scratch slice),
+  byte-identical to 07-04; a DIFFERENT insn site than the 07-04
+  QMutex::unlock @0xdbc9f but the SAME recycled-frame poison family (single
+  8-byte pointer slot overwritten; rdi/r12/r14 heap ptrs healthy). Both
+  sightings share phase: KWin attempt-1, cold-cache, session bring-up.
+  MECHANISM: same kernel frame-recycling family as 07-04, at residual rate
+  after the 67d7b5c ordering fix (verified present: munmap/madvise/mremap all
+  flush-before-free). The cpumask-miss path (trap entry clears vm->cpumask,
+  trap.c:2009, but keeps the user TLB — no CR3 switch) is SELF-HEALING with
+  PCID OFF (this run: `max ASID=0`): userret does an unconditional MOV-CR3
+  full-flush (trampoline.S:36) and kernel user-mem access is software-walk +
+  direct-map (copyout walk/walkaddr), so neither user-mode nor kernel-mediated
+  stale writes corrupt. => residual is one of two kernel-silent frame-recycling
+  micro-windows offline analysis cannot separate: (a) shootdown-vs-concurrent-
+  fault / lock-drop timing residual, or (b) COW refcount under-count under the
+  fork storm. Host/virgl DMA and pure-userspace UAF are DISFAVORED (poison is
+  guest ld.so path text; 07-04 residue was in kernel-zero-filled .bss tails).
+  PROMOTION HAZARD (record): do NOT enable `x86_pcid=1`+`x86_cr3_noflush=1`
+  before fixing cpumask completeness (in-kernel CPUs holding the user CR3) —
+  noflush userret (trampoline.S:35, bit63 set) REOPENS the shootdown-miss into
+  a live corruptor. DECISIVE EXPERIMENT (<=1 boot, OFF arm): default-off knobs
+  `anon_free_poison=1` (canary-fill anon frames at free) +
+  `anon_fault_verify=1` (assert zero-or-canary at anon/.bss fault-in install;
+  log pa/vm/pid/va+bytes on mismatch) + `vm_shootdown_cpumask_audit=1`
+  (log CPUs whose live CR3==pagetable but absent from vm->cpumask). verify
+  fires with path bytes => confirms+localizes kernel free-then-write (cpumask
+  audit picks (a) vs COW (b)); verify silent + #GP recurs => exonerates
+  frame-recycling, pivot to userspace/host. Also add faulting-VA PTE/frame
+  dump to the kwin fatal handler.
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
