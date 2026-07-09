@@ -592,6 +592,82 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
     and need auditing. Until that refresh, U5's guest matrix stays pending;
     the U5 kernel emit path itself is exercised indirectly by the KDE run
     (legacy path unchanged, no regression).
+  - VALIDATOR REFRESH DONE 2026-07-08 (drmiftest owner lane; drmiftest.c only,
+    user submodule, uncommitted). U5's `kms_atomic_flip_event_matrix` is now
+    REACHED and PASSES in a nographic guest boot (archive
+    20260708T220649Z-u5-drmiftest-refresh):
+      drmiftest: kms_atomic_flip_event_matrix event_per_commit=PASS
+      test_only_noevent=PASS flag_absent_noevent=PASS
+      ring_full_eagain_pre_present=PASS overflow_drain=PASS
+      legacy_atomic_interleave=PASS crtc_id=1 capacity=16 status=PASS
+    Per-assert refresh (old expectation -> kernel truth, file:line):
+    - CURSOR BO: was "unexpectedly enabled" fail-closed -> cursor-from-BO is
+      implemented (fb_drm_kms_properties.c:1364 -> gpu_kms_upload_cursor_from_bo
+      :444). Now creates a dedicated 64x64 dumb BO, asserts upload succeeds +
+      kms_cursor_uploads bumps, and that an over-max dim (>FB_GPU_CURSOR_MAX_DIM
+      =64, fb.h:64) is still rejected.
+    - CREATEPROPBLOB: was fail-closed -> implemented
+      (fb_drm_kms_properties.c:148 gpu_drm_mode_createblob). Asserts create
+      returns a nonzero id + DESTROYPROPBLOB accepts it; unknown-blob destroy
+      still rejected (-ENOENT, :227).
+    - CRTC_QUEUE_SEQUENCE: was "unexpectedly enabled" -> functional
+      (fb_drm_core_kms.c:1764); queues one DRM_EVENT_VBLANK with the resolved
+      target sequence / crtc_id=1 / user_data. Now asserts success, DRAINS the
+      queued VBLANK (else it corrupts the following page-flip event-order
+      reads), and keeps fail-closed on bad crtc (-EINVAL :1776) and bad flags
+      (bumps kms_crtc_queue_sequence_bad_flags :1779). Dropped the two
+      vblank_source_matrix delta asserts on kms_crtc_queue_sequence_rejects /
+      _noevent_rejects — the kernel declares (fb.h:1081,1083) but NEVER
+      increments those counters; matrix text updated
+      (crtc_queue_sequence_functional/event_drained instead of fail_closed).
+    - SETGAMMA: was "unexpectedly enabled" -> zero-size LUT succeeds as a no-op
+      (fb_drm_core_kms.c:1830-1835); asserts success + bad crtc still rejected.
+    - GEM_FLINK/GEM_OPEN (check_dumb, render fd): were fail-closed -> global
+      names implemented (fb_drm_dispatch.c:486/498, fb_bo_shmem_dmabuf.c:1967/
+      2005). Asserts FLINK returns a nonzero name, OPEN resolves it to a handle
+      of matching size, and name 0 rejected.
+    - SETPLANE: AUDITED, no drift — the primary plane still returns -EOPNOTSUPP
+      (fb_drm_kms_properties.c:630); the existing asserts hold as-is.
+    - SYNCOBJ_EVENTFD: AUDITED — implemented (fb_syncobj_prime_virtgpu.c:1170)
+      but correctly rejects a non-eventfd fd (the syncobj fd passed) with
+      -EINVAL; only the misleading message was corrected (behavior unchanged).
+    Newly-exposed (test never reached these before; refreshed to the real
+    committed contract, all now PASS):
+    - WAIT_VBLANK: absolute WAIT_VBLANK(N) returns reply.sequence == the counter
+      at the N-th edge (>= N), i.e. exactly N when crossing from below — it does
+      NOT overshoot to N+1. Old assert required >= 42 for a request of 41;
+      corrected to >= 41 (the real absolute-wait contract).
+    - vblank_source_matrix: the old assert compared kms_vblank_sequence against
+      crtc_sequence_sample. Those are NOT one monotonic scale: CRTC_GET_SEQUENCE
+      returns the synthetic-time estimate (inflated during the idle WAIT_VBLANK
+      block), while the display-present path OVERWRITES kms_vblank_sequence with
+      the present count (fb_scanout.c:315), so the display-correlated sequence
+      can read LOWER than an earlier idle synthetic sample (observed 22 vs 41).
+      Refreshed to the coherent display-correlated contract: synthetic==0,
+      display_correlated==1, source flags coherent, kms_vblank_sequence ==
+      display_last_complete, and display_last_complete advanced. FINDING
+      (pre-existing, non-U5): kms_vblank_sequence is non-monotonic across the
+      synthetic-idle -> display-present transition (overwrite, not max) — ties
+      to the recorded M4/M7/R9 "kwin has no vsync/present clock" root cause.
+    - check_kms_sync_file_in_fence_matrix: the kernel waits in-ioctl on a
+      pending sync_file in-fence via an unbounded dma_fence_wait(-1)
+      (fb_drm_kms_atomic_props.c:534) and rejects NONBLOCK atomic, so there is
+      NO non-blocking path; the old single-threaded submit-then-signal pattern
+      DEADLOCKED. Refreshed to drive the pending in-fence commit from a forked
+      child while the parent waits for the pending wait to register then
+      SYNCOBJ_SIGNALs (dma_fence_signal in place on the shared fence,
+      fb_syncobj_prime_virtgpu.c:860 area), mirroring check_syncobj_*_wakeup.
+      Now PASS (pending_waits_delta=1, pending_wakeups_delta=1, refs balanced).
+  - RESIDUAL (does NOT gate U5; blocks only the final `drmiftest: ok`):
+    check_fence_callback_lifecycle_matrix reports fence_objects_live_delta=-1
+    with ALL functional callback assertions passing (added=2/fired=1/removed=1/
+    late=1/errors=0, fence_fd_live_delta=0). A fence object live at the matrix
+    baseline is reaped within its window; not conclusively attributed —
+    candidates are a pre-existing lazy fence-object free first exposed now, or a
+    child-teardown side effect of the new fork() in the refreshed sync_file
+    matrix. Needs one follow-up boot to attribute (deferred: this pass already
+    used its boot budget). All drift up to and including U5's matrix is
+    validated PASS.
 - U6 (IMPLEMENTED + VALIDATED 2026-07-08; crash root-caused H2, see below):
   closed the dcache
   eviction/no-flush gaps. These fix a LIVE default-build bug: the positive
@@ -761,8 +837,52 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   qemu-proc-stat-final.txt). NOTE: the 07-05 44%/57-64% readings are
   superseded — they were non-GL boots that never presented; this is the
   first reading on a GL boot with confirmed active presentation.
-- U9 (N2, blocked): ext4 direct-read default promotion — needs the kernel
-  page-fault diagnosis (cr2=0x1aafdd193 into _rodata) explained first.
+- U9 (N2) — FORENSICS DONE 2026-07-08 (OFFLINE; scratchpad
+  u9-rodata-fault-forensics.md): the `cr2=0x1aafdd193 err=0x2
+  rip=0xffff80000039a34c` fault is CORRUPTED CONTROL FLOW INTO `.rodata`
+  (err=0x2 = supervisor WRITE; RIP genuinely in `_rodata` 0x35e000..0x3b7000;
+  the executed rodata bytes decode to a stray write at cr2 — cr2 and the
+  `sig_trampoline` symbol are second-order symptoms of executing data, not the
+  origin). Frame `0xbefc6cc0` is INSIDE CPU-2's idle kstack (0xbefc0000+32KB),
+  so the corruption sits on the idle thread's own control-flow (saved
+  return-addr / a sched or IRQ pointer) — a stray write from elsewhere.
+  ROOT CAUSE (named, plausible): `rcu_head_cache` free-list / callback
+  corruption — the R3 lane's unroot-caused double-free/UAF under fd-teardown
+  load. The slab free list is intrusive (next-ptr at obj offset 0 = the
+  rcu_head's own `->next`; mm/slab.c:601,634), so a double-free/UAF-write of a
+  slab rcu_head corrupts it; a corrupted head reaching `func(data)`
+  (lock/rcu.c ~866) or `call_rcu` scribbling through a bad free-list ptr
+  (rcu.c:806-810) = the wild transfer seen. CORROBORATION: R3's archived
+  double-free is `cpu=2` on `rcu_cb/2` (SAME core), clustered on socket/fd
+  teardown, and `repairing corrupt freelist cache='rcu_head_cache'` was seen
+  07-04 (slab.c:624). The heavy fd/inode churn funnels through the deferred
+  fput path (close->call_rcu->workqueue->vfs_fput; vfs_syscall.c:911-946,
+  file.c:134). AUDIT: `ext4_read_page_direct` itself is CLEAN
+  (ext4fs_file.c:686/89/186 — only local bio_alloc/add_folio/await/release, NO
+  call_rcu/rcu_head; DMA target pinned page_ref>=2 + io_in_progress; transient
+  compound nodes explicitly fall back, :754) — it is a CORRELATIONAL ACCELERANT
+  (−50% latency raises the pre-existing bug's recurrence rate), not the
+  corrupter (the R3 double-frees also hit the direct-read-OFF arm). U6/R5
+  cross-ref: NEITHER retroactively explains it — the crash kernel (18:53,
+  pre-04b1ee2) ALREADY had the R5 stale-TLB fix (67d7b5c), and U6's fix fires
+  only on unmount (absent from a KDE run; the runtime LRU evictor
+  vfs_evict_lru_inodes is ref==0-guarded). Both are SIBLINGS in the same
+  call_rcu/stale-frame lifetime family; they narrow the surface but leave the
+  R3 door (best match) open. RETRY: N2 CAN be retried as a DIAGNOSTIC-ARMED
+  battery (not a blind flip) — the corrupter is whole-system and direct-read-
+  independent, so it should not block direct-read indefinitely. BATTERY (spec
+  in scratchpad §6): static/build + nographic safety gate now ALSO asserting
+  `dcachetest RESULT=PASS`, then the cold-cache A/B with EVERY arm armed
+  `ext4_read_page_direct_debug=1 rcu_head_trace=1` (ON) / `=0 rcu_head_trace=1`
+  (OFF), complete the interrupted 5x5 and keep accruing to zero faults, all
+  §5 guardrails green (real-GL, qtquick 0, crash-grep 0 incl.
+  KERNEL PAGE FAULT/__slab_obj_put/repairing corrupt freelist/rcu_head_trace:).
+  If it recurs, 04b1ee2's full reg/PTE/instr/.rodata-classifier dump +
+  rcu_head_trace owner-history decides rcu-corruption (→ becomes an R3 root-
+  cause, N2 stays behind it) vs an ext4-direct-read-ring correlation (→ kill
+  promotion) vs neither (→ R5-residual/sched scribble). Standing rec: add
+  `rcu_head_trace=1` (default-off, ~0 cost) to EVERY future KDE battery to
+  finally root-cause R3.
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
