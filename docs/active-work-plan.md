@@ -970,6 +970,45 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   audit picks (a) vs COW (b)); verify silent + #GP recurs => exonerates
   frame-recycling, pivot to userspace/host. Also add faulting-VA PTE/frame
   dump to the kwin fatal handler.
+  EXECUTED 2026-07-09 (9 boots; kernel edits UNCOMMITTED in submodule; full
+  detail scratchpad r5class-kwin-gp-forensics.md par.8-9). Knobs implemented
+  (cached-parse, default OFF; canary=0xA5A5A5A5<<32|pfn per frame):
+  page.h/page.c/vm.c + x86 vm.c audit. ITERATION 1 (anon-only poison,
+  run1b): 28 verify fires = FALSE POSITIVES root-caused to slab intrusive
+  freelists (__slab_make writes obj-next PAs into PAGE_TYPE_SLAB pages;
+  __slab_destroy frees via the unpoisoned __page_free path; signature
+  own-page-PA @obj_size offset). FIX: poison extended to ALL page types at
+  every allocator sink (__page_free, __page_ref_dec order-0, anon batch) +
+  free-site attribution ring (pfn->freeing pid/name/sink/page-type/jiffies,
+  printed on hit). Both nographic gates PASS (dcachetest x3 rc0, fork/clone/
+  cow expected rc, 0 false fires, 0 crash markers). RESULT (4 armed OFF-arm
+  KDE boots: run2 PASS 2 hits, run3 PASS 3 hits, run4 FM19-artifact-timeout
+  0 hits, run5 FM19-prompt-sync 3 hits; crash-greps all clean; no #GP
+  recurrence): 8 TRUE kernel write-after-free events, all the SAME invariant
+  signature — EXACTLY 9 zero bytes at page offset 0x0-0x8 (8-byte NULL word +
+  1 low byte) written 3-73 jiffies AFTER free into frames freed by
+  worker_thread pid 43/44 (total-reaper) via page_free sink, PAGE_TYPE_ANON =
+  the REAPER-FREED THREAD/KSTACK COMPOUND (thread_create/__kstack_arrange
+  place struct thread+utrapframe+sched_entity on the kstack alloc;
+  thread.c:387). Victims: kwin_wayland x5, plasmashell, kbuildsycoca5,
+  pipewire heap faults at session bring-up. MECHANISM VERDICT: neither (a)
+  nor (b) — a THIRD mechanism (c): post-mortem stale-struct-thread write
+  (small {ptr,flag}-shaped zero store) after the total-reaper frees the
+  thread page; R3-adjacent deferred-teardown lifetime family; bring-up
+  thread churn explains the attempt-1 phase lock. Not (b): freeing context
+  is reaper page_free, and single-threaded victims hit. Not (a): payload is
+  a kernel-struct store, not a user write; audit MISSes (126-128/run,
+  capped) are the pervasive benign trap-entry state = (a) PRECONDITION only,
+  PCID-OFF self-healing per par.4(2) — promotion gate stands. CAVEAT: all 8
+  payloads are zeros (invisible without canary; fault-fill re-zeroes) — the
+  NONZERO path-byte writer behind the actual #GP did not recur in 4 armed
+  boots (~1-in-5 OFF-arm residual rate; honest null), but family (c) is the
+  only demonstrated writer into recycled anon-fault frames = prime suspect.
+  NEXT LANE (0 boots to start): audit stale struct-thread users post-reap
+  (tq/sched-entity refs, futex/signal, p->lock users, proctab lookups);
+  search key = the 9-byte {NULL-ptr + zero-byte} store; then rerun this
+  battery — verify silent => R5 family closed. Knobs stay opt-in (full
+  poison = 4K memset per free; run4/5 FM19 timeouts may include this cost).
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
