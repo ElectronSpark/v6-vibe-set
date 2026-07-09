@@ -833,6 +833,93 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   "async-present workqueue unavailable" fallback print. Archives:
   `kde-plasma-desktop-smoke-history/20260709T151220Z-m7-asyncpresent-control/`,
   `...T152900Z-m7-asyncpresent-treatment/`.
+  U7-RESIDUAL ATTRIBUTED + FIX IMPLEMENTED 2026-07-09 (OFFLINE, kernel edits
+  UNCOMMITTED, TU compile-proof clean, NO boot — gate DEFAULT OFF; A/B deferred
+  to conductor). ATTRIBUTION (mined the fresh U7 A/B archives + qemu traces +
+  fbstat): the 51fps ceiling is NOT (a) present-ioctl-cost bound (async-present
+  already collapsed the flip ioctl 24ms->0.65ms with presentedFPS flat 51.2->
+  51.0), NOT (b) software_blit-bandwidth bound (fbstat control blit_bytes
+  3678208000 over 898 full_blits = EXACTLY 1280x800x4 = 4,096,000 B/blit, ~200
+  MB/s at 51fps — orders below memcpy BW; copy_ticks=0 per the settled
+  attribution), and NOT (c) make_room/retire back-pressure during video (qemu
+  trace steady state is a clean 1:1:1 `ctx_submit ctx0x2 size 4336` /
+  `res_flush 1280x800 res {0x5,0xe,0x4}` (triple-buffered) / `fence_resp`, and
+  fence_ctrl==fence_resp==965 => no ring-fill backlog; the H1 make_room stalls
+  were the konsole-LAUNCH finding, ring depth already 60). ROOT CAUSE (confirmed
+  from source): kwin has NO free-running vsync clock — the flip-complete event
+  carries the DISPLAY-CORRELATED vblank (gpu_kms_sample_vblank_locked overwrites
+  kms_vblank_sequence with display_last_complete, fb_drm_core_kms.c:1412; fbstat
+  control kms_vblank_display_correlated=1, seq=898=display_last_complete). kwin
+  5.27's RenderLoop schedules next-repaint at lastPresentationTimestamp +
+  16.67ms; with lastPresentationTimestamp = REAL completion time (present
+  round-trip ~3ms per U2 EVTREAD + repaint + wakeup), that per-frame overhead is
+  ADDED to every interval, sliding the loop to ~19.6ms = 51fps (matches the
+  recorded "mono-modal ~22.7ms throughput limiter, not vsync-beat bimodal",
+  ~19.6ms post total-reaper). async-present and vblank_paced_flip both left this
+  intact (vblank_paced still chains off real completion — "next edge PAST real
+  completion") => both measured M7-null. This is the recorded M4/M7/U5 "kwin has
+  no vsync/present clock" root cause, now confirmed as the M7 ceiling.
+  FIX (highest-leverage, matches task candidate (c)-opt1): new gate
+  `virtio_gpu_present_clock_60hz=1` (DEFAULT OFF; composes with + REQUIRES
+  virtio_gpu_async_present=1; no-op when async off => sync flip path
+  byte-identical). In the async-present worker, AFTER the blit completes and the
+  R5-critical BO ref is dropped (blit -> fb_bo_put -> [arm completion]), the
+  flip-complete event's seq/ts is taken from a free-running, wall-clock-anchored
+  60Hz grid (new gpu_kms_present_clock_next_locked: monotonic +1/present, edges
+  16.67ms apart, self-healing snap-forward past missed edges = a dropped frame,
+  correct vsync) INSTEAD of the real-completion clock, and delivered at that grid
+  edge via the existing tested gpu_drm_pace_completed_flip_by_id timer/
+  reservation/never-drop path (helper returns base=(grid_seq-1, grid_ts-period)
+  so pace's internal +1 lands exactly on the grid edge). kwin then paces off a
+  stable 60Hz grid instead of a sliding real-completion chain => grid-locks at
+  16.67ms = 60fps. SAFETY: changes only the event's CLOCK, not its ordering vs
+  the blit (armed after blit+put), so NO new tearing/UAF over async-present;
+  gpu_kms_sample_vblank_locked is still called for its side effects (keeps
+  kms_vblank_sequence coherent for fbstat/WAIT_VBLANK/CRTC_GET_SEQUENCE), clock60
+  overrides only the delivered seq/ts. SUPERSEDES vblank_paced_flip's completion
+  timing when both set. WHY higher-leverage than alternatives: retire-batching
+  wouldn't help (no video ring backlog), direct-scanout skip-copy is
+  architecturally fail-closed on this host (all kms_present_reject_*=898,
+  native_present_credit=0, no DDA/nouveau/D3D12-bind) AND the copy isn't the
+  limiter (copy_ticks=0). Files (kernel submodule): fb_drm_core_kms.c (gate
+  reader + free-clock helper), fb_drm_kms_properties.c (worker: clock60 route +
+  one-shot "present-clock 60Hz engaged" banner, printed OUTSIDE the lock),
+  inc/dev/fb.h (2 END-appended stats: present_clock60_events_total,
+  present_clock60_snap_total). COMPILE PROOF: dev/fb module.c TU rebuilt with the
+  production -Wall -Werror command from build-x86_64/kernel/build/
+  compile_commands.json to scratchpad (in-tree .o untouched), clean; `git -C
+  kernel diff --check` clean. ADVERSARIAL SELF-REVIEW (no blockers): (R1) base_ts
+  = anchor+(target_seq-1)*period >= anchor >= 1 > 0, no underflow, predict()
+  never early-returns 0; (R2) target_seq>=1 always => base_seq>=0, delivered seq
+  monotonic across snaps (wall clock monotonic); (R3) worst-case pace re-reads
+  now >= target_ts => delay clamps to 1ms (rare, benign); (R4) grid statics +
+  stats touched only under fb_state.lock; (R5) monotonic_ns()-under-lock has
+  precedent (gpu_drm_page_flip_paced:1575); (R6) printf moved out of the lock
+  (no printf-under-fb_state.lock precedent existed); single-threaded fb-present
+  wq => `announced` static race-free; (R7) reservation lifecycle UNCHANGED (rides
+  the timer, released by timer_cb; exactly one release, same as vblank_paced);
+  (R8) no early delivery vs blit => tearing guardrail holds; (R9) M6 mesakmsgl
+  under clock60+async would read ~60 (same documented vsync tradeoff as
+  vblank_paced; A/B uses chromium-video, not M6). A/B SPEC (conductor, M7 recipe,
+  DO NOT BOOT until VM lane frees): CONTROL = async-present only
+  (`virtio_gpu_async_present=1`), TREATMENT = +`virtio_gpu_present_clock_60hz=1`;
+  chromium-video kprofile KPROFILE_SECONDS=90, USE_KVM, virtio-vga-gl-primary,
+  audio none; verify both tokens in booted cmdline (op-caution 1). ENGAGEMENT:
+  grep run.log for `present-clock 60Hz engaged` (one-shot banner) in TREATMENT,
+  absent in CONTROL. PRIMARY: presentedFPS 51 -> target >=55 (goal), ideally
+  ~60; decodedFPS unchanged ~61; dropPct expected to fall further. DECISIVE
+  KILL/CONFIRM (fbstat, if capturable, else infer): if presentedFPS rises toward
+  60 with present_clock60_snap_total << events_total => CLOCK hypothesis CONFIRMED
+  (limiter was the missing free vsync clock). If presentedFPS stays ~51 AND
+  snap_total ~= events_total => residual is HOST PRESENT THROUGHPUT (worker
+  blit+round-trip routinely > 16.67ms), NOT the clock — pivot to host-retire, do
+  NOT relitigate the clock. GUARDRAILS (mandatory, same as async-present A/B):
+  real virgl/D3D12 GL both arms, qtquick 0 violations, crash grep 0, no
+  image-layout race, screenshot direct-launch-diff = settled 1001730 (tearing
+  guard — clock change must not corrupt frames), M4/M5/M8 within noise,
+  fork/clone/cow signatures same boot. PROMOTION: only on a proven presentedFPS
+  win with owner sign-off + full regression battery (keep default-OFF until then,
+  same posture as all prior M7 gates).
 - U8 (M8) — MEASURED 2026-07-08 (FIRST VALID reading; GOAL MET, large
   margin): idle-desktop host-CPU on a real-GL boot with the N5 poll-notify
   full-wait gates default-ON (evdev fix). Recipe: `launch-gui.sh USE_KVM=1
@@ -1109,6 +1196,13 @@ approval.
 - `virtio_gpu_vblank_paced_flip=1` — flip-complete events paced to the
   synthetic vblank edge; engagement proven; no gap/first-frame win; small
   warm cost (~+250ms/launch). Vsync-semantics infrastructure. 1661795.
+- `virtio_gpu_present_clock_60hz=1` — IMPLEMENTED 2026-07-09 (uncommitted,
+  TU-compile-clean, A/B PENDING). Requires+composes with async_present;
+  delivers the async flip-complete on a free-running phase-locked 60Hz grid
+  (decoupled from real completion time) to give kwin a stable vsync clock —
+  targets the M7 51fps ceiling (kwin-has-no-vsync-clock root cause). No-op when
+  async off (sync path byte-identical). Supersedes vblank_paced completion
+  timing when both set. See U7-RESIDUAL entry for attribution + A/B spec.
 - `virtio_gpu_async_cursor=1` — cursor image uploads off the compositor
   thread (17-36ms/upload); correctness GO (R9 probe PASS). PERF VERDICT DONE
   (U4 2026-07-08): engagement PROVEN via kwin ioctl shim (CURSOR2 upload max
@@ -1127,6 +1221,48 @@ approval.
 - Default-ON (validated): ordered pageflip, poll-notify full-wait (both
   gates, post evdev/pipe/inotify/timerfd producer fixes), TSC jiffies,
   kernel_preempt, console_async, ring depth 60, total-reaper redesign.
+
+## Instruments
+
+- `hoverprobe` (`user/programs/hoverprobe/hoverprobe.c`, repo-owned guest
+  tool, DONE + baselined 2026-07-09) — accurate end-to-end Plasma
+  responsiveness instrument. ONE guest process injects pointer input
+  (/dev/mouse absolute16, guest-only policy, same struct mouse_event as
+  /bin/mouseinject) AND polls a SMALL region of interest via
+  FB_GPU_SCANOUT_READ (fbstat's sample-current primitive) in a tight loop, so
+  t_inject and t_first_change share one CLOCK_MONOTONIC. Times hover_in,
+  hover_out, click from the pre-injection timestamp to the first readback whose
+  ROI FNV hash differs from the reference captured just before injection
+  (reference = un-hovered desktop for hover_in, hovered state for hover_out,
+  hovered-not-pressed for click). ROI derived in pixels from the icon abs16
+  coord using the harness mapping; centred, screen-clamped. The DRM cursor
+  plane is NOT composited into the primary scanout the ioctl reads, so the ROI
+  reflects highlight/press feedback, not the cursor sprite. Args (all optional,
+  default taskbar-left target 11000,64200 / neutral centre 32768,32768):
+  `hoverprobe [icon_x icon_y away_x away_y iters rw rh settle_ms timeout_ms
+  calib_samples]`. Emits one line/event/iter
+  (`hoverprobe event=.. t_inject_ms=.. t_first_change_ms=.. latency_ms=..
+  sampler_period_ms=.. samples=.. result=CHANGED|TIMEOUT rect=..`), a
+  per-event median/min/max summary, and a sampler_calibration line reporting
+  the measured readback resolution. Compile-proof clean under the production
+  user command (-Wall -Wextra). Harness hook: `KDE_SMOKE_HOVERPROBE=1` runs it
+  in the desktop-interaction-latency reducer right after taskbar-settle (new
+  `run_hoverprobe_instrument` + `hoverprobe` guest-script kind, archived via
+  the interaction-helper capture); `KDE_SMOKE_HOVERPROBE_ONLY=1` finishes right
+  after (lean focused run); knobs KDE_SMOKE_HOVERPROBE_{ITERS,RW,RH,SETTLE_MS,
+  TIMEOUT_MS,AWAY_X,AWAY_Y,CALIB} + icon via
+  KDE_APP_LAUNCH_PROBE_KPROFILE_HOVER_X/Y. Default OFF = byte-identical (no
+  flip). MEASURED RESOLUTION: ~4-5ms per small-rect readback at idle (goal
+  <=5ms MET on the calibration floor), inflating to ~13-16ms while kwin
+  actively composites (scanout-read ioctl serialises behind kwin's synchronous
+  present). Baselines: `kde-plasma-desktop-smoke-history/
+  20260709T162636Z-hoverprobe-instrument-baseline` (chromium-launcher target;
+  click 4/6, 2 timeouts because launching chromium does not idempotently
+  repaint the ROI) and `...20260709T162836Z-hoverprobe-launcher-clean-click`
+  (Kickoff-launcher target; click 6/6 clean). See M10. FINDING: the true
+  hover-in latency is ~205ms, not the ~450-490ms the retired coarse
+  framebuffer-diff sampler reported (that floor was the SAMPLER's serial
+  round-trip, not the desktop) — this instrument resolves it to ~4-5ms.
 
 ## Operational cautions (bite-you-again class)
 
@@ -1200,9 +1336,10 @@ approval.
 | M4 | konsole_wait_ms | warm 1184-1205ms, cold 1406-1500ms (2026-07-08 clean guiperf N=4, all gates green); bottleneck LOCALIZED (U2): kwin damage->repaint SCHEDULE latency = ~96% of each 58-139ms frame-callback wait, konsole render ~0%, kwin repaint ioctl ~4%; imageformats prune opt-in (U3 DONE, ~55-67ms dlopen cut) | Linux-like (~0.3s) |
 | M5 | first_visible_ms | ~6.2-6.6s (clean guiperf N=4) | <15000 |
 | M6 | mesakmsgl FPS | 118-125 (ordered default); ~60 by design under vblank-paced gate | done |
-| M7 | presentedFPS | 51.2 control / 51.0 under virtio_gpu_async_present=1 (2026-07-09 A/B, chromium-video kprofile 90s, complete windows, real virgl/D3D12 GL, crash 0) — async-present does NOT move presentedFPS; dropPct 9.63->7.54 | >=55 (U7) |
+| M7 | presentedFPS | 51.2 control / 51.0 under virtio_gpu_async_present=1 (2026-07-09 A/B, chromium-video kprofile 90s, complete windows, real virgl/D3D12 GL, crash 0) — async-present does NOT move presentedFPS; dropPct 9.63->7.54. ROOT-CAUSED 2026-07-09 (U7-RESIDUAL): ceiling is kwin-has-no-free-vsync-clock (flip-complete carries real-completion time -> RenderLoop interval slides 16.67->19.6ms); fix `virtio_gpu_present_clock_60hz=1` (free 60Hz flip-complete grid, composes with async-present) IMPLEMENTED default-OFF, A/B PENDING VM lane | >=55 (U7) |
 | M8 | idle host CPU | 13.7% mean (13.7/13.6/13.9, 3x10s /proc/stat delta) on a real-GL boot, N5 gates default-ON — FIRST VALID reading 2026-07-08 (U8); far below the 85-130% historical band = N5 poll-notify payoff | <100% (MET) |
 | M9 | Chromium visible | PASS guard | hold |
+| M10 | hoverprobe latency (input-inject -> first ROI pixel change, in-process shared CLOCK_MONOTONIC) | NEW BASELINE 2026-07-09 (U-HP, real KVM+virgl/D3D12 GL, N=6/event, crash 0): hover_in median ~205-234ms (min 176-189), hover_out median ~193-205ms (min 149-159), click median ~250-312ms (launcher-toggle arm 6/6 clean min 24ms). Sampler resolution (256 idle small-rect readbacks) mean 5.5-6.4ms, min 4.0-4.4ms, max ~19-23ms (per-sample inflates to ~13-16ms while kwin composites — scanout-read ioctl serialises behind kwin's synchronous present). SUPERSEDES the retired coarse framebuffer-diff hover metric whose ~448-490ms floor "measured the sampler, not the desktop": true hover-in is ~2x faster (~205ms) at ~4-5ms resolution. | approach Linux VM |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: forktest (rc=1
 exhaustion signature OK), clonetest rc=0, cowtest rc=0, same boot.

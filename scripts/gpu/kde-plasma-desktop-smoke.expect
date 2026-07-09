@@ -12375,6 +12375,10 @@ dump_direct_launch_full_maps() {
     puts $fh "    fbstat)"
     puts $fh "      fbstat"
     puts $fh "      ;;"
+    puts $fh "    hoverprobe)"
+    puts $fh "      /bin/hoverprobe \"\$@\""
+    puts $fh "      probe_rc=\$?"
+    puts $fh "      ;;"
     puts $fh "    *)"
     puts $fh "      echo \"kde-interaction-helper: unknown kind=\$kind\""
     puts $fh "      ;;"
@@ -18481,7 +18485,7 @@ proc enforce_desktop_interaction_guest_input_policy {action} {
 proc persist_interaction_helper_log {kind serial safe_label log_text} {
     global outdir
 
-    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat"} {
+    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat" && $kind ne "hoverprobe"} {
         return ""
     }
 
@@ -18495,7 +18499,7 @@ proc persist_interaction_helper_log {kind serial safe_label log_text} {
 proc persist_interaction_helper_status {kind serial safe_label status_text} {
     global outdir
 
-    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat"} {
+    if {$kind ne "direct-launch" && $kind ne "activation-pty" && $kind ne "fbstat" && $kind ne "hoverprobe"} {
         return ""
     }
 
@@ -19147,6 +19151,33 @@ proc wait_for_taskbar_settled_before_hover {min_nonblack attempts interval_ms ex
     set elapsed_ms [expr {[clock milliseconds] - $start_ms}]
     desktop_interaction_log_line "phase=taskbar-settle action=before-hover status=FAIL reason=unstable elapsed_ms=$elapsed_ms samples=$samples stable_count=$stable_count last_hash=$last_hash last_nonblack=$last_nonblack last_center=$last_center"
     finish 8 "KDE-PLASMA-DESKTOP-SMOKE-FAIL taskbar-settled-before-hover-timeout"
+}
+
+proc run_hoverprobe_instrument {icon_x icon_y} {
+    set away_x [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_X 32768 0 65535]
+    set away_y [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_Y 32768 0 65535]
+    set iters [env_int_range KDE_SMOKE_HOVERPROBE_ITERS 6 1 32]
+    set rw [env_int_range KDE_SMOKE_HOVERPROBE_RW 56 8 400]
+    set rh [env_int_range KDE_SMOKE_HOVERPROBE_RH 40 8 400]
+    set settle [env_int_range KDE_SMOKE_HOVERPROBE_SETTLE_MS 900 100 5000]
+    set tmo [env_int_range KDE_SMOKE_HOVERPROBE_TIMEOUT_MS 2500 200 10000]
+    set calib [env_int_range KDE_SMOKE_HOVERPROBE_CALIB 256 8 4096]
+    set helper_args [format "%d %d %d %d %d %d %d %d %d %d" \
+                         $icon_x $icon_y $away_x $away_y $iters $rw $rh \
+                         $settle $tmo $calib]
+    desktop_interaction_log_line "phase=hoverprobe action=instrument status=start icon_abs16=$icon_x,$icon_y away_abs16=$away_x,$away_y iters=$iters rect_wh=${rw}x${rh} settle_ms=$settle timeout_ms=$tmo [desktop_interaction_guest_input_policy_fields]"
+    set result [run_desktop_interaction_helper_command \
+                    hoverprobe "hoverprobe" $helper_args 240000]
+    set log_text [lindex $result 3]
+    set host_log_path [lindex $result 5]
+    foreach raw_line [split $log_text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[regexp {^hoverprobe (summary|sampler_calibration|config|done|event=)} $line]} {
+            desktop_interaction_log_line "phase=hoverprobe $line"
+            puts "KDE-PLASMA-DESKTOP-SMOKE-INFO $line"
+        }
+    }
+    desktop_interaction_log_line "phase=hoverprobe action=instrument status=PASS host_log=$host_log_path"
 }
 
 proc measure_profiled_visual_hover {action_label x y timeout_ms interval_ms} {
@@ -20423,6 +20454,12 @@ proc run_desktop_interaction_latency_reducer {} {
         $taskbar_settle_attempts $taskbar_settle_interval_ms \
         $taskbar_settle_wait_ms $taskbar_settle_stable_samples
     enforce_desktop_interaction_guest_input_policy "after-taskbar-settle"
+    if {[env_bool KDE_SMOKE_HOVERPROBE 0]} {
+        run_hoverprobe_instrument $profiled_hover_x $profiled_hover_y
+        if {[env_bool KDE_SMOKE_HOVERPROBE_ONLY 0]} {
+            finish 0 "KDE-PLASMA-DESKTOP-SMOKE-DONE reducer=desktop-interaction-latency hoverprobe-only"
+        }
+    }
     capture_fb $guest_taskbar_settled_before_hover_ppm \
         "taskbar-settled-before-hover"
     host_screenshot "taskbar-settled-before-hover" \
