@@ -5,10 +5,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -946,6 +948,526 @@ static void run_egl_readiness_gate(void)
             KDE_EGL_READINESS_MAX_ATTEMPTS, monotonic_ms() - start_ms);
 }
 
+/*
+ * U-KICKOFF: session-start Kickoff (start-menu) PREWARM.
+ *
+ * The COLD first Kickoff activation of a session costs ~2s (one-time QML
+ * component compile + app/recents model population). Proven lever (M11 A/B,
+ * hoverprobe _PREWARM gate): opening Kickoff ONCE at login and dismissing it
+ * moves the user's first open from 2254/1892ms into the warm ~500ms band
+ * (-75%). This ports that lever into the real product session so normal users
+ * (not just the test tool) get it.
+ *
+ * Mechanism (kwin/plasmashell are prebuilt, so no C++ patch): input injection.
+ * A double-forked helper waits for the taskbar to paint (FB scanout-read ROI
+ * settle heuristic, borrowed from hoverprobe), then absolute-clicks the Kickoff
+ * launcher icon via /dev/mouse, dwells to let the models build, and dismisses
+ * with a click on the empty desktop -- leaving the desktop pristine (verified
+ * by an ROI hash compare, in addition to the harness screenshot diff). It runs
+ * in its own session (setsid) so it never steals the session-child's wait, and
+ * is non-blocking for the rest of startup. At session start nothing else is
+ * running, so the injected clicks cannot steal focus from the user.
+ *
+ * Default OFF (opt-in) per the guardrails -- an injected click has a non-~0
+ * one-time cost (~2s of prewarm work paid at login, though nearly free within
+ * the ~6.2-6.6s M5 first-visible window). Enable with cmdline
+ * kde_kickoff_prewarm=1 or env KDE_KICKOFF_PREWARM=1. Promotion to default-on
+ * needs the standard same-session A/B + owner sign-off + regression battery.
+ */
+#define KICKOFF_MOUSE_DEV        "/dev/mouse"
+#define KICKOFF_FB_DEV           "/dev/fb0"
+#define KICKOFF_FB_SCANOUT_READ  0x4635      /* FB_GPU_SCANOUT_READ */
+#define KICKOFF_MOUSE_F_ABSOLUTE 0x01
+
+/* Validated defaults from the M11 A/B (screen 1280x800). */
+#define KICKOFF_ICON_ABS_X   1200
+#define KICKOFF_ICON_ABS_Y   64200
+#define KICKOFF_AWAY_ABS_X   32768
+#define KICKOFF_AWAY_ABS_Y   32768
+#define KICKOFF_DWELL_MS     4000
+#define KICKOFF_SETTLE_MS    900
+#define KICKOFF_GATE_MS      60000
+#define KICKOFF_PRESS_MS     40
+#define KICKOFF_OPEN_ATTEMPTS   8
+#define KICKOFF_OPEN_TIMEOUT_MS 2500
+
+/* /dev/mouse packet (matches kernel struct mouse_event, 8 bytes). */
+struct kickoff_mouse_event {
+    int16_t dx;
+    int16_t dy;
+    uint8_t buttons;
+    uint8_t flags;
+    int8_t  dz;
+    uint8_t pad[1];
+};
+
+/* FB_GPU_SCANOUT_READ argument (matches kernel struct fb_gpu_scanout_read). */
+struct kickoff_scanout_read {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t h;
+    uint32_t pitch;
+    uint32_t flags;
+    uint64_t pixels;
+    uint32_t screen_width;
+    uint32_t screen_height;
+    uint32_t screen_pitch;
+    uint32_t reserved;
+};
+
+static int kickoff_prewarm_enabled(void)
+{
+    static int cached = -1;
+
+    if (cached < 0)
+        cached = flag_or_env_enabled("kde_kickoff_prewarm=1",
+                                     "KDE_KICKOFF_PREWARM") ? 1 : 0;
+    return cached;
+}
+
+static long long kickoff_env_ll(const char *name, long long fallback,
+                                long long lo, long long hi)
+{
+    const char *v = getenv(name);
+    long long r;
+
+    if (!v || !*v)
+        return fallback;
+    r = strtoll(v, NULL, 10);
+    if (r < lo)
+        r = lo;
+    if (r > hi)
+        r = hi;
+    return r;
+}
+
+static int kickoff_clamp_abs(long long v)
+{
+    if (v < 0)
+        return 0;
+    if (v > 65535)
+        return 65535;
+    return (int)v;
+}
+
+static int kickoff_inject_abs(int mouse_fd, int ax, int ay, int buttons)
+{
+    struct kickoff_mouse_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.flags = KICKOFF_MOUSE_F_ABSOLUTE;
+    ev.dx = (int16_t)kickoff_clamp_abs(ax);
+    ev.dy = (int16_t)kickoff_clamp_abs(ay);
+    ev.buttons = (uint8_t)buttons;
+    if (write(mouse_fd, &ev, sizeof(ev)) != (ssize_t)sizeof(ev))
+        return -1;
+    return 0;
+}
+
+static void kickoff_sleep_ms(long long ms)
+{
+    struct timespec ts;
+
+    if (ms <= 0)
+        return;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
+/*
+ * Read a scanout ROI; return 0 on success. Fills *hash (FNV-1a over pixels),
+ * *nonblack (count of pixels with any non-zero RGB) and, when requested, the
+ * returned scanout dimensions. Any of the out pointers may be NULL.
+ */
+static int kickoff_sample_roi(int fb_fd, uint32_t x, uint32_t y,
+                              uint32_t w, uint32_t h, uint64_t *hash_out,
+                              uint32_t *nonblack_out, uint32_t *sw_out,
+                              uint32_t *sh_out)
+{
+    struct kickoff_scanout_read req;
+    uint32_t *pix;
+    uint64_t hh = 1469598103934665603ULL;
+    uint32_t nb = 0;
+    uint32_t n;
+
+    if (fb_fd < 0 || w == 0 || h == 0)
+        return -1;
+    n = w * h;
+    pix = malloc((size_t)n * sizeof(uint32_t));
+    if (!pix)
+        return -1;
+    memset(&req, 0, sizeof(req));
+    req.x = x;
+    req.y = y;
+    req.w = w;
+    req.h = h;
+    req.pitch = w * (uint32_t)sizeof(uint32_t);
+    req.pixels = (uint64_t)(uintptr_t)pix;
+    if (ioctl(fb_fd, KICKOFF_FB_SCANOUT_READ, &req) < 0) {
+        free(pix);
+        return -1;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t p = pix[i];
+
+        hh ^= p;
+        hh *= 1099511628211ULL;
+        if ((p & 0x00FFFFFFU) != 0)
+            nb++;
+    }
+    if (hash_out)
+        *hash_out = hh;
+    if (nonblack_out)
+        *nonblack_out = nb;
+    if (sw_out)
+        *sw_out = req.screen_width;
+    if (sh_out)
+        *sh_out = req.screen_height;
+    free(pix);
+    return 0;
+}
+
+/* Dump the full current scanout to a P6 PPM (pristine-desktop proof). */
+static void kickoff_dump_frame_ppm(int fb_fd, const char *path,
+                                   uint32_t w, uint32_t h)
+{
+    struct kickoff_scanout_read req;
+    uint32_t *px;
+    unsigned char *rgb;
+    uint32_t n;
+    FILE *fp;
+
+    if (fb_fd < 0 || w == 0 || h == 0)
+        return;
+    n = w * h;
+    px = malloc((size_t)n * sizeof(uint32_t));
+    rgb = malloc((size_t)n * 3);
+    if (!px || !rgb) {
+        free(px);
+        free(rgb);
+        return;
+    }
+    memset(&req, 0, sizeof(req));
+    req.x = 0;
+    req.y = 0;
+    req.w = w;
+    req.h = h;
+    req.pitch = w * (uint32_t)sizeof(uint32_t);
+    req.pixels = (uint64_t)(uintptr_t)px;
+    if (ioctl(fb_fd, KICKOFF_FB_SCANOUT_READ, &req) < 0) {
+        free(px);
+        free(rgb);
+        return;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t p = px[i];   /* XRGB8888 little-endian */
+
+        rgb[i * 3 + 0] = (unsigned char)((p >> 16) & 0xff);
+        rgb[i * 3 + 1] = (unsigned char)((p >> 8) & 0xff);
+        rgb[i * 3 + 2] = (unsigned char)(p & 0xff);
+    }
+    fp = fopen(path, "wb");
+    if (fp) {
+        fprintf(fp, "P6\n%u %u\n255\n", w, h);
+        fwrite(rgb, 1, (size_t)n * 3, fp);
+        fclose(fp);
+    }
+    free(px);
+    free(rgb);
+}
+
+/*
+ * Wait for the taskbar (bottom-left launcher region) to be painted and stable.
+ * Returns 1 = settled, 0 = timed out (caller proceeds anyway). Mirrors the
+ * harness taskbar-settle heuristic: a bottom-left ROI must become non-black and
+ * hash-stable for a few consecutive samples.
+ */
+static int kickoff_wait_taskbar_settled(int fb_fd, uint32_t sw, uint32_t sh,
+                                        long long budget_ms)
+{
+    uint32_t rw = 56, rh = 40;
+    uint32_t rx = 0;
+    uint32_t ry = (sh > rh) ? sh - rh : 0;
+    uint32_t need_nonblack;
+    long long start_ms = monotonic_ms();
+    long long deadline = start_ms + budget_ms;
+    uint64_t last = 0;
+    int have = 0, stable = 0, samples = 0;
+
+    if (rw > sw)
+        rw = sw;
+    need_nonblack = (rw * rh) / 20;   /* >= ~5% of the ROI painted */
+    if (need_nonblack < 1)
+        need_nonblack = 1;
+
+    while (monotonic_ms() < deadline) {
+        uint64_t h;
+        uint32_t nb;
+
+        samples++;
+        if (kickoff_sample_roi(fb_fd, rx, ry, rw, rh, &h, &nb,
+                               NULL, NULL) < 0) {
+            kickoff_sleep_ms(250);
+            continue;
+        }
+        if (nb >= need_nonblack) {
+            if (have && h == last) {
+                if (++stable >= 3) {
+                    fprintf(stderr,
+                            "kde-plasma-session-child: kickoff-prewarm gate "
+                            "status=READY elapsed_ms=%lld samples=%d "
+                            "nonblack=%u roi=%u,%u,%u,%u\n",
+                            monotonic_ms() - start_ms, samples, nb,
+                            rx, ry, rw, rh);
+                    return 1;
+                }
+            } else {
+                stable = 0;
+            }
+            last = h;
+            have = 1;
+        } else {
+            stable = 0;
+            have = 0;
+        }
+        kickoff_sleep_ms(250);
+    }
+
+    fprintf(stderr,
+            "kde-plasma-session-child: kickoff-prewarm gate status=TIMEOUT "
+            "elapsed_ms=%lld samples=%d proceeding=1\n",
+            monotonic_ms() - start_ms, samples);
+    return 0;
+}
+
+/*
+ * Poll an ROI until its hash differs from baseline (a change) or timeout.
+ * Returns 1 = changed, 0 = timed out, -1 = readback error.
+ */
+static int kickoff_poll_roi_change(int fb_fd, uint32_t x, uint32_t y,
+                                   uint32_t w, uint32_t h, uint64_t baseline,
+                                   long long timeout_ms)
+{
+    long long deadline = monotonic_ms() + timeout_ms;
+
+    while (monotonic_ms() < deadline) {
+        uint64_t hh;
+
+        if (kickoff_sample_roi(fb_fd, x, y, w, h, &hh, NULL, NULL, NULL) < 0)
+            return -1;
+        if (hh != baseline)
+            return 1;
+        kickoff_sleep_ms(20);
+    }
+    return 0;
+}
+
+/* Body of the prewarm worker (runs in the double-forked grandchild). */
+static void kickoff_prewarm_run(void)
+{
+    int mouse_fd, fb_fd;
+    int icon_x = KICKOFF_ICON_ABS_X, icon_y = KICKOFF_ICON_ABS_Y;
+    int away_x = KICKOFF_AWAY_ABS_X, away_y = KICKOFF_AWAY_ABS_Y;
+    long long dwell_ms = kickoff_env_ll("KDE_KICKOFF_PREWARM_DWELL_MS",
+                                        KICKOFF_DWELL_MS, 0, 30000);
+    long long settle_ms = kickoff_env_ll("KDE_KICKOFF_PREWARM_SETTLE_MS",
+                                         KICKOFF_SETTLE_MS, 0, 5000);
+    long long budget_ms = kickoff_env_ll("KDE_KICKOFF_PREWARM_GATE_MS",
+                                         KICKOFF_GATE_MS, 1000, 180000);
+    uint32_t sw = 1280, sh = 800;
+    uint32_t mrx, mry, mrw = 200, mrh = 200;
+    uint64_t base_hash = 0, open_hash = 0, post_hash = 0;
+    uint32_t base_nb = 0, open_nb = 0, post_nb = 0;
+    int have_base = 0, gate = -1;
+    long long t0 = monotonic_ms();
+
+    icon_x = (int)kickoff_env_ll("KDE_KICKOFF_PREWARM_ICON_ABS_X", icon_x,
+                                 0, 65535);
+    icon_y = (int)kickoff_env_ll("KDE_KICKOFF_PREWARM_ICON_ABS_Y", icon_y,
+                                 0, 65535);
+
+    mouse_fd = open(KICKOFF_MOUSE_DEV, O_RDWR);
+    if (mouse_fd < 0) {
+        fprintf(stderr,
+                "kde-plasma-session-child: kickoff-prewarm status=SKIP "
+                "reason=mouse-open-failed err=%s\n", strerror(errno));
+        return;
+    }
+    fb_fd = open(KICKOFF_FB_DEV, O_RDWR);
+    if (fb_fd >= 0) {
+        /* Probe the current scanout size (also warms the readback path). */
+        kickoff_sample_roi(fb_fd, 0, 0, 1, 1, NULL, NULL, &sw, &sh);
+        if (sw == 0 || sh == 0) {
+            sw = 1280;
+            sh = 800;
+        }
+    }
+
+    fprintf(stderr,
+            "kde-plasma-session-child: kickoff-prewarm status=START "
+            "screen=%ux%u icon_abs16=%d,%d away_abs16=%d,%d dwell_ms=%lld "
+            "settle_ms=%lld gate_ms=%lld\n",
+            sw, sh, icon_x, icon_y, away_x, away_y, dwell_ms, settle_ms,
+            budget_ms);
+
+    /* Readiness gate: wait for the taskbar to paint (best-effort). */
+    if (fb_fd >= 0)
+        gate = kickoff_wait_taskbar_settled(fb_fd, sw, sh, budget_ms);
+
+    /* Pristine baseline over the Kickoff-body region (best-effort). */
+    mrx = 100;
+    mry = 330;
+    if (mrx + mrw > sw)
+        mrx = (sw > mrw) ? sw - mrw : 0;
+    if (mry + mrh > sh)
+        mry = (sh > mrh) ? sh - mrh : 0;
+    if (fb_fd >= 0 &&
+        kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &base_hash, &base_nb,
+                           NULL, NULL) == 0)
+        have_base = 1;
+
+    /*
+     * OPEN with verify-and-retry. The Kickoff applet may not be interactive the
+     * instant the taskbar corner paints, so a single early click can be
+     * swallowed. Click the launcher, confirm the menu-body ROI actually changed
+     * (Kickoff drew over the wallpaper), and retry if not. Each attempt starts
+     * from a known-closed state (click empty desktop) so a click that DID open
+     * is not silently toggled shut by the next attempt.
+     */
+    long long open_timeout_ms =
+        kickoff_env_ll("KDE_KICKOFF_PREWARM_OPEN_TIMEOUT_MS",
+                       KICKOFF_OPEN_TIMEOUT_MS, 200, 10000);
+    int max_attempts = have_base ? KICKOFF_OPEN_ATTEMPTS : 1;
+    int opened = 0, attempt = 0;
+    uint64_t pre_open_hash = base_hash;
+
+    for (attempt = 1; attempt <= max_attempts; attempt++) {
+        uint64_t attempt_base = base_hash;
+
+        /* Ensure a known-closed, pristine desktop first. */
+        kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
+        kickoff_sleep_ms(settle_ms);
+        if (have_base)
+            kickoff_inject_abs(mouse_fd, away_x, away_y, 1);
+        kickoff_sleep_ms(KICKOFF_PRESS_MS);
+        if (have_base)
+            kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
+        kickoff_sleep_ms(settle_ms);
+        if (have_base)
+            kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &attempt_base, NULL,
+                               NULL, NULL);
+        pre_open_hash = attempt_base;
+
+        /* Click the Kickoff launcher icon. */
+        kickoff_inject_abs(mouse_fd, icon_x, icon_y, 1);
+        kickoff_sleep_ms(KICKOFF_PRESS_MS);
+        kickoff_inject_abs(mouse_fd, icon_x, icon_y, 0);
+
+        if (!have_base) {
+            opened = -1;   /* no fb: cannot verify, assume best-effort */
+            break;
+        }
+        if (kickoff_poll_roi_change(fb_fd, mrx, mry, mrw, mrh, attempt_base,
+                                    open_timeout_ms) == 1) {
+            opened = 1;
+            kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &open_hash, &open_nb,
+                               NULL, NULL);
+            fprintf(stderr,
+                    "kde-plasma-session-child: kickoff-prewarm open status=OPEN "
+                    "attempt=%d elapsed_ms=%lld\n",
+                    attempt, monotonic_ms() - t0);
+            break;
+        }
+        fprintf(stderr,
+                "kde-plasma-session-child: kickoff-prewarm open status=RETRY "
+                "attempt=%d/%d elapsed_ms=%lld\n",
+                attempt, max_attempts, monotonic_ms() - t0);
+    }
+
+    /* Dwell so the one-time QML compile + app/recents models fully build. */
+    kickoff_sleep_ms(dwell_ms);
+
+    /* DISMISS: click the empty desktop to close Kickoff. */
+    kickoff_inject_abs(mouse_fd, away_x, away_y, 1);
+    kickoff_sleep_ms(KICKOFF_PRESS_MS);
+    kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
+    kickoff_sleep_ms(settle_ms);
+
+    /* Pristine-desktop proof: dump the full frame after the dismiss. */
+    if (fb_fd >= 0)
+        kickoff_dump_frame_ppm(fb_fd,
+                               "/kde-plasma-kickoff-prewarm-after.ppm", sw, sh);
+
+    /* Verify the desktop is pristine again (menu-body ROI back to closed). */
+    if (have_base &&
+        kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &post_hash, &post_nb,
+                           NULL, NULL) == 0) {
+        int pristine = (post_hash == pre_open_hash);
+
+        fprintf(stderr,
+                "kde-plasma-session-child: kickoff-prewarm status=DONE "
+                "gate=%s opened=%d attempts=%d pristine=%d elapsed_ms=%lld "
+                "menu_roi=%u,%u,%u,%u base_nonblack=%u open_nonblack=%u "
+                "post_nonblack=%u\n",
+                gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
+                opened, attempt, pristine, monotonic_ms() - t0, mrx, mry, mrw,
+                mrh, base_nb, open_nb, post_nb);
+    } else {
+        fprintf(stderr,
+                "kde-plasma-session-child: kickoff-prewarm status=DONE "
+                "gate=%s opened=%d pristine=unknown elapsed_ms=%lld "
+                "reason=no-roi-verify\n",
+                gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
+                opened, monotonic_ms() - t0);
+    }
+
+    if (fb_fd >= 0)
+        close(fb_fd);
+    close(mouse_fd);
+}
+
+/*
+ * Launch the prewarm worker without blocking the session-child. Double-forks so
+ * the worker is reparented to init (no zombie, and the session-child's
+ * waitpid(plasmashell) is never confused by the worker's exit).
+ */
+static void kickoff_prewarm_start(void)
+{
+    pid_t pid;
+
+    if (!kickoff_prewarm_enabled())
+        return;
+
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr,
+                "kde-plasma-session-child: kickoff-prewarm fork failed: %s\n",
+                strerror(errno));
+        return;
+    }
+    if (pid == 0) {
+        pid_t worker;
+
+        setsid();
+        worker = fork();
+        if (worker < 0)
+            _exit(0);
+        if (worker > 0)
+            _exit(0);
+        kickoff_prewarm_run();
+        _exit(0);
+    }
+
+    /* Reap the intermediate; the worker is now an init child. */
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+        ;
+    fprintf(stderr,
+            "kde-plasma-session-child: kickoff-prewarm scheduled "
+            "(gate=kde_kickoff_prewarm=1)\n");
+}
+
 int main(void)
 {
     char *dbus_env[] = {
@@ -1024,6 +1546,11 @@ int main(void)
     run_optional(activity, 0, 0);
 
     run_egl_readiness_gate();
+
+    /* U-KICKOFF: schedule the session-start Kickoff prewarm (gated, default
+     * OFF). Non-blocking: the worker self-gates on the taskbar painting, so it
+     * is safe to launch here even though plasmashell is spawned just below. */
+    kickoff_prewarm_start();
 
     return wait_for_plasmashell_logged(plasmashell);
 }
