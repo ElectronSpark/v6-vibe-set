@@ -45,6 +45,53 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
 
 ## UNFINISHED WORK — priority queue
 
+- U-TOOLTIP (taskbar-icon tooltip slow + unstable — DECOMPOSED + BOTH LEVERS
+  IMPLEMENTED AND BOOT-VALIDATED 2026-07-09, gates default OFF; residual =
+  default-on promotion): USER PAIN ("hovering a taskbar icon -> tooltip above
+  it takes noticeably long, latency unstable run-to-run") reproduced with a
+  new hoverprobe TOOLTIP protocol (see Instruments; tip ROI 135,710,140,50
+  above the Kate taskbar icon, hover-no-click; full-frame PPM proves a genuine
+  "Kate / Advanced Text Editor" tooltip). ROOT (config FIRST, binary-verified):
+  plasma-framework 5.115 ToolTipArea reads plasmarc [PlasmaToolTips] Delay,
+  compiled default 700 ms (libcorebindingsplugin.so disasm readEntry("Delay",
+  0x2bc); enabled=(Delay>0) so Delay<=0 DISABLES tooltips — never use 0); the
+  image ships NO plasmarc, so 700 ms show-delay = 74% of the 945 ms baseline
+  median. DECOMPOSITION (n=12/event/boot, 7 boots, all gates green, 0 FM19):
+  baseline tooltip_open med 948.5/942.9 p90 973/1006 max 1093/1124 sd 50/59 =
+  700 config delay + ~250 ms render (tooltip QML update + kwin damage->repaint
+  schedule, U2 wall ~3-4x67ms cadence); tooltip_close ~260 ms all arms; A->B
+  switch (dialog visible) 233 -> ~110 ms when Delay=50. VARIANCE ATTRIBUTED:
+  repeats tight everywhere (sd 44-80); the instability is the FIRST tooltip of
+  the session = ToolTipDialog QML cold instantiation, HIDDEN at Delay=700
+  (~+150ms) but EXPOSED + jittery at Delay=50 (first 994/2331 ms vs ~470
+  repeats) — plus occasional close-side outliers (kwin schedule jitter, known
+  wall, quantified not chased). FIX (two gated levers, default OFF,
+  byte-identical without tokens; sources edited but NOT committed):
+  (1) kde-session.c cmdline `kde_plasma_tooltip_delay=<1..10000>` writes
+  /dev/shm/kde-config/plasmarc Delay override (engagement line "plasma tooltip
+  delay override Delay=50 ms" in run.log); (2) kde-plasma-session-child.c
+  cmdline `kde_tooltip_prewarm=1` (env KDE_TOOLTIP_PREWARM=1) extends the
+  kickoff-prewarm double-forked worker (now started if EITHER gate is on;
+  kickoff-only portion skipped when its own gate is off) to hover the taskbar
+  icon once after the taskbar-ready gate (knobs KDE_TOOLTIP_PREWARM_ICON_ABS_X/
+  _Y/_DWELL_MS default 11000,64200/2500) then move away — ~3.4 s worker time at
+  login, tooltip auto-hides, pristine; (3) harness A/B hook
+  KDE_SMOKE_PLASMA_TOOLTIP_DELAY_MS stages /etc/xdg/plasmarc into the PER-RUN
+  fs.img copy (KConfig system cascade). A/B VERDICT (Delay=50 + prewarm, two
+  reps): med 945 -> 486/482 (-49%), p90 ~990 -> 541/530 (-46%), worst-case
+  2331 -> 607/747, first-of-session ~1.1s -> 486/747 ms; prewarm-only at
+  Delay=700 = NULL (first 1105 — the 700ms delay already masks the cold cost;
+  prewarm pays off only once the delay is cut); Delay=50 alone leaves the
+  first-tooltip jitter (994/2331). Residual ~480 ms floor = U2 kwin
+  damage->repaint schedule latency (settled, do not relitigate). Staged into
+  committed fs.img via debugfs (kde-session, kde-plasma-session-child,
+  hoverprobe — all gated/inert by default; backups in the tooltip worker's
+  scratchpad); gate-OFF equivalence proven by boot6 baseline-identical stats
+  on the new binaries. PROMOTION to default-on (residual): needs the standard
+  regression battery + owner sign-off (same posture as kickoff prewarm); the
+  natural default candidate is Delay~200-300 + prewarm if 50 ms feels too
+  eager for real users. Archives: 20260709T205408Z-tooltip-ab-summary (+ 7 run
+  archives listed inside). See M12.
 - U-KICKOFF (start-menu open/close — DECOMPOSED + LEVER PROVEN 2026-07-09;
   PRODUCT-SIDE PREWARM IMPLEMENTED + BOOT-VALIDATED 2026-07-09, gate default
   OFF; only residual is the default-on promotion):
@@ -1367,6 +1414,22 @@ approval.
   menu iter1 is only cold with _DO_HOVER=0. Staged into fs.img via debugfs
   (native ELF at sysroot/bin/hoverprobe rebuilt with build_host_user_program
   flags) — no rootfs rebuild needed.
+  TOOLTIP-PROTOCOL EXTENSION (2026-07-09, U-TOOLTIP): arg 18 menu_protocol
+  (0=click default byte-identical, 1=hover) reuses the menu ROI as a TIP ROI
+  above a taskbar icon: OPEN = move onto the icon (no click) -> first tip-ROI
+  change (tooltip appears; show-delay + QML + kwin schedule), CLOSE = move
+  away -> ROI reverts (hide); args 19,20 = optional icon B abs16 for an A->B
+  SWITCH phase (hover A until tooltip up, move straight to B while the dialog
+  is visible; per-icon cold + visible-path timer). Emits event=tooltip_open/
+  tooltip_close/tooltip_switch with temperature=first|repeat and summaries
+  with median/p90/min/max/STDDEV (variance is the deliverable); dumps
+  /kde-plasma-tooltip-proof.ppm on iter 1. Env knobs
+  KDE_SMOKE_HOVERPROBE_MENU_PROTOCOL/_ICON2_X/_ICON2_Y; helper timeout
+  240s->480s; use _DO_HOVER=0 so iter 1 is the genuine first tooltip of the
+  session. Compile-clean -Wall -Wextra; staged into fs.img via debugfs.
+  Companion gated config stage: `KDE_SMOKE_PLASMA_TOOLTIP_DELAY_MS=<ms>` writes
+  /etc/xdg/plasmarc [PlasmaToolTips] Delay into the per-run fs.img copy
+  (system-cascade override; Delay<=0 would disable tooltips and is rejected).
 
 ## Operational cautions (bite-you-again class)
 
@@ -1444,6 +1507,7 @@ approval.
 | M8 | idle host CPU | 13.7% mean (13.7/13.6/13.9, 3x10s /proc/stat delta) on a real-GL boot, N5 gates default-ON — FIRST VALID reading 2026-07-08 (U8); far below the 85-130% historical band = N5 poll-notify payoff | <100% (MET) |
 | M9 | Chromium visible | PASS guard | hold |
 | M11 | Kickoff (start-menu) open/close latency (hoverprobe menu-mode, menu-body ROI, in-process CLOCK_MONOTONIC) | BASELINE + PREWARM A/B 2026-07-09 (U-KICKOFF, real virgl/D3D12 GL, qtquick PASS, crash 0, n=2/arm, full-frame PPM confirms genuine Kickoff open). USER PAIN REPRODUCED + DECOMPOSED: COLD first-open (never opened in session) = 2254/1892ms (matches the reported 1394-2517ms); WARM repeat-open (same session) = median ~400-500ms (340-670ms); menu CLOSE ~180-420ms. Cold excess ~1500-1850ms is a ONE-TIME-per-session cost = QML component compile + Kickoff app/recents model population (KIO/DBus), NOT compositor cadence (kwin ioctl-trace: compositor mostly idle during the cold open, PAGE_FLIP dur ~5ms). Warm ~400ms floor = U2 kwin damage->repaint SCHEDULE latency + fade frames (known-hard, do not relitigate). ATTACK — session-start PREWARM (gated, open Kickoff once at login, wait for model build, close): user's first open 2254/1892 -> 498/540ms (-75%, ~1550ms), into the warm band. Prewarm one-time cost ~2000ms real, paid at session start (tunable wait). Gate default OFF; product promotion path below. Old "open 1394-2517ms / close 415-963ms" from the retired coarse full-frame sampler is partly artifact (same lesson as M10 hover) BUT the cold-open pain is REAL (~2s) and prewarm is the lever. PRODUCT-PREWARM BOOT A/B 2026-07-09 (U-KICKOFF, gate kde_kickoff_prewarm=1 in kde-plasma-session-child, hoverprobe _DO_HOVER=0 _PREWARM=0 so iter1=user's first real click, real virgl/D3D12 GL, qtquick PASS, crash 0, no lingering qemu, 3 boots): gate ON user first-open=493ms (worker DONE opened=1 pristine=1, pristine screenshot verified) vs gate OFF cold=2164ms same config = -77% (~1670ms), matching the test-tool prewarm A/B (498/540ms). Gate default OFF; promotion-to-default-on pending standard battery + owner sign-off. | approach Linux VM |
+| M12 | Taskbar tooltip latency (hoverprobe tooltip protocol: hover -> first tip-ROI pixel; median/p90/max/stddev, n=12/boot) | BASELINE + DECOMPOSITION + GATED FIX A/B 2026-07-09 (U-TOOLTIP, real virgl/D3D12 GL, qtquick PASS, crash 0, 7 boots, 0 FM19). BASELINE (Delay=700 default): open med 948.5/942.9 p90 973.3/1005.8 max 1092.6/1123.7 sd 50.3/58.5 ms; close ~262; A->B switch ~233. DECOMPOSED: 700 ms plasmarc [PlasmaToolTips] Delay compiled default (74%, binary-verified in libcorebindingsplugin.so; image ships no plasmarc) + ~250 ms render (U2 kwin schedule wall) + first-of-session QML cold cost (the JITTER source: hidden at Delay=700, exposed at Delay=50: first 994/2331 vs ~470 repeats). FIX gated default-OFF: kde_plasma_tooltip_delay=50 + kde_tooltip_prewarm=1 -> open med 486.1/482.2 (-49%), p90 541.1/530.3 (-46%), max 606.7/747.1 (worst-case -68% vs delay-only 2331), first == repeats, sd 44.4/79.2; switch ~110. Prewarm-only at Delay=700 NULL (700ms delay masks cold cost). Residual ~480 ms = U2 kwin damage->repaint schedule floor (do not relitigate). Promotion pending battery + sign-off. Archive 20260709T205408Z-tooltip-ab-summary. | approach Linux VM |
 | M10 | hoverprobe latency (input-inject -> first ROI pixel change, in-process shared CLOCK_MONOTONIC) | NEW BASELINE 2026-07-09 (U-HP, real KVM+virgl/D3D12 GL, N=6/event, crash 0): hover_in median ~205-234ms (min 176-189), hover_out median ~193-205ms (min 149-159), click median ~250-312ms (launcher-toggle arm 6/6 clean min 24ms). Sampler resolution (256 idle small-rect readbacks) mean 5.5-6.4ms, min 4.0-4.4ms, max ~19-23ms (per-sample inflates to ~13-16ms while kwin composites — scanout-read ioctl serialises behind kwin's synchronous present). SUPERSEDES the retired coarse framebuffer-diff hover metric whose ~448-490ms floor "measured the sampler, not the desktop": true hover-in is ~2x faster (~205ms) at ~4-5ms resolution. CLOCK-60 CHECK 2026-07-09 (hoverprobe under M7 treatment tokens async-present+present_clock_60hz, banner engaged, real GL, crash 0, N=6): hover_in median 203.5ms (185.5-401.4), hover_out 157.8ms (147.5-194.9), click 284.0ms (269.9-286.9, 4/6). WITHIN NOISE of baseline — no clear interaction-latency win from the 60Hz clock; consistent with U2 (hover/click latency dominated by kwin damage->repaint SCHEDULE latency ~96%, not present cadence). | approach Linux VM |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: forktest (rc=1

@@ -532,6 +532,40 @@ static void seed_kde_config(void)
                       konsole_shell_profile);
     write_config_file("/dev/shm/kde-config/plasma-org.kde.plasma.desktop-appletsrc",
                       plasma_appletsrc);
+
+    /* Gated Plasma tooltip show-delay override (taskbar-tooltip latency
+     * lever). plasma-framework's ToolTipArea reads plasmarc
+     * [PlasmaToolTips] Delay with a compiled default of 700 ms before the
+     * tooltip popup is even requested; Delay<=0 DISABLES tooltips entirely
+     * (binary-verified in libcorebindingsplugin.so 5.115), so only small
+     * POSITIVE overrides are accepted. Default OFF: without the cmdline
+     * token no plasmarc is written and behaviour is byte-identical. */
+    {
+        char tooltip_delay[16];
+
+        if (cmdline_get_value("kde_plasma_tooltip_delay", tooltip_delay,
+                              sizeof(tooltip_delay))) {
+            int delay_ms = atoi(tooltip_delay);
+
+            if (delay_ms > 0 && delay_ms <= 10000) {
+                char plasmarc[64];
+
+                snprintf(plasmarc, sizeof(plasmarc),
+                         "[PlasmaToolTips]\nDelay=%d\n", delay_ms);
+                write_config_file("/dev/shm/kde-config/plasmarc", plasmarc);
+                fprintf(stderr,
+                        "kde-session: plasma tooltip delay override "
+                        "Delay=%d ms (kde_plasma_tooltip_delay)\n",
+                        delay_ms);
+            } else {
+                fprintf(stderr,
+                        "kde-session: ignoring invalid "
+                        "kde_plasma_tooltip_delay=%s (need 1..10000; "
+                        "Delay<=0 would disable tooltips)\n",
+                        tooltip_delay);
+            }
+        }
+    }
     fprintf(stderr, "kde-session: seeded KWin OpenGL/effects guardrails\n");
 }
 

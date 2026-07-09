@@ -1026,6 +1026,23 @@ static int kickoff_prewarm_enabled(void)
     return cached;
 }
 
+/*
+ * Tooltip prewarm (gated, default OFF): hover a taskbar icon once at login so
+ * plasmashell instantiates the shared ToolTipDialog QML; the user's first real
+ * hover then pays only the warm tooltip cost (~0.5s) instead of the cold one
+ * (~1.0s measured). Rides the same double-forked worker as the Kickoff
+ * prewarm; each step keeps its own gate so either can run alone.
+ */
+static int tooltip_prewarm_enabled(void)
+{
+    static int cached = -1;
+
+    if (cached < 0)
+        cached = flag_or_env_enabled("kde_tooltip_prewarm=1",
+                                     "KDE_TOOLTIP_PREWARM") ? 1 : 0;
+    return cached;
+}
+
 static long long kickoff_env_ll(const char *name, long long fallback,
                                 long long lo, long long hi)
 {
@@ -1335,6 +1352,7 @@ static void kickoff_prewarm_run(void)
      * (Kickoff drew over the wallpaper), and retry if not. Each attempt starts
      * from a known-closed state (click empty desktop) so a click that DID open
      * is not silently toggled shut by the next attempt.
+     * (Skipped entirely when only the tooltip prewarm gate is on.)
      */
     long long open_timeout_ms =
         kickoff_env_ll("KDE_KICKOFF_PREWARM_OPEN_TIMEOUT_MS",
@@ -1342,6 +1360,9 @@ static void kickoff_prewarm_run(void)
     int max_attempts = have_base ? KICKOFF_OPEN_ATTEMPTS : 1;
     int opened = 0, attempt = 0;
     uint64_t pre_open_hash = base_hash;
+
+    if (!kickoff_prewarm_enabled())
+        max_attempts = 0;
 
     for (attempt = 1; attempt <= max_attempts; attempt++) {
         uint64_t attempt_base = base_hash;
@@ -1386,41 +1407,70 @@ static void kickoff_prewarm_run(void)
                 attempt, max_attempts, monotonic_ms() - t0);
     }
 
-    /* Dwell so the one-time QML compile + app/recents models fully build. */
-    kickoff_sleep_ms(dwell_ms);
+    if (kickoff_prewarm_enabled()) {
+        /* Dwell so the one-time QML compile + app/recents models build. */
+        kickoff_sleep_ms(dwell_ms);
 
-    /* DISMISS: click the empty desktop to close Kickoff. */
-    kickoff_inject_abs(mouse_fd, away_x, away_y, 1);
-    kickoff_sleep_ms(KICKOFF_PRESS_MS);
-    kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
-    kickoff_sleep_ms(settle_ms);
+        /* DISMISS: click the empty desktop to close Kickoff. */
+        kickoff_inject_abs(mouse_fd, away_x, away_y, 1);
+        kickoff_sleep_ms(KICKOFF_PRESS_MS);
+        kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
+        kickoff_sleep_ms(settle_ms);
 
-    /* Pristine-desktop proof: dump the full frame after the dismiss. */
-    if (fb_fd >= 0)
-        kickoff_dump_frame_ppm(fb_fd,
-                               "/kde-plasma-kickoff-prewarm-after.ppm", sw, sh);
+        /* Pristine-desktop proof: dump the full frame after the dismiss. */
+        if (fb_fd >= 0)
+            kickoff_dump_frame_ppm(fb_fd,
+                                   "/kde-plasma-kickoff-prewarm-after.ppm",
+                                   sw, sh);
 
-    /* Verify the desktop is pristine again (menu-body ROI back to closed). */
-    if (have_base &&
-        kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &post_hash, &post_nb,
-                           NULL, NULL) == 0) {
-        int pristine = (post_hash == pre_open_hash);
+        /* Verify the desktop is pristine again (menu-body ROI closed). */
+        if (have_base &&
+            kickoff_sample_roi(fb_fd, mrx, mry, mrw, mrh, &post_hash,
+                               &post_nb, NULL, NULL) == 0) {
+            int pristine = (post_hash == pre_open_hash);
 
+            fprintf(stderr,
+                    "kde-plasma-session-child: kickoff-prewarm status=DONE "
+                    "gate=%s opened=%d attempts=%d pristine=%d elapsed_ms=%lld "
+                    "menu_roi=%u,%u,%u,%u base_nonblack=%u open_nonblack=%u "
+                    "post_nonblack=%u\n",
+                    gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
+                    opened, attempt, pristine, monotonic_ms() - t0, mrx, mry,
+                    mrw, mrh, base_nb, open_nb, post_nb);
+        } else {
+            fprintf(stderr,
+                    "kde-plasma-session-child: kickoff-prewarm status=DONE "
+                    "gate=%s opened=%d pristine=unknown elapsed_ms=%lld "
+                    "reason=no-roi-verify\n",
+                    gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
+                    opened, monotonic_ms() - t0);
+        }
+    }
+
+    /*
+     * Tooltip prewarm (own gate): hover a taskbar icon once so plasmashell
+     * builds the shared ToolTipDialog QML now; move away so the tooltip
+     * hides again. Runs after the Kickoff dismissal so the two prewarm
+     * pop-ups never overlap; leaves the desktop pristine (tooltips
+     * auto-hide on hover-out, nothing to click).
+     */
+    if (tooltip_prewarm_enabled()) {
+        int tip_x = (int)kickoff_env_ll("KDE_TOOLTIP_PREWARM_ICON_ABS_X",
+                                        11000, 0, 65535);
+        int tip_y = (int)kickoff_env_ll("KDE_TOOLTIP_PREWARM_ICON_ABS_Y",
+                                        64200, 0, 65535);
+        long long tip_dwell_ms =
+            kickoff_env_ll("KDE_TOOLTIP_PREWARM_DWELL_MS", 2500, 0, 30000);
+        long long t1 = monotonic_ms();
+
+        kickoff_inject_abs(mouse_fd, tip_x, tip_y, 0);
+        kickoff_sleep_ms(tip_dwell_ms);   /* show-delay + QML build + paint */
+        kickoff_inject_abs(mouse_fd, away_x, away_y, 0);
+        kickoff_sleep_ms(settle_ms);      /* tooltip hides (~0.3s) */
         fprintf(stderr,
-                "kde-plasma-session-child: kickoff-prewarm status=DONE "
-                "gate=%s opened=%d attempts=%d pristine=%d elapsed_ms=%lld "
-                "menu_roi=%u,%u,%u,%u base_nonblack=%u open_nonblack=%u "
-                "post_nonblack=%u\n",
-                gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
-                opened, attempt, pristine, monotonic_ms() - t0, mrx, mry, mrw,
-                mrh, base_nb, open_nb, post_nb);
-    } else {
-        fprintf(stderr,
-                "kde-plasma-session-child: kickoff-prewarm status=DONE "
-                "gate=%s opened=%d pristine=unknown elapsed_ms=%lld "
-                "reason=no-roi-verify\n",
-                gate == 1 ? "READY" : (gate == 0 ? "TIMEOUT" : "NOFB"),
-                opened, monotonic_ms() - t0);
+                "kde-plasma-session-child: tooltip-prewarm status=DONE "
+                "icon_abs16=%d,%d dwell_ms=%lld elapsed_ms=%lld\n",
+                tip_x, tip_y, tip_dwell_ms, monotonic_ms() - t1);
     }
 
     if (fb_fd >= 0)
@@ -1437,7 +1487,7 @@ static void kickoff_prewarm_start(void)
 {
     pid_t pid;
 
-    if (!kickoff_prewarm_enabled())
+    if (!kickoff_prewarm_enabled() && !tooltip_prewarm_enabled())
         return;
 
     pid = fork();
@@ -1465,7 +1515,9 @@ static void kickoff_prewarm_start(void)
         ;
     fprintf(stderr,
             "kde-plasma-session-child: kickoff-prewarm scheduled "
-            "(gate=kde_kickoff_prewarm=1)\n");
+            "(gates: kickoff=%d kde_kickoff_prewarm=1, "
+            "tooltip=%d kde_tooltip_prewarm=1)\n",
+            kickoff_prewarm_enabled(), tooltip_prewarm_enabled());
 }
 
 int main(void)

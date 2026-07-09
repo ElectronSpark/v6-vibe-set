@@ -561,6 +561,44 @@ proc stage_qt_minimal_imageformats_if_enabled {} {
 }
 
 stage_qt_minimal_imageformats_if_enabled
+
+proc stage_plasma_tooltip_delay_if_enabled {} {
+    global tmpimg outdir
+
+    # Opt-in tooltip show-delay override for the taskbar-tooltip latency A/B.
+    # Plasma ToolTipArea (plasma-framework 5.115 libcorebindingsplugin.so)
+    # reads plasmarc [PlasmaToolTips] Delay with a compiled default of 700 ms
+    # (binary-verified: readEntry("Delay", 700); Delay<=0 DISABLES tooltips,
+    # so an "instant" arm must use a small POSITIVE value). The session writes
+    # no user plasmarc and XDG_CONFIG_DIRS=/etc/xdg, so a staged
+    # /etc/xdg/plasmarc wins via the KConfig system cascade. Operates on the
+    # per-run fs.img copy only; committed image untouched; unset env =
+    # byte-identical.
+    if {![info exists ::env(KDE_SMOKE_PLASMA_TOOLTIP_DELAY_MS)] ||
+        $::env(KDE_SMOKE_PLASMA_TOOLTIP_DELAY_MS) eq ""} {
+        return
+    }
+    set delay $::env(KDE_SMOKE_PLASMA_TOOLTIP_DELAY_MS)
+    if {![string is integer -strict $delay] || $delay <= 0} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-FAIL plasma-tooltip-delay-invalid value=$delay"
+        exit 8
+    }
+
+    set host_rc "$outdir/plasmarc.tooltip-delay"
+    set stage_log "$outdir/plasma-tooltip-delay-stage.log"
+    set fh [open $host_rc "w"]
+    puts $fh "\[PlasmaToolTips\]"
+    puts $fh "Delay=$delay"
+    close $fh
+
+    exec sh -c "printf '%s\n' \
+        'rm /etc/xdg/plasmarc' \
+        'write $host_rc /etc/xdg/plasmarc' \
+        'stat /etc/xdg/plasmarc' \
+        | debugfs -w '$tmpimg' >'$stage_log' 2>&1"
+}
+
+stage_plasma_tooltip_delay_if_enabled
 set chromium_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/wayland-chromium' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set host_egl_gbm_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-egl-gbm-gl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
 set host_wlegl_available [expr {![catch {exec sh -c "debugfs -R 'stat /bin/host-wlegl-smoke' '$tmpimg' 2>&1 | grep -q '^Inode:'"}]}]
@@ -19169,18 +19207,22 @@ proc run_hoverprobe_instrument {icon_x icon_y} {
     set menu_iters [env_int_range KDE_SMOKE_HOVERPROBE_MENU_ITERS $iters 1 32]
     set do_hover [env_int_range KDE_SMOKE_HOVERPROBE_DO_HOVER 1 0 1]
     set prewarm [env_int_range KDE_SMOKE_HOVERPROBE_PREWARM 0 0 1]
-    set helper_args [format "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d" \
+    set menu_protocol [env_int_range KDE_SMOKE_HOVERPROBE_MENU_PROTOCOL 0 0 1]
+    set icon2_x [env_int_range KDE_SMOKE_HOVERPROBE_ICON2_X 0 0 65535]
+    set icon2_y [env_int_range KDE_SMOKE_HOVERPROBE_ICON2_Y 0 0 65535]
+    set helper_args [format "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d" \
                          $icon_x $icon_y $away_x $away_y $iters $rw $rh \
                          $settle $tmo $calib $menu_px_x $menu_px_y \
-                         $menu_rw $menu_rh $menu_iters $do_hover $prewarm]
+                         $menu_rw $menu_rh $menu_iters $do_hover $prewarm \
+                         $menu_protocol $icon2_x $icon2_y]
     desktop_interaction_log_line "phase=hoverprobe action=instrument status=start icon_abs16=$icon_x,$icon_y away_abs16=$away_x,$away_y iters=$iters rect_wh=${rw}x${rh} settle_ms=$settle timeout_ms=$tmo [desktop_interaction_guest_input_policy_fields]"
     set result [run_desktop_interaction_helper_command \
-                    hoverprobe "hoverprobe" $helper_args 240000]
+                    hoverprobe "hoverprobe" $helper_args 480000]
     set log_text [lindex $result 3]
     set host_log_path [lindex $result 5]
     foreach raw_line [split $log_text "\n"] {
         set line [string trimright $raw_line "\r"]
-        if {[regexp {^hoverprobe (summary|sampler_calibration|config|menu_config|menu_prewarm|done|event=)} $line]} {
+        if {[regexp {^hoverprobe (summary|sampler_calibration|config|menu_config|tooltip_config|menu_prewarm|done|event=)} $line]} {
             desktop_interaction_log_line "phase=hoverprobe $line"
             puts "KDE-PLASMA-DESKTOP-SMOKE-INFO $line"
         }
@@ -19188,6 +19230,8 @@ proc run_hoverprobe_instrument {icon_x icon_y} {
     global outdir
     dump_optional_guest_artifact "/kde-plasma-menu-open-proof.ppm" \
         "$outdir/kde-plasma-menu-open-proof.ppm"
+    dump_optional_guest_artifact "/kde-plasma-tooltip-proof.ppm" \
+        "$outdir/kde-plasma-tooltip-proof.ppm"
     desktop_interaction_log_line "phase=hoverprobe action=instrument status=PASS host_log=$host_log_path"
 }
 
