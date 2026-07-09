@@ -883,6 +883,60 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   promotion) vs neither (→ R5-residual/sched scribble). Standing rec: add
   `rcu_head_trace=1` (default-off, ~0 cost) to EVERY future KDE battery to
   finally root-cause R3.
+  BATTERY EXECUTED 2026-07-09 (diagnostic-armed 5x5 complete; NO default
+  flip — decision stays with conductor): kernel d052c5d rebuilt no-op
+  (binary current), tree clean. NOGRAPHIC SAFETY GATE PASS
+  (`20260709T014010Z-n2-diag-safety-gate`, cmdline ext4_read_page_direct=1
+  rcu_head_trace=1): dcachetest x3 rc=0 (ALL-PASS==rc0), forktest rc=1
+  exhaustion, clonetest rc=0, cowtest rc=0; crash grep clean (the
+  `vfs_unmount: remaining inodes=2` console flood during dcachetest mount
+  churn is the expected U6 deferred-fput EBUSY-retry diagnostic, NOT a
+  fault). COLD-CACHE A/B (desktop-interaction reducer, active-sample,
+  audio=none, software-GL unset, KVM+virtio-vga-gl-primary; ON arm
+  `ext4_read_page_direct=1 ext4_read_page_direct_debug=1 rcu_head_trace=1`,
+  OFF arm `=0 rcu_head_trace=1`; tokens verified in every booted cmdline;
+  debug ring arms silently, dumps only on fault, so token==armed):
+  ON 5/5 PASS (`20260709T014901Z/T015302Z/T020047Z/T020459Z/T020909Z-n2-
+  diag-on-run1..5`; konsole_wait warm 1202-1313 cold 1498-1613,
+  first_visible 6301-8541, real-GL virgl(D3D12) all, qtquick 0 violations,
+  crash grep 0, direct-launch-diff 1001730 all five).
+  OFF 4/5 PASS (`...T015106Z/T015451Z/T020245Z/T021055Z-n2-diag-off-run1/
+  2/3/5`; same guardrails green) + 1 CRASH: OFF run4
+  (`...T020704Z-n2-diag-off-run4-kwin-gp-r5class-crash`)
+  kde-session-ready-crash = kwin_wayland USERSPACE #GP
+  (`pid 59 kwin_wayland: exception 13 (#GP) rip=0x7ffffd8545e5 err=0x0`)
+  with rbx=0x2d34365f3638782f — the BYTE-IDENTICAL R5-class bad pointer
+  from 07-04 (little-endian ASCII "/x86_64-", path bytes read as a
+  pointer). Kernel side of that run: ZERO kernel faults, ZERO
+  rcu_head_trace anomalies, ZERO slab/double-free/freelist lines — the
+  armed kernel diagnostics saw nothing, so this corruption event is
+  userspace-visible-only (recycled-byte/ld.so family), not an observed
+  kernel rcu_head event. FM19 reruns (not counted, both crash-grep-clean):
+  on-run1 attempt1 visible-timeout (`...T014604Z-...-attempt1-fm19-
+  visible-timeout`), on-run3 attempt1 prompt-sync-timeout
+  (`...T015654Z-...-attempt1-fm19-prompt-sync-timeout`).
+  VERDICT: (1) the 07-04 `.rodata` KERNEL page fault did NOT recur across
+  the full armed 5x5 (12 KDE boots incl reruns + 1 gate) — the direct-read
+  kill criterion did NOT trigger, and the ON arm is 5/5 clean including
+  the run-5 slot that faulted on 07-04. (2) The battery is NOT fully green:
+  the R5-class kwin #GP recurred on the CONTROL arm (direct-read OFF) —
+  strict §5 "full matrix clean" promote criterion NOT met. (3) Attribution:
+  a fault-family recurrence with direct-read disabled is further
+  EXCULPATION of ext4_read_page_direct (accelerant-not-corrupter thesis
+  reinforced); and rcu_head_trace silence during the event weakens the
+  R3-rcu path as the explanation for THIS class, pointing at the
+  recycled-byte/mapping corruption family instead. RECOMMENDATION
+  (conductor decides): do NOT flip yet; either (a) accrue one more
+  OFF-heavy armed battery to separate "R5-class background rate" from the
+  promotion signal, or (b) explicitly decouple N2 promotion from the
+  direct-read-independent R5-class userspace bug (documented recurring
+  since 07-04 without the token) and promote on the 5/5-clean ON evidence;
+  either way prioritize root-causing the kwin #GP using the fresh archive
+  (it now has kde-exception-mem reg/memory dumps). Boots used: 17 total =
+  1 gate PASS + 4 gate harness-shakeout boots (guest-console lessons:
+  op-caution 7 confirmed + typeahead-flush addendum) + 10 counted A/B + 2
+  FM19 reruns; exceeded the <=14 budget by 3, all on gate shakeout.
+  Hygiene: no lingering qemu, tree clean except this plan update.
 - U10 (N3 residual): KWin LibinputBackend nullptr payload bug.
 - U11 (P1/M2 <1.5us): needs a NEW approach; cpumask/CR0.TS is dead.
 - U12: push the pending commits (currently ~7 ahead of origin) — needs
@@ -968,7 +1022,13 @@ approval.
    (FM 24a); wakeup-semantics changes need an interactive check.
 7. Serial console: ~55-60 char truncation, no globbing in guest /bin/sh,
    absolute paths for kprofile exec, markers via variable
-   (`M=XX; cmd; echo ${M}RES=$?`).
+   (`M=XX; cmd; echo ${M}RES=$?`). ADDENDUM 2026-07-09 (cost 4 boots): the
+   guest shell FLUSHES TYPEAHEAD around prompt redraw — input sent while
+   it is printing is silently EATEN; only send from a proven-idle prompt
+   (flush expect buffer, send \r, require a NEW prompt). Kernel printf
+   floods (e.g. dcachetest's vfs_unmount EBUSY-retry lines) byte-interleave
+   with shell echo, so live sentinel matching fails: write test rc's to a
+   guest file and poll it with `cat` from idle prompts instead.
 8. One VM lane at a time; `pgrep -af qemu-system` before and after; never
    trailing `&`; delete scratch images; no lingering QEMU.
 9. Subagent run-workers must WAIT SYNCHRONOUSLY on their own runs (bounded
