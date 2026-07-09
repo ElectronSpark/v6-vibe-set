@@ -810,6 +810,29 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
   sync budget / irq_wait_ms tiering) is the only salvageable piece and is
   ORTHOGONAL — it also bounds a stuck workqueue present, so do (b) as a general
   robustness fix decoupled from unlocked-wait. M7=51.
+  U7-PREMISE MEASURED 2026-07-09 (VM lane, 2 boots, kernel 3254ce6/repo
+  6a3f67c): chromium-video kprofile A/B (KPROFILE_SECONDS=90, USE_KVM,
+  virtio-vga-gl-primary, audio none) — CONTROL "PERF-VIDEO RESULT pass
+  fps=51.2 speed=1.000 presentedFPS=51.2 decodedFPS=62.1 dropPct=9.63
+  advanced=15.23" vs TREATMENT (virtio_gpu_async_present=1, token verified
+  x3 in booted cmdline) "PERF-VIDEO RESULT pass fps=51.0 speed=0.998
+  presentedFPS=51.0 decodedFPS=61.1 dropPct=7.54 advanced=15.37". Both
+  windows COMPLETE (advanced ~= runMs 15s); both arms real virgl/D3D12 GL,
+  crash 0, gpu_init/config/exit_error_count=0, fault_count=0; kms_page_flips
+  897 vs 917, page_flip_events 1:1, all software_blit. dropPct improved
+  (9.63->7.54) but presentedFPS is FLAT at ~51. VERDICT: async-present is
+  landed+validated AND M7<55 => the recorded reopen condition for the U7
+  RESIDUAL (workqueue/pacing, NOT op_lock release) is now formally met;
+  presentedFPS ~51 is NOT present-ioctl-cost bound (consistent with the U2
+  kill-criterion cadence null). CAVEAT: in-image fbstat does not print
+  present_async_* (fields exist in fb.h:1770-1779 only; fbstat.c has no
+  printf for them — only cursor_async), so per-run counter engagement is
+  not capturable in-guest; engagement proof of record remains the
+  2026-07-08 U2 shim A/B (PAGE_FLIP 925-1017us -> 64-73us median, 1:1
+  FLIP_COMPLETE) + this run's cmdline token + absence of the
+  "async-present workqueue unavailable" fallback print. Archives:
+  `kde-plasma-desktop-smoke-history/20260709T151220Z-m7-asyncpresent-control/`,
+  `...T152900Z-m7-asyncpresent-treatment/`.
 - U8 (M8) — MEASURED 2026-07-08 (FIRST VALID reading; GOAL MET, large
   margin): idle-desktop host-CPU on a real-GL boot with the N5 poll-notify
   full-wait gates default-ON (evdev fix). Recipe: `launch-gui.sh USE_KVM=1
@@ -1177,7 +1200,7 @@ approval.
 | M4 | konsole_wait_ms | warm 1184-1205ms, cold 1406-1500ms (2026-07-08 clean guiperf N=4, all gates green); bottleneck LOCALIZED (U2): kwin damage->repaint SCHEDULE latency = ~96% of each 58-139ms frame-callback wait, konsole render ~0%, kwin repaint ioctl ~4%; imageformats prune opt-in (U3 DONE, ~55-67ms dlopen cut) | Linux-like (~0.3s) |
 | M5 | first_visible_ms | ~6.2-6.6s (clean guiperf N=4) | <15000 |
 | M6 | mesakmsgl FPS | 118-125 (ordered default); ~60 by design under vblank-paced gate | done |
-| M7 | presentedFPS | 51.0 | >=55 (U7) |
+| M7 | presentedFPS | 51.2 control / 51.0 under virtio_gpu_async_present=1 (2026-07-09 A/B, chromium-video kprofile 90s, complete windows, real virgl/D3D12 GL, crash 0) — async-present does NOT move presentedFPS; dropPct 9.63->7.54 | >=55 (U7) |
 | M8 | idle host CPU | 13.7% mean (13.7/13.6/13.9, 3x10s /proc/stat delta) on a real-GL boot, N5 gates default-ON — FIRST VALID reading 2026-07-08 (U8); far below the 85-130% historical band = N5 poll-notify payoff | <100% (MET) |
 | M9 | Chromium visible | PASS guard | hold |
 
