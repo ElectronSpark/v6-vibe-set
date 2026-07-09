@@ -45,6 +45,38 @@ Konsole shell-readiness is ~1.2-1.5s vs ~0.3s native. Fully decomposed:
 
 ## UNFINISHED WORK — priority queue
 
+- U-KICKOFF (start-menu open/close — DECOMPOSED + LEVER PROVEN 2026-07-09,
+  gated prewarm A/B PASS; PRODUCT-INTEGRATION of the prewarm is the residual):
+  USER PAIN ("opening/closing the KDE start menu takes SECONDS") reproduced and
+  split with a new hoverprobe menu-mode (menu-body ROI + open/close protocol;
+  see Instruments). ROOT: the pain is the COLD FIRST Kickoff activation of a
+  session = 2254/1892ms (n=2, matches the reported 1394-2517ms); every WARM
+  repeat-open in the same session is ~400-500ms and close is ~180-420ms. So the
+  ~2s is a ONE-TIME QML-compile + app/recents model-population cost, NOT a
+  per-open cost and NOT compositor cadence (co-enabled kwin ioctl-trace shows
+  the compositor mostly idle during the cold open; PAGE_FLIP dur ~5ms). The
+  residual warm ~400ms floor is the already-settled U2 kwin damage->repaint
+  schedule latency (do not relitigate). ATTACK CHOSEN = session-start PREWARM
+  (open Kickoff once during login, wait for the model build, close) — cheapest
+  lever that works whether the cold cost is compile or model-population. A/B
+  (hoverprobe _PREWARM gate, do_hover=0 so iter1 = user's first click): first
+  open 2254/1892 -> 498/540ms, -75% (~1550ms), all gates green (real virgl/
+  D3D12 GL, qtquick PASS, crash 0, no lingering qemu, full-frame PPM confirms
+  genuine Kickoff open). See M11 + archive 20260709T190655Z-menu-prewarm-ab-
+  summary (+ ...T190352Z-...-treatment-rep1). PROMOTION PATH (residual, needs
+  owner sign-off — the _PREWARM gate proves the mechanism but lives in the TEST
+  tool, not the product): implement the prewarm as a gated session-startup step
+  that, after plasmashell is ready, triggers ONE Kickoff open+dismiss before
+  handing to the user. kwin/plasmashell are PREBUILT (C++ patches off the
+  table), so the guest-side realization is either (a) an input-injection prewarm
+  in kde-plasma-session-child after a readiness gate (mirrors hoverprobe's
+  /dev/mouse open+Escape), or (b) a plasmashell scripting/DBus toggle if a hook
+  exists. Cost is ~2s paid once at login (during the ~6.2-6.6s M5 first-visible
+  window it is nearly free wall-clock). NOTE (not yet measured, cheaper still if
+  it works): persistent QML disk cache (qmlcachegen at image build / prepopulate
+  ~/.cache/*qmlcache) would cut only the compile half and needs plasmashell env
+  (QML_DISK_CACHE) proven enabled — deferred; prewarm subsumes it and needs no
+  image rebuild.
 - U1 (KERNEL PART DONE 2026-07-08 — metadata hypothesis retired): the
   drmGetDevice2 device-metadata surface is ALREADY implemented+committed in
   the kernel (`kernel/vfs/sysfs/*`: `/sys/dev/char/226:0|226:128/device/{vendor
@@ -1297,6 +1329,20 @@ approval.
   hover-in latency is ~205ms, not the ~450-490ms the retired coarse
   framebuffer-diff sampler reported (that floor was the SAMPLER's serial
   round-trip, not the desktop) — this instrument resolves it to ~4-5ms.
+  MENU-MODE EXTENSION (2026-07-09, U-KICKOFF): args 11-17 add a SECOND ROI over
+  the popup BODY (distinct from the click target) + a click-launcher->open /
+  click-empty-desktop->close protocol with per-iter cold/warm labelling, an
+  optional prewarm pass (arg 17), and a skip-hover flag (arg 16, so iter1 is a
+  genuine COLD Kickoff activation). New env knobs KDE_SMOKE_HOVERPROBE_MENU_PX_X/
+  _PX_Y/_RW/_RH/_ITERS + _DO_HOVER + _PREWARM (all default 0/1 = byte-identical
+  when menu ROI unset). Emits event=menu_open/menu_close lines with
+  temperature=first|repeat + a menu_prewarm line; run_hoverprobe_instrument
+  also pulls a full-frame proof PPM (/kde-plasma-menu-open-proof.ppm) captured
+  while the menu is open. Compile-clean -Wall -Wextra. CAUTION: the hover/click
+  phase (do_hover=1) CLICKS the same launcher and thereby PREWARMS Kickoff, so
+  menu iter1 is only cold with _DO_HOVER=0. Staged into fs.img via debugfs
+  (native ELF at sysroot/bin/hoverprobe rebuilt with build_host_user_program
+  flags) — no rootfs rebuild needed.
 
 ## Operational cautions (bite-you-again class)
 
@@ -1373,6 +1419,7 @@ approval.
 | M7 | presentedFPS | CLOCK-60 A/B MEASURED 2026-07-09 (chromium-video kprofile 90s, complete windows advanced~15, real virgl/D3D12 GL both arms, crash 0, FM17 launch-evidence-missing bookkeeping expected): CONTROL (async-present) presentedFPS=52.3 dropPct=6.50; TREATMENT (+virtio_gpu_present_clock_60hz=1) presentedFPS=53.4 dropPct=6.22. Clock ENGAGED (run.log banner "present-clock 60Hz engaged", both tokens x3 in cmdline) and PACES (fbstat present_clock60 events_total=913==all session flips, snap_total=58 = 6.4% << events => async worker keeps up with the 60Hz grid). MOVE IS DIRECTIONAL BUT SUB-THRESHOLD: +1.1fps (+2.1%), dropPct -0.28; goal >=55 NOT met and FPS did NOT rise toward 60. Because snap<<events (worker feeds a clean 60Hz grid) yet present still caps ~53, the U7-RESIDUAL prediction (clean completion clock => ~60fps) is REFUTED in magnitude: dominant M7 ceiling is DOWNSTREAM host/kwin present throughput, NOT the completion-clock timestamp. Gate `virtio_gpu_present_clock_60hz=1` stays default-OFF (small real win, sub-threshold). Prior 51.2/51.0 async-present A/B superseded by this pushed-kernel re-read (52.3/53.4). PIVOT: host-retire/present-throughput. | >=55 (U7) |
 | M8 | idle host CPU | 13.7% mean (13.7/13.6/13.9, 3x10s /proc/stat delta) on a real-GL boot, N5 gates default-ON — FIRST VALID reading 2026-07-08 (U8); far below the 85-130% historical band = N5 poll-notify payoff | <100% (MET) |
 | M9 | Chromium visible | PASS guard | hold |
+| M11 | Kickoff (start-menu) open/close latency (hoverprobe menu-mode, menu-body ROI, in-process CLOCK_MONOTONIC) | BASELINE + PREWARM A/B 2026-07-09 (U-KICKOFF, real virgl/D3D12 GL, qtquick PASS, crash 0, n=2/arm, full-frame PPM confirms genuine Kickoff open). USER PAIN REPRODUCED + DECOMPOSED: COLD first-open (never opened in session) = 2254/1892ms (matches the reported 1394-2517ms); WARM repeat-open (same session) = median ~400-500ms (340-670ms); menu CLOSE ~180-420ms. Cold excess ~1500-1850ms is a ONE-TIME-per-session cost = QML component compile + Kickoff app/recents model population (KIO/DBus), NOT compositor cadence (kwin ioctl-trace: compositor mostly idle during the cold open, PAGE_FLIP dur ~5ms). Warm ~400ms floor = U2 kwin damage->repaint SCHEDULE latency + fade frames (known-hard, do not relitigate). ATTACK — session-start PREWARM (gated, open Kickoff once at login, wait for model build, close): user's first open 2254/1892 -> 498/540ms (-75%, ~1550ms), into the warm band. Prewarm one-time cost ~2000ms real, paid at session start (tunable wait). Gate default OFF; product promotion path below. Old "open 1394-2517ms / close 415-963ms" from the retired coarse full-frame sampler is partly artifact (same lesson as M10 hover) BUT the cold-open pain is REAL (~2s) and prewarm is the lever. | approach Linux VM |
 | M10 | hoverprobe latency (input-inject -> first ROI pixel change, in-process shared CLOCK_MONOTONIC) | NEW BASELINE 2026-07-09 (U-HP, real KVM+virgl/D3D12 GL, N=6/event, crash 0): hover_in median ~205-234ms (min 176-189), hover_out median ~193-205ms (min 149-159), click median ~250-312ms (launcher-toggle arm 6/6 clean min 24ms). Sampler resolution (256 idle small-rect readbacks) mean 5.5-6.4ms, min 4.0-4.4ms, max ~19-23ms (per-sample inflates to ~13-16ms while kwin composites — scanout-read ioctl serialises behind kwin's synchronous present). SUPERSEDES the retired coarse framebuffer-diff hover metric whose ~448-490ms floor "measured the sampler, not the desktop": true hover-in is ~2x faster (~205ms) at ~4-5ms resolution. CLOCK-60 CHECK 2026-07-09 (hoverprobe under M7 treatment tokens async-present+present_clock_60hz, banner engaged, real GL, crash 0, N=6): hover_in median 203.5ms (185.5-401.4), hover_out 157.8ms (147.5-194.9), click 284.0ms (269.9-286.9, 4/6). WITHIN NOISE of baseline — no clear interaction-latency win from the 60Hz clock; consistent with U2 (hover/click latency dominated by kwin damage->repaint SCHEDULE latency ~96%, not present cadence). | approach Linux VM |
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: forktest (rc=1

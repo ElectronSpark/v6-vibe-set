@@ -19162,9 +19162,17 @@ proc run_hoverprobe_instrument {icon_x icon_y} {
     set settle [env_int_range KDE_SMOKE_HOVERPROBE_SETTLE_MS 900 100 5000]
     set tmo [env_int_range KDE_SMOKE_HOVERPROBE_TIMEOUT_MS 2500 200 10000]
     set calib [env_int_range KDE_SMOKE_HOVERPROBE_CALIB 256 8 4096]
-    set helper_args [format "%d %d %d %d %d %d %d %d %d %d" \
+    set menu_px_x [env_int_range KDE_SMOKE_HOVERPROBE_MENU_PX_X 0 0 8192]
+    set menu_px_y [env_int_range KDE_SMOKE_HOVERPROBE_MENU_PX_Y 0 0 8192]
+    set menu_rw [env_int_range KDE_SMOKE_HOVERPROBE_MENU_RW 64 8 800]
+    set menu_rh [env_int_range KDE_SMOKE_HOVERPROBE_MENU_RH 64 8 800]
+    set menu_iters [env_int_range KDE_SMOKE_HOVERPROBE_MENU_ITERS $iters 1 32]
+    set do_hover [env_int_range KDE_SMOKE_HOVERPROBE_DO_HOVER 1 0 1]
+    set prewarm [env_int_range KDE_SMOKE_HOVERPROBE_PREWARM 0 0 1]
+    set helper_args [format "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d" \
                          $icon_x $icon_y $away_x $away_y $iters $rw $rh \
-                         $settle $tmo $calib]
+                         $settle $tmo $calib $menu_px_x $menu_px_y \
+                         $menu_rw $menu_rh $menu_iters $do_hover $prewarm]
     desktop_interaction_log_line "phase=hoverprobe action=instrument status=start icon_abs16=$icon_x,$icon_y away_abs16=$away_x,$away_y iters=$iters rect_wh=${rw}x${rh} settle_ms=$settle timeout_ms=$tmo [desktop_interaction_guest_input_policy_fields]"
     set result [run_desktop_interaction_helper_command \
                     hoverprobe "hoverprobe" $helper_args 240000]
@@ -19172,11 +19180,14 @@ proc run_hoverprobe_instrument {icon_x icon_y} {
     set host_log_path [lindex $result 5]
     foreach raw_line [split $log_text "\n"] {
         set line [string trimright $raw_line "\r"]
-        if {[regexp {^hoverprobe (summary|sampler_calibration|config|done|event=)} $line]} {
+        if {[regexp {^hoverprobe (summary|sampler_calibration|config|menu_config|menu_prewarm|done|event=)} $line]} {
             desktop_interaction_log_line "phase=hoverprobe $line"
             puts "KDE-PLASMA-DESKTOP-SMOKE-INFO $line"
         }
     }
+    global outdir
+    dump_optional_guest_artifact "/kde-plasma-menu-open-proof.ppm" \
+        "$outdir/kde-plasma-menu-open-proof.ppm"
     desktop_interaction_log_line "phase=hoverprobe action=instrument status=PASS host_log=$host_log_path"
 }
 
