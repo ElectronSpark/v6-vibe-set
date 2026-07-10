@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "xv6 YouTube media-state probe",
-  "version": "1.0.0",
-  "description": "Default-off bounded media-state evidence for the xv6 YouTube performance harness.",
+  "version": "1.1.0",
+  "description": "Default-off bounded media-state and optional hd720 selector evidence for the xv6 YouTube performance harness.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2C9UE8E4bNgXv5b1lp+u3deHJ3ibg2PdIQeXWRF548hBrLDIykTot07lgXQRP/CXwqU86jKGEfT401SglMUEAI/uleHparyoPT9vNCs0wiGlHNKPlI10rdawbXHdPxctDMZY50GsT9BhVaWXk2n07sxVMgkLc23xyqBmSGEqy095hhyySuFksoV0cfsD3ifj8b/skVm3B89ltXJSC4/OVl58uoxw05InE7cPswfCew8DjibcqpgEJZGDrWBjqIJ5QwP8/DZtny9mm/zvIC6dqB+CrqZpv9Pq9DMueMZqadAzO0JDVLk3ETqy7adMX85LeQdE0kdhKx6povn82bjUwIDAQAB",
   "content_scripts": [
     {

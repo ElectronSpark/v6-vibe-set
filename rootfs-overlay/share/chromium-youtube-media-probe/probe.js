@@ -6,11 +6,18 @@
   global.__xv6YouTubeMediaProbeStarted = true;
 
   const lib = global.__xv6YouTubeMediaProbeLib;
-  const nonceMatch = /^#xv6ytprobe=([0-9a-f]{32})$/.exec(global.location.hash);
+  const nonceMatch = /^#xv6ytprobe=([0-9a-f]{32})(?:&xv6ythd720=(1))?$/.exec(
+    global.location.hash);
   const nonce = nonceMatch ? nonceMatch[1] : "unavailable";
-  const MAX_ROWS = 24;
+  const forceHd720 = Boolean(nonceMatch && nonceMatch[2] === "1");
+  const MAX_ROWS = forceHd720 ? 30 : 24;
   const SAMPLE_COUNT = 20;
   const SAMPLE_INTERVAL_MS = 1000;
+  const FORCE_READY_ATTEMPTS = 120;
+  const FORCE_READY_INTERVAL_MS = 500;
+  const FORCE_OBSERVE_ATTEMPTS = 40;
+  const FORCE_OBSERVE_INTERVAL_MS = 250;
+  const FORCE_STABLE_OBSERVATIONS = 4;
   let emittedRows = 0;
 
   function emit(kind, fields) {
@@ -33,8 +40,8 @@
     return new Promise(resolve => global.setTimeout(resolve, milliseconds));
   }
 
-  function qualityState() {
-    const player = document.getElementById("movie_player");
+  function qualityState(playerOverride) {
+    const player = playerOverride || document.getElementById("movie_player");
     let selected = "unavailable";
     let available = "unavailable";
     let selectedApi = 0;
@@ -57,6 +64,181 @@
       }
     } catch (_) {}
     return { selected, available, selectedApi, availableApi };
+  }
+
+  function qualityIncludes(available, wanted) {
+    return String(available).split(",").includes(wanted);
+  }
+
+  function returnType(value) {
+    if (value === null)
+      return "null";
+    return lib.boundedToken(typeof value, 16);
+  }
+
+  /*
+   * This routine emits bounded raw facts only.  In particular, neither its
+   * loop exit nor any emitted value grants quality/cadence credit; the host
+   * parser owns the exact arm, API, hd720, stability and progress verdicts.
+   */
+  async function exerciseHd720Selector() {
+    let player = null;
+    let video = null;
+    let quality = {
+      selected: "unavailable", available: "unavailable",
+      selectedApi: 0, availableApi: 0
+    };
+    let readyAttempt = 0;
+    let rangePresent = 0;
+    let qualityPresent = 0;
+    let selectorPrerequisites = false;
+    let playerStateApi = 0;
+    let playerState = -1;
+
+    for (readyAttempt = 1; readyAttempt <= FORCE_READY_ATTEMPTS; readyAttempt++) {
+      player = document.getElementById("movie_player");
+      video = document.querySelector("video");
+      quality = qualityState(player);
+      rangePresent = player && typeof player.setPlaybackQualityRange === "function" ? 1 : 0;
+      qualityPresent = player && typeof player.setPlaybackQuality === "function" ? 1 : 0;
+      playerStateApi = player && typeof player.getPlayerState === "function" ? 1 : 0;
+      playerState = -1;
+      if (playerStateApi) {
+        try {
+          playerState = Number(player.getPlayerState());
+          if (!Number.isSafeInteger(playerState))
+            playerState = -1;
+        } catch (_) {
+          playerState = -1;
+        }
+      }
+      selectorPrerequisites = Boolean(
+        player && video && video.isConnected && video.videoWidth > 0 &&
+        video.videoHeight > 0 && video.readyState >= 2 &&
+        playerStateApi && playerState === 1 &&
+        quality.selectedApi && quality.availableApi &&
+        qualityIncludes(quality.available, "hd720") &&
+        rangePresent && qualityPresent);
+      if (selectorPrerequisites)
+        break;
+      if (readyAttempt < FORCE_READY_ATTEMPTS)
+        await sleep(FORCE_READY_INTERVAL_MS);
+    }
+    if (readyAttempt > FORCE_READY_ATTEMPTS)
+      readyAttempt = FORCE_READY_ATTEMPTS;
+
+    emit("force_ready", {
+      attempt: readyAttempt,
+      player_present: player ? 1 : 0,
+      player_state_api: playerStateApi,
+      player_state: playerState,
+      video_present: video && video.isConnected ? 1 : 0,
+      ready_state: video ? video.readyState : -1,
+      video_width: video ? video.videoWidth : 0,
+      video_height: video ? video.videoHeight : 0,
+      selected_api: quality.selectedApi,
+      available_api: quality.availableApi,
+      selected: quality.selected,
+      available: quality.available,
+      range_api: rangePresent,
+      quality_api: qualityPresent
+    });
+
+    emit("force_attempt", {
+      seq: 1,
+      api: "setPlaybackQualityRange",
+      arg_min: "hd720",
+      arg_max: "hd720",
+      present: rangePresent
+    });
+    let rangeInvoked = 0;
+    let rangeThrew = 0;
+    let rangeReturn;
+    if (rangePresent && selectorPrerequisites) {
+      rangeInvoked = 1;
+      try {
+        rangeReturn = player.setPlaybackQualityRange("hd720", "hd720");
+      } catch (_) {
+        rangeThrew = 1;
+      }
+    }
+    emit("force_result", {
+      seq: 1,
+      api: "setPlaybackQualityRange",
+      invoked: rangeInvoked,
+      threw: rangeThrew,
+      return_type: rangeInvoked && !rangeThrew ? returnType(rangeReturn) : "unavailable"
+    });
+
+    emit("force_attempt", {
+      seq: 2,
+      api: "setPlaybackQuality",
+      arg_min: "hd720",
+      arg_max: "hd720",
+      present: qualityPresent
+    });
+    let qualityInvoked = 0;
+    let qualityThrew = 0;
+    let qualityReturn;
+    if (qualityPresent && selectorPrerequisites) {
+      qualityInvoked = 1;
+      try {
+        qualityReturn = player.setPlaybackQuality("hd720");
+      } catch (_) {
+        qualityThrew = 1;
+      }
+    }
+    emit("force_result", {
+      seq: 2,
+      api: "setPlaybackQuality",
+      invoked: qualityInvoked,
+      threw: qualityThrew,
+      return_type: qualityInvoked && !qualityThrew ? returnType(qualityReturn) : "unavailable"
+    });
+
+    let observeAttempt = 0;
+    let stableCount = 0;
+    let firstTime = video ? lib.finiteNumber(video.currentTime, -1) : -1;
+    let lastTime = firstTime;
+    for (observeAttempt = 1;
+         observeAttempt <= FORCE_OBSERVE_ATTEMPTS;
+         observeAttempt++) {
+      player = document.getElementById("movie_player");
+      video = document.querySelector("video");
+      quality = qualityState(player);
+      lastTime = video ? lib.finiteNumber(video.currentTime, -1) : -1;
+      const rawMatch = Boolean(
+        video && video.isConnected && quality.selectedApi &&
+        quality.availableApi && quality.selected === "hd720" &&
+        qualityIncludes(quality.available, "hd720") &&
+        video.videoWidth === 1280 && video.videoHeight === 720 &&
+        video.readyState >= 2 && !video.paused && !video.ended);
+      stableCount = rawMatch ? stableCount + 1 : 0;
+      if (stableCount >= FORCE_STABLE_OBSERVATIONS &&
+          firstTime >= 0 && lastTime - firstTime >= 0.5)
+        break;
+      if (observeAttempt < FORCE_OBSERVE_ATTEMPTS)
+        await sleep(FORCE_OBSERVE_INTERVAL_MS);
+    }
+    if (observeAttempt > FORCE_OBSERVE_ATTEMPTS)
+      observeAttempt = FORCE_OBSERVE_ATTEMPTS;
+    emit("force_observation", {
+      attempt: observeAttempt,
+      stable_count: stableCount,
+      selected_api: quality.selectedApi,
+      available_api: quality.availableApi,
+      selected: quality.selected,
+      available: quality.available,
+      video_width: video ? video.videoWidth : 0,
+      video_height: video ? video.videoHeight : 0,
+      ready_state: video ? video.readyState : -1,
+      paused: video && video.paused ? 1 : 0,
+      ended: video && video.ended ? 1 : 0,
+      current_time_first: lib.fixed(firstTime, 3, -1),
+      current_time_last: lib.fixed(lastTime, 3, -1)
+    });
+
+    return video && video.isConnected ? video : null;
   }
 
   function playbackQuality(video) {
@@ -118,7 +300,7 @@
       return;
     }
 
-    const video = await waitForVideo();
+    const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();
     if (!video) {
       emit("failure", { reason: "video-timeout" });
       return;

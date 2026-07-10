@@ -39,7 +39,7 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
 
 ## ACTIVE LANES
 
-- A1 (IN FLIGHT — bounded `hd720` selector is the immediate next job):
+- A1 (IN FLIGHT — selector PASS; fresh N>=2 measurement is next):
   Codec capacity is NOT the constraint: controlled local 1280x720@60 H.264
   and VP9 reach about 52-54 presented fps, so YouTube frame supply/selection
   and the later local present ceiling are separate walls. The EGL revision-2
@@ -57,10 +57,17 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   option-free helper independently passes NO-BOOT review; strict historical
   replay is a valid envelope with `SOURCE_PROVEN=0`, hence no FPS or
   PERF-VIDEO credit. Do not spend a helper-only rerun.
-  IMMEDIATE NEXT: implement a bounded default-OFF `hd720` force/selector,
-  obtain independent adversarial NO-BOOT approval, then run exactly N>=2 fresh
-  real KVM+virgl measurements with all GPU/software/crash/artifact/cleanup
-  gates armed. No selector exists today, so no quality-forced claim is valid.
+  The bounded default-OFF `YT_FORCE_HD720=1` selector now has independent
+  adversarial NO-BOOT PASS. Its exact arm is multiprocess=1, audio-disable=1,
+  media-probe=1, forensics=0. In MAIN world it waits for a playing player with
+  `hd720` advertised, then calls `setPlaybackQualityRange('hd720','hd720')`
+  before `setPlaybackQuality('hd720')`; emitted rows are raw evidence and only
+  the host parser may grant quality/cadence/FPS credit. Adversarial missing,
+  duplicate, reordered, spoofed, drift, wrong-dimension, 30-fps, and API-failure
+  mutations all reject. Review ended with an exact zero QEMU process count;
+  this is implementation proof only and makes no performance claim.
+  IMMEDIATE NEXT: run fresh N>=2 real KVM+virgl measurements in one authorized
+  VM worker, serially, with all GPU/software/crash/artifact/cleanup gates armed.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
@@ -74,11 +81,28 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   1024 policy versus Chromium's 512-frame callback, but applied/effective
   attributes remain unproven. The July paplay scaffold is INVALID under current
   synchronous-wait/process-ownership rules and never produced the needed
-  comparison. NEXT: source-controlled default-OFF reducer/harness plus
-  adversarial NO-BOOT review, then exactly one real KVM+virgl localization boot
-  with Chromium audio enabled, `QEMU_AUDIO=none`, explicit null sink, and the
-  chain pw-play -> paplay -> Chromium-shaped libpulse -> 20s Chromium smoke.
-  A4 `QEMU_AUDIO=virtio` + WAV/audible work remains subsequent. Kernel
+  comparison. The first source-controlled localizer passed its own static suite
+  but was independently REJECTED NO-BOOT; no VM was launched. Loader audit now
+  proves the direct `LD_PRELOAD` `pa_*` tracer cannot observe Chrome 150's
+  handle-specific Pulse stubs. The smallest supported replacement is a
+  default-OFF, handle-aware `dlopen`/`dlsym` interposer: exact guest glibc 2.39
+  `dlvsym` plus a `dlsym@GLIBC_2.2.5`/RTLD_LOCAL reducer captured provider
+  lookup and wrapper substitution. Its contract requires the exact libpulse
+  handle/path/SONAME/build ID; ABI-typed wrappers including begin-write/write/
+  state/errno; stable same-PID context/stream IDs; provider return, errno, and
+  success/failure output-pointer parity; fork/thread safety; bounded class caps
+  that retain late failures; and opportunistic effective attrs (Chrome does not
+  resolve `pa_stream_get_buffer_attr`; the dedicated reducer supplies them).
+  Required NO-BOOT gates are exact-handle/off/missing-symbol/dlerror controls,
+  full binding and provider-identity proof, multi-context/stream IDs,
+  thread+fork-held-lock, poison-output/errno parity, >100k-call cap+late-failure,
+  and parser acceptance without a Chromium effective-attr row. The correction
+  and the prior classifier/ownership/software-scan/timeout/cleanup fixes are in
+  flight; boot remains unauthorized pending adversarial NO-BOOT approval. Only
+  then spend exactly one real KVM+virgl localization boot
+  with audio enabled, `QEMU_AUDIO=none`, explicit null sink, and pw-play ->
+  paplay -> exact Chromium libpulse -> >=20s Chromium smoke. A4
+  `QEMU_AUDIO=virtio` + WAV/audible work remains subsequent. Kernel
   virtio-snd/OSS/ALSA is closed and is not the gap.
 - A3: promotion batteries for the gate list above (start with kickoff
   prewarm + tooltip pair — the direct user-feel wins).
@@ -131,7 +155,9 @@ VM orchestration guard: the conductor authorizes at most one VM worker and all
 other lanes remain no-boot. Dispatch requires no active VM worker plus an exact
 zero `/proc/*/exe` count for `qemu-system-*`/`qemu-kvm` (never `pgrep`); another
 VM worker waits for synchronous completion, owned cleanup, and a repeated zero
-count. This does not cap guest `QEMU_MEMORY`/`-m`, which may grow when justified.
+count. Enforcement is orchestration-only: do not add QEMU/launcher singleton
+changes. Only one VM worker may be authorized at a time, while guest
+`QEMU_MEMORY`/`-m` may grow when justified.
 
 - NO un-gated default flips; promotion only via the standard battery.
 - CODE-FIRST/OFFLINE-FIRST; adversarial review before kernel boots; boot

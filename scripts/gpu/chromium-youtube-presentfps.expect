@@ -10,6 +10,8 @@
 #   YT_EGL_FORENSICS=0|1               (default 0; only valid with MP/audio=1)
 #   YT_MEDIA_PROBE=0|1                 (default 0; 1 requires MP/audio=1,
 #                                       forensics=0 and proves source before FPS)
+#   YT_FORCE_HD720=0|1                 (default 0; 1 additionally requires the
+#                                       exact media-probe arm and forces hd720)
 #   YT_OUTDIR=<new/empty run directory>  (default is a unique timestamped dir)
 #   YT_WINDOW_SECONDS=<seconds>           (default 60)
 #   YT_PLAYER_CROP=<WxH+X+Y>              (default 960x540+160+130)
@@ -52,6 +54,18 @@ proc media_probe_arm_contract {multiprocess disable_audio forensics media_probe}
         return [list 0 "YT_MEDIA_PROBE-requires-multiprocess-1-audio-1-forensics-0 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
     }
     return [list 1 "media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
+}
+
+proc force_hd720_arm_contract {multiprocess disable_audio forensics media_probe force_hd720} {
+    if {$force_hd720 ne "0" && $force_hd720 ne "1"} {
+        return [list 0 "YT_FORCE_HD720-must-be-0-or-1 value=$force_hd720"]
+    }
+    if {$force_hd720 eq "1" &&
+        ($multiprocess ne "1" || $disable_audio ne "1" ||
+         $forensics ne "0" || $media_probe ne "1")} {
+        return [list 0 "YT_FORCE_HD720-requires-multiprocess-1-audio-1-forensics-0-media-probe-1 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics media_probe=$media_probe"]
+    }
+    return [list 1 "force_hd720=$force_hd720 media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
 }
 
 proc media_probe_random_nonce {} {
@@ -116,6 +130,7 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
         source_log /host-gui-wayland-chromium.log \
         capture_log /yt-media-probe.log \
         temp_prefix /tmp/yt-media-probe \
+        expected_rows 24 \
         max_polls 75 \
         sleep_seconds 1 \
         do_sync 1]
@@ -135,9 +150,14 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
             error "invalid media-probe helper path for $key"
         }
     }
+    set expected_rows [dict get $config expected_rows]
+    if {$expected_rows ni {24 30}} {
+        error "invalid media-probe helper expected_rows"
+    }
+    set max_allowed_polls [expr {$expected_rows == 30 ? 105 : 75}]
     set max_polls [dict get $config max_polls]
     if {![string is integer -strict $max_polls] ||
-        $max_polls < 1 || $max_polls > 75} {
+        $max_polls < 1 || $max_polls > $max_allowed_polls} {
         error "invalid media-probe helper max_polls"
     }
     set sleep_seconds [dict get $config sleep_seconds]
@@ -155,6 +175,7 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
         @SOURCE_LOG@ [dict get $config source_log] \
         @CAPTURE_LOG@ [dict get $config capture_log] \
         @TEMP_PREFIX@ [dict get $config temp_prefix] \
+        @EXPECTED_ROWS@ $expected_rows \
         @MAX_POLLS@ $max_polls \
         @SLEEP_SECONDS@ $sleep_seconds \
         @DO_SYNC@ $do_sync] {#!/bin/bash
@@ -175,7 +196,7 @@ rm -f "$marker_tmp" "$done_tmp" "$failure_tmp" "$capture_log"
 while [ "$i" -lt "$max_polls" ]; do
     "$grep_bin" 'YT_MEDIA_PROBE_V1' "$source_log" > "$marker_tmp" 2>/dev/null
     "$grep_bin" ' schema=1 nonce=@NONCE@ ' "$marker_tmp" > "$capture_log" 2>/dev/null
-    "$grep_bin" 'kind=done schema=1 nonce=@NONCE@ status=complete samples=20 rows=24' "$capture_log" > "$done_tmp" 2>/dev/null
+    "$grep_bin" 'kind=done schema=1 nonce=@NONCE@ status=complete samples=20 rows=@EXPECTED_ROWS@' "$capture_log" > "$done_tmp" 2>/dev/null
     if [ -s "$done_tmp" ]; then status=complete; break; fi
     "$grep_bin" 'kind=failure schema=1 nonce=@NONCE@ ' "$capture_log" > "$failure_tmp" 2>/dev/null
     if [ -s "$failure_tmp" ]; then status=failure; break; fi
@@ -216,6 +237,12 @@ set media_probe_contract [media_probe_arm_contract \
 if {![lindex $media_probe_contract 0]} {
     fail_preflight [lindex $media_probe_contract 1]
 }
+set force_hd720 [expr {[info exists env(YT_FORCE_HD720)] ? $env(YT_FORCE_HD720) : "0"}]
+set force_hd720_contract [force_hd720_arm_contract \
+    $multiprocess $disable_audio $egl_forensics $media_probe $force_hd720]
+if {![lindex $force_hd720_contract 0]} {
+    fail_preflight [lindex $force_hd720_contract 1]
+}
 set media_probe_extension_id "edfilgocpdgbkehcgdillfgnnhclphol"
 set media_probe_nonce "off"
 if {$media_probe eq "1"} {
@@ -225,9 +252,10 @@ if {$media_probe eq "1"} {
     }
     set media_probe_nonce [lindex $nonce_result 1]
 }
-set arm [expr {$media_probe eq "1" ? "media-probe" :
+set arm [expr {$force_hd720 eq "1" ? "media-probe-hd720" :
+               ($media_probe eq "1" ? "media-probe" :
                ($egl_forensics eq "1" ? "egl-forensics" :
-               ($multiprocess eq "1" ? "multiprocess" : "single-process"))}]
+               ($multiprocess eq "1" ? "multiprocess" : "single-process")))}]
 
 set window_seconds [expr {[info exists env(YT_WINDOW_SECONDS)] ? $env(YT_WINDOW_SECONDS) : "60"}]
 if {![string is integer -strict $window_seconds] || $window_seconds < 10 ||
@@ -250,11 +278,15 @@ if {![regexp {^[A-Za-z0-9_-]+$} $vid]} {
 set url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
 if {$media_probe eq "1"} {
     append url "#xv6ytprobe=$media_probe_nonce"
+    if {$force_hd720 eq "1"} {
+        append url "&xv6ythd720=1"
+    }
 }
 set stamp [clock format [clock seconds] -gmt true -format "%Y%m%dT%H%M%SZ"]
 set forensic_suffix [expr {$egl_forensics eq "1" ? "-egl1" : ""}]
 set media_suffix [expr {$media_probe eq "1" ? "-media1" : ""}]
-set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}"
+set force_suffix [expr {$force_hd720 eq "1" ? "-hd7201" : ""}]
+set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}${force_suffix}"
 if {[info exists env(YT_OUTDIR)]} {
     set outdir [file normalize $env(YT_OUTDIR)]
 } else {
@@ -289,6 +321,9 @@ set media_probe_serial "$outdir/yt-media-probe.serial.txt"
 set media_probe_assets "$outdir/media-probe-assets.txt"
 set media_probe_host_dir "$root/rootfs-overlay/share/chromium-youtube-media-probe"
 set media_probe_guest_dir "/share/chromium-youtube-media-probe"
+set chromium_extra_flags [expr {$media_probe eq "1" ?
+    "--autoplay-policy=no-user-gesture-required --load-extension=$media_probe_guest_dir" :
+    "--autoplay-policy=no-user-gesture-required"}]
 set qemu_pid 0
 set qemu_started 0
 set qemu_wait_result "not-waited"
@@ -1067,7 +1102,7 @@ proc extract_and_validate_success {} {
     global outdir required_guest_frames launcher_log chrome_log launch_stdio_log
     global debugcon_log player_delta_min metricsf runlog multiprocess url scratch
     global log_extract_status media_probe media_probe_log media_probe_nonce
-    global media_probe_extension_id
+    global media_probe_extension_id force_hd720
 
     set errors {}
     extract_available_guest_evidence
@@ -1149,7 +1184,7 @@ proc extract_and_validate_success {} {
             lappend errors "media-probe-artifact-missing"
         } else {
             set parsed_media [parse_media_probe_evidence [read_text $media_probe_log] \
-                $media_probe_nonce $media_probe_extension_id]
+                $media_probe_nonce $media_probe_extension_id $force_hd720]
             if {![lindex $parsed_media 0] || ![lindex $parsed_media 1]} {
                 lappend errors "media-probe-source-proof-[lindex $parsed_media 2]"
             } else {
@@ -1183,6 +1218,7 @@ proc extract_and_validate_media_probe_null {} {
     global outdir launcher_log chrome_log launch_stdio_log media_probe_log
     global debugcon_log metricsf runlog log_extract_status
     global media_probe_nonce media_probe_extension_id
+    global force_hd720
 
     set errors {}
     extract_available_guest_evidence
@@ -1205,7 +1241,7 @@ proc extract_and_validate_media_probe_null {} {
         lappend errors "media-probe-artifact-missing"
     } else {
         set parsed [parse_media_probe_evidence [read_text $media_probe_log] \
-            $media_probe_nonce $media_probe_extension_id]
+            $media_probe_nonce $media_probe_extension_id $force_hd720]
         if {![lindex $parsed 0] || [lindex $parsed 1]} {
             lappend errors "media-probe-null-shape-[lindex $parsed 2]"
         } else {
@@ -1826,7 +1862,51 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             fail_preflight "static-check-media-probe-arm-contract case=$contract_case parsed=$parsed_contract"
         }
     }
+    foreach contract_case {
+        {1 1 0 1 0 1}
+        {1 1 0 1 1 1}
+        {0 1 0 1 1 0}
+        {1 0 0 1 1 0}
+        {1 1 1 1 1 0}
+        {1 1 0 0 1 0}
+        {1 1 0 1 2 0}
+    } {
+        lassign $contract_case mp audio forensic probe force expected
+        set parsed_contract [force_hd720_arm_contract \
+            $mp $audio $forensic $probe $force]
+        if {[lindex $parsed_contract 0] ne $expected} {
+            fail_preflight "static-check-force-hd720-arm-contract case=$contract_case parsed=$parsed_contract"
+        }
+    }
     set static_nonce 0123456789abcdef0123456789abcdef
+    set static_base_url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
+    if {$force_hd720 eq "1"} {
+        if {$arm ne "media-probe-hd720" ||
+            $url ne "$static_base_url#xv6ytprobe=$media_probe_nonce&xv6ythd720=1"} {
+            fail_preflight "static-check-force-hd720-arm-url arm=$arm url=$url"
+        }
+    } elseif {[string first {xv6ythd720} $url] >= 0} {
+        fail_preflight "static-check-force-hd720-selector-leaked url=$url"
+    } elseif {$media_probe eq "0" && $url ne $static_base_url} {
+        fail_preflight "static-check-normal-arm-url-mutated url=$url"
+    } elseif {$media_probe eq "1" &&
+              $url ne "$static_base_url#xv6ytprobe=$media_probe_nonce"} {
+        fail_preflight "static-check-media-arm-url-mutated url=$url"
+    }
+    set expected_extra_flags [expr {$media_probe eq "1" ?
+        "--autoplay-policy=no-user-gesture-required --load-extension=/share/chromium-youtube-media-probe" :
+        "--autoplay-policy=no-user-gesture-required"}]
+    if {$chromium_extra_flags ne $expected_extra_flags} {
+        fail_preflight "static-check-arm-extra-flags flags=$chromium_extra_flags"
+    }
+    set static_manifest [read_text \
+        "$media_probe_host_dir/manifest.json"]
+    if {![regexp {"world"[ \t]*:[ \t]*"MAIN"} $static_manifest] ||
+        ![regexp {"js"[ \t]*:[ \t]*\["probe-lib\.js",[ \t]*"probe\.js"\]} \
+            $static_manifest] ||
+        ![regexp {"run_at"[ \t]*:[ \t]*"document_idle"} $static_manifest]} {
+        fail_preflight "static-check-media-probe-main-world-manifest"
+    }
     set media_60 [synthetic_media_probe_evidence $static_nonce]
     set media_60_parsed [parse_media_probe_evidence $media_60 \
         $static_nonce $media_probe_extension_id]
@@ -1834,6 +1914,8 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         ![string match {reason=pass*} [lindex $media_60_parsed 2]]} {
         fail_preflight "static-check-media-probe-60fps parsed=$media_60_parsed"
     }
+    set force_media_60 [synthetic_media_probe_evidence $static_nonce \
+        [dict create force_hd720 1]]
     # Exact open-boundary serialization controls: 14.9996 -> 15.000 and
     # 18.5004 -> 18.500 at the probe's three-decimal median precision. Their
     # histogram bins remain outside b15_18p5, so neither may source-prove.
@@ -1936,6 +2018,10 @@ cat /host-gui-wayland-chromium.log
         [list invalid-nonce {not-a-nonce} {}] \
         [list zero-polls $static_nonce [dict create max_polls 0]] \
         [list excessive-polls $static_nonce [dict create max_polls 76]] \
+        [list excessive-force-polls $static_nonce [dict create \
+            expected_rows 30 max_polls 106]] \
+        [list invalid-expected-rows $static_nonce [dict create \
+            expected_rows 25]] \
         [list excessive-sleep $static_nonce [dict create sleep_seconds 2]] \
         [list unsafe-path $static_nonce [dict create source_log {/tmp/../bad}]] \
         [list unknown-option $static_nonce [dict create unknown 1]]] {
@@ -2020,6 +2106,31 @@ cat /host-gui-wayland-chromium.log
         ![lindex $complete_parsed 0] || ![lindex $complete_parsed 1] ||
         ![static_media_helper_clean $helper_temp_prefix]} {
         fail_preflight "static-check-media-helper-complete-envelope run=$complete_run capture=$complete_capture parsed=$complete_parsed"
+    }
+
+    set force_helper_script "$helper_reducer_dir/ytmediaprobe-force.sh"
+    wf $force_helper_script [media_probe_guest_helper_script $static_nonce \
+        [dict merge $helper_options [dict create expected_rows 30]]]
+    if {[catch {exec bash -n $force_helper_script 2>@1} force_helper_syntax]} {
+        fail_preflight "static-check-force-media-helper-bash-syntax error=$force_helper_syntax"
+    }
+    set force_complete_run [static_media_helper_run $force_helper_script \
+        $helper_source "$force_media_60\n"]
+    set force_complete_capture [media_probe_capture_payload \
+        [lindex $force_complete_run 1] $static_nonce]
+    set force_complete_parsed [parse_media_probe_evidence \
+        [lindex $force_complete_capture 2] $static_nonce \
+        $media_probe_extension_id 1]
+    if {![lindex $force_complete_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $force_complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $force_complete_run 1]] ||
+        ![lindex $force_complete_capture 0] ||
+        [lindex $force_complete_capture 2] ne $force_media_60 ||
+        [read_text $helper_capture] ne "$force_media_60\n" ||
+        ![lindex $force_complete_parsed 0] ||
+        ![lindex $force_complete_parsed 1] ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-force-media-helper-complete-envelope run=$force_complete_run capture=$force_complete_capture parsed=$force_complete_parsed"
     }
 
     # A later invocation must remove the prior complete capture before
@@ -2146,11 +2257,113 @@ cat /host-gui-wayland-chromium.log
         fail_preflight "static-check-media-probe-retained-invalid parsed=$retained_invalid_parsed"
     }
 
-    proc static_media_probe_reject {label evidence nonce extension_id} {
-        set parsed [parse_media_probe_evidence $evidence $nonce $extension_id]
+    proc static_media_probe_reject {label evidence nonce extension_id {force 0}} {
+        set parsed [parse_media_probe_evidence $evidence $nonce $extension_id $force]
         if {[lindex $parsed 0]} {
             fail_preflight "static-check-media-probe-mutation-accepted-$label parsed=$parsed"
         }
+    }
+    set force_media_60 [synthetic_media_probe_evidence $static_nonce \
+        [dict create force_hd720 1]]
+    set force_media_parsed [parse_media_probe_evidence $force_media_60 \
+        $static_nonce $media_probe_extension_id 1]
+    if {![lindex $force_media_parsed 0] || ![lindex $force_media_parsed 1] ||
+        ![string match {reason=pass*} [lindex $force_media_parsed 2]]} {
+        fail_preflight "static-check-force-hd720-pass parsed=$force_media_parsed"
+    }
+    static_media_probe_reject force-envelope-on-normal-arm $force_media_60 \
+        $static_nonce $media_probe_extension_id 0
+    static_media_probe_reject normal-envelope-on-force-arm $media_60 \
+        $static_nonce $media_probe_extension_id 1
+
+    set force_30 [synthetic_media_probe_evidence $static_nonce [dict create \
+        force_hd720 1 interval_positive 600 interval_near60 0 \
+        interval_other30 600 interval_sum_ms 19999.800 median_ms 33.333 \
+        media_delta 19.999800]]
+    set force_30_parsed [parse_media_probe_evidence $force_30 \
+        $static_nonce $media_probe_extension_id 1]
+    if {![lindex $force_30_parsed 0] || [lindex $force_30_parsed 1] ||
+        ![string match {reason=cadence-not-16p7ms*} [lindex $force_30_parsed 2]]} {
+        fail_preflight "static-check-force-hd720-30fps-credit parsed=$force_30_parsed"
+    }
+    set force_delayed [synthetic_media_probe_evidence $static_nonce \
+        [dict create force_hd720 1 force_ready_attempt 120 \
+            force_observe_attempt 40 force_stable_count 4]]
+    set force_delayed_parsed [parse_media_probe_evidence $force_delayed \
+        $static_nonce $media_probe_extension_id 1]
+    if {![lindex $force_delayed_parsed 0] || ![lindex $force_delayed_parsed 1]} {
+        fail_preflight "static-check-force-hd720-delayed-boundary parsed=$force_delayed_parsed"
+    }
+
+    foreach force_reject_case [list \
+        [list hd720-unavailable [dict create force_hd720 1 \
+            force_available hd1080,large]] \
+        [list player-state-api-missing [dict create force_hd720 1 \
+            force_player_state_api 0 force_player_state -1]] \
+        [list player-not-playing [dict create force_hd720 1 \
+            force_player_state 3]] \
+        [list range-api-missing [dict create force_hd720 1 \
+            force_range_present 0 force_range_invoked 0]] \
+        [list quality-api-missing [dict create force_hd720 1 \
+            force_quality_present 0 force_quality_invoked 0]] \
+        [list range-api-throw [dict create force_hd720 1 \
+            force_range_threw 1]] \
+        [list quality-api-throw [dict create force_hd720 1 \
+            force_quality_threw 1]] \
+        [list api-noop [dict create force_hd720 1 \
+            force_observe_selected medium force_stable_count 0]] \
+        [list observe-unstable [dict create force_hd720 1 \
+            force_stable_count 3]] \
+        [list observe-wrong-dimensions [dict create force_hd720 1 \
+            force_observe_width 640 force_observe_height 360]] \
+        [list ready-attempt-overflow [dict create force_hd720 1 \
+            force_ready_attempt 121]] \
+        [list observe-attempt-overflow [dict create force_hd720 1 \
+            force_observe_attempt 41]] \
+        [list observe-progress-short [dict create force_hd720 1 \
+            force_time_first 1.000 force_time_last 1.499]] \
+        [list observe-to-sample-regression [dict create force_hd720 1 \
+            force_time_first 1.000 force_time_last 1.750]] \
+        [list stable-selected-wrong [dict create force_hd720 1 \
+            sample_quality medium]]] {
+        lassign $force_reject_case label options
+        static_media_probe_reject force-$label \
+            [synthetic_media_probe_evidence $static_nonce $options] \
+            $static_nonce $media_probe_extension_id 1
+    }
+
+    set force_lines [split $force_media_60 "\n"]
+    set force_absent [join [lreplace $force_lines 1 1] "\n"]
+    set force_duplicate [join [linsert $force_lines 1 [lindex $force_lines 0]] "\n"]
+    set force_reordered_lines [lreplace $force_lines 1 2 \
+        [lindex $force_lines 2] [lindex $force_lines 1]]
+    set force_reordered [join $force_reordered_lines "\n"]
+    set force_drift [media_probe_mutate_once $force_media_60 \
+        {index=10 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=10.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720} \
+        {index=10 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=10.000 playback_rate=1.000 paused=0 ended=0 quality_selected=medium}]
+    set force_wrong_source [media_probe_mutate_once $force_media_60 \
+        "chrome-extension://$media_probe_extension_id/probe.js (100)" \
+        {https://www.youtube.com/watch (100)}]
+    set force_line_mismatch [media_probe_mutate_once $force_media_60 \
+        {INFO:CONSOLE:100]} {INFO:CONSOLE:99]}]
+    set force_nonce_mismatch [media_probe_mutate_once $force_media_60 \
+        "kind=force_ready schema=1 nonce=$static_nonce" \
+        "kind=force_ready schema=1 nonce=$wrong_nonce"]
+    set force_oversized [media_probe_mutate_once $force_media_60 \
+        {selected=medium available=hd1080,hd720,large range_api=1} \
+        "selected=medium available=[string repeat x 1100] range_api=1"]
+    foreach force_mutation [list \
+        [list absent $force_absent] \
+        [list duplicate $force_duplicate] \
+        [list reordered $force_reordered] \
+        [list selected-drift $force_drift] \
+        [list page-source $force_wrong_source] \
+        [list line-number $force_line_mismatch] \
+        [list nonce $force_nonce_mismatch] \
+        [list row-byte-cap $force_oversized]] {
+        lassign $force_mutation label evidence
+        static_media_probe_reject force-$label $evidence \
+            $static_nonce $media_probe_extension_id 1
     }
     regexp {"(YT_MEDIA_PROBE_V1 kind=start[^"]+)"} $media_60 -> raw_payload
     set first_line_end [string first "\n" $media_60]
@@ -2720,14 +2933,14 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe forensic_arm_contract=PASS media_arm_contract=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
-af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe"
-af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=$egl_forensics fps_claim_gated_by_media_source=$media_probe"
+af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720"
+af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=$egl_forensics fps_claim_gated_by_media_source=$media_probe"
 wf "$outdir/chromium-url.txt" "$url\n"
-wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
+wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_FORCE_HD720=$force_hd720\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
 
 exec cp --reflink=auto --sparse=always -- $fsimg $scratch
 if {$media_probe eq "1"} {
@@ -2744,7 +2957,7 @@ set launch_host "$outdir/ytlaunch.sh"
 set fh [open $launch_host w]
 puts $fh "#!/bin/bash"
 puts $fh "set +e"
-puts $fh "echo YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=$disable_audio"
+puts $fh "echo YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=$disable_audio force_hd720=$force_hd720"
 puts $fh "if ! mkdir /tmp/yt-presentfps-launch.lock 2>/dev/null; then echo YT_LAUNCH_DUP; exit 0; fi"
 puts $fh "rm -f /host-gui-wayland-chromium.log /tmp/host-gui-wayland-chromium.log /chrome_debug.log /tmp/chrome_debug.log /yt-launch-stdio.log /yt-media-probe.log /kde-chromium-process-evidence.log /yt-role-*.log /yt-role-*-stdio.log /chromium-egl-trace.*.log /mesa-egl-context-trace.log /yt-egl-forensics-manifest.txt /yt-egl-dynamic-processes.log"
 puts $fh "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
@@ -2752,9 +2965,9 @@ puts $fh "export WAYLAND_DISPLAY=wayland-0"
 puts $fh "export WAYLAND_CHROMIUM_MULTIPROCESS=$multiprocess"
 puts $fh "export WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT=$disable_audio"
 if {$media_probe eq "1"} {
-    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS='--autoplay-policy=no-user-gesture-required --load-extension=$media_probe_guest_dir'"
+    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS='$chromium_extra_flags'"
 } else {
-    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS=--autoplay-policy=no-user-gesture-required"
+    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS=$chromium_extra_flags"
 }
 if {$egl_forensics eq "1"} {
     puts $fh "export CHROMIUM_EGL_TRACE=1"
@@ -2763,7 +2976,7 @@ if {$egl_forensics eq "1"} {
     puts $fh "export LD_PRELOAD=/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload.so"
 }
 puts $fh "U='$url'"
-puts $fh "echo YT_ENV multiprocess=\$WAYLAND_CHROMIUM_MULTIPROCESS disable_audio_output=\$WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT media_probe=$media_probe"
+puts $fh "echo YT_ENV multiprocess=\$WAYLAND_CHROMIUM_MULTIPROCESS disable_audio_output=\$WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT media_probe=$media_probe force_hd720=$force_hd720"
 puts $fh "echo YT_ACTUAL /bin/wayland-chromium \"\$U\""
 puts $fh "/bin/wayland-chromium \"\$U\" >/yt-launch-stdio.log 2>&1 &"
 puts $fh "p=\$!"
@@ -2837,7 +3050,10 @@ close $fh
 
 set media_host "$outdir/ytmediaprobe.sh"
 if {$media_probe eq "1"} {
-    wf $media_host [media_probe_guest_helper_script $media_probe_nonce]
+    set live_media_rows [expr {$force_hd720 eq "1" ? 30 : 24}]
+    set live_media_polls [expr {$force_hd720 eq "1" ? 105 : 75}]
+    wf $media_host [media_probe_guest_helper_script $media_probe_nonce \
+        [dict create expected_rows $live_media_rows max_polls $live_media_polls]]
 }
 
 set helper_pairs [list $launch_host /ytlaunch.sh $fbs_host /fbs.sh $role_host /ytrole.sh $argv_host /ytargv.sh]
@@ -3005,8 +3221,10 @@ if {!$started} {
 
 if {$media_probe eq "1"} {
     require_treatment_gpu_role mediaProbe
+    set media_capture_timeout [expr {$force_hd720 eq "1" ? 140 : 110}]
     set media_buf [require_guest_ok \
-        [guest_cmd "/bin/bash /ytmediaprobe.sh" media-probe-capture 110] \
+        [guest_cmd "/bin/bash /ytmediaprobe.sh" media-probe-capture \
+            $media_capture_timeout] \
         media-probe-capture]
     wf $media_probe_serial $media_buf
     capture_guest_fb mediaProbe
@@ -3018,7 +3236,7 @@ if {$media_probe eq "1"} {
         finish 8 "FAIL media-probe-capture-invalid [lindex $captured_media 1] no_fps_claim=1"
     }
     set media_parsed [parse_media_probe_evidence [lindex $captured_media 2] \
-        $media_probe_nonce $media_probe_extension_id]
+        $media_probe_nonce $media_probe_extension_id $force_hd720]
     if {![lindex $media_parsed 0]} {
         set media_probe_verdict "INVALID"
         af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 detail=[lindex $media_parsed 2]"

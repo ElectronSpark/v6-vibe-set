@@ -27,6 +27,31 @@ proc media_probe_in_range {value low high} {
 
 proc media_probe_expected_keys {kind} {
     switch -- $kind {
+        force_ready {
+            return {
+                kind schema nonce attempt player_present video_present
+                player_state_api player_state ready_state video_width
+                video_height selected_api available_api selected available
+                range_api quality_api
+            }
+        }
+        force_attempt {
+            return {
+                kind schema nonce seq api arg_min arg_max present
+            }
+        }
+        force_result {
+            return {
+                kind schema nonce seq api invoked threw return_type
+            }
+        }
+        force_observation {
+            return {
+                kind schema nonce attempt stable_count selected_api
+                available_api selected available video_width video_height
+                ready_state paused ended current_time_first current_time_last
+            }
+        }
         start {
             return {kind schema nonce samples interval_ms rvfc_available src_id}
         }
@@ -110,7 +135,10 @@ proc media_probe_row_fields {row expected_nonce} {
     return [list 1 "pass" $fields]
 }
 
-proc media_probe_enveloped_rows {text expected_nonce extension_id} {
+proc media_probe_enveloped_rows {text expected_nonce extension_id {row_cap 24}} {
+    if {$row_cap ni {24 30}} {
+        return [list 0 "invalid-row-cap-$row_cap" {}]
+    }
     set rows {}
     set total_bytes 0
     set qid [regex_quote $extension_id]
@@ -136,10 +164,10 @@ proc media_probe_enveloped_rows {text expected_nonce extension_id} {
     if {$marker_lines == 0} {
         return [list 0 "injection-no-marker-rows" {}]
     }
-    if {$marker_lines > 24} {
+    if {$marker_lines > $row_cap} {
         return [list 0 "row-cap-exceeded-$marker_lines" {}]
     }
-    if {$total_bytes > 24000} {
+    if {$total_bytes > $row_cap * 1000} {
         return [list 0 "total-byte-cap-exceeded-$total_bytes" {}]
     }
     return [list 1 "pass" $rows]
@@ -538,8 +566,123 @@ proc media_probe_counter_shape {available first last delta} {
     return [expr {$last >= $first && $delta == ($last - $first)}]
 }
 
-proc parse_media_probe_evidence {text expected_nonce extension_id} {
-    set envelope [media_probe_enveloped_rows $text $expected_nonce $extension_id]
+proc media_probe_quality_contains {available quality} {
+    return [expr {$available ne "unavailable" && $available ne "empty" &&
+                  $quality in [split $available ,]}]
+}
+
+proc media_probe_validate_force_rows {rows} {
+    set ready [lindex [lindex $rows 0] 1]
+    foreach key {
+        attempt player_present video_present player_state_api selected_api
+        available_api range_api quality_api
+    } {
+        if {![media_probe_is_uint [dict get $ready $key]]} {
+            return [list 0 "force-ready-grammar-$key"]
+        }
+    }
+    foreach key {
+        player_present video_present player_state_api selected_api
+        available_api range_api quality_api
+    } {
+        if {[dict get $ready $key] ni {0 1}} {
+            return [list 0 "force-ready-boolean-$key"]
+        }
+    }
+    foreach key {player_state ready_state video_width video_height} {
+        if {![media_probe_is_sint [dict get $ready $key]]} {
+            return [list 0 "force-ready-grammar-$key"]
+        }
+    }
+    if {[dict get $ready attempt] < 1 || [dict get $ready attempt] > 120 ||
+        [dict get $ready player_present] ne "1" ||
+        [dict get $ready video_present] ne "1" ||
+        [dict get $ready player_state_api] ne "1" ||
+        [dict get $ready player_state] ne "1" ||
+        [dict get $ready ready_state] < 2 || [dict get $ready ready_state] > 4 ||
+        [dict get $ready video_width] < 1 || [dict get $ready video_width] > 8192 ||
+        [dict get $ready video_height] < 1 || [dict get $ready video_height] > 8192 ||
+        [dict get $ready selected_api] ne "1" ||
+        [dict get $ready available_api] ne "1" ||
+        [dict get $ready range_api] ne "1" ||
+        [dict get $ready quality_api] ne "1" ||
+        ![media_probe_quality_token_valid [dict get $ready selected]] ||
+        [dict get $ready selected] in {unavailable empty} ||
+        ![media_probe_quality_available_valid [dict get $ready available] 1] ||
+        ![media_probe_quality_contains [dict get $ready available] hd720]} {
+        return [list 0 "force-ready-prerequisites"]
+    }
+
+    foreach {position seq api} {
+        1 1 setPlaybackQualityRange
+        3 2 setPlaybackQuality
+    } {
+        set attempt [lindex [lindex $rows $position] 1]
+        if {[dict get $attempt seq] ne $seq ||
+            [dict get $attempt api] ne $api ||
+            [dict get $attempt arg_min] ne "hd720" ||
+            [dict get $attempt arg_max] ne "hd720" ||
+            [dict get $attempt present] ne "1"} {
+            return [list 0 "force-attempt-$seq-invalid"]
+        }
+        set result [lindex [lindex $rows [expr {$position + 1}]] 1]
+        if {[dict get $result seq] ne $seq ||
+            [dict get $result api] ne $api ||
+            [dict get $result invoked] ne "1" ||
+            [dict get $result threw] ne "0" ||
+            [dict get $result return_type] ni {
+                undefined boolean number string object function symbol bigint null
+            }} {
+            return [list 0 "force-result-$seq-invalid"]
+        }
+    }
+
+    set observation [lindex [lindex $rows 5] 1]
+    foreach key {attempt stable_count video_width video_height ready_state} {
+        if {![media_probe_is_uint [dict get $observation $key]]} {
+            return [list 0 "force-observation-grammar-$key"]
+        }
+    }
+    foreach key {selected_api available_api paused ended} {
+        if {[dict get $observation $key] ni {0 1}} {
+            return [list 0 "force-observation-boolean-$key"]
+        }
+    }
+    foreach key {current_time_first current_time_last} {
+        if {![media_probe_in_range [dict get $observation $key] 0 100000000]} {
+            return [list 0 "force-observation-range-$key"]
+        }
+    }
+    if {[dict get $observation attempt] < 1 ||
+        [dict get $observation attempt] > 40 ||
+        [dict get $observation stable_count] < 4 ||
+        [dict get $observation stable_count] > [dict get $observation attempt] ||
+        [dict get $observation selected_api] ne "1" ||
+        [dict get $observation available_api] ne "1" ||
+        [dict get $observation selected] ne "hd720" ||
+        ![media_probe_quality_available_valid [dict get $observation available] 1] ||
+        ![media_probe_quality_contains [dict get $observation available] hd720] ||
+        [dict get $observation video_width] ne "1280" ||
+        [dict get $observation video_height] ne "720" ||
+        [dict get $observation ready_state] < 2 ||
+        [dict get $observation ready_state] > 4 ||
+        [dict get $observation paused] ne "0" ||
+        [dict get $observation ended] ne "0" ||
+        double([dict get $observation current_time_last]) -
+            double([dict get $observation current_time_first]) < 0.5} {
+        return [list 0 "force-observation-not-stable"]
+    }
+    return [list 1 "pass"]
+}
+
+proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0}} {
+    if {$force_hd720 ni {0 1}} {
+        return [list 0 0 "force-arm-must-be-0-or-1"]
+    }
+    set force_rows [expr {$force_hd720 ? 6 : 0}]
+    set expected_rows [expr {24 + $force_rows}]
+    set envelope [media_probe_enveloped_rows $text $expected_nonce $extension_id \
+        $expected_rows]
     if {![lindex $envelope 0]} { return [list 0 0 [lindex $envelope 1]] }
     set rows [lindex $envelope 2]
     foreach item $rows {
@@ -548,18 +691,30 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
             return [list 0 0 "injection-failure-[dict get $fields reason]"]
         }
     }
-    if {[llength $rows] != 24} {
-        return [list 0 0 "row-count-[llength $rows]-expected-24"]
+    if {[llength $rows] != $expected_rows} {
+        return [list 0 0 "row-count-[llength $rows]-expected-$expected_rows"]
     }
-    set expected_order [concat start [lrepeat 20 sample] summary rvfc_summary done]
-    for {set position 0} {$position < 24} {incr position} {
+    set expected_order [concat \
+        [expr {$force_hd720 ? {
+            force_ready force_attempt force_result force_attempt force_result
+            force_observation
+        } : {}}] \
+        start [lrepeat 20 sample] summary rvfc_summary done]
+    for {set position 0} {$position < $expected_rows} {incr position} {
         set kind [dict get [lindex [lindex $rows $position] 1] kind]
         if {$kind ne [lindex $expected_order $position]} {
             return [list 0 0 "row-order-position-$position-kind-$kind"]
         }
     }
 
-    set start [lindex [lindex $rows 0] 1]
+    if {$force_hd720} {
+        set force_validation [media_probe_validate_force_rows $rows]
+        if {![lindex $force_validation 0]} {
+            return [list 0 0 [lindex $force_validation 1]]
+        }
+    }
+
+    set start [lindex [lindex $rows $force_rows] 1]
     if {[dict get $start samples] ne "20" ||
         [dict get $start interval_ms] ne "1000" ||
         [dict get $start rvfc_available] ni {0 1} ||
@@ -575,7 +730,7 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
     set first_sample {}
     set prior_sample {}
     for {set index 1} {$index <= 20} {incr index} {
-        set sample [lindex [lindex $rows $index] 1]
+        set sample [lindex [lindex $rows [expr {$force_rows + $index}]] 1]
         if {![media_probe_is_uint [dict get $sample index]] ||
             [dict get $sample index] != $index} {
             return [list 0 0 "sample-index-$index-invalid"]
@@ -624,6 +779,12 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
             ($selected_api && $selected in {unavailable empty}) ||
             ![media_probe_quality_available_valid $available $available_api]} {
             return [list 0 0 "sample-$index-quality-shape"]
+        }
+        if {$force_hd720 &&
+            ($selected_api ne "1" || $available_api ne "1" ||
+             $selected ne "hd720" ||
+             ![media_probe_quality_contains $available hd720])} {
+            return [list 0 0 "force-sample-$index-quality-not-hd720"]
         }
         foreach family {vpq webkit} {
             set api [dict get $sample ${family}_available]
@@ -721,8 +882,15 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
         set prior_sample $sample
     }
     set last_sample [lindex $samples end]
+    if {$force_hd720} {
+        set force_observation [lindex [lindex $rows 5] 1]
+        if {double([dict get $first_sample current_time]) <
+            double([dict get $force_observation current_time_last])} {
+            return [list 0 0 "force-first-sample-time-regression"]
+        }
+    }
 
-    set summary [lindex [lindex $rows 21] 1]
+    set summary [lindex [lindex $rows [expr {$force_rows + 21}]] 1]
     foreach key {samples width_min width_max height_min height_max longtask_count} {
         if {![media_probe_is_uint [dict get $summary $key]]} {
             return [list 0 0 "summary-grammar-$key"]
@@ -769,7 +937,7 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
         }
     }
 
-    set rvfc [lindex [lindex $rows 22] 1]
+    set rvfc [lindex [lindex $rows [expr {$force_rows + 22}]] 1]
     foreach key {
         available callbacks schedule_failures warmup_callbacks interval_slots
         presented_first presented_last presented_delta presented_invalid
@@ -883,9 +1051,10 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
         return [list 0 0 [lindex $sample_rvfc 1]]
     }
 
-    set done [lindex [lindex $rows 23] 1]
+    set done [lindex [lindex $rows [expr {$force_rows + 23}]] 1]
     if {[dict get $done status] ne "complete" ||
-        [dict get $done samples] ne "20" || [dict get $done rows] ne "24"} {
+        [dict get $done samples] ne "20" ||
+        [dict get $done rows] ne $expected_rows} {
         return [list 0 0 "done-row-invalid"]
     }
 
@@ -944,9 +1113,13 @@ proc parse_media_probe_evidence {text expected_nonce extension_id} {
         set reason "pass"
     }
     set source_proven [expr {$reason eq "pass"}]
-    return [list 1 $source_proven \
-        "reason=$reason intervals=$interval_count median_ms=[dict get $rvfc median_ms] near60_ratio=[format %.4f $near_ratio] time_progress=[format %.3f $time_progress]" \
-        $summary $rvfc]
+    set detail "reason=$reason intervals=$interval_count median_ms=[dict get $rvfc median_ms] near60_ratio=[format %.4f $near_ratio] time_progress=[format %.3f $time_progress]"
+    if {$force_hd720} {
+        set force_ready [lindex [lindex $rows 0] 1]
+        set force_observation [lindex [lindex $rows 5] 1]
+        append detail " force_hd720=1 force_ready_attempt=[dict get $force_ready attempt] force_observe_attempt=[dict get $force_observation attempt] force_stable_count=[dict get $force_observation stable_count]"
+    }
+    return [list 1 $source_proven $detail $summary $rvfc]
 }
 
 proc media_probe_console_line {payload {line_number 321} {extension_id edfilgocpdgbkehcgdillfgnnhclphol}} {
@@ -957,6 +1130,15 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
     set defaults [dict create \
         width 1280 height 720 optional_apis 1 paused 0 ended 0 \
         playback_rate 1.000 time_step 1.000 rvfc_available 1 \
+        force_hd720 0 force_ready_attempt 3 force_ready_selected medium \
+        force_player_state_api 1 force_player_state 1 \
+        force_available hd1080,hd720,large force_range_present 1 \
+        force_range_invoked 1 force_range_threw 0 force_quality_present 1 \
+        force_quality_invoked 1 force_quality_threw 0 \
+        force_observe_attempt 5 force_stable_count 4 \
+        force_observe_selected hd720 force_observe_width 1280 \
+        force_observe_height 720 force_time_first 0.000 force_time_last 0.750 \
+        sample_quality hd720 sample_available hd1080,hd720,large \
         interval_positive 1200 interval_near60 1200 interval_other30 0 \
         interval_b14_15 0 interval_b18p5_20 0 \
         interval_regressions 0 interval_duplicates 0 interval_invalid 0 \
@@ -966,7 +1148,16 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
         presented_duplicates 0 presented_delta auto callbacks_override auto]
     set opt [dict merge $defaults $options]
     set src {blob:https://www.youtube.com/<redacted>}
-    set payloads [list "YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=$nonce samples=20 interval_ms=1000 rvfc_available=[dict get $opt rvfc_available] src_id=$src"]
+    set payloads {}
+    if {[dict get $opt force_hd720]} {
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$nonce attempt=[dict get $opt force_ready_attempt] player_present=1 video_present=1 player_state_api=[dict get $opt force_player_state_api] player_state=[dict get $opt force_player_state] ready_state=4 video_width=640 video_height=360 selected_api=1 available_api=1 selected=[dict get $opt force_ready_selected] available=[dict get $opt force_available] range_api=[dict get $opt force_range_present] quality_api=[dict get $opt force_quality_present]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_attempt schema=1 nonce=$nonce seq=1 api=setPlaybackQualityRange arg_min=hd720 arg_max=hd720 present=[dict get $opt force_range_present]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_result schema=1 nonce=$nonce seq=1 api=setPlaybackQualityRange invoked=[dict get $opt force_range_invoked] threw=[dict get $opt force_range_threw] return_type=[expr {[dict get $opt force_range_invoked] && ![dict get $opt force_range_threw] ? {undefined} : {unavailable}}]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_attempt schema=1 nonce=$nonce seq=2 api=setPlaybackQuality arg_min=hd720 arg_max=hd720 present=[dict get $opt force_quality_present]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_result schema=1 nonce=$nonce seq=2 api=setPlaybackQuality invoked=[dict get $opt force_quality_invoked] threw=[dict get $opt force_quality_threw] return_type=[expr {[dict get $opt force_quality_invoked] && ![dict get $opt force_quality_threw] ? {undefined} : {unavailable}}]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$nonce attempt=[dict get $opt force_observe_attempt] stable_count=[dict get $opt force_stable_count] selected_api=1 available_api=1 selected=[dict get $opt force_observe_selected] available=[dict get $opt force_available] video_width=[dict get $opt force_observe_width] video_height=[dict get $opt force_observe_height] ready_state=4 paused=0 ended=0 current_time_first=[dict get $opt force_time_first] current_time_last=[dict get $opt force_time_last]"
+    }
+    lappend payloads "YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=$nonce samples=20 interval_ms=1000 rvfc_available=[dict get $opt rvfc_available] src_id=$src"
     set positive [dict get $opt interval_positive]
     set valid [expr {$positive + [dict get $opt interval_regressions] +
         [dict get $opt interval_duplicates]}]
@@ -1016,17 +1207,18 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
             set sample_media $media_last
         }
         set current_time [expr {1.0 + (($index - 1) * double([dict get $opt time_step]))}]
-        lappend payloads "YT_MEDIA_PROBE_V1 kind=sample schema=1 nonce=$nonce index=$index video_width=[dict get $opt width] video_height=[dict get $opt height] src_id=$src current_time=[format %.3f $current_time] playback_rate=[dict get $opt playback_rate] paused=[dict get $opt paused] ended=[dict get $opt ended] quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=$optional vpq_total=$vpq_total vpq_dropped=$vpq_dropped webkit_available=$optional webkit_decoded=$webkit_decoded webkit_dropped=$webkit_dropped rvfc_available=[dict get $opt rvfc_available] rvfc_callbacks=$sample_callbacks rvfc_presented=$sample_presented rvfc_media_time=[format %.6f $sample_media] longtask_available=1 longtask_count=[expr {$index / 5}] longtask_duration_ms=[format %.3f [expr {$index * 6.0}]]"
+        lappend payloads "YT_MEDIA_PROBE_V1 kind=sample schema=1 nonce=$nonce index=$index video_width=[dict get $opt width] video_height=[dict get $opt height] src_id=$src current_time=[format %.3f $current_time] playback_rate=[dict get $opt playback_rate] paused=[dict get $opt paused] ended=[dict get $opt ended] quality_selected=[dict get $opt sample_quality] quality_available=[dict get $opt sample_available] quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=$optional vpq_total=$vpq_total vpq_dropped=$vpq_dropped webkit_available=$optional webkit_decoded=$webkit_decoded webkit_dropped=$webkit_dropped rvfc_available=[dict get $opt rvfc_available] rvfc_callbacks=$sample_callbacks rvfc_presented=$sample_presented rvfc_media_time=[format %.6f $sample_media] longtask_available=1 longtask_count=[expr {$index / 5}] longtask_duration_ms=[format %.3f [expr {$index * 6.0}]]"
     }
     if {[dict get $opt optional_apis]} {
         set api_summary {vpq_available=1 vpq_total_first=1060 vpq_total_last=2200 vpq_total_delta=1140 vpq_dropped_first=11 vpq_dropped_last=30 vpq_dropped_delta=19 webkit_available=1 webkit_decoded_first=1060 webkit_decoded_last=2200 webkit_decoded_delta=1140 webkit_dropped_first=11 webkit_dropped_last=30 webkit_dropped_delta=19}
     } else {
         set api_summary {vpq_available=0 vpq_total_first=-1 vpq_total_last=-1 vpq_total_delta=-1 vpq_dropped_first=-1 vpq_dropped_last=-1 vpq_dropped_delta=-1 webkit_available=0 webkit_decoded_first=-1 webkit_decoded_last=-1 webkit_decoded_delta=-1 webkit_dropped_first=-1 webkit_dropped_last=-1 webkit_dropped_delta=-1}
     }
-    lappend payloads "YT_MEDIA_PROBE_V1 kind=summary schema=1 nonce=$nonce samples=20 width_min=[dict get $opt width] width_max=[dict get $opt width] height_min=[dict get $opt height] height_max=[dict get $opt height] src_id=$src quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 $api_summary longtask_available=1 longtask_count=4 longtask_duration_ms=120.000"
+    lappend payloads "YT_MEDIA_PROBE_V1 kind=summary schema=1 nonce=$nonce samples=20 width_min=[dict get $opt width] width_max=[dict get $opt width] height_min=[dict get $opt height] height_max=[dict get $opt height] src_id=$src quality_selected=[dict get $opt sample_quality] quality_available=[dict get $opt sample_available] quality_selected_api=1 quality_available_api=1 $api_summary longtask_available=1 longtask_count=4 longtask_duration_ms=120.000"
     set hist "regress:[dict get $opt interval_regressions],duplicate:[dict get $opt interval_duplicates],lt8:0,b8_12:0,b12_14:0,b14_15:[dict get $opt interval_b14_15],b15_18p5:[dict get $opt interval_near60],b18p5_20:[dict get $opt interval_b18p5_20],b20_28:0,b28_40:[dict get $opt interval_other30],b40_80:0,ge80:0"
     lappend payloads "YT_MEDIA_PROBE_V1 kind=rvfc_summary schema=1 nonce=$nonce available=[dict get $opt rvfc_available] callbacks=$callbacks schedule_failures=[dict get $opt schedule_failures] warmup_callbacks=0 interval_slots=$intervals presented_first=$presented_first presented_last=$presented_last presented_delta=[expr {$callbacks ? $presented_delta : -1}] presented_invalid=[dict get $opt presented_invalid] presented_pair_invalid=[dict get $opt presented_pair_invalid] presented_regressions=[dict get $opt presented_regressions] presented_duplicates=[dict get $opt presented_duplicates] media_first=[format %.6f $media_first] media_last=[format %.6f $media_last] media_delta=[format %.6f $media_delta] media_invalid=[dict get $opt media_invalid] interval_count=$intervals interval_valid=$valid interval_invalid=[dict get $opt interval_invalid] interval_positive=$positive interval_regressions=[dict get $opt interval_regressions] interval_duplicates=[dict get $opt interval_duplicates] interval_sum_ms=[dict get $opt interval_sum_ms] median_ms=[dict get $opt median_ms] near60_count=[dict get $opt interval_near60] hist=$hist"
-    lappend payloads "YT_MEDIA_PROBE_V1 kind=done schema=1 nonce=$nonce status=complete samples=20 rows=24"
+    set row_count [expr {[dict get $opt force_hd720] ? 30 : 24}]
+    lappend payloads "YT_MEDIA_PROBE_V1 kind=done schema=1 nonce=$nonce status=complete samples=20 rows=$row_count"
     set lines {}
     set line_number 100
     foreach payload $payloads {
