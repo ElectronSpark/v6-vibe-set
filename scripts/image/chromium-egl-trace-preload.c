@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <EGL/egl.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,10 +21,23 @@ static pid_t trace_identity_pid = -1;
 static int render_fds[1024];
 static int socket_fds[1024];
 static int socket_fd_log_count[1024];
+static volatile int trace_egl_budget_lock;
+static pid_t trace_egl_state_pid = -1;
+static pid_t trace_egl_budget_pid = -1;
+static unsigned int trace_egl_rows;
+static pid_t trace_egl_provider_pid = -1;
+
+enum {
+    TRACE_EGL_ROWS_PER_PID = 32,
+    TRACE_PROVIDER_MAPS_BYTES_MAX = 1024 * 1024,
+    TRACE_PROVIDER_MAP_LINE_MAX = 2048,
+};
 
 typedef EGLDisplay (*egl_get_display_fn_t)(EGLNativeDisplayType);
 typedef EGLDisplay (*egl_get_platform_display_fn_t)(EGLenum, void *,
                                                     const EGLAttrib *);
+typedef EGLDisplay (*egl_get_platform_display_ext_fn_t)(EGLenum, void *,
+                                                        const EGLint *);
 typedef EGLBoolean (*egl_initialize_fn_t)(EGLDisplay, EGLint *, EGLint *);
 typedef EGLBoolean (*egl_bind_api_fn_t)(EGLenum);
 typedef const char *(*egl_query_string_fn_t)(EGLDisplay, EGLint);
@@ -46,7 +60,7 @@ typedef __eglMustCastToProperFunctionPointerType (*egl_get_proc_address_fn_t)(
 
 static egl_get_display_fn_t real_egl_get_display;
 static egl_get_platform_display_fn_t real_egl_get_platform_display;
-static egl_get_platform_display_fn_t real_egl_get_platform_display_ext;
+static egl_get_platform_display_ext_fn_t real_egl_get_platform_display_ext;
 static egl_initialize_fn_t real_egl_initialize;
 static egl_bind_api_fn_t real_egl_bind_api;
 static egl_query_string_fn_t real_egl_query_string;
@@ -59,8 +73,12 @@ static egl_create_pbuffer_surface_fn_t real_egl_create_pbuffer_surface;
 static egl_create_window_surface_fn_t real_egl_create_window_surface;
 static egl_get_proc_address_fn_t real_egl_get_proc_address;
 
+EGLDisplay eglGetPlatformDisplayEXT(EGLenum platform, void *native_display,
+                                    const EGLint *attrib_list);
+
 static void trace_process_identity_once(void);
 static void *trace_lookup_next(const char *symbol);
+static void trace_egl_provider_once(const char *symbol, const void *provider);
 static int trace_egl_symbol_is_interesting(const char *procname);
 static __eglMustCastToProperFunctionPointerType
 trace_egl_wrapper_for_name(const char *procname);
@@ -104,20 +122,17 @@ static void trace_pid_path(char *buf, size_t size)
     }
 }
 
-static void trace_line(const char *fmt, ...)
+static void trace_vline(const char *fmt, va_list ap)
 {
     char path[512];
     char buf[8192];
-    va_list ap;
     int n;
     int fd;
 
     if (!trace_enabled())
         return;
 
-    va_start(ap, fmt);
     n = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
     if (n < 0)
         return;
     if ((size_t)n >= sizeof(buf))
@@ -131,6 +146,95 @@ static void trace_line(const char *fmt, ...)
         (void)syscall(SYS_write, fd, buf, (size_t)n);
         (void)syscall(SYS_close, fd);
     }
+}
+
+static void trace_line(const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    trace_vline(fmt, ap);
+    va_end(ap);
+}
+
+static void trace_egl_state_reset(pid_t pid)
+{
+    __atomic_store_n(&trace_egl_budget_lock, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&trace_egl_state_pid, pid, __ATOMIC_RELEASE);
+    trace_egl_budget_pid = pid;
+    trace_egl_rows = 0;
+    trace_egl_provider_pid = -1;
+    trace_identity_pid = -1;
+}
+
+static void trace_egl_atfork_child(void)
+{
+    /* The forking thread may inherit this diagnostic lock while another
+     * vanished thread owned it.  Reset all per-PID state before any child EGL
+     * call instead of attempting to unlock an inherited pthread mutex. */
+    trace_egl_state_reset(getpid());
+}
+
+static void trace_egl_state_lock(void)
+{
+    pid_t pid = getpid();
+
+    if (__atomic_load_n(&trace_egl_state_pid, __ATOMIC_ACQUIRE) != pid)
+        trace_egl_state_reset(pid);
+    while (__atomic_exchange_n(&trace_egl_budget_lock, 1,
+                               __ATOMIC_ACQUIRE) != 0) {
+#ifdef SYS_sched_yield
+        (void)syscall(SYS_sched_yield);
+#endif
+    }
+}
+
+static void trace_egl_state_unlock(void)
+{
+    __atomic_store_n(&trace_egl_budget_lock, 0, __ATOMIC_RELEASE);
+}
+
+/* Exported only for the no-boot fork-held-lock reducer. */
+void chromium_egl_trace_reducer_lock(void)
+{
+    trace_egl_state_lock();
+}
+
+void chromium_egl_trace_reducer_unlock(void)
+{
+    trace_egl_state_unlock();
+}
+
+static int trace_egl_row_reserve(void)
+{
+    pid_t pid;
+    int allowed;
+
+    if (!trace_enabled())
+        return 0;
+    pid = getpid();
+    trace_egl_state_lock();
+    if (trace_egl_budget_pid != pid) {
+        trace_egl_budget_pid = pid;
+        trace_egl_rows = 0;
+        trace_egl_provider_pid = -1;
+    }
+    allowed = trace_egl_rows < TRACE_EGL_ROWS_PER_PID;
+    if (allowed)
+        trace_egl_rows++;
+    trace_egl_state_unlock();
+    return allowed;
+}
+
+static void trace_egl_line(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!trace_egl_row_reserve())
+        return;
+    va_start(ap, fmt);
+    trace_vline(fmt, ap);
+    va_end(ap);
 }
 
 static void *trace_lookup_next(const char *symbol)
@@ -250,6 +354,82 @@ static void trace_egl_attribs(char *buf, size_t size, const EGLint *attribs)
         snprintf(buf + off, size - off, "%s...", off ? "," : "...");
 }
 
+static void trace_egl_platform_attribs(char *buf, size_t size,
+                                       const EGLAttrib *attribs)
+{
+    size_t off = 0;
+
+    if (size == 0)
+        return;
+    buf[0] = '\0';
+    if (attribs == NULL) {
+        snprintf(buf, size, "NULL");
+        return;
+    }
+    for (size_t i = 0; i < 128; i += 2) {
+        EGLAttrib attr = attribs[i];
+        int n;
+
+        if (attr == EGL_NONE) {
+            snprintf(buf + off, off < size ? size - off : 0,
+                     "%sEGL_NONE", off ? "," : "");
+            return;
+        }
+        if (off >= size)
+            return;
+        n = snprintf(buf + off, size - off, "%s%s(0x%lx)=0x%lx",
+                     off ? "," : "", egl_attr_name((EGLint)attr),
+                     (unsigned long)attr, (unsigned long)attribs[i + 1]);
+        if (n < 0)
+            return;
+        if ((size_t)n >= size - off) {
+            buf[size - 1] = '\0';
+            return;
+        }
+        off += (size_t)n;
+    }
+    if (off < size)
+        snprintf(buf + off, size - off, "%s...", off ? "," : "...");
+}
+
+static void trace_egl_platform_ext_attribs(char *buf, size_t size,
+                                           const EGLint *attribs)
+{
+    size_t off = 0;
+
+    if (size == 0)
+        return;
+    buf[0] = '\0';
+    if (attribs == NULL) {
+        snprintf(buf, size, "NULL");
+        return;
+    }
+    for (size_t i = 0; i < 128; i += 2) {
+        EGLint attr = attribs[i];
+        int n;
+
+        if (attr == EGL_NONE) {
+            snprintf(buf + off, off < size ? size - off : 0,
+                     "%sEGL_NONE", off ? "," : "");
+            return;
+        }
+        if (off >= size)
+            return;
+        n = snprintf(buf + off, size - off, "%s%s(0x%x)=0x%x",
+                     off ? "," : "", egl_attr_name(attr), attr,
+                     attribs[i + 1]);
+        if (n < 0)
+            return;
+        if ((size_t)n >= size - off) {
+            buf[size - 1] = '\0';
+            return;
+        }
+        off += (size_t)n;
+    }
+    if (off < size)
+        snprintf(buf + off, size - off, "%s...", off ? "," : "...");
+}
+
 static int trace_egl_symbol_is_interesting(const char *procname)
 {
     if (procname == NULL)
@@ -279,7 +459,7 @@ trace_egl_wrapper_for_name(const char *procname)
     if (strcmp(procname, "eglGetPlatformDisplay") == 0)
         return (__eglMustCastToProperFunctionPointerType)eglGetPlatformDisplay;
     if (strcmp(procname, "eglGetPlatformDisplayEXT") == 0)
-        return (__eglMustCastToProperFunctionPointerType)eglGetPlatformDisplay;
+        return (__eglMustCastToProperFunctionPointerType)eglGetPlatformDisplayEXT;
     if (strcmp(procname, "eglInitialize") == 0)
         return (__eglMustCastToProperFunctionPointerType)eglInitialize;
     if (strcmp(procname, "eglBindAPI") == 0)
@@ -446,6 +626,181 @@ static void append_escaped_bytes(char *buf, size_t size, size_t *off,
         }
     }
     buf[*off] = '\0';
+}
+
+static void trace_provider_map_line(const char *line, size_t line_len,
+                                    int line_truncated,
+                                    const char *provider_base, int *found,
+                                    char *map_path, size_t map_path_size,
+                                    char *map_line, size_t map_line_size,
+                                    int *selected_line_truncated)
+{
+    const char *path;
+    size_t copy_len;
+
+    if (*found || line_len == 0)
+        return;
+    if (!((provider_base && strcmp(provider_base, "unavailable") != 0 &&
+           memmem(line, line_len, provider_base,
+                  strlen(provider_base)) != NULL) ||
+          memmem(line, line_len, "libEGL", 6) != NULL))
+        return;
+
+    copy_len = line_len;
+    if (copy_len >= map_line_size)
+        copy_len = map_line_size - 1;
+    memcpy(map_line, line, copy_len);
+    map_line[copy_len] = '\0';
+    path = memrchr(line, ' ', line_len);
+    if (path && path + 1 < line + line_len) {
+        size_t path_len = (size_t)(line + line_len - (path + 1));
+
+        if (path_len >= map_path_size)
+            path_len = map_path_size - 1;
+        memcpy(map_path, path + 1, path_len);
+        map_path[path_len] = '\0';
+    }
+    *selected_line_truncated = line_truncated || copy_len != line_len;
+    *found = 1;
+}
+
+static void trace_egl_provider_once(const char *symbol, const void *provider)
+{
+    char map_path[1024] = "unavailable";
+    char map_line[TRACE_PROVIDER_MAP_LINE_MAX] = "unavailable";
+    char provider_path[1024] = "unavailable";
+    char provider_symbol[256] = "unavailable";
+    char escaped_path[2048] = "";
+    char escaped_symbol[512] = "";
+    char escaped_map_path[2048] = "";
+    char escaped_map_line[4096] = "";
+    char read_buf[4096];
+    char line_buf[TRACE_PROVIDER_MAP_LINE_MAX];
+    const char *maps_status = "open_error";
+    const char *provider_base = NULL;
+    Dl_info info;
+    size_t maps_total = 0;
+    size_t line_len = 0;
+    size_t off;
+    pid_t pid;
+    int fd;
+    int claimed = 0;
+    int map_found = 0;
+    int line_truncated = 0;
+    int maps_any_line_truncated = 0;
+    int selected_line_truncated = 0;
+    unsigned int reserved_row = 0;
+
+    if (!trace_enabled())
+        return;
+    pid = getpid();
+    trace_egl_state_lock();
+    if (trace_egl_budget_pid != pid) {
+        trace_egl_budget_pid = pid;
+        trace_egl_rows = 0;
+        trace_egl_provider_pid = -1;
+    }
+    if (trace_egl_provider_pid != pid &&
+        trace_egl_rows < TRACE_EGL_ROWS_PER_PID) {
+        trace_egl_provider_pid = pid;
+        trace_egl_rows++;
+        reserved_row = trace_egl_rows;
+        claimed = 1;
+    }
+    trace_egl_state_unlock();
+    if (!claimed)
+        return;
+
+    memset(&info, 0, sizeof(info));
+    if (provider != NULL && dladdr(provider, &info) != 0) {
+        if (info.dli_fname && info.dli_fname[0])
+            snprintf(provider_path, sizeof(provider_path), "%s", info.dli_fname);
+        if (info.dli_sname && info.dli_sname[0])
+            snprintf(provider_symbol, sizeof(provider_symbol), "%s", info.dli_sname);
+    }
+    provider_base = strrchr(provider_path, '/');
+    provider_base = provider_base ? provider_base + 1 : provider_path;
+
+    fd = (int)syscall(SYS_openat, AT_FDCWD, "/proc/self/maps",
+                      O_RDONLY | O_CLOEXEC, 0);
+    if (fd >= 0) {
+        maps_status = "complete";
+        while (maps_total < TRACE_PROVIDER_MAPS_BYTES_MAX) {
+            size_t remaining = TRACE_PROVIDER_MAPS_BYTES_MAX - maps_total;
+            size_t request = remaining < sizeof(read_buf) ? remaining :
+                                                               sizeof(read_buf);
+            ssize_t n = (ssize_t)syscall(SYS_read, fd, read_buf, request);
+
+            if (n < 0) {
+                maps_status = "read_error";
+                break;
+            }
+            if (n == 0)
+                break;
+            maps_total += (size_t)n;
+            for (ssize_t i = 0; i < n; i++) {
+                if (read_buf[i] == '\n') {
+                    if (line_truncated)
+                        maps_any_line_truncated = 1;
+                    trace_provider_map_line(
+                        line_buf, line_len, line_truncated, provider_base,
+                        &map_found, map_path, sizeof(map_path), map_line,
+                        sizeof(map_line), &selected_line_truncated);
+                    line_len = 0;
+                    line_truncated = 0;
+                } else if (line_len + 1 < sizeof(line_buf)) {
+                    line_buf[line_len++] = read_buf[i];
+                } else {
+                    line_truncated = 1;
+                }
+            }
+        }
+        if (maps_total == TRACE_PROVIDER_MAPS_BYTES_MAX) {
+            char extra;
+            ssize_t n = (ssize_t)syscall(SYS_read, fd, &extra, 1);
+
+            if (n > 0)
+                maps_status = "truncated";
+            else if (n < 0)
+                maps_status = "read_error";
+        }
+        (void)syscall(SYS_close, fd);
+    }
+    if (line_len > 0) {
+        if (line_truncated)
+            maps_any_line_truncated = 1;
+        trace_provider_map_line(
+            line_buf, line_len, line_truncated, provider_base, &map_found,
+            map_path, sizeof(map_path), map_line, sizeof(map_line),
+            &selected_line_truncated);
+    }
+
+    off = 0;
+    append_escaped_bytes(escaped_path, sizeof(escaped_path), &off,
+                         provider_path, (ssize_t)strlen(provider_path));
+    off = 0;
+    append_escaped_bytes(escaped_symbol, sizeof(escaped_symbol), &off,
+                         provider_symbol, (ssize_t)strlen(provider_symbol));
+    off = 0;
+    append_escaped_bytes(escaped_map_path, sizeof(escaped_map_path), &off,
+                         map_path, (ssize_t)strlen(map_path));
+    off = 0;
+    append_escaped_bytes(escaped_map_line, sizeof(escaped_map_line), &off,
+                         map_line, (ssize_t)strlen(map_line));
+    trace_line("chromium_egl_trace phase=provider pid=%ld first_call=%s "
+               "provider_addr=%p provider_path=\"%s\" provider_symbol=\"%s\" "
+               "provider_base=%p mapped_provider_path=\"%s\" "
+               "map_line=\"%s\" map_line_truncated=%d "
+               "maps_any_line_truncated=%d map_found=%d "
+               "maps_stream_status=%s maps_total_bytes=%lu maps_cap_bytes=%d "
+               "egl_reserved_row=%u egl_row_cap=%d",
+               (long)pid, symbol ? symbol : "unknown", provider,
+               escaped_path, escaped_symbol, info.dli_fbase,
+               escaped_map_path, escaped_map_line, selected_line_truncated,
+               maps_any_line_truncated, map_found, maps_status,
+               (unsigned long)maps_total,
+               TRACE_PROVIDER_MAPS_BYTES_MAX, reserved_row,
+               TRACE_EGL_ROWS_PER_PID);
 }
 
 static size_t trace_iov_total(const struct iovec *iov, size_t iovlen)
@@ -1249,17 +1604,19 @@ EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id)
     }
     if (real_egl_get_display == NULL)
         return EGL_NO_DISPLAY;
+    trace_egl_provider_once("eglGetDisplay", (const void *)real_egl_get_display);
     ret = real_egl_get_display(display_id);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetDisplay pid=%ld "
-               "display_id=%p ret=%p",
-               (long)getpid(), (void *)display_id, (void *)ret);
+    trace_egl_line("chromium_egl_trace phase=eglGetDisplay pid=%ld "
+                   "display_id=%p ret=%p",
+                   (long)getpid(), (void *)display_id, (void *)ret);
     return ret;
 }
 
 EGLDisplay eglGetPlatformDisplay(EGLenum platform, void *native_display,
                                  const EGLAttrib *attrib_list)
 {
+    char attrs[2048];
     EGLDisplay ret;
 
     if (real_egl_get_platform_display == NULL) {
@@ -1267,64 +1624,71 @@ EGLDisplay eglGetPlatformDisplay(EGLenum platform, void *native_display,
             (egl_get_platform_display_fn_t)
                 trace_lookup_next("eglGetPlatformDisplay");
     }
-    if (real_egl_get_platform_display == NULL) {
-        real_egl_get_platform_display =
-            (egl_get_platform_display_fn_t)
-                trace_lookup_next("eglGetPlatformDisplayEXT");
-    }
     if (real_egl_get_platform_display == NULL)
         return EGL_NO_DISPLAY;
+    trace_egl_provider_once("eglGetPlatformDisplay",
+                            (const void *)real_egl_get_platform_display);
+    trace_egl_platform_attribs(attrs, sizeof(attrs), attrib_list);
     ret = real_egl_get_platform_display(platform, native_display, attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetPlatformDisplay pid=%ld "
-               "platform=0x%x native_display=%p attribs=%p ret=%p",
-               (long)getpid(), platform, native_display, (void *)attrib_list,
-               (void *)ret);
+    trace_egl_line("chromium_egl_trace phase=eglGetPlatformDisplay pid=%ld "
+                   "platform=0x%x native_display=%p attribs=\"%s\" ret=%p",
+                   (long)getpid(), platform, native_display, attrs, (void *)ret);
     return ret;
 }
 
 EGLDisplay eglGetPlatformDisplayEXT(EGLenum platform, void *native_display,
                                     const EGLint *attrib_list)
 {
+    char attrs[2048];
     EGLDisplay ret;
 
     if (real_egl_get_platform_display_ext == NULL) {
         real_egl_get_platform_display_ext =
-            (egl_get_platform_display_fn_t)
+            (egl_get_platform_display_ext_fn_t)
                 trace_lookup_next("eglGetPlatformDisplayEXT");
-    }
-    if (real_egl_get_platform_display_ext == NULL) {
-        real_egl_get_platform_display_ext =
-            (egl_get_platform_display_fn_t)
-                trace_lookup_next("eglGetPlatformDisplay");
     }
     if (real_egl_get_platform_display_ext == NULL)
         return EGL_NO_DISPLAY;
+    trace_egl_provider_once("eglGetPlatformDisplayEXT",
+                            (const void *)real_egl_get_platform_display_ext);
+    trace_egl_platform_ext_attribs(attrs, sizeof(attrs), attrib_list);
     ret = real_egl_get_platform_display_ext(platform, native_display,
-                                            (const EGLAttrib *)attrib_list);
+                                            attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetPlatformDisplayEXT pid=%ld "
-               "platform=0x%x native_display=%p attribs=%p ret=%p",
-               (long)getpid(), platform, native_display, (void *)attrib_list,
-               (void *)ret);
+    trace_egl_line("chromium_egl_trace phase=eglGetPlatformDisplayEXT pid=%ld "
+                   "platform=0x%x native_display=%p attribs=\"%s\" ret=%p",
+                   (long)getpid(), platform, native_display, attrs, (void *)ret);
     return ret;
 }
 
 EGLBoolean eglInitialize(EGLDisplay dpy, EGLint *major, EGLint *minor)
 {
     EGLBoolean ret;
+    char major_value[32] = "unavailable";
+    char minor_value[32] = "unavailable";
+    int major_available;
+    int minor_available;
 
     if (real_egl_initialize == NULL)
         real_egl_initialize =
             (egl_initialize_fn_t)trace_lookup_next("eglInitialize");
     if (real_egl_initialize == NULL)
         return EGL_FALSE;
+    trace_egl_provider_once("eglInitialize", (const void *)real_egl_initialize);
     ret = real_egl_initialize(dpy, major, minor);
+    major_available = ret == EGL_TRUE && major != NULL;
+    minor_available = ret == EGL_TRUE && minor != NULL;
+    if (major_available)
+        snprintf(major_value, sizeof(major_value), "%d", *major);
+    if (minor_available)
+        snprintf(minor_value, sizeof(minor_value), "%d", *minor);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglInitialize pid=%ld dpy=%p "
-               "ret=%d major=%d minor=%d",
-               (long)getpid(), (void *)dpy, ret, major ? *major : -1,
-               minor ? *minor : -1);
+    trace_egl_line("chromium_egl_trace phase=eglInitialize pid=%ld dpy=%p "
+                   "ret=%d major_available=%d major=%s "
+                   "minor_available=%d minor=%s",
+                   (long)getpid(), (void *)dpy, ret, major_available,
+                   major_value, minor_available, minor_value);
     return ret;
 }
 
@@ -1337,15 +1701,18 @@ EGLBoolean eglBindAPI(EGLenum api)
             (egl_bind_api_fn_t)trace_lookup_next("eglBindAPI");
     if (real_egl_bind_api == NULL)
         return EGL_FALSE;
+    trace_egl_provider_once("eglBindAPI", (const void *)real_egl_bind_api);
     ret = real_egl_bind_api(api);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglBindAPI pid=%ld api=0x%x ret=%d",
-               (long)getpid(), api, ret);
+    trace_egl_line("chromium_egl_trace phase=eglBindAPI pid=%ld api=0x%x ret=%d",
+                   (long)getpid(), api, ret);
     return ret;
 }
 
 const char *eglQueryString(EGLDisplay dpy, EGLint name)
 {
+    char value[4096];
+    size_t value_off = 0;
     const char *ret;
 
     if (real_egl_query_string == NULL)
@@ -1353,11 +1720,15 @@ const char *eglQueryString(EGLDisplay dpy, EGLint name)
             (egl_query_string_fn_t)trace_lookup_next("eglQueryString");
     if (real_egl_query_string == NULL)
         return NULL;
+    trace_egl_provider_once("eglQueryString", (const void *)real_egl_query_string);
     ret = real_egl_query_string(dpy, name);
+    value[0] = '\0';
+    append_escaped_bytes(value, sizeof(value), &value_off, ret,
+                         ret ? (ssize_t)strlen(ret) : 0);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglQueryString pid=%ld dpy=%p "
-               "name=0x%x ret=%p",
-               (long)getpid(), (void *)dpy, name, ret);
+    trace_egl_line("chromium_egl_trace phase=eglQueryString pid=%ld dpy=%p "
+                   "name=0x%x ret=%p value=\"%s\"",
+                   (long)getpid(), (void *)dpy, name, ret, value);
     return ret;
 }
 
@@ -1365,19 +1736,38 @@ EGLBoolean eglGetConfigs(EGLDisplay dpy, EGLConfig *configs,
                          EGLint config_size, EGLint *num_config)
 {
     EGLBoolean ret;
+    EGLint num_config_value = 0;
+    char num_config_text[32] = "unavailable";
+    char first_config_text[64] = "unavailable";
+    int num_config_available;
+    int first_config_available;
 
     if (real_egl_get_configs == NULL)
         real_egl_get_configs =
             (egl_get_configs_fn_t)trace_lookup_next("eglGetConfigs");
     if (real_egl_get_configs == NULL)
         return EGL_FALSE;
+    trace_egl_provider_once("eglGetConfigs", (const void *)real_egl_get_configs);
     ret = real_egl_get_configs(dpy, configs, config_size, num_config);
+    num_config_available = ret == EGL_TRUE && num_config != NULL;
+    if (num_config_available) {
+        num_config_value = *num_config;
+        snprintf(num_config_text, sizeof(num_config_text), "%d",
+                 num_config_value);
+    }
+    first_config_available = ret == EGL_TRUE && configs != NULL &&
+                             config_size > 0 && num_config_available &&
+                             num_config_value > 0;
+    if (first_config_available)
+        snprintf(first_config_text, sizeof(first_config_text), "%p",
+                 (void *)configs[0]);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetConfigs pid=%ld dpy=%p "
-               "config_size=%d ret=%d num_config=%d first_config=%p",
-               (long)getpid(), (void *)dpy, config_size, ret,
-               num_config ? *num_config : -1,
-               configs && config_size > 0 ? (void *)configs[0] : NULL);
+    trace_egl_line("chromium_egl_trace phase=eglGetConfigs pid=%ld dpy=%p "
+                   "config_size=%d ret=%d num_config_available=%d "
+                   "num_config=%s first_config_available=%d first_config=%s",
+                   (long)getpid(), (void *)dpy, config_size, ret,
+                   num_config_available, num_config_text,
+                   first_config_available, first_config_text);
     return ret;
 }
 
@@ -1385,6 +1775,8 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config,
                               EGLint attribute, EGLint *value)
 {
     EGLBoolean ret;
+    char value_text[32] = "unavailable";
+    int value_available;
 
     if (real_egl_get_config_attrib == NULL) {
         real_egl_get_config_attrib =
@@ -1393,12 +1785,19 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config,
     }
     if (real_egl_get_config_attrib == NULL)
         return EGL_FALSE;
+    trace_egl_provider_once("eglGetConfigAttrib",
+                            (const void *)real_egl_get_config_attrib);
     ret = real_egl_get_config_attrib(dpy, config, attribute, value);
+    value_available = ret == EGL_TRUE && value != NULL;
+    if (value_available)
+        snprintf(value_text, sizeof(value_text), "0x%x", *value);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetConfigAttrib pid=%ld "
-               "dpy=%p config=%p attr=%s(0x%x) ret=%d value=0x%x",
-               (long)getpid(), (void *)dpy, (void *)config,
-               egl_attr_name(attribute), attribute, ret, value ? *value : -1);
+    trace_egl_line("chromium_egl_trace phase=eglGetConfigAttrib pid=%ld "
+                   "dpy=%p config=%p attr=%s(0x%x) ret=%d "
+                   "value_available=%d value=%s",
+                   (long)getpid(), (void *)dpy, (void *)config,
+                   egl_attr_name(attribute), attribute, ret, value_available,
+                   value_text);
     return ret;
 }
 
@@ -1411,10 +1810,11 @@ EGLint eglGetError(void)
             (egl_get_error_fn_t)trace_lookup_next("eglGetError");
     if (real_egl_get_error == NULL)
         return EGL_SUCCESS;
+    trace_egl_provider_once("eglGetError", (const void *)real_egl_get_error);
     ret = real_egl_get_error();
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglGetError pid=%ld ret=0x%x",
-               (long)getpid(), ret);
+    trace_egl_line("chromium_egl_trace phase=eglGetError pid=%ld ret=0x%x",
+                   (long)getpid(), ret);
     return ret;
 }
 
@@ -1424,6 +1824,11 @@ EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list,
 {
     char attrs[2048];
     EGLBoolean ret;
+    EGLint num_config_value = 0;
+    char num_config_text[32] = "unavailable";
+    char first_config_text[64] = "unavailable";
+    int num_config_available;
+    int first_config_available;
 
     if (real_egl_choose_config == NULL) {
         real_egl_choose_config =
@@ -1432,17 +1837,32 @@ EGLBoolean eglChooseConfig(EGLDisplay dpy, const EGLint *attrib_list,
     if (real_egl_choose_config == NULL)
         return EGL_FALSE;
 
+    trace_egl_provider_once("eglChooseConfig", (const void *)real_egl_choose_config);
     trace_egl_attribs(attrs, sizeof(attrs), attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglChooseConfig_enter pid=%ld "
-               "dpy=%p config_size=%d attribs=\"%s\"",
-               (long)getpid(), (void *)dpy, config_size, attrs);
+    trace_egl_line("chromium_egl_trace phase=eglChooseConfig_enter pid=%ld "
+                   "dpy=%p config_size=%d attribs=\"%s\"",
+                   (long)getpid(), (void *)dpy, config_size, attrs);
     ret = real_egl_choose_config(dpy, attrib_list, configs, config_size,
                                  num_config);
-    trace_line("chromium_egl_trace phase=eglChooseConfig_exit pid=%ld "
-               "ret=%d num_config=%d first_config=%p",
-               (long)getpid(), ret, num_config ? *num_config : -1,
-               configs && config_size > 0 ? (void *)configs[0] : NULL);
+    num_config_available = ret == EGL_TRUE && num_config != NULL;
+    if (num_config_available) {
+        num_config_value = *num_config;
+        snprintf(num_config_text, sizeof(num_config_text), "%d",
+                 num_config_value);
+    }
+    first_config_available = ret == EGL_TRUE && configs != NULL &&
+                             config_size > 0 && num_config_available &&
+                             num_config_value > 0;
+    if (first_config_available)
+        snprintf(first_config_text, sizeof(first_config_text), "%p",
+                 (void *)configs[0]);
+    trace_egl_line("chromium_egl_trace phase=eglChooseConfig_exit pid=%ld "
+                   "ret=%d num_config_available=%d num_config=%s "
+                   "first_config_available=%d first_config=%s",
+                   (long)getpid(), ret, num_config_available,
+                   num_config_text, first_config_available,
+                   first_config_text);
     return ret;
 }
 
@@ -1460,17 +1880,18 @@ EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config,
     if (real_egl_create_context == NULL)
         return EGL_NO_CONTEXT;
 
+    trace_egl_provider_once("eglCreateContext", (const void *)real_egl_create_context);
     trace_egl_attribs(attrs, sizeof(attrs), attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglCreateContext_enter pid=%ld "
-               "dpy=%p config=%p share=%p attribs=\"%s\"",
-               (long)getpid(), (void *)dpy, (void *)config,
-               (void *)share_context, attrs);
+    trace_egl_line("chromium_egl_trace phase=eglCreateContext_enter pid=%ld "
+                   "dpy=%p config=%p share=%p attribs=\"%s\"",
+                   (long)getpid(), (void *)dpy, (void *)config,
+                   (void *)share_context, attrs);
     ret = real_egl_create_context(dpy, config, share_context, attrib_list);
-    trace_line("chromium_egl_trace phase=eglCreateContext_exit pid=%ld "
-               "ret=%p failed=%d",
-               (long)getpid(), (void *)ret,
-               ret == EGL_NO_CONTEXT ? 1 : 0);
+    trace_egl_line("chromium_egl_trace phase=eglCreateContext_exit pid=%ld "
+                   "ret=%p failed=%d",
+                   (long)getpid(), (void *)ret,
+                   ret == EGL_NO_CONTEXT ? 1 : 0);
     return ret;
 }
 
@@ -1488,16 +1909,18 @@ EGLSurface eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig config,
     if (real_egl_create_pbuffer_surface == NULL)
         return EGL_NO_SURFACE;
 
+    trace_egl_provider_once("eglCreatePbufferSurface",
+                            (const void *)real_egl_create_pbuffer_surface);
     trace_egl_attribs(attrs, sizeof(attrs), attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglCreatePbufferSurface_enter "
-               "pid=%ld dpy=%p config=%p attribs=\"%s\"",
-               (long)getpid(), (void *)dpy, (void *)config, attrs);
+    trace_egl_line("chromium_egl_trace phase=eglCreatePbufferSurface_enter "
+                   "pid=%ld dpy=%p config=%p attribs=\"%s\"",
+                   (long)getpid(), (void *)dpy, (void *)config, attrs);
     ret = real_egl_create_pbuffer_surface(dpy, config, attrib_list);
-    trace_line("chromium_egl_trace phase=eglCreatePbufferSurface_exit "
-               "pid=%ld ret=%p failed=%d",
-               (long)getpid(), (void *)ret,
-               ret == EGL_NO_SURFACE ? 1 : 0);
+    trace_egl_line("chromium_egl_trace phase=eglCreatePbufferSurface_exit "
+                   "pid=%ld ret=%p failed=%d",
+                   (long)getpid(), (void *)ret,
+                   ret == EGL_NO_SURFACE ? 1 : 0);
     return ret;
 }
 
@@ -1516,17 +1939,19 @@ EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config,
     if (real_egl_create_window_surface == NULL)
         return EGL_NO_SURFACE;
 
+    trace_egl_provider_once("eglCreateWindowSurface",
+                            (const void *)real_egl_create_window_surface);
     trace_egl_attribs(attrs, sizeof(attrs), attrib_list);
     trace_process_identity_once();
-    trace_line("chromium_egl_trace phase=eglCreateWindowSurface_enter "
-               "pid=%ld dpy=%p config=%p win=%p attribs=\"%s\"",
-               (long)getpid(), (void *)dpy, (void *)config, (void *)win,
-               attrs);
+    trace_egl_line("chromium_egl_trace phase=eglCreateWindowSurface_enter "
+                   "pid=%ld dpy=%p config=%p win=%p attribs=\"%s\"",
+                   (long)getpid(), (void *)dpy, (void *)config, (void *)win,
+                   attrs);
     ret = real_egl_create_window_surface(dpy, config, win, attrib_list);
-    trace_line("chromium_egl_trace phase=eglCreateWindowSurface_exit "
-               "pid=%ld ret=%p failed=%d",
-               (long)getpid(), (void *)ret,
-               ret == EGL_NO_SURFACE ? 1 : 0);
+    trace_egl_line("chromium_egl_trace phase=eglCreateWindowSurface_exit "
+                   "pid=%ld ret=%p failed=%d",
+                   (long)getpid(), (void *)ret,
+                   ret == EGL_NO_SURFACE ? 1 : 0);
     return ret;
 }
 
@@ -1543,23 +1968,27 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procname)
     }
     if (real_egl_get_proc_address == NULL)
         return NULL;
+    trace_egl_provider_once("eglGetProcAddress",
+                            (const void *)real_egl_get_proc_address);
     ret = real_egl_get_proc_address(procname);
     interesting = trace_egl_symbol_is_interesting(procname);
     wrapper = trace_egl_wrapper_for_name(procname);
     if (trace_enabled() && interesting) {
         trace_process_identity_once();
-        trace_line("chromium_egl_trace phase=eglGetProcAddress pid=%ld "
-                   "name=%s ret=%p traced=%d",
-                   (long)getpid(), procname ? procname : "(null)",
-                   (void *)ret, wrapper ? 1 : 0);
+        trace_egl_line("chromium_egl_trace phase=eglGetProcAddress pid=%ld "
+                       "name=%s ret=%p traced=%d",
+                       (long)getpid(), procname ? procname : "(null)",
+                       (void *)ret, wrapper ? 1 : 0);
     }
-    if (wrapper != NULL)
+    if (wrapper != NULL && ret != NULL)
         return wrapper;
     return ret;
 }
 
 __attribute__((constructor)) static void chromium_egl_trace_init(void)
 {
+    trace_egl_state_reset(getpid());
+    (void)pthread_atfork(NULL, NULL, trace_egl_atfork_child);
     __atomic_store_n(&trace_enabled_cached, trace_enabled(),
                      __ATOMIC_RELAXED);
     trace_line("chromium_egl_trace phase=init status=BEGIN pid=%ld ppid=%ld "

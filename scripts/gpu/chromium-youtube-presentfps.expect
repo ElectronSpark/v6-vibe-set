@@ -1,265 +1,3062 @@
 #!/usr/bin/env expect
-# YouTube presented-FPS measurement on the KDE/kwin lane (M7 comparison vs the
-# local-file chromium-video baseline).  Boots the KDE image WITH networking,
-# launches /bin/wayland-chromium on a 60fps YouTube watch page from the serial
-# root shell, then samples fbstat page-flip counters across timed windows so
-# presented fps = delta(kms_page_flip_events)/delta(host-wall-seconds).
+# Strict A1 YouTube frame-supply A/B driver.  Each invocation runs one arm;
+# callers must provide both arm values explicitly and use N>=2 runs per arm.
 #
-# Honesty: presented fps (compositor page-flips) is the only rate we can measure
-# for YouTube without in-page JS injection.  decodedFPS/dropPct require the
-# perf-video.html harness (local asset) or getVideoPlaybackQuality() JS and are
-# NOT obtainable here; playback reality is proven by advancing screendumps.
+# Required environment:
+#   YT_MULTIPROCESS=0|1
+#   YT_DISABLE_AUDIO_OUTPUT=1
+#
+# Optional environment:
+#   YT_EGL_FORENSICS=0|1               (default 0; only valid with MP/audio=1)
+#   YT_MEDIA_PROBE=0|1                 (default 0; 1 requires MP/audio=1,
+#                                       forensics=0 and proves source before FPS)
+#   YT_OUTDIR=<new/empty run directory>  (default is a unique timestamped dir)
+#   YT_WINDOW_SECONDS=<seconds>           (default 60)
+#   YT_PLAYER_CROP=<WxH+X+Y>              (default 960x540+160+130)
+#   YT_PLAYER_DELTA_MIN=<pixels>          (default 1000 per window)
+#
+# Normal runs report compositor page-flip/BO-present rates and require guest-fb
+# player deltas.  The default-off media probe injects a bounded content
+# extension and additionally captures media state, playback-quality counters,
+# rVFC cadence and long tasks.  A probe run reaches the FPS windows only after
+# independently proving 1280x720 at approximately 16.7ms source cadence.
+# PERF-VIDEO remains the separate local-video comparison instrument.
 
 set timeout 900
-set root "/home/es/xv6-os"
-set outdir [expr {[info exists env(YT_OUTDIR)] ? $env(YT_OUTDIR) : "$root/build-x86_64/chromium-youtube-m7/manual"}]
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
 set kernel "$root/build-x86_64/kernel/build/kernel/xv6.bin"
 set fsimg "$root/build-x86_64/fs.img"
-set vid [expr {[info exists env(YT_VIDEO_ID)] ? $env(YT_VIDEO_ID) : "aqz-KE-bpKQ"}]
-set url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
-set scratch "/tmp/xv6-yt-presentfps.fs.img"
-set monitor "/tmp/xv6-yt-presentfps.monitor.sock"
-set runlog "$outdir/run.log"
-set fbcsv "$outdir/fbstat-samples.txt"
-set statusf "$outdir/STATUS.txt"
 
-exec sh -c "mkdir -p '$outdir/screendumps'; rm -f '$runlog' '$fbcsv' '$statusf' '$monitor' '$scratch'; rm -f '$outdir'/screendumps/*"
-
-# Pace serial input: the guest UART drops/doubles chars if sent full-speed.
-# 10ms/char keeps ~40-80 char lines intact (send -s uses this).
-set send_slow {1 .010}
-
-proc af {path text} { set fh [open $path a]; puts $fh $text; close $fh }
-proc iso_now {} { return [clock format [clock seconds] -gmt true -format "%Y-%m-%dT%H:%M:%SZ"] }
-
-proc monitor_cmd {cmd {tmo 6}} {
-    global monitor
-    set safe [string map {' '\''} $cmd]
-    catch { exec sh -c "printf '%s\n' '$safe' | nc -U -w $tmo -q 0 '$monitor'" } out
-    return $out
-}
-proc screendump {label} {
-    global outdir monitor
-    set ppm "$outdir/screendumps/$label.ppm"
-    monitor_cmd "screendump $ppm" 8
-    after 500
-    set info "missing"
-    if {[file exists $ppm] && [file size $ppm] > 0} {
-        catch { exec sha256sum $ppm } sres
-        set info "size=[file size $ppm] sha16=[string range $sres 0 15]"
-    }
-    af "$outdir/screendumps/index.txt" "[iso_now] $label $info"
-    return $info
-}
-
-# Send a shell line and wait for completion.  When no explicit marker is given,
-# append a UNIQUE per-command sync marker and wait for THAT (never a stale
-# root:/# prompt) so the next command is never sent while the guest is still
-# reading this one -- that stale-prompt race caused the earlier serial
-# corruption (recho / doubled chars).
-set sync_counter 0
-proc sh_wait {line {marker ""} {wait 25}} {
-    global timeout sync_counter
-    if {$marker eq ""} {
-        incr sync_counter
-        set m "SW_DONE_$sync_counter"
-        send -s "$line; echo $m\r"
-        set marker "\\m$m\\M"
-    } else {
-        send -s "$line\r"
-    }
-    set old $timeout; set timeout $wait; set ok 0
-    expect { -re $marker { set ok 1 } timeout { set ok 0 } eof { set ok 0 } }
-    set timeout $old
-    return $ok
-}
-
-# Sample fbstat: dump the FULL stats to the serial console (always works,
-# independent of guest grep/disk-write quirks) between unique markers, and
-# parse the two cumulative present counters from the stream directly.
-# Returns "flips presents host_ms".
-proc fb_sample {tag} {
-    global timeout fbcsv
-    set flips -1; set presents -1
-    for {set try 1} {$try <= 2 && $flips < 0} {incr try} {
-        send -s "bash /fbs.sh\r"
-        set old $timeout; set timeout 25
-        expect {
-            -re "FBEND" {
-                set buf $expect_out(buffer)
-                if {[regexp {kms_page_flip_events=([0-9]+)} $buf -> m]} { set flips $m }
-                if {[regexp {bo_presents ([0-9]+)} $buf -> m]} { set presents $m }
-            }
-            timeout {}
-            eof {}
-        }
-        set timeout $old
-    }
-    set hms [clock milliseconds]
-    af $fbcsv "$tag flips=$flips presents=$presents host_ms=$hms iso=[iso_now]"
-    return [list $flips $presents $hms]
-}
-
-# ---- preflight: no stray qemu ----
-set existing [exec sh -c "pgrep -af '\[q]emu-system' || true"]
-if {$existing ne ""} { af $statusf "ABORT: qemu already running: $existing"; exit 11 }
-
-exec sh -c "cp --reflink=auto --sparse=always '$fsimg' '$scratch'"
-
-# ---- stage helper scripts OFFLINE into the image via debugfs ----
-# The serial console corrupts multi-char INPUT (dropped/doubled/inserted chars),
-# so we assemble every script here (100% reliable) and only ever issue tiny
-# `sh /X.sh` commands over serial.
-# Idempotent: a lockfile guards against a second launch, so the tiny
-# `bash /ytlaunch.sh` serial command can be RETRIED safely (retry needed
-# because that command can itself catch a corrupted char). Always echoes
-# YT_CHILD= so the driver can confirm.
-set lf [open "$outdir/ytlaunch.sh" w]
-# Guard against a second launch by checking for a LIVE chromium process (a
-# lockfile did not serialise reliably; a running process is detectable). Retries
-# spaced longer than process-start latency therefore never double-launch.
-puts $lf "if ps 2>/dev/null | grep -i chrom | grep -qv grep; then echo YTL_DUP; exit 0; fi"
-puts $lf "echo YTL_NEW"
-puts $lf "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
-puts $lf "export WAYLAND_DISPLAY=wayland-0"
-puts $lf "export WAYLAND_CHROMIUM_EXTRA_FLAGS=--autoplay-policy=no-user-gesture-required"
-puts $lf "U=\"$url\""
-puts $lf "echo YT_ACTUAL /bin/wayland-chromium \"\$U\""
-puts $lf "/bin/wayland-chromium \"\$U\" >/dev/shm/yt-host.log 2>&1 &"
-puts $lf "echo YT_CHILD=\$!"
-close $lf
-set ff [open "$outdir/fbs.sh" w]
-puts $ff "echo FBMARK"
-puts $ff "fbstat 2>&1"
-puts $ff "echo FBEND"
-close $ff
-set gf [open "$outdir/ytlogs.sh" w]
-puts $gf "echo YT_HOSTLOG_BEGIN"
-puts $gf "tail -100 /dev/shm/yt-host.log 2>/dev/null"
-puts $gf "echo YT_HOSTLOG_END"
-puts $gf "echo YT_CHROMELOG_BEGIN"
-puts $gf "tail -120 /tmp/chrome_debug.log 2>/dev/null"
-puts $gf "echo YT_CHROMELOG_END"
-puts $gf "echo YT_PS_BEGIN"
-puts $gf "ps 2>/dev/null | grep -i hrom"
-puts $gf "echo YT_PS_END"
-close $gf
-exec sh -c "printf '%s\\n' 'rm /ytlaunch.sh' 'write $outdir/ytlaunch.sh /ytlaunch.sh' 'rm /fbs.sh' 'write $outdir/fbs.sh /fbs.sh' 'rm /ytlogs.sh' 'write $outdir/ytlogs.sh /ytlogs.sh' | debugfs -w '$scratch' >/dev/null 2>&1"
-
-af "$outdir/chromium-url.txt" $url
-af "$outdir/chromium-video-id.txt" $vid
-
-set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
-set qextra "-monitor unix:$monitor,server,nowait"
-af "$outdir/qemu-launch-command.txt" "DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' bash scripts/launch/run-qemu.sh x86_64 $kernel $scratch"
-
-log_file -a $runlog
-spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND=$append QEMU_EXTRA=$qextra bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
-set qemu_pid [exp_pid]
-match_max 1000000
-
-proc finish {code label} {
-    global statusf monitor scratch outdir qemu_pid
-    af $statusf "[iso_now] $label"
-    catch { monitor_cmd "quit" 4 }
-    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
-    catch { exec kill $qemu_pid }
-    after 1500
-    # dump disk-backed fbstat files + logs
-    foreach t {idle t0 t1 t2} {
-        catch { exec sh -c "debugfs -R 'dump /ytfb_$t.txt $outdir/ytfb_$t.txt' '$scratch' >/dev/null 2>&1" }
-    }
-    catch { exec sh -c "debugfs -R 'dump /yt-chrome.log $outdir/yt-chrome.log' '$scratch' >/dev/null 2>&1" }
-    catch { exec sh -c "debugfs -R 'dump /yt-host.log $outdir/yt-host.log' '$scratch' >/dev/null 2>&1" }
-    catch { exec sh -c "for f in '$outdir'/screendumps/*.ppm; do [ -e \"\$f\" ] || continue; convert \"\$f\" \"\${f%.ppm}.png\" 2>/dev/null || true; done" }
-    catch { exec sh -c "rm -f '$scratch'" }
-    puts "\nRESULT $label"
+proc fail_preflight {message {code 2}} {
+    puts stderr "YT-PRESENTFPS-PREFLIGHT-FAIL $message"
     exit $code
 }
 
-set boot_ok 0
-expect {
-    -re {root:/# } { set boot_ok 1 }
-    timeout { finish 12 "FAIL no-root-prompt" }
-    eof { finish 13 "FAIL qemu-exited-before-prompt" }
+proc forensics_arm_contract {multiprocess disable_audio forensics} {
+    if {$forensics ne "0" && $forensics ne "1"} {
+        return [list 0 "YT_EGL_FORENSICS-must-be-0-or-1 value=$forensics"]
+    }
+    if {$forensics eq "1" &&
+        ($multiprocess ne "1" || $disable_audio ne "1")} {
+        return [list 0 "YT_EGL_FORENSICS-requires-multiprocess-1-audio-1 multiprocess=$multiprocess audio=$disable_audio"]
+    }
+    return [list 1 "forensics=$forensics multiprocess=$multiprocess audio=$disable_audio"]
 }
 
-# KDE readiness
-set old $timeout; set timeout 260
-set kde_ok 0
-expect {
-    -re {kde-session: KWin and plasmashell are running} { set kde_ok 1 }
-    timeout { af $statusf "WARN kde-readiness-timeout-continuing" }
-    eof { finish 14 "FAIL qemu-exited-before-kde" }
+proc media_probe_arm_contract {multiprocess disable_audio forensics media_probe} {
+    if {$media_probe ne "0" && $media_probe ne "1"} {
+        return [list 0 "YT_MEDIA_PROBE-must-be-0-or-1 value=$media_probe"]
+    }
+    if {$media_probe eq "1" &&
+        ($multiprocess ne "1" || $disable_audio ne "1" || $forensics ne "0")} {
+        return [list 0 "YT_MEDIA_PROBE-requires-multiprocess-1-audio-1-forensics-0 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
+    }
+    return [list 1 "media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
 }
-set timeout $old
-af $statusf "[iso_now] boot_ok=$boot_ok kde_ok=$kde_ok"
-after 4000
-screendump "00-pre-chromium"
 
-# Idle baseline flip counter (desktop should be near-static: repaint-on-damage)
-set s_idle [fb_sample "idle"]
-set idle_flips [lindex $s_idle 0]
-if {$idle_flips < 0} { set idle_flips 5 }
+proc media_probe_random_nonce {} {
+    if {[catch {exec sh -c {od -An -N16 -tx1 /dev/urandom | tr -d ' \n'}} nonce]} {
+        return [list 0 "urandom-read-failed"]
+    }
+    set nonce [string trim $nonce]
+    if {![regexp {^[0-9a-f]{32}$} $nonce]} {
+        return [list 0 "urandom-nonce-invalid"]
+    }
+    return [list 1 $nonce]
+}
 
-# Launch via the ps-guarded idempotent script, then GATE re-sends on ACTUAL
-# rendering (fbstat flip count rising >> idle) rather than serial markers.  The
-# first serial send is sometimes eaten, so we re-send only if the compositor
-# shows NO rendering; once chromium is up its page-load flip burst confirms it,
-# so we never fire a second instance (the ps-guard in ytlaunch.sh is a backup).
-sh_wait "bash /ytlaunch.sh" {YTL_} 20
-af $statusf "[iso_now] launch fired (gating on flips next)"
-set launch_ms [clock milliseconds]
+proc media_probe_process_filter_command {} {
+    # Guest `ps` prints parent/name rather than argv.  Therefore the literal
+    # middle substring matches chrome, Chromium, and chrome_crashpad names but
+    # does not match the transient bash/grep row itself.
+    return {ps 2>/dev/null | grep hrom}
+}
 
-set started 0
-for {set p 1} {$p <= 5 && !$started} {incr p} {
-    after 45000
-    monitor_cmd "mouse_move 24576 32768"
-    monitor_cmd "mouse_button 1"
-    monitor_cmd "mouse_button 0"
-    set sp [fb_sample "probe$p"]
-    set fp [lindex $sp 0]
-    if {$fp >= 0 && $fp > [expr {$idle_flips + 100}]} {
-        set started 1
-        af $statusf "[iso_now] rendering-confirmed probe=$p flips=$fp (>idle+100)"
-    } else {
-        af $statusf "[iso_now] no-render-yet probe=$p flips=$fp; re-firing launch (ps-guard dedups)"
-        sh_wait "bash /ytlaunch.sh" {YTL_} 20
+proc guest_helper_grep_option_contract {name script} {
+    set errors {}
+    set line_number 0
+    foreach raw_line [split $script "\n"] {
+        incr line_number
+        set line [string trim $raw_line]
+        if {$line eq "" || [string index $line 0] eq "#"} { continue }
+        if {[regexp {(^|[ \t|;&])(/bin/)?pgrep([ \t]|$)} $line]} {
+            lappend errors "line-$line_number-pgrep-forbidden"
+        }
+        set search_from 0
+        while {[regexp -indices -start $search_from \
+            {(^|[ \t|;&])(/bin/)?grep[ \t]+([^|;&]*)} $line \
+            whole prefix binary arguments]} {
+            set argument_text [string range $line \
+                [lindex $arguments 0] [lindex $arguments 1]]
+            if {[regexp {(^|[ \t])['\"]?--?[A-Za-z]} $argument_text]} {
+                lappend errors "line-$line_number-grep-option-operand"
+            }
+            set search_from [expr {[lindex $whole 1] + 1}]
+        }
+        if {[string first {"$grep_bin"} $line] >= 0} {
+            set variable_arguments [string range $line \
+                [expr {[string first {"$grep_bin"} $line] + 11}] end]
+            if {[regexp {(^|[ \t])['\"]?--?[A-Za-z]} $variable_arguments]} {
+                lappend errors "line-$line_number-variable-grep-option-operand"
+            }
+        }
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 "helper=$name errors=[join $errors ,]"]
+    }
+    return [list 1 "helper=$name guest_grep_options=none pgrep=none"]
+}
+
+proc media_probe_guest_helper_script {nonce {overrides {}}} {
+    if {![regexp {^[0-9a-f]{32}$} $nonce]} {
+        error "invalid media-probe helper nonce"
+    }
+    set config [dict create \
+        grep_bin /bin/grep \
+        source_log /host-gui-wayland-chromium.log \
+        capture_log /yt-media-probe.log \
+        temp_prefix /tmp/yt-media-probe \
+        max_polls 75 \
+        sleep_seconds 1 \
+        do_sync 1]
+    if {[catch {dict size $overrides}]} {
+        error "media-probe helper overrides must be a dictionary"
+    }
+    dict for {key value} $overrides {
+        if {![dict exists $config $key]} {
+            error "unknown media-probe helper option: $key"
+        }
+        dict set config $key $value
+    }
+    foreach key {grep_bin source_log capture_log temp_prefix} {
+        set value [dict get $config $key]
+        if {![regexp {^/[A-Za-z0-9._/+:-]+$} $value] ||
+            [regexp {(^|/)\.\.?(/|$)} $value]} {
+            error "invalid media-probe helper path for $key"
+        }
+    }
+    set max_polls [dict get $config max_polls]
+    if {![string is integer -strict $max_polls] ||
+        $max_polls < 1 || $max_polls > 75} {
+        error "invalid media-probe helper max_polls"
+    }
+    set sleep_seconds [dict get $config sleep_seconds]
+    if {![string is integer -strict $sleep_seconds] ||
+        $sleep_seconds < 0 || $sleep_seconds > 1} {
+        error "invalid media-probe helper sleep_seconds"
+    }
+    set do_sync [dict get $config do_sync]
+    if {$do_sync ne "0" && $do_sync ne "1"} {
+        error "invalid media-probe helper do_sync"
+    }
+    return [string map [list \
+        @NONCE@ $nonce \
+        @GREP_BIN@ [dict get $config grep_bin] \
+        @SOURCE_LOG@ [dict get $config source_log] \
+        @CAPTURE_LOG@ [dict get $config capture_log] \
+        @TEMP_PREFIX@ [dict get $config temp_prefix] \
+        @MAX_POLLS@ $max_polls \
+        @SLEEP_SECONDS@ $sleep_seconds \
+        @DO_SYNC@ $do_sync] {#!/bin/bash
+set +e
+status=timeout
+i=0
+grep_bin='@GREP_BIN@'
+source_log='@SOURCE_LOG@'
+capture_log='@CAPTURE_LOG@'
+temp_prefix='@TEMP_PREFIX@'
+max_polls='@MAX_POLLS@'
+sleep_seconds='@SLEEP_SECONDS@'
+do_sync='@DO_SYNC@'
+marker_tmp="${temp_prefix}.markers"
+done_tmp="${temp_prefix}.done"
+failure_tmp="${temp_prefix}.failure"
+rm -f "$marker_tmp" "$done_tmp" "$failure_tmp" "$capture_log"
+while [ "$i" -lt "$max_polls" ]; do
+    "$grep_bin" 'YT_MEDIA_PROBE_V1' "$source_log" > "$marker_tmp" 2>/dev/null
+    "$grep_bin" ' schema=1 nonce=@NONCE@ ' "$marker_tmp" > "$capture_log" 2>/dev/null
+    "$grep_bin" 'kind=done schema=1 nonce=@NONCE@ status=complete samples=20 rows=24' "$capture_log" > "$done_tmp" 2>/dev/null
+    if [ -s "$done_tmp" ]; then status=complete; break; fi
+    "$grep_bin" 'kind=failure schema=1 nonce=@NONCE@ ' "$capture_log" > "$failure_tmp" 2>/dev/null
+    if [ -s "$failure_tmp" ]; then status=failure; break; fi
+    i=$((i + 1))
+    if [ "$sleep_seconds" -gt 0 ]; then sleep "$sleep_seconds"; fi
+done
+"$grep_bin" 'YT_MEDIA_PROBE_V1' "$source_log" > "$marker_tmp" 2>/dev/null
+"$grep_bin" ' schema=1 nonce=@NONCE@ ' "$marker_tmp" > "$capture_log" 2>/dev/null
+echo YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=@NONCE@ status=$status polls=$i
+cat "$capture_log" 2>/dev/null
+echo YT_MEDIA_PROBE_CAPTURE_END nonce=@NONCE@ status=$status polls=$i
+rm -f "$marker_tmp" "$done_tmp" "$failure_tmp"
+if [ "$do_sync" = 1 ]; then sync; fi
+}]
+}
+
+foreach required {YT_MULTIPROCESS YT_DISABLE_AUDIO_OUTPUT} {
+    if {![info exists env($required)]} {
+        fail_preflight "missing-required-env=$required"
     }
 }
-af $statusf "[iso_now] chromium_started=$started idle_flips=$idle_flips"
-
-# A little more warmup so playback (if any) is steady before the timed windows.
-after 30000
-screendump "02-steady-start"
-set s0 [fb_sample "t0"]
-
-# Window A: 60s of steady playback
-after 60000
-screendump "03-windowA-end"
-set s1 [fb_sample "t1"]
-
-# Window B: 60s more
-after 60000
-screendump "04-windowB-end"
-set s2 [fb_sample "t2"]
-
-# Emit chrome/host log tails + process list over serial (land in run.log) for
-# post-mortem media/decode/crash evidence, via the offline-staged script.
-sh_wait "bash /ytlogs.sh" {YT_PS_END} 60
-
-# Compute presented fps for both windows
-proc fps {a b} {
-    set fa [lindex $a 0]; set fb [lindex $b 0]
-    set ta [lindex $a 2]; set tb [lindex $b 2]
-    if {$fa < 0 || $fb < 0 || $tb <= $ta} { return "NA" }
-    set df [expr {$fb - $fa}]
-    set dt [expr {($tb - $ta)/1000.0}]
-    return [format "%.2f" [expr {$df/$dt}]]
+set multiprocess $env(YT_MULTIPROCESS)
+if {$multiprocess ne "0" && $multiprocess ne "1"} {
+    fail_preflight "YT_MULTIPROCESS-must-be-explicit-0-or-1 value=$multiprocess"
 }
-set fpsA [fps $s0 $s1]
-set fpsB [fps $s1 $s2]
-af $statusf "[iso_now] presented_fps windowA=$fpsA windowB=$fpsB (kms_page_flip_events delta / host-wall seconds)"
-af $statusf "[iso_now] samples t0=$s0 t1=$s1 t2=$s2"
+set disable_audio $env(YT_DISABLE_AUDIO_OUTPUT)
+if {$disable_audio ne "1"} {
+    fail_preflight "YT_DISABLE_AUDIO_OUTPUT-must-be-explicit-1 value=$disable_audio"
+}
+set egl_forensics [expr {[info exists env(YT_EGL_FORENSICS)] ? $env(YT_EGL_FORENSICS) : "0"}]
+set forensics_contract [forensics_arm_contract $multiprocess $disable_audio $egl_forensics]
+if {![lindex $forensics_contract 0]} {
+    fail_preflight [lindex $forensics_contract 1]
+}
+set media_probe [expr {[info exists env(YT_MEDIA_PROBE)] ? $env(YT_MEDIA_PROBE) : "0"}]
+set media_probe_contract [media_probe_arm_contract \
+    $multiprocess $disable_audio $egl_forensics $media_probe]
+if {![lindex $media_probe_contract 0]} {
+    fail_preflight [lindex $media_probe_contract 1]
+}
+set media_probe_extension_id "edfilgocpdgbkehcgdillfgnnhclphol"
+set media_probe_nonce "off"
+if {$media_probe eq "1"} {
+    set nonce_result [media_probe_random_nonce]
+    if {![lindex $nonce_result 0]} {
+        fail_preflight "YT_MEDIA_PROBE-nonce-generation-[lindex $nonce_result 1]"
+    }
+    set media_probe_nonce [lindex $nonce_result 1]
+}
+set arm [expr {$media_probe eq "1" ? "media-probe" :
+               ($egl_forensics eq "1" ? "egl-forensics" :
+               ($multiprocess eq "1" ? "multiprocess" : "single-process"))}]
 
-finish 0 "DONE presented_fpsA=$fpsA presented_fpsB=$fpsB"
+set window_seconds [expr {[info exists env(YT_WINDOW_SECONDS)] ? $env(YT_WINDOW_SECONDS) : "60"}]
+if {![string is integer -strict $window_seconds] || $window_seconds < 10 ||
+    $window_seconds > 180} {
+    fail_preflight "YT_WINDOW_SECONDS-invalid value=$window_seconds range=10..180"
+}
+set player_crop [expr {[info exists env(YT_PLAYER_CROP)] ? $env(YT_PLAYER_CROP) : "960x540+160+130"}]
+if {![regexp {^[1-9][0-9]*x[1-9][0-9]*\+[0-9]+\+[0-9]+$} $player_crop]} {
+    fail_preflight "YT_PLAYER_CROP-invalid value=$player_crop"
+}
+set player_delta_min [expr {[info exists env(YT_PLAYER_DELTA_MIN)] ? $env(YT_PLAYER_DELTA_MIN) : "1000"}]
+if {![string is integer -strict $player_delta_min] || $player_delta_min < 1} {
+    fail_preflight "YT_PLAYER_DELTA_MIN-invalid value=$player_delta_min"
+}
+
+set vid [expr {[info exists env(YT_VIDEO_ID)] ? $env(YT_VIDEO_ID) : "aqz-KE-bpKQ"}]
+if {![regexp {^[A-Za-z0-9_-]+$} $vid]} {
+    fail_preflight "YT_VIDEO_ID-invalid value=$vid"
+}
+set url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
+if {$media_probe eq "1"} {
+    append url "#xv6ytprobe=$media_probe_nonce"
+}
+set stamp [clock format [clock seconds] -gmt true -format "%Y%m%dT%H%M%SZ"]
+set forensic_suffix [expr {$egl_forensics eq "1" ? "-egl1" : ""}]
+set media_suffix [expr {$media_probe eq "1" ? "-media1" : ""}]
+set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}"
+if {[info exists env(YT_OUTDIR)]} {
+    set outdir [file normalize $env(YT_OUTDIR)]
+} else {
+    set outdir "$root/build-x86_64/chromium-youtube-m7/$run_id"
+}
+if {[file exists $outdir] && [llength [glob -nocomplain -directory $outdir *]] > 0} {
+    fail_preflight "run-directory-not-empty path=$outdir"
+}
+file mkdir "$outdir/guest-fb" "$outdir/monitor-screendumps"
+
+set scratch "/tmp/xv6-yt-${run_id}.fs.img"
+set monitor "/tmp/xv6-yt-${run_id}.monitor.sock"
+set runlog "$outdir/run.log"
+set statusf "$outdir/STATUS.txt"
+set metricsf "$outdir/metrics.txt"
+set fbcsv "$outdir/fbstat-samples.txt"
+set launcher_log "$outdir/host-gui-wayland-chromium.log"
+set chrome_log "$outdir/chrome_debug.log"
+set launch_stdio_log "$outdir/yt-launch-stdio.log"
+set debugcon_log "$outdir/qemu-debugcon.log"
+set debugcon_source "/tmp/xv6-debugcon.log"
+set artifact_manifest "$outdir/artifact-manifest.txt"
+set cleanup_log "$outdir/cleanup.txt"
+set debugfs_log "$outdir/debugfs-operations.log"
+set egl_trace_dir "$outdir/egl-traces"
+set provider_dir "$outdir/egl-providers"
+set mesa_trace_log "$outdir/mesa-egl-context-trace.log"
+set forensic_manifest "$outdir/egl-forensics-manifest.txt"
+set dynamic_process_log "$outdir/egl-dynamic-processes.log"
+set media_probe_log "$outdir/yt-media-probe.log"
+set media_probe_serial "$outdir/yt-media-probe.serial.txt"
+set media_probe_assets "$outdir/media-probe-assets.txt"
+set media_probe_host_dir "$root/rootfs-overlay/share/chromium-youtube-media-probe"
+set media_probe_guest_dir "/share/chromium-youtube-media-probe"
+set qemu_pid 0
+set qemu_started 0
+set qemu_wait_result "not-waited"
+set finishing 0
+set forensic_verdict "NOT_RUN"
+set media_probe_verdict "NOT_RUN"
+set owned_group_remaining ""
+set serial_counter 0
+set serial_nonce "YTP[pid][clock clicks]"
+regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
+set required_guest_frames {pre steady0 windowA windowB}
+if {$egl_forensics eq "1"} {
+    set required_guest_frames {pre}
+    file mkdir $egl_trace_dir $provider_dir
+}
+if {$media_probe eq "1"} {
+    lappend required_guest_frames mediaProbe
+}
+set send_slow {1 .010}
+set log_extract_status [dict create]
+set debugcon_prepared 0
+set debugcon_epoch 0
+
+proc af {path text} {
+    set fh [open $path a]
+    puts $fh $text
+    close $fh
+}
+proc wf {path text} {
+    set fh [open $path w]
+    puts -nonewline $fh $text
+    close $fh
+}
+proc read_text {path} {
+    if {![file exists $path]} { return "" }
+    set fh [open $path r]
+    set text [read $fh]
+    close $fh
+    return $text
+}
+proc iso_now {} {
+    return [clock format [clock seconds] -gmt true -format "%Y-%m-%dT%H:%M:%SZ"]
+}
+proc regex_quote {text} {
+    regsub -all {[][(){}.^$*+?|\\]} $text {\\&} text
+    return $text
+}
+
+proc prepare_debugcon_path {path} {
+    set prior "absent"
+    if {[file exists $path]} {
+        set prior "present:size=[file size $path]:mtime=[file mtime $path]"
+    }
+    if {[catch {file delete -force $path} err]} {
+        return [list 0 0 "delete-failed prior=$prior error=$err"]
+    }
+    if {[file exists $path]} {
+        return [list 0 0 "delete-postcondition-failed prior=$prior"]
+    }
+    return [list 1 [clock seconds] "truncated-before-spawn prior=$prior"]
+}
+
+proc debugcon_freshness {path prepared epoch} {
+    if {!$prepared} {
+        return [list "unprepared" "debugcon-preparation-missing"]
+    }
+    if {![file exists $path]} {
+        return [list "missing" "not-created-this-run"]
+    }
+    set mtime [file mtime $path]
+    set size [file size $path]
+    if {$mtime < $epoch} {
+        return [list "stale" "mtime=$mtime epoch=$epoch size=$size"]
+    }
+    if {$size == 0} {
+        return [list "empty-current" "mtime=$mtime epoch=$epoch size=0"]
+    }
+    return [list "present-current" "mtime=$mtime epoch=$epoch size=$size"]
+}
+
+proc qemu_spawn_ownership_contract {leader child pgid sid done wait_pid wait_rc} {
+    set errors {}
+    if {$leader <= 0 || $child ne $leader} { lappend errors "leader-child-mismatch" }
+    if {$pgid ne $leader} { lappend errors "owned-pgid-mismatch" }
+    if {$sid ne $leader} { lappend errors "owned-sid-mismatch" }
+    if {!$done} { lappend errors "lifetime-marker-missing" }
+    if {$wait_pid ne $leader} { lappend errors "wait-pid-mismatch" }
+    if {$wait_rc ne "0"} { lappend errors "wait-rc-$wait_rc" }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "leader=$leader child=$child pgid=$pgid sid=$sid waited=1"]
+}
+
+# Build interpolated marker patterns from a braced format string.  A literal
+# `[0-9]` inside a double-quoted Tcl word would otherwise be evaluated as a
+# command substitution before Expect sees the regex.
+proc guest_marker_regex {marker} {
+    return [format {%s:([0-9]+)} [regex_quote $marker]]
+}
+
+# debugfs writes its normal version banner and successful `write` allocation
+# notice to stderr.  Tcl's exec treats any unredirected stderr as an error even
+# when debugfs exits zero, so merge both streams and make the child status the
+# process-level verdict.  Callers must still verify their semantic
+# postcondition because several debugfs command errors also exit zero.
+proc debugfs_run {image writable command label} {
+    global debugfs_log
+    set argv [list debugfs]
+    if {$writable} { lappend argv -w }
+    lappend argv -R $command $image
+    set caught [catch {exec {*}$argv 2>@1} output options]
+    set rc 0
+    if {$caught} {
+        set rc -1
+        if {[dict exists $options -errorcode]} {
+            set errorcode [dict get $options -errorcode]
+            if {[lindex $errorcode 0] eq "CHILDSTATUS"} {
+                set rc [lindex $errorcode 2]
+            }
+        }
+    }
+    af $debugfs_log "[iso_now] BEGIN label=$label writable=$writable image=$image command=$command"
+    if {$output ne ""} { af $debugfs_log $output }
+    af $debugfs_log "[iso_now] END label=$label process_rc=$rc process_ok=[expr {!$caught}]"
+    return [list [expr {!$caught}] $rc $output]
+}
+
+proc debugfs_arg {value} {
+    regsub -all {\\} $value {\\\\} value
+    regsub -all {"} $value {\\"} value
+    return "\"$value\""
+}
+
+proc files_identical {left right} {
+    if {![file isfile $left] || ![file isfile $right] ||
+        [file size $left] != [file size $right]} {
+        return 0
+    }
+    set lf [open $left rb]
+    set rf [open $right rb]
+    fconfigure $lf -translation binary -encoding binary
+    fconfigure $rf -translation binary -encoding binary
+    set same [expr {[read $lf] eq [read $rf]}]
+    close $lf
+    close $rf
+    return $same
+}
+
+proc sha256_file {path} {
+    if {![file isfile $path]} { return "unavailable" }
+    if {[catch {exec sha256sum -- $path} output]} { return "unavailable" }
+    return [lindex [split [string trim $output]] 0]
+}
+
+proc verify_media_probe_image_assets {image} {
+    global media_probe_host_dir media_probe_guest_dir media_probe_assets outdir
+    set errors {}
+    set rows {}
+    foreach name {manifest.json probe-lib.js probe.js} {
+        set host "$media_probe_host_dir/$name"
+        set guest "$media_probe_guest_dir/$name"
+        set extracted "$outdir/media-probe-image-$name"
+        if {![file isfile $host] || ![file readable $host]} {
+            lappend errors "host-asset-missing-$name"
+            continue
+        }
+        catch {file delete -force $extracted}
+        set result [debugfs_run $image 0 \
+            "dump [debugfs_arg $guest] [debugfs_arg $extracted]" \
+            "media-probe-image-$name"]
+        if {![lindex $result 0] || ![files_identical $host $extracted]} {
+            lappend errors "image-asset-missing-or-mismatch-$name"
+            continue
+        }
+        set host_sha [sha256_file $host]
+        set image_sha [sha256_file $extracted]
+        lappend rows "asset=$name guest=$guest bytes=[file size $host] host_sha256=$host_sha image_sha256=$image_sha status=PASS"
+    }
+    wf $media_probe_assets "[join $rows \n]\n"
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "assets=3 hashes=match"]
+}
+
+source "$root/scripts/gpu/chromium-youtube-media-probe-parser.tcl"
+
+# Stage one helper and prove that the guest inode is a readable/executable
+# regular file with the exact host bytes.  This is the fail-closed layer for
+# debugfs command errors that incorrectly return status zero.
+proc debugfs_stage_file {image host guest label} {
+    global outdir
+    set errors {}
+    set qhost [debugfs_arg $host]
+    set qguest [debugfs_arg $guest]
+    set safe_label $label
+    regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
+    set verify "$outdir/debugfs-verify-$safe_label.bin"
+    catch {file delete -force $verify}
+
+    # Absence before write is expected; retain rm diagnostics but do not use it
+    # as the staging verdict.
+    debugfs_run $image 1 "rm $qguest" "$label-rm"
+    set write_result [debugfs_run $image 1 "write $qhost $qguest" "$label-write"]
+    if {![lindex $write_result 0]} {
+        lappend errors "write-process-rc=[lindex $write_result 1]"
+    }
+    set mode_result [debugfs_run $image 1 "set_inode_field $qguest mode 0100755" "$label-mode"]
+    if {![lindex $mode_result 0]} {
+        lappend errors "mode-process-rc=[lindex $mode_result 1]"
+    }
+    set stat_result [debugfs_run $image 0 "stat $qguest" "$label-stat"]
+    if {![lindex $stat_result 0]} {
+        lappend errors "stat-process-rc=[lindex $stat_result 1]"
+    }
+    if {![regexp {Type:[ \t]+regular[ \t]+Mode:[ \t]+0755([ \t]|$)} [lindex $stat_result 2]]} {
+        lappend errors "guest-regular-mode-0755-unverified"
+    }
+    set dump_result [debugfs_run $image 0 "dump $qguest [debugfs_arg $verify]" "$label-verify-dump"]
+    if {![lindex $dump_result 0]} {
+        lappend errors "dump-process-rc=[lindex $dump_result 1]"
+    }
+    if {![files_identical $host $verify]} {
+        lappend errors "guest-content-mismatch-or-missing"
+    }
+    if {[llength $errors] == 0} {
+        catch {file delete -force $verify}
+        return [list 1 "pass"]
+    }
+    return [list 0 [join $errors ,]]
+}
+
+# Do not use pgrep -f here: its own command line can match the search.  Inspect
+# /proc executable basenames, requiring the exact QEMU binary name instead.
+proc exact_qemu_lines {} {
+    set script {
+        for d in /proc/[0-9]*; do
+            [ -e "$d/exe" ] || continue
+            e=$(readlink "$d/exe" 2>/dev/null) || continue
+            b=${e##*/}
+            [ "$b" = qemu-system-x86_64 ] || continue
+            p=${d##*/}
+            printf '%s exe=%s\n' "$p" "$e"
+        done
+    }
+    if {[catch {exec sh -c $script} out]} {
+        return [string trim $out]
+    }
+    return [string trim $out]
+}
+
+proc owned_process_group_lines {{live_only 0}} {
+    global qemu_pid
+    if {$qemu_pid <= 0} { return "" }
+    set script {
+        ps -eo pid=,pgid=,stat=,comm= 2>/dev/null |
+            awk -v want="$1" -v live="$2" \
+                '$2 == want && (!live || $3 !~ /^Z/) { print $1 " pgid=" $2 " stat=" $3 " comm=" $4 }'
+    }
+    if {[catch {exec sh -c $script sh $qemu_pid $live_only} out]} {
+        return [string trim $out]
+    }
+    return [string trim $out]
+}
+
+set existing [exact_qemu_lines]
+if {$existing ne ""} {
+    af $statusf "[iso_now] ABORT exact-qemu-preflight=$existing"
+    fail_preflight "qemu-already-running exact=$existing" 11
+}
+if {![file isfile $kernel] || ![file readable $kernel]} {
+    fail_preflight "kernel-missing path=$kernel"
+}
+if {![file isfile $fsimg] || ![file readable $fsimg]} {
+    fail_preflight "fsimg-missing path=$fsimg"
+}
+foreach tool {debugfs convert compare nc} {
+    if {[auto_execok $tool] eq ""} {
+        fail_preflight "host-tool-missing tool=$tool"
+    }
+}
+
+proc monitor_cmd {cmd {tmo 6}} {
+    global monitor
+    if {![file exists $monitor]} { return "monitor-missing" }
+    if {[catch {exec sh -c {printf '%s\n' "$1" | nc -U -w "$2" -q 0 "$3"} sh $cmd $tmo $monitor} out]} {
+        return $out
+    }
+    return $out
+}
+
+proc monitor_screendump {label} {
+    global outdir
+    set ppm "$outdir/monitor-screendumps/$label.ppm"
+    set response [monitor_cmd "screendump $ppm" 8]
+    after 300
+    if {[file exists $ppm] && [file size $ppm] > 0} {
+        catch {exec convert $ppm "$outdir/monitor-screendumps/$label.png"}
+        af "$outdir/monitor-screendumps/index.txt" "[iso_now] $label status=present size=[file size $ppm]"
+        return 1
+    }
+    af "$outdir/monitor-screendumps/index.txt" "[iso_now] $label status=missing response=$response"
+    return 0
+}
+
+proc crash_text {} {
+    global runlog
+    set text [read_text $runlog]
+    if {[info exists ::expect_out(buffer)]} {
+        append text "\n" $::expect_out(buffer)
+    }
+    return $text
+}
+proc crash_match {} {
+    set text [crash_text]
+    return [expr {[fatal_runtime_marker $text] ||
+                  [gpu_init_failure_marker $text]}]
+}
+
+proc stop_qemu {} {
+    global qemu_started qemu_pid owned_group_remaining cleanup_log qemu_wait_result
+    if {!$qemu_started || $qemu_pid <= 0} { return }
+    af $cleanup_log "[iso_now] cleanup-start leader=$qemu_pid"
+    catch {monitor_cmd "quit" 4}
+    after 500
+    for {set attempt 1} {$attempt <= 3} {incr attempt} {
+        set remaining [owned_process_group_lines]
+        set live_remaining [owned_process_group_lines 1]
+        af $cleanup_log "[iso_now] cleanup-attempt=$attempt remaining=[expr {$remaining eq "" ? "none" : $remaining}] live=[expr {$live_remaining eq "" ? "none" : $live_remaining}]"
+        if {$live_remaining eq ""} { break }
+        set signal [expr {$attempt == 1 ? "-TERM" : "-KILL"}]
+        catch {exec kill $signal -- [expr {-$qemu_pid}]}
+        after [expr {$attempt == 1 ? 1000 : 500}]
+    }
+    set live_remaining [owned_process_group_lines 1]
+    if {$live_remaining eq ""} {
+        # Expect owns the direct launcher/QEMU PID.  Once no live group member
+        # remains, synchronously reap that exact child; a zombie leader is safe
+        # to wait and disappears from the group postcondition.
+        if {[catch {wait} waited]} {
+            set qemu_wait_result "wait-error:$waited"
+        } else {
+            set qemu_wait_result "waited:$waited"
+        }
+    } else {
+        # Preserve bounded cleanup on the exceptional stuck-process path.  The
+        # lingering-group verdict below is authoritative and fails the run.
+        catch {wait -nowait} waited
+        set qemu_wait_result "not-waited-live-group:$live_remaining result=$waited"
+    }
+    set owned_group_remaining [owned_process_group_lines]
+    af $cleanup_log "[iso_now] cleanup-finished remaining=[expr {$owned_group_remaining eq "" ? "none" : $owned_group_remaining}] wait=$qemu_wait_result"
+    set qemu_started 0
+}
+
+proc dump_guest_artifact {guest host {required 0}} {
+    global scratch
+    catch {file delete -force $host}
+    set result [debugfs_run $scratch 0 "dump [debugfs_arg $guest] [debugfs_arg $host]" "extract-$guest"]
+    set ok [lindex $result 0]
+    if {![file exists $host] || [file size $host] <= 0} {
+        set ok 0
+    }
+    if {!$ok && $required} {
+        return 0
+    }
+    return $ok
+}
+
+# Logs may legitimately be empty, unlike PPM evidence.  Stat first so a
+# missing guest path (which debugfs often reports with rc=0) cannot be mistaken
+# for a successfully extracted zero-length file.
+proc dump_guest_log_artifact {guest host} {
+    global scratch
+    catch {file delete -force $host}
+    set qguest [debugfs_arg $guest]
+    set stat_result [debugfs_run $scratch 0 "stat $qguest" "extract-stat-$guest"]
+    if {![lindex $stat_result 0]} {
+        return "extract-failed"
+    }
+    set stat_text [lindex $stat_result 2]
+    if {![regexp {Type:[ \t]+regular([ \t]|$)} $stat_text]} {
+        return "missing"
+    }
+    if {![regexp {(^|[\r\n])[^\r\n]*Size:[ \t]+([0-9]+)([ \t\r\n]|$)} $stat_text -> _ guest_size]} {
+        return "stat-invalid"
+    }
+    set dump_result [debugfs_run $scratch 0 "dump $qguest [debugfs_arg $host]" "extract-$guest"]
+    if {![lindex $dump_result 0] || ![file exists $host] ||
+        [file size $host] != $guest_size} {
+        return "extract-failed"
+    }
+    return [expr {$guest_size == 0 ? "empty" : "present"}]
+}
+
+proc parse_guest_trace_listing {text} {
+    set paths {}
+    foreach line [split $text "\n"] {
+        if {[regexp {^/[0-9]+/10[0-9]+/[0-9]+/[0-9]+/(chromium-egl-trace\.[1-9][0-9]*\.log)/} $line -> name]} {
+            lappend paths "/$name"
+        }
+    }
+    return [lsort -unique $paths]
+}
+
+proc parse_forensic_manifest_paths {text} {
+    set paths {}
+    foreach line [split $text "\n"] {
+        if {[regexp {^trace=(/chromium-egl-trace\.[1-9][0-9]*\.log)([ \t]|$)} $line -> path]} {
+            lappend paths $path
+        }
+    }
+    return [lsort -unique $paths]
+}
+
+proc enumerate_guest_egl_trace_paths {} {
+    global scratch
+    set result [debugfs_run $scratch 0 "ls -p /" egl-trace-root-listing]
+    if {![lindex $result 0]} {
+        return {}
+    }
+    return [parse_guest_trace_listing [lindex $result 2]]
+}
+
+proc forensic_provider_paths {texts} {
+    set paths {}
+    foreach text $texts {
+        foreach pattern {
+            {provider_path="([^"]+)"}
+            {mapped_provider_path="([^"]+)"}
+        } {
+            foreach {whole path} [regexp -all -inline $pattern $text] {
+                set path [string trim $path]
+                regsub { \(deleted\)$} $path {} path
+                if {[string index $path 0] eq "/" &&
+                    [string first "\\" $path] < 0 &&
+                    [string first ".." $path] < 0} {
+                    lappend paths $path
+                }
+            }
+        }
+    }
+    return [lsort -unique $paths]
+}
+
+proc forensic_trace_caps {preload_texts mesa_text} {
+    set preload_counts [dict create]
+    set mesa_counts [dict create]
+    set providers [dict create]
+    foreach text $preload_texts {
+        foreach line [split $text "\n"] {
+            if {[regexp {chromium_egl_trace phase=(provider|egl[A-Za-z0-9_]+) pid=([1-9][0-9]*)} $line -> phase pid]} {
+                dict incr preload_counts $pid
+                if {$phase eq "provider"} {
+                    dict incr providers $pid
+                    if {![regexp {egl_reserved_row=1 egl_row_cap=32($|[ \t])} $line]} {
+                        return [list 0 "provider-reservation-invalid-pid-$pid"]
+                    }
+                }
+            }
+        }
+    }
+    if {[dict size $preload_counts] == 0} {
+        return [list 0 "preload-egl-rows-missing"]
+    }
+    foreach pid [dict keys $preload_counts] {
+        if {[dict get $preload_counts $pid] > 32} {
+            return [list 0 "preload-cap-exceeded-pid-$pid-count-[dict get $preload_counts $pid]"]
+        }
+        if {![dict exists $providers $pid]} {
+            return [list 0 "provider-row-missing-pid-$pid"]
+        }
+        if {[dict get $providers $pid] != 1} {
+            return [list 0 "provider-row-count-invalid-pid-$pid-count-[dict get $providers $pid]"]
+        }
+    }
+    foreach line [split $mesa_text "\n"] {
+        if {[regexp {xv6_mesa_egl_context_trace phase=context_failure pid=([1-9][0-9]*) row=([1-9][0-9]*) cap=16 } $line -> pid row]} {
+            dict incr mesa_counts $pid
+            if {$row > 16} {
+                return [list 0 "mesa-row-cap-field-exceeded-pid-$pid-row-$row"]
+            }
+        }
+    }
+    if {[dict size $mesa_counts] == 0} {
+        return [list 0 "mesa-failure-rows-missing"]
+    }
+    foreach pid [dict keys $mesa_counts] {
+        if {[dict get $mesa_counts $pid] > 16} {
+            return [list 0 "mesa-cap-exceeded-pid-$pid-count-[dict get $mesa_counts $pid]"]
+        }
+    }
+    return [list 1 "preload_pids=[dict size $preload_counts] mesa_pids=[dict size $mesa_counts] preload_cap=32 mesa_cap=16"]
+}
+
+proc forensic_provider_contract {preload_texts} {
+    set providers 0
+    foreach text $preload_texts {
+        foreach line [split $text "\n"] {
+            if {![regexp {chromium_egl_trace phase=provider } $line]} {
+                continue
+            }
+            incr providers
+            if {![regexp {phase=provider pid=([1-9][0-9]*) first_call=egl[A-Za-z0-9_]+ provider_addr=[^ ]+ provider_path="/[^\"]+" provider_symbol="[^\"]+" provider_base=[^ ]+ mapped_provider_path="/[^\"]+" map_line="[^\"]+" map_line_truncated=[01] maps_any_line_truncated=[01] map_found=1 maps_stream_status=(complete|truncated) maps_total_bytes=([0-9]+) maps_cap_bytes=1048576 egl_reserved_row=1 egl_row_cap=32($|[ \t])} $line -> pid status total]} {
+                return [list 0 "provider-shape-invalid"]
+            }
+            if {$status eq "truncated" && $total != 1048576} {
+                return [list 0 "provider-truncation-total-invalid-pid-$pid-total-$total"]
+            }
+            if {$status eq "complete" && $total > 1048576} {
+                return [list 0 "provider-complete-total-invalid-pid-$pid-total-$total"]
+            }
+        }
+    }
+    if {$providers == 0} {
+        return [list 0 "provider-rows-missing"]
+    }
+    return [list 1 "provider_rows=$providers maps_stream_contract=PASS"]
+}
+
+proc valid_provider_build_id {build_id} {
+    set length [string length $build_id]
+    return [expr {$length >= 16 && $length <= 128 &&
+                  ($length % 2) == 0 &&
+                  [regexp {^[0-9a-f]+$} $build_id]}]
+}
+
+proc provider_artifact_build_id_contract {manifest} {
+    set providers 0
+    foreach line [split $manifest "\n"] {
+        if {![string match "provider_guest=*" $line]} {
+            continue
+        }
+        incr providers
+        if {![regexp {provider_guest=/[^ ]+ resolved=/[^ ]+ host=[^ ]+ size=[1-9][0-9]* sha256=[0-9a-f]{64} build_id=([^ ]+)$} $line -> build_id]} {
+            return [list 0 "provider-artifact-shape-or-build-id-missing"]
+        }
+        if {![valid_provider_build_id $build_id]} {
+            return [list 0 "provider-build-id-invalid-$build_id"]
+        }
+    }
+    if {$providers == 0} {
+        return [list 0 "provider-artifacts-missing"]
+    }
+    return [list 1 "provider_artifacts=$providers build_ids=hex"]
+}
+
+proc forensic_attr_format_contract {preload mesa} {
+    if {![regexp {phase=eglCreateContext_enter[^\r\n]*attribs="EGL_CONTEXT_OPENGL_NO_ERROR_KHR\(0x31b3\)=0x1,EGL_CONTEXT_CLIENT_VERSION\(0x3098\)=0x3,EGL_NONE"} $preload]} {
+        return [list 0 "preload-attrs-not-exact"]
+    }
+    if {![regexp {phase=context_failure[^\r\n]*first_rejected_attr=0x31b3[^\r\n]*attribs="0x31b3=0x1,0x3098=0x3,EGL_NONE\(0x3038\)"} $mesa]} {
+        return [list 0 "mesa-attrs-not-exact"]
+    }
+    return [list 1 "exact-ordered-attrs=PASS"]
+}
+
+proc resolve_guest_regular_path {path} {
+    global scratch
+    set current $path
+    for {set depth 0} {$depth < 8} {incr depth} {
+        set result [debugfs_run $scratch 0 "stat [debugfs_arg $current]" "provider-stat-$depth"]
+        if {![lindex $result 0]} { return "" }
+        set stat [lindex $result 2]
+        if {[regexp {Type:[ \t]+regular([ \t]|$)} $stat]} {
+            return $current
+        }
+        if {![regexp {Type:[ \t]+symlink([ \t]|$)} $stat] ||
+            ![regexp {Fast link dest: "([^"]+)"} $stat -> target]} {
+            return ""
+        }
+        if {[string index $target 0] eq "/"} {
+            set current $target
+        } else {
+            if {[string first ".." $target] >= 0} { return "" }
+            set current "[file dirname $current]/$target"
+            regsub -all {//+} $current {/} current
+        }
+    }
+    return ""
+}
+
+proc extract_forensic_providers {trace_texts} {
+    global outdir provider_dir artifact_manifest
+    set index 0
+    foreach guest [forensic_provider_paths $trace_texts] {
+        incr index
+        set resolved [resolve_guest_regular_path $guest]
+        if {$resolved eq ""} {
+            af $artifact_manifest "provider_guest=$guest resolved=unavailable status=not-regular-or-unresolved"
+            continue
+        }
+        set base [file tail $resolved]
+        regsub -all {[^A-Za-z0-9_.-]} $base {_} base
+        set host "$provider_dir/[format %02d $index]-$base"
+        if {![dump_guest_artifact $resolved $host 0]} {
+            af $artifact_manifest "provider_guest=$guest resolved=$resolved status=extract-failed"
+            continue
+        }
+        set sha "unavailable"
+        set build_id "unavailable"
+        if {![catch {exec sha256sum $host} sha_out]} {
+            set sha [lindex $sha_out 0]
+        }
+        if {![catch {exec readelf -n $host} note_out] &&
+            [regexp {Build ID: ([0-9a-fA-F]+)} $note_out -> found_build_id]} {
+            set build_id [string tolower $found_build_id]
+        }
+        af $artifact_manifest "provider_guest=$guest resolved=$resolved host=$host size=[file size $host] sha256=$sha build_id=$build_id"
+    }
+    return $index
+}
+
+proc extract_available_guest_evidence {} {
+    global outdir required_guest_frames launcher_log chrome_log launch_stdio_log
+    global debugcon_log artifact_manifest debugfs_log log_extract_status
+    global debugcon_source debugcon_prepared debugcon_epoch
+    global egl_forensics egl_trace_dir mesa_trace_log forensic_manifest
+    global dynamic_process_log media_probe media_probe_log
+
+    wf $artifact_manifest "extraction_timestamp=[iso_now]\n"
+    set log_extract_status [dict create]
+    set debugfs_status [expr {[file exists $debugfs_log] ? "present" : "missing"}]
+    af $artifact_manifest "host_debugfs_operations=$debugfs_log status=$debugfs_status"
+    foreach tag $required_guest_frames {
+        set guest "/yt-$tag.ppm"
+        set host "$outdir/guest-fb/$tag.ppm"
+        set ok [dump_guest_artifact $guest $host 0]
+        af $artifact_manifest "guest=$guest host=$host status=[expr {$ok ? "present" : "missing"}]"
+        if {$ok} {
+            if {[catch {exec convert $host "$outdir/guest-fb/$tag.png"} err]} {
+                af $artifact_manifest "guest=$guest conversion=failed error=$err"
+            } else {
+                af $artifact_manifest "guest=$guest conversion=pass"
+            }
+        }
+    }
+
+    foreach pair [list \
+        [list /host-gui-wayland-chromium.log $launcher_log] \
+        [list /chrome_debug.log $chrome_log] \
+        [list /yt-launch-stdio.log $launch_stdio_log] \
+        [list /kde-chromium-process-evidence.log "$outdir/kde-chromium-process-evidence.log"] \
+        [list /yt-role-windowA.log "$outdir/yt-role-windowA.log"] \
+        [list /yt-role-windowA-stdio.log "$outdir/yt-role-windowA-stdio.log"] \
+        [list /yt-role-windowB.log "$outdir/yt-role-windowB.log"] \
+        [list /yt-role-windowB-stdio.log "$outdir/yt-role-windowB-stdio.log"] \
+        [list /yt-role-mediaProbe.log "$outdir/yt-role-mediaProbe.log"] \
+        [list /yt-role-mediaProbe-stdio.log "$outdir/yt-role-mediaProbe-stdio.log"]] {
+        set guest [lindex $pair 0]
+        set host [lindex $pair 1]
+        set status [dump_guest_log_artifact $guest $host]
+        dict set log_extract_status $guest $status
+        af $artifact_manifest "guest=$guest host=$host status=$status"
+    }
+    if {$media_probe eq "1"} {
+        set status [dump_guest_log_artifact /yt-media-probe.log $media_probe_log]
+        dict set log_extract_status /yt-media-probe.log $status
+        af $artifact_manifest "guest=/yt-media-probe.log host=$media_probe_log status=$status"
+    }
+    if {$egl_forensics eq "1"} {
+        foreach pair [list \
+            [list /mesa-egl-context-trace.log $mesa_trace_log] \
+            [list /yt-egl-forensics-manifest.txt $forensic_manifest] \
+            [list /yt-egl-dynamic-processes.log $dynamic_process_log]] {
+            set guest [lindex $pair 0]
+            set host [lindex $pair 1]
+            set status [dump_guest_log_artifact $guest $host]
+            dict set log_extract_status $guest $status
+            af $artifact_manifest "guest=$guest host=$host status=$status"
+        }
+        set trace_paths [enumerate_guest_egl_trace_paths]
+        set trace_texts {}
+        foreach guest $trace_paths {
+            set host "$egl_trace_dir/[file tail $guest]"
+            set status [dump_guest_log_artifact $guest $host]
+            dict set log_extract_status $guest $status
+            af $artifact_manifest "guest=$guest host=$host status=$status enumeration=debugfs-root"
+            if {$status eq "present"} {
+                lappend trace_texts [read_text $host]
+            }
+        }
+        af $artifact_manifest "egl_trace_enumerated_count=[llength $trace_paths] paths=[join $trace_paths ,]"
+        set provider_count [extract_forensic_providers $trace_texts]
+        af $artifact_manifest "provider_identity_count=$provider_count"
+    }
+    catch {file delete -force $debugcon_log}
+    set freshness [debugcon_freshness $debugcon_source $debugcon_prepared $debugcon_epoch]
+    set debugcon_status [lindex $freshness 0]
+    set debugcon_detail [lindex $freshness 1]
+    if {$debugcon_status in {present-current empty-current}} {
+        if {[catch {file copy -force $debugcon_source $debugcon_log} err]} {
+            af $artifact_manifest "host=$debugcon_source status=copy-failed freshness=$debugcon_status detail=$debugcon_detail error=$err"
+        } else {
+            af $artifact_manifest "host=$debugcon_source status=$debugcon_status detail=$debugcon_detail copy=$debugcon_log"
+        }
+    } else {
+        af $artifact_manifest "host=$debugcon_source status=$debugcon_status detail=$debugcon_detail copy=rejected"
+    }
+}
+
+proc software_marker {text} {
+    return [regexp -nocase {(^|[^A-Za-z0-9_])(llvmpipe|softpipe|swrast|kms_swrast|drisw)([^A-Za-z0-9_]|$)|LIBGL_ALWAYS_SOFTWARE=(1|true|yes|on)|OpenGL renderer string:[^\r\n]*software|SwiftShader|SwANGLE|ANGLE[^\r\n]*(software|WARP)|(software|WARP)[^\r\n]*ANGLE|--use-angle=(swiftshader|swiftshader-webgl)|use_angle="(swiftshader|swiftshader-webgl)"} $text]
+}
+
+proc gpu_init_failure_marker {text} {
+    return [regexp -nocase {EGL_BAD_ATTRIBUTE|No suitable EGL config|eglCreateContext ES [0-9.]+ failed|Fallback eglCreateContext[^\r\n]*failed|fallback[^\r\n]*context[^\r\n]*fail|CollectGraphicsInfo failed|Could not create surface for info collection|Exiting GPU process due to errors during initialization|GPU process exited unexpectedly[^\r\n]*(initializ|EGL|config|context)|GPU process launch failed} $text]
+}
+
+proc fatal_runtime_marker {text} {
+    return [regexp -nocase {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault|GPU process exited unexpectedly|GPU process launch failed} $text]
+}
+
+proc non_gpu_fatal_runtime_marker {text} {
+    return [regexp -nocase {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} $text]
+}
+
+# redirect_log() runs before the launcher emits `starting`, then the same
+# process logs its child argv and execs Chromium.  With
+# --enable-logging=stderr, those markers in the canonical launcher file prove
+# Chromium inherited the authoritative stderr destination.  Separate Chrome
+# and outer-stdio logs are therefore optional derivatives, never substitutes
+# for this authoritative chain.
+proc chromium_redirect_log_contract {launcher chrome stdio} {
+    set errors {}
+    if {$launcher eq ""} {
+        lappend errors "missing-authoritative-launcher-log"
+    } else {
+        foreach {name pattern} {
+            redirect-start {(^|[\r\n])wayland-chromium-launcher: starting argc=[1-9][0-9]*([\r\n]|$)}
+            launch-marker {(^|[\r\n])wayland-chromium-launcher: launch_marker pid=[1-9][0-9]*([\r\n]|$)}
+            stderr-argv {(^|[\r\n])wayland-chromium-launcher: argv_[0-9]+="--enable-logging=stderr"([\r\n]|$)}
+            child-exec {(^|[\r\n])wayland-chromium-launcher: child_exec path=[^\r\n]+([\r\n]|$)}
+        } {
+            if {![regexp $pattern $launcher]} {
+                lappend errors "authoritative-redirect-proof-missing-$name"
+            }
+        }
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    set chrome_shape [expr {$chrome eq "" ? "empty-or-absent" : "nonempty"}]
+    set stdio_shape [expr {$stdio eq "" ? "empty-or-absent" : "nonempty"}]
+    return [list 1 "authoritative=launcher stderr_logging=1 chrome_log=$chrome_shape stdio_log=$stdio_shape"]
+}
+
+proc chromium_diagnostic_evidence {runlog launcher chrome stdio role_a role_b} {
+    return "$runlog\n$launcher\n$chrome\n$stdio\n$role_a\n$role_b"
+}
+
+proc chromium_gpu_role_marker {text} {
+    return [regexp {kde_chromium_process_evidence fast phase=[^ ]+ pid=[1-9][0-9]* ppid=[-0-9]+ comm="chrome" role="gpu-process" cmd="[^"]*--type=gpu-process[^"]*" role_source="type_arg" type_arg="gpu-process" argv0="(chrome|exe)"} $text]
+}
+
+proc crop_delta {left right label} {
+    global outdir player_crop
+    set lc "$outdir/guest-fb/${label}-left-crop.png"
+    set rc "$outdir/guest-fb/${label}-right-crop.png"
+    set diff "$outdir/guest-fb/${label}-diff.png"
+    if {[catch {exec convert $left -crop $player_crop +repage $lc} err]} {
+        return [list -1 "left-crop:$err"]
+    }
+    if {[catch {exec convert $right -crop $player_crop +repage $rc} err]} {
+        return [list -1 "right-crop:$err"]
+    }
+    catch {exec compare -metric AE $lc $rc $diff 2>@1} metric
+    if {![regexp {([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)} $metric -> value]} {
+        return [list -1 "compare:$metric"]
+    }
+    return [list [expr {int(ceil(double($value)))}] "ok"]
+}
+
+proc extract_and_validate_success {} {
+    global outdir required_guest_frames launcher_log chrome_log launch_stdio_log
+    global debugcon_log player_delta_min metricsf runlog multiprocess url scratch
+    global log_extract_status media_probe media_probe_log media_probe_nonce
+    global media_probe_extension_id
+
+    set errors {}
+    extract_available_guest_evidence
+    foreach tag $required_guest_frames {
+        set host "$outdir/guest-fb/$tag.ppm"
+        if {![file exists $host] || [file size $host] <= 0} {
+            lappend errors "missing-guest-fb-$tag"
+        } elseif {![file exists "$outdir/guest-fb/$tag.png"] ||
+                  [file size "$outdir/guest-fb/$tag.png"] <= 0} {
+            lappend errors "invalid-guest-fb-$tag"
+        }
+    }
+    set launcher [read_text $launcher_log]
+    set chrome [read_text $chrome_log]
+    set launch_stdio [read_text $launch_stdio_log]
+    set log_contract [chromium_redirect_log_contract $launcher $chrome $launch_stdio]
+    if {![lindex $log_contract 0]} {
+        lappend errors [lindex $log_contract 1]
+    } else {
+        af $metricsf "diagnostic_log_contract=PASS [lindex $log_contract 1]"
+    }
+    foreach guest {/host-gui-wayland-chromium.log /chrome_debug.log /yt-launch-stdio.log} {
+        if {![dict exists $log_extract_status $guest]} {
+            lappend errors "log-extraction-status-missing-$guest"
+            continue
+        }
+        set status [dict get $log_extract_status $guest]
+        if {$guest eq "/host-gui-wayland-chromium.log"} {
+            if {$status ne "present"} {
+                lappend errors "authoritative-log-extraction-$status"
+            }
+        } elseif {$status ni {present empty missing}} {
+            lappend errors "optional-log-extraction-$guest-$status"
+        }
+    }
+
+    set evidence [chromium_diagnostic_evidence \
+        [read_text $runlog] $launcher $chrome $launch_stdio \
+        [read_text $outdir/yt-role-windowA.log] \
+        [read_text $outdir/yt-role-windowB.log]]
+    if {[software_marker $evidence]} {
+        lappend errors "software-renderer-marker"
+    }
+    if {[gpu_init_failure_marker $evidence]} {
+        lappend errors "gpu-init-failure-marker"
+    }
+    if {[fatal_runtime_marker $evidence]} {
+        lappend errors "crash-marker"
+    }
+
+    foreach required_arg [list "--disable-audio-output" $url] {
+        set q [regex_quote $required_arg]
+        if {![regexp "wayland-chromium-launcher: argv_\\d+=\"$q\"" $launcher]} {
+            lappend errors "launcher-argv-missing-$required_arg"
+        }
+    }
+    set single_args {--disable-gpu --in-process-gpu --single-process --no-zygote}
+    foreach arg $single_args {
+        set present [regexp "wayland-chromium-launcher: argv_\\d+=\"[regex_quote $arg]\"" $launcher]
+        if {$multiprocess eq "0" && !$present} {
+            lappend errors "control-argv-missing-$arg"
+        }
+        if {$multiprocess eq "1" && $present} {
+            lappend errors "treatment-argv-forbidden-$arg"
+        }
+    }
+    if {$multiprocess eq "1"} {
+        foreach tag {windowA windowB} {
+            set role_path "$outdir/yt-role-$tag.log"
+            if {![file exists $role_path] ||
+                ![chromium_gpu_role_marker [read_text $role_path]]} {
+                lappend errors "treatment-live-gpu-role-artifact-missing-$tag"
+            }
+        }
+    }
+    if {$media_probe eq "1"} {
+        if {![dict exists $log_extract_status /yt-media-probe.log] ||
+            [dict get $log_extract_status /yt-media-probe.log] ne "present"} {
+            lappend errors "media-probe-artifact-missing"
+        } else {
+            set parsed_media [parse_media_probe_evidence [read_text $media_probe_log] \
+                $media_probe_nonce $media_probe_extension_id]
+            if {![lindex $parsed_media 0] || ![lindex $parsed_media 1]} {
+                lappend errors "media-probe-source-proof-[lindex $parsed_media 2]"
+            } else {
+                af $metricsf "media_probe_artifact_validation=PASS [lindex $parsed_media 2]"
+            }
+        }
+        if {![regexp {wayland-chromium-launcher: argv_[0-9]+="--load-extension=/share/chromium-youtube-media-probe"} $launcher]} {
+            lappend errors "media-probe-launcher-argv-missing"
+        }
+    } elseif {[regexp {--load-extension=/share/chromium-youtube-media-probe} $launcher]} {
+        lappend errors "media-probe-launcher-argv-present-while-off"
+    }
+
+    set dA [crop_delta "$outdir/guest-fb/steady0.ppm" "$outdir/guest-fb/windowA.ppm" windowA]
+    set dB [crop_delta "$outdir/guest-fb/windowA.ppm" "$outdir/guest-fb/windowB.ppm" windowB]
+    set deltaA [lindex $dA 0]
+    set deltaB [lindex $dB 0]
+    af $metricsf "player_crop=$::player_crop player_delta_windowA=$deltaA player_delta_windowB=$deltaB min=$player_delta_min"
+    if {$deltaA < $player_delta_min} { lappend errors "player-delta-windowA-invalid-$deltaA" }
+    if {$deltaB < $player_delta_min} { lappend errors "player-delta-windowB-invalid-$deltaB" }
+
+    if {[llength $errors] > 0} {
+        af $metricsf "artifact_validation=FAIL errors=[join $errors ,]"
+        return [list 0 [join $errors ,]]
+    }
+    af $metricsf "artifact_validation=PASS authoritative_logs=launcher,chrome guest_fb=pre,steady0,windowA,windowB"
+    return [list 1 "pass"]
+}
+
+proc extract_and_validate_media_probe_null {} {
+    global outdir launcher_log chrome_log launch_stdio_log media_probe_log
+    global debugcon_log metricsf runlog log_extract_status
+    global media_probe_nonce media_probe_extension_id
+
+    set errors {}
+    extract_available_guest_evidence
+    foreach tag {pre mediaProbe} {
+        set host "$outdir/guest-fb/$tag.ppm"
+        if {![file exists $host] || [file size $host] <= 0 ||
+            ![file exists "$outdir/guest-fb/$tag.png"]} {
+            lappend errors "missing-guest-fb-$tag"
+        }
+    }
+    set launcher [read_text $launcher_log]
+    set log_contract [chromium_redirect_log_contract $launcher \
+        [read_text $chrome_log] [read_text $launch_stdio_log]]
+    if {![lindex $log_contract 0]} { lappend errors [lindex $log_contract 1] }
+    if {![regexp {wayland-chromium-launcher: argv_[0-9]+="--load-extension=/share/chromium-youtube-media-probe"} $launcher]} {
+        lappend errors "media-probe-launcher-argv-missing"
+    }
+    if {![dict exists $log_extract_status /yt-media-probe.log] ||
+        [dict get $log_extract_status /yt-media-probe.log] ne "present"} {
+        lappend errors "media-probe-artifact-missing"
+    } else {
+        set parsed [parse_media_probe_evidence [read_text $media_probe_log] \
+            $media_probe_nonce $media_probe_extension_id]
+        if {![lindex $parsed 0] || [lindex $parsed 1]} {
+            lappend errors "media-probe-null-shape-[lindex $parsed 2]"
+        } else {
+            af $metricsf "media_probe_null_artifact_validation=PASS [lindex $parsed 2]"
+        }
+    }
+    set evidence [chromium_diagnostic_evidence [read_text $runlog] $launcher \
+        [read_text $chrome_log] [read_text $launch_stdio_log] \
+        [read_text "$outdir/yt-role-mediaProbe.log"] ""]
+    if {[software_marker $evidence]} { lappend errors "software-renderer-marker" }
+    if {[gpu_init_failure_marker $evidence]} { lappend errors "gpu-init-failure-marker" }
+    if {[fatal_runtime_marker $evidence]} { lappend errors "crash-marker" }
+    if {![chromium_gpu_role_marker [read_text "$outdir/yt-role-mediaProbe.log"]]} {
+        lappend errors "treatment-live-gpu-role-artifact-missing-mediaProbe"
+    }
+    if {[regexp {(^|[\r\n])(presented_fps|bo_present_fps)_} [read_text $metricsf]]} {
+        lappend errors "fps-claim-present-on-source-null"
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "source-unproven no_fps_claim=1"]
+}
+
+proc extract_and_validate_forensics {} {
+    global outdir launcher_log mesa_trace_log forensic_manifest
+    global dynamic_process_log artifact_manifest egl_trace_dir runlog
+    global forensic_verdict log_extract_status
+
+    set errors {}
+    extract_available_guest_evidence
+    set launcher [read_text $launcher_log]
+    set mesa [read_text $mesa_trace_log]
+    set run [read_text $runlog]
+    set dynamic [read_text $dynamic_process_log]
+    set trace_files [lsort [glob -nocomplain -directory $egl_trace_dir chromium-egl-trace.*.log]]
+    set trace_texts {}
+    foreach path $trace_files { lappend trace_texts [read_text $path] }
+    set all_trace [join $trace_texts "\n"]
+
+    set log_contract [chromium_redirect_log_contract $launcher "" ""]
+    if {![lindex $log_contract 0]} {
+        lappend errors [lindex $log_contract 1]
+    }
+    if {![regexp {wayland-chromium-launcher: env XV6_MESA_EGL_CONTEXT_TRACE="1"} $launcher]} {
+        lappend errors "mesa-trace-env-missing"
+    }
+    if {![regexp {wayland-chromium-launcher: env LD_PRELOAD="/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload\.so"} $launcher]} {
+        lappend errors "preload-env-missing"
+    }
+    if {![regexp {phase=process_env[^\r\n]*entry="CHROMIUM_EGL_TRACE=1"} $all_trace] ||
+        ![regexp {phase=process_env[^\r\n]*entry="CHROMIUM_EGL_TRACE_LOG=/chromium-egl-trace\.log"} $all_trace]} {
+        lappend errors "preload-trace-env-evidence-missing"
+    }
+    if {[llength $trace_files] == 0} {
+        lappend errors "per-pid-preload-traces-missing"
+    }
+    set cap_result [forensic_trace_caps $trace_texts $mesa]
+    if {![lindex $cap_result 0]} {
+        lappend errors [lindex $cap_result 1]
+    }
+    set provider_contract [forensic_provider_contract $trace_texts]
+    if {![lindex $provider_contract 0]} {
+        lappend errors [lindex $provider_contract 1]
+    }
+    if {![regexp {xv6_mesa_egl_context_trace phase=context_failure[^\r\n]*bound_api=0x[0-9a-f]+[^\r\n]*display_platform_name=[^ ]+[^\r\n]*gate_khr_create_context=[01][^\r\n]*config=(\(nil\)|0x[0-9a-f]+)[^\r\n]*share=(\(nil\)|0x[0-9a-f]+)[^\r\n]*error_name=EGL_[A-Z_]+[^\r\n]*first_rejected_attr=0x[0-9a-f]+[^\r\n]*attribs="[^"]+"} $mesa]} {
+        lappend errors "canonical-mesa-failure-shape-missing"
+    }
+    if {[regexp {attribs="[^"]*\.\.\.} $mesa]} {
+        lappend errors "canonical-mesa-attrs-truncated"
+    }
+
+    set manifest_paths [parse_forensic_manifest_paths [read_text $forensic_manifest]]
+    set extracted_paths {}
+    foreach path $trace_files { lappend extracted_paths "/[file tail $path]" }
+    set extracted_paths [lsort -unique $extracted_paths]
+    if {$manifest_paths ne $extracted_paths} {
+        lappend errors "trace-artifact-enumeration-mismatch-manifest-[join $manifest_paths :]-extracted-[join $extracted_paths :]"
+    }
+    set build_id_contract [provider_artifact_build_id_contract \
+        [read_text $artifact_manifest]]
+    if {![lindex $build_id_contract 0]} {
+        lappend errors [lindex $build_id_contract 1]
+    }
+    set evidence "$run\n$launcher\n$mesa\n$all_trace\n$dynamic"
+    if {[software_marker $evidence]} { lappend errors "software-renderer-marker" }
+    if {[non_gpu_fatal_runtime_marker $evidence]} { lappend errors "non-gpu-crash-marker" }
+    if {$forensic_verdict ne "GPU_INIT_FAILURE" ||
+        ![gpu_init_failure_marker $evidence]} {
+        lappend errors "gpu-init-failure-verdict-unproved-$forensic_verdict"
+    }
+    foreach guest {/host-gui-wayland-chromium.log /mesa-egl-context-trace.log /yt-egl-forensics-manifest.txt} {
+        if {![dict exists $log_extract_status $guest] ||
+            [dict get $log_extract_status $guest] ne "present"} {
+            lappend errors "required-forensic-log-$guest-[expr {[dict exists $log_extract_status $guest] ? [dict get $log_extract_status $guest] : "untracked"}]"
+        }
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "verdict=$forensic_verdict no_fps_claim=1 trace_files=[llength $trace_files] [lindex $cap_result 1]"]
+}
+
+proc finish {code label} {
+    global finishing statusf outdir scratch monitor qemu_pid qemu_started
+    global metricsf runlog owned_group_remaining egl_forensics
+    global media_probe media_probe_verdict
+    # A second signal while the first finish path is draining must not bypass
+    # the process-group kill and exact-name postcondition.
+    if {$finishing} { return }
+    set finishing 1
+
+    stop_qemu
+    catch {file delete -force $monitor}
+
+    if {$code == 0} {
+        if {$egl_forensics eq "1"} {
+            set artifact_result [extract_and_validate_forensics]
+        } elseif {$media_probe eq "1" &&
+                  $media_probe_verdict eq "SOURCE_UNPROVEN"} {
+            set artifact_result [extract_and_validate_media_probe_null]
+        } else {
+            set artifact_result [extract_and_validate_success]
+        }
+        if {![lindex $artifact_result 0]} {
+            set code 8
+            set label "FAIL artifact-validation [lindex $artifact_result 1]"
+        }
+    } else {
+        extract_available_guest_evidence
+    }
+
+    if {$owned_group_remaining ne ""} {
+        set code 9
+        set label "FAIL lingering-owned-process-group exact=$owned_group_remaining"
+    }
+
+    set lingering [exact_qemu_lines]
+    if {$lingering ne ""} {
+        set code 9
+        set label "FAIL lingering-qemu exact=$lingering"
+    }
+    af $statusf "[iso_now] result_code=$code result=$label exact_qemu_after=[expr {$lingering eq "" ? "none" : $lingering}]"
+    if {$code == 0} {
+        catch {file delete -force $scratch}
+    } else {
+        af $statusf "[iso_now] retained_scratch=$scratch"
+    }
+    puts "\nYT-PRESENTFPS-RESULT code=$code arm=$::arm $label outdir=$outdir"
+    exit $code
+}
+
+proc fail_timeout {phase {code 8}} {
+    if {[gpu_init_failure_marker [crash_text]]} {
+        finish 4 "FAIL gpu-init-before-timeout phase=$phase"
+    }
+    if {[crash_match]} {
+        finish 4 "FAIL crash-before-timeout phase=$phase"
+    }
+    finish $code "FAIL timeout phase=$phase crash_grep=clean"
+}
+
+proc guest_cmd {command label {seconds 30}} {
+    global timeout serial_counter serial_nonce send_slow
+    incr serial_counter
+    set marker "${serial_nonce}C${serial_counter}"
+    set marker_regex [guest_marker_regex $marker]
+    set old_timeout $timeout
+    set timeout $seconds
+    # `true;` is sacrificial: if the serial path drops its first character,
+    # `rue` may fail but the semicolon keeps the real command intact.
+    send "\025"
+    send -s "true;$command;rc=\$?;m=$marker;echo \$m:\$rc;echo \$m:\$rc;echo \$m:\$rc\r"
+    expect {
+        -re $marker_regex {
+            set rc $expect_out(1,string)
+            set buf $expect_out(buffer)
+            set timeout $old_timeout
+            return [list $rc $buf]
+        }
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} {
+            set timeout $old_timeout
+            finish 4 "FAIL crash phase=$label"
+        }
+        timeout {
+            set timeout $old_timeout
+            fail_timeout $label
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "FAIL eof phase=$label"
+        }
+    }
+}
+
+proc require_guest_ok {result label} {
+    if {[lindex $result 0] ne "0"} {
+        finish 8 "FAIL guest-command phase=$label rc=[lindex $result 0]"
+    }
+    return [lindex $result 1]
+}
+
+proc require_kvm_proof {} {
+    global runlog
+    set text [read_text $runlog]
+    if {![regexp {run-qemu: using KVM acceleration} $text]} {
+        finish 8 "FAIL missing-kvm-proof"
+    }
+}
+
+proc require_treatment_gpu_role {tag} {
+    global multiprocess outdir metricsf
+    if {$multiprocess eq "0"} {
+        af $metricsf "gpu_role_probe_$tag=NOT_APPLICABLE control_gpu=in-process argv_gate=required"
+        return
+    }
+    set buf [require_guest_ok [guest_cmd "/bin/bash /ytrole.sh $tag" "gpu-role-$tag" 45] "gpu-role-$tag"]
+    wf "$outdir/gpu-role-$tag.serial.txt" $buf
+    if {![regexp "YT_ROLE_END tag=$tag probe_rc=0" $buf]} {
+        finish 8 "FAIL treatment-gpu-role-probe-command tag=$tag"
+    }
+    if {![chromium_gpu_role_marker $buf]} {
+        finish 8 "FAIL treatment-live-gpu-role-missing tag=$tag semantic_source=type_arg"
+    }
+    if {[software_marker $buf]} {
+        finish 8 "FAIL treatment-gpu-role-software-fallback tag=$tag"
+    }
+    if {[gpu_init_failure_marker $buf]} {
+        finish 8 "FAIL treatment-gpu-role-init-failure tag=$tag"
+    }
+    af $metricsf "gpu_role_probe_$tag=PASS role=gpu-process role_source=type_arg live_proc_census=1"
+}
+
+proc canonical_decimal {value} {
+    set canonical [string trimleft $value 0]
+    return [expr {$canonical eq "" ? "0" : $canonical}]
+}
+
+proc resolve_fbstat_counter {name observations} {
+    if {[llength $observations] == 0} {
+        return [list 0 -1 "missing-$name"]
+    }
+    set expected [canonical_decimal [lindex [lindex $observations 0] 1]]
+    set rendered {}
+    foreach observation $observations {
+        set source [lindex $observation 0]
+        set value [canonical_decimal [lindex $observation 1]]
+        lappend rendered "$source=$value"
+        if {$value ne $expected} {
+            return [list 0 -1 "conflicting-$name observations=[join $rendered ,]"]
+        }
+    }
+    return [list 1 $expected "[join $rendered ,]"]
+}
+
+proc resolve_fbstat_proof {name observations expected} {
+    if {[llength $observations] == 0} {
+        return [list 0 "missing-$name"]
+    }
+    set rendered {}
+    foreach observation $observations {
+        set source [lindex $observation 0]
+        set value [lindex $observation 1]
+        lappend rendered "$source=$value"
+        if {$value ne $expected} {
+            return [list 0 "wrong-$name expected=$expected observations=[join $rendered ,]"]
+        }
+    }
+    return [list 1 "[join $rendered ,]"]
+}
+
+proc render_fbstat_observations {observations} {
+    if {[llength $observations] == 0} { return "none" }
+    set rendered {}
+    foreach observation $observations {
+        lappend rendered "[lindex $observation 0]=[canonical_decimal [lindex $observation 1]]"
+    }
+    return [join $rendered ,]
+}
+
+# Parse only current fbstat ABI rows.  The flip counter is a field in the
+# named, line-anchored KMS provenance matrix.  Every measurement must prove the
+# virgl/OpenGL backend, making virgl_bo_presents the authoritative present
+# counter.  FB_GPU_GET_STATS supplies one locked snapshot, but the generic
+# bo_presents field counts request admission while virgl_bo_presents counts a
+# later successful virgl presentation.  Cross-key drift is therefore valid
+# and must not be reconciled by equality or max-selection.  Exactly one
+# authoritative virgl scalar is required; duplicate rows are ambiguous even
+# when their values agree.  Serial-corrupted or stale lookalikes are ignored.
+proc parse_fbstat_counters {text} {
+    set flip_observations {}
+    set virgl_present_observations {}
+    set generic_present_observations {}
+    set backend_observations {}
+    set submit_observations {}
+    set submit_gate_observations {}
+    set virgl_opengl_observations {}
+    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $text]
+    set line_number 0
+    foreach line [split $normalized "\n"] {
+        incr line_number
+        if {[regexp {^backend[ \t]+([^ \t]+)[ \t]+flags[ \t]+0x[0-9a-fA-F]+[ \t]+renderer[ \t]+(.+[^ \t])[ \t]*$} $line -> backend renderer]} {
+            set backend_value "$backend/$renderer"
+            lappend backend_observations [list "backend:line$line_number" $backend_value]
+        }
+        foreach {key expected observations_name} {
+            backend_opengl_submit 1 submit_observations
+            backend_opengl_submit_gate open submit_gate_observations
+            backend_virgl_opengl 1 virgl_opengl_observations
+        } {
+            set pattern [format {^%s[ \t]+([^ \t]+)[ \t]*$} $key]
+            if {[regexp $pattern $line -> value]} {
+                lappend $observations_name [list "${key}:line$line_number" $value]
+            }
+        }
+        if {[regexp {^d3d12_native_completion_not_kms_matrix([ \t]|$)} $line]} {
+            foreach token [regexp -all -inline {[^ \t]+} $line] {
+                if {[regexp {^kms_page_flip_events=([0-9]+)$} $token -> value]} {
+                    lappend flip_observations [list "d3d12_native_completion_not_kms_matrix:line$line_number" $value]
+                }
+            }
+        }
+        if {[regexp {^bo_presents[ \t]+([0-9]+)[ \t]*$} $line -> value]} {
+            lappend generic_present_observations [list "bo_presents:line$line_number" $value]
+        }
+        if {[regexp {^virgl_bo_presents[ \t]+([0-9]+)[ \t]*$} $line -> value]} {
+            lappend virgl_present_observations [list "virgl_bo_presents:line$line_number" $value]
+        }
+    }
+    set flip_count [llength $flip_observations]
+    if {$flip_count == 0} {
+        return [list 0 -1 -1 "missing-kms_page_flip_events"]
+    }
+    if {$flip_count != 1} {
+        set flip_resolution [resolve_fbstat_counter kms_page_flip_events $flip_observations]
+        if {![lindex $flip_resolution 0]} {
+            return [list 0 -1 -1 [lindex $flip_resolution 2]]
+        }
+        return [list 0 -1 -1 \
+            "duplicate-kms_page_flip_events count=$flip_count observations=[render_fbstat_observations $flip_observations]"]
+    }
+    set flips [resolve_fbstat_counter kms_page_flip_events $flip_observations]
+    if {![lindex $flips 0]} {
+        return [list 0 -1 -1 [lindex $flips 2]]
+    }
+    foreach proof [list \
+        [resolve_fbstat_proof backend $backend_observations {virgl/OpenGL via virtio-gpu virgl}] \
+        [resolve_fbstat_proof backend_opengl_submit $submit_observations 1] \
+        [resolve_fbstat_proof backend_opengl_submit_gate $submit_gate_observations open] \
+        [resolve_fbstat_proof backend_virgl_opengl $virgl_opengl_observations 1]] {
+        if {![lindex $proof 0]} {
+            return [list 0 [lindex $flips 1] -1 [lindex $proof 1]]
+        }
+    }
+    set authoritative_count [llength $virgl_present_observations]
+    if {$authoritative_count == 0} {
+        return [list 0 [lindex $flips 1] -1 "missing-virgl_bo_presents"]
+    }
+    if {$authoritative_count != 1} {
+        return [list 0 [lindex $flips 1] -1 \
+            "duplicate-authoritative-virgl_bo_presents count=$authoritative_count observations=[render_fbstat_observations $virgl_present_observations]"]
+    }
+    set presents [resolve_fbstat_counter virgl_bo_presents $virgl_present_observations]
+    if {![lindex $presents 0]} {
+        return [list 0 [lindex $flips 1] -1 [lindex $presents 2]]
+    }
+    return [list 1 [lindex $flips 1] [lindex $presents 1] \
+                 "backend=virgl-opengl flip_sources=[lindex $flips 2] authoritative_present_sources=[lindex $presents 2] generic_present_diagnostic=[render_fbstat_observations $generic_present_observations]"]
+}
+
+# Require one intact separation-matrix row from a single fbstat buffer.  Do not
+# concatenate wrapped/corrupted fragments: asynchronous kernel text can split
+# a row across serial lines, and reconstructing it would fabricate proof.
+proc fbstat_separation_proof {text} {
+    set candidates {}
+    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $text]
+    set line_number 0
+    foreach line [split $normalized "\n"] {
+        incr line_number
+        if {[regexp {^opengl_submit_backend_separation_matrix([ \t]|$)} $line]} {
+            lappend candidates [list $line_number $line]
+        }
+    }
+    set count [llength $candidates]
+    if {$count == 0} {
+        return [list RETRY "missing-opengl-submit-backend-separation-matrix"]
+    }
+    if {$count != 1} {
+        return [list HARD "duplicate-opengl-submit-backend-separation-matrix count=$count"]
+    }
+    set line_number [lindex [lindex $candidates 0] 0]
+    set line [lindex [lindex $candidates 0] 1]
+    if {![regexp {^opengl_submit_backend_separation_matrix([ \t]+[A-Za-z0-9_]+=[A-Za-z0-9_.:/+-]+)+[ \t]*$} $line]} {
+        return [list RETRY "corrupt-opengl-submit-backend-separation-matrix line=$line_number"]
+    }
+    set expected {opengl_submit_backend_separation_matrix backend=virgl dxg_transport=0 d3dkmt=0 virgl_opengl=1 backend_opengl_submit=1 allowed_submit_backend=virgl hyperv_dxg_transport_is_submit=0 hyperv_d3dkmt_is_submit=0 kvm_virgl_submit_allowed=1 native_present_credit=0 opengl_submit_credit=1 status=PASS}
+    if {[string trimright $line " \t"] ne $expected} {
+        return [list HARD "inconsistent-opengl-submit-backend-separation-matrix line=$line_number"]
+    }
+    return [list PASS "separation_matrix_line=$line_number"]
+}
+
+# Scan the entire buffer for evidence that can never be made retryable by a
+# different missing/corrupt row in that same buffer.  This runs before the
+# normal parser so a missing flip/matrix cannot mask a later contradiction or
+# fatal marker.
+proc fbstat_hard_evidence {text require_separation} {
+    set errors {}
+    if {[fatal_runtime_marker $text]} { lappend errors "fatal-runtime-marker" }
+    if {[gpu_init_failure_marker $text]} { lappend errors "gpu-init-failure-marker" }
+    if {[software_marker $text]} { lappend errors "software-renderer-marker" }
+
+    set flips {}
+    set virgl_presents {}
+    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $text]
+    set line_number 0
+    foreach line [split $normalized "\n"] {
+        incr line_number
+        if {[regexp {^backend[ \t]+([^ \t]+)[ \t]+flags[ \t]+0x[0-9a-fA-F]+[ \t]+renderer[ \t]+(.+[^ \t])[ \t]*$} $line -> backend renderer]} {
+            if {"$backend/$renderer" ne {virgl/OpenGL via virtio-gpu virgl}} {
+                lappend errors "wrong-backend:line$line_number=$backend/$renderer"
+            }
+        }
+        foreach {key expected} {
+            backend_opengl_submit 1
+            backend_opengl_submit_gate open
+            backend_virgl_opengl 1
+        } {
+            set pattern [format {^%s[ \t]+([^ \t]+)[ \t]*$} $key]
+            if {[regexp $pattern $line -> value]} {
+                if {$value ne $expected} {
+                    lappend errors "wrong-$key:line$line_number=$value"
+                }
+            }
+        }
+        if {[regexp {^d3d12_native_completion_not_kms_matrix([ \t]|$)} $line]} {
+            foreach token [regexp -all -inline {[^ \t]+} $line] {
+                if {[regexp {^kms_page_flip_events=([0-9]+)$} $token -> value]} {
+                    lappend flips [list "line$line_number" $value]
+                }
+            }
+        }
+        if {[regexp {^virgl_bo_presents[ \t]+([0-9]+)[ \t]*$} $line -> value]} {
+            lappend virgl_presents [list "line$line_number" $value]
+        }
+    }
+    if {[llength $flips] > 1} {
+        set resolved [resolve_fbstat_counter kms_page_flip_events $flips]
+        if {[lindex $resolved 0]} {
+            lappend errors "duplicate-kms_page_flip_events:[render_fbstat_observations $flips]"
+        } else {
+            lappend errors [lindex $resolved 2]
+        }
+    }
+    if {[llength $virgl_presents] > 1} {
+        lappend errors "duplicate-authoritative-virgl_bo_presents:[render_fbstat_observations $virgl_presents]"
+    }
+    if {$require_separation} {
+        set separation [fbstat_separation_proof $text]
+        if {[lindex $separation 0] eq "HARD"} {
+            lappend errors [lindex $separation 1]
+        }
+    }
+    return $errors
+}
+
+proc classify_fbstat_sample {text require_separation} {
+    set hard_errors [fbstat_hard_evidence $text $require_separation]
+    set parsed [parse_fbstat_counters $text]
+    if {[llength $hard_errors] > 0} {
+        return [list HARD $parsed "hard-evidence=[join $hard_errors ,]"]
+    }
+    if {![lindex $parsed 0]} {
+        set detail [lindex $parsed 3]
+        if {[string match {wrong-*} $detail] ||
+            [string match {conflicting-*} $detail] ||
+            [string match {duplicate-*} $detail]} {
+            return [list HARD $parsed $detail]
+        }
+        return [list RETRY $parsed $detail]
+    }
+    if {$require_separation} {
+        set separation [fbstat_separation_proof $text]
+        if {[lindex $separation 0] ne "PASS"} {
+            return [list [lindex $separation 0] $parsed [lindex $separation 1]]
+        }
+        return [list PASS $parsed [lindex $separation 1]]
+    }
+    return [list PASS $parsed "separation_matrix=NOT_REQUIRED postlaunch-no-resample"]
+}
+
+proc select_prelaunch_fbstat_attempt {attempts} {
+    set failures {}
+    set attempt_number 0
+    foreach text $attempts {
+        incr attempt_number
+        set classified [classify_fbstat_sample $text 1]
+        set disposition [lindex $classified 0]
+        if {$disposition eq "PASS"} {
+            return [list 1 $attempt_number [lindex $classified 1] [lindex $classified 2]]
+        }
+        lappend failures "attempt$attempt_number:$disposition:[lindex $classified 2]"
+        if {$disposition eq "HARD"} {
+            return [list 0 $attempt_number [lindex $classified 1] "hard-reject [join $failures ,]"]
+        }
+    }
+    return [list 0 $attempt_number {} "retry-exhausted [join $failures ,]"]
+}
+
+proc fb_sample {tag} {
+    global fbcsv outdir
+    # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
+    # remain single-shot so retries cannot move a measurement boundary or bias
+    # a timed window.  Every raw attempt is retained and guest_cmd supplies a
+    # fresh serial nonce marker on each acquisition.
+    set max_attempts [expr {$tag eq "idle" ? 3 : 1}]
+    set failures {}
+    for {set attempt 1} {$attempt <= $max_attempts} {incr attempt} {
+        set result [guest_cmd "/bin/bash /fbs.sh $tag" "fbstat-$tag-attempt$attempt" 35]
+        set buf [lindex $result 1]
+        set attempt_path "$outdir/fbstat-$tag-attempt$attempt.txt"
+        wf $attempt_path $buf
+        if {[lindex $result 0] ne "0"} {
+            finish 8 "FAIL guest-command phase=fbstat-$tag-attempt$attempt rc=[lindex $result 0] artifact=$attempt_path"
+        }
+        if {[fatal_runtime_marker $buf] || [gpu_init_failure_marker $buf]} {
+            finish 4 "FAIL crash-or-gpu-marker phase=fbstat-$tag-attempt$attempt artifact=$attempt_path"
+        }
+        if {[software_marker $buf]} {
+            finish 8 "FAIL software-renderer-fbstat tag=$tag attempt=$attempt artifact=$attempt_path"
+        }
+        set classified [classify_fbstat_sample $buf [expr {$tag eq "idle"}]]
+        set disposition [lindex $classified 0]
+        set parsed [lindex $classified 1]
+        set detail [lindex $classified 2]
+        af $fbcsv "$tag attempt=$attempt disposition=$disposition iso=[iso_now] parser=$detail artifact=$attempt_path"
+        if {$disposition eq "PASS"} {
+            set flips [lindex $parsed 1]
+            set presents [lindex $parsed 2]
+            set hms [clock milliseconds]
+            wf "$outdir/fbstat-$tag.txt" $buf
+            af $fbcsv "$tag accepted_attempt=$attempt flips=$flips presents=$presents host_ms=$hms iso=[iso_now] parser=[lindex $parsed 3] proof=$detail"
+            return [list $flips $presents $hms]
+        }
+        lappend failures "attempt$attempt:$disposition:$detail"
+        if {$disposition eq "HARD" || $tag ne "idle"} {
+            finish 8 "FAIL invalid-fbstat-sample tag=$tag attempt=$attempt disposition=$disposition detail=$detail artifact=$attempt_path"
+        }
+        if {[crash_match]} {
+            finish 4 "FAIL crash-before-fbstat-resample tag=$tag attempt=$attempt"
+        }
+        if {$attempt < $max_attempts} { after 250 }
+    }
+    finish 8 "FAIL fbstat-resample-exhausted tag=$tag attempts=$max_attempts failures=[join $failures ,]"
+}
+
+proc capture_guest_fb {tag} {
+    set path "/yt-$tag.ppm"
+    set command "fbstat ppm-current $path 0 0 1280 800;sync"
+    set buf [require_guest_ok [guest_cmd $command "capture-$tag" 45] "capture-$tag"]
+    set q [regex_quote $path]
+    if {![regexp "fb_ppm_current path=$q screen=1280x800 scanout=1280x800" $buf]} {
+        finish 8 "FAIL guest-fb-capture-missing tag=$tag"
+    }
+}
+
+proc metric_fps {a b counter_index} {
+    set ca [lindex $a $counter_index]
+    set cb [lindex $b $counter_index]
+    set ta [lindex $a 2]
+    set tb [lindex $b 2]
+    if {$ca < 0 || $cb < $ca || $tb <= $ta} { return "NA" }
+    return [expr {double($cb - $ca) / (double($tb - $ta) / 1000.0)}]
+}
+
+proc validate_window_metric {name value a b counter_index} {
+    global window_seconds
+    if {$value eq "NA" || ![string is double -strict $value] ||
+        $value <= 0.0 || $value > 240.0} {
+        finish 8 "FAIL invalid-metric name=$name value=$value"
+    }
+    set elapsed [expr {double([lindex $b 2] - [lindex $a 2]) / 1000.0}]
+    if {$elapsed < (0.8 * $window_seconds) || $elapsed > ($window_seconds + 30.0)} {
+        finish 8 "FAIL invalid-window-duration name=$name elapsed=$elapsed requested=$window_seconds"
+    }
+    return [format "%.2f" $value]
+}
+
+trap {finish 130 "FAIL signal SIGINT"} SIGINT
+trap {finish 143 "FAIL signal SIGTERM"} SIGTERM
+trap {finish 129 "FAIL signal SIGHUP"} SIGHUP
+
+if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
+    foreach contract_case {
+        {1 1 0 1}
+        {1 1 1 1}
+        {0 1 1 0}
+        {1 0 1 0}
+        {1 1 2 0}
+    } {
+        lassign $contract_case mp audio forensic expected
+        set parsed_contract [forensics_arm_contract $mp $audio $forensic]
+        if {[lindex $parsed_contract 0] ne $expected} {
+            fail_preflight "static-check-forensics-arm-contract case=$contract_case parsed=$parsed_contract"
+        }
+    }
+    foreach contract_case {
+        {1 1 0 0 1}
+        {1 1 0 1 1}
+        {0 1 0 1 0}
+        {1 0 0 1 0}
+        {1 1 1 1 0}
+        {1 1 0 2 0}
+    } {
+        lassign $contract_case mp audio forensic probe expected
+        set parsed_contract [media_probe_arm_contract $mp $audio $forensic $probe]
+        if {[lindex $parsed_contract 0] ne $expected} {
+            fail_preflight "static-check-media-probe-arm-contract case=$contract_case parsed=$parsed_contract"
+        }
+    }
+    set static_nonce 0123456789abcdef0123456789abcdef
+    set media_60 [synthetic_media_probe_evidence $static_nonce]
+    set media_60_parsed [parse_media_probe_evidence $media_60 \
+        $static_nonce $media_probe_extension_id]
+    if {![lindex $media_60_parsed 0] || ![lindex $media_60_parsed 1] ||
+        ![string match {reason=pass*} [lindex $media_60_parsed 2]]} {
+        fail_preflight "static-check-media-probe-60fps parsed=$media_60_parsed"
+    }
+    # Exact open-boundary serialization controls: 14.9996 -> 15.000 and
+    # 18.5004 -> 18.500 at the probe's three-decimal median precision. Their
+    # histogram bins remain outside b15_18p5, so neither may source-prove.
+    set media_median_b14 [synthetic_media_probe_evidence $static_nonce \
+        [dict create interval_near60 0 interval_b14_15 1200 \
+            interval_sum_ms 17999.520 median_ms 15.000 \
+            media_delta 17.999520]]
+    set media_median_b18 [synthetic_media_probe_evidence $static_nonce \
+        [dict create interval_near60 0 interval_b18p5_20 1200 \
+            interval_sum_ms 22200.480 median_ms 18.500 \
+            media_delta 22.200480]]
+    foreach boundary_case [list \
+        [list median-lower [dict create median_ms 15.000] 1 pass] \
+        [list median-upper [dict create median_ms 18.500] 1 pass] \
+        [list median-b14-rounds-up [dict create interval_near60 0 \
+            interval_b14_15 1200 interval_sum_ms 17999.520 \
+            median_ms 15.000 media_delta 17.999520] 0 cadence-not-16p7ms] \
+        [list median-b18-rounds-down [dict create interval_near60 0 \
+            interval_b18p5_20 1200 interval_sum_ms 22200.480 \
+            median_ms 18.500 media_delta 22.200480] 0 cadence-not-16p7ms] \
+        [list presented-eight-per-callback [dict create presented_delta 9600] 1 pass] \
+        [list available-zero-callbacks [dict create interval_positive 0 \
+            interval_near60 0 interval_sum_ms 0.000 median_ms -1.000 \
+            media_delta -1.000000 callbacks_override 0] 0 cadence-not-16p7ms] \
+        [list available-one-callback [dict create interval_positive 0 \
+            interval_near60 0 interval_sum_ms 0.000 median_ms -1.000 \
+            media_delta 0.000000] 0 cadence-not-16p7ms]] {
+        lassign $boundary_case name options expected_proven expected_reason
+        set evidence [synthetic_media_probe_evidence $static_nonce $options]
+        set parsed [parse_media_probe_evidence $evidence \
+            $static_nonce $media_probe_extension_id]
+        if {![lindex $parsed 0] || [lindex $parsed 1] != $expected_proven ||
+            ![string match "reason=$expected_reason*" [lindex $parsed 2]]} {
+            fail_preflight "static-check-media-probe-boundary-$name parsed=$parsed"
+        }
+    }
+    set capture_fixture "noise before\nYT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=1\n$media_60\nYT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=1\nnoise after"
+    set captured_fixture [media_probe_capture_payload $capture_fixture $static_nonce]
+    if {![lindex $captured_fixture 0] ||
+        [lindex $captured_fixture 2] ne $media_60} {
+        fail_preflight "static-check-media-probe-capture-bracketing parsed=$captured_fixture"
+    }
+
+    # The live guest helper is intentionally a byte/order-preserving capture
+    # reducer, not a provenance or semantic classifier.  Its grep invocations
+    # must conform to the guest primitive's exact `grep pattern [file ...]`
+    # grammar; the strict host parser above remains the sole source of trust.
+    set production_media_helper [media_probe_guest_helper_script $static_nonce]
+    set helper_grep_lines {}
+    foreach helper_line [split $production_media_helper "\n"] {
+        if {[string first {"$grep_bin"} $helper_line] < 0} { continue }
+        lappend helper_grep_lines $helper_line
+        if {![regexp {^[ \t]*"\$grep_bin"[ \t]+'[A-Za-z0-9 ][^']*'[ \t]+"\$(source_log|marker_tmp|capture_log)"[ \t]+>[ \t]+"\$(marker_tmp|capture_log|done_tmp|failure_tmp)"[ \t]+2>/dev/null$} $helper_line]} {
+            fail_preflight "static-check-media-helper-nonprimitive-grep line=$helper_line"
+        }
+    }
+    if {[llength $helper_grep_lines] != 6 ||
+        [regexp {(^|[ \t])(grep|"\$grep_bin")[ \t]+(-|--)} $production_media_helper] ||
+        [string first $media_probe_extension_id $production_media_helper] >= 0 ||
+        [string first {INFO:CONSOLE} $production_media_helper] >= 0 ||
+        [string first {probe.js} $production_media_helper] >= 0} {
+        fail_preflight "static-check-media-helper-grep-or-trust-contract lines=[llength $helper_grep_lines]"
+    }
+    set process_filter_command [media_probe_process_filter_command]
+    if {$process_filter_command ne {ps 2>/dev/null | grep hrom}} {
+        fail_preflight "static-check-media-process-filter-command command=$process_filter_command"
+    }
+    set static_media_arm_helpers [dict create \
+        /ytlaunch.sh "#!/bin/bash\n$process_filter_command\n" \
+        /fbs.sh {#!/bin/bash
+fbstat 2>&1
+} \
+        /ytrole.sh {#!/bin/bash
+cat /kde-chromium-process-evidence.log
+} \
+        /ytargv.sh {#!/bin/bash
+cat /host-gui-wayland-chromium.log
+} \
+        /ytmediaprobe.sh $production_media_helper]
+    dict for {helper_name helper_script_text} $static_media_arm_helpers {
+        set helper_contract [guest_helper_grep_option_contract \
+            $helper_name $helper_script_text]
+        if {![lindex $helper_contract 0]} {
+            fail_preflight "static-check-media-arm-helper-contract parsed=$helper_contract"
+        }
+    }
+    foreach invalid_grep_helper [list \
+        {ps 2>/dev/null | grep -i hrom} \
+        {if grep -q marker file; then echo bad; fi} \
+        {grep marker file --quiet} \
+        {/bin/grep -E marker file} \
+        {pgrep chrome}] {
+        set invalid_contract [guest_helper_grep_option_contract \
+            invalid $invalid_grep_helper]
+        if {[lindex $invalid_contract 0]} {
+            fail_preflight "static-check-media-arm-invalid-grep-accepted script=$invalid_grep_helper"
+        }
+    }
+    foreach invalid_helper_case [list \
+        [list invalid-nonce {not-a-nonce} {}] \
+        [list zero-polls $static_nonce [dict create max_polls 0]] \
+        [list excessive-polls $static_nonce [dict create max_polls 76]] \
+        [list excessive-sleep $static_nonce [dict create sleep_seconds 2]] \
+        [list unsafe-path $static_nonce [dict create source_log {/tmp/../bad}]] \
+        [list unknown-option $static_nonce [dict create unknown 1]]] {
+        lassign $invalid_helper_case label nonce options
+        if {![catch {media_probe_guest_helper_script $nonce $options}]} {
+            fail_preflight "static-check-media-helper-invalid-accepted-$label"
+        }
+    }
+
+    # Exercise the exact staged guest grep executable directly on the host.
+    # It is an imported x86_64 Linux primitive whose supported interface is
+    # deliberately only `grep pattern [file ...]`.
+    set guest_grep_primitive "$root/build-x86_64/sysroot/bin/grep"
+    if {![file executable $guest_grep_primitive]} {
+        fail_preflight "static-check-media-helper-guest-grep-missing path=$guest_grep_primitive"
+    }
+    set helper_reducer_dir "$outdir/media-helper-reducer"
+    if {[file exists $helper_reducer_dir]} {
+        fail_preflight "static-check-media-helper-reducer-dir-preexists path=$helper_reducer_dir"
+    }
+    file mkdir $helper_reducer_dir
+    set primitive_input "$helper_reducer_dir/primitive-input.log"
+    wf $primitive_input "before\nneedle exact bytes  \nafter\n"
+    if {[catch {exec $guest_grep_primitive {needle exact} $primitive_input} primitive_output] ||
+        $primitive_output ne {needle exact bytes  }} {
+        fail_preflight "static-check-media-helper-guest-grep-control output=$primitive_output"
+    }
+    set process_input "$helper_reducer_dir/process-input.log"
+    set process_chrome {1:1:216:216        0     R  [U]  20   init/chrome}
+    set process_self {1:1:999:999        1     R  [U]  20   bash/grep}
+    set process_thread {1:1:216:251        2     S  [U]  20   chrome/Chrome_IOThread}
+    set process_other {1:1:80:80          3     S  [U]  20   init/plasmashell}
+    wf $process_input "SID:PGID:TGID:TID CPU ST U/K PRI COMMAND\n$process_chrome\n$process_self\n$process_thread\n$process_other\n"
+    if {[catch {exec $guest_grep_primitive hrom $process_input} process_output] ||
+        $process_output ne "$process_chrome\n$process_thread"} {
+        fail_preflight "static-check-media-helper-process-filter-control output=$process_output"
+    }
+
+    set helper_source "$helper_reducer_dir/source.log"
+    set helper_capture "$helper_reducer_dir/capture.log"
+    set helper_temp_prefix "$helper_reducer_dir/work"
+    set helper_script "$helper_reducer_dir/ytmediaprobe.sh"
+    set helper_options [dict create \
+        grep_bin $guest_grep_primitive \
+        source_log $helper_source \
+        capture_log $helper_capture \
+        temp_prefix $helper_temp_prefix \
+        max_polls 2 sleep_seconds 0 do_sync 0]
+    wf $helper_script [media_probe_guest_helper_script $static_nonce $helper_options]
+    if {[catch {exec bash -n $helper_script 2>@1} helper_syntax]} {
+        fail_preflight "static-check-media-helper-bash-syntax error=$helper_syntax"
+    }
+    proc static_media_helper_run {helper source source_text} {
+        wf $source $source_text
+        set caught [catch {exec bash $helper 2>@1} output options]
+        if {$caught} {
+            set errorcode [expr {[dict exists $options -errorcode] ?
+                [dict get $options -errorcode] : "unavailable"}]
+            return [list 0 $output $errorcode]
+        }
+        return [list 1 $output {}]
+    }
+    proc static_media_helper_clean {prefix} {
+        foreach suffix {markers done failure} {
+            if {[file exists "${prefix}.${suffix}"]} { return 0 }
+        }
+        return 1
+    }
+
+    set wrong_nonce fedcba9876543210fedcba9876543210
+    set wrong_media [string map [list $static_nonce $wrong_nonce] $media_60]
+    set complete_input "noise-before\n$wrong_media\n$media_60\nnoise-after\n"
+    set complete_run [static_media_helper_run $helper_script $helper_source $complete_input]
+    set complete_capture [media_probe_capture_payload [lindex $complete_run 1] $static_nonce]
+    set complete_parsed [parse_media_probe_evidence [lindex $complete_capture 2] \
+        $static_nonce $media_probe_extension_id]
+    if {![lindex $complete_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $complete_run 1]] ||
+        ![lindex $complete_capture 0] || [lindex $complete_capture 2] ne $media_60 ||
+        [read_text $helper_capture] ne "$media_60\n" ||
+        ![lindex $complete_parsed 0] || ![lindex $complete_parsed 1] ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-media-helper-complete-envelope run=$complete_run capture=$complete_capture parsed=$complete_parsed"
+    }
+
+    # A later invocation must remove the prior complete capture before
+    # collecting a failure row; old-nonce rows are filtered, while the exact
+    # current row is retained byte-for-byte.
+    set failure_payload "YT_MEDIA_PROBE_V1 kind=failure schema=1 nonce=$static_nonce reason=synthetic"
+    set failure_line [media_probe_console_line $failure_payload 777 $media_probe_extension_id]
+    set failure_run [static_media_helper_run $helper_script $helper_source \
+        "$wrong_media\n$failure_line\n"]
+    set failure_capture [media_probe_capture_payload [lindex $failure_run 1] $static_nonce]
+    if {![lindex $failure_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=failure polls=0" [lindex $failure_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=failure polls=0" [lindex $failure_run 1]] ||
+        ![lindex $failure_capture 0] || [lindex $failure_capture 2] ne $failure_line ||
+        [read_text $helper_capture] ne "$failure_line\n" ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-media-helper-failure run=$failure_run capture=$failure_capture"
+    }
+
+    # A complete envelope for another nonce must neither trigger completion
+    # nor survive in the current capture.  The bounded two-poll reducer also
+    # proves that prior failure/output state is cleaned before polling.
+    set wrong_nonce_run [static_media_helper_run $helper_script $helper_source "$wrong_media\n"]
+    set wrong_nonce_capture [media_probe_capture_payload [lindex $wrong_nonce_run 1] $static_nonce]
+    if {![lindex $wrong_nonce_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=timeout polls=2" [lindex $wrong_nonce_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=timeout polls=2" [lindex $wrong_nonce_run 1]] ||
+        ![lindex $wrong_nonce_capture 0] || [lindex $wrong_nonce_capture 2] ne "" ||
+        [read_text $helper_capture] ne "" ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-media-helper-wrong-nonce run=$wrong_nonce_run capture=$wrong_nonce_capture"
+    }
+
+    # An incomplete current envelope times out but remains intact for the host
+    # parser.  The helper must not silently turn missing rows into trust.
+    set first_media_line [lindex [split $media_60 "\n"] 0]
+    set timeout_run [static_media_helper_run $helper_script $helper_source "$first_media_line\n"]
+    set timeout_capture [media_probe_capture_payload [lindex $timeout_run 1] $static_nonce]
+    if {![lindex $timeout_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=timeout polls=2" [lindex $timeout_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=timeout polls=2" [lindex $timeout_run 1]] ||
+        ![lindex $timeout_capture 0] || [lindex $timeout_capture 2] ne $first_media_line ||
+        [read_text $helper_capture] ne "$first_media_line\n" ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-media-helper-timeout run=$timeout_run capture=$timeout_capture"
+    }
+
+    # Same-nonce stale/injected rows are deliberately preserved, not deduped
+    # or blessed by the helper.  The authoritative host parser must reject the
+    # resulting 25-row envelope even though the coarse helper status is done.
+    set stale_input "$first_media_line\n$media_60\n"
+    set stale_run [static_media_helper_run $helper_script $helper_source $stale_input]
+    set stale_capture [media_probe_capture_payload [lindex $stale_run 1] $static_nonce]
+    set stale_parsed [parse_media_probe_evidence [lindex $stale_capture 2] \
+        $static_nonce $media_probe_extension_id]
+    if {![lindex $stale_run 0] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $stale_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $stale_run 1]] ||
+        ![lindex $stale_capture 0] || [lindex $stale_capture 2] ne [string trim $stale_input] ||
+        [lindex $stale_parsed 0] ||
+        ![static_media_helper_clean $helper_temp_prefix]} {
+        fail_preflight "static-check-media-helper-stale-row-trust run=$stale_run capture=$stale_capture parsed=$stale_parsed"
+    }
+    catch {file delete -force $helper_reducer_dir}
+
+    foreach null_case [list \
+        [list 30fps [dict create interval_positive 600 interval_near60 0 \
+            interval_other30 600 interval_sum_ms 19999.800 median_ms 33.333 \
+            media_delta 19.999800] cadence-not-16p7ms] \
+        [list dimensions [dict create width 1920 height 1080] dimensions-not-1280x720] \
+        [list missing-rvfc [dict create rvfc_available 0 interval_positive 0 \
+            interval_near60 0 interval_sum_ms 0.000 median_ms -1.000 \
+            media_delta -1.000000] rvfc-unavailable] \
+        [list duplicate-adversary [dict create interval_positive 120 \
+            interval_near60 120 interval_duplicates 1080 \
+            interval_sum_ms 2000.040 media_delta 2.000040] cadence-nonpositive] \
+        [list paused [dict create paused 1] playback-not-active] \
+        [list short-progress [dict create time_step 0.100] playback-not-active] \
+        [list presented-insufficient [dict create presented_delta 10 \
+            presented_duplicates 1190] presented-frames-insufficient] \
+        [list media-insufficient [dict create interval_positive 120 \
+            interval_near60 120 interval_sum_ms 2000.040 \
+            media_delta 2.000040] media-delta-insufficient]] {
+        lassign $null_case name options expected_reason
+        set evidence [synthetic_media_probe_evidence $static_nonce $options]
+        set parsed [parse_media_probe_evidence $evidence \
+            $static_nonce $media_probe_extension_id]
+        if {![lindex $parsed 0] || [lindex $parsed 1] ||
+            ![string match "reason=$expected_reason*" [lindex $parsed 2]]} {
+            fail_preflight "static-check-media-probe-null-$name parsed=$parsed"
+        }
+    }
+    set media_missing_optional [synthetic_media_probe_evidence $static_nonce \
+        [dict create optional_apis 0]]
+    set missing_optional_parsed [parse_media_probe_evidence \
+        $media_missing_optional $static_nonce $media_probe_extension_id]
+    if {![lindex $missing_optional_parsed 0] ||
+        ![lindex $missing_optional_parsed 1]} {
+        fail_preflight "static-check-media-probe-missing-optional-api parsed=$missing_optional_parsed"
+    }
+
+    # Exact retained-last-valid media shape: callback 60 is valid, callback 61
+    # has invalid media metadata and retains the callback-60 media time, and
+    # callback 62 is valid but its pair is invalid because callback 61 was not.
+    set media_retained_invalid $media_60
+    set media_retained_invalid [media_probe_mutate_once $media_retained_invalid \
+        {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+        {rvfc_callbacks=61 rvfc_presented=160 rvfc_media_time=1.983353}]
+    set media_retained_invalid [media_probe_mutate_once $media_retained_invalid \
+        {rvfc_callbacks=180 rvfc_presented=279 rvfc_media_time=3.983393} \
+        {rvfc_callbacks=62 rvfc_presented=161 rvfc_media_time=2.016687}]
+    set media_retained_invalid [media_probe_mutate_once $media_retained_invalid \
+        {media_invalid=0 interval_count=1200 interval_valid=1200 interval_invalid=0 interval_positive=1200} \
+        {media_invalid=1 interval_count=1200 interval_valid=1198 interval_invalid=2 interval_positive=1198}]
+    set media_retained_invalid [media_probe_mutate_once $media_retained_invalid \
+        {near60_count=1200 hist=regress:0,duplicate:0,lt8:0,b8_12:0,b12_14:0,b14_15:0,b15_18p5:1200,b18p5_20:0} \
+        {near60_count=1198 hist=regress:0,duplicate:0,lt8:0,b8_12:0,b12_14:0,b14_15:0,b15_18p5:1198,b18p5_20:0}]
+    set retained_invalid_parsed [parse_media_probe_evidence \
+        $media_retained_invalid $static_nonce $media_probe_extension_id]
+    if {![lindex $retained_invalid_parsed 0] ||
+        [lindex $retained_invalid_parsed 1] ||
+        ![string match {reason=cadence-invalid*} \
+            [lindex $retained_invalid_parsed 2]]} {
+        fail_preflight "static-check-media-probe-retained-invalid parsed=$retained_invalid_parsed"
+    }
+
+    proc static_media_probe_reject {label evidence nonce extension_id} {
+        set parsed [parse_media_probe_evidence $evidence $nonce $extension_id]
+        if {[lindex $parsed 0]} {
+            fail_preflight "static-check-media-probe-mutation-accepted-$label parsed=$parsed"
+        }
+    }
+    regexp {"(YT_MEDIA_PROBE_V1 kind=start[^"]+)"} $media_60 -> raw_payload
+    set first_line_end [string first "\n" $media_60]
+    set first_line [string range $media_60 0 [expr {$first_line_end - 1}]]
+    set second_line_start [expr {$first_line_end + 1}]
+    set second_line_end [string first "\n" $media_60 $second_line_start]
+    set second_line [string range $media_60 $second_line_start [expr {$second_line_end - 1}]]
+    set reordered [string replace $media_60 0 [expr {$second_line_end - 1}] "$second_line\n$first_line"]
+    set extra_key [media_probe_mutate_once $media_60 \
+        "status=complete samples=20 rows=24" \
+        "status=complete samples=20 rows=24 extra=1"]
+    set missing_key [media_probe_mutate_once $media_60 \
+        "status=complete samples=20 rows=24" "status=complete rows=24"]
+    set page_source [media_probe_mutate_once $media_60 \
+        "chrome-extension://$media_probe_extension_id/probe.js (100)" \
+        {https://www.youtube.com/watch (100)}]
+    set wrong_source [media_probe_mutate_once $media_60 \
+        "chrome-extension://$media_probe_extension_id/probe.js (100)" \
+        {chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/probe.js (100)}]
+    set line_mismatch [media_probe_mutate_once $media_60 \
+        {INFO:CONSOLE:100]} {INFO:CONSOLE:99]}]
+    set nonce_mismatch [media_probe_mutate_once $media_60 \
+        "kind=start schema=1 nonce=$static_nonce" \
+        "kind=start schema=1 nonce=$wrong_nonce"]
+    set fully_shaped_spoof [media_probe_console_line \
+        "YT_MEDIA_PROBE_V1 kind=done schema=1 nonce=$static_nonce status=complete samples=20 rows=24" \
+        999 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+    set retained_interval_short [media_probe_mutate_once $media_retained_invalid \
+        {interval_valid=1198 interval_invalid=2 interval_positive=1198} \
+        {interval_valid=1199 interval_invalid=1 interval_positive=1199}]
+    set retained_interval_short [media_probe_mutate_once $retained_interval_short \
+        {near60_count=1198 hist=regress:0,duplicate:0,lt8:0,b8_12:0,b12_14:0,b14_15:0,b15_18p5:1198,b18p5_20:0} \
+        {near60_count=1199 hist=regress:0,duplicate:0,lt8:0,b8_12:0,b12_14:0,b14_15:0,b15_18p5:1199,b18p5_20:0}]
+    set median_b14_near_spoof [media_probe_mutate_once $media_median_b14 \
+        {near60_count=0} {near60_count=1200}]
+    set median_b14_near_spoof [media_probe_mutate_once $median_b14_near_spoof \
+        {b14_15:1200,b15_18p5:0} {b14_15:0,b15_18p5:1200}]
+    set median_b18_near_spoof [media_probe_mutate_once $media_median_b18 \
+        {near60_count=0} {near60_count=1200}]
+    set median_b18_near_spoof [media_probe_mutate_once $median_b18_near_spoof \
+        {b15_18p5:0,b18p5_20:1200} {b15_18p5:1200,b18p5_20:0}]
+    foreach mutation [list \
+        [list raw-row $raw_payload] \
+        [list empty ""] \
+        [list page-source $page_source] \
+        [list wrong-extension $wrong_source] \
+        [list mixed-source "$media_60\n$fully_shaped_spoof"] \
+        [list line-number $line_mismatch] \
+        [list nonce $nonce_mismatch] \
+        [list wrong-expected-nonce [string map [list $static_nonce $wrong_nonce] $media_60]] \
+        [list extra-key $extra_key] \
+        [list missing-key $missing_key] \
+        [list row-order $reordered] \
+        [list numeric-nan [media_probe_mutate_once $media_60 \
+            {current_time=1.000} {current_time=NaN}]] \
+        [list numeric-infinity [media_probe_mutate_once $media_60 \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500} \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=Inf}]] \
+        [list range [media_probe_mutate_once $media_60 \
+            {index=1 video_width=1280} {index=1 video_width=9000}]] \
+        [list source [media_probe_mutate_once $media_60 \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted>} \
+            {index=1 video_width=1280 video_height=720 src_id=https://evil.invalid/<path-redacted>}]] \
+        [list quality [media_probe_mutate_once $media_60 \
+            {height_max=720 src_id=blob:https://www.youtube.com/<redacted> quality_selected=hd720} \
+            {height_max=720 src_id=blob:https://www.youtube.com/<redacted> quality_selected=medium}]] \
+        [list currenttime-regress [media_probe_mutate_once $media_60 \
+            {index=2 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=2.000} \
+            {index=2 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=0.500}]] \
+        [list sample-presented-regression [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=158 rvfc_media_time=2.983373}]] \
+        [list sample-presented-duplicate [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=159 rvfc_media_time=2.983373}]] \
+        [list sample-presented-invalid [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=-1 rvfc_media_time=2.983373}]] \
+        [list sample-media-regression [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=1.900000}]] \
+        [list sample-media-duplicate [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=1.983353}]] \
+        [list sample-media-invalid [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=-1.000000}]] \
+        [list sample-change-without-callback [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=60 rvfc_presented=219 rvfc_media_time=2.983373}]] \
+        [list sample-zero-callback-shape [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=60 rvfc_presented=159 rvfc_media_time=1.983353} \
+            {rvfc_callbacks=0 rvfc_presented=159 rvfc_media_time=1.983353}]] \
+        [list sample-presented-jump [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=640 rvfc_media_time=2.983373}]] \
+        [list sample-presented-safe-range [media_probe_mutate_once $media_60 \
+            {rvfc_callbacks=120 rvfc_presented=219 rvfc_media_time=2.983373} \
+            {rvfc_callbacks=120 rvfc_presented=9007199254740992 rvfc_media_time=2.983373}]] \
+        [list histogram-median-impossible [media_probe_mutate_once $media_60 \
+            {median_ms=16.667} {median_ms=1.000}]] \
+        [list presented-upper-bound-plus-one [synthetic_media_probe_evidence \
+            $static_nonce [dict create presented_delta 9601]]] \
+        [list retained-media-invalid-counter-short [media_probe_mutate_once \
+            $media_retained_invalid {media_invalid=1 interval_count=1200} \
+            {media_invalid=0 interval_count=1200}]] \
+        [list retained-media-interval-counter-short $retained_interval_short] \
+        [list median-b14-near-spoof $median_b14_near_spoof] \
+        [list median-b18-near-spoof $median_b18_near_spoof] \
+        [list rvfc-availability [media_probe_mutate_once $media_60 \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=1 vpq_total=1060 vpq_dropped=11 webkit_available=1 webkit_decoded=1060 webkit_dropped=11 rvfc_available=1} \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=1 vpq_total=1060 vpq_dropped=11 webkit_available=1 webkit_decoded=1060 webkit_dropped=11 rvfc_available=0}]] \
+        [list callback-reconcile [media_probe_mutate_once $media_60 \
+            {kind=rvfc_summary schema=1 nonce=0123456789abcdef0123456789abcdef available=1 callbacks=1201} \
+            {kind=rvfc_summary schema=1 nonce=0123456789abcdef0123456789abcdef available=1 callbacks=1202}]] \
+        [list histogram [media_probe_mutate_once $media_60 \
+            {near60_count=1200 hist=regress:0} {near60_count=1199 hist=regress:0}]] \
+        [list presented-delta [media_probe_mutate_once $media_60 \
+            {presented_delta=1200 presented_invalid=0} \
+            {presented_delta=1199 presented_invalid=0}]] \
+        [list media-delta [media_probe_mutate_once $media_60 \
+            {media_delta=20.000400 media_invalid=0} \
+            {media_delta=19.000400 media_invalid=0}]] \
+        [list vpq-delta [media_probe_mutate_once $media_60 \
+            {vpq_total_delta=1140} {vpq_total_delta=1139}]] \
+        [list webkit-delta [media_probe_mutate_once $media_60 \
+            {webkit_decoded_delta=1140} {webkit_decoded_delta=1139}]] \
+        [list longtask [media_probe_mutate_once $media_60 \
+            {kind=summary schema=1 nonce=0123456789abcdef0123456789abcdef samples=20 width_min=1280 width_max=1280 height_min=720 height_max=720 src_id=blob:https://www.youtube.com/<redacted> quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 vpq_available=1 vpq_total_first=1060 vpq_total_last=2200 vpq_total_delta=1140 vpq_dropped_first=11 vpq_dropped_last=30 vpq_dropped_delta=19 webkit_available=1 webkit_decoded_first=1060 webkit_decoded_last=2200 webkit_decoded_delta=1140 webkit_dropped_first=11 webkit_dropped_last=30 webkit_dropped_delta=19 longtask_available=1 longtask_count=4 longtask_duration_ms=120.000} \
+            {kind=summary schema=1 nonce=0123456789abcdef0123456789abcdef samples=20 width_min=1280 width_max=1280 height_min=720 height_max=720 src_id=blob:https://www.youtube.com/<redacted> quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 vpq_available=1 vpq_total_first=1060 vpq_total_last=2200 vpq_total_delta=1140 vpq_dropped_first=11 vpq_dropped_last=30 vpq_dropped_delta=19 webkit_available=1 webkit_decoded_first=1060 webkit_decoded_last=2200 webkit_decoded_delta=1140 webkit_dropped_first=11 webkit_dropped_last=30 webkit_dropped_delta=19 longtask_available=1 longtask_count=5 longtask_duration_ms=120.000}]] \
+        [list unavailable-shape [media_probe_mutate_once $media_missing_optional \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=0 vpq_total=-1} \
+            {index=1 video_width=1280 video_height=720 src_id=blob:https://www.youtube.com/<redacted> current_time=1.000 playback_rate=1.000 paused=0 ended=0 quality_selected=hd720 quality_available=hd1080,hd720,large quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=0 vpq_total=0}]]] {
+        lassign $mutation label evidence
+        static_media_probe_reject $label $evidence $static_nonce $media_probe_extension_id
+    }
+    set listing_synthetic {
+/2/040755/0/0/.//
+/17/100644/0/0/chromium-egl-trace.412.log/2048/
+/18/100644/0/0/chromium-egl-trace.509.log/4096/
+/19/100644/0/0/chromium-egl-trace.bad.log/128/
+}
+    set listing_paths [parse_guest_trace_listing $listing_synthetic]
+    if {$listing_paths ne {/chromium-egl-trace.412.log /chromium-egl-trace.509.log}} {
+        fail_preflight "static-check-forensic-artifact-enumeration paths=$listing_paths"
+    }
+    set manifest_synthetic "trace=/chromium-egl-trace.509.log rows=12\ntrace=/chromium-egl-trace.412.log rows=32\n"
+    if {[parse_forensic_manifest_paths $manifest_synthetic] ne $listing_paths} {
+        fail_preflight "static-check-forensic-manifest-enumeration"
+    }
+    set provider_synthetic {chromium_egl_trace phase=provider pid=412 first_call=eglGetDisplay provider_addr=0x1 provider_path="/lib/libEGL.so.1" provider_symbol="eglGetDisplay" provider_base=0x2 mapped_provider_path="/lib/libEGL.so.1.0.0" map_line="1000-2000 r-xp /lib/libEGL.so.1.0.0" map_line_truncated=0 maps_any_line_truncated=0 map_found=1 maps_stream_status=truncated maps_total_bytes=1048576 maps_cap_bytes=1048576 egl_reserved_row=1 egl_row_cap=32}
+    set cap_preload "$provider_synthetic\n"
+    for {set row 2} {$row <= 32} {incr row} {
+        append cap_preload "chromium_egl_trace phase=eglGetError pid=412 ret=0x3000\n"
+    }
+    set cap_mesa ""
+    for {set row 1} {$row <= 16} {incr row} {
+        append cap_mesa "xv6_mesa_egl_context_trace phase=context_failure pid=412 row=$row cap=16 bound_api=0x30a0 attribs=\"EGL_NONE(0x3038)\"\n"
+    }
+    set cap_pass [forensic_trace_caps [list $cap_preload] $cap_mesa]
+    if {![lindex $cap_pass 0]} {
+        fail_preflight "static-check-forensic-cap-pass parsed=$cap_pass"
+    }
+    set cap_preload_over "$cap_preload\nchromium_egl_trace phase=eglGetError pid=412 ret=0x3000\n"
+    if {[lindex [forensic_trace_caps [list $cap_preload_over] $cap_mesa] 0]} {
+        fail_preflight "static-check-preload-cap-overflow-accepted"
+    }
+    append cap_mesa "xv6_mesa_egl_context_trace phase=context_failure pid=412 row=17 cap=16 bound_api=0x30a0 attribs=\"EGL_NONE(0x3038)\"\n"
+    if {[lindex [forensic_trace_caps [list $cap_preload] $cap_mesa] 0]} {
+        fail_preflight "static-check-mesa-cap-overflow-accepted"
+    }
+    set provider_paths [forensic_provider_paths [list $cap_preload]]
+    if {$provider_paths ne {/lib/libEGL.so.1 /lib/libEGL.so.1.0.0}} {
+        fail_preflight "static-check-provider-paths parsed=$provider_paths"
+    }
+    set provider_contract [forensic_provider_contract [list $cap_preload]]
+    if {![lindex $provider_contract 0]} {
+        fail_preflight "static-check-provider-contract parsed=$provider_contract"
+    }
+    set provider_bad_total [string map \
+        {maps_total_bytes=1048576 maps_total_bytes=1048575} \
+        $provider_synthetic]
+    if {[lindex [forensic_provider_contract [list $provider_bad_total]] 0]} {
+        fail_preflight "static-check-provider-truncation-total-accepted"
+    }
+    set provider_bad_status [string map \
+        {maps_stream_status=truncated maps_stream_status=unavailable} \
+        $provider_synthetic]
+    if {[lindex [forensic_provider_contract [list $provider_bad_status]] 0]} {
+        fail_preflight "static-check-provider-unavailable-status-accepted"
+    }
+    set provider_sha [string repeat a 64]
+    set build_id_valid "provider_guest=/lib/libEGL.so resolved=/lib/libEGL.so.1 host=/tmp/libEGL.so size=4096 sha256=$provider_sha build_id=474e8b157e8629734b76eebf9ca5383e44b56252"
+    if {![lindex [provider_artifact_build_id_contract $build_id_valid] 0]} {
+        fail_preflight "static-check-valid-provider-build-id-rejected"
+    }
+    foreach invalid_build_id {
+        unavailable
+        xyz
+        0123456789abcde
+        0123456789abcdef0
+    } {
+        set invalid_manifest "provider_guest=/lib/libEGL.so resolved=/lib/libEGL.so.1 host=/tmp/libEGL.so size=4096 sha256=$provider_sha build_id=$invalid_build_id"
+        if {[lindex [provider_artifact_build_id_contract $invalid_manifest] 0]} {
+            fail_preflight "static-check-invalid-provider-build-id-accepted-$invalid_build_id"
+        }
+    }
+    set attr_preload {chromium_egl_trace phase=eglCreateContext_enter pid=412 dpy=0x1 config=0x2 share=(nil) attribs="EGL_CONTEXT_OPENGL_NO_ERROR_KHR(0x31b3)=0x1,EGL_CONTEXT_CLIENT_VERSION(0x3098)=0x3,EGL_NONE"}
+    set attr_mesa {xv6_mesa_egl_context_trace phase=context_failure pid=412 row=1 cap=16 first_rejected_attr=0x31b3 attribs="0x31b3=0x1,0x3098=0x3,EGL_NONE(0x3038)"}
+    set attr_contract [forensic_attr_format_contract $attr_preload $attr_mesa]
+    if {![lindex $attr_contract 0]} {
+        fail_preflight "static-check-forensic-attr-format parsed=$attr_contract"
+    }
+    # Expect/forkpty already creates a distinct session/process-group leader.
+    # Directly execing the launcher preserves one owned PID through EOF/wait;
+    # wrapping this leader in plain util-linux setsid would fork and break that
+    # identity, which the negative contract below rejects.
+    set ownership_payload {pgid=$(ps -o pgid= -p $$ | tr -d ' '); sid=$(ps -o sid= -p $$ | tr -d ' '); printf 'STATIC_OWNER pid=%s pgid=%s sid=%s\n' "$$" "$pgid" "$sid"; sleep 0.05; printf 'STATIC_OWNER_DONE\n'}
+    set ownership_old_timeout $timeout
+    set timeout 3
+    log_user 0
+    spawn -noecho sh -c $ownership_payload
+    set ownership_leader [exp_pid]
+    set ownership_child -1
+    set ownership_pgid -1
+    set ownership_sid -1
+    set ownership_done 0
+    set ownership_timed_out 0
+    expect {
+        -re {STATIC_OWNER pid=([0-9]+) pgid=([0-9]+) sid=([0-9]+)} {
+            set ownership_child $expect_out(1,string)
+            set ownership_pgid $expect_out(2,string)
+            set ownership_sid $expect_out(3,string)
+            exp_continue
+        }
+        -re {STATIC_OWNER_DONE} {
+            set ownership_done 1
+            exp_continue
+        }
+        eof {}
+        timeout { set ownership_timed_out 1 }
+    }
+    set ownership_wait [wait]
+    log_user 1
+    set timeout $ownership_old_timeout
+    set ownership_contract [qemu_spawn_ownership_contract \
+        $ownership_leader $ownership_child $ownership_pgid $ownership_sid \
+        [expr {$ownership_done && !$ownership_timed_out}] \
+        [lindex $ownership_wait 0] [lindex $ownership_wait 3]]
+    if {![lindex $ownership_contract 0]} {
+        fail_preflight "static-check-direct-spawn-ownership parsed=$ownership_contract wait=$ownership_wait"
+    }
+    set ownership_bad [qemu_spawn_ownership_contract 100 101 101 101 0 100 0]
+    if {[lindex $ownership_bad 0]} {
+        fail_preflight "static-check-forked-wrapper-ownership-accepted"
+    }
+
+    set freshness_path "$outdir/debugcon-freshness-reducer.log"
+    wf $freshness_path "stale-prior-run\n"
+    file mtime $freshness_path [expr {[clock seconds] - 60}]
+    set freshness_prepare [prepare_debugcon_path $freshness_path]
+    if {![lindex $freshness_prepare 0] || [file exists $freshness_path]} {
+        fail_preflight "static-check-debugcon-preparation parsed=$freshness_prepare"
+    }
+    set freshness_epoch [lindex $freshness_prepare 1]
+    set freshness_missing [debugcon_freshness $freshness_path 1 $freshness_epoch]
+    if {[lindex $freshness_missing 0] ne "missing"} {
+        fail_preflight "static-check-debugcon-missing parsed=$freshness_missing"
+    }
+    wf $freshness_path "current-run\n"
+    file mtime $freshness_path $freshness_epoch
+    set freshness_current [debugcon_freshness $freshness_path 1 $freshness_epoch]
+    if {[lindex $freshness_current 0] ne "present-current"} {
+        fail_preflight "static-check-debugcon-current parsed=$freshness_current"
+    }
+    file mtime $freshness_path [expr {$freshness_epoch - 1}]
+    set freshness_stale [debugcon_freshness $freshness_path 1 $freshness_epoch]
+    if {[lindex $freshness_stale 0] ne "stale"} {
+        fail_preflight "static-check-debugcon-stale parsed=$freshness_stale"
+    }
+    wf $freshness_path ""
+    file mtime $freshness_path $freshness_epoch
+    set freshness_empty [debugcon_freshness $freshness_path 1 $freshness_epoch]
+    if {[lindex $freshness_empty 0] ne "empty-current"} {
+        fail_preflight "static-check-debugcon-empty parsed=$freshness_empty"
+    }
+    set freshness_unprepared [debugcon_freshness $freshness_path 0 $freshness_epoch]
+    if {[lindex $freshness_unprepared 0] ne "unprepared"} {
+        fail_preflight "static-check-debugcon-unprepared parsed=$freshness_unprepared"
+    }
+    catch {file delete -force $freshness_path}
+
+    # Reducer for guest_cmd's interpolated Expect regex.  Constructing this
+    # pattern must leave `[0-9]` as regex syntax, not invoke a Tcl command.
+    set marker_reducer_regex [guest_marker_regex YTREDUCERC7]
+    if {![regexp $marker_reducer_regex {prefix YTREDUCERC7:42 suffix} -> marker_reducer_rc] ||
+        $marker_reducer_rc ne "42" ||
+        [regexp $marker_reducer_regex {prefix YTREDUCERC7:notnumeric suffix}]} {
+        fail_preflight "static-check-guest-marker-regex pattern=$marker_reducer_regex"
+    }
+    proc static_guest_marker_expect {pattern payload} {
+        global timeout
+        set old_timeout $timeout
+        set timeout 2
+        set matched ""
+        log_user 0
+        spawn -noecho sh -c {printf '%s\n' "$1"} sh $payload
+        expect {
+            -re $pattern { set matched $expect_out(1,string) }
+            eof {}
+            timeout {}
+        }
+        catch {wait}
+        log_user 1
+        set timeout $old_timeout
+        return $matched
+    }
+    set marker_expect_numeric [static_guest_marker_expect $marker_reducer_regex {prefix YTREDUCERC7:73 suffix}]
+    set marker_expect_nonnumeric [static_guest_marker_expect $marker_reducer_regex {prefix YTREDUCERC7:notnumeric suffix}]
+    if {$marker_expect_numeric ne "73" || $marker_expect_nonnumeric ne ""} {
+        fail_preflight "static-check-guest-marker-expect numeric=$marker_expect_numeric nonnumeric=$marker_expect_nonnumeric"
+    }
+
+    # Exact relevant t2 rows from completed C1.  FB_GPU_GET_STATS is one locked
+    # snapshot: generic bo_presents counts admitted requests, while the
+    # virgl-specific counter counts later successful virgl presentations.
+    # Virgl is canonical under the backend proof, so 6199/6198 must parse as
+    # 6198 rather than conflict or max-select 6199.
+    set c1_t2_fbstat_excerpt {
+backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl
+backend_opengl_submit 1
+backend_opengl_submit_gate open
+backend_virgl_opengl 1
+opengl_submit_backend_separation_matrix backend=virgl dxg_transport=0 d3dkmt=0 virgl_opengl=1 backend_opengl_submit=1 allowed_submit_backend=virgl hyperv_dxg_transport_is_submit=0 hyperv_d3dkmt_is_submit=0 kvm_virgl_submit_allowed=1 native_present_credit=0 opengl_submit_credit=1 status=PASS
+d3d12_native_completion_not_kms_matrix generic_display_last_complete=6198 kms_vblank_display_correlated=1 kms_vblank_source_software_display=1 kms_vblank_source_native_hw=0 kms_atomic_out_fence_display_correlated=0 kms_atomic_out_fence_software_scanout_correlated=0 kms_page_flip_events=6197 page_flip_events_software_blit=6197 page_flip_events_native_hw=0 display_wait_is_native=0 kms_generic_display_credit=0 native_present_credit=0 opengl_submit_credit=0 status=PASS
+bo_presents 6199
+virgl_bo_presents 6198
+}
+    set c1_t2_parsed [parse_fbstat_counters $c1_t2_fbstat_excerpt]
+    if {![lindex $c1_t2_parsed 0] || [lindex $c1_t2_parsed 1] ne "6197" ||
+        [lindex $c1_t2_parsed 2] ne "6198" ||
+        ![string match {*generic_present_diagnostic=*6199*} [lindex $c1_t2_parsed 3]]} {
+        fail_preflight "static-check-c1-t2-nonatomic-drift parsed=$c1_t2_parsed"
+    }
+    set c1_same_value [string map [list {bo_presents 6199} {bo_presents 6198}] $c1_t2_fbstat_excerpt]
+    set c1_same_parsed [parse_fbstat_counters $c1_same_value]
+    if {![lindex $c1_same_parsed 0] || [lindex $c1_same_parsed 2] ne "6198"} {
+        fail_preflight "static-check-c1-same-value parsed=$c1_same_parsed"
+    }
+    set c1_no_generic [string map [list {bo_presents 6199} {old_bo_presents 6199}] $c1_t2_fbstat_excerpt]
+    set c1_no_generic_parsed [parse_fbstat_counters $c1_no_generic]
+    if {![lindex $c1_no_generic_parsed 0] || [lindex $c1_no_generic_parsed 2] ne "6198" ||
+        ![string match {*generic_present_diagnostic=none} [lindex $c1_no_generic_parsed 3]]} {
+        fail_preflight "static-check-c1-no-generic-counter parsed=$c1_no_generic_parsed"
+    }
+    set c1_same_authoritative [parse_fbstat_counters "$c1_t2_fbstat_excerpt\nvirgl_bo_presents 6198\n"]
+    if {[lindex $c1_same_authoritative 0] ||
+        ![string match {duplicate-authoritative-virgl_bo_presents*} [lindex $c1_same_authoritative 3]]} {
+        fail_preflight "static-check-c1-same-authoritative-duplicate-accepted parsed=$c1_same_authoritative"
+    }
+    set c1_authoritative_conflict [parse_fbstat_counters "$c1_t2_fbstat_excerpt\nvirgl_bo_presents 6200\n"]
+    if {[lindex $c1_authoritative_conflict 0] ||
+        ![string match {duplicate-authoritative-virgl_bo_presents*} [lindex $c1_authoritative_conflict 3]]} {
+        fail_preflight "static-check-c1-authoritative-conflict parsed=$c1_authoritative_conflict"
+    }
+    set c1_missing_authoritative [string map [list {virgl_bo_presents 6198} {old_virgl_bo_presents 6198}] $c1_t2_fbstat_excerpt]
+    set c1_missing_authoritative_parsed [parse_fbstat_counters $c1_missing_authoritative]
+    if {[lindex $c1_missing_authoritative_parsed 0] ||
+        ![string match {missing-virgl_bo_presents*} [lindex $c1_missing_authoritative_parsed 3]]} {
+        fail_preflight "static-check-c1-authoritative-missing parsed=$c1_missing_authoritative_parsed"
+    }
+    set c1_wrong_backend [string map [list \
+        {backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl} \
+        {backend bochs flags 0x0 renderer software framebuffer}] $c1_t2_fbstat_excerpt]
+    set c1_wrong_backend_parsed [parse_fbstat_counters $c1_wrong_backend]
+    if {[lindex $c1_wrong_backend_parsed 0] ||
+        ![string match {wrong-backend*} [lindex $c1_wrong_backend_parsed 3]]} {
+        fail_preflight "static-check-c1-wrong-backend parsed=$c1_wrong_backend_parsed"
+    }
+    set c1_missing_backend [string map [list \
+        {backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl} \
+        {old_backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl}] $c1_t2_fbstat_excerpt]
+    set c1_missing_backend_parsed [parse_fbstat_counters $c1_missing_backend]
+    if {[lindex $c1_missing_backend_parsed 0] ||
+        ![string match {missing-backend*} [lindex $c1_missing_backend_parsed 3]]} {
+        fail_preflight "static-check-c1-missing-backend parsed=$c1_missing_backend_parsed"
+    }
+    set c1_missing_flip [string map [list {kms_page_flip_events=6197} {old_kms_page_flip_events=6197}] $c1_t2_fbstat_excerpt]
+    set c1_missing_flip_parsed [parse_fbstat_counters $c1_missing_flip]
+    if {[lindex $c1_missing_flip_parsed 0] ||
+        ![string match {missing-kms_page_flip_events*} [lindex $c1_missing_flip_parsed 3]]} {
+        fail_preflight "static-check-c1-flip-missing parsed=$c1_missing_flip_parsed"
+    }
+    set c1_flip_conflict [parse_fbstat_counters "$c1_t2_fbstat_excerpt\nd3d12_native_completion_not_kms_matrix kms_page_flip_events=6199\n"]
+    if {[lindex $c1_flip_conflict 0] ||
+        ![string match {conflicting-kms_page_flip_events*} [lindex $c1_flip_conflict 3]]} {
+        fail_preflight "static-check-c1-flip-conflict parsed=$c1_flip_conflict"
+    }
+
+    # Exact relevant shape from T1 idle attempt 1: scalar/backend rows were
+    # clean, but an asynchronous virtio log split the separation matrix.  The
+    # continuation must never be spliced back onto the candidate row.
+    set t1_corrupt_fbstat_excerpt {
+backend virgl flags 0x27 renderer OpenGL via virtio-gpu virgl
+backend_opengl_submit 1
+backend_opengl_submit_gate open
+backend_virgl_opengl 1
+opengl_submit_backend_separation_matrix backend=virgl dxg_t[r4an2s2p1o5rt4=704 1d134]d kvmit=r0t ivoi_rggl_poup: enpgalge-f=1 lbiapck epnrde_soepnetn grle_ssuoubrmciet==1 al4lo wesdi_szue=1b280mxi8t0_b0a caklerneda=dvy_biorugln hdy=p0e rv_drxegg_itsrtanesrpeodr=t1_i s_rseubbimnidt==00  sheytp_ecrovu_nd3dtk=m3 ats_yins_cs_uscbamniotu=t0= 0kv
+m_virgl_submit_allowed=1 native_present_credit=0 opengl_submit_credit=1 status=PASS
+d3d12_native_completion_not_kms_matrix generic_display_last_complete=6 kms_vblank_display_correlated=1 kms_vblank_source_software_display=1 kms_vblank_source_native_hw=0 kms_atomic_out_fence_display_correlated=0 kms_atomic_out_fence_software_scanout_correlated=0 kms_page_flip_events=5 page_flip_events_software_blit=5 page_flip_events_native_hw=0 display_wait_is_native=0 kms_generic_display_credit=0 native_present_credit=0 opengl_submit_credit=0 status=PASS
+virgl_bo_presents 6
+}
+    set t1_corrupt_classified [classify_fbstat_sample $t1_corrupt_fbstat_excerpt 1]
+    if {[lindex $t1_corrupt_classified 0] ne "RETRY" ||
+        ![string match {corrupt-opengl-submit-backend-separation-matrix*} [lindex $t1_corrupt_classified 2]]} {
+        fail_preflight "static-check-t1-corrupt-classification parsed=$t1_corrupt_classified"
+    }
+    set t1_retry_selected [select_prelaunch_fbstat_attempt [list $t1_corrupt_fbstat_excerpt $c1_t2_fbstat_excerpt]]
+    if {![lindex $t1_retry_selected 0] || [lindex $t1_retry_selected 1] ne "2" ||
+        [lindex [lindex $t1_retry_selected 2] 2] ne "6198"} {
+        fail_preflight "static-check-t1-corrupt-then-clean-retry parsed=$t1_retry_selected"
+    }
+    set t1_all_corrupt [select_prelaunch_fbstat_attempt [list \
+        $t1_corrupt_fbstat_excerpt $t1_corrupt_fbstat_excerpt $t1_corrupt_fbstat_excerpt]]
+    if {[lindex $t1_all_corrupt 0] ||
+        ![string match {retry-exhausted*} [lindex $t1_all_corrupt 3]]} {
+        fail_preflight "static-check-t1-all-corrupt-accepted parsed=$t1_all_corrupt"
+    }
+    set inconsistent_separation [string map [list \
+        {opengl_submit_credit=1 status=PASS} \
+        {opengl_submit_credit=0 status=PASS}] $c1_t2_fbstat_excerpt]
+    set inconsistent_selected [select_prelaunch_fbstat_attempt [list $inconsistent_separation $c1_t2_fbstat_excerpt]]
+    if {[lindex $inconsistent_selected 0] ||
+        ![string match {hard-reject*inconsistent-opengl-submit-backend-separation-matrix*} [lindex $inconsistent_selected 3]]} {
+        fail_preflight "static-check-single-inconsistent-matrix-accepted parsed=$inconsistent_selected"
+    }
+    set duplicate_separation "$c1_t2_fbstat_excerpt\nopengl_submit_backend_separation_matrix backend=virgl dxg_transport=0 d3dkmt=0 virgl_opengl=1 backend_opengl_submit=1 allowed_submit_backend=virgl hyperv_dxg_transport_is_submit=0 hyperv_d3dkmt_is_submit=0 kvm_virgl_submit_allowed=1 native_present_credit=0 opengl_submit_credit=1 status=PASS\n"
+    set duplicate_separation_classified [classify_fbstat_sample $duplicate_separation 1]
+    if {[lindex $duplicate_separation_classified 0] ne "HARD" ||
+        ![string match {*duplicate-opengl-submit-backend-separation-matrix*} [lindex $duplicate_separation_classified 2]]} {
+        fail_preflight "static-check-duplicate-separation-matrix parsed=$duplicate_separation_classified"
+    }
+    set mixed_missing_flip_duplicate_authority [string map [list \
+        {kms_page_flip_events=6197} {old_kms_page_flip_events=6197}] $c1_t2_fbstat_excerpt]
+    append mixed_missing_flip_duplicate_authority "\nvirgl_bo_presents 6198\n"
+    set mixed_authority_classified [classify_fbstat_sample $mixed_missing_flip_duplicate_authority 1]
+    if {[lindex $mixed_authority_classified 0] ne "HARD" ||
+        ![string match {*duplicate-authoritative-virgl_bo_presents*} [lindex $mixed_authority_classified 2]]} {
+        fail_preflight "static-check-missing-flip-masked-duplicate-authority parsed=$mixed_authority_classified"
+    }
+    set mixed_missing_matrix_conflicting_flip [string map [list \
+        {opengl_submit_backend_separation_matrix backend=virgl} \
+        {old_opengl_submit_backend_separation_matrix backend=virgl}] $c1_t2_fbstat_excerpt]
+    append mixed_missing_matrix_conflicting_flip "\nd3d12_native_completion_not_kms_matrix kms_page_flip_events=6199\n"
+    set mixed_flip_classified [classify_fbstat_sample $mixed_missing_matrix_conflicting_flip 1]
+    if {[lindex $mixed_flip_classified 0] ne "HARD" ||
+        ![string match {*conflicting-kms_page_flip_events*} [lindex $mixed_flip_classified 2]]} {
+        fail_preflight "static-check-missing-matrix-masked-conflicting-flip parsed=$mixed_flip_classified"
+    }
+    set mixed_missing_flip_fatal "$mixed_missing_flip_duplicate_authority\nPANIC synthetic-static-marker\n"
+    set mixed_fatal_classified [classify_fbstat_sample $mixed_missing_flip_fatal 1]
+    if {[lindex $mixed_fatal_classified 0] ne "HARD" ||
+        ![string match {*fatal-runtime-marker*} [lindex $mixed_fatal_classified 2]]} {
+        fail_preflight "static-check-missing-proof-masked-fatal-marker parsed=$mixed_fatal_classified"
+    }
+
+    set redirected_launcher_log {
+wayland-chromium-launcher: starting argc=2
+wayland-chromium-launcher: launch_marker pid=412
+wayland-chromium-launcher: argv_17="--enable-logging=stderr"
+wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome-linux64/chrome
+}
+    set redirected_contract [chromium_redirect_log_contract $redirected_launcher_log "" ""]
+    if {![lindex $redirected_contract 0]} {
+        fail_preflight "static-check-redirected-log-contract parsed=$redirected_contract"
+    }
+    set missing_log_contract [chromium_redirect_log_contract "" "" ""]
+    if {[lindex $missing_log_contract 0] ||
+        ![string match {missing-authoritative-launcher-log*} [lindex $missing_log_contract 1]]} {
+        fail_preflight "static-check-all-diagnostic-logs-missing parsed=$missing_log_contract"
+    }
+    set optional_log_contract [chromium_redirect_log_contract \
+        $redirected_launcher_log {optional chrome diagnostic line} ""]
+    if {![lindex $optional_log_contract 0] ||
+        ![string match {*chrome_log=nonempty*} [lindex $optional_log_contract 1]]} {
+        fail_preflight "static-check-optional-chrome-log parsed=$optional_log_contract"
+    }
+    set optional_without_authority [chromium_redirect_log_contract \
+        "" {optional chrome diagnostic line} {outer stdio diagnostic line}]
+    if {[lindex $optional_without_authority 0]} {
+        fail_preflight "static-check-optional-logs-without-authority parsed=$optional_without_authority"
+    }
+    set launcher_marker_evidence [chromium_diagnostic_evidence "" \
+        "$redirected_launcher_log\nEGL_BAD_ATTRIBUTE\nGoogle SwiftShader\nGPU process exited unexpectedly" \
+        "" "" "" ""]
+    if {![gpu_init_failure_marker $launcher_marker_evidence] ||
+        ![software_marker $launcher_marker_evidence] ||
+        ![fatal_runtime_marker $launcher_marker_evidence]} {
+        fail_preflight "static-check-authoritative-launcher-marker-scan"
+    }
+    set optional_marker_evidence [chromium_diagnostic_evidence "" \
+        $redirected_launcher_log {EGL_BAD_ATTRIBUTE} "" "" ""]
+    if {![gpu_init_failure_marker $optional_marker_evidence]} {
+        fail_preflight "static-check-optional-log-marker-scan"
+    }
+    set synthetic {wayland-chromium-launcher: argv_17="--disable-audio-output"}
+    if {![regexp "wayland-chromium-launcher: argv_\\d+=\"[regex_quote --disable-audio-output]\"" $synthetic]} {
+        fail_preflight "static-check-launcher-regex"
+    }
+    if {![software_marker {OpenGL renderer string: llvmpipe}] ||
+        ![software_marker {GL_RENDERER=Google SwiftShader}] ||
+        ![software_marker {ANGLE renderer selected software backend}] ||
+        [software_marker {backend virgl renderer OpenGL via virtio-gpu virgl}]} {
+        fail_preflight "static-check-software-marker"
+    }
+    foreach signature {
+        {eglCreateContext ES 3.0 failed with error EGL_BAD_ATTRIBUTE}
+        {No suitable EGL configs found for initialization.}
+        {Fallback eglCreateContext ES 2.0 failed with error EGL_BAD_ATTRIBUTE}
+        {Exiting GPU process due to errors during initialization}
+    } {
+        if {![gpu_init_failure_marker $signature]} {
+            fail_preflight "static-check-gpu-init-marker signature=$signature"
+        }
+    }
+    set role_synthetic {kde_chromium_process_evidence fast phase=fast-001 pid=412 ppid=300 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process --use-gl=angle" role_source="type_arg" type_arg="gpu-process" argv0="exe" use_gl="angle"}
+    if {![chromium_gpu_role_marker $role_synthetic]} {
+        fail_preflight "static-check-semantic-gpu-role"
+    }
+
+    # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
+    # debugfs write emits both its banner and "Allocated inode" on stderr;
+    # the stage must accept that process status, then independently prove the
+    # inode mode and bytes.  Bogus guest/image paths must still fail through
+    # those semantic postconditions even though this debugfs version returns
+    # zero for several command-level errors.
+    if {[auto_execok mke2fs] eq ""} {
+        fail_preflight "static-check-host-tool-missing tool=mke2fs"
+    }
+    set reducer_image "$outdir/debugfs-stderr-reducer.img"
+    set reducer_host "$outdir/debugfs-stderr-reducer.sh"
+    set reducer_missing_image "$outdir/debugfs-definitely-missing.img"
+    catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    set reducer_fh [open $reducer_image wb]
+    seek $reducer_fh [expr {8 * 1024 * 1024 - 1}] start
+    puts -nonewline $reducer_fh "\0"
+    close $reducer_fh
+    wf $reducer_host "#!/bin/bash\necho debugfs-stderr-reducer\n"
+    if {[catch {exec mke2fs -q -t ext2 -F $reducer_image 2>@1} reducer_mkfs]} {
+        fail_preflight "static-check-debugfs-reducer-mkfs error=$reducer_mkfs"
+    }
+    set reducer_stage [debugfs_stage_file $reducer_image $reducer_host /reducer.sh static-valid]
+    if {![lindex $reducer_stage 0]} {
+        fail_preflight "static-check-debugfs-rc0-stderr-stage error=[lindex $reducer_stage 1]"
+    }
+    set reducer_log [read_text $debugfs_log]
+    if {![regexp {debugfs [0-9][^\r\n]*} $reducer_log] ||
+        ![regexp {Allocated inode:[ \t]*[1-9][0-9]*} $reducer_log]} {
+        fail_preflight "static-check-debugfs-stderr-not-captured"
+    }
+    set reducer_bad_path [debugfs_stage_file $reducer_image $reducer_host /missing-parent/reducer.sh static-bogus-path]
+    if {[lindex $reducer_bad_path 0]} {
+        fail_preflight "static-check-debugfs-bogus-path-accepted"
+    }
+    set reducer_bad_image [debugfs_stage_file $reducer_missing_image $reducer_host /reducer.sh static-bogus-image]
+    if {[lindex $reducer_bad_image 0]} {
+        fail_preflight "static-check-debugfs-bogus-image-accepted"
+    }
+    catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe forensic_arm_contract=PASS media_arm_contract=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    exit 0
+}
+
+af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe"
+af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=$egl_forensics fps_claim_gated_by_media_source=$media_probe"
+wf "$outdir/chromium-url.txt" "$url\n"
+wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
+
+exec cp --reflink=auto --sparse=always -- $fsimg $scratch
+if {$media_probe eq "1"} {
+    set image_assets [verify_media_probe_image_assets $scratch]
+    if {![lindex $image_assets 0]} {
+        finish 8 "FAIL media-probe-image-assets [lindex $image_assets 1] no_fps_claim=1"
+    }
+    af $metricsf "media_probe_image_assets=PASS [lindex $image_assets 1]"
+}
+
+# Stage short helpers offline.  Serial input only invokes their short paths;
+# command bodies and URLs never traverse the fragile UART input path.
+set launch_host "$outdir/ytlaunch.sh"
+set fh [open $launch_host w]
+puts $fh "#!/bin/bash"
+puts $fh "set +e"
+puts $fh "echo YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=$disable_audio"
+puts $fh "if ! mkdir /tmp/yt-presentfps-launch.lock 2>/dev/null; then echo YT_LAUNCH_DUP; exit 0; fi"
+puts $fh "rm -f /host-gui-wayland-chromium.log /tmp/host-gui-wayland-chromium.log /chrome_debug.log /tmp/chrome_debug.log /yt-launch-stdio.log /yt-media-probe.log /kde-chromium-process-evidence.log /yt-role-*.log /yt-role-*-stdio.log /chromium-egl-trace.*.log /mesa-egl-context-trace.log /yt-egl-forensics-manifest.txt /yt-egl-dynamic-processes.log"
+puts $fh "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
+puts $fh "export WAYLAND_DISPLAY=wayland-0"
+puts $fh "export WAYLAND_CHROMIUM_MULTIPROCESS=$multiprocess"
+puts $fh "export WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT=$disable_audio"
+if {$media_probe eq "1"} {
+    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS='--autoplay-policy=no-user-gesture-required --load-extension=$media_probe_guest_dir'"
+} else {
+    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS=--autoplay-policy=no-user-gesture-required"
+}
+if {$egl_forensics eq "1"} {
+    puts $fh "export CHROMIUM_EGL_TRACE=1"
+    puts $fh "export CHROMIUM_EGL_TRACE_LOG=/chromium-egl-trace.log"
+    puts $fh "export XV6_MESA_EGL_CONTEXT_TRACE=1"
+    puts $fh "export LD_PRELOAD=/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload.so"
+}
+puts $fh "U='$url'"
+puts $fh "echo YT_ENV multiprocess=\$WAYLAND_CHROMIUM_MULTIPROCESS disable_audio_output=\$WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT media_probe=$media_probe"
+puts $fh "echo YT_ACTUAL /bin/wayland-chromium \"\$U\""
+puts $fh "/bin/wayland-chromium \"\$U\" >/yt-launch-stdio.log 2>&1 &"
+puts $fh "p=\$!"
+puts $fh "echo YT_CHILD=\$p"
+puts $fh "sleep 1"
+puts $fh [media_probe_process_filter_command]
+puts $fh "echo YT_LAUNCH_END arm=$arm"
+close $fh
+
+set forensic_host "$outdir/yteglforensics.sh"
+if {$egl_forensics eq "1"} {
+    set fh [open $forensic_host w]
+    puts $fh "#!/bin/bash"
+    puts $fh "set +e"
+    puts $fh {grep 'xv6_mesa_egl_context_trace ' /host-gui-wayland-chromium.log > /mesa-egl-context-trace.log 2>/dev/null}
+    puts $fh {: > /yt-egl-forensics-manifest.txt}
+    puts $fh {for f in /chromium-egl-trace.*.log; do}
+    puts $fh {    [ -f "$f" ] || continue}
+    puts $fh {    lines=$(wc -l < "$f" 2>/dev/null)}
+    puts $fh {    bytes=$(wc -c < "$f" 2>/dev/null)}
+    puts $fh {    printf 'trace=%s rows=%s bytes=%s\n' "$f" "$lines" "$bytes" >> /yt-egl-forensics-manifest.txt}
+    puts $fh {done}
+    puts $fh {: > /yt-egl-dynamic-processes.log}
+    puts $fh {for d in /proc/[0-9]*; do}
+    puts $fh {    [ -r "$d/cmdline" ] || continue}
+    puts $fh {    cmd=$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)}
+    puts $fh {    case "$cmd" in *chrome*) ;; *) continue ;; esac}
+    puts $fh {    pid=${d#/proc/}}
+    puts $fh {    exe=$(readlink "$d/exe" 2>/dev/null)}
+    puts $fh {    printf 'pid=%s exe="%s" argv="%s"\n' "$pid" "$exe" "$cmd" >> /yt-egl-dynamic-processes.log}
+    puts $fh {    grep -E 'libEGL|libGLES|chromium-egl-trace-preload' "$d/maps" 2>/dev/null | sed "s/^/pid=$pid map=/" >> /yt-egl-dynamic-processes.log}
+    puts $fh {done}
+    puts $fh "echo YT_EGL_FORENSICS_BEGIN"
+    puts $fh "cat /yt-egl-forensics-manifest.txt 2>/dev/null"
+    puts $fh "cat /mesa-egl-context-trace.log 2>/dev/null"
+    puts $fh "echo YT_EGL_FORENSICS_END"
+    puts $fh "sync"
+    close $fh
+}
+
+set fbs_host "$outdir/fbs.sh"
+set fh [open $fbs_host w]
+puts $fh "#!/bin/bash"
+puts $fh "echo YT_FBSTAT_BEGIN tag=\$1"
+puts $fh "fbstat 2>&1"
+puts $fh "echo YT_FBSTAT_END tag=\$1"
+close $fh
+
+set role_host "$outdir/ytrole.sh"
+set fh [open $role_host w]
+puts $fh "#!/bin/bash"
+puts $fh "set +e"
+puts $fh "tag=\$1"
+puts $fh "rm -f /kde-chromium-process-evidence.log /yt-role-\$tag.log /yt-role-\$tag-stdio.log"
+puts $fh "KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe --chromium-fast-census-only --fast-census-ms 500 --fast-census-interval-ms 100 >/yt-role-\$tag-stdio.log 2>&1"
+puts $fh "probe_rc=\$?"
+puts $fh "cat /kde-chromium-process-evidence.log > /yt-role-\$tag.log 2>/dev/null"
+puts $fh "echo YT_ROLE_BEGIN tag=\$tag"
+puts $fh "cat /yt-role-\$tag.log 2>/dev/null"
+puts $fh "echo YT_ROLE_END tag=\$tag probe_rc=\$probe_rc"
+puts $fh "exit \$probe_rc"
+close $fh
+
+set argv_host "$outdir/ytargv.sh"
+set fh [open $argv_host w]
+puts $fh "#!/bin/bash"
+puts $fh "echo YT_ARGV_BEGIN"
+puts $fh "cat /host-gui-wayland-chromium.log 2>/dev/null"
+puts $fh "echo YT_ARGV_END"
+close $fh
+
+set media_host "$outdir/ytmediaprobe.sh"
+if {$media_probe eq "1"} {
+    wf $media_host [media_probe_guest_helper_script $media_probe_nonce]
+}
+
+set helper_pairs [list $launch_host /ytlaunch.sh $fbs_host /fbs.sh $role_host /ytrole.sh $argv_host /ytargv.sh]
+if {$egl_forensics eq "1"} {
+    lappend helper_pairs $forensic_host /yteglforensics.sh
+}
+if {$media_probe eq "1"} {
+    lappend helper_pairs $media_host /ytmediaprobe.sh
+}
+if {$media_probe eq "1"} {
+    set guest_grep_contract_rows {}
+    foreach {host guest} $helper_pairs {
+        set contract [guest_helper_grep_option_contract $guest [read_text $host]]
+        lappend guest_grep_contract_rows [lindex $contract 1]
+        if {![lindex $contract 0]} {
+            finish 8 "FAIL media-arm-helper-guest-grep-contract [lindex $contract 1] no_fps_claim=1"
+        }
+    }
+    wf "$outdir/media-arm-helper-guest-grep-contract.txt" \
+        "[join $guest_grep_contract_rows \n]\n"
+}
+foreach {host guest} $helper_pairs {
+    set staged [debugfs_stage_file $scratch $host $guest "stage-$guest"]
+    if {![lindex $staged 0]} {
+        finish 8 "FAIL helper-stage guest=$guest error=[lindex $staged 1] diagnostics=$debugfs_log"
+    }
+}
+
+set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
+set qextra "-monitor unix:$monitor,server,nowait"
+wf "$outdir/qemu-launch-command.txt" "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
+
+set debugcon_prepare [prepare_debugcon_path $debugcon_source]
+if {![lindex $debugcon_prepare 0]} {
+    finish 8 "FAIL debugcon-prepare-before-spawn detail=[lindex $debugcon_prepare 2]"
+}
+set debugcon_prepared 1
+set debugcon_epoch [lindex $debugcon_prepare 1]
+af $statusf "[iso_now] debugcon_prepared=1 epoch=$debugcon_epoch detail=[lindex $debugcon_prepare 2]"
+
+log_file -a $runlog
+spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND=$append QEMU_EXTRA=$qextra bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
+set qemu_pid [exp_pid]
+set qemu_started 1
+match_max 2000000
+after 50
+set owner_snapshot [owned_process_group_lines]
+set owner_pattern [format {^%s pgid=%s } $qemu_pid $qemu_pid]
+if {![regexp $owner_pattern $owner_snapshot]} {
+    finish 13 "FAIL direct-spawn-owned-group-missing leader=$qemu_pid snapshot=$owner_snapshot"
+}
+af $statusf "[iso_now] direct_spawn_owner leader=$qemu_pid snapshot=$owner_snapshot"
+
+expect {
+    -re {root:/# } {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
+        finish 4 "FAIL crash-before-root-prompt"
+    }
+    timeout { fail_timeout root-prompt 12 }
+    eof { finish 13 "FAIL qemu-exited-before-root-prompt" }
+}
+require_kvm_proof
+
+set old_timeout $timeout
+set timeout 260
+expect {
+    -re {kde-session: KWin and plasmashell are running} {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
+        set timeout $old_timeout
+        finish 4 "FAIL crash-before-kde-ready"
+    }
+    timeout {
+        set timeout $old_timeout
+        fail_timeout kde-ready 14
+    }
+    eof {
+        set timeout $old_timeout
+        finish 15 "FAIL qemu-exited-before-kde-ready"
+    }
+}
+set timeout $old_timeout
+after 4000
+
+set idle [fb_sample idle]
+capture_guest_fb pre
+monitor_screendump pre
+
+set launch_buf [require_guest_ok [guest_cmd "/bin/bash /ytlaunch.sh" chromium-launch 35] chromium-launch]
+if {![regexp "YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=1" $launch_buf] ||
+    ![regexp {YT_CHILD=[1-9][0-9]*} $launch_buf] ||
+    ![regexp "YT_LAUNCH_END arm=$arm" $launch_buf]} {
+    finish 8 "FAIL chromium-start-missing"
+}
+
+after 12000
+set argv_buf [require_guest_ok [guest_cmd "/bin/bash /ytargv.sh" launcher-argv 40] launcher-argv]
+if {![regexp {YT_ARGV_BEGIN} $argv_buf] || ![regexp {YT_ARGV_END} $argv_buf] ||
+    ![regexp {wayland-chromium-launcher: child_exec path=} $argv_buf]} {
+    finish 8 "FAIL launcher-argv-evidence-missing"
+}
+if {![regexp {wayland-chromium-launcher: argv_[0-9]+="--disable-audio-output"} $argv_buf]} {
+    finish 8 "FAIL launcher-audio-argv-missing"
+}
+if {[software_marker $argv_buf]} {
+    finish 8 "FAIL chromium-software-fallback-before-measurement"
+}
+if {$egl_forensics eq "0" && [gpu_init_failure_marker $argv_buf]} {
+    finish 8 "FAIL chromium-gpu-init-before-measurement"
+}
+foreach arg {--disable-gpu --in-process-gpu --single-process --no-zygote} {
+    set present [regexp "wayland-chromium-launcher: argv_\\d+=\"[regex_quote $arg]\"" $argv_buf]
+    if {$multiprocess eq "0" && !$present} {
+        finish 8 "FAIL control-launcher-argv-missing arg=$arg"
+    }
+    if {$multiprocess eq "1" && $present} {
+        finish 8 "FAIL treatment-launcher-argv-forbidden arg=$arg"
+    }
+}
+set media_arg "--load-extension=$media_probe_guest_dir"
+set media_arg_present [regexp "wayland-chromium-launcher: argv_\\d+=\"[regex_quote $media_arg]\"" $argv_buf]
+if {$media_probe eq "1" && !$media_arg_present} {
+    finish 8 "FAIL media-probe-launcher-argv-missing no_fps_claim=1"
+}
+if {$media_probe eq "0" && $media_arg_present} {
+    finish 8 "FAIL media-probe-launcher-argv-present-while-off"
+}
+
+if {$egl_forensics eq "1"} {
+    set forensic_buf [require_guest_ok \
+        [guest_cmd "/bin/bash /yteglforensics.sh" egl-forensics-snapshot 45] \
+        egl-forensics-snapshot]
+    wf "$outdir/egl-forensics.serial.txt" $forensic_buf
+    if {![regexp {YT_EGL_FORENSICS_BEGIN} $forensic_buf] ||
+        ![regexp {YT_EGL_FORENSICS_END} $forensic_buf] ||
+        ![regexp {trace=/chromium-egl-trace\.[1-9][0-9]*\.log} $forensic_buf]} {
+        finish 8 "FAIL egl-forensics-snapshot-incomplete"
+    }
+    set forensic_evidence "$argv_buf\n$forensic_buf\n[read_text $runlog]"
+    if {[non_gpu_fatal_runtime_marker $forensic_evidence]} {
+        finish 4 "FAIL non-gpu-crash-during-egl-forensics"
+    }
+    if {![gpu_init_failure_marker $forensic_evidence]} {
+        set forensic_verdict "INDETERMINATE"
+        finish 8 "FAIL egl-forensics-gpu-init-verdict-indeterminate no_fps_claim=1"
+    }
+    set forensic_verdict "GPU_INIT_FAILURE"
+    af $metricsf "egl_forensics_verdict=$forensic_verdict diagnostic_only=1 no_fps_claim=1"
+    finish 0 "DIAGNOSTIC-ONLY egl_forensics=1 verdict=$forensic_verdict no_fps_claim=1"
+}
+
+# Rendering/start gate: require a substantial flip delta from the idle sample.
+set started 0
+for {set probe 1} {$probe <= 5 && !$started} {incr probe} {
+    after 30000
+    set sample [fb_sample "probe$probe"]
+    if {[lindex $sample 0] > [expr {[lindex $idle 0] + 100}] &&
+        [lindex $sample 1] > [lindex $idle 1]} {
+        set started 1
+        af $statusf "[iso_now] chromium-rendering-confirmed probe=$probe flips=[lindex $sample 0] presents=[lindex $sample 1]"
+    }
+}
+if {!$started} {
+    finish 8 "FAIL chromium-render-start-missing"
+}
+
+if {$media_probe eq "1"} {
+    require_treatment_gpu_role mediaProbe
+    set media_buf [require_guest_ok \
+        [guest_cmd "/bin/bash /ytmediaprobe.sh" media-probe-capture 110] \
+        media-probe-capture]
+    wf $media_probe_serial $media_buf
+    capture_guest_fb mediaProbe
+    monitor_screendump mediaProbe
+    set captured_media [media_probe_capture_payload $media_buf $media_probe_nonce]
+    if {![lindex $captured_media 0]} {
+        set media_probe_verdict "INVALID"
+        af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 detail=[lindex $captured_media 1]"
+        finish 8 "FAIL media-probe-capture-invalid [lindex $captured_media 1] no_fps_claim=1"
+    }
+    set media_parsed [parse_media_probe_evidence [lindex $captured_media 2] \
+        $media_probe_nonce $media_probe_extension_id]
+    if {![lindex $media_parsed 0]} {
+        set media_probe_verdict "INVALID"
+        af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 detail=[lindex $media_parsed 2]"
+        finish 8 "FAIL media-probe-invalid [lindex $media_parsed 2] no_fps_claim=1"
+    }
+    if {![lindex $media_parsed 1]} {
+        set media_probe_verdict "SOURCE_UNPROVEN"
+        af $metricsf "media_probe_verdict=SOURCE_UNPROVEN no_fps_claim=1 [lindex $media_parsed 2]"
+        require_guest_ok [guest_cmd "sync" media-probe-null-sync 30] media-probe-null-sync
+        finish 0 "DIAGNOSTIC-ONLY media_probe=1 source=UNPROVEN no_fps_claim=1 [lindex $media_parsed 2]"
+    }
+    set media_probe_verdict "SOURCE_PROVEN"
+    af $metricsf "media_probe_verdict=SOURCE_PROVEN no_fps_claim=0 [lindex $media_parsed 2]"
+}
+
+after 20000
+capture_guest_fb steady0
+monitor_screendump steady0
+set s0 [fb_sample t0]
+require_treatment_gpu_role windowA
+
+after [expr {$window_seconds * 1000}]
+capture_guest_fb windowA
+monitor_screendump windowA
+set s1 [fb_sample t1]
+require_treatment_gpu_role windowB
+
+after [expr {$window_seconds * 1000}]
+capture_guest_fb windowB
+monitor_screendump windowB
+set s2 [fb_sample t2]
+
+set fpsA [validate_window_metric presented_fps_windowA [metric_fps $s0 $s1 0] $s0 $s1 0]
+set fpsB [validate_window_metric presented_fps_windowB [metric_fps $s1 $s2 0] $s1 $s2 0]
+set boA [validate_window_metric bo_present_fps_windowA [metric_fps $s0 $s1 1] $s0 $s1 1]
+set boB [validate_window_metric bo_present_fps_windowB [metric_fps $s1 $s2 1] $s1 $s2 1]
+af $metricsf "presented_fps_windowA=$fpsA presented_fps_windowB=$fpsB bo_present_fps_windowA=$boA bo_present_fps_windowB=$boB"
+af $metricsf "samples_t0=$s0 samples_t1=$s1 samples_t2=$s2"
+
+require_guest_ok [guest_cmd "sync" final-sync 30] final-sync
+finish 0 "PASS presented_fps_windowA=$fpsA presented_fps_windowB=$fpsB bo_present_fps_windowA=$boA bo_present_fps_windowB=$boB"

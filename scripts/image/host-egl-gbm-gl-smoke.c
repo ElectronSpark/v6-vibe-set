@@ -41,6 +41,14 @@
 #define EGL_CONTEXT_OPENGL_NO_ERROR_KHR 0x31B3
 #endif
 
+#ifndef EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE
+#define EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE 0x33AC
+#endif
+
+#ifndef EGL_CONTEXT_HARDENED_ANGLE
+#define EGL_CONTEXT_HARDENED_ANGLE 0x34F8
+#endif
+
 #ifndef EGL_CONTEXT_PRIORITY_LEVEL_IMG
 #define EGL_CONTEXT_PRIORITY_LEVEL_IMG 0x3100
 #endif
@@ -503,7 +511,268 @@ out:
     clear_egl_error();
 }
 
-static void
+static int
+log_no_error_semantic_attempt(EGLDisplay display, const char *profile,
+                              EGLint renderable,
+                              const EGLint *context_attrs,
+                              int context_client_version,
+                              int expect_context, EGLint expect_error)
+{
+    EGLConfig config = NULL;
+    EGLContext context = EGL_NO_CONTEXT;
+    EGLint count = 0;
+    EGLint err = EGL_SUCCESS;
+    int choose_ok;
+    int got_context;
+    int matched;
+
+    choose_ok = choose_chromium_config(display, renderable, EGL_DONT_CARE,
+                                       &config, &count);
+    if (!choose_ok || count <= 0 || !config) {
+        err = eglGetError();
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=egl_no_error_semantics status=FAIL profile=%s renderable=0x%x count=%d context_client_version=%d context_created=0 expected_context=%d egl_error=0x%x error_name=%s expected_error=0x%x expected_error_name=%s reason=%s\n",
+                profile, renderable, count, context_client_version,
+                expect_context, err, egl_error_name(err), expect_error,
+                egl_error_name(expect_error),
+                choose_ok ? "no_config" : "eglChooseConfig");
+        clear_egl_error();
+        return 1;
+    }
+
+    clear_egl_error();
+    context = eglCreateContext(display, config, EGL_NO_CONTEXT, context_attrs);
+    got_context = context != EGL_NO_CONTEXT;
+    err = eglGetError();
+    matched = got_context == expect_context && err == expect_error;
+
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_no_error_semantics status=%s profile=%s renderable=0x%x count=%d context_client_version=%d context_created=%d expected_context=%d egl_error=0x%x error_name=%s expected_error=0x%x expected_error_name=%s reason=%s\n",
+            matched ? "PASS" : "FAIL", profile, renderable, count,
+            context_client_version, got_context, expect_context, err,
+            egl_error_name(err), expect_error, egl_error_name(expect_error),
+            matched ? "matched" : "mismatch");
+
+    if (context != EGL_NO_CONTEXT)
+        eglDestroyContext(display, context);
+    clear_egl_error();
+    return matched ? 0 : 1;
+}
+
+static int
+log_angle_contract_attempt(EGLDisplay display, const char *profile,
+                           EGLenum api, EGLint renderable,
+                           const EGLint *context_attrs,
+                           int expect_context, EGLint expect_error)
+{
+    EGLConfig config = NULL;
+    EGLContext context = EGL_NO_CONTEXT;
+    EGLint count = 0;
+    EGLint err = EGL_SUCCESS;
+    int choose_ok;
+    int got_context;
+    int matched;
+
+    clear_egl_error();
+    if (!eglBindAPI(api)) {
+        err = eglGetError();
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract status=FAIL profile=%s bound_api=0x%x renderable=0x%x count=0 context_created=0 expected_context=%d egl_error=0x%x error_name=%s expected_error=0x%x expected_error_name=%s reason=eglBindAPI\n",
+                profile, api, renderable, expect_context, err,
+                egl_error_name(err), expect_error,
+                egl_error_name(expect_error));
+        clear_egl_error();
+        return 1;
+    }
+
+    choose_ok = choose_chromium_config(display, renderable, EGL_DONT_CARE,
+                                       &config, &count);
+    if (!choose_ok || count <= 0 || !config) {
+        err = eglGetError();
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract status=FAIL profile=%s bound_api=0x%x renderable=0x%x count=%d context_created=0 expected_context=%d egl_error=0x%x error_name=%s expected_error=0x%x expected_error_name=%s reason=%s\n",
+                profile, api, renderable, count, expect_context, err,
+                egl_error_name(err), expect_error,
+                egl_error_name(expect_error),
+                choose_ok ? "no_config" : "eglChooseConfig");
+        clear_egl_error();
+        return 1;
+    }
+
+    clear_egl_error();
+    context = eglCreateContext(display, config, EGL_NO_CONTEXT,
+                               context_attrs);
+    got_context = context != EGL_NO_CONTEXT;
+    err = eglGetError();
+    matched = got_context == expect_context && err == expect_error;
+
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract status=%s profile=%s bound_api=0x%x renderable=0x%x count=%d context_created=%d expected_context=%d egl_error=0x%x error_name=%s expected_error=0x%x expected_error_name=%s reason=%s\n",
+            matched ? "PASS" : "FAIL", profile, api, renderable, count,
+            got_context, expect_context, err, egl_error_name(err),
+            expect_error, egl_error_name(expect_error),
+            matched ? "matched" : "mismatch");
+
+    if (context != EGL_NO_CONTEXT)
+        eglDestroyContext(display, context);
+    clear_egl_error();
+    return matched ? 0 : 1;
+}
+
+static int
+log_angle_context_contract(EGLDisplay display)
+{
+    static const EGLint base_es3_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_NONE,
+    };
+    static const EGLint base_es2_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_NONE,
+    };
+    static const EGLint observed_es3_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    static const EGLint observed_es2_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    static const EGLint reverse_es3_attrs[] = {
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE,
+    };
+    static const EGLint reverse_es2_attrs[] = {
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_NONE,
+    };
+    static const EGLint hardened_true_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_TRUE,
+        EGL_NONE,
+    };
+    static const EGLint webgl_hardened_true_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_TRUE,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_TRUE,
+        EGL_NONE,
+    };
+    static const EGLint invalid_webgl_bool_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, 2,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    static const EGLint invalid_hardened_bool_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_HARDENED_ANGLE, 2,
+        EGL_NONE,
+    };
+    static const EGLint webgl_false_only_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    static const EGLint hardened_false_only_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    static const EGLint error_precedence_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_FLAGS_KHR, EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_MINOR_VERSION, 0,
+        EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE, EGL_FALSE,
+        EGL_CONTEXT_HARDENED_ANGLE, EGL_FALSE,
+        EGL_NONE,
+    };
+    const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
+    int advertised = has_extension(
+        extensions, "EGL_ANGLE_create_context_webgl_compatibility");
+    int failures = advertised ? 1 : 0;
+
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_angle_context_advertisement status=%s extension=EGL_ANGLE_create_context_webgl_compatibility advertised=%d expected=0 hardened_semantics=unsupported action=withdraw\n",
+            advertised ? "FAIL" : "PASS", advertised);
+
+    failures += log_angle_contract_attempt(
+        display, "control_base_es3", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, base_es3_attrs, 1, EGL_SUCCESS);
+    failures += log_angle_contract_attempt(
+        display, "control_base_es2", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES2_BIT, base_es2_attrs, 1, EGL_SUCCESS);
+    failures += log_angle_contract_attempt(
+        display, "observed_runtime_order_es3_false_false",
+        EGL_OPENGL_ES_API, EGL_OPENGL_ES3_BIT, observed_es3_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "observed_runtime_order_es2_false_false",
+        EGL_OPENGL_ES_API, EGL_OPENGL_ES2_BIT, observed_es2_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "reverse_order_es3_false_false", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, reverse_es3_attrs, 0, EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "reverse_order_es2_false_false", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES2_BIT, reverse_es2_attrs, 0, EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "negative_hardened_true_not_silently_accepted",
+        EGL_OPENGL_ES_API, EGL_OPENGL_ES3_BIT, hardened_true_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "negative_webgl_hardened_true_not_silently_accepted",
+        EGL_OPENGL_ES_API, EGL_OPENGL_ES3_BIT,
+        webgl_hardened_true_attrs, 0, EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "negative_invalid_webgl_boolean", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, invalid_webgl_bool_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "negative_invalid_hardened_boolean", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, invalid_hardened_bool_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "extension_disabled_webgl_false", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, webgl_false_only_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "extension_disabled_hardened_false", EGL_OPENGL_ES_API,
+        EGL_OPENGL_ES3_BIT, hardened_false_only_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "api_mismatch_opengl_exact_observed", EGL_OPENGL_API,
+        EGL_OPENGL_BIT, observed_es3_attrs, 0, EGL_BAD_ATTRIBUTE);
+    failures += log_angle_contract_attempt(
+        display, "bad_attribute_precedes_no_error_debug_bad_match",
+        EGL_OPENGL_ES_API, EGL_OPENGL_ES3_BIT, error_precedence_attrs, 0,
+        EGL_BAD_ATTRIBUTE);
+
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract_summary status=%s cases=14 failures=%d advertised=%d semantic_decision=withdraw\n",
+            failures == 0 ? "PASS" : "FAIL", failures, advertised);
+    return failures;
+}
+
+static int
 log_chromium_config_attempts(EGLDisplay display, struct gbm_device *gbm)
 {
     static const EGLint es3_base_attrs[] = {
@@ -533,6 +802,54 @@ log_chromium_config_attempts(EGLDisplay display, struct gbm_device *gbm)
         EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
         EGL_NONE,
     };
+    static const EGLint chromium_no_error_before_es3_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE,
+    };
+    static const EGLint chromium_no_error_before_es2_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_NONE,
+    };
+    static const EGLint no_error_after_es3_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_NONE,
+    };
+    static const EGLint no_error_after_es2_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_NONE,
+    };
+    static const EGLint no_error_before_es1_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_CLIENT_VERSION, 1,
+        EGL_NONE,
+    };
+    static const EGLint no_error_after_es1_attrs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 1,
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_NONE,
+    };
+    static const EGLint no_error_before_es3_debug_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_FLAGS_KHR, EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE,
+    };
+    static const EGLint no_error_before_es3_robust_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_OPENGL_ROBUST_ACCESS, EGL_TRUE,
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE,
+    };
+    static const EGLint no_error_before_es1_debug_attrs[] = {
+        EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
+        EGL_CONTEXT_FLAGS_KHR, EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
+        EGL_CONTEXT_CLIENT_VERSION, 1,
+        EGL_NONE,
+    };
     static const EGLint es3_priority_high_attrs[] = {
         EGL_CONTEXT_CLIENT_VERSION, 3,
         EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG,
@@ -546,6 +863,7 @@ log_chromium_config_attempts(EGLDisplay display, struct gbm_device *gbm)
         EGL_CONTEXT_OPENGL_NO_ERROR_KHR, EGL_TRUE,
         EGL_NONE,
     };
+    int failures = 0;
 
     log_chromium_config_attempt(display, gbm,
                                 "chromium_offscreen_pbuffer_es3",
@@ -614,6 +932,82 @@ log_chromium_config_attempts(EGLDisplay display, struct gbm_device *gbm)
                                 EGL_OPENGL_ES3_BIT, EGL_DONT_CARE,
                                 "surfaceless", es3_chrome_combo_attrs, 3,
                                 "chrome_combo");
+
+    failures += log_no_error_semantic_attempt(
+        display, "chromium_no_error_before_version_es3",
+        EGL_OPENGL_ES3_BIT, chromium_no_error_before_es3_attrs, 3, 1,
+        EGL_SUCCESS);
+    failures += log_no_error_semantic_attempt(
+        display, "chromium_no_error_before_version_es2",
+        EGL_OPENGL_ES2_BIT, chromium_no_error_before_es2_attrs, 2, 1,
+        EGL_SUCCESS);
+    failures += log_no_error_semantic_attempt(
+        display, "control_no_error_after_version_es3",
+        EGL_OPENGL_ES3_BIT, no_error_after_es3_attrs, 3, 1, EGL_SUCCESS);
+    failures += log_no_error_semantic_attempt(
+        display, "control_no_error_after_version_es2",
+        EGL_OPENGL_ES2_BIT, no_error_after_es2_attrs, 2, 1, EGL_SUCCESS);
+    failures += log_no_error_semantic_attempt(
+        display, "negative_no_error_before_version_es1",
+        EGL_OPENGL_ES2_BIT, no_error_before_es1_attrs, 1, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_no_error_semantic_attempt(
+        display, "negative_no_error_after_version_es1",
+        EGL_OPENGL_ES2_BIT, no_error_after_es1_attrs, 1, 0,
+        EGL_BAD_ATTRIBUTE);
+    failures += log_no_error_semantic_attempt(
+        display, "negative_no_error_debug_conflict_es3",
+        EGL_OPENGL_ES3_BIT, no_error_before_es3_debug_attrs, 3, 0,
+        EGL_BAD_MATCH);
+    failures += log_no_error_semantic_attempt(
+        display, "negative_no_error_robust_conflict_es3",
+        EGL_OPENGL_ES3_BIT, no_error_before_es3_robust_attrs, 3, 0,
+        EGL_BAD_MATCH);
+    failures += log_no_error_semantic_attempt(
+        display, "negative_no_error_es1_precedes_debug_conflict",
+        EGL_OPENGL_ES2_BIT, no_error_before_es1_debug_attrs, 1, 0,
+        EGL_BAD_ATTRIBUTE);
+
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_no_error_semantics_summary status=%s cases=9 failures=%d\n",
+            failures == 0 ? "PASS" : "FAIL", failures);
+    failures += log_angle_context_contract(display);
+    return failures;
+}
+
+static int
+run_angle_contract_only(void)
+{
+    EGLDisplay display;
+    EGLint major = 0;
+    EGLint minor = 0;
+    int failures;
+
+    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (display == EGL_NO_DISPLAY) {
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract_summary status=FAIL cases=14 failures=1 advertised=-1 semantic_decision=withdraw reason=no_display\n");
+        return 1;
+    }
+    if (!eglInitialize(display, &major, &minor)) {
+        EGLint err = eglGetError();
+
+        fprintf(stderr,
+                "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract_summary status=FAIL cases=14 failures=1 advertised=-1 semantic_decision=withdraw reason=eglInitialize egl_error=0x%x error_name=%s\n",
+                err, egl_error_name(err));
+        return 1;
+    }
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=egl_angle_context_contract_setup status=PASS major=%d minor=%d vendor=%s version=%s client_apis=%s\n",
+            major, minor, safe_str(eglQueryString(display, EGL_VENDOR)),
+            safe_str(eglQueryString(display, EGL_VERSION)),
+            safe_str(eglQueryString(display, EGL_CLIENT_APIS)));
+    failures = log_angle_context_contract(display);
+    eglTerminate(display);
+    fprintf(stderr,
+            "host-egl-gbm-gl-smoke: phase=result status=%s mode=angle-contract-only exit_status=%d\n",
+            failures == 0 ? "PASS" : "FAIL", failures == 0 ? 0 : 1);
+    return failures == 0 ? 0 : 1;
 }
 
 static void
@@ -775,7 +1169,7 @@ parse_bool_value(const char *value, int *out)
 
 static int
 select_options(int argc, char **argv, enum smoke_api *api, int *require_config,
-               int *chromium_attempts)
+               int *chromium_attempts, int *angle_contract_only)
 {
     const char *env_api = getenv("HOST_EGL_GBM_SMOKE_API");
     const char *env_require_config =
@@ -786,6 +1180,7 @@ select_options(int argc, char **argv, enum smoke_api *api, int *require_config,
     *api = SMOKE_API_GLES;
     *require_config = 0;
     *chromium_attempts = 0;
+    *angle_contract_only = 0;
     if (env_api && env_api[0] && !parse_api_value(env_api, api)) {
         fprintf(stderr,
                 "host-egl-gbm-gl-smoke: phase=api_select status=FAIL source=env name=HOST_EGL_GBM_SMOKE_API value=%s reason=unsupported_api\n",
@@ -824,6 +1219,9 @@ select_options(int argc, char **argv, enum smoke_api *api, int *require_config,
             continue;
         } else if (strcmp(argv[i], "--chromium-attempts") == 0) {
             *chromium_attempts = 1;
+            continue;
+        } else if (strcmp(argv[i], "--angle-contract-only") == 0) {
+            *angle_contract_only = 1;
             continue;
         } else if (strncmp(argv[i], "--chromium-attempts=", 20) == 0) {
             value = argv[i] + 20;
@@ -923,12 +1321,14 @@ main(int argc, char **argv)
     int have_surfaceless;
     int require_config;
     int chromium_attempts;
+    int angle_contract_only;
+    int chromium_attempt_failures = 0;
     int use_configless = 0;
     int use_surfaceless = 0;
     int rc = 1;
 
     if (!select_options(argc, argv, &api, &require_config,
-                        &chromium_attempts)) {
+                        &chromium_attempts, &angle_contract_only)) {
         fprintf(stderr,
                 "host-egl-gbm-gl-smoke: phase=result status=FAIL exit_status=2\n");
         return 2;
@@ -957,6 +1357,9 @@ main(int argc, char **argv)
             "host-egl-gbm-gl-smoke: diag egl_no_display_extensions=%s\n",
             safe_str(eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS)));
     clear_egl_error();
+
+    if (angle_contract_only)
+        return run_angle_contract_only();
 
     fd = open(render_node, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
@@ -1037,7 +1440,8 @@ main(int argc, char **argv)
                 smoke_api_name(api), total_configs);
         log_config_summary(display, api, total_configs);
         if (chromium_attempts)
-            log_chromium_config_attempts(display, gbm);
+            chromium_attempt_failures =
+                log_chromium_config_attempts(display, gbm);
     } else {
         EGLint err = eglGetError();
 
@@ -1156,10 +1560,10 @@ main(int argc, char **argv)
             version ? "PASS" : "FAIL", smoke_api_name(api),
             has_extension((const char *)glGetString(GL_EXTENSIONS),
                           "GL_OES_surfaceless_context"));
-    rc = version ? 0 : 1;
+    rc = version && chromium_attempt_failures == 0 ? 0 : 1;
     fprintf(stderr,
             "host-egl-gbm-gl-smoke: phase=result status=%s api=%s exit_status=%d\n",
-            version ? "PASS" : "FAIL", smoke_api_name(api), rc);
+            rc == 0 ? "PASS" : "FAIL", smoke_api_name(api), rc);
 
     if (display != EGL_NO_DISPLAY)
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE,
