@@ -392,7 +392,7 @@ proc qemu_spawn_ownership_contract {leader child pgid sid done wait_pid wait_rc}
 # its newline drains the owned command frame before another serial command can
 # begin; semantic RC acceptance is handled separately over the complete frame.
 proc guest_fence_regex {marker} {
-    return [format {%s:FENCE\r?\n} [regex_quote $marker]]
+    return [format {(^|\n)%s:FENCE\r{0,2}\n} [regex_quote $marker]]
 }
 
 proc guest_command_frame_parse {text marker} {
@@ -401,11 +401,27 @@ proc guest_command_frame_parse {text marker} {
     }
     set rc_values {}
     set fence_indices {}
+    set lines [split $text "\n"]
+    set last_line_index [expr {[llength $lines] - 1}]
     set line_index -1
     set quoted [regex_quote $marker]
-    foreach raw_line [split $text "\n"] {
+    foreach raw_line $lines {
         incr line_index
-        set line [string trimright $raw_line "\r"]
+        set line $raw_line
+        set cr_count 0
+        while {[string length $line] > 0 &&
+               [string index $line end] eq "\r"} {
+            incr cr_count
+            set line [string range $line 0 end-1]
+        }
+        if {[string match "$marker:*" $line]} {
+            if {$line_index == $last_line_index} {
+                return [list 0 "frame-marker-line-missing-newline-$line_index" ""]
+            }
+            if {$cr_count > 2} {
+                return [list 0 "frame-marker-line-cr-count-$cr_count-$line_index" ""]
+            }
+        }
         if {[regexp [format {^%s:RC:([0-9]+)$} $quoted] $line -> rc]} {
             lappend rc_values [list $line_index $rc]
             continue
@@ -3137,6 +3153,83 @@ cat /host-gui-wayland-chromium.log
     set valid_frame_parse [guest_command_frame_parse $valid_frame $marker_reducer]
     set expect_frame [static_guest_fence_expect $marker_fence_regex $valid_frame]
     set expect_frame_parse [guest_command_frame_parse $expect_frame $marker_reducer]
+    set newline_frames {}
+    foreach terminator [list "\n" "\r\n" "\r\r\n"] {
+        set newline_frame "$marker_reducer:RC:73$terminator$marker_reducer:FENCE$terminator"
+        set newline_match [regexp -- $marker_fence_regex $newline_frame]
+        set newline_parse [guest_command_frame_parse $newline_frame $marker_reducer]
+        lappend newline_frames [list $newline_match $newline_parse]
+    }
+    set newline_frames_ok 1
+    foreach newline_result $newline_frames {
+        if {![lindex $newline_result 0] ||
+            ![lindex [lindex $newline_result 1] 0] ||
+            [lindex [lindex $newline_result 1] 2] ne "73"} {
+            set newline_frames_ok 0
+        }
+    }
+    set three_cr_frame "$marker_reducer:RC:73\r\r\r\n$marker_reducer:FENCE\r\r\r\n"
+    set three_cr_match [regexp -- $marker_fence_regex $three_cr_frame]
+    set three_cr_parse [guest_command_frame_parse $three_cr_frame $marker_reducer]
+    set missing_newline_frame "$marker_reducer:RC:73\r\r\n$marker_reducer:FENCE\r\r"
+    set missing_newline_match [regexp -- $marker_fence_regex $missing_newline_frame]
+    set missing_newline_parse [guest_command_frame_parse $missing_newline_frame $marker_reducer]
+    set wrong_nonce_frame "YTWRONGC7:RC:73\r\r\nYTWRONGC7:FENCE\r\r\n"
+    set wrong_nonce_match [regexp -- $marker_fence_regex $wrong_nonce_frame]
+    set wrong_nonce_parse [guest_command_frame_parse $wrong_nonce_frame $marker_reducer]
+    set spoof_frame "prefix$marker_reducer:RC:73\r\r\nprefix$marker_reducer:FENCE\r\r\n"
+    set spoof_match [regexp -- $marker_fence_regex $spoof_frame]
+    set spoof_parse [guest_command_frame_parse $spoof_frame $marker_reducer]
+    set unknown_spoof_frame "$marker_reducer:RC:73\r\r\n$marker_reducer:FENCE:spoof\r\r\n"
+    set unknown_spoof_parse [guest_command_frame_parse \
+        $unknown_spoof_frame $marker_reducer]
+
+    # Replay the two retained raw terminal transcripts byte-for-byte.  Their
+    # immutable hashes and exact final CRCRLF frames are the regression
+    # fixture; Tcl regexp is the same matcher used by Expect's `-re` arm.
+    set retained_fence_replays [list \
+        [list \
+            "$root/build-x86_64/chromium-youtube-m7/20260710T194123Z-a1-hd720-hostwait-t1-mp1-audio1/run.log" \
+            4141ff01c02cc8d903893249ead83a7b7be055452acae879dac6ceb3ed9f8fe4 \
+            YTP3243321783712483847858C1] \
+        [list \
+            "$root/build-x86_64/chromium-youtube-m7/20260710T194313Z-a1-hd720-hostwait-t1r1-mp1-audio1/run.log" \
+            895f22c253a573abeac2538486778598e3044e2a404f842f32ba90a6d38fbea7 \
+            YTP3264071783712593687233C1]]
+    set retained_fence_results {}
+    foreach replay $retained_fence_replays {
+        lassign $replay replay_path replay_sha replay_marker
+        set replay_fh [open $replay_path rb]
+        fconfigure $replay_fh -translation binary -encoding binary
+        set replay_raw [read $replay_fh]
+        close $replay_fh
+        set replay_regex [guest_fence_regex $replay_marker]
+        set replay_expected \
+            "$replay_marker:RC:0\r\r\n$replay_marker:FENCE\r\r\n"
+        set replay_parse [guest_command_frame_parse $replay_raw $replay_marker]
+        lappend retained_fence_results [list \
+            [expr {[sha256_file $replay_path] eq $replay_sha}] \
+            [expr {[string first $replay_expected $replay_raw] >= 0}] \
+            [regexp -- $replay_regex $replay_raw] \
+            $replay_parse]
+    }
+    set retained_fence_results_ok 1
+    foreach replay_result $retained_fence_results {
+        if {![lindex $replay_result 0] ||
+            ![lindex $replay_result 1] ||
+            ![lindex $replay_result 2] ||
+            ![lindex [lindex $replay_result 3] 0] ||
+            [lindex [lindex $replay_result 3] 2] ne "0"} {
+            set retained_fence_results_ok 0
+        }
+    }
+    set guest_cmd_body [info body guest_cmd]
+    set fail_timeout_body [info body fail_timeout]
+    set fatal_timeout_contract [expr {
+        [string first "timeout {\n            set timeout \$old_timeout\n            fail_timeout \$label\n        }" \
+            $guest_cmd_body] >= 0 &&
+        [string first {finish $code "FAIL timeout phase=$phase crash_grep=clean"} \
+            $fail_timeout_body] >= 0}]
     set conflict_frame [guest_command_frame_parse \
         "$marker_reducer:RC:0\n$marker_reducer:RC:9\n$marker_reducer:RC:9\n$marker_reducer:FENCE\n" \
         $marker_reducer]
@@ -3163,6 +3256,14 @@ cat /host-gui-wayland-chromium.log
         [lindex $valid_frame_parse 2] ne "73" ||
         ![lindex $expect_frame_parse 0] ||
         [lindex $expect_frame_parse 2] ne "73" ||
+        !$newline_frames_ok ||
+        $three_cr_match || [lindex $three_cr_parse 0] ||
+        $missing_newline_match || [lindex $missing_newline_parse 0] ||
+        $wrong_nonce_match || [lindex $wrong_nonce_parse 0] ||
+        $spoof_match || [lindex $spoof_parse 0] ||
+        [lindex $unknown_spoof_parse 0] ||
+        !$retained_fence_results_ok ||
+        !$fatal_timeout_contract ||
         [lindex $conflict_frame 0] ||
         ![string match {frame-rc-count-3} [lindex $conflict_frame 1]] ||
         [lindex $conflict_expect_frame 0] ||
@@ -3175,7 +3276,7 @@ cat /host-gui-wayland-chromium.log
         [lindex $reversed_frame 0] ||
         [lindex $duplicate_fence_frame 0] ||
         [lindex $unknown_frame 0]} {
-        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame"
+        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse newline=$newline_frames three_cr=$three_cr_parse missing_newline=$missing_newline_parse wrong_nonce=$wrong_nonce_parse spoof=$spoof_parse unknown_spoof=$unknown_spoof_parse retained=$retained_fence_results fatal_timeout=$fatal_timeout_contract conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame"
     }
 
     # Exact relevant t2 rows from completed C1.  FB_GPU_GET_STATS is one locked

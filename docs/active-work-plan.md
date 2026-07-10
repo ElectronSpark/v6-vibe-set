@@ -179,6 +179,20 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   or other malformed endings, then raw-evidence replay and independent review.
   Boot remains prohibited; exact QEMU count was zero between attempts and
   after final owned cleanup.
+  The independent CRCRLF fence re-review now PASSES NO-BOOT. The live receiver
+  accepts exactly LF, CRLF, and CRCRLF; it rejects three-or-more CR, missing
+  newline, wrong-nonce, prefixed/unknown-spoof, duplicate, missing, and reordered
+  RC/FENCE frames. The two retained raw transcripts hash to
+  `4141ff01c02cc8d903893249ead83a7b7be055452acae879dac6ceb3ed9f8fe4` and
+  `895f22c253a573abeac2538486778598e3044e2a404f842f32ba90a6d38fbea7`;
+  hash/byte-exact comparison passes and replay parses same-nonce RC=0. Timeout
+  remains fatal with no next serial command, and no phase budget, output,
+  denominator, or FPS logic changed. Exact QEMU count was zero. Nonblocking
+  durability note: raw replay currently depends on retained ignored build
+  artifacts; synthetic newline/adversarial cases remain self-contained, and a
+  future tracked fixture is optional rather than boot-blocking. Next verified
+  checkpoint is this fence correction; then retry A1 serially in the sole VM
+  lane to obtain N>=2, while holding the A2 VM boot.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
