@@ -1,24 +1,22 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-10. Sole live plan; history remains in git and
-`docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`, with
-runtime proofs under `build-x86_64/`.
+Last updated: 2026-07-10. Sole live plan; history is in git and the archived
+full-history plan, with runtime proofs under `build-x86_64/`.
 
-Branch: `codex/host-linux-abi-shell-port-ff`. Audited HEAD/origin is `72842ae`
-(plan-only); latest code parent `ec4a733` handles bounded console line endings.
-The uncommitted one-file wide-integer correction has independent NO-BOOT PASS;
-preserve unrelated `kde-plasma-desktop-smoke.expect` work.
+Branch `codex/host-linux-abi-shell-port-ff`: HEAD and same-name origin are
+`da4a4265d2c4b7916c91dc455078562c0aaf6438`, including the passed wide-integer correction. Preserve unrelated KDE harness work.
 
 ## Objective and operating state
 
-Close YouTube 720p60 to same-host Linux-VM parity: frame supply >=52 presented
-fps, then real audio without the disable flag, then the 55-60 fps present wall.
-Validate real KVM+virgl GL only with yt-presentfps and PERF-VIDEO; software
-fallback invalidates a run and N=1 timings are diagnostic noise.
+Close YouTube 720p60 to same-host Linux-VM parity in two separate acceptance
+modes: (A) normal watch-page/windowed and (B) true YouTube/player fullscreen.
+Each must first reach >=52 presented fps and finally about 55-60 with low drops
+and stable pacing; windowed cannot close fullscreen or the overall goal. Use
+real KVM+virgl yt-presentfps and PERF-VIDEO only; software is invalid. Each mode
+needs N>=2 valid comparable trials, never pooled; N=1 is diagnostic.
 
-Every audit, measurement, implementation, battery, and forensic job is
-delegated to an opus worker. No VM worker is authorized; an exact
-`/proc/*/exe` scan finds zero `qemu-system-*`/`qemu-kvm` processes.
+Every concrete job is delegated to an opus worker. No VM worker is authorized;
+an exact `/proc/*/exe` scan finds zero QEMU processes.
 
 ## Host and VM safety (binding)
 
@@ -79,11 +77,11 @@ Verified harness closures, in order:
    Full prefix matrices and corruption mutations pass/reject as intended.
 4. Commit `ec4a733` accepts only LF, CRLF, or CRCRLF console fences and rejects
    malformed, duplicate, missing, reordered, spoofed, or wrong-nonce frames.
-5. Pending one-file fix: bounded signed Tcl `wideinteger` validation. NO-BOOT
-   review passes epoch-scale exact-130000 ms arithmetic, 115000/114999 edges,
-   live phase anchoring, min/max, overflow fail-closed cases, all arms, and
-   JS/static/diff checks. Placement, budgets, framing, and FPS logic are
-   unchanged.
+5. Commit `da4a426` closes bounded signed Tcl `wideinteger` validation.
+   NO-BOOT review passed epoch-scale exact-130000 ms arithmetic,
+   115000/114999 edges, live phase anchoring, min/max, overflow fail-closed
+   cases, all arms, and JS/static/diff checks. Placement, budgets, framing,
+   and FPS logic are unchanged.
 
 Newest runtime artifact:
 
@@ -97,11 +95,28 @@ Newest runtime artifact:
   epoch values used in the reducer are synthetic and must not be attributed to
   the artifact.
 
-Next: commit the passed wide-integer fix with this plan and push the pre-approved
-lineage. After a fresh zero-QEMU/no-active-worker gate, one sole VM worker runs
-serial real-KVM+virgl trials for at least two valid samples. One retry may
-replace a harness-invalid run; invalids remain NULL. Hold A2 VM work until A1
-N>=2 and exact QEMU zero.
+Next: after a fresh zero-QEMU/no-active-worker gate, one sole VM worker runs
+serial real-KVM+virgl windowed trials for at least two valid samples. One retry
+may replace a harness-invalid run; invalids remain NULL. Hold A2 VM work until
+the A1 windowed N>=2 gate and exact QEMU zero.
+
+## Fullscreen acceptance mode
+
+Status: OPEN; no deterministic fullscreen performance baseline exists.
+
+- FPS credit needs raw nonce-bound actual player/document fullscreen proof,
+  not merely a maximized window: stable transition/settle, active playback,
+  selected `hd720`, stable source `videoWidth/videoHeight=1280x720`; only the
+  host parser classifies.
+- Record output mode, viewport, scale, and composition state so scaling cost is
+  not mislabeled as frame supply. Reject drift, ambiguity, wrong dimensions,
+  paused playback, or spoofed/out-of-order facts.
+- Run N>=2 valid fullscreen trials comparable to windowed and matching
+  Linux-VM/local fullscreen baselines. Never pool modes; >=52 interim and final
+  about 55-60/low-drop/stable-pacing gates apply here.
+- The current 44.29/44.63 (mean 44.46) artifact is watch-page/non-fullscreen
+  diagnostic N=1 unless its raw artifact proves otherwise; it is not a
+  fullscreen baseline or claim.
 
 ## A2/A4 — real Chromium audio
 
@@ -121,19 +136,22 @@ Status: localizer ready; runtime localization and stream fix remain open.
   quantum versus Chromium's 512-frame callback, but effective negotiation is
   unproven and must not be promoted to a verdict.
 
-After A1 N=2 and zero QEMU, authorize one A2 boot: real KVM+virgl, audio on,
-`QEMU_AUDIO=none`, null sink, then serial pw-play -> paplay -> exact Chromium
+After A1 windowed N=2 and zero QEMU, authorize one A2 boot: real KVM+virgl,
+audio on, `QEMU_AUDIO=none`, null sink, then pw-play -> paplay -> Chromium
 libpulse -> >=20 s Chromium smoke. Fix the proven userspace path so YouTube
 runs without the audio-disable flag; then validate `QEMU_AUDIO=virtio`/WAV.
-Kernel virtio-snd/OSS/ALSA is closed absent new evidence.
+Final A2 validation and remeasurement must pass windowed and true fullscreen
+with real audio and no disable workaround. Kernel virtio-snd/OSS/ALSA is closed.
 
 ## Residual present wall
 
-After forced-hd720 N>=2 and real audio, measure YouTube against the local
-52-53 baseline. If it remains below 55-60, pursue only the recorded VPQ/drop,
-async make-room, host-retire, and present-throughput residual. Do not reopen
-codec selection, DNS, launcher packaging, or the kwin 5.27 schedule wall
-without new evidence.
+After forced-hd720 N>=2 per mode and real audio, measure YouTube against
+matching windowed and fullscreen Linux-VM/local baselines. Separate
+fullscreen-specific scaling/composition, present-retire, VPQ/drop, and pacing
+overhead from the windowed frame-supply path. If either mode remains below
+55-60, pursue only the recorded VPQ/drop, async make-room, host-retire, and
+present-throughput residual. Do not reopen codec selection, DNS, launcher
+packaging, or the kwin 5.27 schedule wall without new evidence.
 
 ## Secondary default-promotion queue
 
@@ -142,7 +160,8 @@ Chromium launch-only, R5-watch knobs, and M4/M5/M8 within noise.
 
 1. Kickoff prewarm plus tooltip delay/prewarm: proven opt-in results are menu
    2164 -> 493 ms and tooltip median 945 -> 486 ms.
-2. Video pair: `virtio_gpu_async_present=1` plus
+2. Video pair, with windowed and true-fullscreen regression coverage:
+   `virtio_gpu_async_present=1` plus
    `virtio_gpu_present_clock_60hz=1`; prior local video result was 52.3 ->
    53.4 fps with lower drops.
 
@@ -167,13 +186,14 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Checkpoint and push the passed wide-integer fix plus this plan rewrite.
-2. Sole-VM A1 serial N>=2 forced-hd720 measurement; invalid runs stay NULL.
-3. Sole-VM A2 Pulse localization, stream fix/review, then remeasure without the
-   audio-disable flag.
-4. Compare YouTube with local 52-53 and close the 55-60 present-retire wall.
-5. Run kickoff+tooltip promotion battery, then the video-pair battery as lanes
-   free.
+1. Checkpoint this plan on the pre-approved branch lineage.
+2. Sole-VM A1 serial windowed N>=2 forced-hd720 measurement; invalids are NULL.
+3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
+4. Sole-VM A2 Pulse localization and reviewed stream fix.
+5. Validate audio-on windowed and fullscreen parity; close each mode's
+   fullscreen-scaling/present-retire residual before the overall goal.
+6. Run kickoff+tooltip promotion battery, then the both-mode video-pair battery
+   as lanes free.
 
 Closed: kernel audio base, codec-capacity theory, loader/config M4 levers,
 single-lib stubs, syscall/VFS-cost-as-M4, unlocked-wait, present-clock alone,
