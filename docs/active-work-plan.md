@@ -160,9 +160,21 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   COMPLETE, normal prefixes 0--23 INCOMPLETE and 24 COMPLETE; legitimate
   terminal writer-race prefixes 28/29 and 22/23 remain recapturable, while
   corrupted summary or rVFC rows reject. Every arm/static/adversarial test and
-  diff check passes, and the final exact QEMU count is zero. Next, checkpoint
-  the verified code, then authorize one sole-VM worker for serial N>=2 A1
-  measurement; no A2 VM worker may overlap it.
+  diff check passes, and the final exact QEMU count is zero. The subsequent
+  sole-VM measurement retained T1
+  `build-x86_64/chromium-youtube-m7/20260710T194123Z-a1-hd720-hostwait-t1-mp1-audio1`
+  and its only retry
+  `build-x86_64/chromium-youtube-m7/20260710T194313Z-a1-hd720-hostwait-t1r1-mp1-audio1`.
+  Both are INVALID/NULL: the pre-Chromium `fbstat-idle` command exceeded its
+  35s phase budget, although the full same-nonce END/RC/FENCE response arrived
+  late in both attempts. Crash scans were clean and all three staged media
+  assets hash-matched, but Chromium never launched, so there is no source,
+  FPS, or PERF-VIDEO evidence. T1 plus the one allowed retry therefore yields
+  N=0; no T2 or audio-localizer boot was spent. Exact QEMU count was zero
+  between attempts and after final owned cleanup. This is deterministic under
+  the current command budget and does not implicate the media helper. Further
+  boots are prohibited pending bounded NO-BOOT latency forensics, a
+  phase-specific correction, and independent adversarial review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
