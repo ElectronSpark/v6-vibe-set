@@ -39,7 +39,7 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
 
 ## ACTIVE LANES
 
-- A1 (IN FLIGHT — first hd720 measurement NULL; causal fix is next):
+- A1 (IN FLIGHT — one valid hd720 run; N=2 still unsatisfied):
   Codec capacity is NOT the constraint: controlled local 1280x720@60 H.264
   and VP9 reach about 52-54 presented fps, so YouTube frame supply/selection
   and the later local present ceiling are separate walls. The EGL revision-2
@@ -93,9 +93,28 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   passes `source_proven`, but this NO-BOOT fixture/review grants no FPS claim;
   equality accepts, +1 rejects, causal/order/dimension/VPQ/summary mutations
   reject, and 30fps remains diagnostic NULL. Review ended with an exact zero
-  QEMU process count. IMMEDIATE NEXT: commit the verified checkpoint, then
-  authorize only one serial real-KVM+virgl worker for an honest N>=2 retry;
-  preserve every invalid attempt as INVALID/NULL.
+  QEMU process count. The corrected sole-VM retry retained one valid T1 at
+  `build-x86_64/chromium-youtube-m7/20260710T174100Z-a1-hd720-t1-retry2-mp1-audio1`:
+  real KVM+virgl, source-proven `hd720`, stable 1280x720, and presented windows
+  44.29/44.63 fps (mean 44.46). This is +15.56 fps/+53.8% versus 28.9, but
+  still misses the first 52-fps target by 7.54 and the 52-53 local baseline by
+  7.54-8.54. Source facts are 812 callbacks, presented delta 1123 over
+  19.950s (~56.29/s), 16.667ms median, near60 ratio 0.6338; VPQ delta
+  1148/drop 316 (27.53%), leaving 832 non-dropped frames (~43.45/s), with
+  8 long tasks/664ms. Display present/completion deltas are parity in both
+  windows (3603/3603 and 3559/3559); async posted/retired deltas are
+  10812/10812 then 10679/10678 with pending snapshots 1/1/2; async make-room
+  stall deltas are 6882/6780 with max wait 401524us. Player-crop deltas are
+  178514/178514. Serial T2 at
+  `build-x86_64/chromium-youtube-m7/20260710T174600Z-a1-hd720-t2-retry2-mp1-audio1`
+  is INVALID/NULL on an `fbstat` timeout; its one retry at
+  `build-x86_64/chromium-youtube-m7/20260710T174800Z-a1-hd720-t2r1-retry2-mp1-audio1`
+  is INVALID/NULL on the media helper timeout/partial 10-of-30-row envelope.
+  Therefore N=2 is unsatisfied and the 44.46 N=1 result is diagnostic only,
+  not a performance claim. Exact QEMU count was zero between attempts and at
+  final cleanup. The bounded residual is now VPQ/drop plus host-retire/present
+  backpressure;
+  IMMEDIATE NEXT is NO-BOOT invalid-helper forensics before another boot.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
