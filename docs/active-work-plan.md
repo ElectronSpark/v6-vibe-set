@@ -193,6 +193,18 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   future tracked fixture is optional rather than boot-blocking. Next verified
   checkpoint is this fence correction; then retry A1 serially in the sole VM
   lane to obtain N>=2, while holding the A2 VM boot.
+  That sole-VM retry retained
+  `build-x86_64/chromium-youtube-m7/20260710T211500Z-a1-hd720-fencefix-t1-mp1-audio1`
+  but is INVALID/NULL. Real KVM+virgl, all 3/3 staged media assets, the GPU
+  role, and rendered Chromium were proven before the deterministic
+  `media-probe-deadline-before-initial remaining_ms=-1 required115000` stop;
+  capture was never sent, so there is no source, FPS, or PERF-VIDEO evidence
+  and no T2 or extra boot was spent. The fence fix is not implicated: Tcl
+  `string is integer -strict` rejects the epoch-scale start/deadline values
+  `1783714675638`/`1783714805638`, while `wideinteger` accepts them and proves
+  the true remaining budget was 130000ms. Owned cleanup ended with exact QEMU
+  count zero. Boot remains prohibited pending a narrow NO-BOOT wide-integer
+  correction and independent adversarial review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
