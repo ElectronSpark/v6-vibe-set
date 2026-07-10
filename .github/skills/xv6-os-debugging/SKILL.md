@@ -10,6 +10,35 @@ argument-hint: 'Describe the xv6-os build, runtime, or port symptom'
 
 The real repo skill files live under `.github/skills`. Repo-local `.codex/skills` entries are redirects only; migrate durable content here and keep `.codex` from becoming a second source of truth.
 
+## Host Resource Safety
+
+- Root `AGENTS.md` is binding for this skill and every delegated worker. Repeat
+  its search, synchronous-wait, serial-console, `pgrep`, and QEMU-cleanup rules
+  in every worker prompt.
+- Use only the guarded `rg` resolved from `/home/es/.local/bin/rg`, implemented
+  by `scripts/audit/safe-rg.sh`, for repository searches. Never bypass it with
+  `/usr/bin/rg`; only the guarded wrappers may call the system binary.
+- Ban recursive `-a`/`--text`, `-u`/`-uuu`, `--no-ignore*`, and `--binary`,
+  including clustered short forms. Never recursively content-search build or
+  image trees. Use `scripts/audit/safe-rg-artifact.sh PATTERN FILE...` only for
+  explicitly named, size-checked regular artifact files. Operands must remain
+  canonically inside the repository, traverse no symlinked parent, and use no
+  case-insensitive disk-image or archive extension.
+- Output consumers such as `head` and tool token limits do not bound scanning
+  or memory. Permit only one potentially large search across all workers; the
+  wrappers serialize through one global lock and impose a 2 GiB address-space
+  cap, 64 MiB per-file cap, one thread, no symlink following, and a finite
+  timeout.
+- When an exec returns a `session_id` or cell ID, synchronously wait for that
+  exact process to exit before issuing another search or resource-heavy job.
+  Do not replace the wait with a monitor or an unowned polling loop.
+- The conductor may grant VM authorization to at most one worker; mark all
+  other lanes no-boot. Before dispatch, require no active VM worker plus an
+  exact `/proc/*/exe` count of zero for `qemu-system-*` and `qemu-kvm` (never
+  `pgrep`). Do not dispatch another VM worker until synchronous completion,
+  owned cleanup, and a repeated exact zero count. This is orchestration-only:
+  guest `QEMU_MEMORY`/`-m` may be increased when justified and is not capped.
+
 ## Fast Workflow
 
 - For Linux GUI ABI, X11/XWayland, Chromium/WebKit stress, AF_UNIX/SCM, or

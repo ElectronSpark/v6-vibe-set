@@ -89,6 +89,20 @@ exhaustion-OK, clonetest/cowtest rc=0.
 
 ## Rules (binding, unchanged)
 
+Host-resource guardrail (2026-07-10): the WSL OOM was caused by overlapping
+recursive `rg --text` scans of multi-GiB raw images; `head` bounded output only.
+Root `AGENTS.md` and the authoritative debugging skill now require guarded,
+globally serialized source searches with one thread, 64 MiB/file, <=2 GiB
+address space, no-follow, finite timeout, generated/image exclusions, and a
+separate explicit-file artifact path. Dangerous unrestricted/text/binary flags
+and `/usr/bin/rg` bypasses are forbidden; returned process handles must be
+synchronously reaped before another heavy job. No performance/VM work resumed.
+VM orchestration guard: the conductor authorizes at most one VM worker and all
+other lanes remain no-boot. Dispatch requires no active VM worker plus an exact
+zero `/proc/*/exe` count for `qemu-system-*`/`qemu-kvm` (never `pgrep`); another
+VM worker waits for synchronous completion, owned cleanup, and a repeated zero
+count. This does not cap guest `QEMU_MEMORY`/`-m`, which may grow when justified.
+
 - NO un-gated default flips; promotion only via the standard battery.
 - CODE-FIRST/OFFLINE-FIRST; adversarial review before kernel boots; boot
   before believing; N=1 timing wins are noise until repeated (burned 3x).

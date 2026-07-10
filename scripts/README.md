@@ -85,3 +85,15 @@ scripts/
 
 - `linux_abi_audit.py` and `linux_abi_semantic_audit.py` - regenerate the Linux
   ABI audit documents under `docs/`.
+- `safe-rg.sh` - mandatory fail-closed recursive source-search wrapper; it
+  rejects unsafe flags and build/image operands, serializes searches, and caps
+  threads, file size, address space, and runtime. Explicit operands must
+  canonicalize inside the repository without symlinked parents. Case-insensitive
+  disk-image and archive extensions are excluded. `/home/es/.local/bin/rg`
+  should be a symlink to this script and precede `/usr/bin` in `PATH`.
+- `safe-rg-artifact.sh PATTERN FILE [FILE ...]` - search only explicitly named,
+  non-symlink regular artifacts of at most 64 MiB; disk-image extensions are
+  rejected case-insensitively along with archive extensions. It shares the
+  recursive wrapper's canonical-path checks, lock, and resource caps.
+- `test-safe-rg.sh` - lightweight no-large-file regression suite for both
+  wrappers, including the original `rg --text ... build-x86_64` incident shape.
