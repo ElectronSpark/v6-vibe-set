@@ -163,10 +163,18 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   Required NO-BOOT gates are exact-handle/off/missing-symbol/dlerror controls,
   full binding and provider-identity proof, multi-context/stream IDs,
   thread+fork-held-lock, poison-output/errno parity, >100k-call cap+late-failure,
-  and parser acceptance without a Chromium effective-attr row. The correction
-  and the prior classifier/ownership/software-scan/timeout/cleanup fixes are in
-  flight; boot remains unauthorized pending adversarial NO-BOOT approval. Only
-  then spend exactly one real KVM+virgl localization boot
+  and parser acceptance without a Chromium effective-attr row. The corrected
+  tree passes its static and parser-mutation suites, but independent NO-BOOT
+  review REJECTS it: loading provider A then B globally overwrites saved
+  bindings (A resolves 0x1111 before B, then the same A wrapper calls 0x2222);
+  the reducer rejects a valid aligned 2048-byte successful begin-write despite
+  minreq=2048; and timeout unrefs a running operation while its late callback
+  still references a stack waiter. Audio boot is prohibited. Required
+  correction is handle-local provider slots plus a two-provider regression,
+  acceptance/write of every aligned positive returned size including 2048,
+  and callback-safe timeout lifetime, followed by independent adversarial
+  NO-BOOT re-review. Only after PASS spend exactly one real KVM+virgl
+  localization boot
   with audio enabled, `QEMU_AUDIO=none`, explicit null sink, and pw-play ->
   paplay -> exact Chromium libpulse -> >=20s Chromium smoke. A4
   `QEMU_AUDIO=virtio` + WAV/audible work remains subsequent. Kernel
