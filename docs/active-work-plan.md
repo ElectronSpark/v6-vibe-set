@@ -134,7 +134,15 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   correction is an absolute host-monotonic phase deadline covering send,
   parse, wait, and final capture with margin and a 60s wait; validate an exact
   ordered unique prefix before any incomplete classification; require exactly
-  one same-nonce RC and fence; then repeat adversarial NO-BOOT review.
+  one same-nonce RC and fence; then repeat adversarial NO-BOOT review. The
+  second host-wait NO-BOOT re-review closes the deadline and unique RC/fence
+  blockers but still REJECTS: structurally ordered 10/30 prefixes with semantic
+  corruptions (`player_state=2`, `invoked=0`, selected `medium`, or sample
+  `640x360`) are classified INCOMPLETE and earn the 60s wait because prefix
+  checking validates structure but not semantics. Exact QEMU count was zero;
+  boot remains prohibited. Required correction is shared/full semantic
+  validation of every present prefix row before any wait, exact mutations for
+  those four cases, and another independent adversarial NO-BOOT review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
