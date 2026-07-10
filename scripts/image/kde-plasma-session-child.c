@@ -96,10 +96,98 @@ static int flag_or_env_enabled(const char *flag, const char *env)
     return cmdline_has_flag(flag) || env_is_enabled(env);
 }
 
+static void audio_status(const char *fmt, ...)
+    __attribute__((format(printf, 1, 2)));
+
 static int pactl_readiness_probe_enabled(void)
 {
     return cmdline_has_flag("kde_pactl_probe=1") ||
            env_is_enabled("KDE_PACTL_READINESS_PROBE");
+}
+
+/*
+ * Audio gap workaround: guarantee a working (silent) PulseAudio sink.
+ *
+ * The baked pipewire.conf declares an ALSA sink "alsa_output.xv6_virtio"
+ * bound to hw:0 (factory.name = api.alsa.pcm.sink, flags = [ nofail ]).
+ * On the current guest the spa-alsa hw:0 open does not complete, so that
+ * node never instantiates and PipeWire/pipewire-pulse come up with ZERO
+ * sinks. Chromium's PulseAudio renderer then fails to init a stream
+ * (media/audio/pulse/pulse_util.cc "pa_operation is nullptr" +
+ * PipelineStatus::AUDIO_RENDERER_ERROR), and because YouTube muxes an Opus
+ * audio track the whole combined audio+video pipeline is failed -> black
+ * player. The kde.plasma.pulseaudio widget likewise logs
+ * "No object for name alsa_output.xv6_virtio.monitor".
+ *
+ * When this gate is ON we drop a PipeWire config fragment that instantiates
+ * a support.null-audio-sink (node "xv6_null_output") so apps get a
+ * working-but-silent server (equivalent to Chromium's own
+ * --disable-audio-output null sink, but server-side and shared) AND we make
+ * it the DEFAULT sink once pipewire-pulse is up, so Chromium's output stream
+ * lands on a sink that always consumes samples instead of the ALSA hw:0 sink
+ * (which, when it does register, is backed by a kernel /dev/snd with no host
+ * backend and errors on stream start -> "MixableOutputStream: Error during
+ * independent playback"). This is the pragmatic userspace-only path; it does
+ * NOT route audio to the host (that needs the spa-alsa<->kernel /dev/snd path
+ * debugged and working with a real QEMU audio backend).
+ *
+ * Default OFF (opt-in), byte-identical when unset: no fragment is written.
+ * Enable with cmdline kde_audio_null_sink=1 or env KDE_AUDIO_NULL_SINK=1.
+ */
+#define AUDIO_NULL_SINK_NODE "xv6_null_output"
+static int audio_null_sink_enabled(void)
+{
+    return flag_or_env_enabled("kde_audio_null_sink=1", "KDE_AUDIO_NULL_SINK");
+}
+
+static void write_audio_null_sink_dropin(void)
+{
+    const char *dir = "/dev/shm/kde-config/pipewire";
+    const char *ddir = "/dev/shm/kde-config/pipewire/pipewire.conf.d";
+    const char *path =
+        "/dev/shm/kde-config/pipewire/pipewire.conf.d/50-xv6-null-sink.conf";
+    FILE *fp;
+
+    mkdir_one("/dev/shm/kde-config", 0700);
+    mkdir_one(dir, 0700);
+    mkdir_one(ddir, 0700);
+
+    fp = fopen(path, "w");
+    if (!fp) {
+        fprintf(stderr,
+                "kde-plasma-session-child: null-sink dropin %s: %s\n",
+                path, strerror(errno));
+        audio_status("phase=null-sink status=FAIL reason=open-%s", strerror(errno));
+        return;
+    }
+
+    fprintf(fp,
+        "# xv6 gated audio workaround (kde_audio_null_sink=1): a guaranteed\n"
+        "# working silent sink so PulseAudio clients (Chromium) init cleanly\n"
+        "# when the ALSA hw:0 sink does not instantiate.\n"
+        "context.objects = [\n"
+        "    {   factory = adapter\n"
+        "        args = {\n"
+        "            factory.name            = support.null-audio-sink\n"
+        "            node.name               = \"" AUDIO_NULL_SINK_NODE "\"\n"
+        "            node.description        = \"xv6 Null Output\"\n"
+        "            media.class             = \"Audio/Sink\"\n"
+        "            audio.position          = \"FL,FR\"\n"
+        "            monitor.channel-volumes = true\n"
+        "            priority.session        = 2000\n"
+        "            priority.driver         = 2000\n"
+        "            node.always-process     = true\n"
+        "            object.linger           = true\n"
+        "        }\n"
+        "    }\n"
+        "]\n");
+    fclose(fp);
+
+    audio_status("phase=null-sink status=WROTE path=%s node=%s",
+                 path, AUDIO_NULL_SINK_NODE);
+    fprintf(stderr,
+            "kde-plasma-session-child: audio null-sink dropin written: %s\n",
+            path);
 }
 
 static int plasmashell_crash_capture_enabled(void)
@@ -632,8 +720,11 @@ static void run_audio_services(char *const pipewire[],
     int pulse_ready;
     int pactl_enabled = pactl_readiness_probe_enabled();
 
-    audio_status("phase=start status=START pactl_probe=%s",
-                 pactl_enabled ? "enabled" : "skipped");
+    audio_status("phase=start status=START pactl_probe=%s null_sink=%s",
+                 pactl_enabled ? "enabled" : "skipped",
+                 audio_null_sink_enabled() ? "enabled" : "skipped");
+    if (audio_null_sink_enabled())
+        write_audio_null_sink_dropin();
     unsetenv("LD_LIBRARY_PATH");
     unsetenv("LD_PRELOAD");
     run_optional(pipewire, 0, 0);
@@ -644,6 +735,16 @@ static void run_audio_services(char *const pipewire[],
     pulse_ready = wait_for_pulse_server();
     audio_status("phase=socket status=%s pipewire_core=%d pulse_socket=%d",
                  pulse_ready ? "PASS" : "FAIL", core_ready, pulse_ready);
+    if (audio_null_sink_enabled() && pulse_ready) {
+        /* Make the always-consuming null sink the default so Chromium's
+         * PulseAudio output stream does not land on the broken ALSA hw:0
+         * sink. pactl writes the wireplumber default-sink metadata. */
+        run_optional((char *const[]){ "/usr/bin/pactl", "set-default-sink",
+                                      AUDIO_NULL_SINK_NODE, NULL },
+                     1, 4000);
+        audio_status("phase=null-sink status=DEFAULT node=%s",
+                     AUDIO_NULL_SINK_NODE);
+    }
     if (!pactl_enabled) {
         audio_status("phase=pactl status=SKIPPED reason=nonessential-readiness-probe enable=kde_pactl_probe=1");
     } else {
