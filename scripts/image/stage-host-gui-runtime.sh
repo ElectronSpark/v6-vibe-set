@@ -84,6 +84,24 @@ stage_chromium_egl_trace_preload() {
     fi
 }
 
+stage_chromium_pulse_trace_preload() {
+    local out="${BUILD_DIR}/chromium-pulse-trace-preload.so"
+    local dst="${OVERLAY}/opt/host-gui/wayland-chromium/lib/chromium-pulse-trace-preload.so"
+
+    if "${CC_BIN}" -O2 -Wall -Wextra -Werror -fPIC -shared \
+        -o "${out}" \
+        "${REPO_ROOT}/scripts/image/chromium-pulse-trace-preload.c" \
+        -ldl -pthread >/dev/null 2>&1; then
+        mkdir -p "$(dirname "${dst}")"
+        cp -aL "${out}" "${dst}"
+        chmod 0755 "${dst}" 2>/dev/null || true
+        note "staged default-off Chromium Pulse trace preload at ${dst#${OVERLAY}}"
+    else
+        note "failed to build required default-off Chromium Pulse trace preload"
+        return 1
+    fi
+}
+
 stage_host_file() {
     local src="$1"
     local dst="$2"
@@ -168,6 +186,11 @@ stage_dbus() {
 }
 
 stage_c_probes() {
+    build_simple chromium-pulse-stream-reducer \
+        "${REPO_ROOT}/scripts/image/chromium-pulse-stream-reducer.c" \
+        "${REPO_ROOT}/scripts/image/chromium-pulse-stream-reducer-launcher.c" \
+        -ldl -pthread
+
     if has_pkg_config gtk+-3.0; then
         # shellcheck disable=SC2046
         build_simple host-gtk-smoke \
@@ -431,6 +454,7 @@ stage_c_probes
 stage_wayland_probes
 stage_idle_if_available
 stage_chromium_egl_trace_preload
+stage_chromium_pulse_trace_preload
 stage_chromium_for_testing
 
 note "overlay=${OVERLAY}"

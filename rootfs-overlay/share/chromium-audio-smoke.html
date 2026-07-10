@@ -13,9 +13,15 @@
     await ctx.resume();
     document.title = "chromium-audio-smoke:playing";
     console.log("CHROMIUM-AUDIO-SMOKE playing state=" + ctx.state);
-    setInterval(() => {
-      document.title = "chromium-audio-smoke:t=" + ctx.currentTime.toFixed(1);
-    }, 500);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks++;
+      const current = ctx.currentTime.toFixed(3);
+      document.title = "chromium-audio-smoke:t=" + current;
+      console.log("CHROMIUM-AUDIO-SMOKE tick=" + ticks +
+                  " currentTime=" + current + " state=" + ctx.state);
+      if (ticks >= 30) clearInterval(timer);
+    }, 1000);
   } catch (e) {
     document.title = "chromium-audio-smoke:error:" + e.name;
     console.log("CHROMIUM-AUDIO-SMOKE error " + e.stack);

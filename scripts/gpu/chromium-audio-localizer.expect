@@ -1,0 +1,676 @@
+#!/usr/bin/env expect
+# One-boot, default-off A2/A4 Pulse/PipeWire/Chromium localization driver.
+# This is diagnostic only: every valid class explicitly carries no YouTube
+# performance or audible-output claim.
+
+set timeout 900
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+source "$root/scripts/gpu/chromium-audio-localizer-parser.tcl"
+
+proc audio_fail_preflight {message {code 2}} {
+    puts stderr "AUDIO-LOCALIZER-PREFLIGHT-FAIL $message"
+    exit $code
+}
+
+proc audio_exact_qemu_lines {} {
+    set rows {}
+    foreach link [glob -nocomplain {/proc/[0-9]*/exe}] {
+        if {[catch {file readlink $link} exe]} { continue }
+        set base [file tail $exe]
+        if {![string match {qemu-system-*} $base] && $base ne "qemu-kvm"} {
+            continue
+        }
+        if {![regexp {^/proc/([0-9]+)/exe$} $link -> pid]} { continue }
+        set cmdline ""
+        if {![catch {
+            set fh [open "/proc/$pid/cmdline" rb]
+            set cmdline [read $fh]
+            close $fh
+        }]} {
+            regsub -all {\x00} $cmdline { } cmdline
+        }
+        lappend rows "$pid exe=$exe cmd=$cmdline"
+    }
+    return [join [lsort $rows] { | }]
+}
+
+set preexisting [audio_exact_qemu_lines]
+if {$preexisting ne ""} {
+    audio_fail_preflight "qemu-already-running exact=$preexisting" 11
+}
+
+if {[info exists env(AUDIO_LOCALIZER_STATIC_CHECK)] &&
+    $env(AUDIO_LOCALIZER_STATIC_CHECK) eq "1"} {
+    set caught [catch {
+        exec bash "$root/scripts/gpu/chromium-audio-localizer-static.sh" 2>@1
+    } output options]
+    puts $output
+    if {$caught} {
+        audio_fail_preflight "static-suite-failed errorcode=[dict get $options -errorcode]" 3
+    }
+    set remaining [audio_exact_qemu_lines]
+    if {$remaining ne ""} {
+        audio_fail_preflight "static-suite-left-qemu exact=$remaining" 11
+    }
+    puts "AUDIO-LOCALIZER-STATIC-CHECK-PASS exact_qemu=none"
+    exit 0
+}
+
+if {![info exists env(AUDIO_LOCALIZER)] || $env(AUDIO_LOCALIZER) ne "1"} {
+    audio_fail_preflight "default-off-arm-requires-AUDIO_LOCALIZER=1"
+}
+
+set kernel "$root/build-x86_64/kernel/build/kernel/xv6.bin"
+set fsimg "$root/build-x86_64/fs.img"
+set guest_helper_source "$root/scripts/gpu/chromium-audio-localizer-guest.sh"
+set stamp [clock format [clock seconds] -gmt true -format "%Y%m%dT%H%M%SZ"]
+set run_id "${stamp}-pid[pid]-a2-pulse-localizer"
+if {[info exists env(AUDIO_LOCALIZER_OUTDIR)] &&
+    $env(AUDIO_LOCALIZER_OUTDIR) ne ""} {
+    set outdir [file normalize $env(AUDIO_LOCALIZER_OUTDIR)]
+} else {
+    set outdir "$root/build-x86_64/chromium-audio-localizer/$run_id"
+}
+if {[file exists $outdir] && [llength [glob -nocomplain -directory $outdir *]] > 0} {
+    audio_fail_preflight "run-directory-not-empty path=$outdir"
+}
+file mkdir $outdir
+
+set scratch "/tmp/xv6-audio-localizer-${run_id}.fs.img"
+set monitor "/tmp/xv6-audio-localizer-${run_id}.monitor.sock"
+set debugcon_source "/tmp/xv6-debugcon.log"
+set debugcon_log "$outdir/qemu-debugcon.log"
+set runlog "$outdir/run.log"
+set statusf "$outdir/STATUS.txt"
+set cleanup_log "$outdir/cleanup.txt"
+set debugfs_log "$outdir/debugfs-operations.log"
+set identity_log "$outdir/helper-identity.txt"
+set artifact_manifest "$outdir/artifact-manifest.txt"
+set fbstat_pre "$outdir/fbstat-pre.txt"
+set fbstat_post "$outdir/fbstat-post.txt"
+set serial_log "$outdir/helper-serial.txt"
+set qemu_pid 0
+set qemu_started 0
+set qemu_wait_result not-waited
+set owned_group_remaining ""
+set finishing 0
+set debugcon_prepared 0
+set debugcon_epoch 0
+set serial_counter 0
+set serial_nonce "AUDIO[pid][clock clicks]"
+regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
+set send_slow {1 .010}
+set helper_declared_worst_seconds 420
+set helper_timeout_seconds 480
+
+proc audio_iso_now {} {
+    return [clock format [clock seconds] -gmt true -format "%Y-%m-%dT%H:%M:%SZ"]
+}
+
+proc audio_write {path text} {
+    set fh [open $path w]
+    puts -nonewline $fh $text
+    close $fh
+}
+
+proc audio_append {path text} {
+    set fh [open $path a]
+    puts $fh $text
+    close $fh
+}
+
+proc audio_sha256 {path} {
+    if {![file isfile $path] || ![file readable $path]} { return unavailable }
+    if {[catch {exec sha256sum -- $path} output]} { return unavailable }
+    set value [lindex [split [string trim $output]] 0]
+    return [expr {[regexp {^[0-9a-f]{64}$} $value] ? $value : "unavailable"}]
+}
+
+proc audio_build_id {path} {
+    if {![file isfile $path] || [catch {exec readelf -n $path} output] ||
+        ![regexp {Build ID: ([0-9a-fA-F]+)} $output -> value]} {
+        return unavailable
+    }
+    set value [string tolower $value]
+    if {[string length $value] < 16 || [string length $value] > 128 ||
+        ([string length $value] % 2) != 0 ||
+        ![regexp {^[0-9a-f]+$} $value]} {
+        return invalid
+    }
+    return $value
+}
+
+proc audio_debugfs_arg {value} {
+    regsub -all {\\} $value {\\\\} value
+    regsub -all {"} $value {\\"} value
+    return "\"$value\""
+}
+
+proc audio_debugfs_run {image writable command label} {
+    global debugfs_log
+    set argv [list debugfs]
+    if {$writable} { lappend argv -w }
+    lappend argv -R $command $image
+    set caught [catch {exec {*}$argv 2>@1} output options]
+    set rc 0
+    if {$caught} {
+        set rc -1
+        if {[dict exists $options -errorcode]} {
+            set ec [dict get $options -errorcode]
+            if {[lindex $ec 0] eq "CHILDSTATUS"} { set rc [lindex $ec 2] }
+        }
+    }
+    audio_append $debugfs_log "[audio_iso_now] BEGIN label=$label writable=$writable command=$command"
+    if {$output ne ""} { audio_append $debugfs_log $output }
+    audio_append $debugfs_log "[audio_iso_now] END label=$label rc=$rc"
+    return [list [expr {!$caught}] $rc $output]
+}
+
+proc audio_debugfs_stage {image host guest} {
+    audio_debugfs_run $image 1 "rm [audio_debugfs_arg $guest]" "remove-$guest"
+    set write [audio_debugfs_run $image 1 \
+        "write [audio_debugfs_arg $host] [audio_debugfs_arg $guest]" \
+        "write-$guest"]
+    if {![lindex $write 0]} { return [list 0 "write-process"] }
+    set mode [audio_debugfs_run $image 1 \
+        "sif [audio_debugfs_arg $guest] mode 0100755" "chmod-$guest"]
+    if {![lindex $mode 0]} { return [list 0 "chmod-process"] }
+    set stat [audio_debugfs_run $image 0 "stat [audio_debugfs_arg $guest]" "stat-$guest"]
+    if {![lindex $stat 0] ||
+        ![regexp {Type:[ \t]+regular([ \t]|$)} [lindex $stat 2]] ||
+        ![regexp {(^|[\r\n])[^\r\n]*Size:[ \t]+([0-9]+)([ \t\r\n]|$)} [lindex $stat 2] -> _ size] ||
+        $size != [file size $host]} {
+        return [list 0 "stat-or-size"]
+    }
+    return [list 1 "size=$size"]
+}
+
+proc audio_dump_file {guest host {allow_empty 0}} {
+    global scratch artifact_manifest
+    catch {file delete -force $host}
+    set stat [audio_debugfs_run $scratch 0 "stat [audio_debugfs_arg $guest]" "extract-stat-$guest"]
+    if {![lindex $stat 0] ||
+        ![regexp {Type:[ \t]+regular([ \t]|$)} [lindex $stat 2]] ||
+        ![regexp {(^|[\r\n])[^\r\n]*Size:[ \t]+([0-9]+)([ \t\r\n]|$)} [lindex $stat 2] -> _ size]} {
+        audio_append $artifact_manifest "guest=$guest host=$host status=missing"
+        return 0
+    }
+    set dump [audio_debugfs_run $scratch 0 \
+        "dump [audio_debugfs_arg $guest] [audio_debugfs_arg $host]" "extract-$guest"]
+    if {![lindex $dump 0] || ![file exists $host] || [file size $host] != $size ||
+        (!$allow_empty && $size == 0)} {
+        audio_append $artifact_manifest "guest=$guest host=$host status=extract-failed expected_size=$size"
+        return 0
+    }
+    audio_append $artifact_manifest "guest=$guest host=$host status=present size=$size"
+    return 1
+}
+
+proc audio_prepare_debugcon {} {
+    global debugcon_source debugcon_prepared debugcon_epoch statusf
+    set prior absent
+    if {[file exists $debugcon_source]} {
+        set prior "size=[file size $debugcon_source]:mtime=[file mtime $debugcon_source]"
+    }
+    if {[catch {file delete -force $debugcon_source} error] ||
+        [file exists $debugcon_source]} {
+        return [list 0 "delete-failed prior=$prior error=$error"]
+    }
+    set debugcon_prepared 1
+    set debugcon_epoch [clock seconds]
+    audio_append $statusf "[audio_iso_now] debugcon_prepared=1 epoch=$debugcon_epoch prior=$prior"
+    return [list 1 "epoch=$debugcon_epoch"]
+}
+
+proc audio_copy_debugcon {} {
+    global debugcon_source debugcon_log debugcon_prepared debugcon_epoch artifact_manifest
+    set status missing
+    set detail ""
+    if {!$debugcon_prepared} {
+        set status unprepared
+    } elseif {![file exists $debugcon_source]} {
+        set status missing
+    } elseif {[file mtime $debugcon_source] < $debugcon_epoch} {
+        set status stale
+        set detail "mtime=[file mtime $debugcon_source] epoch=$debugcon_epoch"
+    } elseif {[file size $debugcon_source] == 0} {
+        set status empty
+    } else {
+        file copy -force $debugcon_source $debugcon_log
+        set status present-current
+        set detail "size=[file size $debugcon_log]"
+    }
+    audio_append $artifact_manifest "host=$debugcon_source copy=$debugcon_log status=$status $detail"
+    return [list [expr {$status eq "present-current"}] $status $detail]
+}
+
+proc audio_owned_group_lines {{live_only 0}} {
+    global qemu_pid
+    if {$qemu_pid <= 0} { return "" }
+    set script {
+        ps -eo pid=,pgid=,stat=,comm= 2>/dev/null |
+            awk -v want="$1" -v live="$2" \
+                '$2 == want && (!live || $3 !~ /^Z/) { print $1 " pgid=" $2 " stat=" $3 " comm=" $4 }'
+    }
+    if {[catch {exec sh -c $script sh $qemu_pid $live_only} output]} {
+        return [string trim $output]
+    }
+    return [string trim $output]
+}
+
+proc audio_monitor_cmd {command {seconds 5}} {
+    global monitor
+    if {![file exists $monitor]} { return monitor-missing }
+    if {[catch {
+        exec sh -c {printf '%s\n' "$1" | nc -U -w "$2" -q 0 "$3"} \
+            sh $command $seconds $monitor
+    } output]} {
+        return $output
+    }
+    return $output
+}
+
+proc audio_stop_qemu {} {
+    global qemu_started qemu_pid qemu_wait_result owned_group_remaining cleanup_log
+    if {!$qemu_started || $qemu_pid <= 0} { return }
+    audio_append $cleanup_log "[audio_iso_now] cleanup-start leader=$qemu_pid"
+    catch {audio_monitor_cmd quit 4}
+    after 500
+    for {set attempt 1} {$attempt <= 3} {incr attempt} {
+        set all [audio_owned_group_lines]
+        set live [audio_owned_group_lines 1]
+        audio_append $cleanup_log "[audio_iso_now] attempt=$attempt all=[expr {$all eq "" ? "none" : $all}] live=[expr {$live eq "" ? "none" : $live}]"
+        if {$live eq ""} { break }
+        set signal [expr {$attempt == 1 ? "-TERM" : "-KILL"}]
+        catch {exec kill $signal -- [expr {-$qemu_pid}]}
+        after [expr {$attempt == 1 ? 1000 : 500}]
+    }
+    set live [audio_owned_group_lines 1]
+    if {$live eq ""} {
+        if {[catch {wait} waited]} {
+            set qemu_wait_result "wait-error:$waited"
+        } else {
+            set qemu_wait_result "waited:$waited"
+        }
+    } else {
+        catch {wait -nowait} waited
+        set qemu_wait_result "not-waited-live:$live result=$waited"
+    }
+    set owned_group_remaining [audio_owned_group_lines]
+    audio_append $cleanup_log "[audio_iso_now] cleanup-finished remaining=[expr {$owned_group_remaining eq "" ? "none" : $owned_group_remaining}] wait=$qemu_wait_result"
+    set qemu_started 0
+}
+
+proc audio_extract_artifacts {} {
+    global outdir artifact_manifest debugcon_log
+    audio_write $artifact_manifest "extraction_timestamp=[audio_iso_now]\n"
+    set required [dict create \
+        manifest /audio-localizer/manifest.log \
+        snapshots /audio-localizer/snapshots.log \
+        helper /audio-localizer/helper.log \
+        primary-socket /audio-localizer/primary-socket.log \
+        fixture /audio-localizer/fixture.log \
+        pw-play-primary /audio-localizer/pw-play-primary.log \
+        paplay-primary /audio-localizer/paplay-primary.log \
+        reducer-primary /audio-localizer/reducer-primary.log \
+        chromium-stdio /audio-localizer/chromium-stdio.log \
+        chromium-owner /audio-localizer/chromium-owner.log \
+        chromium-owner-record /audio-localizer/chromium.owner \
+        launcher /host-gui-wayland-chromium.log \
+        pulse-trace /chromium-pulse-trace.log \
+        pipewire-quantum /audio-localizer/pipewire-quantum.log \
+        pulse-quantum /audio-localizer/pipewire-pulse-quantum.log]
+    dict for {name guest} $required {
+        audio_dump_file $guest "$outdir/$name.log" 0
+    }
+    foreach pair [list \
+        [list fallback-server /audio-localizer/fallback-server.log] \
+        [list fallback-socket /audio-localizer/fallback-socket.log] \
+        [list fallback-owner /audio-localizer/fallback-owner.log] \
+        [list fallback-owner-record /audio-localizer/fallback.owner] \
+        [list paplay-fallback /audio-localizer/paplay-fallback.log] \
+        [list reducer-fallback /audio-localizer/reducer-fallback.log] \
+        [list chrome-debug /chrome_debug.log]] {
+        lassign $pair name guest
+        audio_dump_file $guest "$outdir/$name.log" 1
+    }
+    return [audio_copy_debugcon]
+}
+
+proc audio_gpu_contract {text} {
+    set errors {}
+    foreach {name pattern} {
+        backend {(^|[\r\n])backend virgl flags [^\r\n]*renderer [^\r\n]*virgl([^\r\n]*)([\r\n]|$)}
+        opengl {(^|[\r\n])backend_opengl_submit 1([\r\n]|$)}
+        gate {(^|[\r\n])backend_opengl_submit_gate open([\r\n]|$)}
+        virgl {(^|[\r\n])backend_virgl_opengl 1([\r\n]|$)}
+        separation {(^|[\r\n])opengl_submit_backend_separation_matrix [^\r\n]*backend=virgl[^\r\n]*opengl_submit_credit=1[^\r\n]*status=PASS([\r\n]|$)}
+    } {
+        if {![regexp $pattern $text]} { lappend errors "missing-$name" }
+    }
+    if {[regexp -nocase {llvmpipe|softpipe|swrast|kms_swrast|drisw|SwiftShader|LIBGL_ALWAYS_SOFTWARE=(1|true|yes|on)} $text]} {
+        lappend errors software-marker
+    }
+    return [list [expr {[llength $errors] == 0}] [join $errors ,]]
+}
+
+proc audio_extract_and_classify {} {
+    global outdir runlog fbstat_pre fbstat_post debugcon_log identity_log
+    set required_paths [dict create \
+        manifest "$outdir/manifest.log" \
+        snapshots "$outdir/snapshots.log" \
+        primary_socket "$outdir/primary-socket.log" \
+        reducer_primary "$outdir/reducer-primary.log" \
+        launcher "$outdir/launcher.log" \
+        trace "$outdir/pulse-trace.log" \
+        chromium_owner "$outdir/chromium-owner.log" \
+        chromium_owner_record "$outdir/chromium-owner-record.log" \
+        provider_identity $identity_log \
+        pipewire_quantum "$outdir/pipewire-quantum.log" \
+        pulse_quantum "$outdir/pulse-quantum.log"]
+    set missing {}
+    set artifacts [dict create]
+    dict for {key path} $required_paths {
+        if {![file exists $path] || [file size $path] == 0} {
+            lappend missing "$key:$path"
+        } else {
+            dict set artifacts $key [audio_read_text $path]
+        }
+    }
+    if {[llength $missing] > 0} {
+        return [dict create valid 0 class INVALID errors [list "missing-required-artifacts-[join $missing ,]"] no_youtube_claim 1]
+    }
+    if {[file exists "$outdir/reducer-fallback.log"] &&
+        [file size "$outdir/reducer-fallback.log"] > 0} {
+        dict set artifacts reducer_fallback [audio_read_text "$outdir/reducer-fallback.log"]
+    }
+    foreach pair [list \
+        [list fallback_owner "$outdir/fallback-owner.log"] \
+        [list fallback_owner_record "$outdir/fallback-owner-record.log"] \
+        [list fallback_socket "$outdir/fallback-socket.log"]] {
+        lassign $pair key path
+        if {[file exists $path] && [file size $path] > 0} {
+            dict set artifacts $key [audio_read_text $path]
+        }
+    }
+    set evidence ""
+    foreach path [list $runlog $fbstat_pre $fbstat_post $debugcon_log \
+        $identity_log "$outdir/helper.log" "$outdir/chromium-stdio.log" \
+        "$outdir/fallback-server.log" "$outdir/fallback-owner.log" \
+        "$outdir/launcher.log" "$outdir/pulse-trace.log" \
+        "$outdir/reducer-primary.log"] {
+        append evidence "\n" [audio_read_text $path]
+    }
+    dict set artifacts evidence $evidence
+    set gpu_pre [audio_gpu_contract [audio_read_text $fbstat_pre]]
+    set gpu_post [audio_gpu_contract [audio_read_text $fbstat_post]]
+    if {![lindex $gpu_pre 0] || ![lindex $gpu_post 0] ||
+        ![regexp {run-qemu: using KVM acceleration} [audio_read_text $runlog]]} {
+        return [dict create valid 0 class INVALID \
+            errors [list "gpu-or-kvm-contract pre=[lindex $gpu_pre 1] post=[lindex $gpu_post 1]"] \
+            no_youtube_claim 1]
+    }
+    return [audio_localizer_classify $artifacts]
+}
+
+proc audio_finish {code label} {
+    global finishing outdir statusf scratch monitor owned_group_remaining qemu_started
+    if {$finishing} { return }
+    set finishing 1
+    audio_stop_qemu
+    catch {file delete -force $monitor}
+    set debugcon [audio_extract_artifacts]
+    if {![lindex $debugcon 0]} {
+        set code 8
+        set label "INVALID fresh-debugcon-[lindex $debugcon 1]"
+    }
+    if {$owned_group_remaining ne ""} {
+        set code 9
+        set label "INVALID lingering-owned-qemu-group=$owned_group_remaining"
+    }
+    set exact [audio_exact_qemu_lines]
+    if {$exact ne ""} {
+        set code 9
+        set label "INVALID lingering-qemu=$exact"
+    }
+    audio_append $statusf "[audio_iso_now] result_code=$code result=$label exact_qemu_after=[expr {$exact eq "" ? "none" : $exact}] no_youtube_claim=1"
+    if {$code == 0} {
+        catch {file delete -force $scratch}
+    } else {
+        audio_append $statusf "[audio_iso_now] retained_scratch=$scratch"
+    }
+    puts "\nAUDIO-LOCALIZER-RESULT code=$code $label outdir=$outdir no_youtube_claim=1 exact_qemu=[expr {$exact eq "" ? "none" : $exact}]"
+    exit $code
+}
+
+proc audio_marker_regex {marker} {
+    return [format {%s:([0-9]+)} $marker]
+}
+
+proc audio_guest_cmd {command label {seconds 60}} {
+    global timeout serial_counter serial_nonce send_slow
+    incr serial_counter
+    set marker "${serial_nonce}C${serial_counter}"
+    set pattern [audio_marker_regex $marker]
+    set old_timeout $timeout
+    set timeout $seconds
+    send "\025"
+    # Sacrificial true protects the first real command character from the
+    # known post-prompt bracketed-paste drop.
+    send -s "true;$command;rc=\$?;m=$marker;echo \$m:\$rc;echo \$m:\$rc;echo \$m:\$rc\r"
+    expect {
+        -re $pattern {
+            set rc $expect_out(1,string)
+            set buffer $expect_out(buffer)
+            set timeout $old_timeout
+            return [list $rc $buffer]
+        }
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} {
+            set timeout $old_timeout
+            audio_finish 4 "INVALID crash phase=$label"
+        }
+        timeout {
+            set timeout $old_timeout
+            audio_finish 8 "INVALID timeout phase=$label"
+        }
+        eof {
+            set timeout $old_timeout
+            audio_finish 5 "INVALID eof phase=$label"
+        }
+    }
+}
+
+proc audio_guest_ok {result label} {
+    if {[lindex $result 0] ne "0"} {
+        audio_finish 8 "INVALID guest-command phase=$label rc=[lindex $result 0]"
+    }
+    return [lindex $result 1]
+}
+
+trap {audio_finish 130 "INVALID signal=SIGINT"} SIGINT
+trap {audio_finish 143 "INVALID signal=SIGTERM"} SIGTERM
+trap {audio_finish 129 "INVALID signal=SIGHUP"} SIGHUP
+
+foreach path [list $kernel $fsimg $guest_helper_source] {
+    if {![file isfile $path] || ![file readable $path]} {
+        audio_fail_preflight "required-file-missing path=$path"
+    }
+}
+foreach tool {debugfs sha256sum readelf nc} {
+    if {[auto_execok $tool] eq ""} { audio_fail_preflight "host-tool-missing tool=$tool" }
+}
+
+audio_write $statusf "[audio_iso_now] arm=A2-pulse-localizer default_off=1 qemu_audio=none audio_disable=0 no_youtube_claim=1 helper_declared_worst_seconds=$helper_declared_worst_seconds helper_timeout_seconds=$helper_timeout_seconds\n"
+audio_write $cleanup_log ""
+audio_write $debugfs_log ""
+catch {file delete -force $scratch $monitor}
+file copy -force $fsimg $scratch
+
+set staged [audio_debugfs_stage $scratch $guest_helper_source /audio-localizer-guest.sh]
+if {![lindex $staged 0]} {
+    audio_finish 8 "INVALID guest-helper-stage [lindex $staged 1]"
+}
+
+# Fail closed before a boot unless every executable/data provider is
+# byte-identical across its source/build staging path and the scratch image.
+# This driver never builds or refreshes those paths itself.
+set identity_specs [list \
+    [list reducer_provider \
+        /opt/host-gui/chromium-pulse-stream-reducer/bin/chromium-pulse-stream-reducer \
+        "$outdir/image-reducer-provider" 1 \
+        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-stream-reducer" \
+              "$root/rootfs-overlay/opt/host-gui/chromium-pulse-stream-reducer/bin/chromium-pulse-stream-reducer"]] \
+    [list reducer_launcher /bin/chromium-pulse-stream-reducer \
+        "$outdir/image-reducer-launcher" 1 \
+        [list "$root/rootfs-overlay/bin/chromium-pulse-stream-reducer"]] \
+    [list pulse_trace \
+        /opt/host-gui/wayland-chromium/lib/chromium-pulse-trace-preload.so \
+        "$outdir/image-pulse-trace.so" 1 \
+        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-trace-preload.so" \
+              "$root/rootfs-overlay/opt/host-gui/wayland-chromium/lib/chromium-pulse-trace-preload.so"]] \
+    [list pulse_provider \
+        /opt/host-gui/wayland-chromium/chrome-linux64/libpulse.so.0 \
+        "$outdir/image-libpulse.so.0" 1 \
+        [list "$root/rootfs-overlay/opt/host-gui/wayland-chromium/chrome-linux64/libpulse.so.0"]] \
+    [list audio_smoke /share/chromium-audio-smoke.html \
+        "$outdir/image-audio-smoke.html" 0 \
+        [list "$root/rootfs-overlay/share/chromium-audio-smoke.html"]] \
+    [list guest_helper /audio-localizer-guest.sh \
+        "$outdir/image-audio-localizer-guest.sh" 0 \
+        [list $guest_helper_source]]]
+audio_write $identity_log ""
+foreach spec $identity_specs {
+    lassign $spec name guest image_path require_build_id expected_paths
+    if {![audio_dump_file $guest $image_path 0]} {
+        audio_finish 8 "INVALID image-helper-missing name=$name guest=$guest refresh_required=1"
+    }
+    set image_sha [audio_sha256 $image_path]
+    set image_build_id [expr {$require_build_id ? [audio_build_id $image_path] : "not-applicable"}]
+    set expected_rows {}
+    set identity_ok [expr {$image_sha ne "unavailable" &&
+        (!$require_build_id || $image_build_id ni {unavailable invalid})}]
+    foreach expected $expected_paths {
+        set expected_sha [audio_sha256 $expected]
+        set expected_build_id [expr {$require_build_id ? [audio_build_id $expected] : "not-applicable"}]
+        lappend expected_rows "$expected:$expected_sha:$expected_build_id"
+        if {$expected_sha ne $image_sha ||
+            ($require_build_id && $expected_build_id ne $image_build_id)} {
+            set identity_ok 0
+        }
+    }
+    audio_append $identity_log "identity schema=1 name=$name guest=$guest image=$image_path image_sha=$image_sha image_build_id=$image_build_id expected_count=[llength $expected_paths] expected=[join $expected_rows ,] status=[expr {$identity_ok ? "PASS" : "FAIL"}]"
+    if {!$identity_ok} {
+        audio_finish 8 "INVALID source-stage-image-identity name=$name"
+    }
+}
+
+set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0 kde_audio_null_sink=1"
+set qextra "-monitor unix:$monitor,server,nowait"
+audio_write "$outdir/qemu-launch-command.txt" \
+    "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=0 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
+
+set prepared [audio_prepare_debugcon]
+if {![lindex $prepared 0]} {
+    audio_finish 8 "INVALID debugcon-prepare [lindex $prepared 1]"
+}
+
+try {
+log_file -a $runlog
+spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 \
+    QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary \
+    QEMU_INPUT=virtio QEMU_NET=0 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none \
+    QEMU_APPEND=$append QEMU_EXTRA=$qextra \
+    bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
+set qemu_pid [exp_pid]
+set qemu_started 1
+match_max 2000000
+after 50
+set owner [audio_owned_group_lines]
+set owner_pattern [format {^%s pgid=%s } $qemu_pid $qemu_pid]
+if {![regexp $owner_pattern $owner]} {
+    audio_finish 13 "INVALID direct-spawn-owner leader=$qemu_pid snapshot=$owner"
+}
+audio_append $statusf "[audio_iso_now] direct_spawn_owner leader=$qemu_pid snapshot=$owner"
+
+expect {
+    -re {root:/# } {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
+        audio_finish 4 "INVALID crash-before-root"
+    }
+    timeout { audio_finish 12 "INVALID timeout-root" }
+    eof { audio_finish 13 "INVALID eof-before-root" }
+}
+if {![regexp {run-qemu: using KVM acceleration} [audio_read_text $runlog]]} {
+    audio_finish 8 "INVALID missing-kvm-proof"
+}
+
+set old_timeout $timeout
+set timeout 260
+expect {
+    -re {kde-session: KWin and plasmashell are running} {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
+        set timeout $old_timeout
+        audio_finish 4 "INVALID crash-before-kde"
+    }
+    timeout {
+        set timeout $old_timeout
+        audio_finish 14 "INVALID timeout-kde"
+    }
+    eof {
+        set timeout $old_timeout
+        audio_finish 15 "INVALID eof-before-kde"
+    }
+}
+set timeout $old_timeout
+after 3000
+
+set pre [audio_guest_ok [audio_guest_cmd "fbstat" fbstat-pre 40] fbstat-pre]
+audio_write $fbstat_pre $pre
+set pre_gpu [audio_gpu_contract $pre]
+if {![lindex $pre_gpu 0]} {
+    audio_finish 8 "INVALID gpu-pre [lindex $pre_gpu 1]"
+}
+
+set helper_result [audio_guest_ok \
+    [audio_guest_cmd "/bin/bash /audio-localizer-guest.sh" helper-chain \
+        $helper_timeout_seconds] \
+    helper-chain]
+audio_write $serial_log $helper_result
+set manifest_serial [audio_guest_ok \
+    [audio_guest_cmd "cat /audio-localizer/manifest.log" manifest-snapshot 45] \
+    manifest-snapshot]
+if {![regexp {AUDIO_LOCALIZER_HELPER_RESULT schema=1 status=COMPLETE} $manifest_serial]} {
+    audio_finish 8 "INVALID helper-result-missing"
+}
+
+set post [audio_guest_ok [audio_guest_cmd "fbstat" fbstat-post 40] fbstat-post]
+audio_write $fbstat_post $post
+set post_gpu [audio_gpu_contract $post]
+if {![lindex $post_gpu 0]} {
+    audio_finish 8 "INVALID gpu-post [lindex $post_gpu 1]"
+}
+audio_guest_ok [audio_guest_cmd sync final-sync 40] final-sync
+
+audio_stop_qemu
+set debugcon [audio_extract_artifacts]
+if {![lindex $debugcon 0]} {
+    audio_finish 8 "INVALID fresh-debugcon-[lindex $debugcon 1]"
+}
+set exact_after [audio_exact_qemu_lines]
+if {$owned_group_remaining ne "" || $exact_after ne ""} {
+    audio_finish 9 "INVALID cleanup owned=$owned_group_remaining exact=$exact_after"
+}
+set verdict [audio_extract_and_classify]
+audio_write "$outdir/verdict.txt" "[dict get $verdict class] $verdict\n"
+if {![dict get $verdict valid]} {
+    audio_finish 8 "INVALID classification errors=[join [dict get $verdict errors] :]"
+}
+audio_finish 0 "DIAGNOSTIC-ONLY class=[dict get $verdict class] detail=[dict get $verdict detail]"
+} on error {message options} {
+    audio_append $statusf "[audio_iso_now] unexpected_tcl_error=$message"
+    audio_finish 8 "INVALID unexpected-tcl-error message=$message"
+} finally {
+    if {$qemu_started} {
+        audio_stop_qemu
+    }
+}

@@ -151,7 +151,18 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   prohibited. Required narrow correction is shared semantic summary/rVFC
   validation, exact terminal prefixes classified INCOMPLETE while corrupted
   terminal prefixes still reject, an all-length prefix matrix, and another
-  independent adversarial NO-BOOT re-review.
+  independent adversarial NO-BOOT re-review. Final independent NO-BOOT review
+  now PASSES the host-monotonic correction after those three rejection rounds:
+  one absolute 130s deadline preserves a 10s margin, the one allowed wait is
+  60s and every command uses only its remaining budget, same-nonce RC and FENCE
+  are exact and unique, and prefix/full paths share the semantic validators.
+  The exhaustive matrix classifies force prefixes 0--29 INCOMPLETE and 30
+  COMPLETE, normal prefixes 0--23 INCOMPLETE and 24 COMPLETE; legitimate
+  terminal writer-race prefixes 28/29 and 22/23 remain recapturable, while
+  corrupted summary or rVFC rows reject. Every arm/static/adversarial test and
+  diff check passes, and the final exact QEMU count is zero. Next, checkpoint
+  the verified code, then authorize one sole-VM worker for serial N>=2 A1
+  measurement; no A2 VM worker may overlap it.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
@@ -181,18 +192,20 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   full binding and provider-identity proof, multi-context/stream IDs,
   thread+fork-held-lock, poison-output/errno parity, >100k-call cap+late-failure,
   and parser acceptance without a Chromium effective-attr row. The corrected
-  tree passes its static and parser-mutation suites, but independent NO-BOOT
-  review REJECTS it: loading provider A then B globally overwrites saved
-  bindings (A resolves 0x1111 before B, then the same A wrapper calls 0x2222);
-  the reducer rejects a valid aligned 2048-byte successful begin-write despite
-  minreq=2048; and timeout unrefs a running operation while its late callback
-  still references a stack waiter. Audio boot is prohibited. Required
-  correction is handle-local provider slots plus a two-provider regression,
-  acceptance/write of every aligned positive returned size including 2048,
-  and callback-safe timeout lifetime, followed by independent adversarial
-  NO-BOOT re-review. Only after PASS spend exactly one real KVM+virgl
-  localization boot
-  with audio enabled, `QEMU_AUDIO=none`, explicit null sink, and pw-play ->
+  localizer now has independent adversarial NO-BOOT PASS across the full
+  static/reducer/parser suite. Provider A remains 4 after provider B returns
+  104, distinct handle-local wrappers are proven, and default-OFF output is
+  byte-equal. Successful 2048- and 1024-byte begin-write results produce those
+  exact frame counts and writes; 1025-byte and failure cases produce no write.
+  The heap-owned late callback safely defers through mainloop stop, releases,
+  then unrefs under ASan/UBSan. Binding 21 covers the context callback and
+  optional binding 22 covers effective attrs. Causal parser ordering,
+  primary-versus-teardown attribution, provider/source identity, thread/fork,
+  and hot-call late-failure tests all pass; the unarmed localizer exits 2.
+  Review ended with an exact zero QEMU process count. Next, checkpoint the
+  verified code, then spend exactly one sole-VM real KVM+virgl localization
+  boot (no concurrent A1 VM worker) with audio enabled, `QEMU_AUDIO=none`,
+  explicit null sink, and pw-play ->
   paplay -> exact Chromium libpulse -> >=20s Chromium smoke. A4
   `QEMU_AUDIO=virtio` + WAV/audible work remains subsequent. Kernel
   virtio-snd/OSS/ALSA is closed and is not the gap.
