@@ -341,6 +341,21 @@ proc media_probe_histogram_sum_valid {hist interval_sum_ms} {
     return 1
 }
 
+# rVFC delivery to JavaScript may be coalesced while the main world is busy:
+# metadata.presentedFrames and metadata.mediaTime then advance by more than one
+# even though only one callback is delivered.  Bound those jumps against media
+# time, not against an arbitrary multiple of delivered callback slots.  75 fps
+# is a deliberately conservative ceiling for a source whose separate cadence
+# gate requires approximately 60 fps; the small fixed slack covers independent
+# sample reads at either edge of a one-second observation window.
+proc media_probe_frame_window_cap {media_delta {slack 8}} {
+    if {![media_probe_is_decimal $media_delta] ||
+        double($media_delta) < 0.0 || ![media_probe_is_uint $slack]} {
+        return -1
+    }
+    return [expr {wide(ceil(75.0 * double($media_delta))) + $slack}]
+}
+
 proc media_probe_sample_rvfc_consistency {samples rvfc} {
     set max_safe 9007199254740991
     foreach key {
@@ -362,6 +377,15 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
     }
     set callbacks [dict get $rvfc callbacks]
     set slots [dict get $rvfc interval_slots]
+    set causal_clean [expr {
+        [dict get $rvfc presented_invalid] == 0 &&
+        [dict get $rvfc presented_pair_invalid] == 0 &&
+        [dict get $rvfc presented_regressions] == 0 &&
+        [dict get $rvfc presented_duplicates] == 0 &&
+        [dict get $rvfc media_invalid] == 0 &&
+        [dict get $rvfc interval_invalid] == 0 &&
+        [dict get $rvfc interval_regressions] == 0 &&
+        [dict get $rvfc interval_duplicates] == 0}]
     if {[dict get $rvfc presented_invalid] > $callbacks ||
         [dict get $rvfc media_invalid] > $callbacks ||
         [dict get $rvfc presented_pair_invalid] +
@@ -439,9 +463,6 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
                     } elseif {$presented_step < $callback_delta} {
                         set observed_presented_nonincrease 1
                     }
-                    if {$presented_step > 8 * $callback_delta} {
-                        return [list 0 "sample-$sample_index-presented-callback-jump"]
-                    }
                 }
                 if {$prior_media >= 0.0 && $media >= 0.0} {
                     if {$media == $prior_media} {
@@ -462,6 +483,39 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
                     $prior_callbacks > 0} {
                     set observed_interval_invalid_min [expr {max(
                         $observed_interval_invalid_min, $prior_callbacks)}]
+                }
+
+                # Reconcile each independently sampled window only when both
+                # endpoints are valid.  Callback coalescing is allowed, but a
+                # presentedFrames or VPQ jump that cannot fit in elapsed media
+                # time is not.  When VPQ exists, presented progress must lie
+                # between total-minus-dropped and total, modulo edge skew.
+                if {$causal_clean &&
+                    $prior_presented >= 0 && $presented >= 0 &&
+                    $prior_media >= 0.0 && $media >= $prior_media} {
+                    set media_step [expr {$media - $prior_media}]
+                    set presented_step [expr {$presented - $prior_presented}]
+                    set frame_cap [media_probe_frame_window_cap $media_step]
+                    if {$presented_step >= 0 && $presented_step > $frame_cap} {
+                        return [list 0 "sample-$sample_index-presented-media-jump"]
+                    }
+                    if {[dict get $sample vpq_available]} {
+                        set total_step [expr {[dict get $sample vpq_total] -
+                            [dict get $prior vpq_total]}]
+                        set dropped_step [expr {[dict get $sample vpq_dropped] -
+                            [dict get $prior vpq_dropped]}]
+                        if {$total_step < 0 || $dropped_step < 0} {
+                            return [list 0 "sample-$sample_index-vpq-regression"]
+                        }
+                        if {$total_step > $frame_cap ||
+                            $dropped_step > $total_step + 8} {
+                            return [list 0 "sample-$sample_index-vpq-media-contradiction"]
+                        }
+                        if {$presented_step > $total_step + 8 ||
+                            $presented_step + $dropped_step + 8 < $total_step} {
+                            return [list 0 "sample-$sample_index-presented-vpq-contradiction"]
+                        }
+                    }
                 }
             }
         }
@@ -486,8 +540,11 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
             } elseif {$delta < $sample_slots} {
                 set observed_presented_nonincrease 1
             }
-            if {$delta > 8 * $sample_slots} {
-                return [list 0 "sample-rvfc-presented-first-jump"]
+            if {$causal_clean &&
+                $first_media >= 0.0 && $media >= $first_media &&
+                $delta > [media_probe_frame_window_cap \
+                    [expr {$media - $first_media}]]} {
+                return [list 0 "sample-rvfc-presented-first-media-jump"]
             }
         }
         if {$first_media >= 0.0} {
@@ -551,6 +608,54 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
         [dict get $rvfc interval_duplicates] <
             $retained_media_flat_callbacks} {
         return [list 0 "sample-rvfc-media-nonincreasing-unreconciled"]
+    }
+
+
+    # The full rVFC window includes callbacks before sample 1, so it can only
+    # be reconciled directly to its own media-time window.  The sample-1 to
+    # sample-20 subwindow has matching VPQ endpoints and therefore receives a
+    # stronger total/dropped-counter cross-check.
+    if {$causal_clean &&
+        [dict get $rvfc presented_first] >= 0 &&
+        [dict get $rvfc presented_delta] >= 0 &&
+        double([dict get $rvfc media_delta]) >= 0.0 &&
+        [dict get $rvfc presented_delta] >
+            [media_probe_frame_window_cap [dict get $rvfc media_delta]]} {
+        return [list 0 "rvfc-presented-media-window-contradiction"]
+    }
+    set first_sample [lindex $samples 0]
+    set last_sample [lindex $samples end]
+    if {$causal_clean &&
+        [dict get $first_sample rvfc_presented] >= 0 &&
+        [dict get $last_sample rvfc_presented] >= 0 &&
+        double([dict get $first_sample rvfc_media_time]) >= 0.0 &&
+        double([dict get $last_sample rvfc_media_time]) >=
+            double([dict get $first_sample rvfc_media_time])} {
+        set sample_presented_delta [expr {
+            [dict get $last_sample rvfc_presented] -
+            [dict get $first_sample rvfc_presented]}]
+        set sample_media_delta [expr {
+            double([dict get $last_sample rvfc_media_time]) -
+            double([dict get $first_sample rvfc_media_time])}]
+        if {$sample_presented_delta < 0 ||
+            $sample_presented_delta >
+                [media_probe_frame_window_cap $sample_media_delta 16]} {
+            return [list 0 "sample-window-presented-media-contradiction"]
+        }
+        if {[dict get $first_sample vpq_available]} {
+            set total_delta [expr {[dict get $last_sample vpq_total] -
+                [dict get $first_sample vpq_total]}]
+            set dropped_delta [expr {[dict get $last_sample vpq_dropped] -
+                [dict get $first_sample vpq_dropped]}]
+            if {$total_delta < 0 || $dropped_delta < 0 ||
+                $total_delta >
+                    [media_probe_frame_window_cap $sample_media_delta 16] ||
+                $dropped_delta > $total_delta + 16 ||
+                $sample_presented_delta > $total_delta + 16 ||
+                $sample_presented_delta + $dropped_delta + 16 < $total_delta} {
+                return [list 0 "sample-window-presented-vpq-contradiction"]
+            }
+        }
     }
     return [list 1 "pass"]
 }
@@ -1085,9 +1190,7 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
         [dict get $rvfc presented_regressions] == 0 &&
         [dict get $rvfc presented_duplicates] == 0 &&
         [dict get $rvfc presented_first] >= 0 &&
-        [dict get $rvfc presented_delta] >= [dict get $rvfc interval_slots] &&
-        [dict get $rvfc presented_delta] <=
-            max(1, 8 * [dict get $rvfc interval_slots])}]
+        [dict get $rvfc presented_delta] >= [dict get $rvfc interval_slots]}]
     set media_sufficient [expr {
         double([dict get $rvfc media_first]) >= 0 &&
         double([dict get $rvfc media_delta]) >= 15.0}]
@@ -1139,6 +1242,8 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
         force_observe_selected hd720 force_observe_width 1280 \
         force_observe_height 720 force_time_first 0.000 force_time_last 0.750 \
         sample_quality hd720 sample_available hd1080,hd720,large \
+        vpq_total_base 1000 vpq_total_step 60 \
+        vpq_dropped_base 10 vpq_dropped_step 1 \
         interval_positive 1200 interval_near60 1200 interval_other30 0 \
         interval_b14_15 0 interval_b18p5_20 0 \
         interval_regressions 0 interval_duplicates 0 interval_invalid 0 \
@@ -1176,13 +1281,30 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
         double([dict get $opt media_delta]) : -1.0}]
     set media_last [expr {$callbacks ?
         $media_first + $media_delta : -1.0}]
+    foreach key {vpq_total_base vpq_total_step vpq_dropped_base vpq_dropped_step} {
+        if {![media_probe_is_uint [dict get $opt $key]]} {
+            error "invalid synthetic media-probe counter option: $key"
+        }
+    }
+    set vpq_first -1
+    set vpq_last -1
+    set vpq_dropped_first -1
+    set vpq_dropped_last -1
     for {set index 1} {$index <= 20} {incr index} {
         set optional [dict get $opt optional_apis]
         if {$optional} {
-            set vpq_total [expr {1000 + ($index * 60)}]
-            set vpq_dropped [expr {10 + $index}]
+            set vpq_total [expr {[dict get $opt vpq_total_base] +
+                ($index * [dict get $opt vpq_total_step])}]
+            set vpq_dropped [expr {[dict get $opt vpq_dropped_base] +
+                ($index * [dict get $opt vpq_dropped_step])}]
             set webkit_decoded $vpq_total
             set webkit_dropped $vpq_dropped
+            if {$index == 1} {
+                set vpq_first $vpq_total
+                set vpq_dropped_first $vpq_dropped
+            }
+            set vpq_last $vpq_total
+            set vpq_dropped_last $vpq_dropped
         } else {
             set vpq_total -1; set vpq_dropped -1
             set webkit_decoded -1; set webkit_dropped -1
@@ -1210,7 +1332,9 @@ proc synthetic_media_probe_evidence {nonce {options {}}} {
         lappend payloads "YT_MEDIA_PROBE_V1 kind=sample schema=1 nonce=$nonce index=$index video_width=[dict get $opt width] video_height=[dict get $opt height] src_id=$src current_time=[format %.3f $current_time] playback_rate=[dict get $opt playback_rate] paused=[dict get $opt paused] ended=[dict get $opt ended] quality_selected=[dict get $opt sample_quality] quality_available=[dict get $opt sample_available] quality_selected_api=1 quality_available_api=1 ready_state=4 network_state=2 buffered_ahead=12.500 vpq_available=$optional vpq_total=$vpq_total vpq_dropped=$vpq_dropped webkit_available=$optional webkit_decoded=$webkit_decoded webkit_dropped=$webkit_dropped rvfc_available=[dict get $opt rvfc_available] rvfc_callbacks=$sample_callbacks rvfc_presented=$sample_presented rvfc_media_time=[format %.6f $sample_media] longtask_available=1 longtask_count=[expr {$index / 5}] longtask_duration_ms=[format %.3f [expr {$index * 6.0}]]"
     }
     if {[dict get $opt optional_apis]} {
-        set api_summary {vpq_available=1 vpq_total_first=1060 vpq_total_last=2200 vpq_total_delta=1140 vpq_dropped_first=11 vpq_dropped_last=30 vpq_dropped_delta=19 webkit_available=1 webkit_decoded_first=1060 webkit_decoded_last=2200 webkit_decoded_delta=1140 webkit_dropped_first=11 webkit_dropped_last=30 webkit_dropped_delta=19}
+        set vpq_delta [expr {$vpq_last - $vpq_first}]
+        set vpq_dropped_delta [expr {$vpq_dropped_last - $vpq_dropped_first}]
+        set api_summary "vpq_available=1 vpq_total_first=$vpq_first vpq_total_last=$vpq_last vpq_total_delta=$vpq_delta vpq_dropped_first=$vpq_dropped_first vpq_dropped_last=$vpq_dropped_last vpq_dropped_delta=$vpq_dropped_delta webkit_available=1 webkit_decoded_first=$vpq_first webkit_decoded_last=$vpq_last webkit_decoded_delta=$vpq_delta webkit_dropped_first=$vpq_dropped_first webkit_dropped_last=$vpq_dropped_last webkit_dropped_delta=$vpq_dropped_delta"
     } else {
         set api_summary {vpq_available=0 vpq_total_first=-1 vpq_total_last=-1 vpq_total_delta=-1 vpq_dropped_first=-1 vpq_dropped_last=-1 vpq_dropped_delta=-1 webkit_available=0 webkit_decoded_first=-1 webkit_decoded_last=-1 webkit_decoded_delta=-1 webkit_dropped_first=-1 webkit_dropped_last=-1 webkit_dropped_delta=-1}
     }

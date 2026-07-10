@@ -1916,6 +1916,43 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     }
     set force_media_60 [synthetic_media_probe_evidence $static_nonce \
         [dict create force_hd720 1]]
+    # Byte-for-byte corpus from the retained 20260710T170400Z retry.  Its
+    # 1.565-second main-world long task coalesced rVFC delivery: callback 1
+    # reported presentedFrames=88, while sample 1 saw only 7 callbacks but
+    # presentedFrames=188 at mediaTime=3.400000.  This is valid raw API shape;
+    # host credit must reconcile it to elapsed media time and VPQ, never to a
+    # fixed multiple of delivered callback slots.
+    set retained_coalesced_path \
+        "$root/scripts/gpu/chromium-youtube-media-probe-coalesced-v1.fixture"
+    set retained_coalesced_nonce a98efdddfe320fb01e5d85a345eeb30d
+    set retained_coalesced [read_text $retained_coalesced_path]
+    if {[sha256_file $retained_coalesced_path] ne \
+            {1c57fdea78c3ebafb0d0b5657dbaa6c4438e7ad9df9898f09be9213cc2f5a5f6} ||
+        [string first {index=1 video_width=1280 video_height=720} \
+            $retained_coalesced] < 0 ||
+        [string first {rvfc_callbacks=7 rvfc_presented=188 rvfc_media_time=3.400000 longtask_available=1 longtask_count=2 longtask_duration_ms=1565.000} \
+            $retained_coalesced] < 0 ||
+        [string first {vpq_total_delta=1151 vpq_dropped_first=78 vpq_dropped_last=362 vpq_dropped_delta=284} \
+            $retained_coalesced] < 0 ||
+        [string first {callbacks=796 schedule_failures=0 warmup_callbacks=0 interval_slots=795 presented_first=88 presented_last=1326 presented_delta=1238} \
+            $retained_coalesced] < 0 ||
+        [string first {media_delta=21.416667 media_invalid=0 interval_count=795 interval_valid=795 interval_invalid=0 interval_positive=795} \
+            $retained_coalesced] < 0 ||
+        [string first {median_ms=16.667 near60_count=505} \
+            $retained_coalesced] < 0} {
+        fail_preflight "static-check-media-probe-coalesced-corpus-drift"
+    }
+    set retained_coalesced_parsed [parse_media_probe_evidence \
+        $retained_coalesced $retained_coalesced_nonce \
+        $media_probe_extension_id 1]
+    if {![lindex $retained_coalesced_parsed 0] ||
+        ![lindex $retained_coalesced_parsed 1] ||
+        ![string match {reason=pass*} [lindex $retained_coalesced_parsed 2]] ||
+        [dict get [lindex $retained_coalesced_parsed 3] vpq_total_delta] ne "1151" ||
+        [dict get [lindex $retained_coalesced_parsed 4] presented_delta] ne "1238" ||
+        [dict get [lindex $retained_coalesced_parsed 4] media_delta] ne "21.416667"} {
+        fail_preflight "static-check-media-probe-coalesced-positive parsed=$retained_coalesced_parsed"
+    }
     # Exact open-boundary serialization controls: 14.9996 -> 15.000 and
     # 18.5004 -> 18.500 at the probe's three-decimal median precision. Their
     # histogram bins remain outside b15_18p5, so neither may source-prove.
@@ -1936,7 +1973,8 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [list median-b18-rounds-down [dict create interval_near60 0 \
             interval_b18p5_20 1200 interval_sum_ms 22200.480 \
             median_ms 18.500 media_delta 22.200480] 0 cadence-not-16p7ms] \
-        [list presented-eight-per-callback [dict create presented_delta 9600] 1 pass] \
+        [list presented-time-window-boundary [dict create optional_apis 0 \
+            presented_delta 1509] 1 pass] \
         [list available-zero-callbacks [dict create interval_positive 0 \
             interval_near60 0 interval_sum_ms 0.000 median_ms -1.000 \
             media_delta -1.000000 callbacks_override 0] 0 cadence-not-16p7ms] \
@@ -2199,21 +2237,23 @@ cat /host-gui-wayland-chromium.log
     foreach null_case [list \
         [list 30fps [dict create interval_positive 600 interval_near60 0 \
             interval_other30 600 interval_sum_ms 19999.800 median_ms 33.333 \
-            media_delta 19.999800] cadence-not-16p7ms] \
+            media_delta 19.999800 vpq_total_step 30] cadence-not-16p7ms] \
         [list dimensions [dict create width 1920 height 1080] dimensions-not-1280x720] \
         [list missing-rvfc [dict create rvfc_available 0 interval_positive 0 \
             interval_near60 0 interval_sum_ms 0.000 median_ms -1.000 \
             media_delta -1.000000] rvfc-unavailable] \
         [list duplicate-adversary [dict create interval_positive 120 \
             interval_near60 120 interval_duplicates 1080 \
-            interval_sum_ms 2000.040 media_delta 2.000040] cadence-nonpositive] \
+            interval_sum_ms 2000.040 media_delta 2.000040 \
+            presented_delta 120 presented_duplicates 1080 \
+            vpq_total_step 6] cadence-nonpositive] \
         [list paused [dict create paused 1] playback-not-active] \
         [list short-progress [dict create time_step 0.100] playback-not-active] \
-        [list presented-insufficient [dict create presented_delta 10 \
+        [list presented-insufficient [dict create optional_apis 0 presented_delta 10 \
             presented_duplicates 1190] presented-frames-insufficient] \
         [list media-insufficient [dict create interval_positive 120 \
             interval_near60 120 interval_sum_ms 2000.040 \
-            media_delta 2.000040] media-delta-insufficient]] {
+            media_delta 2.000040 optional_apis 0] media-delta-insufficient]] {
         lassign $null_case name options expected_reason
         set evidence [synthetic_media_probe_evidence $static_nonce $options]
         set parsed [parse_media_probe_evidence $evidence \
@@ -2263,6 +2303,46 @@ cat /host-gui-wayland-chromium.log
             fail_preflight "static-check-media-probe-mutation-accepted-$label parsed=$parsed"
         }
     }
+
+    # Adversarial mutations of the exact coalesced-callback corpus.  Each one
+    # preserves the trusted extension envelope while falsifying one causal or
+    # reconciliation relationship that the host parser must own.
+    set coalesced_impossible_time [media_probe_mutate_once \
+        $retained_coalesced \
+        {presented_first=88 presented_last=1326 presented_delta=1238} \
+        {presented_first=0 presented_last=1326 presented_delta=1326}]
+    set coalesced_vpq_contradiction [media_probe_mutate_once \
+        $retained_coalesced \
+        {vpq_available=1 vpq_total=301 vpq_dropped=107} \
+        {vpq_available=1 vpq_total=240 vpq_dropped=107}]
+    set coalesced_presented_reset [media_probe_mutate_once \
+        $retained_coalesced \
+        {rvfc_callbacks=16 rvfc_presented=254 rvfc_media_time=4.866666} \
+        {rvfc_callbacks=16 rvfc_presented=80 rvfc_media_time=4.866666}]
+    set coalesced_forged_summary [media_probe_mutate_once \
+        $retained_coalesced {vpq_total_delta=1151} {vpq_total_delta=1150}]
+    set coalesced_bad_dimensions [media_probe_mutate_once \
+        $retained_coalesced \
+        {index=10 video_width=1280 video_height=720} \
+        {index=10 video_width=640 video_height=360}]
+    set coalesced_order_lines [split \
+        [string trimright $retained_coalesced "\n"] "\n"]
+    set coalesced_sample_1 [lindex $coalesced_order_lines 7]
+    set coalesced_sample_2 [lindex $coalesced_order_lines 8]
+    lset coalesced_order_lines 7 $coalesced_sample_2
+    lset coalesced_order_lines 8 $coalesced_sample_1
+    set coalesced_bad_sample_order [join $coalesced_order_lines "\n"]
+    foreach coalesced_mutation [list \
+        [list impossible-media-window $coalesced_impossible_time] \
+        [list vpq-contradiction $coalesced_vpq_contradiction] \
+        [list presented-reset $coalesced_presented_reset] \
+        [list forged-summary $coalesced_forged_summary] \
+        [list bad-dimensions $coalesced_bad_dimensions] \
+        [list bad-sample-order $coalesced_bad_sample_order]] {
+        lassign $coalesced_mutation label evidence
+        static_media_probe_reject coalesced-$label $evidence \
+            $retained_coalesced_nonce $media_probe_extension_id 1
+    }
     set force_media_60 [synthetic_media_probe_evidence $static_nonce \
         [dict create force_hd720 1]]
     set force_media_parsed [parse_media_probe_evidence $force_media_60 \
@@ -2279,7 +2359,7 @@ cat /host-gui-wayland-chromium.log
     set force_30 [synthetic_media_probe_evidence $static_nonce [dict create \
         force_hd720 1 interval_positive 600 interval_near60 0 \
         interval_other30 600 interval_sum_ms 19999.800 median_ms 33.333 \
-        media_delta 19.999800]]
+        media_delta 19.999800 vpq_total_step 30]]
     set force_30_parsed [parse_media_probe_evidence $force_30 \
         $static_nonce $media_probe_extension_id 1]
     if {![lindex $force_30_parsed 0] || [lindex $force_30_parsed 1] ||
@@ -2465,8 +2545,8 @@ cat /host-gui-wayland-chromium.log
             {rvfc_callbacks=120 rvfc_presented=9007199254740992 rvfc_media_time=2.983373}]] \
         [list histogram-median-impossible [media_probe_mutate_once $media_60 \
             {median_ms=16.667} {median_ms=1.000}]] \
-        [list presented-upper-bound-plus-one [synthetic_media_probe_evidence \
-            $static_nonce [dict create presented_delta 9601]]] \
+        [list presented-time-window-plus-one [synthetic_media_probe_evidence \
+            $static_nonce [dict create optional_apis 0 presented_delta 1510]]] \
         [list retained-media-invalid-counter-short [media_probe_mutate_once \
             $media_retained_invalid {media_invalid=1 interval_count=1200} \
             {media_invalid=0 interval_count=1200}]] \
@@ -2933,7 +3013,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 

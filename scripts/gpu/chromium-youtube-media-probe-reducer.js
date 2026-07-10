@@ -121,6 +121,7 @@ async function runProbeScenario(options = {}) {
   let presentedFrames = 100;
   let mediaTime = 1;
   let totalVideoFrames = 1000;
+  let coalescedAdvanceDone = false;
   const available = options.available || ["hd1080", "hd720", "large"];
   const video = {
     isConnected: options.videoMissing ? false : true,
@@ -198,6 +199,27 @@ async function runProbeScenario(options = {}) {
     if (!callback)
       return;
     const frameCount = Math.max(1, Math.round(milliseconds / 16.667));
+    if (options.coalesceFirstAdvance && !coalescedAdvanceDone && frameCount >= 2) {
+      coalescedAdvanceDone = true;
+      // Model a MAIN-world long task: one callback is delivered before the
+      // blocked interval, then the next delivery reports the latest frame.
+      // The producer must preserve that presentedFrames/mediaTime jump as raw
+      // evidence; only the Tcl host parser may decide whether it is causal.
+      let current = callback;
+      callback = null;
+      presentedFrames++;
+      totalVideoFrames++;
+      mediaTime += 1 / 60;
+      current(video.currentTime * 1000, { presentedFrames, mediaTime });
+      assert(callback, "coalesced reducer callback was not rescheduled");
+      current = callback;
+      callback = null;
+      presentedFrames += frameCount - 1;
+      totalVideoFrames += frameCount - 1;
+      mediaTime += (frameCount - 1) / 60;
+      current(video.currentTime * 1000, { presentedFrames, mediaTime });
+      return;
+    }
     for (let index = 0; index < frameCount && callback; index++) {
       const current = callback;
       callback = null;
@@ -320,13 +342,29 @@ function forcePrelude(result) {
   assert.strictEqual(wrongDimensions.fields[5].video_width, "640");
   assert.strictEqual(wrongDimensions.fields[5].stable_count, "0");
 
+  const coalesced = await runProbeScenario({ coalesceFirstAdvance: true });
+  const coalescedFirstSample = coalesced.fields.find(fields =>
+    fields.kind === "sample" && fields.index === "1");
+  const coalescedSummary = coalesced.fields.find(fields =>
+    fields.kind === "rvfc_summary");
+  assert(coalescedFirstSample && coalescedSummary);
+  assert.strictEqual(coalescedFirstSample.rvfc_callbacks, "2");
+  assert.strictEqual(coalescedFirstSample.rvfc_presented, "160");
+  assert.strictEqual(coalescedFirstSample.rvfc_media_time, "2.000000");
+  assert.strictEqual(coalescedSummary.callbacks, "1142");
+  assert.strictEqual(coalescedSummary.presented_first, "101");
+  assert.strictEqual(coalescedSummary.presented_delta, "1199");
+  assert.strictEqual(coalescedSummary.near60_count, "1140");
+  assert(coalescedSummary.hist.includes("ge80:1"));
+
   assert.strictEqual(typeof pass.classifyForce, "undefined");
   process.stdout.write(
     "YT-MEDIA-PROBE-JS-REDUCER-PASS redaction=PASS bounds=PASS " +
     "raw60=PASS raw30=PASS duplicate1080=COUNTED host_classifier_only=PASS " +
     "extension_id=edfilgocpdgbkehcgdillfgnnhclphol missing_api=PASS " +
     "force_main_world=PASS force_exact_order=PASS force_api_throw=RAW " +
-    "force_noop=RAW force_delayed=BOUNDED normal_isolation=PASS\n");
+    "force_noop=RAW force_delayed=BOUNDED normal_isolation=PASS " +
+    "coalesced_rvfc=RAW\n");
 })().catch(error => {
   process.stderr.write(`${error.stack || error}\n`);
   process.exitCode = 1;

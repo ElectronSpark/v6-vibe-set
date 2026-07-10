@@ -82,9 +82,20 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   could advance while callback delivery coalesced. Verdict remains NULL with
   no performance claim: N=2 is unsatisfied and further boots stopped. Both
   attempts were synchronously reaped with owned cleanup, and the final exact
-  QEMU process count was zero. IMMEDIATE NEXT: correct the producer/parser
-  causal contract NO-BOOT, obtain independent adversarial review, then resume
-  sole-VM N>=2 measurement only after PASS.
+  QEMU process count was zero. The scoped coalesced-rVFC parser correction now
+  has independent adversarial NO-BOOT PASS: it replaces the arbitrary <=8x
+  delivered-callback cap with `ceil(media_time_delta*75)` plus fixed edge
+  slack, and reconciles VPQ total/drop progress per sample and across the full
+  sampled window while retaining the 720p60, playback, provenance, and cadence
+  gates. The exact retained fixture SHA-256 is
+  `1c57fdea78c3ebafb0d0b5657dbaa6c4438e7ad9df9898f09be9213cc2f5a5f6`
+  and it is byte-identical (`cmp=0`) to the retained retry evidence. Replay now
+  passes `source_proven`, but this NO-BOOT fixture/review grants no FPS claim;
+  equality accepts, +1 rejects, causal/order/dimension/VPQ/summary mutations
+  reject, and 30fps remains diagnostic NULL. Review ended with an exact zero
+  QEMU process count. IMMEDIATE NEXT: commit the verified checkpoint, then
+  authorize only one serial real-KVM+virgl worker for an honest N>=2 retry;
+  preserve every invalid attempt as INVALID/NULL.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
