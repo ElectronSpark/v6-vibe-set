@@ -584,16 +584,28 @@ proc media_probe_phase_budget_valid {outer_ms phase_ms margin_ms} {
     return [expr {$phase_ms + $margin_ms <= $outer_ms}]
 }
 
+proc media_probe_wideinteger_valid {value} {
+    if {![string is wideinteger -strict $value]} {
+        return 0
+    }
+    return [expr {$value >= -9223372036854775808 &&
+                  $value <= 9223372036854775807}]
+}
+
 proc media_probe_deadline_remaining_ms {deadline_ms now_ms} {
-    if {![string is integer -strict $deadline_ms] ||
-        ![string is integer -strict $now_ms]} {
+    if {![media_probe_wideinteger_valid $deadline_ms] ||
+        ![media_probe_wideinteger_valid $now_ms]} {
         return -1
     }
-    return [expr {$deadline_ms - $now_ms}]
+    set remaining_ms [expr {$deadline_ms - $now_ms}]
+    if {![media_probe_wideinteger_valid $remaining_ms]} {
+        return -1
+    }
+    return $remaining_ms
 }
 
 proc media_probe_deadline_allows {deadline_ms now_ms required_ms} {
-    if {![string is integer -strict $required_ms] || $required_ms < 0} {
+    if {![media_probe_wideinteger_valid $required_ms] || $required_ms < 0} {
         return 0
     }
     return [expr {[media_probe_deadline_remaining_ms $deadline_ms $now_ms] >=
@@ -2498,6 +2510,12 @@ cat /host-gui-wayland-chromium.log
         $media_probe_extension_id 0]
     set synthetic_phase_start 1000
     set synthetic_phase_deadline 131000
+    set synthetic_epoch_run_start 1783714548104
+    set synthetic_epoch_phase_start [expr {$synthetic_epoch_run_start + 127534}]
+    set synthetic_epoch_phase_deadline [expr {$synthetic_epoch_phase_start + 130000}]
+    set synthetic_epoch_wrong_run_deadline [expr {$synthetic_epoch_run_start + 130000}]
+    set synthetic_wide_max 9223372036854775807
+    set synthetic_wide_min -9223372036854775808
     set synthetic_final_boundary [media_probe_final_timeout_seconds \
         $synthetic_phase_deadline 106000 30000 20000 5000]
     set synthetic_final_short [media_probe_final_timeout_seconds \
@@ -2553,6 +2571,30 @@ cat /host-gui-wayland-chromium.log
         [media_probe_host_wait_elapsed_valid 59000 60000] ||
         ![media_probe_phase_budget_valid 140000 130000 10000] ||
         [media_probe_phase_budget_valid 140000 131000 10000] ||
+        [media_probe_deadline_remaining_ms $synthetic_epoch_phase_deadline \
+            $synthetic_epoch_phase_start] != 130000 ||
+        ![media_probe_deadline_allows $synthetic_epoch_phase_deadline \
+            [expr {$synthetic_epoch_phase_start + 15000}] 115000] ||
+        [media_probe_deadline_allows $synthetic_epoch_phase_deadline \
+            [expr {$synthetic_epoch_phase_start + 15001}] 115000] ||
+        [media_probe_deadline_remaining_ms $synthetic_epoch_phase_deadline \
+            [expr {$synthetic_epoch_phase_start + 15001}]] != 114999 ||
+        [media_probe_deadline_remaining_ms $synthetic_epoch_wrong_run_deadline \
+            $synthetic_epoch_phase_start] != 2466 ||
+        [media_probe_deadline_allows $synthetic_epoch_wrong_run_deadline \
+            $synthetic_epoch_phase_start 115000] ||
+        [media_probe_deadline_remaining_ms not-a-deadline \
+            $synthetic_epoch_phase_start] != -1 ||
+        [media_probe_deadline_remaining_ms $synthetic_epoch_phase_deadline \
+            1.5] != -1 ||
+        [media_probe_deadline_allows $synthetic_epoch_phase_deadline \
+            $synthetic_epoch_phase_start 1.5] ||
+        [media_probe_deadline_remaining_ms 9223372036854775808 0] != -1 ||
+        [media_probe_deadline_remaining_ms 0 -9223372036854775809] != -1 ||
+        [media_probe_deadline_remaining_ms $synthetic_wide_max \
+            $synthetic_wide_min] != -1 ||
+        [media_probe_deadline_remaining_ms $synthetic_wide_max \
+            [expr {$synthetic_wide_max - 130000}]] != 130000 ||
         ![media_probe_deadline_allows $synthetic_phase_deadline \
             $synthetic_phase_start 115000] ||
         ![media_probe_deadline_allows $synthetic_phase_deadline 46000 85000] ||
@@ -3525,7 +3567,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
