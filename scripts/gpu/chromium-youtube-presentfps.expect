@@ -130,9 +130,6 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
         source_log /host-gui-wayland-chromium.log \
         capture_log /yt-media-probe.log \
         temp_prefix /tmp/yt-media-probe \
-        expected_rows 24 \
-        max_polls 75 \
-        sleep_seconds 1 \
         do_sync 1]
     if {[catch {dict size $overrides}]} {
         error "media-probe helper overrides must be a dictionary"
@@ -150,21 +147,6 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
             error "invalid media-probe helper path for $key"
         }
     }
-    set expected_rows [dict get $config expected_rows]
-    if {$expected_rows ni {24 30}} {
-        error "invalid media-probe helper expected_rows"
-    }
-    set max_allowed_polls [expr {$expected_rows == 30 ? 105 : 75}]
-    set max_polls [dict get $config max_polls]
-    if {![string is integer -strict $max_polls] ||
-        $max_polls < 1 || $max_polls > $max_allowed_polls} {
-        error "invalid media-probe helper max_polls"
-    }
-    set sleep_seconds [dict get $config sleep_seconds]
-    if {![string is integer -strict $sleep_seconds] ||
-        $sleep_seconds < 0 || $sleep_seconds > 1} {
-        error "invalid media-probe helper sleep_seconds"
-    }
     set do_sync [dict get $config do_sync]
     if {$do_sync ne "0" && $do_sync ne "1"} {
         error "invalid media-probe helper do_sync"
@@ -175,40 +157,21 @@ proc media_probe_guest_helper_script {nonce {overrides {}}} {
         @SOURCE_LOG@ [dict get $config source_log] \
         @CAPTURE_LOG@ [dict get $config capture_log] \
         @TEMP_PREFIX@ [dict get $config temp_prefix] \
-        @EXPECTED_ROWS@ $expected_rows \
-        @MAX_POLLS@ $max_polls \
-        @SLEEP_SECONDS@ $sleep_seconds \
         @DO_SYNC@ $do_sync] {#!/bin/bash
 set +e
-status=timeout
-i=0
 grep_bin='@GREP_BIN@'
 source_log='@SOURCE_LOG@'
 capture_log='@CAPTURE_LOG@'
 temp_prefix='@TEMP_PREFIX@'
-max_polls='@MAX_POLLS@'
-sleep_seconds='@SLEEP_SECONDS@'
 do_sync='@DO_SYNC@'
-marker_tmp="${temp_prefix}.markers"
-done_tmp="${temp_prefix}.done"
-failure_tmp="${temp_prefix}.failure"
-rm -f "$marker_tmp" "$done_tmp" "$failure_tmp" "$capture_log"
-while [ "$i" -lt "$max_polls" ]; do
-    "$grep_bin" 'YT_MEDIA_PROBE_V1' "$source_log" > "$marker_tmp" 2>/dev/null
-    "$grep_bin" ' schema=1 nonce=@NONCE@ ' "$marker_tmp" > "$capture_log" 2>/dev/null
-    "$grep_bin" 'kind=done schema=1 nonce=@NONCE@ status=complete samples=20 rows=@EXPECTED_ROWS@' "$capture_log" > "$done_tmp" 2>/dev/null
-    if [ -s "$done_tmp" ]; then status=complete; break; fi
-    "$grep_bin" 'kind=failure schema=1 nonce=@NONCE@ ' "$capture_log" > "$failure_tmp" 2>/dev/null
-    if [ -s "$failure_tmp" ]; then status=failure; break; fi
-    i=$((i + 1))
-    if [ "$sleep_seconds" -gt 0 ]; then sleep "$sleep_seconds"; fi
-done
-"$grep_bin" 'YT_MEDIA_PROBE_V1' "$source_log" > "$marker_tmp" 2>/dev/null
-"$grep_bin" ' schema=1 nonce=@NONCE@ ' "$marker_tmp" > "$capture_log" 2>/dev/null
-echo YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=@NONCE@ status=$status polls=$i
+capture_tmp="${temp_prefix}.capture"
+rm -f "$capture_tmp" "$capture_log"
+"$grep_bin" ' schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
+/bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=48 2>/dev/null
+echo YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot polls=0 byte_cap=49152
 cat "$capture_log" 2>/dev/null
-echo YT_MEDIA_PROBE_CAPTURE_END nonce=@NONCE@ status=$status polls=$i
-rm -f "$marker_tmp" "$done_tmp" "$failure_tmp"
+echo YT_MEDIA_PROBE_CAPTURE_END nonce=@NONCE@ status=oneshot polls=0 byte_cap=49152
+rm -f "$capture_tmp"
 if [ "$do_sync" = 1 ]; then sync; fi
 }]
 }
@@ -319,6 +282,13 @@ set dynamic_process_log "$outdir/egl-dynamic-processes.log"
 set media_probe_log "$outdir/yt-media-probe.log"
 set media_probe_serial "$outdir/yt-media-probe.serial.txt"
 set media_probe_assets "$outdir/media-probe-assets.txt"
+set media_probe_capture_timeout_ms 30000
+set media_probe_host_wait_ms 60000
+set media_probe_outer_ceiling_ms 140000
+set media_probe_phase_budget_ms 130000
+set media_probe_deadline_margin_ms 10000
+set media_probe_final_min_ms 20000
+set media_probe_final_post_ms 5000
 set media_probe_host_dir "$root/rootfs-overlay/share/chromium-youtube-media-probe"
 set media_probe_guest_dir "/share/chromium-youtube-media-probe"
 set chromium_extra_flags [expr {$media_probe eq "1" ?
@@ -418,11 +388,46 @@ proc qemu_spawn_ownership_contract {leader child pgid sid done wait_pid wait_rc}
     return [list 1 "leader=$leader child=$child pgid=$pgid sid=$sid waited=1"]
 }
 
-# Build interpolated marker patterns from a braced format string.  A literal
-# `[0-9]` inside a double-quoted Tcl word would otherwise be evaluated as a
-# command substitution before Expect sees the regex.
-proc guest_marker_regex {marker} {
-    return [format {%s:([0-9]+)} [regex_quote $marker]]
+# The command fence is emitted only after the single RC row.  Waiting through
+# its newline drains the owned command frame before another serial command can
+# begin; semantic RC acceptance is handled separately over the complete frame.
+proc guest_fence_regex {marker} {
+    return [format {%s:FENCE\r?\n} [regex_quote $marker]]
+}
+
+proc guest_command_frame_parse {text marker} {
+    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+        return [list 0 "frame-marker-invalid" ""]
+    }
+    set rc_values {}
+    set fence_indices {}
+    set line_index -1
+    set quoted [regex_quote $marker]
+    foreach raw_line [split $text "\n"] {
+        incr line_index
+        set line [string trimright $raw_line "\r"]
+        if {[regexp [format {^%s:RC:([0-9]+)$} $quoted] $line -> rc]} {
+            lappend rc_values [list $line_index $rc]
+            continue
+        }
+        if {$line eq "$marker:FENCE"} {
+            lappend fence_indices $line_index
+            continue
+        }
+        if {[string match "$marker:*" $line]} {
+            return [list 0 "frame-unknown-marker-line-$line_index" ""]
+        }
+    }
+    if {[llength $rc_values] != 1} {
+        return [list 0 "frame-rc-count-[llength $rc_values]" ""]
+    }
+    if {[llength $fence_indices] != 1} {
+        return [list 0 "frame-fence-count-[llength $fence_indices]" ""]
+    }
+    if {[lindex [lindex $rc_values 0] 0] >= [lindex $fence_indices 0]} {
+        return [list 0 "frame-rc-not-before-fence" ""]
+    }
+    return [list 1 "pass" [lindex [lindex $rc_values 0] 1]]
 }
 
 # debugfs writes its normal version banner and successful `write` allocation
@@ -511,6 +516,93 @@ proc verify_media_probe_image_assets {image} {
 }
 
 source "$root/scripts/gpu/chromium-youtube-media-probe-parser.tcl"
+
+# Classify one raw, nonce-bound snapshot using only host-side framing and the
+# authoritative semantic parser.  INCOMPLETE is deliberately narrow: it is
+# either an empty snapshot or a structurally valid prefix shorter than the
+# selected arm's required row count.  Malformed, duplicate, reordered, failed,
+# or overlong evidence is INVALID and never earns a delayed retry.
+proc media_probe_capture_disposition {text nonce extension_id force_hd720} {
+    set captured [media_probe_capture_payload $text $nonce]
+    if {![lindex $captured 0]} {
+        return [list INVALID [lindex $captured 1] "" {}]
+    }
+    set payload [lindex $captured 2]
+    set parsed [parse_media_probe_evidence $payload $nonce $extension_id \
+        $force_hd720]
+    if {[lindex $parsed 0]} {
+        return [list COMPLETE [lindex $parsed 2] $payload $parsed]
+    }
+    set detail [lindex $parsed 2]
+    set expected_rows [expr {$force_hd720 ? 30 : 24}]
+    set incomplete [expr {$detail eq "injection-no-marker-rows" &&
+                          [string trim $payload] eq ""}]
+    if {[regexp {^row-count-([0-9]+)-expected-([0-9]+)$} $detail \
+        -> actual expected] && $expected == $expected_rows &&
+        $actual < $expected} {
+        set prefix [media_probe_validate_partial_prefix $payload $nonce \
+            $extension_id $force_hd720]
+        if {[lindex $prefix 0]} {
+            set incomplete 1
+            set detail "$detail-[lindex $prefix 1]"
+        } else {
+            set detail [lindex $prefix 1]
+        }
+    }
+    return [list [expr {$incomplete ? "INCOMPLETE" : "INVALID"}] \
+        $detail $payload $parsed]
+}
+
+proc media_probe_host_wait_elapsed_valid {target_ms elapsed_ms} {
+    if {![string is integer -strict $target_ms] ||
+        ![string is integer -strict $elapsed_ms]} {
+        return 0
+    }
+    return [expr {$target_ms >= 60000 && $elapsed_ms >= $target_ms}]
+}
+
+proc media_probe_phase_budget_valid {outer_ms phase_ms margin_ms} {
+    foreach value [list $outer_ms $phase_ms $margin_ms] {
+        if {![string is integer -strict $value] || $value < 1} { return 0 }
+    }
+    return [expr {$phase_ms + $margin_ms <= $outer_ms}]
+}
+
+proc media_probe_deadline_remaining_ms {deadline_ms now_ms} {
+    if {![string is integer -strict $deadline_ms] ||
+        ![string is integer -strict $now_ms]} {
+        return -1
+    }
+    return [expr {$deadline_ms - $now_ms}]
+}
+
+proc media_probe_deadline_allows {deadline_ms now_ms required_ms} {
+    if {![string is integer -strict $required_ms] || $required_ms < 0} {
+        return 0
+    }
+    return [expr {[media_probe_deadline_remaining_ms $deadline_ms $now_ms] >=
+                  $required_ms}]
+}
+
+proc media_probe_final_timeout_seconds {deadline_ms now_ms cap_ms min_ms post_ms} {
+    foreach value [list $cap_ms $min_ms $post_ms] {
+        if {![string is integer -strict $value] || $value < 1} {
+            return [list 0 0 "final-timeout-parameter-invalid"]
+        }
+    }
+    set available [expr {[media_probe_deadline_remaining_ms \
+        $deadline_ms $now_ms] - $post_ms}]
+    if {$available < $min_ms} {
+        return [list 0 0 "final-timeout-budget-short-available-$available-min-$min_ms"]
+    }
+    set selected [expr {min($cap_ms, $available)}]
+    set seconds [expr {int($selected / 1000)}]
+    if {$seconds * 1000 < $min_ms} {
+        return [list 0 0 "final-timeout-rounded-short-seconds-$seconds"]
+    }
+    return [list 1 $seconds \
+        "remaining-[media_probe_deadline_remaining_ms $deadline_ms $now_ms]-post-$post_ms"]
+}
 
 # Stage one helper and prove that the guest inode is a readable/executable
 # regular file with the exact host bytes.  This is the fail-closed layer for
@@ -1404,23 +1496,46 @@ proc fail_timeout {phase {code 8}} {
     finish $code "FAIL timeout phase=$phase crash_grep=clean"
 }
 
-proc guest_cmd {command label {seconds 30}} {
+proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000}} {
     global timeout serial_counter serial_nonce send_slow
     incr serial_counter
     set marker "${serial_nonce}C${serial_counter}"
-    set marker_regex [guest_marker_regex $marker]
+    set fence_regex [guest_fence_regex $marker]
     set old_timeout $timeout
-    set timeout $seconds
+    if {$deadline_ms != 0} {
+        set before_send_ms [clock clicks -milliseconds]
+        set before_send_plan [media_probe_final_timeout_seconds $deadline_ms \
+            $before_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+        if {![lindex $before_send_plan 0]} {
+            set timeout $old_timeout
+            finish 8 "FAIL guest-command-deadline-before-send phase=$label detail=[lindex $before_send_plan 2]"
+        }
+    }
     # `true;` is sacrificial: if the serial path drops its first character,
     # `rue` may fail but the semicolon keeps the real command intact.
     send "\025"
-    send -s "true;$command;rc=\$?;m=$marker;echo \$m:\$rc;echo \$m:\$rc;echo \$m:\$rc\r"
+    send -s "true;$command;rc=\$?;m=$marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\"\r"
+    if {$deadline_ms != 0} {
+        set after_send_ms [clock clicks -milliseconds]
+        set after_send_plan [media_probe_final_timeout_seconds $deadline_ms \
+            $after_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+        if {![lindex $after_send_plan 0]} {
+            set timeout $old_timeout
+            finish 8 "FAIL guest-command-deadline-after-send phase=$label detail=[lindex $after_send_plan 2]"
+        }
+        set timeout [lindex $after_send_plan 1]
+    } else {
+        set timeout $seconds
+    }
     expect {
-        -re $marker_regex {
-            set rc $expect_out(1,string)
+        -re $fence_regex {
             set buf $expect_out(buffer)
             set timeout $old_timeout
-            return [list $rc $buf]
+            set frame [guest_command_frame_parse $buf $marker]
+            if {![lindex $frame 0]} {
+                return [list FRAME_INVALID $buf [lindex $frame 1]]
+            }
+            return [list [lindex $frame 2] $buf pass]
         }
         -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} {
             set timeout $old_timeout
@@ -1439,7 +1554,7 @@ proc guest_cmd {command label {seconds 30}} {
 
 proc require_guest_ok {result label} {
     if {[lindex $result 0] ne "0"} {
-        finish 8 "FAIL guest-command phase=$label rc=[lindex $result 0]"
+        finish 8 "FAIL guest-command phase=$label rc=[lindex $result 0] framing=[lindex $result 2]"
     }
     return [lindex $result 1]
 }
@@ -1990,7 +2105,9 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             fail_preflight "static-check-media-probe-boundary-$name parsed=$parsed"
         }
     }
-    set capture_fixture "noise before\nYT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=1\n$media_60\nYT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=1\nnoise after"
+    set capture_begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=oneshot polls=0 byte_cap=49152"
+    set capture_end "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=oneshot polls=0 byte_cap=49152"
+    set capture_fixture "noise before\n$capture_begin\n$media_60\n$capture_end\nnoise after"
     set captured_fixture [media_probe_capture_payload $capture_fixture $static_nonce]
     if {![lindex $captured_fixture 0] ||
         [lindex $captured_fixture 2] ne $media_60} {
@@ -2006,12 +2123,14 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     foreach helper_line [split $production_media_helper "\n"] {
         if {[string first {"$grep_bin"} $helper_line] < 0} { continue }
         lappend helper_grep_lines $helper_line
-        if {![regexp {^[ \t]*"\$grep_bin"[ \t]+'[A-Za-z0-9 ][^']*'[ \t]+"\$(source_log|marker_tmp|capture_log)"[ \t]+>[ \t]+"\$(marker_tmp|capture_log|done_tmp|failure_tmp)"[ \t]+2>/dev/null$} $helper_line]} {
+        if {![regexp {^[ \t]*"\$grep_bin"[ \t]+'[^']+'[ \t]+"\$source_log"[ \t]+>[ \t]+"\$capture_tmp"[ \t]+2>/dev/null$} $helper_line]} {
             fail_preflight "static-check-media-helper-nonprimitive-grep line=$helper_line"
         }
     }
-    if {[llength $helper_grep_lines] != 6 ||
+    if {[llength $helper_grep_lines] != 1 ||
         [regexp {(^|[ \t])(grep|"\$grep_bin")[ \t]+(-|--)} $production_media_helper] ||
+        [regexp {(^|[ \t])(while|until|sleep)([ \t]|$)} $production_media_helper] ||
+        [string first {/bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=48} $production_media_helper] < 0 ||
         [string first $media_probe_extension_id $production_media_helper] >= 0 ||
         [string first {INFO:CONSOLE} $production_media_helper] >= 0 ||
         [string first {probe.js} $production_media_helper] >= 0} {
@@ -2054,13 +2173,7 @@ cat /host-gui-wayland-chromium.log
     }
     foreach invalid_helper_case [list \
         [list invalid-nonce {not-a-nonce} {}] \
-        [list zero-polls $static_nonce [dict create max_polls 0]] \
-        [list excessive-polls $static_nonce [dict create max_polls 76]] \
-        [list excessive-force-polls $static_nonce [dict create \
-            expected_rows 30 max_polls 106]] \
-        [list invalid-expected-rows $static_nonce [dict create \
-            expected_rows 25]] \
-        [list excessive-sleep $static_nonce [dict create sleep_seconds 2]] \
+        [list invalid-sync $static_nonce [dict create do_sync 2]] \
         [list unsafe-path $static_nonce [dict create source_log {/tmp/../bad}]] \
         [list unknown-option $static_nonce [dict create unknown 1]]] {
         lassign $invalid_helper_case label nonce options
@@ -2107,7 +2220,7 @@ cat /host-gui-wayland-chromium.log
         source_log $helper_source \
         capture_log $helper_capture \
         temp_prefix $helper_temp_prefix \
-        max_polls 2 sleep_seconds 0 do_sync 0]
+        do_sync 0]
     wf $helper_script [media_probe_guest_helper_script $static_nonce $helper_options]
     if {[catch {exec bash -n $helper_script 2>@1} helper_syntax]} {
         fail_preflight "static-check-media-helper-bash-syntax error=$helper_syntax"
@@ -2123,7 +2236,7 @@ cat /host-gui-wayland-chromium.log
         return [list 1 $output {}]
     }
     proc static_media_helper_clean {prefix} {
-        foreach suffix {markers done failure} {
+        foreach suffix {capture} {
             if {[file exists "${prefix}.${suffix}"]} { return 0 }
         }
         return 1
@@ -2134,21 +2247,22 @@ cat /host-gui-wayland-chromium.log
     set complete_input "noise-before\n$wrong_media\n$media_60\nnoise-after\n"
     set complete_run [static_media_helper_run $helper_script $helper_source $complete_input]
     set complete_capture [media_probe_capture_payload [lindex $complete_run 1] $static_nonce]
-    set complete_parsed [parse_media_probe_evidence [lindex $complete_capture 2] \
-        $static_nonce $media_probe_extension_id]
+    set complete_disposition [media_probe_capture_disposition \
+        [lindex $complete_run 1] $static_nonce $media_probe_extension_id 0]
     if {![lindex $complete_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $complete_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=oneshot polls=0 byte_cap=49152" [lindex $complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=oneshot polls=0 byte_cap=49152" [lindex $complete_run 1]] ||
         ![lindex $complete_capture 0] || [lindex $complete_capture 2] ne $media_60 ||
         [read_text $helper_capture] ne "$media_60\n" ||
-        ![lindex $complete_parsed 0] || ![lindex $complete_parsed 1] ||
+        [lindex $complete_disposition 0] ne "COMPLETE" ||
+        ![lindex [lindex $complete_disposition 3] 1] ||
         ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-media-helper-complete-envelope run=$complete_run capture=$complete_capture parsed=$complete_parsed"
+        fail_preflight "static-check-media-helper-complete-envelope run=$complete_run capture=$complete_capture disposition=$complete_disposition"
     }
 
     set force_helper_script "$helper_reducer_dir/ytmediaprobe-force.sh"
     wf $force_helper_script [media_probe_guest_helper_script $static_nonce \
-        [dict merge $helper_options [dict create expected_rows 30]]]
+        $helper_options]
     if {[catch {exec bash -n $force_helper_script 2>@1} force_helper_syntax]} {
         fail_preflight "static-check-force-media-helper-bash-syntax error=$force_helper_syntax"
     }
@@ -2156,19 +2270,19 @@ cat /host-gui-wayland-chromium.log
         $helper_source "$force_media_60\n"]
     set force_complete_capture [media_probe_capture_payload \
         [lindex $force_complete_run 1] $static_nonce]
-    set force_complete_parsed [parse_media_probe_evidence \
-        [lindex $force_complete_capture 2] $static_nonce \
+    set force_complete_disposition [media_probe_capture_disposition \
+        [lindex $force_complete_run 1] $static_nonce \
         $media_probe_extension_id 1]
     if {![lindex $force_complete_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $force_complete_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $force_complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=oneshot polls=0 byte_cap=49152" [lindex $force_complete_run 1]] ||
+        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=oneshot polls=0 byte_cap=49152" [lindex $force_complete_run 1]] ||
         ![lindex $force_complete_capture 0] ||
         [lindex $force_complete_capture 2] ne $force_media_60 ||
         [read_text $helper_capture] ne "$force_media_60\n" ||
-        ![lindex $force_complete_parsed 0] ||
-        ![lindex $force_complete_parsed 1] ||
+        [lindex $force_complete_disposition 0] ne "COMPLETE" ||
+        ![lindex [lindex $force_complete_disposition 3] 1] ||
         ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-force-media-helper-complete-envelope run=$force_complete_run capture=$force_complete_capture parsed=$force_complete_parsed"
+        fail_preflight "static-check-force-media-helper-complete-envelope run=$force_complete_run capture=$force_complete_capture disposition=$force_complete_disposition"
     }
 
     # A later invocation must remove the prior complete capture before
@@ -2179,58 +2293,320 @@ cat /host-gui-wayland-chromium.log
     set failure_run [static_media_helper_run $helper_script $helper_source \
         "$wrong_media\n$failure_line\n"]
     set failure_capture [media_probe_capture_payload [lindex $failure_run 1] $static_nonce]
+    set failure_disposition [media_probe_capture_disposition \
+        [lindex $failure_run 1] $static_nonce $media_probe_extension_id 0]
     if {![lindex $failure_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=failure polls=0" [lindex $failure_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=failure polls=0" [lindex $failure_run 1]] ||
         ![lindex $failure_capture 0] || [lindex $failure_capture 2] ne $failure_line ||
         [read_text $helper_capture] ne "$failure_line\n" ||
+        [lindex $failure_disposition 0] ne "INVALID" ||
+        ![string match {injection-failure-*} [lindex $failure_disposition 1]] ||
         ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-media-helper-failure run=$failure_run capture=$failure_capture"
+        fail_preflight "static-check-media-helper-failure run=$failure_run capture=$failure_capture disposition=$failure_disposition"
     }
 
-    # A complete envelope for another nonce must neither trigger completion
-    # nor survive in the current capture.  The bounded two-poll reducer also
-    # proves that prior failure/output state is cleaned before polling.
+    # A complete envelope for another nonce must not survive in the current
+    # capture.  Empty initial evidence may wait, but the same empty final
+    # disposition remains non-creditable.
     set wrong_nonce_run [static_media_helper_run $helper_script $helper_source "$wrong_media\n"]
     set wrong_nonce_capture [media_probe_capture_payload [lindex $wrong_nonce_run 1] $static_nonce]
+    set wrong_nonce_disposition [media_probe_capture_disposition \
+        [lindex $wrong_nonce_run 1] $static_nonce $media_probe_extension_id 0]
     if {![lindex $wrong_nonce_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=timeout polls=2" [lindex $wrong_nonce_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=timeout polls=2" [lindex $wrong_nonce_run 1]] ||
         ![lindex $wrong_nonce_capture 0] || [lindex $wrong_nonce_capture 2] ne "" ||
         [read_text $helper_capture] ne "" ||
+        [lindex $wrong_nonce_disposition 0] ne "INCOMPLETE" ||
         ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-media-helper-wrong-nonce run=$wrong_nonce_run capture=$wrong_nonce_capture"
+        fail_preflight "static-check-media-helper-wrong-nonce run=$wrong_nonce_run capture=$wrong_nonce_capture disposition=$wrong_nonce_disposition"
     }
 
-    # An incomplete current envelope times out but remains intact for the host
-    # parser.  The helper must not silently turn missing rows into trust.
-    set first_media_line [lindex [split $media_60 "\n"] 0]
-    set timeout_run [static_media_helper_run $helper_script $helper_source "$first_media_line\n"]
-    set timeout_capture [media_probe_capture_payload [lindex $timeout_run 1] $static_nonce]
-    if {![lindex $timeout_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=timeout polls=2" [lindex $timeout_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=timeout polls=2" [lindex $timeout_run 1]] ||
-        ![lindex $timeout_capture 0] || [lindex $timeout_capture 2] ne $first_media_line ||
-        [read_text $helper_capture] ne "$first_media_line\n" ||
-        ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-media-helper-timeout run=$timeout_run capture=$timeout_capture"
+    # The retained T2 shape was a valid 10-of-30 prefix.  The first one-shot
+    # must classify it as INCOMPLETE, a later complete same-nonce one-shot must
+    # classify COMPLETE, and the host wait/capture budget must remain bounded.
+    set force_partial [join [lrange [split $force_media_60 "\n"] 0 9] "\n"]
+    set partial_run [static_media_helper_run $force_helper_script \
+        $helper_source "$force_partial\n"]
+    set partial_disposition [media_probe_capture_disposition \
+        [lindex $partial_run 1] $static_nonce $media_probe_extension_id 1]
+    set final_run [static_media_helper_run $force_helper_script \
+        $helper_source "$force_media_60\n"]
+    set final_disposition [media_probe_capture_disposition \
+        [lindex $final_run 1] $static_nonce $media_probe_extension_id 1]
+    set force_partial_lines [split $force_partial "\n"]
+    set partial_reordered [join [concat [lrange $force_partial_lines 0 5] \
+        [lrange $force_partial_lines 7 7] [lrange $force_partial_lines 6 6] \
+        [lrange $force_partial_lines 8 end]] "\n"]
+    set partial_reordered_run [static_media_helper_run $force_helper_script \
+        $helper_source "$partial_reordered\n"]
+    set partial_reordered_disposition [media_probe_capture_disposition \
+        [lindex $partial_reordered_run 1] $static_nonce \
+        $media_probe_extension_id 1]
+    set partial_duplicate [join [lreplace $force_partial_lines 9 9 \
+        [lindex $force_partial_lines 8]] "\n"]
+    set partial_duplicate_run [static_media_helper_run $force_helper_script \
+        $helper_source "$partial_duplicate\n"]
+    set partial_duplicate_disposition [media_probe_capture_disposition \
+        [lindex $partial_duplicate_run 1] $static_nonce \
+        $media_probe_extension_id 1]
+    set partial_malformed [media_probe_mutate_once $force_partial \
+        { kind=force_ready } { kind=force_ready kind=force_ready }]
+    set partial_malformed_run [static_media_helper_run $force_helper_script \
+        $helper_source "$partial_malformed\n"]
+    set partial_malformed_disposition [media_probe_capture_disposition \
+        [lindex $partial_malformed_run 1] $static_nonce \
+        $media_probe_extension_id 1]
+    proc static_force_prefix_disposition {helper source lines nonce extension_id} {
+        set run [static_media_helper_run $helper $source \
+            "[join $lines \n]\n"]
+        return [media_probe_capture_disposition [lindex $run 1] $nonce \
+            $extension_id 1]
+    }
+    set reviewer_ready_lines $force_partial_lines
+    lset reviewer_ready_lines 0 [string map \
+        {{ player_state=1 } { player_state=2 }} \
+        [lindex $reviewer_ready_lines 0]]
+    set reviewer_ready_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $reviewer_ready_lines \
+        $static_nonce $media_probe_extension_id]
+    set reviewer_result_lines $force_partial_lines
+    lset reviewer_result_lines 2 [string map \
+        {{ invoked=1 } { invoked=0 }} \
+        [lindex $reviewer_result_lines 2]]
+    set reviewer_result_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $reviewer_result_lines \
+        $static_nonce $media_probe_extension_id]
+    set reviewer_observation_lines $force_partial_lines
+    lset reviewer_observation_lines 5 [string map \
+        {{ selected=hd720 } { selected=medium }} \
+        [lindex $reviewer_observation_lines 5]]
+    set reviewer_observation_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $reviewer_observation_lines \
+        $static_nonce $media_probe_extension_id]
+    set reviewer_dimensions_lines $force_partial_lines
+    lset reviewer_dimensions_lines 7 [string map \
+        {{ video_width=1280 video_height=720 } \
+         { video_width=640 video_height=360 }} \
+        [lindex $reviewer_dimensions_lines 7]]
+    set reviewer_dimensions_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $reviewer_dimensions_lines \
+        $static_nonce $media_probe_extension_id]
+    set playback_boundary_lines $force_partial_lines
+    lset playback_boundary_lines 7 [string map \
+        {{ playback_rate=1.000 } { playback_rate=0.950 }} \
+        [lindex $playback_boundary_lines 7]]
+    set playback_boundary_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $playback_boundary_lines \
+        $static_nonce $media_probe_extension_id]
+    set playback_below_lines $force_partial_lines
+    lset playback_below_lines 7 [string map \
+        {{ playback_rate=1.000 } { playback_rate=0.949 }} \
+        [lindex $playback_below_lines 7]]
+    set playback_below_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $playback_below_lines \
+        $static_nonce $media_probe_extension_id]
+    set counter_negative_lines $force_partial_lines
+    set negative_sample [lindex $counter_negative_lines 7]
+    regsub { vpq_total=[^ ]+ } $negative_sample \
+        { vpq_total=-1 } negative_sample
+    lset counter_negative_lines 7 $negative_sample
+    set counter_negative_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $counter_negative_lines \
+        $static_nonce $media_probe_extension_id]
+    set sample_regression_lines $force_partial_lines
+    set regressed_sample [lindex $sample_regression_lines 8]
+    regsub { current_time=[^ ]+ } $regressed_sample \
+        { current_time=0.000 } regressed_sample
+    lset sample_regression_lines 8 $regressed_sample
+    set sample_regression_disposition [static_force_prefix_disposition \
+        $force_helper_script $helper_source $sample_regression_lines \
+        $static_nonce $media_probe_extension_id]
+    proc static_framed_prefix_disposition {
+        evidence row_count nonce extension_id force_hd720
+    } {
+        set lines [split $evidence "\n"]
+        set payload [expr {$row_count == 0 ? "" :
+            [join [lrange $lines 0 [expr {$row_count - 1}]] "\n"]}]
+        set begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$nonce status=oneshot polls=0 byte_cap=49152"
+        set end "YT_MEDIA_PROBE_CAPTURE_END nonce=$nonce status=oneshot polls=0 byte_cap=49152"
+        return [media_probe_capture_disposition \
+            "$begin\n$payload\n$end\n" $nonce $extension_id $force_hd720]
+    }
+    set prefix_matrix_errors {}
+    foreach matrix_case [list \
+        [list force $force_media_60 30 1] \
+        [list normal $media_60 24 0]] {
+        lassign $matrix_case matrix_name matrix_evidence matrix_rows matrix_force
+        for {set prefix_length 0} {$prefix_length <= $matrix_rows} \
+            {incr prefix_length} {
+            set matrix_disposition [static_framed_prefix_disposition \
+                $matrix_evidence $prefix_length $static_nonce \
+                $media_probe_extension_id $matrix_force]
+            set expected_disposition [expr {$prefix_length == $matrix_rows ?
+                "COMPLETE" : "INCOMPLETE"}]
+            if {[lindex $matrix_disposition 0] ne $expected_disposition} {
+                lappend prefix_matrix_errors \
+                    "$matrix_name-$prefix_length-[lindex $matrix_disposition 0]-[lindex $matrix_disposition 1]"
+            }
+        }
+    }
+    set force_terminal_lines [split $force_media_60 "\n"]
+    set force_bad_summary_lines $force_terminal_lines
+    lset force_bad_summary_lines 27 [string map \
+        {{ width_min=1280 } { width_min=1279 }} \
+        [lindex $force_bad_summary_lines 27]]
+    set force_bad_summary_disposition [static_framed_prefix_disposition \
+        [join $force_bad_summary_lines "\n"] 28 $static_nonce \
+        $media_probe_extension_id 1]
+    set force_bad_rvfc_lines $force_terminal_lines
+    set force_bad_rvfc [lindex $force_bad_rvfc_lines 28]
+    regsub { callbacks=[^ ]+ } $force_bad_rvfc \
+        { callbacks=999999 } force_bad_rvfc
+    lset force_bad_rvfc_lines 28 $force_bad_rvfc
+    set force_bad_rvfc_disposition [static_framed_prefix_disposition \
+        [join $force_bad_rvfc_lines "\n"] 29 $static_nonce \
+        $media_probe_extension_id 1]
+    set normal_terminal_lines [split $media_60 "\n"]
+    set normal_bad_summary_lines $normal_terminal_lines
+    lset normal_bad_summary_lines 21 [string map \
+        {{ width_min=1280 } { width_min=1279 }} \
+        [lindex $normal_bad_summary_lines 21]]
+    set normal_bad_summary_disposition [static_framed_prefix_disposition \
+        [join $normal_bad_summary_lines "\n"] 22 $static_nonce \
+        $media_probe_extension_id 0]
+    set normal_bad_rvfc_lines $normal_terminal_lines
+    set normal_bad_rvfc [lindex $normal_bad_rvfc_lines 22]
+    regsub { callbacks=[^ ]+ } $normal_bad_rvfc \
+        { callbacks=999999 } normal_bad_rvfc
+    lset normal_bad_rvfc_lines 22 $normal_bad_rvfc
+    set normal_bad_rvfc_disposition [static_framed_prefix_disposition \
+        [join $normal_bad_rvfc_lines "\n"] 23 $static_nonce \
+        $media_probe_extension_id 0]
+    set synthetic_phase_start 1000
+    set synthetic_phase_deadline 131000
+    set synthetic_final_boundary [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 106000 30000 20000 5000]
+    set synthetic_final_short [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 106001 30000 20000 5000]
+    set synthetic_final_cap [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 96000 30000 20000 5000]
+    set synthetic_initial_before_send [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 1000 30000 1000 85000]
+    set synthetic_initial_slow_send [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 26000 30000 1000 85000]
+    set synthetic_initial_exhausted_send [media_probe_final_timeout_seconds \
+        $synthetic_phase_deadline 45001 30000 1000 85000]
+    if {![lindex $partial_run 0] ||
+        [lindex $partial_disposition 0] ne "INCOMPLETE" ||
+        ![string match {row-count-10-expected-30-prefix-rows-10-ordered-unique} \
+            [lindex $partial_disposition 1]] ||
+        ![lindex $final_run 0] ||
+        [lindex $final_disposition 0] ne "COMPLETE" ||
+        [lindex $partial_reordered_disposition 0] ne "INVALID" ||
+        ![string match {prefix-order-*} \
+            [lindex $partial_reordered_disposition 1]] ||
+        [lindex $partial_duplicate_disposition 0] ne "INVALID" ||
+        ![string match {prefix-duplicate-*} \
+            [lindex $partial_duplicate_disposition 1]] ||
+        [lindex $partial_malformed_disposition 0] ne "INVALID" ||
+        [lindex $reviewer_ready_disposition 0] ne "INVALID" ||
+        ![string match {prefix-force-ready-prerequisites} \
+            [lindex $reviewer_ready_disposition 1]] ||
+        [lindex $reviewer_result_disposition 0] ne "INVALID" ||
+        ![string match {prefix-force-result-1-invalid} \
+            [lindex $reviewer_result_disposition 1]] ||
+        [lindex $reviewer_observation_disposition 0] ne "INVALID" ||
+        ![string match {prefix-force-observation-not-stable} \
+            [lindex $reviewer_observation_disposition 1]] ||
+        [lindex $reviewer_dimensions_disposition 0] ne "INVALID" ||
+        ![string match {prefix-force-sample-1-dimensions-not-1280x720} \
+            [lindex $reviewer_dimensions_disposition 1]] ||
+        [lindex $playback_boundary_disposition 0] ne "INCOMPLETE" ||
+        [lindex $playback_below_disposition 0] ne "INVALID" ||
+        ![string match {prefix-force-sample-1-playback-not-active} \
+            [lindex $playback_below_disposition 1]] ||
+        [lindex $counter_negative_disposition 0] ne "INVALID" ||
+        [lindex $sample_regression_disposition 0] ne "INVALID" ||
+        ![string match {prefix-sample-2-current-time-regression} \
+            [lindex $sample_regression_disposition 1]] ||
+        [llength $prefix_matrix_errors] != 0 ||
+        [lindex $force_bad_summary_disposition 0] ne "INVALID" ||
+        [lindex $force_bad_rvfc_disposition 0] ne "INVALID" ||
+        [lindex $normal_bad_summary_disposition 0] ne "INVALID" ||
+        [lindex $normal_bad_rvfc_disposition 0] ne "INVALID" ||
+        ![media_probe_host_wait_elapsed_valid 60000 60000] ||
+        [media_probe_host_wait_elapsed_valid 60000 59999] ||
+        [media_probe_host_wait_elapsed_valid 59000 60000] ||
+        ![media_probe_phase_budget_valid 140000 130000 10000] ||
+        [media_probe_phase_budget_valid 140000 131000 10000] ||
+        ![media_probe_deadline_allows $synthetic_phase_deadline \
+            $synthetic_phase_start 115000] ||
+        ![media_probe_deadline_allows $synthetic_phase_deadline 46000 85000] ||
+        [media_probe_deadline_allows $synthetic_phase_deadline 46001 85000] ||
+        ![lindex $synthetic_final_boundary 0] ||
+        [lindex $synthetic_final_boundary 1] != 20 ||
+        [lindex $synthetic_final_short 0] ||
+        ![lindex $synthetic_final_cap 0] ||
+        [lindex $synthetic_final_cap 1] != 30 ||
+        ![lindex $synthetic_initial_before_send 0] ||
+        [lindex $synthetic_initial_before_send 1] != 30 ||
+        ![lindex $synthetic_initial_slow_send 0] ||
+        [lindex $synthetic_initial_slow_send 1] != 20 ||
+        [lindex $synthetic_initial_exhausted_send 0] ||
+        [media_probe_deadline_allows $synthetic_phase_deadline 131001 0]} {
+        fail_preflight "static-check-media-helper-host-wait partial=$partial_disposition final=$final_disposition reordered=$partial_reordered_disposition duplicate=$partial_duplicate_disposition malformed=$partial_malformed_disposition reviewer_ready=$reviewer_ready_disposition reviewer_result=$reviewer_result_disposition reviewer_observation=$reviewer_observation_disposition reviewer_dimensions=$reviewer_dimensions_disposition playback_boundary=$playback_boundary_disposition playback_below=$playback_below_disposition counter_negative=$counter_negative_disposition sample_regression=$sample_regression_disposition prefix_matrix_errors=$prefix_matrix_errors force_bad_summary=$force_bad_summary_disposition force_bad_rvfc=$force_bad_rvfc_disposition normal_bad_summary=$normal_bad_summary_disposition normal_bad_rvfc=$normal_bad_rvfc_disposition final_boundary=$synthetic_final_boundary final_short=$synthetic_final_short final_cap=$synthetic_final_cap initial_before=$synthetic_initial_before_send initial_slow=$synthetic_initial_slow_send initial_exhausted=$synthetic_initial_exhausted_send"
+    }
+    set still_partial_run [static_media_helper_run $force_helper_script \
+        $helper_source "$force_partial\n"]
+    set still_partial_disposition [media_probe_capture_disposition \
+        [lindex $still_partial_run 1] $static_nonce $media_probe_extension_id 1]
+    if {[lindex $still_partial_disposition 0] ne "INCOMPLETE"} {
+        fail_preflight "static-check-media-helper-still-partial-accepted disposition=$still_partial_disposition"
     }
 
     # Same-nonce stale/injected rows are deliberately preserved, not deduped
     # or blessed by the helper.  The authoritative host parser must reject the
-    # resulting 25-row envelope even though the coarse helper status is done.
+    # resulting 25-row envelope.
+    set first_media_line [lindex [split $media_60 "\n"] 0]
     set stale_input "$first_media_line\n$media_60\n"
     set stale_run [static_media_helper_run $helper_script $helper_source $stale_input]
     set stale_capture [media_probe_capture_payload [lindex $stale_run 1] $static_nonce]
-    set stale_parsed [parse_media_probe_evidence [lindex $stale_capture 2] \
-        $static_nonce $media_probe_extension_id]
+    set stale_disposition [media_probe_capture_disposition \
+        [lindex $stale_run 1] $static_nonce $media_probe_extension_id 0]
     if {![lindex $stale_run 0] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=complete polls=0" [lindex $stale_run 1]] ||
-        ![regexp "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=complete polls=0" [lindex $stale_run 1]] ||
         ![lindex $stale_capture 0] || [lindex $stale_capture 2] ne [string trim $stale_input] ||
-        [lindex $stale_parsed 0] ||
+        [lindex $stale_disposition 0] ne "INVALID" ||
         ![static_media_helper_clean $helper_temp_prefix]} {
-        fail_preflight "static-check-media-helper-stale-row-trust run=$stale_run capture=$stale_capture parsed=$stale_parsed"
+        fail_preflight "static-check-media-helper-stale-row-trust run=$stale_run capture=$stale_capture disposition=$stale_disposition"
+    }
+
+    set media_lines [split $media_60 "\n"]
+    set reordered_media [join [concat [lrange $media_lines 0 0] \
+        [lrange $media_lines 2 2] [lrange $media_lines 1 1] \
+        [lrange $media_lines 3 end]] "\n"]
+    set reordered_run [static_media_helper_run $helper_script $helper_source \
+        "$reordered_media\n"]
+    set reordered_disposition [media_probe_capture_disposition \
+        [lindex $reordered_run 1] $static_nonce $media_probe_extension_id 0]
+    set old_timeout_capture "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=timeout polls=105\n$force_partial\nYT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=timeout polls=105"
+    set timeout_disposition [media_probe_capture_disposition \
+        $old_timeout_capture $static_nonce $media_probe_extension_id 1]
+    set duplicate_marker_capture "$capture_begin\n$media_60\n$capture_begin\n$capture_end"
+    set duplicate_marker [media_probe_capture_payload \
+        $duplicate_marker_capture $static_nonce]
+    if {[lindex $reordered_disposition 0] ne "INVALID" ||
+        [lindex $timeout_disposition 0] ne "INVALID" ||
+        [lindex $duplicate_marker 0]} {
+        fail_preflight "static-check-media-helper-order-timeout-marker reordered=$reordered_disposition timeout=$timeout_disposition duplicate_marker=$duplicate_marker"
+    }
+
+    set oversized_input [join [lrepeat 200 $first_media_line] "\n"]
+    set oversized_run [static_media_helper_run $helper_script $helper_source \
+        "$oversized_input\n"]
+    if {![lindex $oversized_run 0] ||
+        ![file exists $helper_capture] ||
+        [file size $helper_capture] > 49152 ||
+        [lindex [media_probe_capture_disposition [lindex $oversized_run 1] \
+            $static_nonce $media_probe_extension_id 0] 0] ne "INVALID"} {
+        fail_preflight "static-check-media-helper-output-cap run=$oversized_run bytes=[expr {[file exists $helper_capture] ? [file size $helper_capture] : -1}]"
     }
     catch {file delete -force $helper_reducer_dir}
 
@@ -2736,15 +3112,11 @@ cat /host-gui-wayland-chromium.log
     }
     catch {file delete -force $freshness_path}
 
-    # Reducer for guest_cmd's interpolated Expect regex.  Constructing this
-    # pattern must leave `[0-9]` as regex syntax, not invoke a Tcl command.
-    set marker_reducer_regex [guest_marker_regex YTREDUCERC7]
-    if {![regexp $marker_reducer_regex {prefix YTREDUCERC7:42 suffix} -> marker_reducer_rc] ||
-        $marker_reducer_rc ne "42" ||
-        [regexp $marker_reducer_regex {prefix YTREDUCERC7:notnumeric suffix}]} {
-        fail_preflight "static-check-guest-marker-regex pattern=$marker_reducer_regex"
-    }
-    proc static_guest_marker_expect {pattern payload} {
+    # Reducer for the complete serial command frame.  Expect waits through the
+    # explicit fence; only the offline frame parser may grant the single RC.
+    set marker_reducer YTREDUCERC7
+    set marker_fence_regex [guest_fence_regex $marker_reducer]
+    proc static_guest_fence_expect {pattern payload} {
         global timeout
         set old_timeout $timeout
         set timeout 2
@@ -2752,7 +3124,7 @@ cat /host-gui-wayland-chromium.log
         log_user 0
         spawn -noecho sh -c {printf '%s\n' "$1"} sh $payload
         expect {
-            -re $pattern { set matched $expect_out(1,string) }
+            -re $pattern { set matched $expect_out(buffer) }
             eof {}
             timeout {}
         }
@@ -2761,10 +3133,49 @@ cat /host-gui-wayland-chromium.log
         set timeout $old_timeout
         return $matched
     }
-    set marker_expect_numeric [static_guest_marker_expect $marker_reducer_regex {prefix YTREDUCERC7:73 suffix}]
-    set marker_expect_nonnumeric [static_guest_marker_expect $marker_reducer_regex {prefix YTREDUCERC7:notnumeric suffix}]
-    if {$marker_expect_numeric ne "73" || $marker_expect_nonnumeric ne ""} {
-        fail_preflight "static-check-guest-marker-expect numeric=$marker_expect_numeric nonnumeric=$marker_expect_nonnumeric"
+    set valid_frame "noise\n$marker_reducer:RC:73\n$marker_reducer:FENCE\n"
+    set valid_frame_parse [guest_command_frame_parse $valid_frame $marker_reducer]
+    set expect_frame [static_guest_fence_expect $marker_fence_regex $valid_frame]
+    set expect_frame_parse [guest_command_frame_parse $expect_frame $marker_reducer]
+    set conflict_frame [guest_command_frame_parse \
+        "$marker_reducer:RC:0\n$marker_reducer:RC:9\n$marker_reducer:RC:9\n$marker_reducer:FENCE\n" \
+        $marker_reducer]
+    set conflict_expect_frame [guest_command_frame_parse \
+        [static_guest_fence_expect $marker_fence_regex \
+            "$marker_reducer:RC:0\n$marker_reducer:RC:9\n$marker_reducer:RC:9\n$marker_reducer:FENCE\n"] \
+        $marker_reducer]
+    set duplicate_frame [guest_command_frame_parse \
+        "$marker_reducer:RC:0\n$marker_reducer:RC:0\n$marker_reducer:FENCE\n" \
+        $marker_reducer]
+    set missing_fence_frame [guest_command_frame_parse \
+        "$marker_reducer:RC:0\n" $marker_reducer]
+    set missing_rc_frame [guest_command_frame_parse \
+        "$marker_reducer:FENCE\n" $marker_reducer]
+    set reversed_frame [guest_command_frame_parse \
+        "$marker_reducer:FENCE\n$marker_reducer:RC:0\n" $marker_reducer]
+    set duplicate_fence_frame [guest_command_frame_parse \
+        "$marker_reducer:RC:0\n$marker_reducer:FENCE\n$marker_reducer:FENCE\n" \
+        $marker_reducer]
+    set unknown_frame [guest_command_frame_parse \
+        "$marker_reducer:RC:notnumeric\n$marker_reducer:FENCE\n" \
+        $marker_reducer]
+    if {![lindex $valid_frame_parse 0] ||
+        [lindex $valid_frame_parse 2] ne "73" ||
+        ![lindex $expect_frame_parse 0] ||
+        [lindex $expect_frame_parse 2] ne "73" ||
+        [lindex $conflict_frame 0] ||
+        ![string match {frame-rc-count-3} [lindex $conflict_frame 1]] ||
+        [lindex $conflict_expect_frame 0] ||
+        ![string match {frame-rc-count-3} \
+            [lindex $conflict_expect_frame 1]] ||
+        [lindex $duplicate_frame 0] ||
+        ![string match {frame-rc-count-2} [lindex $duplicate_frame 1]] ||
+        [lindex $missing_fence_frame 0] ||
+        [lindex $missing_rc_frame 0] ||
+        [lindex $reversed_frame 0] ||
+        [lindex $duplicate_fence_frame 0] ||
+        [lindex $unknown_frame 0]} {
+        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame"
     }
 
     # Exact relevant t2 rows from completed C1.  FB_GPU_GET_STATS is one locked
@@ -3013,7 +3424,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=PASS media_helper_timeout=PASS media_helper_wrong_nonce=PASS media_helper_stale_rows=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_marker_regex=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
@@ -3130,10 +3541,7 @@ close $fh
 
 set media_host "$outdir/ytmediaprobe.sh"
 if {$media_probe eq "1"} {
-    set live_media_rows [expr {$force_hd720 eq "1" ? 30 : 24}]
-    set live_media_polls [expr {$force_hd720 eq "1" ? 105 : 75}]
-    wf $media_host [media_probe_guest_helper_script $media_probe_nonce \
-        [dict create expected_rows $live_media_rows max_polls $live_media_polls]]
+    wf $media_host [media_probe_guest_helper_script $media_probe_nonce]
 }
 
 set helper_pairs [list $launch_host /ytlaunch.sh $fbs_host /fbs.sh $role_host /ytrole.sh $argv_host /ytargv.sh]
@@ -3301,22 +3709,146 @@ if {!$started} {
 
 if {$media_probe eq "1"} {
     require_treatment_gpu_role mediaProbe
-    set media_capture_timeout [expr {$force_hd720 eq "1" ? 140 : 110}]
-    set media_buf [require_guest_ok \
-        [guest_cmd "/bin/bash /ytmediaprobe.sh" media-probe-capture \
-            $media_capture_timeout] \
-        media-probe-capture]
-    wf $media_probe_serial $media_buf
+    if {![media_probe_phase_budget_valid $media_probe_outer_ceiling_ms \
+        $media_probe_phase_budget_ms $media_probe_deadline_margin_ms]} {
+        finish 8 "FAIL media-probe-phase-budget-invalid outer_ms=$media_probe_outer_ceiling_ms phase_ms=$media_probe_phase_budget_ms margin_ms=$media_probe_deadline_margin_ms no_fps_claim=1"
+    }
+    set media_phase_start_ms [clock clicks -milliseconds]
+    set media_phase_deadline_ms [expr {$media_phase_start_ms +
+        $media_probe_phase_budget_ms}]
+    set wait_required_ms [expr {$media_probe_host_wait_ms +
+        $media_probe_final_min_ms + $media_probe_final_post_ms}]
+    set initial_required_ms [expr {$media_probe_capture_timeout_ms +
+        $wait_required_ms}]
+    if {![media_probe_deadline_allows $media_phase_deadline_ms \
+        $media_phase_start_ms $initial_required_ms]} {
+        finish 8 "FAIL media-probe-deadline-before-initial remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $media_phase_start_ms] required_ms=$initial_required_ms no_fps_claim=1"
+    }
+    af $statusf "[iso_now] media_probe_phase_begin nonce=$media_probe_nonce monotonic_ms=$media_phase_start_ms deadline_ms=$media_phase_deadline_ms phase_budget_ms=$media_probe_phase_budget_ms outer_ceiling_ms=$media_probe_outer_ceiling_ms margin_ms=$media_probe_deadline_margin_ms"
+    af $metricsf "media_probe_phase_begin nonce=$media_probe_nonce monotonic_ms=$media_phase_start_ms deadline_ms=$media_phase_deadline_ms phase_budget_ms=$media_probe_phase_budget_ms outer_ceiling_ms=$media_probe_outer_ceiling_ms margin_ms=$media_probe_deadline_margin_ms"
+    set initial_dispatch_ms [clock clicks -milliseconds]
+    if {![media_probe_deadline_allows $media_phase_deadline_ms \
+        $initial_dispatch_ms $initial_required_ms]} {
+        finish 8 "FAIL media-probe-deadline-after-phase-logging remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $initial_dispatch_ms] required_ms=$initial_required_ms no_fps_claim=1"
+    }
+    set initial_capture_timeout [expr {$media_probe_capture_timeout_ms / 1000}]
+    set initial_buf [require_guest_ok \
+        [guest_cmd "/bin/bash /ytmediaprobe.sh" \
+            media-probe-capture-initial $initial_capture_timeout \
+            $media_phase_deadline_ms $wait_required_ms] \
+        media-probe-capture-initial]
+    set initial_end_ms [clock clicks -milliseconds]
+    if {![media_probe_deadline_allows $media_phase_deadline_ms \
+        $initial_end_ms $media_probe_final_post_ms]} {
+        finish 8 "FAIL media-probe-deadline-after-initial remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $initial_end_ms] reserve_ms=$media_probe_final_post_ms no_fps_claim=1"
+    }
+    set serial_evidence "YT_MEDIA_PROBE_HOST_CAPTURE attempt=initial nonce=$media_probe_nonce\n$initial_buf"
+    set capture_disposition [media_probe_capture_disposition $initial_buf \
+        $media_probe_nonce $media_probe_extension_id $force_hd720]
+    set initial_parse_end_ms [clock clicks -milliseconds]
+    if {![media_probe_deadline_allows $media_phase_deadline_ms \
+        $initial_parse_end_ms $media_probe_final_post_ms]} {
+        wf $media_probe_serial $serial_evidence
+        finish 8 "FAIL media-probe-deadline-after-initial-parse remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $initial_parse_end_ms] reserve_ms=$media_probe_final_post_ms no_fps_claim=1"
+    }
+    set capture_path "fast"
+    set host_wait_elapsed_ms 0
+    set final_timeout_record "NOT_APPLICABLE fast_path=1"
+    if {[lindex $capture_disposition 0] eq "INVALID"} {
+        wf $media_probe_serial $serial_evidence
+        set media_probe_verdict "INVALID"
+        af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 capture_path=initial detail=[lindex $capture_disposition 1]"
+        finish 8 "FAIL media-probe-capture-invalid initial-[lindex $capture_disposition 1] no_fps_claim=1"
+    }
+    if {[lindex $capture_disposition 0] eq "INCOMPLETE"} {
+        set capture_path "host-wait-final"
+        set host_wait_start_ms [clock clicks -milliseconds]
+        if {![media_probe_deadline_allows $media_phase_deadline_ms \
+            $host_wait_start_ms $wait_required_ms]} {
+            wf $media_probe_serial $serial_evidence
+            finish 8 "FAIL media-probe-deadline-before-wait remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $host_wait_start_ms] required_ms=$wait_required_ms no_fps_claim=1"
+        }
+        append serial_evidence \
+            "\nYT_MEDIA_PROBE_HOST_WAIT_BEGIN nonce=$media_probe_nonce monotonic_ms=$host_wait_start_ms target_ms=$media_probe_host_wait_ms deadline_ms=$media_phase_deadline_ms\n"
+        af $statusf "[iso_now] media_probe_host_wait_begin nonce=$media_probe_nonce monotonic_ms=$host_wait_start_ms target_ms=$media_probe_host_wait_ms deadline_ms=$media_phase_deadline_ms initial_detail=[lindex $capture_disposition 1]"
+        af $metricsf "media_probe_host_wait_begin nonce=$media_probe_nonce monotonic_ms=$host_wait_start_ms target_ms=$media_probe_host_wait_ms deadline_ms=$media_phase_deadline_ms initial_detail=[lindex $capture_disposition 1]"
+        set before_wait_ms [clock clicks -milliseconds]
+        if {![media_probe_deadline_allows $media_phase_deadline_ms \
+            $before_wait_ms $wait_required_ms]} {
+            wf $media_probe_serial $serial_evidence
+            finish 8 "FAIL media-probe-deadline-after-wait-logging remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $before_wait_ms] required_ms=$wait_required_ms no_fps_claim=1"
+        }
+        after $media_probe_host_wait_ms
+        set host_wait_end_ms [clock clicks -milliseconds]
+        set host_wait_elapsed_ms [expr {$host_wait_end_ms - $host_wait_start_ms}]
+        append serial_evidence \
+            "YT_MEDIA_PROBE_HOST_WAIT_END nonce=$media_probe_nonce monotonic_ms=$host_wait_end_ms elapsed_ms=$host_wait_elapsed_ms target_ms=$media_probe_host_wait_ms\n"
+        af $statusf "[iso_now] media_probe_host_wait_end nonce=$media_probe_nonce monotonic_ms=$host_wait_end_ms elapsed_ms=$host_wait_elapsed_ms target_ms=$media_probe_host_wait_ms"
+        af $metricsf "media_probe_host_wait_end nonce=$media_probe_nonce monotonic_ms=$host_wait_end_ms elapsed_ms=$host_wait_elapsed_ms target_ms=$media_probe_host_wait_ms"
+        if {![media_probe_host_wait_elapsed_valid $media_probe_host_wait_ms \
+            $host_wait_elapsed_ms]} {
+            wf $media_probe_serial $serial_evidence
+            set media_probe_verdict "INVALID"
+            finish 8 "FAIL media-probe-host-wait-short elapsed_ms=$host_wait_elapsed_ms target_ms=$media_probe_host_wait_ms no_fps_claim=1"
+        }
+        set final_plan_now_ms [clock clicks -milliseconds]
+        append serial_evidence \
+            "YT_MEDIA_PROBE_FINAL_BUDGET_PLAN nonce=$media_probe_nonce monotonic_ms=$final_plan_now_ms remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $final_plan_now_ms]\n"
+        set final_dispatch_now_ms [clock clicks -milliseconds]
+        set final_timeout_plan [media_probe_final_timeout_seconds \
+            $media_phase_deadline_ms $final_dispatch_now_ms \
+            $media_probe_capture_timeout_ms $media_probe_final_min_ms \
+            $media_probe_final_post_ms]
+        if {![lindex $final_timeout_plan 0]} {
+            wf $media_probe_serial $serial_evidence
+            set media_probe_verdict "INVALID"
+            finish 8 "FAIL media-probe-deadline-before-final detail=[lindex $final_timeout_plan 2] remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $final_dispatch_now_ms] no_fps_claim=1"
+        }
+        set final_capture_timeout [lindex $final_timeout_plan 1]
+        set final_timeout_record "timeout_seconds=$final_capture_timeout dispatch_monotonic_ms=$final_dispatch_now_ms [lindex $final_timeout_plan 2]"
+        set final_buf [require_guest_ok \
+            [guest_cmd "/bin/bash /ytmediaprobe.sh" \
+                media-probe-capture-final $final_capture_timeout \
+                $media_phase_deadline_ms $media_probe_final_post_ms \
+                $media_probe_final_min_ms] \
+            media-probe-capture-final]
+        set final_capture_end_ms [clock clicks -milliseconds]
+        append serial_evidence \
+            "YT_MEDIA_PROBE_HOST_CAPTURE attempt=final nonce=$media_probe_nonce\n$final_buf"
+        if {![media_probe_deadline_allows $media_phase_deadline_ms \
+            $final_capture_end_ms $media_probe_final_post_ms]} {
+            wf $media_probe_serial $serial_evidence
+            set media_probe_verdict "INVALID"
+            finish 8 "FAIL media-probe-deadline-after-final remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $final_capture_end_ms] reserve_ms=$media_probe_final_post_ms no_fps_claim=1"
+        }
+        set capture_disposition [media_probe_capture_disposition $final_buf \
+            $media_probe_nonce $media_probe_extension_id $force_hd720]
+        if {[lindex $capture_disposition 0] ne "COMPLETE"} {
+            wf $media_probe_serial $serial_evidence
+            set media_probe_verdict "INVALID"
+            af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 capture_path=$capture_path detail=final-[lindex $capture_disposition 1]"
+            finish 8 "FAIL media-probe-capture-invalid final-[lindex $capture_disposition 1] no_fps_claim=1"
+        }
+    }
+    set media_buf [lindex $capture_disposition 2]
+    set media_parsed [lindex $capture_disposition 3]
+    append serial_evidence \
+        "\nYT_MEDIA_PROBE_HOST_CAPTURE_RESULT nonce=$media_probe_nonce path=$capture_path captures=[expr {$capture_path eq \"fast\" ? 1 : 2}] elapsed_ms=$host_wait_elapsed_ms disposition=[lindex $capture_disposition 0]\n"
+    wf $media_probe_serial $serial_evidence
+    af $metricsf "media_probe_capture_path=$capture_path captures=[expr {$capture_path eq \"fast\" ? 1 : 2}] host_wait_elapsed_ms=$host_wait_elapsed_ms"
+    af $metricsf "media_probe_final_capture_budget $final_timeout_record"
+    set media_phase_end_ms [clock clicks -milliseconds]
+    set media_phase_elapsed_ms [expr {$media_phase_end_ms -
+        $media_phase_start_ms}]
+    af $statusf "[iso_now] media_probe_phase_end nonce=$media_probe_nonce monotonic_ms=$media_phase_end_ms elapsed_ms=$media_phase_elapsed_ms deadline_ms=$media_phase_deadline_ms remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $media_phase_end_ms]"
+    af $metricsf "media_probe_phase_end nonce=$media_probe_nonce monotonic_ms=$media_phase_end_ms elapsed_ms=$media_phase_elapsed_ms deadline_ms=$media_phase_deadline_ms remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $media_phase_end_ms]"
+    if {![media_probe_deadline_allows $media_phase_deadline_ms \
+        $media_phase_end_ms 0]} {
+        set media_probe_verdict "INVALID"
+        finish 8 "FAIL media-probe-deadline-after-final-logging elapsed_ms=$media_phase_elapsed_ms phase_budget_ms=$media_probe_phase_budget_ms no_fps_claim=1"
+    }
     capture_guest_fb mediaProbe
     monitor_screendump mediaProbe
-    set captured_media [media_probe_capture_payload $media_buf $media_probe_nonce]
-    if {![lindex $captured_media 0]} {
-        set media_probe_verdict "INVALID"
-        af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 detail=[lindex $captured_media 1]"
-        finish 8 "FAIL media-probe-capture-invalid [lindex $captured_media 1] no_fps_claim=1"
-    }
-    set media_parsed [parse_media_probe_evidence [lindex $captured_media 2] \
-        $media_probe_nonce $media_probe_extension_id $force_hd720]
     if {![lindex $media_parsed 0]} {
         set media_probe_verdict "INVALID"
         af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 detail=[lindex $media_parsed 2]"

@@ -676,8 +676,7 @@ proc media_probe_quality_contains {available quality} {
                   $quality in [split $available ,]}]
 }
 
-proc media_probe_validate_force_rows {rows} {
-    set ready [lindex [lindex $rows 0] 1]
+proc media_probe_validate_force_ready_row {ready} {
     foreach key {
         attempt player_present video_present player_state_api selected_api
         available_api range_api quality_api
@@ -718,31 +717,34 @@ proc media_probe_validate_force_rows {rows} {
         return [list 0 "force-ready-prerequisites"]
     }
 
-    foreach {position seq api} {
-        1 1 setPlaybackQualityRange
-        3 2 setPlaybackQuality
-    } {
-        set attempt [lindex [lindex $rows $position] 1]
-        if {[dict get $attempt seq] ne $seq ||
-            [dict get $attempt api] ne $api ||
-            [dict get $attempt arg_min] ne "hd720" ||
-            [dict get $attempt arg_max] ne "hd720" ||
-            [dict get $attempt present] ne "1"} {
-            return [list 0 "force-attempt-$seq-invalid"]
-        }
-        set result [lindex [lindex $rows [expr {$position + 1}]] 1]
-        if {[dict get $result seq] ne $seq ||
-            [dict get $result api] ne $api ||
-            [dict get $result invoked] ne "1" ||
-            [dict get $result threw] ne "0" ||
-            [dict get $result return_type] ni {
-                undefined boolean number string object function symbol bigint null
-            }} {
-            return [list 0 "force-result-$seq-invalid"]
-        }
-    }
+    return [list 1 "pass"]
+}
 
-    set observation [lindex [lindex $rows 5] 1]
+proc media_probe_validate_force_attempt_row {attempt seq api} {
+    if {[dict get $attempt seq] ne $seq ||
+        [dict get $attempt api] ne $api ||
+        [dict get $attempt arg_min] ne "hd720" ||
+        [dict get $attempt arg_max] ne "hd720" ||
+        [dict get $attempt present] ne "1"} {
+        return [list 0 "force-attempt-$seq-invalid"]
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_validate_force_result_row {result seq api} {
+    if {[dict get $result seq] ne $seq ||
+        [dict get $result api] ne $api ||
+        [dict get $result invoked] ne "1" ||
+        [dict get $result threw] ne "0" ||
+        [dict get $result return_type] ni {
+            undefined boolean number string object function symbol bigint null
+        }} {
+        return [list 0 "force-result-$seq-invalid"]
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_validate_force_observation_row {observation} {
     foreach key {attempt stable_count video_width video_height ready_state} {
         if {![media_probe_is_uint [dict get $observation $key]]} {
             return [list 0 "force-observation-grammar-$key"]
@@ -778,6 +780,510 @@ proc media_probe_validate_force_rows {rows} {
         return [list 0 "force-observation-not-stable"]
     }
     return [list 1 "pass"]
+}
+
+proc media_probe_validate_force_rows {rows} {
+    set validations [list \
+        [media_probe_validate_force_ready_row \
+            [lindex [lindex $rows 0] 1]] \
+        [media_probe_validate_force_attempt_row \
+            [lindex [lindex $rows 1] 1] 1 setPlaybackQualityRange] \
+        [media_probe_validate_force_result_row \
+            [lindex [lindex $rows 2] 1] 1 setPlaybackQualityRange] \
+        [media_probe_validate_force_attempt_row \
+            [lindex [lindex $rows 3] 1] 2 setPlaybackQuality] \
+        [media_probe_validate_force_result_row \
+            [lindex [lindex $rows 4] 1] 2 setPlaybackQuality] \
+        [media_probe_validate_force_observation_row \
+            [lindex [lindex $rows 5] 1]]]
+    foreach validation $validations {
+        if {![lindex $validation 0]} { return $validation }
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_validate_start_row {start} {
+    if {[dict get $start samples] ne "20" ||
+        [dict get $start interval_ms] ne "1000" ||
+        [dict get $start rvfc_available] ni {0 1} ||
+        ![media_probe_source_identity_valid [dict get $start src_id]]} {
+        return [list 0 "invalid-start-row"]
+    }
+    return [list 1 "pass"]
+}
+
+# Shared row-local and prefix-monotonic sample validator.  The complete parser
+# consumes the returned playing bit for its source verdict; the partial-prefix
+# gate sets require_force_source=1 so a forced-hd720 prefix can spend a wait
+# only when every observed sample is already 1280x720 and actively playing.
+proc media_probe_validate_sample_row {
+    sample index start first_sample prior_sample force_hd720
+    {require_force_source 0}
+} {
+    if {![media_probe_is_uint [dict get $sample index]] ||
+        [dict get $sample index] != $index} {
+        return [list 0 "sample-index-$index-invalid" 0]
+    }
+    foreach key {video_width video_height} {
+        if {![media_probe_is_uint [dict get $sample $key]] ||
+            [dict get $sample $key] < 1 || [dict get $sample $key] > 8192} {
+            return [list 0 "sample-$index-range-$key" 0]
+        }
+    }
+    if {![media_probe_source_identity_valid [dict get $sample src_id]] ||
+        [dict get $sample src_id] ne [dict get $start src_id]} {
+        return [list 0 "sample-$index-source-mismatch" 0]
+    }
+    foreach {key low high} {
+        current_time 0 100000000
+        playback_rate 0 16
+        buffered_ahead 0 86400
+        longtask_duration_ms 0 1000000000
+        rvfc_media_time -1 100000000
+    } {
+        if {![media_probe_in_range [dict get $sample $key] $low $high]} {
+            return [list 0 "sample-$index-range-$key" 0]
+        }
+    }
+    foreach key {
+        paused ended quality_selected_api quality_available_api
+        vpq_available webkit_available rvfc_available longtask_available
+    } {
+        if {[dict get $sample $key] ni {0 1}} {
+            return [list 0 "sample-$index-boolean-$key" 0]
+        }
+    }
+    if {![media_probe_is_uint [dict get $sample ready_state]] ||
+        [dict get $sample ready_state] > 4 ||
+        ![media_probe_is_uint [dict get $sample network_state]] ||
+        [dict get $sample network_state] > 3} {
+        return [list 0 "sample-$index-media-state-range" 0]
+    }
+    set selected_api [dict get $sample quality_selected_api]
+    set available_api [dict get $sample quality_available_api]
+    set selected [dict get $sample quality_selected]
+    set available [dict get $sample quality_available]
+    if {![media_probe_quality_token_valid $selected] ||
+        (!$selected_api && $selected ne "unavailable") ||
+        ($selected_api && $selected in {unavailable empty}) ||
+        ![media_probe_quality_available_valid $available $available_api]} {
+        return [list 0 "sample-$index-quality-shape" 0]
+    }
+    if {$force_hd720 &&
+        ($selected_api ne "1" || $available_api ne "1" ||
+         $selected ne "hd720" ||
+         ![media_probe_quality_contains $available hd720])} {
+        return [list 0 "force-sample-$index-quality-not-hd720" 0]
+    }
+    foreach family {vpq webkit} {
+        set api [dict get $sample ${family}_available]
+        set first_key [expr {$family eq "vpq" ? "vpq_total" : "webkit_decoded"}]
+        set second_key [expr {$family eq "vpq" ? "vpq_dropped" : "webkit_dropped"}]
+        set first [dict get $sample $first_key]
+        set second [dict get $sample $second_key]
+        if {!$api} {
+            if {$first ne "-1" || $second ne "-1"} {
+                return [list 0 "sample-$index-$family-unavailable-shape" 0]
+            }
+        } elseif {![media_probe_is_uint $first] ||
+                  ![media_probe_is_uint $second] || $second > $first} {
+            return [list 0 "sample-$index-$family-counter-shape" 0]
+        }
+    }
+    if {![media_probe_is_uint [dict get $sample rvfc_callbacks]] ||
+        ([dict get $sample rvfc_presented] ne "-1" &&
+         ![media_probe_is_uint [dict get $sample rvfc_presented]]) ||
+        ![media_probe_is_uint [dict get $sample longtask_count]]} {
+        return [list 0 "sample-$index-counter-grammar" 0]
+    }
+    if {[dict get $sample rvfc_available] ne [dict get $start rvfc_available]} {
+        return [list 0 "sample-$index-rvfc-availability-mismatch" 0]
+    }
+    if {![dict get $sample rvfc_available] &&
+        ([dict get $sample rvfc_callbacks] ne "0" ||
+         [dict get $sample rvfc_presented] ne "-1" ||
+         double([dict get $sample rvfc_media_time]) != -1.0)} {
+        return [list 0 "sample-$index-rvfc-unavailable-shape" 0]
+    }
+    if {![dict get $sample longtask_available] &&
+        ([dict get $sample longtask_count] ne "0" ||
+         double([dict get $sample longtask_duration_ms]) != 0.0)} {
+        return [list 0 "sample-$index-longtask-unavailable-shape" 0]
+    }
+    if {$index > 1} {
+        if {double([dict get $sample current_time]) <
+            double([dict get $prior_sample current_time])} {
+            return [list 0 "sample-$index-current-time-regression" 0]
+        }
+        foreach key {rvfc_callbacks longtask_count} {
+            if {[dict get $sample $key] < [dict get $prior_sample $key]} {
+                return [list 0 "sample-$index-counter-regression-$key" 0]
+            }
+        }
+        if {double([dict get $sample longtask_duration_ms]) <
+            double([dict get $prior_sample longtask_duration_ms])} {
+            return [list 0 "sample-$index-longtask-duration-regression" 0]
+        }
+        foreach family {vpq webkit} {
+            if {[dict get $sample ${family}_available] ne
+                [dict get $first_sample ${family}_available]} {
+                return [list 0 "sample-$index-$family-availability-change" 0]
+            }
+        }
+        if {[dict get $sample vpq_available]} {
+            foreach key {vpq_total vpq_dropped} {
+                if {[dict get $sample $key] < [dict get $prior_sample $key]} {
+                    return [list 0 "sample-$index-counter-regression-$key" 0]
+                }
+            }
+        }
+        if {[dict get $sample webkit_available]} {
+            foreach key {webkit_decoded webkit_dropped} {
+                if {[dict get $sample $key] < [dict get $prior_sample $key]} {
+                    return [list 0 "sample-$index-counter-regression-$key" 0]
+                }
+            }
+        }
+        foreach key {
+            src_id quality_selected quality_available quality_selected_api
+            quality_available_api vpq_available webkit_available
+            rvfc_available longtask_available
+        } {
+            if {[dict get $sample $key] ne [dict get $first_sample $key]} {
+                return [list 0 "sample-$index-consistency-$key" 0]
+            }
+        }
+    }
+    set playing [expr {
+        [dict get $sample paused] eq "0" &&
+        [dict get $sample ended] eq "0" &&
+        double([dict get $sample playback_rate]) >= 0.95 &&
+        double([dict get $sample playback_rate]) <= 1.05}]
+    if {$require_force_source && $force_hd720 &&
+        ([dict get $sample video_width] ne "1280" ||
+         [dict get $sample video_height] ne "720")} {
+        return [list 0 "force-sample-$index-dimensions-not-1280x720" 0]
+    }
+    if {$require_force_source &&
+        ([dict get $sample ready_state] < 2 ||
+         ([dict get $sample rvfc_available] &&
+          ([dict get $sample rvfc_callbacks] < 1 ||
+           [dict get $sample rvfc_presented] < 0 ||
+           double([dict get $sample rvfc_media_time]) < 0.0)))} {
+        return [list 0 "force-sample-$index-source-state-not-ready" 0]
+    }
+    if {$require_force_source && $index > 1 &&
+        [dict get $sample rvfc_available] &&
+        ([dict get $sample rvfc_presented] <
+            [dict get $prior_sample rvfc_presented] ||
+         double([dict get $sample rvfc_media_time]) <
+            double([dict get $prior_sample rvfc_media_time]))} {
+        return [list 0 "force-sample-$index-rvfc-regression" 0]
+    }
+    if {$require_force_source && !$playing} {
+        return [list 0 "force-sample-$index-playback-not-active" 0]
+    }
+    return [list 1 "pass" $playing]
+}
+
+proc media_probe_validate_summary_row {summary samples} {
+    if {[llength $samples] != 20} {
+        return [list 0 "summary-sample-count-[llength $samples]"]
+    }
+    set first_sample [lindex $samples 0]
+    set last_sample [lindex $samples end]
+    set widths {}
+    set heights {}
+    foreach sample $samples {
+        lappend widths [dict get $sample video_width]
+        lappend heights [dict get $sample video_height]
+    }
+    foreach key {samples width_min width_max height_min height_max longtask_count} {
+        if {![media_probe_is_uint [dict get $summary $key]]} {
+            return [list 0 "summary-grammar-$key"]
+        }
+    }
+    if {[dict get $summary samples] ne "20" ||
+        [dict get $summary width_min] != [tcl::mathfunc::min {*}$widths] ||
+        [dict get $summary width_max] != [tcl::mathfunc::max {*}$widths] ||
+        [dict get $summary height_min] != [tcl::mathfunc::min {*}$heights] ||
+        [dict get $summary height_max] != [tcl::mathfunc::max {*}$heights]} {
+        return [list 0 "summary-dimension-mismatch"]
+    }
+    foreach key {
+        src_id quality_selected quality_available quality_selected_api
+        quality_available_api vpq_available webkit_available longtask_available
+    } {
+        if {[dict get $summary $key] ne [dict get $last_sample $key]} {
+            return [list 0 "summary-consistency-$key"]
+        }
+    }
+    if {![media_probe_in_range [dict get $summary longtask_duration_ms] 0 1000000000] ||
+        [dict get $summary longtask_count] ne [dict get $last_sample longtask_count] ||
+        double([dict get $summary longtask_duration_ms]) !=
+        double([dict get $last_sample longtask_duration_ms])} {
+        return [list 0 "summary-longtask-mismatch"]
+    }
+    foreach family {vpq_total vpq_dropped webkit_decoded webkit_dropped} {
+        set first [dict get $first_sample $family]
+        set last [dict get $last_sample $family]
+        if {[dict get $summary ${family}_first] ne $first ||
+            [dict get $summary ${family}_last] ne $last} {
+            return [list 0 "summary-$family-first-last-mismatch"]
+        }
+        set available [expr {[string match vpq_* $family] ?
+            [dict get $summary vpq_available] :
+            [dict get $summary webkit_available]}]
+        if {![media_probe_counter_shape $available $first $last \
+            [dict get $summary ${family}_delta]]} {
+            return [list 0 "summary-$family-delta-mismatch"]
+        }
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_validate_rvfc_summary_row {rvfc start samples} {
+    if {[llength $samples] != 20} {
+        return [list 0 "rvfc-sample-count-[llength $samples]"]
+    }
+    set last_sample [lindex $samples end]
+    foreach key {
+        available callbacks schedule_failures warmup_callbacks interval_slots
+        presented_first presented_last presented_delta presented_invalid
+        presented_pair_invalid presented_regressions presented_duplicates
+        media_invalid interval_count interval_valid interval_invalid
+        interval_positive interval_regressions interval_duplicates near60_count
+    } {
+        if {$key in {presented_first presented_last presented_delta}} {
+            if {![media_probe_is_sint [dict get $rvfc $key]]} {
+                return [list 0 "rvfc-grammar-$key"]
+            }
+        } elseif {![media_probe_is_uint [dict get $rvfc $key]]} {
+            return [list 0 "rvfc-grammar-$key"]
+        }
+    }
+    foreach key {media_first media_last media_delta interval_sum_ms median_ms} {
+        if {![media_probe_is_decimal [dict get $rvfc $key]]} {
+            return [list 0 "rvfc-grammar-$key"]
+        }
+    }
+    if {[dict get $rvfc available] ni {0 1} ||
+        [dict get $rvfc available] ne [dict get $start rvfc_available] ||
+        [dict get $rvfc available] ne [dict get $last_sample rvfc_available] ||
+        [dict get $rvfc callbacks] ne [dict get $last_sample rvfc_callbacks] ||
+        [dict get $rvfc warmup_callbacks] ne "0"} {
+        return [list 0 "rvfc-start-sample-final-mismatch"]
+    }
+    if {[dict get $rvfc interval_slots] !=
+        [expr {max(0, [dict get $rvfc callbacks] - 1)}] ||
+        [dict get $rvfc interval_count] != [dict get $rvfc interval_slots] ||
+        [dict get $rvfc interval_valid] + [dict get $rvfc interval_invalid] !=
+        [dict get $rvfc interval_count]} {
+        return [list 0 "rvfc-callback-interval-reconciliation"]
+    }
+    set hist_result [media_probe_histogram [dict get $rvfc hist]]
+    if {![lindex $hist_result 0]} { return [list 0 [lindex $hist_result 1]] }
+    set hist [lindex $hist_result 2]
+    set hist_total 0
+    set positive_total 0
+    foreach key [dict keys $hist] {
+        incr hist_total [dict get $hist $key]
+        if {$key ni {regress duplicate}} { incr positive_total [dict get $hist $key] }
+    }
+    if {$hist_total != [dict get $rvfc interval_valid] ||
+        $positive_total != [dict get $rvfc interval_positive] ||
+        [dict get $hist regress] != [dict get $rvfc interval_regressions] ||
+        [dict get $hist duplicate] != [dict get $rvfc interval_duplicates] ||
+        [dict get $hist b15_18p5] != [dict get $rvfc near60_count]} {
+        return [list 0 "rvfc-histogram-reconciliation"]
+    }
+    if {![media_probe_histogram_median_valid $hist $positive_total \
+            [dict get $rvfc median_ms]]} {
+        return [list 0 "rvfc-histogram-median-impossible"]
+    }
+    if {![media_probe_histogram_sum_valid $hist \
+            [dict get $rvfc interval_sum_ms]]} {
+        return [list 0 "rvfc-histogram-sum-impossible"]
+    }
+    if {[dict get $rvfc presented_last] ne [dict get $last_sample rvfc_presented] ||
+        double([dict get $rvfc media_last]) !=
+        double([dict get $last_sample rvfc_media_time])} {
+        return [list 0 "rvfc-last-sample-mismatch"]
+    }
+    if {[dict get $rvfc presented_first] >= 0 &&
+        [dict get $rvfc presented_last] >= 0} {
+        if {[dict get $rvfc presented_delta] !=
+            [dict get $rvfc presented_last] - [dict get $rvfc presented_first]} {
+            return [list 0 "rvfc-presented-delta-mismatch"]
+        }
+    } elseif {[dict get $rvfc presented_delta] ne "-1"} {
+        return [list 0 "rvfc-presented-unavailable-delta-shape"]
+    }
+    if {double([dict get $rvfc media_first]) >= 0 &&
+        double([dict get $rvfc media_last]) >= 0} {
+        if {abs(double([dict get $rvfc media_delta]) -
+                (double([dict get $rvfc media_last]) -
+                 double([dict get $rvfc media_first]))) > 0.000002} {
+            return [list 0 "rvfc-media-delta-mismatch"]
+        }
+    } elseif {double([dict get $rvfc media_delta]) != -1.0} {
+        return [list 0 "rvfc-media-unavailable-delta-shape"]
+    }
+    if {![dict get $rvfc available]} {
+        foreach {key exact} {
+            callbacks 0 warmup_callbacks 0 interval_slots 0
+            presented_first -1 presented_last -1 presented_delta -1
+            presented_invalid 0 presented_pair_invalid 0
+            presented_regressions 0 presented_duplicates 0 media_first -1.000000
+            media_last -1.000000 media_delta -1.000000 media_invalid 0
+            interval_count 0 interval_valid 0 interval_invalid 0
+            interval_positive 0 interval_regressions 0 interval_duplicates 0
+            interval_sum_ms 0.000 median_ms -1.000 near60_count 0
+        } {
+            if {double([dict get $rvfc $key]) != double($exact)} {
+                return [list 0 "rvfc-unavailable-shape-$key"]
+            }
+        }
+    }
+    if {[dict get $rvfc interval_invalid] == 0 &&
+        double([dict get $rvfc media_delta]) >= 0 &&
+        abs(double([dict get $rvfc interval_sum_ms]) / 1000.0 -
+            double([dict get $rvfc media_delta])) > 0.003} {
+        return [list 0 "rvfc-interval-sum-media-delta-mismatch"]
+    }
+    set sample_rvfc [media_probe_sample_rvfc_consistency $samples $rvfc]
+    if {![lindex $sample_rvfc 0]} { return $sample_rvfc }
+    return [list 1 "pass"]
+}
+
+# A short capture may earn one delayed host recapture only when it is an exact
+# positional prefix of the selected arm.  This is intentionally stricter than
+# a row-count check: exact row schemas/nonces are already enforced by
+# media_probe_enveloped_rows(), while this layer rejects duplicate rows,
+# reordered kinds, wrong force API sequencing, and repeated/skipped sample
+# indices before the host spends its wait budget.
+proc media_probe_validate_partial_prefix {text expected_nonce extension_id force_hd720} {
+    if {$force_hd720 ni {0 1}} {
+        return [list 0 "prefix-force-arm-invalid"]
+    }
+    set expected_rows [expr {$force_hd720 ? 30 : 24}]
+    if {[string trim $text] eq ""} {
+        return [list 1 "prefix-empty"]
+    }
+    set envelope [media_probe_enveloped_rows $text $expected_nonce \
+        $extension_id $expected_rows]
+    if {![lindex $envelope 0]} {
+        return [list 0 "prefix-[lindex $envelope 1]"]
+    }
+    set rows [lindex $envelope 2]
+    if {[llength $rows] < 1 || [llength $rows] >= $expected_rows} {
+        return [list 0 "prefix-row-count-[llength $rows]-invalid"]
+    }
+    set expected_order [concat \
+        [expr {$force_hd720 ? {
+            force_ready force_attempt force_result force_attempt force_result
+            force_observation
+        } : {}}] \
+        start [lrepeat 20 sample] summary rvfc_summary done]
+    set seen [dict create]
+    set force_rows [expr {$force_hd720 ? 6 : 0}]
+    set start_position $force_rows
+    set prefix_start {}
+    set first_sample {}
+    set prior_sample {}
+    set prefix_samples {}
+    for {set position 0} {$position < [llength $rows]} {incr position} {
+        set item [lindex $rows $position]
+        set payload [lindex $item 0]
+        set fields [lindex $item 1]
+        if {[dict exists $seen $payload]} {
+            return [list 0 "prefix-duplicate-row-position-$position"]
+        }
+        dict set seen $payload 1
+        set kind [dict get $fields kind]
+        set expected_kind [lindex $expected_order $position]
+        if {$kind ne $expected_kind} {
+            return [list 0 \
+                "prefix-order-position-$position-kind-$kind-expected-$expected_kind"]
+        }
+        if {$force_hd720} {
+            switch -- $position {
+                0 {
+                    set semantic [media_probe_validate_force_ready_row $fields]
+                }
+                1 {
+                    set semantic [media_probe_validate_force_attempt_row \
+                        $fields 1 setPlaybackQualityRange]
+                }
+                2 {
+                    set semantic [media_probe_validate_force_result_row \
+                        $fields 1 setPlaybackQualityRange]
+                }
+                3 {
+                    set semantic [media_probe_validate_force_attempt_row \
+                        $fields 2 setPlaybackQuality]
+                }
+                4 {
+                    set semantic [media_probe_validate_force_result_row \
+                        $fields 2 setPlaybackQuality]
+                }
+                5 {
+                    set semantic [media_probe_validate_force_observation_row \
+                        $fields]
+                }
+            }
+            if {$position <= 5 && ![lindex $semantic 0]} {
+                return [list 0 "prefix-[lindex $semantic 1]"]
+            }
+        }
+        if {$position == $start_position} {
+            set start_validation [media_probe_validate_start_row $fields]
+            if {![lindex $start_validation 0]} {
+                return [list 0 "prefix-[lindex $start_validation 1]"]
+            }
+            set prefix_start $fields
+        }
+        set sample_index [expr {$position - $start_position}]
+        if {$sample_index >= 1 && $sample_index <= 20} {
+            set sample_validation [media_probe_validate_sample_row $fields \
+                $sample_index $prefix_start $first_sample $prior_sample \
+                $force_hd720 1]
+            if {![lindex $sample_validation 0]} {
+                return [list 0 "prefix-[lindex $sample_validation 1]"]
+            }
+            if {$sample_index == 1} {
+                set first_sample $fields
+                if {$force_hd720} {
+                    set observation [lindex [lindex $rows 5] 1]
+                    if {double([dict get $fields current_time]) <
+                        double([dict get $observation current_time_last])} {
+                        return [list 0 \
+                            "prefix-force-first-sample-time-regression"]
+                    }
+                }
+            }
+            set prior_sample $fields
+            lappend prefix_samples $fields
+        }
+        if {$sample_index == 21} {
+            set summary_validation [media_probe_validate_summary_row \
+                $fields $prefix_samples]
+            if {![lindex $summary_validation 0]} {
+                return [list 0 "prefix-[lindex $summary_validation 1]"]
+            }
+        }
+        if {$sample_index == 22} {
+            set rvfc_validation [media_probe_validate_rvfc_summary_row \
+                $fields $prefix_start $prefix_samples]
+            if {![lindex $rvfc_validation 0]} {
+                return [list 0 "prefix-[lindex $rvfc_validation 1]"]
+            }
+        }
+        if {$sample_index > 22} {
+            return [list 0 "prefix-done-row-requires-complete"]
+        }
+    }
+    return [list 1 "prefix-rows-[llength $rows]-ordered-unique"]
 }
 
 proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0}} {
@@ -820,11 +1326,9 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
     }
 
     set start [lindex [lindex $rows $force_rows] 1]
-    if {[dict get $start samples] ne "20" ||
-        [dict get $start interval_ms] ne "1000" ||
-        [dict get $start rvfc_available] ni {0 1} ||
-        ![media_probe_source_identity_valid [dict get $start src_id]]} {
-        return [list 0 0 "invalid-start-row"]
+    set start_validation [media_probe_validate_start_row $start]
+    if {![lindex $start_validation 0]} {
+        return [list 0 0 [lindex $start_validation 1]]
     }
 
     set samples {}
@@ -836,150 +1340,15 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
     set prior_sample {}
     for {set index 1} {$index <= 20} {incr index} {
         set sample [lindex [lindex $rows [expr {$force_rows + $index}]] 1]
-        if {![media_probe_is_uint [dict get $sample index]] ||
-            [dict get $sample index] != $index} {
-            return [list 0 0 "sample-index-$index-invalid"]
+        set sample_validation [media_probe_validate_sample_row $sample $index \
+            $start $first_sample $prior_sample $force_hd720]
+        if {![lindex $sample_validation 0]} {
+            return [list 0 0 [lindex $sample_validation 1]]
         }
-        foreach key {video_width video_height} {
-            if {![media_probe_is_uint [dict get $sample $key]] ||
-                [dict get $sample $key] < 1 || [dict get $sample $key] > 8192} {
-                return [list 0 0 "sample-$index-range-$key"]
-            }
-        }
-        if {![media_probe_source_identity_valid [dict get $sample src_id]] ||
-            [dict get $sample src_id] ne [dict get $start src_id]} {
-            return [list 0 0 "sample-$index-source-mismatch"]
-        }
-        foreach {key low high} {
-            current_time 0 100000000
-            playback_rate 0 16
-            buffered_ahead 0 86400
-            longtask_duration_ms 0 1000000000
-            rvfc_media_time -1 100000000
-        } {
-            if {![media_probe_in_range [dict get $sample $key] $low $high]} {
-                return [list 0 0 "sample-$index-range-$key"]
-            }
-        }
-        foreach key {
-            paused ended quality_selected_api quality_available_api
-            vpq_available webkit_available rvfc_available longtask_available
-        } {
-            if {[dict get $sample $key] ni {0 1}} {
-                return [list 0 0 "sample-$index-boolean-$key"]
-            }
-        }
-        if {![media_probe_is_uint [dict get $sample ready_state]] ||
-            [dict get $sample ready_state] > 4 ||
-            ![media_probe_is_uint [dict get $sample network_state]] ||
-            [dict get $sample network_state] > 3} {
-            return [list 0 0 "sample-$index-media-state-range"]
-        }
-        set selected_api [dict get $sample quality_selected_api]
-        set available_api [dict get $sample quality_available_api]
-        set selected [dict get $sample quality_selected]
-        set available [dict get $sample quality_available]
-        if {![media_probe_quality_token_valid $selected] ||
-            (!$selected_api && $selected ne "unavailable") ||
-            ($selected_api && $selected in {unavailable empty}) ||
-            ![media_probe_quality_available_valid $available $available_api]} {
-            return [list 0 0 "sample-$index-quality-shape"]
-        }
-        if {$force_hd720 &&
-            ($selected_api ne "1" || $available_api ne "1" ||
-             $selected ne "hd720" ||
-             ![media_probe_quality_contains $available hd720])} {
-            return [list 0 0 "force-sample-$index-quality-not-hd720"]
-        }
-        foreach family {vpq webkit} {
-            set api [dict get $sample ${family}_available]
-            set first_key [expr {$family eq "vpq" ? "vpq_total" : "webkit_decoded"}]
-            set second_key [expr {$family eq "vpq" ? "vpq_dropped" : "webkit_dropped"}]
-            set first [dict get $sample $first_key]
-            set second [dict get $sample $second_key]
-            if {!$api} {
-                if {$first ne "-1" || $second ne "-1"} {
-                    return [list 0 0 "sample-$index-$family-unavailable-shape"]
-                }
-            } elseif {![media_probe_is_uint $first] ||
-                      ![media_probe_is_uint $second] || $second > $first} {
-                return [list 0 0 "sample-$index-$family-counter-shape"]
-            }
-        }
-        if {![media_probe_is_uint [dict get $sample rvfc_callbacks]] ||
-            ([dict get $sample rvfc_presented] ne "-1" &&
-             ![media_probe_is_uint [dict get $sample rvfc_presented]]) ||
-            ![media_probe_is_uint [dict get $sample longtask_count]]} {
-            return [list 0 0 "sample-$index-counter-grammar"]
-        }
-        if {[dict get $sample rvfc_available] ne [dict get $start rvfc_available]} {
-            return [list 0 0 "sample-$index-rvfc-availability-mismatch"]
-        }
-        if {![dict get $sample rvfc_available] &&
-            ([dict get $sample rvfc_callbacks] ne "0" ||
-             [dict get $sample rvfc_presented] ne "-1" ||
-             double([dict get $sample rvfc_media_time]) != -1.0)} {
-            return [list 0 0 "sample-$index-rvfc-unavailable-shape"]
-        }
-        if {![dict get $sample longtask_available] &&
-            ([dict get $sample longtask_count] ne "0" ||
-             double([dict get $sample longtask_duration_ms]) != 0.0)} {
-            return [list 0 0 "sample-$index-longtask-unavailable-shape"]
-        }
-
-        if {$index == 1} {
-            set first_sample $sample
-        } else {
-            if {double([dict get $sample current_time]) <
-                double([dict get $prior_sample current_time])} {
-                return [list 0 0 "sample-$index-current-time-regression"]
-            }
-            foreach key {rvfc_callbacks longtask_count} {
-                if {[dict get $sample $key] < [dict get $prior_sample $key]} {
-                    return [list 0 0 "sample-$index-counter-regression-$key"]
-                }
-            }
-            if {double([dict get $sample longtask_duration_ms]) <
-                double([dict get $prior_sample longtask_duration_ms])} {
-                return [list 0 0 "sample-$index-longtask-duration-regression"]
-            }
-            foreach family {vpq webkit} {
-                if {[dict get $sample ${family}_available] ne
-                    [dict get $first_sample ${family}_available]} {
-                    return [list 0 0 "sample-$index-$family-availability-change"]
-                }
-            }
-            if {[dict get $sample vpq_available]} {
-                foreach key {vpq_total vpq_dropped} {
-                    if {[dict get $sample $key] < [dict get $prior_sample $key]} {
-                        return [list 0 0 "sample-$index-counter-regression-$key"]
-                    }
-                }
-            }
-            if {[dict get $sample webkit_available]} {
-                foreach key {webkit_decoded webkit_dropped} {
-                    if {[dict get $sample $key] < [dict get $prior_sample $key]} {
-                        return [list 0 0 "sample-$index-counter-regression-$key"]
-                    }
-                }
-            }
-        }
-        foreach key {
-            src_id quality_selected quality_available quality_selected_api
-            quality_available_api vpq_available webkit_available
-            rvfc_available longtask_available
-        } {
-            if {$index > 1 && [dict get $sample $key] ne
-                [dict get $first_sample $key]} {
-                return [list 0 0 "sample-$index-consistency-$key"]
-            }
-        }
-        if {[dict get $sample paused] ne "0" ||
-            [dict get $sample ended] ne "0" ||
-            double([dict get $sample playback_rate]) < 0.95 ||
-            double([dict get $sample playback_rate]) > 1.05} {
+        if {![lindex $sample_validation 2]} {
             set all_playing 0
         }
+        if {$index == 1} { set first_sample $sample }
         lappend samples $sample
         lappend widths [dict get $sample video_width]
         lappend heights [dict get $sample video_height]
@@ -996,164 +1365,16 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
     }
 
     set summary [lindex [lindex $rows [expr {$force_rows + 21}]] 1]
-    foreach key {samples width_min width_max height_min height_max longtask_count} {
-        if {![media_probe_is_uint [dict get $summary $key]]} {
-            return [list 0 0 "summary-grammar-$key"]
-        }
-    }
-    if {[dict get $summary samples] ne "20" ||
-        [dict get $summary width_min] != [tcl::mathfunc::min {*}$widths] ||
-        [dict get $summary width_max] != [tcl::mathfunc::max {*}$widths] ||
-        [dict get $summary height_min] != [tcl::mathfunc::min {*}$heights] ||
-        [dict get $summary height_max] != [tcl::mathfunc::max {*}$heights]} {
-        return [list 0 0 "summary-dimension-mismatch"]
-    }
-    foreach key {
-        src_id quality_selected quality_available quality_selected_api
-        quality_available_api vpq_available webkit_available longtask_available
-    } {
-        if {[dict get $summary $key] ne [dict get $last_sample $key]} {
-            return [list 0 0 "summary-consistency-$key"]
-        }
-    }
-    if {![media_probe_in_range [dict get $summary longtask_duration_ms] 0 1000000000] ||
-        [dict get $summary longtask_count] ne [dict get $last_sample longtask_count] ||
-        double([dict get $summary longtask_duration_ms]) !=
-        double([dict get $last_sample longtask_duration_ms])} {
-        return [list 0 0 "summary-longtask-mismatch"]
-    }
-    foreach family {vpq_total vpq_dropped webkit_decoded webkit_dropped} {
-        set first [dict get $first_sample $family]
-        set last [dict get $last_sample $family]
-        if {$family in {vpq_total vpq_dropped}} {
-            set prefix $family
-        } else {
-            set prefix $family
-        }
-        if {[dict get $summary ${prefix}_first] ne $first ||
-            [dict get $summary ${prefix}_last] ne $last} {
-            return [list 0 0 "summary-$family-first-last-mismatch"]
-        }
-        set delta [dict get $summary ${prefix}_delta]
-        set available [expr {[string match vpq_* $family] ?
-            [dict get $summary vpq_available] : [dict get $summary webkit_available]}]
-        if {![media_probe_counter_shape $available $first $last $delta]} {
-            return [list 0 0 "summary-$family-delta-mismatch"]
-        }
+    set summary_validation [media_probe_validate_summary_row $summary $samples]
+    if {![lindex $summary_validation 0]} {
+        return [list 0 0 [lindex $summary_validation 1]]
     }
 
     set rvfc [lindex [lindex $rows [expr {$force_rows + 22}]] 1]
-    foreach key {
-        available callbacks schedule_failures warmup_callbacks interval_slots
-        presented_first presented_last presented_delta presented_invalid
-        presented_pair_invalid presented_regressions presented_duplicates
-        media_invalid interval_count interval_valid interval_invalid
-        interval_positive interval_regressions interval_duplicates near60_count
-    } {
-        if {$key in {presented_first presented_last presented_delta}} {
-            if {![media_probe_is_sint [dict get $rvfc $key]]} {
-                return [list 0 0 "rvfc-grammar-$key"]
-            }
-        } elseif {![media_probe_is_uint [dict get $rvfc $key]]} {
-            return [list 0 0 "rvfc-grammar-$key"]
-        }
-    }
-    foreach key {media_first media_last media_delta interval_sum_ms median_ms} {
-        if {![media_probe_is_decimal [dict get $rvfc $key]]} {
-            return [list 0 0 "rvfc-grammar-$key"]
-        }
-    }
-    if {[dict get $rvfc available] ni {0 1} ||
-        [dict get $rvfc available] ne [dict get $start rvfc_available] ||
-        [dict get $rvfc available] ne [dict get $last_sample rvfc_available] ||
-        [dict get $rvfc callbacks] ne [dict get $last_sample rvfc_callbacks] ||
-        [dict get $rvfc warmup_callbacks] ne "0"} {
-        return [list 0 0 "rvfc-start-sample-final-mismatch"]
-    }
-    if {[dict get $rvfc interval_slots] !=
-        [expr {max(0, [dict get $rvfc callbacks] - 1)}] ||
-        [dict get $rvfc interval_count] != [dict get $rvfc interval_slots] ||
-        [dict get $rvfc interval_valid] + [dict get $rvfc interval_invalid] !=
-        [dict get $rvfc interval_count]} {
-        return [list 0 0 "rvfc-callback-interval-reconciliation"]
-    }
-    set hist_result [media_probe_histogram [dict get $rvfc hist]]
-    if {![lindex $hist_result 0]} {
-        return [list 0 0 [lindex $hist_result 1]]
-    }
-    set hist [lindex $hist_result 2]
-    set hist_total 0
-    set positive_total 0
-    foreach key [dict keys $hist] {
-        incr hist_total [dict get $hist $key]
-        if {$key ni {regress duplicate}} {
-            incr positive_total [dict get $hist $key]
-        }
-    }
-    if {$hist_total != [dict get $rvfc interval_valid] ||
-        $positive_total != [dict get $rvfc interval_positive] ||
-        [dict get $hist regress] != [dict get $rvfc interval_regressions] ||
-        [dict get $hist duplicate] != [dict get $rvfc interval_duplicates] ||
-        [dict get $hist b15_18p5] != [dict get $rvfc near60_count]} {
-        return [list 0 0 "rvfc-histogram-reconciliation"]
-    }
-    if {![media_probe_histogram_median_valid $hist $positive_total \
-            [dict get $rvfc median_ms]]} {
-        return [list 0 0 "rvfc-histogram-median-impossible"]
-    }
-    if {![media_probe_histogram_sum_valid $hist \
-            [dict get $rvfc interval_sum_ms]]} {
-        return [list 0 0 "rvfc-histogram-sum-impossible"]
-    }
-    if {[dict get $rvfc presented_last] ne [dict get $last_sample rvfc_presented] ||
-        double([dict get $rvfc media_last]) !=
-        double([dict get $last_sample rvfc_media_time])} {
-        return [list 0 0 "rvfc-last-sample-mismatch"]
-    }
-    if {[dict get $rvfc presented_first] >= 0 &&
-        [dict get $rvfc presented_last] >= 0} {
-        if {[dict get $rvfc presented_delta] !=
-            [dict get $rvfc presented_last] - [dict get $rvfc presented_first]} {
-            return [list 0 0 "rvfc-presented-delta-mismatch"]
-        }
-    } elseif {[dict get $rvfc presented_delta] ne "-1"} {
-        return [list 0 0 "rvfc-presented-unavailable-delta-shape"]
-    }
-    if {double([dict get $rvfc media_first]) >= 0 &&
-        double([dict get $rvfc media_last]) >= 0} {
-        if {abs(double([dict get $rvfc media_delta]) -
-                (double([dict get $rvfc media_last]) -
-                 double([dict get $rvfc media_first]))) > 0.000002} {
-            return [list 0 0 "rvfc-media-delta-mismatch"]
-        }
-    } elseif {double([dict get $rvfc media_delta]) != -1.0} {
-        return [list 0 0 "rvfc-media-unavailable-delta-shape"]
-    }
-    if {![dict get $rvfc available]} {
-        foreach {key exact} {
-            callbacks 0 warmup_callbacks 0 interval_slots 0
-            presented_first -1 presented_last -1 presented_delta -1
-            presented_invalid 0 presented_pair_invalid 0
-            presented_regressions 0 presented_duplicates 0 media_first -1.000000
-            media_last -1.000000 media_delta -1.000000 media_invalid 0
-            interval_count 0 interval_valid 0 interval_invalid 0
-            interval_positive 0 interval_regressions 0 interval_duplicates 0
-            interval_sum_ms 0.000 median_ms -1.000 near60_count 0
-        } {
-            if {double([dict get $rvfc $key]) != double($exact)} {
-                return [list 0 0 "rvfc-unavailable-shape-$key"]
-            }
-        }
-    }
-    if {[dict get $rvfc interval_invalid] == 0 &&
-        double([dict get $rvfc media_delta]) >= 0 &&
-        abs(double([dict get $rvfc interval_sum_ms]) / 1000.0 -
-            double([dict get $rvfc media_delta])) > 0.003} {
-        return [list 0 0 "rvfc-interval-sum-media-delta-mismatch"]
-    }
-    set sample_rvfc [media_probe_sample_rvfc_consistency $samples $rvfc]
-    if {![lindex $sample_rvfc 0]} {
-        return [list 0 0 [lindex $sample_rvfc 1]]
+    set rvfc_validation [media_probe_validate_rvfc_summary_row \
+        $rvfc $start $samples]
+    if {![lindex $rvfc_validation 0]} {
+        return [list 0 0 [lindex $rvfc_validation 1]]
     }
 
     set done [lindex [lindex $rows [expr {$force_rows + 23}]] 1]
@@ -1367,19 +1588,39 @@ proc media_probe_mutate_first {text from to} {
 }
 
 proc media_probe_capture_payload {text expected_nonce} {
-    set begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$expected_nonce status="
-    set end "YT_MEDIA_PROBE_CAPTURE_END nonce=$expected_nonce status="
-    set begin_pos [string first $begin $text]
-    set end_pos [string first $end $text]
-    if {$begin_pos < 0 || $end_pos <= $begin_pos ||
-        [string first $begin $text [expr {$begin_pos + 1}]] >= 0 ||
-        [string first $end $text [expr {$end_pos + 1}]] >= 0} {
+    if {![regexp {^[0-9a-f]{32}$} $expected_nonce]} {
+        return [list 0 "capture-nonce-invalid" ""]
+    }
+    set begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$expected_nonce status=oneshot polls=0 byte_cap=49152"
+    set end "YT_MEDIA_PROBE_CAPTURE_END nonce=$expected_nonce status=oneshot polls=0 byte_cap=49152"
+    set lines [split $text "\n"]
+    set begin_indices {}
+    set end_indices {}
+    set line_index -1
+    foreach raw_line $lines {
+        incr line_index
+        set line [string trimright $raw_line "\r"]
+        if {[string first {YT_MEDIA_PROBE_CAPTURE_BEGIN } $line] >= 0} {
+            if {$line ne $begin} {
+                return [list 0 "capture-begin-shape-invalid" ""]
+            }
+            lappend begin_indices $line_index
+        }
+        if {[string first {YT_MEDIA_PROBE_CAPTURE_END } $line] >= 0} {
+            if {$line ne $end} {
+                return [list 0 "capture-end-shape-invalid" ""]
+            }
+            lappend end_indices $line_index
+        }
+    }
+    if {[llength $begin_indices] != 1 || [llength $end_indices] != 1 ||
+        [lindex $end_indices 0] <= [lindex $begin_indices 0]} {
         return [list 0 "capture-markers-invalid" ""]
     }
-    set begin_line_end [string first "\n" $text $begin_pos]
-    if {$begin_line_end < 0 || $begin_line_end >= $end_pos} {
-        return [list 0 "capture-begin-line-invalid" ""]
+    set payload_lines {}
+    for {set index [expr {[lindex $begin_indices 0] + 1}]} \
+        {$index < [lindex $end_indices 0]} {incr index} {
+        lappend payload_lines [string trimright [lindex $lines $index] "\r"]
     }
-    set payload [string range $text [expr {$begin_line_end + 1}] [expr {$end_pos - 1}]]
-    return [list 1 "pass" [string trim $payload]]
+    return [list 1 "pass" [string trim [join $payload_lines "\n"]]]
 }
