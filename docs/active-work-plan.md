@@ -39,7 +39,7 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
 
 ## ACTIVE LANES
 
-- A1 (IN FLIGHT — selector PASS; fresh N>=2 measurement is next):
+- A1 (IN FLIGHT — first hd720 measurement NULL; causal fix is next):
   Codec capacity is NOT the constraint: controlled local 1280x720@60 H.264
   and VP9 reach about 52-54 presented fps, so YouTube frame supply/selection
   and the later local present ceiling are separate walls. The EGL revision-2
@@ -66,8 +66,25 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   duplicate, reordered, spoofed, drift, wrong-dimension, 30-fps, and API-failure
   mutations all reject. Review ended with an exact zero QEMU process count;
   this is implementation proof only and makes no performance claim.
-  IMMEDIATE NEXT: run fresh N>=2 real KVM+virgl measurements in one authorized
-  VM worker, serially, with all GPU/software/crash/artifact/cleanup gates armed.
+  The authorized sole-VM measurement retained
+  `build-x86_64/chromium-youtube-m7/20260710T170200Z-a1-hd720-t1-mp1-audio1`
+  and its serial retry
+  `build-x86_64/chromium-youtube-m7/20260710T170400Z-a1-hd720-t1r1-mp1-audio1`.
+  T1 is INVALID/NULL on a transient serial `fbstat` probe timeout. The retry
+  used real KVM+virgl and passed the GPU-role, hd720 selector, and stable
+  1280x720 gates, but the source/FPS parser rejected
+  `sample-rvfc-presented-first-jump`. Raw diagnostics were sample 1
+  callbacks=7/presented=188; final callbacks=796, presented_first=88,
+  presented_last=1326, delta=1238, media_delta=21.416667, median=16.667, and
+  near60=505; VPQ total delta=1151 and dropped delta=284. The parser sees a
+  first presented delta of 100 across six callback slots, beyond its 8x cap
+  of 48; the observed 1.565s JS long task/coalescing means presented metadata
+  could advance while callback delivery coalesced. Verdict remains NULL with
+  no performance claim: N=2 is unsatisfied and further boots stopped. Both
+  attempts were synchronously reaped with owned cleanup, and the final exact
+  QEMU process count was zero. IMMEDIATE NEXT: correct the producer/parser
+  causal contract NO-BOOT, obtain independent adversarial review, then resume
+  sole-VM N>=2 measurement only after PASS.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
