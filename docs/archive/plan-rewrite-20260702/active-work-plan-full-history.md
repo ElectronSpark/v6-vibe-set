@@ -6489,3 +6489,448 @@ approval.
 
 Fork-safety gate for any syscall/scheduler/TLB/mm change: forktest (rc=1
 exhaustion signature OK), clonetest rc=0, cowtest rc=0, same boot.
+
+---
+
+# A1 frame-supply/EGL/media-probe history displaced on 2026-07-10
+
+The following A1 lane narrative was moved verbatim from the live
+`docs/active-work-plan.md` during compact-plan maintenance. The live plan
+retains only the current verdict, decisive evidence, and immediate next step.
+
+- A1 (EGL init cleared; multiprocess metric-null; frame-supply forensics next):
+  spawn ownership and debugcon freshness are REPAIRED; codec is NOT the
+  constraint. Refreshed fs.img `21fd6df...` contains launcher `a52dc3a...` with
+  both gate strings verified. The runner now has explicit fail-closed arms,
+  treatment live-GPU-process proof, EGL/software rejection, guest PPMs,
+  crash-aware artifacts, and exact cleanup. Existing multiprocess b2 remains
+  diagnostic only: GPU-process EGL_BAD_ATTRIBUTE/no-config failure was
+  confounded by missing audio-disable. First approved C1 attempt was a
+  pre-boot harness null (0 boots): debugfs helper staging returned rc=0 with
+  its normal stderr banner/allocation output, but Tcl `exec` catch classified
+  it as FAIL; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T040814Z-a1-c1-mp0-audio1`, QEMU
+  none. Staging now handles normal debugfs stderr with exit status preserved,
+  verifies helper bytes/mode/type, and passes its reducers; independently
+  resume-approved with 0 boots consumed. Actual C1 boot #1 reached clean
+  KVM/virgl + KDE, then stopped before Chromium because runner Tcl evaluated
+  regex `[0-9]` as command substitution. Artifact
+  `build-x86_64/chromium-youtube-m7/20260710T041712Z-a1-c1-mp0-audio1`;
+  crash grep clean, QEMU none, 1 boot consumed. T1 was not run; slice closed.
+  All Tcl `-re` sites are now audited; numeric and nonnumeric marker reducers
+  pass. Fresh C1 then stopped deterministically before Chromium because fbstat
+  emitted `virgl_bo_presents 4` while the parser accepts only `bo_presents`;
+  artifact
+  `build-x86_64/chromium-youtube-m7/20260710T042512Z-a1-c1-mp0-audio1`.
+  KVM/virgl/OpenGL proofs pass; crash grep clean, QEMU none, 1 boot consumed
+  in this slice. T1 was not run; slice closed. Parser now accepts exact current
+  C1/producer keys `kms_page_flip_events` + `virgl_bo_presents`; missing,
+  conflicting, and stale-key reducers pass, independent review approves
+  resume, and QEMU remains none. Fresh C1 then completed both 60s windows on
+  real KVM/virgl but is DIAGNOSTIC-ONLY/NULL: 28.81/30.14 presented fps (BO
+  rates equal), player deltas 178515/178513; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T043626Z-a1-c1-mp0-audio1`.
+  Final fail-closed artifact validation found `/chrome_debug.log` absent: the
+  launcher passes `--enable-logging=stderr` and redirects child stderr into
+  authoritative `/host-gui-wayland-chromium.log`, so the separately required
+  file cannot be produced by this launch contract. Crash grep clean, owned
+  process group and exact QEMU none; 1 boot consumed, T1 skipped, slice
+  closed. Launcher-log contract is now repaired and independently RESUME
+  APPROVED: the canonical launcher log is required and must prove redirect,
+  start, argv, and child-exec; `/chrome_debug.log` and launch-stdio are optional
+  and gated when present, while crash/GPU/software marker scans remain armed
+  across retained logs. Reducers pass and QEMU remains none. The next fresh
+  C1 returned code 13/EOF before root and is a pre-boot NULL: its apparent
+  debugcon was stale, byte-identical with the same mtime as the prior `043626Z`
+  artifact, so QEMU never opened a fresh log. Artifact
+  `build-x86_64/chromium-youtube-m7/20260710T045013Z-a1-c1-mp0-audio1`;
+  crash grep clean, owned process group and exact QEMU none, T1 skipped.
+  Spawn ownership and debugcon freshness are now fixed and independently
+  RESUME APPROVED: direct PID=PGID=SID spawn, synchronous reap plus owned
+  cleanup, and stale/missing/empty debugcon rejection. Reducers pass and exact
+  QEMU is none. Fresh C1 then completed both windows but is again
+  DIAGNOSTIC-ONLY/NULL: flips imply 28.67/29.54fps and player deltas were
+  178514/178465; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T050439Z-a1-c1-mp0-audio1`.
+  KVM/virgl/OpenGL, control argv, audio-disable/canonical-log, crash,
+  fresh-debugcon, owned-cleanup, and exact-QEMU gates were clean. Final t2
+  rejected a one-count admission-vs-success drift within one locked stats
+  snapshot (`bo_presents 6199` vs `virgl_bo_presents 6198`), so no canonical
+  C1 metric; 1 boot consumed, T1 skipped, slice closed. Independent NO-BOOT
+  review found the backend-authority parser still accepted duplicate same-value
+  `virgl_bo_presents` rows although the producer emits exactly one. The fix is
+  independently RESUME APPROVED: virgl requires exactly one
+  backend-authoritative `virgl_bo_presents`; same-value and different-value
+  duplicates both reject.
+  The locked snapshot can legitimately show generic BO admission one ahead of
+  backend success, so the backend success counter is authoritative. Exact C1
+  audit and supported backends are unchanged; reducers pass and QEMU is none.
+  Fresh C1 is now canonical PASS on real KVM/virgl: 28.59/30.21fps with
+  player deltas 178515/178515; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T052459Z-a1-c1-mp0-audio1`.
+  All argv/audio-disable, OpenGL, canonical-log, artifact, crash, fresh-debugcon,
+  owned-cleanup, and exact-QEMU gates were clean, but this is N=1 only. T1 boot
+  #2 stopped pre-Chromium and is NULL: an asynchronously interleaved/corrupted
+  `opengl_submit_backend_separation_matrix` row triggered the fail-closed
+  missing-proof gate, so there is no treatment metric; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T052928Z-a1-t1-mp1-audio1`.
+  Crash grep and cleanup were clean and QEMU is none after two boots.
+  Independent NO-BOOT rejected the first idle-resampling draft: returning the
+  first retryable error could mask hard duplicate/conflict evidence later in
+  the same buffer. The hard-precedence correction is now independently RESUME
+  APPROVED: mixed hard/retryable and genuine single-row inconsistent reducers
+  pass, the real T1 corruption classifies retryable, and the bounded one-shot
+  resample policy is preserved. QEMU is none. Fresh T1/T2 are deterministic
+  treatment NULLs before measurement; artifacts
+  `build-x86_64/chromium-youtube-m7/20260710T054648Z-a1-t1-mp1-audio1`
+  and `.../20260710T054803Z-a1-t2-mp1-audio1`. Both proved exact
+  multiprocess argv (audio-disable present; single-process/disable-gpu/
+  in-process-gpu/no-zygote absent), real KVM+virgl/OpenGL submit, fresh
+  debugcon, and canonical logging. External GPU-process initialization then
+  repeated EGL_BAD_ATTRIBUTE/no-config/CollectGraphicsInfo failure and exit
+  (2 attempts T1, 3 T2), so live role windows, FPS, player deltas, and final
+  frame/artifact gates have no evidence. Crash/software scans and cleanup were
+  clean; exact QEMU is none. Canonical C1 remains N=1 at 28.59/30.21fps.
+  Focused offline forensics now gives a VERY-HIGH-CONFIDENCE root cause: the
+  current Mesa `fb2724503` lineage forked before and lost semantic fix
+  `5e3f4bebe` (`merge-base --is-ancestor` rejects it). Current
+  `eglcontext.c` validates `EGL_CONTEXT_OPENGL_NO_ERROR_KHR` inline while the
+  context still has its default ES 1.0 version; Chromium orders NO_ERROR=true
+  before its later CLIENT_VERSION=3/2 attributes, producing the exact repeated
+  ES3+ES2 `EGL_BAD_ATTRIBUTE`. Historical `20260703T125656Z` traced
+  `bad_attr=0x31b3`; applying `5e3f4bebe` immediately cleared EGL init in the
+  `20260703T131336Z` follow-up. This is
+  userspace pre-DRI parsing, not kernel/fd/permission/platform ABI. T1/T2 and
+  current fs.img carry identical `/lib/libEGL.so.1.0.0` SHA-256
+  `0e6bae97edd65392e8426b897ba86410c5518a891482c64c5796bf508d8ed040`
+  (build ID `618e02ae805290e556d15c3b6a52c25a173a576a`). The minimal current-lineage
+  fix is now implemented/staged: `eglcontext.c` records NO_ERROR while parsing,
+  validates against the final client version with BAD_ATTRIBUTE-before-BAD_MATCH
+  precedence, and leaves the WebGL/ANGLE block byte-identical. The exact 9-case
+  reducer matrix (Chromium-order ES3/ES2, reverse controls, ES1 negatives, and
+  debug/robust precedence) passes 9/9 against rebuilt Mesa EGL 1.5. Focused
+  `port-mesa -j2` and narrow `rootfs-refresh -j2` pass. Sysroot and extracted
+  image `/lib/libEGL.so.1.0.0` now hash
+  `33d7c039f7e524e28a3828ab409b063aa49f69597d24f64f0b696e00a8b67e50`
+  with build ID `f7a617e82cd93384b3ccb2a0cb1c26dddda2a1da`; refreshed fs.img is
+  `4e2aeeb0613d8c63c8b713f2bbab265943f3cfa71423a50dcfe9b69e83e505f2`.
+  Chromium's libEGL/libGLES links resolve to guest Mesa. Independent no-boot
+  review BOOT APPROVED the minimal semantic/error-precedence diff, unchanged
+  WebGL/ANGLE block, 9/9 matrix, build/stage hashes, and symlink chain; QEMU
+  remained none. Post-fix T1/T2 are deterministic pre-measurement NULLs;
+  artifacts
+  `build-x86_64/chromium-youtube-m7/20260710T062229Z-a1-t1-post-egl-fix-mp1-audio1`
+  and `.../20260710T062337Z-a1-t2-post-egl-fix-mp1-audio1`. Scratch extraction
+  proves both boots used fixed libEGL `33d7c039...` (and launcher `a52dc3a...`).
+  Exact multiprocess/audio-disable argv, real KVM+virgl/OpenGL, and no software
+  fallback passed, but GPU init still emitted bad-attribute/no-config/
+  CollectGraphicsInfo/exit counts 4/4/2/2 (T1) and 6/6/3/3 (T2). Failure was
+  before semantic GPU-role windows, so FPS, BO rates, player deltas, and final
+  frames are NULL. Canonical logs and fresh debugcon passed; non-GPU-init crash
+  scans, owned cleanup, and exact-QEMU-none were clean. VERDICT: the 9/9 reducer
+  plus semantic fix is insufficient and falsified as the complete runtime
+  explanation. Do not run more FPS retries first; next is focused
+  runtime-vs-reducer forensics of Chromium's actual EGL attribute list and
+  loaded path/library. Focused NO-BOOT forensics confirms the retained logs
+  cannot supply either fact: fixed image hash/symlink contents are NOT proof of
+  the external GPU child's mapped provider because Chrome 150 dlopens EGL and
+  the failed PIDs have no retained maps. Ranked hypotheses are: (1) a
+  runtime-vs-reducer display/API/attribute mismatch, led by a concrete lineage
+  delta — the historical external-GPU success used `EGL_PLATFORM=surfaceless`,
+  `GALLIUM_DRIVER=virgl`, `MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu`, and explicit
+  DRI/GBM paths, while post-fix T1/T2 leave these unset; (2) another EGL/Mesa
+  object or namespace; (3) a different current context attribute, including an
+  API/extension-dependent ANGLE attribute. Display/config failure is lower
+  ranked because Chromium reports `eglCreateContext` BAD_ATTRIBUTE before the
+  later no-config fallback. The required default-OFF arm is now
+  implemented/staged in `chromium-youtube-presentfps.expect`,
+  `chromium-egl-trace-preload.c`, and Mesa `eglcontext.c`:
+  `YT_EGL_FORENSICS=1` is valid only with MP=1/audio=1, activates preload +
+  Mesa gates only for that arm, stops after the GPU-init verdict, and emits no
+  FPS claim. The preload caps EGL/provider rows at 32/PID and records first-call
+  `dladdr`, mapped provider + filtered live maps, role/full argv/env, and exact
+  display/init/bind/choose/create/getError attrs. Mesa is default-silent and
+  logs failure-only rows capped at 16/PID with bound API, platform/version/
+  extension gates, config/share, exact ordered attrs, first rejected attr,
+  final parsed state, and error. The driver enumerates/extracts every per-PID
+  trace plus canonical Mesa/launcher/dynamic-role evidence, resolves provider
+  symlinks, and records provider SHA/build ID while preserving crash,
+  fresh-debugcon, owned cleanup, and exact-QEMU gates. Focused `port-mesa`,
+  preload/launcher/probe staging, narrow `rootfs-refresh`, deepest/top diff
+  checks, regular+forensic/negative arm reducers, cap/provider/attr/artifact
+  reducers, and an actual 32-row preload cap control pass; QEMU is none.
+  Final fs.img is `bb5b004b90ea7759b09a19626151952f4c1163c04b25b1bd1f718c3ca71f5c87`;
+  sysroot=image libEGL is `2649ab5656e15062555a2470913949e1381925af9a50099fe2203d38db2f4c45`
+  (build ID `53a769ca2087120dc04464efb175c4d116f1774d`); build=image preload is
+  `793ee618d18cc2f9b1210788a2452545a0790625a92983eb9f31f1c2d9cfcbf5`
+  (build ID `1350acbdd78af81bb2594fffeeee18d780d79cfc`). Independent adversarial
+  NO-BOOT review REJECTED boot: the preload conflated core
+  `eglGetPlatformDisplay` (`EGLAttrib *`) with EXT
+  `eglGetPlatformDisplayEXT` (`EGLint *`) and cross-falls back between
+  ABI-incompatible signatures; several wrappers read output pointers after
+  failed calls; mutex use is fork-unsafe, provider-budget admission races,
+  filtered maps can truncate silently, and unavailable provider build IDs do
+  not fail closed. All review blockers are now fixed and staged: core and EXT
+  use distinct signatures/resolution/wrappers with no cross-ABI fallback;
+  failed output calls log textual `unavailable` without dereference;
+  PID-aware/atfork-reset state is child-safe; the provider row is reserved
+  deterministically before concurrent EGL rows; `/proc/self/maps` streams by
+  bounded lines with explicit per-line/total/truncation state; and the driver
+  requires an even-length lowercase hexadecimal provider build ID (16..128
+  digits), rejecting unavailable/nonhex/short/odd IDs. Exact no-boot reducers
+  pass: direct plus `eglGetProcAddress` core `EGLAttrib` preserves
+  `0x1122334455667788`, EXT `EGLint` preserves `0x55667788`; PROT_NONE poison
+  outputs survive with all availability fields false; a child EGL call while
+  the parent holds the diagnostic lock exits cleanly; a 64-thread race yields
+  exactly 32 capped rows, one provider row reserved as row 1; 26k split VMAs
+  report honest `maps_stream_status=truncated`, `maps_total_bytes=1048576`,
+  `map_found=0`; and the default-OFF control emits no log. Forensic, regular
+  MP=1, regular MP=0, and invalid-arm Tcl reducers pass/reject as intended.
+  Narrow `rootfs-refresh` passes; build=overlay=extracted-image preload is
+  `267828f658f73243e47a709aa84ddf51540dc7afe68e77f727a41d3b95057bcc`
+  (build ID `944ce6249f85b2ce422a4baf59cc75773c27e887`); refreshed fs.img is
+  `dfcde24e55a219f9960f8d52d80fea99a30c852c012bc810108034694c271da3`.
+  Deepest/top diff checks pass and exact `/proc` QEMU count is zero.
+  Independent adversarial re-review BOOT APPROVES the corrected arm: core/EXT
+  ABI separation and failure-output poison safety are exact; fork reset,
+  race/provider-row cap, honest maps truncation, and build-ID fail-closed tests
+  pass; Mesa remains default-silent/failure-only; staging hashes above match
+  the extracted image; and regular MP=0/MP=1 arms remain silent and isolated.
+  Artifact extraction, crash/fresh-debugcon/owned-cleanup, and exact-QEMU gates
+  remained green. Exactly one MP=1/audio=1 forensic boot ran; artifact
+  `build-x86_64/chromium-youtube-m7/20260710T074122Z-a1-egl-forensic-boot`.
+  Overall artifact validation is NULL because preload EGL/provider proof and
+  provider artifacts are missing, but Mesa's failure-only trace is decisive:
+  OpenGL ES is bound; a DRM-platform EGL 1.5 display is initialized; and the
+  exact ES3 then ES2 lists (`0x3098=3/2,0x30fb=0,0x33ac=0,0x34f8=0,EGL_NONE`)
+  both first reject `0x34f8=0`
+  (`EGL_CONTEXT_HARDENED_ANGLE=FALSE`) with `EGL_BAD_ATTRIBUTE`. This proves a
+  different runtime attribute and falsifies the old no-error explanation plus
+  the immediate surfaceless/API-mismatch hypothesis. Provider identity remains
+  unresolved: Chrome's handle-specific `dlopen`/`dlsym` bypassed preload
+  interposition, while dynamic maps were empty and the guest manifest's `wc`
+  invocations failed. The run makes no FPS claim; crash scan, fresh debugcon,
+  owned cleanup/reap, and exact-QEMU-none were clean. Focused NO-BOOT semantics
+  now completes that reducer/fix: ANGLE revision 2 gives
+  `EGL_CONTEXT_HARDENED_ANGLE=TRUE` real shader-hardening behavior, while Mesa
+  DRI2 only has the older WebGL compatibility bit and no hardened context or
+  compiler policy. VERDICT: withdraw the incomplete
+  `EGL_ANGLE_create_context_webgl_compatibility` advertisement, define the
+  revised `0x34f8` token, and do not fake TRUE semantics. The pre-patch
+  softpipe contract run fails 2 checks (advertised=1 and legacy WebGL-only
+  FALSE succeeds); the same exact ES3/ES2 runtime-order lists reproduce
+  `EGL_BAD_ATTRIBUTE`. Post-patch the new 14-case matrix passes 14/14 across
+  exact/reverse/base/TRUE/invalid/extension-disabled/API/precedence cases; the
+  prior 9-case no-error matrix remains alongside it. Default diagnostics emit
+  zero trace rows; the enabled control emits 12 bounded failure rows. Focused
+  `port-mesa`, narrow `rootfs-refresh`, deepest/top diff checks, and exact
+  QEMU-none pass. Sysroot=image libEGL is
+  `0e97ab6cd81ec7e3a3969ffc26618a855718b6a8aeff8288d3b95947c5f20027`
+  (build ID `fab08fd4014873f3b422b5d411b9fc96381d8e65`); overlay=image reducer is
+  `6c2d6810e3ddc5bc748e93075f70ce171fd7b6bdd67e10c4f2feb7106e3803a5`
+  (build ID `3522fb0be3135153ae4dd0f2e14cd770249cf18e`); fs.img is
+  `e2485574df101eced090f61fb4d6bfd577fa14f11c42da1dc020efccfe41ed13`.
+  Chromium's libEGL/libGLES symlinks still resolve to guest Mesa. Independent
+  adversarial NO-BOOT review BOOT APPROVES the revision-2 withdrawal. EGL
+  extension strings have no revision negotiation: the revised name promises
+  both tokens, so retaining the old advertisement while accepting only FALSE
+  or rejecting TRUE would remain dishonest. Chromium appends both `0x33ac`
+  and `0x34f8` only when that extension name is present; withdrawal therefore
+  makes it omit both attributes instead of weakening hardening semantics. The
+  reviewer confirms the 14/14 matrix plus existing 9/9 no-error matrix,
+  default-silent tracing, exact staging identities/symlinks, deepest/top diff
+  checks, and QEMU-none. Canonical post-withdrawal treatment is now N=2 PASS
+  on real KVM+virgl: T1 `20260710T081853Z-a1-t1-post-withdrawal-mp1-audio1`
+  measured 28.72/28.55 presented+virgl-BO fps with player deltas
+  178514/178505; T2
+  `20260710T082353Z-a1-t2-post-withdrawal-mp1-audio1` measured 29.27/29.30
+  with deltas 178512/178514 (artifacts under `chromium-youtube-m7/`). Both
+  proved exact multiprocess/audio-disable argv, external GPU init with zero
+  bad-attribute/no-config/CollectGraphicsInfo/init-exit markers, live semantic
+  GPU roles in both windows, no software/crash marker, canonical artifacts,
+  fresh debugcon, owned reap/cleanup, and exact-QEMU-none. Thus withdrawal
+  clears the EGL-init blocker, but the four-window mean is 28.96fps: the
+  multiprocess lever is METRIC-NULL versus the established 28.9 and far below
+  52. Each regular log retains one non-process-fatal `missing
+  GL_ANGLE_webgl_compatibility` clue; the GPU role remains live, while exact
+  EGL extension/`0x33ac`/`0x34f8` omission is unavailable with tracing OFF.
+  Canonical post-withdrawal control is now N=2 PASS: C1
+  `20260710T052459Z-a1-c1-mp0-audio1` measured 28.59/30.21fps with player
+  deltas 178515/178515; C2
+  `20260710T083653Z-a1-c2-post-withdrawal-mp0-audio1` measured 26.43/27.95
+  presented+virgl-BO fps with deltas 178515/178515. C2 proved exact
+  control/audio-disable/forensics-off argv, real KVM+virgl/OpenGL submit,
+  canonical frames/logs, fresh debugcon, artifact validation, clean
+  crash/GPU-init/audio/software scans, owned reap/scratch cleanup, and exact
+  QEMU-none. Final four-window A/B is control 28.295 vs treatment 28.960:
+  +0.665fps/+2.35%. VERDICT: multiprocess is METRIC-NULL, supplies no useful
+  frames, and remains far below 52. The EGL revision-2 closure stands. Focused
+  OFFLINE frame-supply forensics now finds a concrete context-admission blocker:
+  T1/T2 destroy 12/11 passthrough contexts because Mesa reports
+  `GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS=192` above Chromium's fixed 64, plus one
+  WebGL context per run for missing `GL_ANGLE_webgl_compatibility`. Chromium's
+  paths call `Destroy(true)` and return fatal per context, so a live GPU role is
+  not proof of usable compositor/raster/WebGL contexts. MP nevertheless engages
+  real GPU buffer handoff (about two virtio submits, one dma-buf
+  reservation/import, and matching sync-file activity per flip versus control's
+  about one submit and no dma-buf sync), but still supplies only ~29fps. An
+  urgent measurement hole prevents attributing that exact cadence: `vq=hd720`
+  is only a soft request, and no retained evidence proves selected resolution,
+  source cadence, decoded frames, or rVFC cadence; a 30fps Auto rendition is a
+  plausible but UNPROVEN hypothesis. Exact local 1280x720@60 H.264/VP9 already
+  decoded ~60.9/60.6 and presented 52.7/53.8, closing codec and the ~29fps
+  present wall. NEXT: add a default-OFF bounded YouTube probe (20x1s plus rVFC,
+  quality/current source, decoded+dropped frames, buffering/state, and long-task
+  totals), run N>=2, and fail closed unless it proves 1280x720 at ~16.7ms source
+  cadence. Then use a scratch image retaining Chromium's matching bundled ANGLE
+  and test MP with `--use-gl=angle --use-angle=gl` over real Mesa/virgl; require
+  the bundled provider, no software fallback, and zero context-admission fatals.
+  Do not re-advertise revision-2 ANGLE semantics from raw Mesa and do not apply a
+  getter-only 192->64 clamp (GLES 3.1 requires at least 96).
+  The default-OFF measurement-hole closure is now implemented/staged:
+  `YT_MEDIA_PROBE=1` is strict 0/1 and valid only with MP=1/audio=1 and EGL
+  forensics OFF; normal arms retain their launch flags. An inert MV3 extension
+  runs in MAIN world only under its exact `--load-extension` arm so YouTube's
+  selected/available-quality APIs are accessible. It emits a parse-stable,
+  capped 24-row artifact: start, exactly 20 one-second samples, media summary,
+  rVFC summary, and done. Samples cover dimensions, redacted/limited source
+  identity (scheme+host only; path/query/token removed), current time/rate,
+  paused/ended, quality, ready/network state, buffered-ahead, VPQ and WebKit
+  decoded/dropped totals, rVFC callbacks/presented frames, and long-task
+  count/duration; rows are <=1000 bytes and total evidence <=24KB. The host
+  parser independently requires stable 1280x720, active progress, rVFC media
+  delta/callback/presented evidence, and median 15.0-18.5ms cadence with >=60%
+  near 16.7ms before either FPS window. Missing/inconsistent/injected evidence,
+  30fps cadence, wrong dimensions, or unavailable rVFC fail closed; a complete
+  but unproven source is DIAGNOSTIC-ONLY with no FPS/perf claim. Real
+  KVM+virgl/OpenGL, no-software, semantic GPU-role, crash, fresh-debugcon,
+  artifact, owned-reap/cleanup, and exact-QEMU gates remain armed. Tcl and JS
+  reducers pass the 60/30fps, dimensions, missing-API, redaction/bounds, arm,
+  injection, and parser matrices; focused `rootfs-refresh -j2`, deepest/top
+  diff checks, and exact-QEMU-none pass. Overlay=image hashes are manifest
+  `ac282262...`, library `bffe9813...`, probe `315bdb77...`; fs.img is
+  `16606551945699b90bb1ca6ff829ff17a0cfb6aaa1a77ffcc607694ec453e45e`.
+  Submitted for independent adversarial review before N=2 with:
+  `for n in 1 2; do out="build-x86_64/chromium-youtube-m7/$(date -u
+  +%Y%m%dT%H%M%SZ)-a1-media-probe-t${n}-mp1-audio1"; env
+  YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1 YT_EGL_FORENSICS=0
+  YT_MEDIA_PROBE=1 YT_WINDOW_SECONDS=60 YT_OUTDIR="$out" timeout 900 expect
+  scripts/gpu/chromium-youtube-presentfps.expect || break; done`.
+  Independent adversarial review PREBOOT REJECTS the media probe: nonpositive
+  or regressing cadence can fail open; console rows lack extension provenance
+  and MAIN-world output is page-spoofable; JS and host classifiers diverge;
+  exact-key, counter, summary/API/quality/long-task consistency are missing
+  and the cadence histogram is too coarse; finite/range/monotonic/byte caps and
+  helper provenance are incomplete. Arm-contract, staging, and cleanup checks
+  passed and exact QEMU remains none. No N=2 boot is authorized; bounded
+  correction plus independent re-review is pending. The bounded correction is
+  now implemented/staged, with the host Tcl parser as the sole semantic
+  classifier and JavaScript limited to raw facts. Every rVFC interval slot is
+  reconciled (callbacks=intervals+1, histogram/count/sum/media/presented
+  deltas), and any invalid, duplicate/nonpositive, or regressing interval makes
+  source proof NULL; the adversarial 1080x0ms+120x16.667ms case is rejected.
+  Chrome INFO-console evidence must have the exact pinned extension ID
+  `edfilgocpdgbkehcgdillfgnnhclphol`, `probe.js` source/line agreement, and a
+  per-run 32-hex nonce. Exact row keys/order plus finite grammar, byte/range,
+  monotonic counter, quality/source, VPQ/WebKit, long-task, and optional-API
+  consistency are fail-closed. Static mutations reject raw/page/mixed/full
+  spoofs, wrong nonce/source/line, schema/order/numeric/counter/summary faults;
+  paused, short-progress, insufficient-presented/media, wrong-dimension, 30fps,
+  and missing-rVFC cases remain diagnostic NULLs. V8 syntax/reducer and the
+  corrected static arm/parser suite pass; focused rootfs refresh, byte-identical
+  debugfs extraction, JSON and deepest/top diff checks, and exact-QEMU-none pass
+  without a boot. New overlay=image hashes are manifest
+  `569762f5539d406de7736a12932a0ab9ad937c4044dd523cf443cddf63018898`, library
+  `2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`, probe
+  `c3c207ca2fa8f958cdfd6ba524e621705b594d594dbd11df4e463d9681d0c23a`; fs.img is
+  `fc98539aab2b9b98af86a28f9039d690175ca2ddf5109589dcf8377d4b6c7fca`.
+  Independent adversarial NO-BOOT still rejects the corrected probe: direct
+  mutations that regress intermediate `rvfc_presented` or `rvfc_media_time`
+  samples still parse/source-prove PASS against a zero-regression summary, and
+  impossible `median_ms=1` with every interval in `b15_18p5` is accepted as
+  DIAGNOSTIC instead of INVALID. The shipped suite, hashes, image, pinned
+  extension-ID, and QEMU-none checks pass, but bounded per-sample monotonicity
+  plus callback/summary reconciliation and histogram/median consistency must
+  be fixed and independently re-reviewed. N=2 remains unauthorized. This
+  final parser correction is now implemented/staged: all 20 samples enforce
+  callback/presented/media range and monotonic shape, exact zero-callback
+  sentinels, no state change without a callback, retained-last-valid state, and
+  an 8x presented-jump ceiling. Observed invalid/pair-invalid/regression/
+  duplicate-or-nonincreasing facts must reconcile with sufficient summary
+  counters; zero or insufficient summaries reject. The recorded cadence median
+  must also fall within the histogram-rank feasible interval. Shipped mutations
+  cover intermediate presented/media regressions, duplicates and invalids,
+  no-callback changes, sentinel/range/jump violations, 8x+1, and the impossible
+  1ms median; valid 15.000/18.500ms, exact 8x, and available zero/one-callback
+  boundaries pass. ON/OFF Tcl suites and V8 syntax/reducer pass, as do
+  deepest/top diff checks and exact-QEMU-none. Assets and image were unchanged:
+  manifest `569762f5539d406de7736a12932a0ab9ad937c4044dd523cf443cddf63018898`,
+  library `2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`,
+  probe `c3c207ca2fa8f958cdfd6ba524e621705b594d594dbd11df4e463d9681d0c23a`,
+  fs.img `fc98539aab2b9b98af86a28f9039d690175ca2ddf5109589dcf8377d4b6c7fca`.
+  Independent adversarial re-review remains NO-BOOT for only two false
+  rejects: retained-last-valid media is discarded after an invalid callback
+  despite sufficient `media_invalid`/`interval_invalid` reconciliation, and
+  three-decimal median quantization mishandles true 14.9996/18.5004ms values
+  at the open-bin edges. The prior three fail-opens now reject; full suites,
+  staged hashes, diff checks, and exact-QEMU-none pass. Bounded retained-state
+  reconciliation plus precision/tolerance fixtures and independent re-review
+  remain pending; N=2 is unauthorized. Both false rejects are now corrected:
+  an unchanged retained `rvfc_media_time` is accepted only when
+  `media_invalid` covers every advanced invalid callback and
+  `interval_invalid` also covers the first next-valid no-pair slot. The exact
+  cb60-valid -> cb61-invalid/retained -> cb62-next-valid fixture reconciles
+  1 media-invalid + 2 interval-invalid, parses valid, and remains diagnostic
+  NULL; coherent zero-media-invalid and one-interval-invalid variants reject.
+  Three-decimal median feasibility now uses its exact half-ULP interval while
+  histogram bins remain authoritative, with a regression-free histogram-sum
+  bound preventing rebinning. Thus true 14.9996->15.000 in `b14_15` and
+  18.5004->18.500 in `b18p5_20` parse valid but cannot source-prove, while
+  rebinned-near60 spoofs reject. Full ON/OFF Tcl suites, V8 syntax/reducer,
+  deepest/top diff checks, and exact-QEMU-none pass. Assets/image are unchanged
+  at manifest `569762f5539d406de7736a12932a0ab9ad937c4044dd523cf443cddf63018898`,
+  library `2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`,
+  probe `c3c207ca2fa8f958cdfd6ba524e621705b594d594dbd11df4e463d9681d0c23a`,
+  fs.img `fc98539aab2b9b98af86a28f9039d690175ca2ddf5109589dcf8377d4b6c7fca`.
+  Independent final re-review is pending; N=2 remains unauthorized.
+  Independent final NO-BOOT re-review now BOOT APPROVES exactly two N=2 boots
+  with `YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1 YT_MEDIA_PROBE=1
+  YT_EGL_FORENSICS=0`. Review confirms the retained-invalid/no-pair coverage,
+  open-edge half-ULP controls, and anti-rebin spoof rejects; the prior three
+  fail-opens (intermediate presented/media regressions and impossible median)
+  remain closed. Exact INFO-console extension-ID/`probe.js`/line/nonce
+  provenance, schema/counter/API checks, ON/OFF Tcl suites, V8 reducer,
+  unchanged asset+fs identities above, deepest/top diff checks, and
+  exact-QEMU-none all pass. Each boot remains fail-closed and yields no FPS or
+  PERF-VIDEO claim unless the probe proves stable 1280x720, active progress,
+  clean ~16.7ms rVFC cadence, and sufficient presented/media deltas; honest
+  diagnostic NULLs still count toward N=2 attempts, not performance evidence.
+  The exactly-two authorized media-probe boots are complete and both formal
+  driver artifacts are INVALID/NULL (`untrusted-marker-envelope`, no FPS or
+  PERF-VIDEO claim):
+  `chromium-youtube-m7/20260710T102211Z-a1-media-probe-t1-mp1-audio1`
+  and `.../20260710T102429Z-a1-media-probe-t2-mp1-audio1`. The failure is a
+  helper ABI bug, not missing probe output: guest `/bin/grep` supports only
+  `grep pattern [file ...]`, so its `-q`/`-E` operands became the pattern and
+  the real patterns became filenames. Each canonical launcher log nevertheless
+  retains exactly 24 correctly ordered, pinned-extension/`probe.js`/line/nonce
+  rows and passes direct strict host-parser replay as valid but
+  `source_proven=0`. Both runs selected stable `640x360`, quality `medium`,
+  source `blob:https://www.youtube.com/<redacted>`; available levels included
+  `hd720` through `hd2160`. T1/T2 rVFC medians were 33.333/33.334ms with
+  0/451 and 0/428 near-60 intervals, presented deltas 574/575, active progress
+  19.840/20.317s, VPQ/WebKit decoded+dropped deltas 595+35/608+50, and long
+  tasks 15/2.139s and 15/2.869s. Thus the N=2 diagnostic explains the ~29fps
+  supply: YouTube Auto selected 360p30, not the requested 720p60. Both boots
+  proved KVM+virgl/OpenGL submit, live GPU role, matching image assets, fresh
+  debugcon, zero software/fatal markers, owned reap/cleanup, and exact-QEMU
+  none. The helper ABI bug is CLOSED: the live generator stages exactly one
+  option-free `/ytmediaprobe.sh`, and every generated media-arm helper is
+  checked grep-option-free/pgrep-free before staging. Actual guest `grep`,
+  complete/failure/timeout/nonce reducers, ON/OFF static suites, and final
+  independent adversarial NO-BOOT review all PASS. Exact T1/T2 replay now
+  yields valid 24-row envelopes but remains `SOURCE_PROVEN=0` at stable
+  640x360 and 33.333/33.334ms, so it is still diagnostic NULL with no FPS
+  credit; do not spend a helper-only rerun. No quality-force selector exists.
+  NEXT: implement the bounded default-OFF `hd720` selector and independently
+  review it before authorizing any new boot or N>=2 attribution.

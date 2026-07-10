@@ -15,7 +15,7 @@ Turn the validated opt-in wins into the DEFAULT user experience and close
 the remaining media gaps: promote the proven responsiveness gates via the
 standard battery, make YouTube/video genuinely good (audio stream fix +
 the contention lever), and keep every correctness guardrail. Conduct via
-opus workers; the conductor orchestrates only.
+opus(or terra) workers; the conductor orchestrates only.
 
 ## PROVEN OPT-IN GATES awaiting default-promotion battery
 
@@ -39,17 +39,47 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
 
 ## ACTIVE LANES
 
-- A1 (IN FLIGHT, worker): VP9/YouTube contention discriminator — JOB1 done:
-  codec is NOT the constraint (controlled VP9-vs-H264 table in archive);
-  pending: WAYLAND_CHROMIUM_MULTIPROCESS=1 boot (single-process contention
-  test; launcher forces --single-process --disable-gpu so decode fights
-  SW-GL compositing) + 480p knob if ambiguous. Target: YouTube 28.9->~52.
-- A2 (IN FLIGHT, same worker): U-AUDIO localization — paplay vs
-  pipewire-pulse probe splits server-bug vs chromium-stream-negotiation.
-  Kernel is NOT the gap (virtio_snd.c + OSS/ALSA ABI exist and register);
-  userspace pipewire/wireplumber/pipewire-pulse all ship; failure is in
-  the pulse playback-stream path (MixableOutputStream -> pa_operation
-  nullptr) even with a valid default null sink.
+- A1 (IN FLIGHT — bounded `hd720` selector is the immediate next job):
+  Codec capacity is NOT the constraint: controlled local 1280x720@60 H.264
+  and VP9 reach about 52-54 presented fps, so YouTube frame supply/selection
+  and the later local present ceiling are separate walls. The EGL revision-2
+  advertisement withdrawal closed external-GPU initialization without faking
+  hardening semantics; nested Mesa `7626b94e` and ports `1a15db74` are
+  committed on `codex/a1-egl-context-closure-20260710`.
+  Canonical real-KVM+virgl multiprocess A/B is control 28.295 vs treatment
+  28.960 presented fps (+0.665/+2.35%): METRIC-NULL and far below 52.
+  The original N=2 media-probe artifacts
+  `chromium-youtube-m7/20260710T102211Z-a1-media-probe-t1-mp1-audio1`
+  and `.../20260710T102429Z-a1-media-probe-t2-mp1-audio1` are formally
+  INVALID/NULL because the guest helper used unsupported grep options, but
+  their canonical 24-row logs prove stable 640x360, quality `medium`,
+  33.333/33.334ms rVFC cadence, with `hd720` advertised. The corrected
+  option-free helper independently passes NO-BOOT review; strict historical
+  replay is a valid envelope with `SOURCE_PROVEN=0`, hence no FPS or
+  PERF-VIDEO credit. Do not spend a helper-only rerun.
+  IMMEDIATE NEXT: implement a bounded default-OFF `hd720` force/selector,
+  obtain independent adversarial NO-BOOT approval, then run exactly N>=2 fresh
+  real KVM+virgl measurements with all GPU/software/crash/artifact/cleanup
+  gates armed. No selector exists today, so no quality-forced claim is valid.
+  Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
+  media-probe history displaced on 2026-07-10” in
+  `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
+- A2 (IN FLIGHT): U-AUDIO localization. Retained evidence proves generic
+  pipewire-pulse playback-stream creation: S16LE/48k stereo reached RUNNING,
+  and a later pacat run exited 0 with nonempty QEMU WAV. Chromium's exact
+  F32LE/48k stereo/512-frame path also opened, started, and was alive at ~5s,
+  then failed at ~8s; `pa_operation is nullptr` rows occurred during Stop/Close
+  and are secondary fallout, not the first failing operation. Leading bounded
+  hypothesis is the VM `default.clock.min-quantum` and `pulse.min.quantum`
+  1024 policy versus Chromium's 512-frame callback, but applied/effective
+  attributes remain unproven. The July paplay scaffold is INVALID under current
+  synchronous-wait/process-ownership rules and never produced the needed
+  comparison. NEXT: source-controlled default-OFF reducer/harness plus
+  adversarial NO-BOOT review, then exactly one real KVM+virgl localization boot
+  with Chromium audio enabled, `QEMU_AUDIO=none`, explicit null sink, and the
+  chain pw-play -> paplay -> Chromium-shaped libpulse -> 20s Chromium smoke.
+  A4 `QEMU_AUDIO=virtio` + WAV/audible work remains subsequent. Kernel
+  virtio-snd/OSS/ALSA is closed and is not the gap.
 - A3: promotion batteries for the gate list above (start with kickoff
   prewarm + tooltip pair — the direct user-feel wins).
 - A4 (durable audio): after A2 verdict, fix the real stream path (server
