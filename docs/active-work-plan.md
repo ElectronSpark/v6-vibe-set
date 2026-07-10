@@ -124,7 +124,17 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   boots are prohibited until a NO-BOOT correction uses host-monotonic timing,
   one-shot partial capture, a 60--90s host wait, and final same-nonce capture
   while preserving the overall 140s bound, then passes offline adversarial
-  review.
+  review. The first host-wait correction is independently REJECTED NO-BOOT.
+  Its one-shot capture, absence of guest sleep/grep options, and nominal cap
+  pass, but the real 140s ceiling is unenforced: the accepted path can begin a
+  90s wait after final-capture work and exceed 150s plus overhead. Reordered or
+  duplicated short 10-row envelopes are misclassified as incomplete and earn
+  another 75s, while conflicting same-nonce RC rows `0,9,9` accept the first
+  zero. Exact QEMU count was zero at review; boot remains prohibited. Required
+  correction is an absolute host-monotonic phase deadline covering send,
+  parse, wait, and final capture with margin and a 60s wait; validate an exact
+  ordered unique prefix before any incomplete classification; require exactly
+  one same-nonce RC and fence; then repeat adversarial NO-BOOT review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
