@@ -165,16 +165,20 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   `build-x86_64/chromium-youtube-m7/20260710T194123Z-a1-hd720-hostwait-t1-mp1-audio1`
   and its only retry
   `build-x86_64/chromium-youtube-m7/20260710T194313Z-a1-hd720-hostwait-t1r1-mp1-audio1`.
-  Both are INVALID/NULL: the pre-Chromium `fbstat-idle` command exceeded its
-  35s phase budget, although the full same-nonce END/RC/FENCE response arrived
-  late in both attempts. Crash scans were clean and all three staged media
-  assets hash-matched, but Chromium never launched, so there is no source,
-  FPS, or PERF-VIDEO evidence. T1 plus the one allowed retry therefore yields
-  N=0; no T2 or audio-localizer boot was spent. Exact QEMU count was zero
-  between attempts and after final owned cleanup. This is deterministic under
-  the current command budget and does not implicate the media helper. Further
-  boots are prohibited pending bounded NO-BOOT latency forensics, a
-  phase-specific correction, and independent adversarial review.
+  Both remain INVALID/NULL, but bounded NO-BOOT `fbstat` forensics corrects
+  the prior budget interpretation: their complete raw frames arrived within
+  4.919/5.320s and 58305/58402 bytes, each with same-nonce END, RC=0, FENCE,
+  and prompt. The live fence used CRCRLF, which the receiver's `\r?\n` regex
+  rejected; retained valid `...T174100Z...` evidence uses the same CRCRLF,
+  while `...T174600Z...` remains the distinct producer-silence failure. Crash
+  scans were clean and all three staged media assets hash-matched, but Chromium
+  never launched, so T1 plus its one retry yields N=0 with no source, FPS, or
+  PERF-VIDEO evidence; no T2 or audio-localizer boot was spent. Keep the 35s
+  phase budget and full counters. The required narrow correction is global and
+  regex-only: bounded LF/CRLF/CRCRLF acceptance, rejection of three-or-more CR
+  or other malformed endings, then raw-evidence replay and independent review.
+  Boot remains prohibited; exact QEMU count was zero between attempts and
+  after final owned cleanup.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
