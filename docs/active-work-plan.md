@@ -113,8 +113,18 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   Therefore N=2 is unsatisfied and the 44.46 N=1 result is diagnostic only,
   not a performance claim. Exact QEMU count was zero between attempts and at
   final cleanup. The bounded residual is now VPQ/drop plus host-retire/present
-  backpressure;
-  IMMEDIATE NEXT is NO-BOOT invalid-helper forensics before another boot.
+  backpressure. Independent NO-BOOT invalid-helper forensics FAILS the current
+  wait contract. In `...T174600Z...`, `fbstat` produced nearly the full 58 KiB
+  payload but lacked its END/nonce after 35s, an intermittent whole-run NULL.
+  In `...T174800Z...`, the helper emitted exactly 10 rows and then the producer
+  went silent while roles and console stayed alive; helper rc was 0, but 105
+  nominal one-second polls collapsed to about 8.04 host seconds. The wait is
+  therefore deterministically unsound, and prior valid `polls=0` runs never
+  validated the sleep path. Exact QEMU count was zero at the verdict. Further
+  boots are prohibited until a NO-BOOT correction uses host-monotonic timing,
+  one-shot partial capture, a 60--90s host wait, and final same-nonce capture
+  while preserving the overall 140s bound, then passes offline adversarial
+  review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
