@@ -142,7 +142,16 @@ M4/M5/M8 in noise (+ interactive check for input-semantics changes):
   checking validates structure but not semantics. Exact QEMU count was zero;
   boot remains prohibited. Required correction is shared/full semantic
   validation of every present prefix row before any wait, exact mutations for
-  those four cases, and another independent adversarial NO-BOOT review.
+  those four cases, and another independent adversarial NO-BOOT review. The
+  third host-wait NO-BOOT re-review closes those semantic-corruption blockers
+  but still REJECTS: exact otherwise-valid terminal prefixes at force lengths
+  28/29 and normal lengths 22/23 fail
+  `prefix-terminal-row-requires-complete`, although each is a legitimate
+  pre-done writer-race prefix. Exact QEMU count was zero; boot remains
+  prohibited. Required narrow correction is shared semantic summary/rVFC
+  validation, exact terminal prefixes classified INCOMPLETE while corrupted
+  terminal prefixes still reject, an all-length prefix matrix, and another
+  independent adversarial NO-BOOT re-review.
   Verbose A1 chronology is archived append-only under “A1 frame-supply/EGL/
   media-probe history displaced on 2026-07-10” in
   `docs/archive/plan-rewrite-20260702/active-work-plan-full-history.md`.
