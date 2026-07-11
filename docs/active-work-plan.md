@@ -328,6 +328,29 @@ does not explain Chromium rendering, and supplies no FPS, semantic, audio, or
 fullscreen credit. The independent adversarial review must now be rerun before
 any A1 VM authority or fresh gate.
 
+**A1 render-start receipt tail-integrity independent adversarial review — PASS /
+NO-BOOT (2026-07-11):** a fresh normal `media=1,capturediag=0` static replay
+`/tmp/xv6-render-tail-independent.wRqbrZ` (external log
+`/tmp/xv6-render-tail-independent-log.wKJqhT`) exited 0; exact all-arch QEMU
+counts were zero before and after. Its retained real-parser reducer rejects
+both false/true source and role tail mismatches, observes valid truncated
+controls, retains the nonce/probe framing and binding, bounded
+cursor/bytes/digest/cap rules, the five 30 s `flips > idle+100 && presents >
+idle` gate, and `capturediag=0`/V3 isolation.
+
+A separate source-extracted parser harness (external log
+`/tmp/xv6-render-tail-parser-adversary.ZfC7X2`, QEMU zero before/after) proved
+regular untruncated plus independently source-truncated and role-truncated
+controls classify `OBSERVED`; all four false/true tail lies return parser
+`INVALID` and cannot be classified `OBSERVED`. It also rejected source/role
+cap and total-order drift, nonce/probe, launch/argv digest, and command-marker
+mutants, retained the 103/4 and 104/4 threshold negatives with 104/5 observed,
+and confirmed that a parser-invalid receipt latches the no-credit path rather
+than entering the receipt-object sequence. No VM, guest JS, FPS, semantic,
+audio, or fullscreen fact was produced. This clears only receipt integrity: a
+new serialized A1 execution gate may now be formed; do not reuse the consumed
+session.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -418,9 +441,9 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    trial had no overlap and clean owned reap, but failed
    `chromium-render-start-missing`, yielding N=0 valid samples. Its flip gate
    is localized but Chromium's no-presentation cause is not. The receipt's
-   tail-integrity repair now has a source/static PASS, but its independent
-   adversarial review must be rerun before forming a new gate; do not reuse
-   either consumed session. Every future
+   tail-integrity repair and its independent adversarial review now pass
+   host-only; this authorizes only forming a fresh serialized gate, never
+   reusing either consumed session. Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
