@@ -493,6 +493,22 @@ serial, build, rootfs, source, or performance work occurred. The mandatory
 two-endpoint passive screen is therefore unproved; it grants no gate or VM
 authority and must not be silently repeated under the consumed trial policy.
 
+**Fresh A1 retry passive screen — INCOMPLETE / NO-BOOT / NO AUTHORITY
+(2026-07-11):** a separately authorized retry first passed named static
+eligibility at `798e4795830c93829b475390b15883872816b614`, equal to explicit
+`origin/codex/host-linux-abi-shell-port-ff`: no staged source state, only the
+preserved KDE-smoke dirt, read/write KVM, `/dev/dxg`, D3D12 GL, X11 and
+Wayland sockets, and all three overlay/base assets at the accepted byte/hash
+receipt. In `/tmp/xv6-a1-windowed-retry-gate.5VaEeZ`, the required single
+foreground passive command recorded `start` at 19:51:52Z with exact all-arch
+QEMU count zero, but its synchronous tool wait returned without the required
+post-60-second `end` endpoint or terminal result. A later immediate inventory
+at 19:52:34Z was also zero, but cannot substitute for the missing endpoint.
+No QEMU was spawned, no serial/build/image/source work occurred, and no trial
+was consumed. This is another incomplete transport record, not evidence of
+quiescence or an external QEMU; it grants no VM authority and must not be
+silently retried without a fresh authorization.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
