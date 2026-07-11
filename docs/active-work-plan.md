@@ -380,6 +380,31 @@ the preserved KDE-smoke file. This checkpoint is pushed only by the exact
 push. It removes the stale lineage block only: the prior gate remains rejected
 and still grants no VM, retry, FPS, semantic, audio, or fullscreen authority.
 
+**Fresh A1 windowed execution after `-ff` reconciliation — CONSUMED / INVALID
+/ N=0 (2026-07-11):** the explicit-`-ff` preflight at
+`e4a25de0e85da7a08a0b71a8372da1fea9f355cf` passed: exact all-arch QEMU zero
+before/after the passive 60 s screen, HEAD equal to explicit
+`origin/codex/host-linux-abi-shell-port-ff`, no other VM worker, KVM,
+DXG/D3D12+GL/X11/Wayland, kernel/base image, and all three named assets. The
+one windowed MP=1/audio-disable=1/media=1/forced-HD720=1/EGL=0/capturediag=0
+trial is `/tmp/xv6-a1-windowed-ff-t1.6GdOdZ` (driver log
+`/tmp/xv6-a1-windowed-ff-t1.6GdOdZ.driver.log`). Its sole natural-bootstrap
+all-arch audit saw exactly one owned x86 KVM+virgl QEMU and zero foreign QEMU;
+the post-run count was zero after the driver's owned synchronous reap
+(`waited:2084735 exp4 0 0`).
+
+The run reached real virgl fbstat and the unchanged render predicate (idle
+3/4; probe 823/824, so `chromium-rendering-confirmed` was correctly emitted),
+but the new guest receipt helper used unavailable `awk`/`tr` and an unsupported
+guest `wc -c`. Its nonce-bound probe emitted malformed role totals/bytes and
+the host parser correctly returned `receipt-meta-parse-drift`; driver code 8
+then stopped before any media/HD720 semantic evidence or FPS windows. Thus
+there is no yt-presentfps, PERF-VIDEO, HD720, audio, fullscreen, semantic, or
+performance fact despite the raw flip increase. This consumes the sole fresh
+trial as INVALID/N=0. Do not retry or boot again under this authority; repair
+the helper's actual guest-tool contract and repeat independent no-boot review
+before requesting a new gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -473,8 +498,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    tail-integrity repair and its independent adversarial review now pass
    host-only; this authorizes only forming a fresh serialized gate, never
    reusing either consumed session. The newly formed gate then rejected the
-   now-reconciled local/origin branch drift before QEMU, so it grants no retry.
-   Every future
+   now-reconciled local/origin branch drift before QEMU. A subsequently
+   authorized post-reconciliation sole trial is now also CONSUMED/INVALID:
+   receipt-helper guest-tool incompatibility stopped it before HD720/FPS/media
+   proof, so no retry is authorized. Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
