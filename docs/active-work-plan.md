@@ -72,6 +72,35 @@ the final exact QEMU count was zero. Preserve named evidence in
 scratch image `/tmp/xv6-yt-20260711T172454Z-pid2002542-mp1-audio1-media1-hd7201-capturediag1.fs.img`.
 This is INVALID/NULL and consumes the gate; no retry or VM authority exists.
 
+**V3 launch pre-send forensic — ACCOUNTING DEFECT / NO-BOOT (2026-07-11):**
+named evidence fixes host START at 17:24:55Z, QEMU ownership at 17:25:33Z,
+and terminal write at 17:26:23Z (STATUS completion/cleanup at 17:26:24Z), but
+does not retain V3 `start_ms` or `before_send_ms`. That absence cannot describe
+guest behavior. It does not block localizing this result: V3 launch first
+admits `35 s + 170 s downstream + 5 s reserve` against the 210 s outer budget,
+then deliberately calls the generic command helper with inner `post_ms=0` to
+avoid subtracting the global reserve twice. The generic helper rejects every
+`post_ms < 1` *before* computing remaining time, so the pre-send branch returns
+`DIAG_DEADLINE_PRE_SEND` with the deterministic
+`final-timeout-parameter-invalid` detail; marker C1 is minted before that
+check and no serial send can occur. The V3 terminal retains status but not that
+raw detail, explaining the named artifact's empty raw witness. This is a
+fail-closed internal API/accounting mismatch, not a guest timing conclusion.
+
+The reviewed 210 s envelope starts only after KDE-ready dispatch (thus excludes
+preflight/QEMU/KDE startup); it includes V3 serial-command time. Endpoints are
+35/105/140/170/205 s with the 5 s global reserve counted in V3 admission once.
+The exact sums intentionally leave zero admission slack at each stage start
+(for example launch admits only when `now == start_ms`); that fragility did not
+produce this raw status but must be explicitly reviewed. The passing static
+route does not execute real V3 dispatch: under `YT_STATIC_CHECK=1` it selects
+the retained V1 runner, directly tests V3 admission edges, and its generic
+pre-send fixture itself expects the same zero-tail parameter failure. **Next
+dependency:** narrow NO-BOOT V3 inner-tail repair plus static/adversarial review:
+permit an explicit zero inner post-send tail without re-debiting the 5 s global
+reserve, prove valid/expired V3 pre-send cases through the real V3 command
+path, and decide the zero-slack admission policy. No VM retry or new gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -152,11 +181,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    named assets match exactly. The historical disposable clone was not
    enumerated without a retained pathname; base freshness is independently
    accepted, while no broader `/tmp` absence claim is made.
-4. **NEXT — NO-BOOT pre-send-deadline forensic and review:** localize the
-   owned `DIAG_DEADLINE_PRE_SEND` path using retained named artifacts and
-   source/reducer evidence only. No retry, new VM gate, performance, audio, or
-   fullscreen work is authorized until that invalid terminal is understood and
-   independently reviewed.
+4. **NEXT — NO-BOOT V3 inner-tail repair and review:** repair the localized
+   zero-inner-tail API mismatch without double-debiting the 5 s reserve; add
+   exact real-V3 pre-send coverage and review the zero-slack admission policy.
+   No retry, new VM gate, performance, audio, or fullscreen work is authorized
+   until that source/static review passes.
 5. **A1 windowed:** only after valid diagnostic success/review and a new gate,
    run N>=2 forced-hd720 trials; clear >=52 before pursuing about 55-60.
 6. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
