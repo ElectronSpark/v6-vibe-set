@@ -126,6 +126,25 @@ scans, was neither launched nor touched by this source-only work, and does not
 change the static verdict. It blocks every future VM authorization until its
 owner has synchronously reaped it and a fresh exact count is zero.
 
+**V3 inner-tail independent adversarial review — PASS / NO-BOOT (2026-07-11):**
+fresh empty host-only replay `/tmp/xv6-v3-inner-tail-independent.DWu6Sq`
+(external log `/tmp/xv6-v3-inner-tail-independent-log.K4FPVi`) exited 0;
+exact `/proc/*/exe` QEMU counts immediately before and after were both zero.
+`YT_STATIC_CHECK` dispatch is deliberately V1, so the verdict uses its
+dedicated, synchronously reaped local-PTY V3-wrapper fixture: V3 admission
+reached the real generic pre/post-send planner and returned owned `RC:0` plus
+`FENCE`; an expired stage returned
+`DIAG_V3_ADMISSION/v3-admission-stage-deadline`. Exact loaded-source checks in
+`/tmp/xv6-v3-inner-tail-boundaries-log.ys18Pc` show generic zero, negative,
+malformed, and nonzero-opt-in all reject `final-timeout-parameter-invalid`;
+only `post=0,optin=1` returns `remaining-1000-post-0`. Admission is unchanged:
+6000 (= 1000 command + 5000 reserve) passes and 5999 fails, proving neither
+timing relaxation nor a second reserve debit. The replay reports
+`v3_diag0_off_parity=PASS` and `js_guest_runtime=UNEXECUTED`; this is no-guest,
+no-VM, noncredit evidence. The formerly observed external QEMU is absent in
+this audit, but every future VM gate still requires a fresh exact zero-QEMU
+preflight; any external QEMU blocks authorization and is never touched.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -209,14 +228,15 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 4. **V3 inner-tail source/static repair — PASS:** explicit V3-only zero inner
    tail reached the real generic pre-send path; exact single-reserve and
    fail-closed negative controls passed host-only.
-5. **NEXT — independent NO-BOOT adversarial review:** inspect the generic
-   opt-in boundary, real-V3 static fixture, exact zero-slack policy, and
-   diag0/no-credit isolation. No retry, new VM gate, performance, audio, or
-   fullscreen work is authorized until that review passes.
-6. **A1 windowed:** only after valid diagnostic success/review and a new gate,
-   run N>=2 forced-hd720 trials; clear >=52 before pursuing about 55-60.
+5. **Independent V3 inner-tail adversarial review — PASS:** generic opt-in
+   boundary, real-V3 local-PTY fixture, zero-slack single-reserve policy, and
+   diag0/no-credit isolation all passed without a VM.
+6. **NEXT — A1 windowed:** only after a new gate and fresh exact zero-QEMU
+   preflight, run N>=2 forced-hd720 trials; clear >=52 before pursuing about
+   55-60. No other VM worker may be active.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
-   then run distinct N>=2 trials. Never pool with windowed.
+   then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
+   remains a required objective rather than a follow-up nicety.
 8. **A2/A4 localization and repair:** only after windowed A1 N>=2; then
    validate audio-on in both windowed and actual fullscreen modes.
 9. **Residual present work and default batteries:** compare each accepted mode
