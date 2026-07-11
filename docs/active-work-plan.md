@@ -272,6 +272,23 @@ cursor/digest at each probe; it must distinguish absent/exited roles from
 live-but-no-presentation before any new gate. Current exact all-arch QEMU
 count is zero; this forensic ran no VM.
 
+**A1 render-start receipt source/static — PASS / NO-BOOT (2026-07-11):** the
+normal `media=1`, `capturediag=0` path now takes a nonce/probe-bound,
+transport-framed receipt on every attempted render-start probe.  It binds the
+verified launch and argv command-frame markers/digests, a capped existing
+Chromium fast-role census (command/status/bytes/digest), capped canonical
+launcher-log cursor/frame/digest, and that probe's fbstat flip/present values.
+The host-only static reducer passed with missing/unreadable/nonregular source,
+no/exited role, failed census, live/no-presentation, marker drift, byte/digest
+tamper, truncation, cursor drift, and five-probe ordering negatives rejected;
+it also proves the retained `flips > idle+100 && presents > idle` predicate
+and `capturediag=0` V3 isolation without executing guest JS. Exact all-arch
+QEMU count was zero before and after. This is diagnostic-only/no-credit: an
+INVALID or INCOMPLETE receipt stops before FPS, semantic, audio, or fullscreen
+success. It does not explain the guest failure or create any performance fact.
+Next queue item is an independent no-boot adversarial review of this receipt;
+only then may a fresh A1 execution gate be formed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

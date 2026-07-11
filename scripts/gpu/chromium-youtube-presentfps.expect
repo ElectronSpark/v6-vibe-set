@@ -201,6 +201,100 @@ if [ "$do_sync" = 1 ]; then sync; fi
 }]
 }
 
+# Normal A1 render-start forensics use a short role census plus a bounded tail
+# of the authoritative launcher log.  The payload is hex framed so arbitrary
+# launcher/role text cannot forge a receipt delimiter on the serial stream.
+proc render_start_receipt_guest_helper_script {} {
+    return {#!/bin/bash
+set +e
+nonce="$1"
+probe="$2"
+launch_marker="$3"
+launch_digest="$4"
+argv_marker="$5"
+argv_digest="$6"
+if [ "${#nonce}" -ne 32 ]; then exit 64; fi
+case "$nonce" in *[!0-9a-f]*) exit 64 ;; esac
+case "$probe" in ''|*[!0-9]*) exit 64 ;; esac
+case "$launch_marker" in ''|*[!A-Za-z0-9]*) exit 64 ;; esac
+case "$argv_marker" in ''|*[!A-Za-z0-9]*) exit 64 ;; esac
+if [ "${#launch_digest}" -ne 64 ] || [ "${#argv_digest}" -ne 64 ]; then exit 64; fi
+case "$launch_digest" in *[!0-9a-f]*) exit 64 ;; esac
+case "$argv_digest" in *[!0-9a-f]*) exit 64 ;; esac
+
+source_log=/host-gui-wayland-chromium.log
+source_cap=2048
+role_cap=4096
+tmp=/tmp/yt-render-start-receipt-$$
+source_frame="$tmp.source"
+role_all="$tmp.role.all"
+role_frame="$tmp.role"
+rm -f "$source_frame" "$role_all" "$role_frame"
+: > "$source_frame"
+: > "$role_frame"
+
+source_status=missing
+source_cursor=0
+source_bytes=0
+source_digest=unavailable
+source_tail_truncated=0
+if [ -e "$source_log" ] || [ -L "$source_log" ]; then
+  if [ ! -r "$source_log" ]; then
+    source_status=unreadable
+  elif [ ! -f "$source_log" ] || [ -L "$source_log" ]; then
+    source_status=nonregular
+  else
+    source_status=regular
+    source_cursor=$(wc -c < "$source_log" 2>/dev/null)
+    source_cursor=${source_cursor//[[:space:]]/}
+    case "$source_cursor" in ''|*[!0-9]*) source_status=unreadable; source_cursor=0 ;; esac
+    if [ "$source_status" = regular ]; then
+      source_offset=0
+      if [ "$source_cursor" -gt "$source_cap" ]; then
+        source_offset=$((source_cursor - source_cap))
+      fi
+      /bin/dd if="$source_log" of="$source_frame" bs=1 skip="$source_offset" count="$source_cap" 2>/dev/null
+      source_bytes=$(wc -c < "$source_frame" 2>/dev/null)
+      source_bytes=${source_bytes//[[:space:]]/}
+      source_digest=$(sha256sum "$source_frame" 2>/dev/null | awk '{print $1}')
+      if [ "$source_cursor" -gt "$source_bytes" ]; then source_tail_truncated=1; fi
+    fi
+  fi
+fi
+
+KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe \
+  --chromium-fast-census-only --fast-census-ms 500 --fast-census-interval-ms 100 \
+  > "$role_all" 2>&1
+role_status=$?
+/bin/dd if="$role_all" of="$role_frame" bs=1024 count=4 2>/dev/null
+role_total=$(wc -c < "$role_all" 2>/dev/null)
+role_total=${role_total//[[:space:]]/}
+role_bytes=$(wc -c < "$role_frame" 2>/dev/null)
+role_bytes=${role_bytes//[[:space:]]/}
+role_digest=$(sha256sum "$role_frame" 2>/dev/null | awk '{print $1}')
+role_tail_truncated=0
+if [ "$role_total" -gt "$role_bytes" ]; then role_tail_truncated=1; fi
+role_state=none_or_exited
+if [ "$role_status" -ne 0 ]; then
+  role_state=command_failed
+elif /bin/grep 'comm="chrome" role="' "$role_frame" >/dev/null 2>&1; then
+  role_state=live
+fi
+source_hex=$(od -An -tx1 -v "$source_frame" 2>/dev/null | tr -d ' \n')
+role_hex=$(od -An -tx1 -v "$role_frame" 2>/dev/null | tr -d ' \n')
+printf 'YT_RENDER_START_RECEIPT_BEGIN nonce=%s probe=%s\n' "$nonce" "$probe"
+printf 'YT_RENDER_START_RECEIPT_META nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s source_status=%s source_cursor=%s source_bytes=%s source_digest=%s source_tail_truncated=%s role_command=fast-census-v1 role_status=%s role_bytes=%s role_digest=%s role_tail_truncated=%s role_state=%s\n' \
+  "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" \
+  "$source_status" "$source_cursor" "$source_bytes" "$source_digest" "$source_tail_truncated" \
+  "$role_status" "$role_bytes" "$role_digest" "$role_tail_truncated" "$role_state"
+printf 'YT_RENDER_START_RECEIPT_SOURCE_HEX %s\n' "$source_hex"
+printf 'YT_RENDER_START_RECEIPT_ROLE_HEX %s\n' "$role_hex"
+printf 'YT_RENDER_START_RECEIPT_END nonce=%s probe=%s\n' "$nonce" "$probe"
+rm -f "$source_frame" "$role_all" "$role_frame"
+exit 0
+}
+}
+
 proc capture_completeness_diag_guest_helper_script {nonce {overrides {}}} {
     if {![regexp {^[0-9a-f]{32}$} $nonce]} {
         error "invalid capture-completeness helper nonce"
@@ -471,6 +565,7 @@ set forensic_verdict "NOT_RUN"
 set media_probe_verdict "NOT_RUN"
 set owned_group_remaining ""
 set serial_counter 0
+set render_start_receipt_counter 0
 set serial_nonce "YTP[pid][clock clicks]"
 regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
 set required_guest_frames {pre steady0 windowA windowB}
@@ -3841,6 +3936,250 @@ proc fb_sample {tag} {
     finish 8 "FAIL fbstat-resample-exhausted tag=$tag attempts=$max_attempts failures=[join $failures ,]"
 }
 
+# Keep normal render-start evidence bounded and transport-owned.  These are
+# forensic receipts only: they explain a failed start gate but never supply an
+# FPS, semantic, audio, or fullscreen success fact.
+proc render_start_receipt_digest {text} {
+    global outdir render_start_receipt_counter
+    incr render_start_receipt_counter
+    set path "$outdir/.render-start-receipt-digest-[pid]-$render_start_receipt_counter"
+    wf $path $text
+    set digest [sha256_file $path]
+    catch {file delete -force $path}
+    if {![regexp {^[0-9a-f]{64}$} $digest]} {
+        error "render-start receipt digest unavailable"
+    }
+    return $digest
+}
+
+proc render_start_receipt_decimal {value cap} {
+    if {![regexp {^(0|[1-9][0-9]*)$} $value] ||
+        ![string is wideinteger -strict $value] || $value > $cap} {
+        return [list 0 -1]
+    }
+    return [list 1 $value]
+}
+
+proc render_start_receipt_parse {
+    text expected_nonce expected_probe launch_marker launch_digest argv_marker
+    argv_digest command_marker
+} {
+    if {![regexp {^[0-9a-f]{32}$} $expected_nonce] ||
+        ![regexp {^[1-9][0-9]*$} $expected_probe] ||
+        ![regexp {^[A-Za-z0-9]+$} $launch_marker] ||
+        ![regexp {^[A-Za-z0-9]+$} $argv_marker] ||
+        ![regexp {^[A-Za-z0-9]+$} $command_marker] ||
+        ![regexp {^[0-9a-f]{64}$} $launch_digest] ||
+        ![regexp {^[0-9a-f]{64}$} $argv_digest]} {
+        return [list 0 receipt-parameter-invalid {}]
+    }
+    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $text]
+    if {[string length $normalized] > 30000} {
+        return [list 0 receipt-truncated-total-cap {}]
+    }
+    set begins {}
+    set metas {}
+    set source_hexes {}
+    set role_hexes {}
+    set ends {}
+    foreach line [split $normalized "\n"] {
+        if {[regexp {^YT_RENDER_START_RECEIPT_BEGIN nonce=([^ ]+) probe=([^ ]+)$} \
+                $line -> nonce probe]} {
+            lappend begins [list $nonce $probe]
+        } elseif {[string match {YT_RENDER_START_RECEIPT_META *} $line]} {
+            lappend metas $line
+        } elseif {[regexp {^YT_RENDER_START_RECEIPT_SOURCE_HEX ([0-9a-f]*)$} \
+                $line -> frame]} {
+            lappend source_hexes $frame
+        } elseif {[regexp {^YT_RENDER_START_RECEIPT_ROLE_HEX ([0-9a-f]*)$} \
+                $line -> frame]} {
+            lappend role_hexes $frame
+        } elseif {[regexp {^YT_RENDER_START_RECEIPT_END nonce=([^ ]+) probe=([^ ]+)$} \
+                $line -> nonce probe]} {
+            lappend ends [list $nonce $probe]
+        }
+    }
+    foreach {name values} [list begin $begins meta $metas source $source_hexes \
+            role $role_hexes end $ends] {
+        if {[llength $values] != 1} {
+            return [list 0 "receipt-truncated-$name-count-[llength $values]" {}]
+        }
+    }
+    if {[lindex [lindex $begins 0] 0] ne $expected_nonce ||
+        [lindex [lindex $begins 0] 1] ne $expected_probe ||
+        [lindex [lindex $ends 0] 0] ne $expected_nonce ||
+        [lindex [lindex $ends 0] 1] ne $expected_probe} {
+        return [list 0 receipt-envelope-nonce-or-probe-drift {}]
+    }
+    set meta {}
+    foreach token [lrange [split [lindex $metas 0] " "] 1 end] {
+        if {![regexp {^([A-Za-z_]+)=([^ ]+)$} $token -> key value] ||
+            [dict exists $meta $key]} {
+            return [list 0 receipt-meta-parse-drift {}]
+        }
+        dict set meta $key $value
+    }
+    set required {nonce probe launch_marker launch_digest argv_marker argv_digest
+        source_status source_cursor source_bytes source_digest source_tail_truncated
+        role_command role_status role_bytes role_digest role_tail_truncated role_state}
+    if {[dict size $meta] != [llength $required]} {
+        return [list 0 receipt-meta-field-count-drift {}]
+    }
+    foreach key $required {
+        if {![dict exists $meta $key]} {
+            return [list 0 "receipt-meta-missing-$key" {}]
+        }
+    }
+    if {[dict get $meta nonce] ne $expected_nonce ||
+        [dict get $meta probe] ne $expected_probe} {
+        return [list 0 receipt-meta-nonce-or-probe-drift {}]
+    }
+    if {[dict get $meta launch_marker] ne $launch_marker} {
+        return [list 0 receipt-launch-marker-mismatch {}]
+    }
+    if {[dict get $meta launch_digest] ne $launch_digest} {
+        return [list 0 receipt-launch-digest-drift {}]
+    }
+    if {[dict get $meta argv_marker] ne $argv_marker} {
+        return [list 0 receipt-argv-marker-mismatch {}]
+    }
+    if {[dict get $meta argv_digest] ne $argv_digest} {
+        return [list 0 receipt-argv-digest-drift {}]
+    }
+    set command_frame [guest_command_frame_parse $normalized $command_marker]
+    if {![lindex $command_frame 0] || [lindex $command_frame 2] ne "0"} {
+        return [list 0 receipt-command-frame-drift {}]
+    }
+    foreach pair [list [list source_cursor 2147483647] \
+            [list source_bytes 2048] [list source_tail_truncated 1] \
+            [list role_status 255] [list role_bytes 4096] \
+            [list role_tail_truncated 1]] {
+        lassign $pair key cap
+        set checked [render_start_receipt_decimal [dict get $meta $key] $cap]
+        if {![lindex $checked 0]} {
+            return [list 0 "receipt-$key-invalid" {}]
+        }
+    }
+    if {[dict get $meta source_bytes] > [dict get $meta source_cursor]} {
+        return [list 0 receipt-source-cursor-before-frame {}]
+    }
+    if {[dict get $meta source_tail_truncated] ni {0 1} ||
+        [dict get $meta role_tail_truncated] ni {0 1} ||
+        [dict get $meta role_command] ne "fast-census-v1"} {
+        return [list 0 receipt-meta-value-drift {}]
+    }
+    set source_status [dict get $meta source_status]
+    if {$source_status ni {missing unreadable nonregular regular}} {
+        return [list 0 receipt-source-status-invalid {}]
+    }
+    set source_hex [lindex $source_hexes 0]
+    if {[string length $source_hex] != 2 * [dict get $meta source_bytes]} {
+        return [list 0 receipt-source-frame-length-drift {}]
+    }
+    if {$source_status eq "regular"} {
+        if {![regexp {^[0-9a-f]{64}$} [dict get $meta source_digest]]} {
+            return [list 0 receipt-source-digest-invalid {}]
+        }
+    } elseif {[dict get $meta source_cursor] != 0 ||
+              [dict get $meta source_bytes] != 0 || $source_hex ne "" ||
+              [dict get $meta source_digest] ne "unavailable" ||
+              [dict get $meta source_tail_truncated] != 0} {
+        return [list 0 receipt-source-absence-drift {}]
+    }
+    set role_hex [lindex $role_hexes 0]
+    if {[string length $role_hex] != 2 * [dict get $meta role_bytes] ||
+        ![regexp {^[0-9a-f]{64}$} [dict get $meta role_digest]]} {
+        return [list 0 receipt-role-frame-or-digest-drift {}]
+    }
+    if {[catch {binary decode hex $source_hex} source_frame] ||
+        [catch {binary decode hex $role_hex} role_frame]} {
+        return [list 0 receipt-hex-decode-drift {}]
+    }
+    if {$source_status eq "regular" &&
+        [render_start_receipt_digest $source_frame] ne [dict get $meta source_digest]} {
+        return [list 0 receipt-source-digest-drift {}]
+    }
+    if {[render_start_receipt_digest $role_frame] ne [dict get $meta role_digest]} {
+        return [list 0 receipt-role-digest-drift {}]
+    }
+    set role_state [dict get $meta role_state]
+    set role_live [regexp {comm="chrome"[^\n]*role="[^"]+"} $role_frame]
+    if {$role_state eq "live" &&
+        ([dict get $meta role_status] != 0 || !$role_live)} {
+        return [list 0 receipt-role-live-drift {}]
+    }
+    if {$role_state eq "none_or_exited" &&
+        ([dict get $meta role_status] != 0 || $role_live)} {
+        return [list 0 receipt-role-exit-drift {}]
+    }
+    if {$role_state eq "command_failed" && [dict get $meta role_status] == 0} {
+        return [list 0 receipt-role-command-status-drift {}]
+    }
+    if {$role_state ni {live none_or_exited command_failed}} {
+        return [list 0 receipt-role-state-invalid {}]
+    }
+    dict set meta source_frame $source_frame
+    dict set meta role_frame $role_frame
+    return [list 1 pass $meta]
+}
+
+proc render_start_receipt_classify {receipt idle sample} {
+    if {[dict get $receipt source_status] ne "regular"} {
+        return [list INCOMPLETE "source-[dict get $receipt source_status]"]
+    }
+    if {[dict get $receipt role_state] eq "command_failed"} {
+        return [list INCOMPLETE "chromium-role-command-status-[dict get $receipt role_status]"]
+    }
+    if {[dict get $receipt role_state] eq "none_or_exited"} {
+        return [list INCOMPLETE chromium-roles-none-or-exited]
+    }
+    if {[lindex $sample 1] <= [lindex $idle 1]} {
+        return [list INCOMPLETE live-roles-no-presentation]
+    }
+    if {[lindex $sample 0] <= [expr {[lindex $idle 0] + 100}]} {
+        return [list INCOMPLETE live-roles-insufficient-flips]
+    }
+    return [list OBSERVED live-roles-presentation-threshold-pass]
+}
+
+proc render_start_receipt_probe_sequence_valid {receipts} {
+    set expected 1
+    foreach receipt $receipts {
+        if {[dict get $receipt probe] != $expected} { return 0 }
+        incr expected
+    }
+    return 1
+}
+
+proc render_start_receipt_probe {
+    probe idle sample launch_marker launch_digest argv_marker argv_digest
+} {
+    global media_probe_nonce outdir metricsf
+    set result [guest_cmd "/bin/bash /ytrenderstartreceipt.sh $media_probe_nonce $probe $launch_marker $launch_digest $argv_marker $argv_digest" \
+        "render-start-receipt-probe$probe" 20]
+    set text [lindex $result 1]
+    set serial_path "$outdir/render-start-receipt-probe$probe.serial.txt"
+    wf $serial_path $text
+    if {[lindex $result 0] ne "0" || [llength $result] != 4} {
+        set detail "receipt-command-rc-[lindex $result 0]"
+        af $metricsf "render_start_receipt probe=$probe class=INVALID detail=$detail diagnostic_only=1 no_fps_claim=1"
+        return [list INVALID $detail {}]
+    }
+    set parsed [render_start_receipt_parse $text $media_probe_nonce $probe \
+        $launch_marker $launch_digest $argv_marker $argv_digest [lindex $result 3]]
+    if {![lindex $parsed 0]} {
+        set detail [lindex $parsed 1]
+        af $metricsf "render_start_receipt probe=$probe class=INVALID detail=$detail diagnostic_only=1 no_fps_claim=1"
+        return [list INVALID $detail {}]
+    }
+    set receipt [lindex $parsed 2]
+    set classified [render_start_receipt_classify $receipt $idle $sample]
+    set canonical "nonce=[dict get $receipt nonce] probe=[dict get $receipt probe] launch_marker=[dict get $receipt launch_marker] launch_digest=[dict get $receipt launch_digest] argv_marker=[dict get $receipt argv_marker] argv_digest=[dict get $receipt argv_digest] source_status=[dict get $receipt source_status] source_cursor=[dict get $receipt source_cursor] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] source_tail_truncated=[dict get $receipt source_tail_truncated] role_command=[dict get $receipt role_command] role_status=[dict get $receipt role_status] role_bytes=[dict get $receipt role_bytes] role_digest=[dict get $receipt role_digest] role_tail_truncated=[dict get $receipt role_tail_truncated] role_state=[dict get $receipt role_state] flips=[lindex $sample 0] presents=[lindex $sample 1]"
+    wf "$outdir/render-start-receipt-probe$probe.txt" "$canonical\n"
+    af $metricsf "render_start_receipt probe=$probe class=[lindex $classified 0] detail=[lindex $classified 1] diagnostic_only=1 no_fps_claim=1"
+    return [list [lindex $classified 0] [lindex $classified 1] $receipt]
+}
+
 proc capture_guest_fb {tag} {
     set path "/yt-$tag.ppm"
     set command "fbstat ppm-current $path 0 0 1280 800;sync"
@@ -6054,6 +6393,7 @@ cat /kde-chromium-process-evidence.log
         /ytargv.sh {#!/bin/bash
 cat /host-gui-wayland-chromium.log
 } \
+        /ytrenderstartreceipt.sh [render_start_receipt_guest_helper_script] \
         /ytmediaprobe.sh $production_media_helper \
         /ytcapturediag.sh $production_capture_diag_helper]
     dict for {helper_name helper_script_text} $static_media_arm_helpers {
@@ -7508,6 +7848,198 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-semantic-gpu-role"
     }
 
+    # Host-only reducer for the normal (capturediag=0) render-start receipt.
+    # It exercises the exact serial frame grammar and every bounded evidence
+    # branch without staging helpers, running guest JS, or starting a VM.
+    proc static_render_start_receipt_fixture {
+        nonce probe launch_marker launch_digest argv_marker argv_digest
+        command_marker source_status source_frame role_status role_frame
+    } {
+        set source_cursor 0
+        set source_bytes 0
+        set source_digest unavailable
+        set source_tail_truncated 0
+        if {$source_status eq "regular"} {
+            set source_cursor [string length $source_frame]
+            set source_bytes $source_cursor
+            set source_digest [render_start_receipt_digest $source_frame]
+        } else {
+            set source_frame ""
+        }
+        set role_bytes [string length $role_frame]
+        set role_digest [render_start_receipt_digest $role_frame]
+        set role_tail_truncated 0
+        if {$role_status != 0} {
+            set role_state command_failed
+        } elseif {[regexp {comm="chrome"[^\n]*role="[^"]+"} $role_frame]} {
+            set role_state live
+        } else {
+            set role_state none_or_exited
+        }
+        return "YT_RENDER_START_RECEIPT_BEGIN nonce=$nonce probe=$probe\nYT_RENDER_START_RECEIPT_META nonce=$nonce probe=$probe launch_marker=$launch_marker launch_digest=$launch_digest argv_marker=$argv_marker argv_digest=$argv_digest source_status=$source_status source_cursor=$source_cursor source_bytes=$source_bytes source_digest=$source_digest source_tail_truncated=$source_tail_truncated role_command=fast-census-v1 role_status=$role_status role_bytes=$role_bytes role_digest=$role_digest role_tail_truncated=$role_tail_truncated role_state=$role_state\nYT_RENDER_START_RECEIPT_SOURCE_HEX [binary encode hex $source_frame]\nYT_RENDER_START_RECEIPT_ROLE_HEX [binary encode hex $role_frame]\nYT_RENDER_START_RECEIPT_END nonce=$nonce probe=$probe\n${command_marker}:RC:0\n${command_marker}:FENCE\n"
+    }
+    set static_render_nonce $static_nonce
+    set static_render_launch_marker YTSTATICLAUNCHC1
+    set static_render_argv_marker YTSTATICARGVC2
+    set static_render_command_marker YTSTATICRECEIPTC3
+    set static_render_launch_digest [render_start_receipt_digest launch-frame]
+    set static_render_argv_digest [render_start_receipt_digest argv-frame]
+    set static_render_source {wayland-chromium-launcher: launch_marker pid=412
+wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome-linux64/chrome}
+    set static_render_live_role $role_synthetic
+    set static_render_valid_frame [static_render_start_receipt_fixture \
+        $static_render_nonce 1 $static_render_launch_marker \
+        $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_command_marker regular \
+        $static_render_source 0 $static_render_live_role]
+    set static_render_valid [render_start_receipt_parse $static_render_valid_frame \
+        $static_render_nonce 1 $static_render_launch_marker \
+        $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_command_marker]
+    set static_render_valid_class [expr {[lindex $static_render_valid 0] ? \
+        [render_start_receipt_classify [lindex $static_render_valid 2] {3 4} {20 21}] : {INVALID parse}}]
+    set static_render_source_classes {}
+    foreach source_status {missing unreadable nonregular} {
+        set frame [static_render_start_receipt_fixture $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest \
+            $static_render_command_marker $source_status "" 0 $static_render_live_role]
+        set parsed [render_start_receipt_parse $frame $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest \
+            $static_render_command_marker]
+        lappend static_render_source_classes [expr {[lindex $parsed 0] ? \
+            [render_start_receipt_classify [lindex $parsed 2] {3 4} {20 21}] : {INVALID parse}}]
+    }
+    set static_render_role_exit_frame [static_render_start_receipt_fixture \
+        $static_render_nonce 1 $static_render_launch_marker \
+        $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_command_marker regular \
+        $static_render_source 0 {kde_chromium_process_evidence fast phase=fast-001 no-chrome}]
+    set static_render_role_exit [render_start_receipt_parse \
+        $static_render_role_exit_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_role_exit_class [expr {[lindex $static_render_role_exit 0] ? \
+        [render_start_receipt_classify [lindex $static_render_role_exit 2] {3 4} {20 21}] : {INVALID parse}}]
+    set static_render_role_command_failed_frame [static_render_start_receipt_fixture \
+        $static_render_nonce 1 $static_render_launch_marker \
+        $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_command_marker regular \
+        $static_render_source 17 {census failed}]
+    set static_render_role_command_failed [render_start_receipt_parse \
+        $static_render_role_command_failed_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_role_command_failed_class [expr {
+        [lindex $static_render_role_command_failed 0] ?
+        [render_start_receipt_classify [lindex $static_render_role_command_failed 2] {3 4} {20 21}] :
+        {INVALID parse}
+    }]
+    set static_render_live_no_present_class [expr {[lindex $static_render_valid 0] ? \
+        [render_start_receipt_classify [lindex $static_render_valid 2] {3 4} {20 4}] : {INVALID parse}}]
+    regsub {YT_RENDER_START_RECEIPT_SOURCE_HEX [0-9a-f]} \
+        $static_render_valid_frame {YT_RENDER_START_RECEIPT_SOURCE_HEX 0} \
+        static_render_tampered_frame
+    set static_render_tampered [render_start_receipt_parse \
+        $static_render_tampered_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_marker_drift [render_start_receipt_parse \
+        $static_render_valid_frame $static_render_nonce 1 YTSTATICLAUNCHC9 \
+        $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_command_marker]
+    regsub {\nYT_RENDER_START_RECEIPT_END[^\n]*} $static_render_valid_frame "" \
+        static_render_truncated_frame
+    set static_render_truncated [render_start_receipt_parse \
+        $static_render_truncated_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_oversize_frame [string map [list \
+        "source_bytes=[string length $static_render_source]" {source_bytes=2049}] \
+        $static_render_valid_frame]
+    set static_render_oversize [render_start_receipt_parse \
+        $static_render_oversize_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_cursor_drift_frame [string map [list \
+        "source_cursor=[string length $static_render_source]" {source_cursor=0}] \
+        $static_render_valid_frame]
+    set static_render_cursor_drift [render_start_receipt_parse \
+        $static_render_cursor_drift_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest \
+        $static_render_command_marker]
+    set static_render_sequence_receipts [list [lindex $static_render_valid 2]]
+    for {set static_probe 2} {$static_probe <= 5} {incr static_probe} {
+        set marker "YTSTATICRECEIPTC$static_probe"
+        set frame [static_render_start_receipt_fixture $static_render_nonce \
+            $static_probe $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest $marker regular \
+            $static_render_source 0 $static_render_live_role]
+        set parsed [render_start_receipt_parse $frame $static_render_nonce \
+            $static_probe $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest $marker]
+        lappend static_render_sequence_receipts [lindex $parsed 2]
+    }
+    set static_render_sequence_good [render_start_receipt_probe_sequence_valid \
+        $static_render_sequence_receipts]
+    set static_render_sequence_bad [render_start_receipt_probe_sequence_valid \
+        [list [lindex $static_render_sequence_receipts 1] \
+              [lindex $static_render_sequence_receipts 0]]]
+    set static_render_threshold_edges [list \
+        [expr {103 > 3 + 100 && 5 > 4}] \
+        [expr {104 > 3 + 100 && 4 > 4}] \
+        [expr {104 > 3 + 100 && 5 > 4}]]
+    set static_render_threshold_needle [join [list \
+        {if } [format %c 123] {[lindex $sample 0] > [expr } \
+        [format %c 123] {[lindex $idle 0] + 100} [format %c 125] {] &&}] ""]
+    set static_render_threshold_source [expr {
+        [string first $static_render_threshold_needle $static_present_source] >= 0 &&
+        [string first {[lindex $sample 1] > [lindex $idle 1]} \
+            $static_present_source] >= 0
+    }]
+    set static_render_receipt_body [info body render_start_receipt_probe]
+    set static_render_v3_isolation [expr {
+        [string first {capture_completeness_diag_v3} $static_render_receipt_body] < 0 &&
+        [string first {capture_completeness_diag_v3} \
+            [render_start_receipt_guest_helper_script]] < 0
+    }]
+    set static_render_diag0_arm $capture_completeness_diag
+    rename capture_completeness_diag_v3_run static_render_saved_v3_runner
+    proc capture_completeness_diag_v3_run {} { error "static-render-v3-route-invoked" }
+    set capture_completeness_diag 0
+    set static_render_diag0_dispatch [capture_completeness_diag_dispatch]
+    set capture_completeness_diag $static_render_diag0_arm
+    rename capture_completeness_diag_v3_run {}
+    rename static_render_saved_v3_runner capture_completeness_diag_v3_run
+    set static_render_js_guest_runtime UNEXECUTED
+    if {![lindex $static_render_valid 0] ||
+        $static_render_valid_class ne {INCOMPLETE live-roles-insufficient-flips} ||
+        $static_render_source_classes ne {{INCOMPLETE source-missing} {INCOMPLETE source-unreadable} {INCOMPLETE source-nonregular}} ||
+        ![lindex $static_render_role_exit 0] ||
+        $static_render_role_exit_class ne {INCOMPLETE chromium-roles-none-or-exited} ||
+        ![lindex $static_render_role_command_failed 0] ||
+        $static_render_role_command_failed_class ne {INCOMPLETE chromium-role-command-status-17} ||
+        $static_render_live_no_present_class ne {INCOMPLETE live-roles-no-presentation} ||
+        [lindex $static_render_tampered 0] ||
+        [lindex $static_render_marker_drift 0] ||
+        [lindex $static_render_truncated 0] ||
+        [lindex $static_render_oversize 0] ||
+        [lindex $static_render_cursor_drift 0] ||
+        !$static_render_sequence_good || $static_render_sequence_bad ||
+        $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
+        !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
+        $static_render_js_guest_runtime ne "UNEXECUTED"} {
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+    }
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS missing_unreadable_nonregular=PASS role_exit_live_no_present=PASS tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;
     # the stage must accept that process status, then independently prove the
@@ -8038,6 +8570,11 @@ puts $fh "cat /host-gui-wayland-chromium.log 2>/dev/null"
 puts $fh "echo YT_ARGV_END"
 close $fh
 
+set render_start_receipt_host "$outdir/ytrenderstartreceipt.sh"
+if {$media_probe eq "1" && $capture_completeness_diag eq "0"} {
+    wf $render_start_receipt_host [render_start_receipt_guest_helper_script]
+}
+
 set media_host "$outdir/ytmediaprobe.sh"
 if {$media_probe eq "1"} {
     wf $media_host [media_probe_guest_helper_script $media_probe_nonce]
@@ -8061,6 +8598,7 @@ if {$capture_completeness_diag eq "1"} {
         lappend helper_pairs $forensic_host /yteglforensics.sh
     }
     if {$media_probe eq "1"} {
+        lappend helper_pairs $render_start_receipt_host /ytrenderstartreceipt.sh
         lappend helper_pairs $media_host /ytmediaprobe.sh
     }
 }
@@ -8203,19 +8741,24 @@ if {[capture_completeness_diag_requires_normal_frames \
     monitor_screendump pre
 }
 
-set launch_buf [require_guest_ok [guest_cmd "/bin/bash /ytlaunch.sh" chromium-launch 35] chromium-launch]
+set launch_result [guest_cmd "/bin/bash /ytlaunch.sh" chromium-launch 35]
+lassign [require_guest_ok_with_marker $launch_result chromium-launch] \
+    launch_buf launch_marker
 if {![regexp "YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=1" $launch_buf] ||
     ![regexp {YT_CHILD=[1-9][0-9]*} $launch_buf] ||
     ![regexp "YT_LAUNCH_END arm=$arm" $launch_buf]} {
     finish 8 "FAIL chromium-start-missing"
 }
+set launch_digest [render_start_receipt_digest $launch_buf]
 
 after 12000
-set argv_buf [require_guest_ok [guest_cmd "/bin/bash /ytargv.sh" launcher-argv 40] launcher-argv]
+set argv_result [guest_cmd "/bin/bash /ytargv.sh" launcher-argv 40]
+lassign [require_guest_ok_with_marker $argv_result launcher-argv] argv_buf argv_marker
 if {![regexp {YT_ARGV_BEGIN} $argv_buf] || ![regexp {YT_ARGV_END} $argv_buf] ||
     ![regexp {wayland-chromium-launcher: child_exec path=} $argv_buf]} {
     finish 8 "FAIL launcher-argv-evidence-missing"
 }
+set argv_digest [render_start_receipt_digest $argv_buf]
 if {![regexp {wayland-chromium-launcher: argv_[0-9]+="--disable-audio-output"} $argv_buf]} {
     finish 8 "FAIL launcher-audio-argv-missing"
 }
@@ -8268,17 +8811,41 @@ if {$egl_forensics eq "1"} {
 
 # Rendering/start gate: require a substantial flip delta from the idle sample.
 set started 0
+set render_start_receipt_details {}
+set render_start_receipt_objects {}
+set render_start_receipt_invalid 0
 for {set probe 1} {$probe <= 5 && !$started} {incr probe} {
     after 30000
     set sample [fb_sample "probe$probe"]
+    if {$media_probe eq "1" && $capture_completeness_diag eq "0"} {
+        set receipt [render_start_receipt_probe $probe $idle $sample \
+            $launch_marker $launch_digest $argv_marker $argv_digest]
+        lappend render_start_receipt_details "probe$probe:[lindex $receipt 0]:[lindex $receipt 1]"
+        if {[lindex $receipt 0] eq "INVALID"} {
+            set render_start_receipt_invalid 1
+        } else {
+            lappend render_start_receipt_objects [lindex $receipt 2]
+            if {[lindex $receipt 0] ne "OBSERVED"} {
+                set render_start_receipt_invalid 1
+            }
+        }
+    }
     if {[lindex $sample 0] > [expr {[lindex $idle 0] + 100}] &&
         [lindex $sample 1] > [lindex $idle 1]} {
         set started 1
         af $statusf "[iso_now] chromium-rendering-confirmed probe=$probe flips=[lindex $sample 0] presents=[lindex $sample 1]"
     }
 }
+if {$media_probe eq "1" && $capture_completeness_diag eq "0" &&
+    ![render_start_receipt_probe_sequence_valid $render_start_receipt_objects]} {
+    set render_start_receipt_invalid 1
+    lappend render_start_receipt_details sequence:INVALID:probe-order-drift
+}
 if {!$started} {
-    finish 8 "FAIL chromium-render-start-missing"
+    finish 8 "FAIL chromium-render-start-missing render_start_receipts=[join $render_start_receipt_details ,] no_fps_claim=1"
+}
+if {$render_start_receipt_invalid} {
+    finish 8 "FAIL chromium-render-start-receipt-invalid details=[join $render_start_receipt_details ,] no_fps_claim=1"
 }
 
 if {$media_probe eq "1"} {
