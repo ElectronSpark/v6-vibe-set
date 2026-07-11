@@ -88,32 +88,54 @@ checks. Both explicitly report `js_guest_runtime=UNEXECUTED`. This is a
 host-only source checkpoint: it is not guest-JS, image, diagnostic, semantic,
 FPS, or VM credit.
 
-### Base-image freshness: stale boundary OPEN
+### Base-image freshness: independent receipt review PASS
 
-Read-only named-file `debugfs` extraction proves the current base
-`build-x86_64/fs.img` predates the V3 probe source. Both overlay and base contain
-only `manifest.json`, `probe-lib.js`, and `probe.js`:
+At source checkpoint `fa0547a`, the authorized target-only
+`cmake --build build-x86_64 --target rootfs-refresh -j2` completed and rewrote
+`build-x86_64/fs.img`; it did not build user or ports targets or run a VM.
+Host-GUI staging ran for Xwayland, xkbcomp, and XKB data. The log retains
+existing compiler-format, GLib schema deprecation, and font-cache warnings,
+but ended with `make-rootfs: wrote ... fs.img` and no target failure.
 
-| asset | overlay bytes / SHA-256 | base bytes / SHA-256 | status |
-| --- | --- | --- | --- |
-| `manifest.json` | 813 / `46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22` | same | match |
-| `probe-lib.js` | 4336 / `2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c` | same | match |
-| `probe.js` | 26585 / `de6fa5dcc51dfd672a131f80bfc598c0dd98c532def3a164268f8b1f5af48fe8` | 22351 / `a674159ccabb89576f7cab0021bba56cec3aca46876e71ecdc44da14cd36287d` | stale |
+The prior named-file receipt recorded that the overlay, refreshed base, and a
+fresh disposable clone had exactly `manifest.json`, `probe-lib.js`, and
+`probe.js` byte-for-byte; the independent review below rechecks overlay/base
+directly. It recorded the clone as removed:
 
-The driver's exact per-asset dump/byte-identity preflight must reject this as
-`image-asset-missing-or-mismatch-probe.js`. Scratch-only injection is
-prohibited. The old claim that this stale boundary was closed and that the old
-`probe.js` hash was current is obsolete.
+| asset | reported bytes / SHA-256 in overlay, base, and clone | status |
+| --- | --- | --- |
+| `manifest.json` | 813 / `46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22` | match |
+| `probe-lib.js` | 4336 / `2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c` | match |
+| `probe.js` | 26585 / `de6fa5dcc51dfd672a131f80bfc598c0dd98c532def3a164268f8b1f5af48fe8` | match |
+
+Scratch-only injection remains prohibited. This closes freshness measurement,
+not VM, diagnostic, semantic, or FPS credit. The generated base image remains
+an authorized refresh artifact, not a staged source change.
+
+**Independent asset-receipt review — PASS (2026-07-11):** at
+`fa0547ac970eb32f31a9577ba415d2dda9aa585a`, equal to both live HEAD and
+`origin/codex/host-linux-abi-shell-port-ff`, a fresh named-file-only receipt
+found exactly those three regular files in both the overlay directory and
+`/share/chromium-youtube-media-probe` in `build-x86_64/fs.img`; direct
+`debugfs` extraction reproduced every listed byte count and SHA-256, including
+`probe.js` 26585 / `de6fa5dcc51dfd672a131f80bfc598c0dd98c532def3a164268f8b1f5af48fe8`.
+The bounded refresh log records only the target rootfs refresh and its final
+`make-rootfs: wrote ... fs.img`. The disposable-clone pathname is not retained
+in the named log or current plan, so it was not enumerated; this review makes
+no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 
 ## Immediate authority chain
 
-1. **Source checkpoint (this commit):** checkpoint only the reviewed V3
-   diagnostic source files and this plan. It grants no image or VM credit.
-2. **Narrow rootfs refresh:** refresh the base extension assets without
-   user/ports work or scratch substitution.
-3. **Freshness receipt and review:** prove exact host/base/fresh-clone bytes and
-   SHA-256 for all three assets; remove the clone; require independent review.
-4. **Fresh conductor gate, then exactly one diag1 KVM+virgl boot:** named-branch
+1. **Source checkpoint — PASS:** reviewed V3 diagnostic sources and the compact
+   plan are checkpointed at `fa0547a`; that is host-only source credit.
+2. **Narrow rootfs refresh — PASS:** base extension assets were refreshed with
+   no user/ports target, scratch substitution, or VM.
+3. **Host/base/fresh-clone receipt — independent review PASS:** all three
+   named assets match exactly. The historical disposable clone was not
+   enumerated without a retained pathname; base freshness is independently
+   accepted, while no broader `/tmp` absence claim is made.
+4. **NEXT — fresh conductor gate, then exactly one diag1 KVM+virgl boot:**
+   require named-branch
    origin, no active VM worker, exact zero QEMU, real virgl prerequisites, and
    MP=1/audio-disable=1/media=1/forced-hd720=1/EGL=0/capture-diag=1. It owns
    and reaps QEMU and remains no-FPS/no-semantic credit.
