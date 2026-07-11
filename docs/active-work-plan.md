@@ -1,20 +1,17 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-10. Sole live plan; history is in git and the archived
-full-history plan, with runtime proofs under `build-x86_64/`.
+Last updated: 2026-07-11. Sole live plan; history is in git/the archive, with runtime proofs under `build-x86_64/`.
 
-Before checkpointing or dispatch, verify live HEAD against its same-name
-origin. This plan records the first authorized boot after fullscreen-plan
-checkpoint `fdb628e`. Preserve unrelated KDE harness work.
+Before checkpointing or dispatch, verify live HEAD against its same-name origin. This plan records the first authorized boot after fullscreen-plan checkpoint `fdb628e`. Preserve unrelated KDE harness work.
 
 ## Objective and operating state
 
-Close YouTube 720p60 to same-host Linux-VM parity in two separate acceptance
-modes: (A) normal watch-page/windowed and (B) true YouTube/player fullscreen.
-Each must first reach >=52 presented fps and finally about 55-60 with low drops
-and stable pacing; windowed cannot close fullscreen or the overall goal. Use
-real KVM+virgl yt-presentfps and PERF-VIDEO only; software is invalid. Each mode
-needs N>=2 valid comparable trials, never pooled; N=1 is diagnostic.
+Close YouTube 720p60 to same-host Linux-VM parity in two acceptance modes:
+(A) windowed watch page and (B) true player fullscreen. Each must first reach
+>=52 presented fps, then about 55-60 with low drops/stable pacing; windowed
+cannot close fullscreen or the overall goal. Use real KVM+virgl yt-presentfps
+and PERF-VIDEO only; software is invalid. Each mode needs N>=2 comparable
+trials, never pooled; N=1 is diagnostic.
 
 Every concrete job is delegated to an opus worker. No VM worker is authorized;
 an exact `/proc/*/exe` scan finds zero QEMU processes.
@@ -91,15 +88,87 @@ Newest runtime artifact and stop verdict:
   the exact treatment arm plus 3/3 staged media assets, but panicked during
   probe 1 before media, GPU-role, yt-presentfps, or PERF-VIDEO evidence. It
   proves no FPS and makes no fullscreen claim; attempt 2 was correctly stopped.
-- The panic was in `kwin_wayland` thread 62: `spin_lock` reentry on `kqueue`.
-  The observed source chain is kqueue rescan/poll -> syncobj fence signal
-  callback -> knote notify -> reacquire of the same kqueue lock. Treat this as
-  a focused kernel event-wait/syncobj callback-locking defect, not frame-supply
-  performance evidence.
-- Owned cleanup completed with exact QEMU count zero; scratch was retained.
-  Windowed N>=2, fullscreen, and A2 remain open. **BOOT PROHIBITED** pending
-  independent NO-BOOT forensics, a focused kernel fix/model, and adversarial
-  review of that fix.
+- Independent NO-BOOT forensics PASS is durable at live HEAD/origin `a2a5f6a`.
+  Linux permits arbitrary `.poll` to wake synchronously; xv6 invoked it under
+  the kqueue lock in rescan, stale-ready, `EV_CLEAR`, and nested paths; the
+  syncobj signal callback then notified a knote and reentered that same lock.
+- First rework self-PASS (NO-BOOT) retains scan-local high-water ordering,
+  post-drain `KN_DELIVERING`/`KN_PENDING` coalescing, unlocked `.poll`
+  dispatch, and pin/identity/generation/ABA/deferred-reclaim checks.
+- The second rework self-PASS established `-ENOSPC` registration exhaustion,
+  unlocked dispatch, ref-pinned cycle admission, and post-drain coalescing;
+  the final independent adversarial NO-BOOT review then **REJECTED** its
+  insufficient guard/admission/callback/fairness proof.
+- Third independent adversarial NO-BOOT re-review **REJECTED** the focused
+  self-PASS: a sole cached-alias, parenthesized member dereference bypassed the
+  repository guard and was reproduced in `/tmp`. Production graph/lifetime
+  tests show no new bounded failure, but their positives cannot compensate for
+  a bypassable prevention policy.
+- Fourth independent adversarial NO-BOOT review **REJECTED** the guard: raw
+  `consume(f->ops->poll)` function-pointer retrieval bypassed it in a separate
+  `/tmp` copy. Its root/kernel-only scope and named diagnostic exceptions are
+  non-exhaustive; direct/mutation positives, the 1,000 `-O2` and 1,000
+  ASan/UBSan cases, and the normal build are therefore insufficient. TSan is
+  unavailable and is not a passing result.
+- Fifth independent adversarial NO-BOOT review **REJECTED** the lexical
+  raw-member guard: macro-expanded file/cdev member access (`REVIEW_FILE_OPS`
+  and its cdev analogue), raw `review_raw_payload.inc` included by copied
+  `kqueue.c`, and a raw symlinked `.c` payload compile locked callbacks despite
+  `lstat` skipping links. Direct/mutation, `-O2`, 1,000-case ASan/UBSan,
+  normal build, and Sparse remain insufficient; TSan is unavailable/non-evidence.
+- Sixth compiler-expanded guard self-PASS used a 293-unit compile DB and
+  preprocessed `#line` provenance. Independent adversarial NO-BOOT review
+  **REJECTED** it: an untracked regular kernel `.c` could token-paste a `.poll`
+  escape, so its configured-universe/missing-source claim was false.
+- Seventh configured-universe self-PASS is **REJECTED** by its final independent
+  adversarial NO-BOOT review. A `/tmp` POC made the compile DB's file/command
+  provenance disagree; it also lacked a manifest/index/status race proof.
+  Existing admission POCs, configured build, `-O2`, 1,000-case ASan/UBSan, and
+  Sparse positives are insufficient; TSan remains unavailable/non-evidence.
+- Eighth DB-provenance/snapshot NO-BOOT self-PASS bound canonical DB file,
+  kernel root, compiler, and exact `-c` source identity. Its final independent
+  adversarial review **REJECTED** it: configured-but-untracked DB C was accepted,
+  and a post-snapshot header touch passed because provenance omitted actual
+  compiler `#line` dependencies. Positives are insufficient; **BOOT REMAINS PROHIBITED**.
+- Ninth dependency-snapshot self-PASS is **REJECTED** by final independent
+  NO-BOOT review: an external untracked header's user-controlled line control
+  made external raw `.poll` look like a dispatcher whitelist. Standard/numeric
+  `#`, `%:`, enabled trigraph, and splice/comment forms reproduce it; include
+  marker flags are forgeable. Positive dependency/snapshot checks, stress,
+  configured build, and Sparse are insufficient.
+- Separate independent NO-BOOT review **REJECTED** raw function-pointer escape
+  `kqueue_guard_review_consume_poll(f->ops->poll);`: it passes although
+  assignment captures reject. TSan is non-evidence.
+- Tenth guard now has an independent adversarial NO-BOOT **PASS**. It
+  normalizes the relevant C translation phases before provenance parsing,
+  authenticates the physical compiler-marker/include stack, and snapshots
+  every external regular header plus post-snapshot TOCTOU state. It rejects
+  user line controls, untrusted external-to-in-tree transitions, external raw
+  `.poll`, and raw function-pointer retrieval/escape; the bounded
+  null-condition repair permits only the direct condition and rejects the
+  following raw retrieval.
+- The independent boundary suite passed: normal `--compiler-only`; benign
+  external/nested tracked-mirror includes; the 12-case null/next-statement
+  matrix; and rejection (`rc=1`) of external/nested raw-consume, `#line`,
+  numeric flags 1/3/4, `%:line`/`%:numeric`, `??=line`,
+  splice/trigraph-splice/comment-separated controls, and external,
+  compile-DB, or in-tree-header post-snapshot touches. This closes the prior
+  spoofed-`#line` provenance and TOCTOU findings.
+- Evidence: kernel build PASS; Sparse 209 files with zero failures/errors
+  (known context warnings including `kqueue.c:1273`); full `-O2` reducer 100
+  PASS; ASan/UBSan model 100 PASS; diff checks PASS; temporary POCs cleaned;
+  exact `/proc/*/exe` QEMU count was zero before and after checks. The full
+  ASan compiler-expanded guard run exited on a host limitation before it
+  reported, so it receives **no credit**.
+- This PASS lifts the kqueue *review* gate only. It does not authorize a boot:
+  first create and push the verified deepest-first checkpoint, then separately
+  establish live same-name-origin, no-VM-worker, and fresh exact-zero-QEMU
+  state before the conductor may authorize one VM.
+- Preserve scan-local high-water, unlocked/pinned dispatch,
+  identity/generation/ABA/deferred reclaim, `-ENOSPC`/cycle admission,
+  stale-ready rejection, callback coalescing, and `EV_CLEAR`/oneshot fairness.
+  The review gate is lifted, but no VM is currently authorized; QEMU is zero,
+  and windowed N>=2, fullscreen, and A2 remain open.
 
 ## Fullscreen acceptance mode
 
@@ -187,10 +256,12 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Independent NO-BOOT panic forensics; design, implement, model-check, and
-   adversarially review the narrow kqueue/syncobj callback-locking fix.
-2. Only after review PASS, fresh no-worker/exact-zero gate, and authorization:
-   sole-VM A1 serial windowed N>=2 forced-hd720 measurement; invalids are NULL.
+1. Create the verified checkpoint deepest-first (kernel first, then top-level
+   plan/reducer/submodule pointer) and push this approved lineage; no boot.
+2. Separately establish live same-name-origin, no active VM worker, and a fresh
+   exact `/proc/*/exe` zero-QEMU gate; only then may the conductor authorize
+   one sole-VM A1 serial windowed N>=2 forced-hd720 measurement. Invalids are
+   NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
 4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.
 5. Validate audio-on windowed and fullscreen parity; close each mode's
