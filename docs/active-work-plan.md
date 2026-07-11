@@ -520,6 +520,15 @@ external QEMU. A future authorized passive 60 s gate may use this proven
 foreground mechanism only: initial <=30 s yield, then one exact synchronous
 session wait <=60 s; this control forms no gate itself.
 
+**Authorized A1 gate attempt — NO-BOOT / INCOMPLETE (2026-07-11):** the proven
+foreground passive record `/tmp/xv6-authorized-a1-passive.log` completed with
+zero QEMU at both endpoints and terminal `status=pass`, and the exact
+post-screen inventory was zero. However, its bundled preflight used malformed
+`test -rw /dev/kvm` syntax, so KVM access was not actually verified despite
+the shell continuing to the passive control. No QEMU was launched. This is not
+a complete authorization gate and grants no VM authority or retry under this
+task; retain it as a no-boot negative-control record.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
