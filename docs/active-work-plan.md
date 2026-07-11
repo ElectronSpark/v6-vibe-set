@@ -244,6 +244,34 @@ INVALID/N=0, not performance credit; no overlap and no second guest occurred.
 A fresh gate and a no-boot localization of `chromium-render-start-missing` are
 required before another A1 trial.
 
+**`chromium-render-start-missing` forensic — GATE LOCALIZED / ROOT CAUSE
+UNRESOLVED / NO-BOOT (2026-07-11):** retained run
+`/tmp/xv6-a1-windowed-quiescent-t1.pKZQwy` reached the normal render-start
+predicate at `chromium-youtube-presentfps.expect:8271-8281`: after Chromium
+launch and a 12 s argv check it allows five 30 s probes only if
+`flips > idle+100` **and** `presents > idle`. Idle was 3/4; probes were
+13/14, 18/19, 19/20, 19/20, and 20/21, so only the presents condition passed
+and the exact terminal label is correct. The normal guest command did run:
+the canonical source log has `launch_marker pid=155`, the complete treatment
+argv/nonce/extension URL, and `child_exec`; its redirect contract makes the
+empty outer stdio and absent optional chrome-debug log non-dispositive.
+The log also shows child no-connection terminations and a network-service
+restart, but retains no main-browser exit, role census, or Wayland-surface
+fact, so it cannot be called the cause.
+
+This is neither missing/wrong/unreadable source-log evidence nor a
+marker/parser rejection: `YT_MEDIA_PROBE_V1` collection begins only after the
+render gate, and the media artifact is therefore correctly absent. With
+`capturediag=0`, the explicit post-KDE branch skips diagnostic dispatch and
+its capture-completeness V1/V3 runners entirely; the recent V3 inner-tail
+contract is not on this control path. Do not propose a rendering repair yet.
+The smallest next no-boot
+addition is a bounded render-start receipt retaining the launch/argv command
+frames plus the existing short Chromium role census and canonical-log
+cursor/digest at each probe; it must distinguish absent/exited roles from
+live-but-no-presentation before any new gate. Current exact all-arch QEMU
+count is zero; this forensic ran no VM.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -332,10 +360,12 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    diag0/no-credit isolation all passed without a VM.
 6. **A1 windowed execution — CONSUMED/INVALID:** the later passive-quiescence
    trial had no overlap and clean owned reap, but failed
-   `chromium-render-start-missing`, yielding N=0 valid samples. Localize that
-   failure no-boot, then form a new gate; do not reuse either consumed session.
-   Every future conductor must pass the passive all-arch zero-QEMU interval
-   and immediate prelaunch check. Clear >=52 before pursuing about 55-60.
+   `chromium-render-start-missing`, yielding N=0 valid samples. Its flip gate
+   is localized but Chromium's no-presentation cause is not: first add and
+   review the bounded render-start receipt no-boot, then form a new gate; do
+   not reuse either consumed session. Every future conductor must pass the
+   passive all-arch zero-QEMU interval and immediate prelaunch check. Clear
+   >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
