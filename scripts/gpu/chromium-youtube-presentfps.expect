@@ -12,6 +12,10 @@
 #                                       forensics=0 and proves source before FPS)
 #   YT_FORCE_HD720=0|1                 (default 0; 1 additionally requires the
 #                                       exact media-probe arm and forces hd720)
+#   YT_CAPTURE_COMPLETENESS_DIAG=0|1    (default 0; 1 is a diagnostic-only
+#                                       forced-hd720 media arm.  It collects
+#                                       bounded timer/rVFC/fbstat context and
+#                                       exits before FPS windows.)
 #   YT_OUTDIR=<new/empty run directory>  (default is a unique timestamped dir)
 #   YT_WINDOW_SECONDS=<seconds>           (default 60)
 #   YT_PLAYER_CROP=<WxH+X+Y>              (default 960x540+160+130)
@@ -66,6 +70,27 @@ proc force_hd720_arm_contract {multiprocess disable_audio forensics media_probe 
         return [list 0 "YT_FORCE_HD720-requires-multiprocess-1-audio-1-forensics-0-media-probe-1 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics media_probe=$media_probe"]
     }
     return [list 1 "force_hd720=$force_hd720 media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
+}
+
+proc capture_completeness_diag_arm_contract {
+    multiprocess disable_audio forensics media_probe force_hd720 diagnostic
+} {
+    if {$diagnostic ne "0" && $diagnostic ne "1"} {
+        return [list 0 "YT_CAPTURE_COMPLETENESS_DIAG-must-be-0-or-1 value=$diagnostic"]
+    }
+    if {$diagnostic eq "1" &&
+        ($multiprocess ne "1" || $disable_audio ne "1" ||
+         $forensics ne "0" || $media_probe ne "1" || $force_hd720 ne "1")} {
+        return [list 0 "YT_CAPTURE_COMPLETENESS_DIAG-requires-multiprocess-1-audio-1-forensics-0-media-probe-1-force-hd720-1 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics media_probe=$media_probe force_hd720=$force_hd720"]
+    }
+    return [list 1 "capture_completeness_diag=$diagnostic force_hd720=$force_hd720 media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
+}
+
+# Diagnostic capture has its own terminal evidence.  It retains the shared
+# renderer/fbstat safety gate, but must not create or require the normal
+# pre/steady/window/media frame set before it can report timer/rVFC liveness.
+proc capture_completeness_diag_requires_normal_frames {diagnostic} {
+    return [expr {$diagnostic ne "1"}]
 }
 
 proc media_probe_random_nonce {} {
@@ -166,11 +191,66 @@ temp_prefix='@TEMP_PREFIX@'
 do_sync='@DO_SYNC@'
 capture_tmp="${temp_prefix}.capture"
 rm -f "$capture_tmp" "$capture_log"
-"$grep_bin" ' schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
+"$grep_bin" 'YT_MEDIA_PROBE_V1 kind=.* schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
 /bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=48 2>/dev/null
 echo YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot polls=0 byte_cap=49152
 cat "$capture_log" 2>/dev/null
 echo YT_MEDIA_PROBE_CAPTURE_END nonce=@NONCE@ status=oneshot polls=0 byte_cap=49152
+rm -f "$capture_tmp"
+if [ "$do_sync" = 1 ]; then sync; fi
+}]
+}
+
+proc capture_completeness_diag_guest_helper_script {nonce {overrides {}}} {
+    if {![regexp {^[0-9a-f]{32}$} $nonce]} {
+        error "invalid capture-completeness helper nonce"
+    }
+    set config [dict create \
+        grep_bin /bin/grep \
+        source_log /host-gui-wayland-chromium.log \
+        capture_log /yt-capture-completeness.log \
+        temp_prefix /tmp/yt-capture-completeness \
+        do_sync 1]
+    if {[catch {dict size $overrides}]} {
+        error "capture-completeness helper overrides must be a dictionary"
+    }
+    dict for {key value} $overrides {
+        if {![dict exists $config $key]} {
+            error "unknown capture-completeness helper option: $key"
+        }
+        dict set config $key $value
+    }
+    foreach key {grep_bin source_log capture_log temp_prefix} {
+        set value [dict get $config $key]
+        if {![regexp {^/[A-Za-z0-9._/+:-]+$} $value] ||
+            [regexp {(^|/)\.\.?(/|$)} $value]} {
+            error "invalid capture-completeness helper path for $key"
+        }
+    }
+    set do_sync [dict get $config do_sync]
+    if {$do_sync ne "0" && $do_sync ne "1"} {
+        error "invalid capture-completeness helper do_sync"
+    }
+    return [string map [list \
+        @NONCE@ $nonce \
+        @GREP_BIN@ [dict get $config grep_bin] \
+        @SOURCE_LOG@ [dict get $config source_log] \
+        @CAPTURE_LOG@ [dict get $config capture_log] \
+        @TEMP_PREFIX@ [dict get $config temp_prefix] \
+        @DO_SYNC@ $do_sync] {#!/bin/bash
+set +e
+grep_bin='@GREP_BIN@'
+source_log='@SOURCE_LOG@'
+capture_log='@CAPTURE_LOG@'
+temp_prefix='@TEMP_PREFIX@'
+do_sync='@DO_SYNC@'
+capture_tmp="${temp_prefix}.capture"
+rm -f "$capture_tmp" "$capture_log"
+"$grep_bin" 'YT_CAPTURE_COMPLETENESS_V1 kind=.* schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
+/bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=16 2>/dev/null
+echo YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot byte_cap=16384
+cat "$capture_log" 2>/dev/null
+echo YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=@NONCE@ status=oneshot byte_cap=16384
 rm -f "$capture_tmp"
 if [ "$do_sync" = 1 ]; then sync; fi
 }]
@@ -206,6 +286,13 @@ set force_hd720_contract [force_hd720_arm_contract \
 if {![lindex $force_hd720_contract 0]} {
     fail_preflight [lindex $force_hd720_contract 1]
 }
+set capture_completeness_diag [expr {[info exists env(YT_CAPTURE_COMPLETENESS_DIAG)] ? $env(YT_CAPTURE_COMPLETENESS_DIAG) : "0"}]
+set capture_completeness_diag_contract [capture_completeness_diag_arm_contract \
+    $multiprocess $disable_audio $egl_forensics $media_probe $force_hd720 \
+    $capture_completeness_diag]
+if {![lindex $capture_completeness_diag_contract 0]} {
+    fail_preflight [lindex $capture_completeness_diag_contract 1]
+}
 set media_probe_extension_id "edfilgocpdgbkehcgdillfgnnhclphol"
 set media_probe_nonce "off"
 if {$media_probe eq "1"} {
@@ -215,10 +302,11 @@ if {$media_probe eq "1"} {
     }
     set media_probe_nonce [lindex $nonce_result 1]
 }
-set arm [expr {$force_hd720 eq "1" ? "media-probe-hd720" :
+set arm [expr {$capture_completeness_diag eq "1" ? "media-probe-hd720-capturediag" :
+               ($force_hd720 eq "1" ? "media-probe-hd720" :
                ($media_probe eq "1" ? "media-probe" :
                ($egl_forensics eq "1" ? "egl-forensics" :
-               ($multiprocess eq "1" ? "multiprocess" : "single-process")))}]
+               ($multiprocess eq "1" ? "multiprocess" : "single-process"))))}]
 
 set window_seconds [expr {[info exists env(YT_WINDOW_SECONDS)] ? $env(YT_WINDOW_SECONDS) : "60"}]
 if {![string is integer -strict $window_seconds] || $window_seconds < 10 ||
@@ -244,12 +332,16 @@ if {$media_probe eq "1"} {
     if {$force_hd720 eq "1"} {
         append url "&xv6ythd720=1"
     }
+    if {$capture_completeness_diag eq "1"} {
+        append url "&xv6ytcapturediag=1"
+    }
 }
 set stamp [clock format [clock seconds] -gmt true -format "%Y%m%dT%H%M%SZ"]
 set forensic_suffix [expr {$egl_forensics eq "1" ? "-egl1" : ""}]
 set media_suffix [expr {$media_probe eq "1" ? "-media1" : ""}]
 set force_suffix [expr {$force_hd720 eq "1" ? "-hd7201" : ""}]
-set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}${force_suffix}"
+set capture_diag_suffix [expr {$capture_completeness_diag eq "1" ? "-capturediag1" : ""}]
+set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}${force_suffix}${capture_diag_suffix}"
 if {[info exists env(YT_OUTDIR)]} {
     set outdir [file normalize $env(YT_OUTDIR)]
 } else {
@@ -282,6 +374,10 @@ set dynamic_process_log "$outdir/egl-dynamic-processes.log"
 set media_probe_log "$outdir/yt-media-probe.log"
 set media_probe_serial "$outdir/yt-media-probe.serial.txt"
 set media_probe_assets "$outdir/media-probe-assets.txt"
+set capture_completeness_diag_log "$outdir/capture-completeness-diagnostic.txt"
+set capture_completeness_diag_serial "$outdir/capture-completeness-diagnostic.serial.txt"
+set capture_completeness_diag_fbstat "$outdir/capture-completeness-fbstat.txt"
+set capture_completeness_diag_raw "$outdir/capture-completeness-diagnostic.raw.txt"
 set media_probe_capture_timeout_ms 30000
 set media_probe_host_wait_ms 60000
 set media_probe_outer_ceiling_ms 140000
@@ -289,6 +385,8 @@ set media_probe_phase_budget_ms 130000
 set media_probe_deadline_margin_ms 10000
 set media_probe_final_min_ms 20000
 set media_probe_final_post_ms 5000
+set capture_completeness_diag_outer_deadline_ms 165000
+set capture_completeness_diag_reserve_ms 5000
 set media_probe_host_dir "$root/rootfs-overlay/share/chromium-youtube-media-probe"
 set media_probe_guest_dir "/share/chromium-youtube-media-probe"
 set chromium_extra_flags [expr {$media_probe eq "1" ?
@@ -305,12 +403,16 @@ set serial_counter 0
 set serial_nonce "YTP[pid][clock clicks]"
 regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
 set required_guest_frames {pre steady0 windowA windowB}
-if {$egl_forensics eq "1"} {
-    set required_guest_frames {pre}
-    file mkdir $egl_trace_dir $provider_dir
-}
-if {$media_probe eq "1"} {
-    lappend required_guest_frames mediaProbe
+if {$capture_completeness_diag eq "1"} {
+    set required_guest_frames {}
+} else {
+    if {$egl_forensics eq "1"} {
+        set required_guest_frames {pre}
+        file mkdir $egl_trace_dir $provider_dir
+    }
+    if {$media_probe eq "1"} {
+        lappend required_guest_frames mediaProbe
+    }
 }
 set send_slow {1 .010}
 set log_extract_status [dict create]
@@ -570,6 +672,438 @@ proc media_probe_capture_disposition {
     }
     return [list [expr {$incomplete ? "INCOMPLETE" : "INVALID"}] \
         $detail $payload $parsed]
+}
+
+proc capture_completeness_diag_disposition {
+    text nonce extension_id expected_marker {expected_attempt initial}
+} {
+    set captured [capture_completeness_diag_capture_payload $text $nonce \
+        $expected_marker $expected_attempt]
+    if {![lindex $captured 0]} {
+        return [list INVALID [lindex $captured 1] "" {}]
+    }
+    set payload [lindex $captured 2]
+    set parsed [parse_capture_completeness_diagnostic $payload $nonce \
+        $extension_id]
+    return [list [lindex $parsed 0] [lindex $parsed 1] $payload $parsed]
+}
+
+# The diagnostic arm cannot use guest_cmd(): that routine intentionally
+# terminalizes generic runs on timeout, EOF, panic, or deadline exhaustion.
+# Here every serial outcome is returned to the diagnostic owner first, so it
+# can be written as nonce-bound raw evidence before finish() ever runs.
+proc capture_completeness_diag_guest_cmd {
+    command label {seconds 30} {deadline_ms 0} {reserve_ms 0}
+    {min_timeout_ms 1000}
+} {
+    global timeout serial_counter serial_nonce send_slow
+    incr serial_counter
+    set marker "${serial_nonce}C${serial_counter}"
+    set fence_regex [guest_fence_regex $marker]
+    set old_timeout $timeout
+    if {$deadline_ms != 0} {
+        set before_send_ms [clock clicks -milliseconds]
+        set before_send_plan [media_probe_final_timeout_seconds $deadline_ms \
+            $before_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+        if {![lindex $before_send_plan 0]} {
+            return [list DIAG_DEADLINE_PRE_SEND "" \
+                "diagnostic-deadline-before-send-$label-[lindex $before_send_plan 2]" \
+                $marker]
+        }
+    }
+    # Preserve the known bracketed-paste first-character-drop mitigation from
+    # the normal serial API, but do not delegate its terminal handling.
+    send "\025"
+    send -s "true;$command;rc=\$?;m=$marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\"\r"
+    if {$deadline_ms != 0} {
+        set after_send_ms [clock clicks -milliseconds]
+        set after_send_plan [media_probe_final_timeout_seconds $deadline_ms \
+            $after_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+        if {![lindex $after_send_plan 0]} {
+            set timeout $old_timeout
+            return [list DIAG_DEADLINE_POST_SEND "" \
+                "diagnostic-deadline-after-send-$label-[lindex $after_send_plan 2]" \
+                $marker]
+        }
+        set timeout [lindex $after_send_plan 1]
+    } else {
+        set timeout $seconds
+    }
+    expect {
+        -re $fence_regex {
+            set buf $expect_out(buffer)
+            set timeout $old_timeout
+            set frame [guest_command_frame_parse $buf $marker]
+            if {![lindex $frame 0]} {
+                return [list FRAME_INVALID $buf [lindex $frame 1] $marker]
+            }
+            return [list [lindex $frame 2] $buf pass $marker]
+        }
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} {
+            set buf $expect_out(buffer)
+            set timeout $old_timeout
+            return [list DIAG_CRASH $buf "diagnostic-crash-$label" $marker]
+        }
+        timeout {
+            set buf [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            set timeout $old_timeout
+            return [list DIAG_TIMEOUT $buf "diagnostic-timeout-$label" $marker]
+        }
+        eof {
+            set buf [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            set timeout $old_timeout
+            return [list DIAG_EOF $buf "diagnostic-eof-$label" $marker]
+        }
+    }
+}
+
+# A shell status or malformed serial fence is retained as raw diagnostic
+# evidence, then terminalized as nonce-bound DIAGNOSTIC_INVALID instead of
+# escaping into require_guest() or the normal result/extractor path.
+proc capture_completeness_diag_command_result {
+    command label {seconds 30} {deadline_ms 0} {reserve_ms 0}
+    {min_timeout_ms 1000}
+} {
+    set result [capture_completeness_diag_guest_cmd $command $label $seconds \
+        $deadline_ms $reserve_ms $min_timeout_ms]
+    set raw_status [lindex $result 0]
+    set raw_text [lindex $result 1]
+    set raw_detail [expr {[llength $result] >= 3 ? [lindex $result 2] : "missing-result-detail"}]
+    set marker [expr {[llength $result] >= 4 ? [lindex $result 3] : ""}]
+    # guest_cmd mints the marker before it writes to the serial console.  Keep
+    # a deterministic fail-closed fallback solely for an internal violation so
+    # an INVALID diagnostic still has a syntactically owned envelope.
+    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+        set raw_status FRAME_INVALID
+        set raw_detail "diagnostic-command-marker-invalid-$raw_detail"
+        set marker YTCAPTUREDIAGMARKERINVALID
+    }
+    return [list $raw_status $raw_text $raw_detail $marker]
+}
+
+proc capture_completeness_diag_terminalize {attempt phase result} {
+    global media_probe_nonce media_probe_extension_id
+    global capture_completeness_diag_serial capture_completeness_diag_log
+    global capture_completeness_diag_raw metricsf
+
+    lassign $result raw_status raw_text raw_detail marker
+    set command_ok [expr {$raw_status eq "0"}]
+    # A successful command may still contain a malformed/replayed diagnostic
+    # payload and is therefore parsed verbatim.  A command/framing failure is
+    # deliberately represented by an otherwise empty owned transaction: no
+    # unframed output can be mistaken for diagnostic facts.
+    set wire [capture_completeness_diag_host_envelope $attempt \
+        $media_probe_nonce $marker]
+    if {$command_ok} {
+        append wire $raw_text
+    }
+    set terminal [capture_completeness_diag_terminal_disposition $wire \
+        $media_probe_nonce $media_probe_extension_id]
+    lassign $terminal disposition detail payload parsed parsed_attempt parsed_marker
+    if {!$command_ok} {
+        set disposition INVALID
+        set detail "command-$phase-status-$raw_status-framing-$raw_detail"
+        set payload ""
+        set parsed_attempt $attempt
+        set parsed_marker $marker
+    }
+    wf $capture_completeness_diag_serial $wire
+    wf $capture_completeness_diag_raw \
+        "capture_attempt=$attempt phase=$phase nonce=$media_probe_nonce marker=$marker raw_status=$raw_status raw_detail=$raw_detail diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n$raw_text"
+    wf $capture_completeness_diag_log \
+        "capture_attempt=$parsed_attempt nonce=$media_probe_nonce disposition=$disposition detail=$detail raw_status=$raw_status raw_phase=$phase diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n$payload"
+    af $metricsf "capture_completeness_diagnostic_raw attempt=$attempt phase=$phase raw_status=$raw_status raw_detail=$raw_detail disposition=$disposition detail=$detail diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    return [list $disposition $detail $raw_status $parsed_marker]
+}
+
+proc capture_completeness_diag_new_marker {} {
+    global serial_counter serial_nonce
+    incr serial_counter
+    set marker "${serial_nonce}D${serial_counter}"
+    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+        error "capture-completeness diagnostic marker invalid"
+    }
+    return $marker
+}
+
+# Convert any diagnostic-owned command or bootstrap failure into one durable,
+# nonce-bound INVALID terminal before finish() starts cleanup.  This is shared
+# by root/KDE/KVM bootstrap failures and the launch/fbstat/capture collector;
+# no caller may reach the generic diagnostic extractor with an unowned raw
+# terminal.
+proc capture_completeness_diag_owned_terminal {phase result} {
+    global media_probe_verdict
+
+    set terminal [capture_completeness_diag_terminalize initial $phase $result]
+    set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+    set label "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    return [list [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}] \
+        $label $terminal]
+}
+
+# This is deliberately a nonterminal adapter so static reducers can exercise
+# the real ownership/serialization path before a test double calls finish().
+proc capture_completeness_diag_bootstrap_outcome {
+    phase raw_status raw_text raw_detail
+} {
+    set marker [capture_completeness_diag_new_marker]
+    return [capture_completeness_diag_owned_terminal $phase \
+        [list $raw_status $raw_text $raw_detail $marker]]
+}
+
+proc capture_completeness_diag_bootstrap_terminal {
+    phase raw_status raw_text raw_detail
+} {
+    global capture_completeness_diag
+    if {$capture_completeness_diag ne "1"} {
+        return 0
+    }
+    lassign [capture_completeness_diag_bootstrap_outcome \
+        $phase $raw_status $raw_text $raw_detail] code label terminal
+    # Bootstrap failures are always invalid.  If an internal contract ever
+    # reports otherwise, fail closed and preserve its raw terminal in label.
+    if {[lindex $terminal 0] ne "INVALID"} {
+        set code 8
+        append label " diagnostic-bootstrap-terminal-not-invalid=1"
+    }
+    finish $code $label
+    return 1
+}
+
+proc capture_completeness_diag_collect {attempt {deadline_ms 0} {reserve_ms 0}} {
+    set result [capture_completeness_diag_command_result \
+        "/bin/bash /ytcapturediag.sh" \
+        "capture-completeness-diagnostic-$attempt" 30 $deadline_ms $reserve_ms]
+    return [capture_completeness_diag_terminalize $attempt capture $result]
+}
+
+# This is intentionally a much narrower parser than fb_sample().  It records
+# only diagnostic before/after context and the required virgl GL role; it does
+# not classify a measurement, retry an idle sample, or expose any FPS metric.
+proc capture_completeness_diag_fbstat_context {text} {
+    set backend_rows 0
+    set submit_rows 0
+    set virgl_rows 0
+    set flips {}
+    set presents {}
+    foreach line [split [string map [list "\r\n" "\n" "\r" "\n"] $text] "\n"] {
+        if {[regexp {^backend virgl flags 0x[0-9a-fA-F]+ renderer OpenGL via virtio-gpu virgl$} $line]} {
+            incr backend_rows
+        }
+        if {$line eq "backend_opengl_submit 1"} { incr submit_rows }
+        if {$line eq "backend_virgl_opengl 1"} { incr virgl_rows }
+        foreach {whole value} [regexp -all -inline {kms_page_flip_events=([0-9]+)} $line] {
+            lappend flips $value
+        }
+        if {[regexp {^virgl_bo_presents ([0-9]+)$} $line -> value]} {
+            lappend presents $value
+        }
+    }
+    if {$backend_rows != 1 || $submit_rows != 1 || $virgl_rows != 1 ||
+        [llength $flips] != 1 || [llength $presents] != 1} {
+        return [list 0 "diagnostic-fbstat-context-shape backend=$backend_rows submit=$submit_rows virgl=$virgl_rows flips=[llength $flips] presents=[llength $presents]"]
+    }
+    return [list 1 [lindex $flips 0] [lindex $presents 0]]
+}
+
+proc capture_completeness_diag_fbstat_snapshot {phase {deadline_ms 0} {reserve_ms 0}} {
+    global capture_completeness_diag_fbstat capture_completeness_diag_raw
+    global media_probe_nonce metricsf outdir
+    set result [capture_completeness_diag_command_result "fbstat 2>&1" \
+        "capture-completeness-fbstat-$phase" 35 $deadline_ms $reserve_ms]
+    lassign $result raw_status raw_text raw_detail marker
+    wf "$outdir/capture-completeness-fbstat-$phase.raw.txt" \
+        "phase=$phase nonce=$media_probe_nonce marker=$marker raw_status=$raw_status raw_detail=$raw_detail diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n$raw_text"
+    if {$raw_status ne "0"} {
+        af $capture_completeness_diag_fbstat "phase=$phase status=INVALID raw_status=$raw_status raw_detail=$raw_detail nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1"
+        return [list 0 "diagnostic-fbstat-command-$phase-status-$raw_status-$raw_detail" $result]
+    }
+    set parsed [capture_completeness_diag_fbstat_context $raw_text]
+    if {![lindex $parsed 0]} {
+        af $capture_completeness_diag_fbstat "phase=$phase status=INVALID raw_status=0 raw_detail=[lindex $parsed 1] nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1"
+        return [list 0 [lindex $parsed 1] $result]
+    }
+    set row "phase=$phase flips=[lindex $parsed 1] presents=[lindex $parsed 2] host_ms=[clock milliseconds] diagnostic_only=1 nonsemantic=1"
+    af $capture_completeness_diag_fbstat $row
+    af $metricsf "capture_completeness_fbstat_$phase $row"
+    return [list 1 [lindex $parsed 1] [lindex $parsed 2] $result]
+}
+
+proc capture_completeness_diag_run {} {
+    global media_probe_verdict metricsf capture_completeness_diag_outer_deadline_ms
+    global capture_completeness_diag_reserve_ms
+
+    set run_start_ms [clock clicks -milliseconds]
+    set deadline_ms [expr {$run_start_ms + $capture_completeness_diag_outer_deadline_ms}]
+
+    set launch [capture_completeness_diag_command_result \
+        "/bin/bash /ytcapturediaglaunch.sh" \
+        capture-completeness-diagnostic-launch 35 $deadline_ms \
+        $capture_completeness_diag_reserve_ms]
+    if {[lindex $launch 0] ne "0"} {
+        lassign [capture_completeness_diag_owned_terminal launch $launch] \
+            code label terminal
+        finish $code $label
+    }
+
+    # This settle belongs only to the diagnostic producer's bounded 20-row
+    # timer/rVFC sequence.  It is not a render-start gate or a normal media
+    # phase deadline.
+    after 25000
+    set before [capture_completeness_diag_fbstat_snapshot before $deadline_ms \
+        $capture_completeness_diag_reserve_ms]
+    if {![lindex $before 0]} {
+        lassign [capture_completeness_diag_owned_terminal fbstat-before \
+            [lindex $before 2]] code label terminal
+        finish $code $label
+    }
+
+    set terminal [capture_completeness_diag_collect initial $deadline_ms \
+        $capture_completeness_diag_reserve_ms]
+    set after_context [capture_completeness_diag_fbstat_snapshot after $deadline_ms \
+        $capture_completeness_diag_reserve_ms]
+    if {![lindex $after_context 0]} {
+        lassign [capture_completeness_diag_owned_terminal fbstat-after \
+            [lindex $after_context 2]] _ _ terminal
+    }
+    set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+    af $metricsf "capture_completeness_diagnostic_terminal disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    set terminal_code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+    finish $terminal_code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+}
+
+# Kept as a tiny, separately testable branch predicate.  The static reducer
+# poisons the diagnostic runner under diag0 and every normal helper under
+# diag1, so a future edit cannot silently cross the two routes.
+proc capture_completeness_diag_dispatch {} {
+    global capture_completeness_diag
+    if {$capture_completeness_diag eq "1"} {
+        capture_completeness_diag_run
+        return 1
+    }
+    return 0
+}
+
+# Keep the post-KDE route mechanically ordered.  This is deliberately a
+# source contract as well as the poisoned dynamic runner: a future edit that
+# moves a normal idle/render/argv/media/frame call above diag1 must fail before
+# it can be hidden by a benign diagnostic stub.
+proc capture_completeness_diag_runtime_order_contract {source} {
+    set post_marker "# POST-KDE-READY-"
+    append post_marker "DISPATCH-BEGIN"
+    set diag_begin "# DIAG1-RUNTIME-ONLY-"
+    append diag_begin "BEGIN"
+    set diag_end "# DIAG1-RUNTIME-ONLY-"
+    append diag_end "END"
+    set normal_marker "# NORMAL-RUNTIME-ONLY-"
+    append normal_marker "BEGIN"
+    foreach marker [list $post_marker $diag_begin $diag_end $normal_marker] {
+        set first [string first $marker $source]
+        if {$first < 0 || [string last $marker $source] != $first} {
+            return [list 0 "diagnostic-route-marker-invalid-$marker"]
+        }
+        dict set positions $marker $first
+    }
+    set post [dict get $positions $post_marker]
+    set begin [dict get $positions $diag_begin]
+    set end [dict get $positions $diag_end]
+    set normal [dict get $positions $normal_marker]
+    if {$post >= $begin || $begin >= $end || $end >= $normal} {
+        return [list 0 "diagnostic-route-marker-order-invalid"]
+    }
+    set branch [string range $source $begin \
+        [expr {$end + [string length $diag_end] - 1}]]
+    foreach required {
+        capture_completeness_diag_dispatch
+        {finish 8 "FAIL capture-completeness-diagnostic-branch-returned}
+        {no_fps_claim=1}
+        {no_semantic_success=1}
+    } {
+        if {[string first $required $branch] < 0} {
+            return [list 0 "diagnostic-route-branch-missing-$required"]
+        }
+    }
+    set forbidden {
+        {after 4000}
+        {fb_sample idle}
+        {capture_guest_fb pre}
+        {monitor_screendump pre}
+        {/bin/bash /ytlaunch.sh}
+        {/bin/bash /ytargv.sh}
+        {require_treatment_gpu_role mediaProbe}
+        {/bin/bash /ytmediaprobe.sh}
+        {media_probe_capture_disposition}
+        {capture_guest_fb mediaProbe}
+        {capture_guest_fb steady0}
+        {require_treatment_gpu_role windowA}
+    }
+    foreach segment [list \
+        [string range $source $post [expr {$begin - 1}]] \
+        [string range $source [expr {$end + [string length $diag_end]}] \
+            [expr {$normal - 1}]]] {
+        foreach token $forbidden {
+            if {[string first $token $segment] >= 0} {
+                return [list 0 "diagnostic-route-normal-before-barrier-$token"]
+            }
+        }
+    }
+    set normal_source [string range $source $normal end]
+    foreach token $forbidden {
+        if {[string first $token $normal_source] < 0} {
+            return [list 0 "diagnostic-route-normal-after-barrier-missing-$token"]
+        }
+    }
+    return [list 1 "diag1-before-normal-runtime"]
+}
+
+# Bootstrap is part of diag1 ownership too.  The route cannot rely on the
+# post-KDE branch if root/KDE serial failures still call generic finish first.
+proc capture_completeness_diag_bootstrap_order_contract {source} {
+    # Do not spell either full marker in this source contract: its own
+    # uniqueness assertion must count only the runtime marker in `source`.
+    set begin "# DIAG1-BOOTSTRAP-SERIAL-"
+    append begin "BEGIN"
+    set end "# DIAG1-BOOTSTRAP-SERIAL-"
+    append end "END"
+    set first [string first $begin $source]
+    set last [string first $end $source]
+    if {$first < 0 || $last <= $first || [string last $begin $source] != $first ||
+        [string last $end $source] != $last} {
+        return [list 0 "diagnostic-bootstrap-marker-invalid"]
+    }
+    set block [string range $source $first [expr {$last + [string length $end] - 1}]]
+    foreach required {
+        {capture_completeness_diag_bootstrap_terminal bootstrap-owner}
+        {capture_completeness_diag_bootstrap_terminal bootstrap-root}
+        {capture_completeness_diag_bootstrap_terminal bootstrap-kde}
+        DIAG_BOOTSTRAP_ROOT_TIMEOUT
+        DIAG_BOOTSTRAP_ROOT_EOF
+        DIAG_BOOTSTRAP_ROOT_PANIC
+        DIAG_BOOTSTRAP_KDE_TIMEOUT
+        DIAG_BOOTSTRAP_KDE_EOF
+        DIAG_BOOTSTRAP_KDE_PANIC
+    } {
+        if {[string first $required $block] < 0} {
+            return [list 0 "diagnostic-bootstrap-required-missing-$required"]
+        }
+    }
+    foreach forbidden {
+        {fb_sample idle}
+        {capture_guest_fb pre}
+        {monitor_screendump pre}
+        {/bin/bash /ytlaunch.sh}
+        {/bin/bash /ytargv.sh}
+        {/bin/bash /ytmediaprobe.sh}
+        {require_guest_ok}
+        {require_treatment_gpu_role}
+        {presented_fps}
+        {bo_present_fps}
+    } {
+        if {[string first $forbidden $block] >= 0} {
+            return [list 0 "diagnostic-bootstrap-normal-path-present-$forbidden"]
+        }
+    }
+    return [list 1 "diag1-bootstrap-before-collector"]
 }
 
 proc media_probe_host_wait_elapsed_valid {target_ms elapsed_ms} {
@@ -1389,6 +1923,267 @@ proc extract_and_validate_media_probe_null {} {
     return [list 1 "source-unproven no_fps_claim=1"]
 }
 
+# This arm is intentionally narrower than every other finish extractor.  Its
+# terminal evidence is one nonce-bound diagnostic capture plus the two fbstat
+# context snapshots; it must never inherit normal media/FPS frames or semantic
+# source credit merely because the diagnostic arm also enables the media
+# extension.  Keep the terminal selector pure so the static reducer can prove
+# that a malicious diagnostic verdict never reaches normal success extraction.
+proc finish_extraction_path {code diagnostic forensics media verdict} {
+    if {$diagnostic eq "1"} {
+        return "capture-completeness-diagnostic"
+    }
+    if {$code != 0} {
+        return "evidence-only"
+    }
+    if {$forensics eq "1"} {
+        return "forensics"
+    }
+    if {$media eq "1" && $verdict eq "SOURCE_UNPROVEN"} {
+        return "media-probe-null"
+    }
+    return "normal-success"
+}
+
+proc capture_completeness_diag_serial_identity {text expected_nonce} {
+    if {![regexp {^YT_CAPTURE_COMPLETENESS_HOST_CAPTURE_V1 attempt=(initial|final) nonce=([0-9a-f]{32}) marker=([A-Za-z0-9]+) command=/bin/bash,/ytcapturediag\.sh phase=capture-completeness-diagnostic-(initial|final)\n} $text -> attempt nonce marker phase]} {
+        return [list 0 "diagnostic-host-envelope-unparseable" "" ""]
+    }
+    if {$nonce ne $expected_nonce} {
+        return [list 0 "diagnostic-host-envelope-nonce-mismatch" "" ""]
+    }
+    if {$attempt ne $phase} {
+        return [list 0 "diagnostic-host-envelope-attempt-phase-mismatch" "" ""]
+    }
+    return [list 1 "pass" $attempt $marker]
+}
+
+# Return the terminal classification even for malformed input.  The caller can
+# therefore record an INVALID diagnostic as a non-crediting terminal outcome,
+# without weakening the parser or treating its malformed payload as evidence.
+proc capture_completeness_diag_terminal_disposition {
+    text expected_nonce extension_id
+} {
+    set identity [capture_completeness_diag_serial_identity $text $expected_nonce]
+    if {![lindex $identity 0]} {
+        return [list INVALID [lindex $identity 1] "" {} "" ""]
+    }
+    set attempt [lindex $identity 2]
+    set marker [lindex $identity 3]
+    set disposition [capture_completeness_diag_disposition $text \
+        $expected_nonce $extension_id $marker $attempt]
+    return [list [lindex $disposition 0] [lindex $disposition 1] \
+        [lindex $disposition 2] [lindex $disposition 3] $attempt $marker]
+}
+
+proc capture_completeness_diag_uint_not_less {later earlier} {
+    if {![media_probe_is_uint $later] || ![media_probe_is_uint $earlier]} {
+        return 0
+    }
+    if {[string length $later] != [string length $earlier]} {
+        return [expr {[string length $later] > [string length $earlier]}]
+    }
+    return [expr {[string compare $later $earlier] >= 0}]
+}
+
+# fbstat is retained only as before/after context.  This parser deliberately
+# checks no elapsed rate or presentation threshold, so snapshots can never be
+# substituted for semantic source proof or FPS credit.
+proc capture_completeness_diag_fbstat_contract {text} {
+    set rows [dict create]
+    set line_number 0
+    foreach line [split [string trimright $text "\n"] "\n"] {
+        incr line_number
+        if {$line eq ""} {
+            return [list 0 "diagnostic-fbstat-blank-line-$line_number"]
+        }
+        if {![regexp {^phase=(before|after) flips=(0|[1-9][0-9]*) presents=(0|[1-9][0-9]*) host_ms=(0|[1-9][0-9]*) diagnostic_only=1 nonsemantic=1$} $line -> phase flips presents host_ms]} {
+            return [list 0 "diagnostic-fbstat-shape-invalid-$line_number"]
+        }
+        if {[dict exists $rows $phase]} {
+            return [list 0 "diagnostic-fbstat-duplicate-phase-$phase"]
+        }
+        dict set rows $phase [list $flips $presents $host_ms]
+    }
+    if {[dict size $rows] != 2 || ![dict exists $rows before] ||
+        ![dict exists $rows after]} {
+        return [list 0 "diagnostic-fbstat-before-after-required"]
+    }
+    lassign [dict get $rows before] before_flips before_presents before_ms
+    lassign [dict get $rows after] after_flips after_presents after_ms
+    foreach pair [list \
+        [list host-ms $after_ms $before_ms] \
+        [list flips $after_flips $before_flips] \
+        [list presents $after_presents $before_presents]] {
+        lassign $pair name later earlier
+        if {![capture_completeness_diag_uint_not_less $later $earlier]} {
+            return [list 0 "diagnostic-fbstat-$name-regressed"]
+        }
+    }
+    return [list 1 "before-after-context=PASS no_fps_claim=1 no_semantic_success=1"]
+}
+
+proc capture_completeness_diag_log_contract {
+    text attempt nonce disposition payload
+} {
+    set prefix "capture_attempt=$attempt nonce=$nonce disposition=$disposition detail="
+    if {[string first $prefix $text] != 0} {
+        return [list 0 "diagnostic-summary-prefix-invalid"]
+    }
+    set newline [string first "\n" $text]
+    if {$newline < 0} {
+        return [list 0 "diagnostic-summary-unterminated"]
+    }
+    set summary [string range $text 0 [expr {$newline - 1}]]
+    if {![regexp { diagnostic_only=1 no_fps_claim=1 no_semantic_success=1$} $summary]} {
+        return [list 0 "diagnostic-summary-noncredit-markers-missing"]
+    }
+    set recorded_payload [string range $text [expr {$newline + 1}] end]
+    if {$recorded_payload ne $payload} {
+        return [list 0 "diagnostic-summary-payload-mismatch"]
+    }
+    if {[regexp {(^|[^A-Za-z_])(presented_fps|bo_present_fps|semantic_success=1)([^A-Za-z_]|$)} $text]} {
+        return [list 0 "diagnostic-summary-credit-token-present"]
+    }
+    return [list 1 "summary=nonce-bound noncredit=PASS"]
+}
+
+proc capture_completeness_diag_guest_log_contract {
+    status text payload {allow_invalid_terminal 0}
+} {
+    set expected_status [expr {$payload eq "" ? "empty" : "present"}]
+    if {$status ne $expected_status &&
+        !($allow_invalid_terminal && $status in {missing empty present})} {
+        return [list 0 "diagnostic-guest-log-status-$status-expected-$expected_status"]
+    }
+    if {!$allow_invalid_terminal && $text ne $payload} {
+        return [list 0 "diagnostic-guest-log-payload-mismatch"]
+    }
+    if {[string first "YT_MEDIA_PROBE_V1 " $text] >= 0} {
+        return [list 0 "diagnostic-guest-log-semantic-marker-present"]
+    }
+    return [list 1 "guest-capture=exact-diagnostic-payload"]
+}
+
+proc capture_completeness_diag_invalid_fbstat_row {line expected_phase expected_nonce} {
+    if {![regexp {^phase=(before|after) status=INVALID raw_status=([^ ]+) raw_detail=.+ nonce=([0-9a-f]{32}) diagnostic_only=1 nonsemantic=1$} $line -> phase raw_status nonce] ||
+        $phase ne $expected_phase || $nonce ne $expected_nonce} {
+        return 0
+    }
+    return 1
+}
+
+# Invalid diagnostic terminal context is stage-bound.  A launch failure occurs
+# before either snapshot, before-context failure owns exactly its one INVALID
+# row, and after-context failure necessarily retains a valid before row plus
+# an INVALID after row.  Do not collapse those honest shapes into a generic
+# extractor failure or accept arbitrary partial context.
+proc capture_completeness_diag_invalid_fbstat_contract {
+    text expected_nonce terminal_phase
+} {
+    if {$terminal_phase in {
+        bootstrap-root bootstrap-kde bootstrap-kvm bootstrap-owner bootstrap-finish launch
+    }} {
+        if {$text ne ""} {
+            return [list 0 "diagnostic-invalid-$terminal_phase-fbstat-not-absent"]
+        }
+        return [list 1 "invalid-context=absent-$terminal_phase raw-status-retained"]
+    }
+    set lines [split [string trimright $text "\n"] "\n"]
+    switch -- $terminal_phase {
+        fbstat-before {
+            if {[llength $lines] != 1 ||
+                ![capture_completeness_diag_invalid_fbstat_row \
+                    [lindex $lines 0] before $expected_nonce]} {
+                return [list 0 "diagnostic-invalid-before-context-shape"]
+            }
+            return [list 1 "invalid-context=before-only raw-status-retained"]
+        }
+        fbstat-after {
+            if {[llength $lines] != 2 ||
+                ![regexp {^phase=before flips=(0|[1-9][0-9]*) presents=(0|[1-9][0-9]*) host_ms=(0|[1-9][0-9]*) diagnostic_only=1 nonsemantic=1$} [lindex $lines 0]] ||
+                ![capture_completeness_diag_invalid_fbstat_row \
+                    [lindex $lines 1] after $expected_nonce]} {
+                return [list 0 "diagnostic-invalid-after-context-shape"]
+            }
+            return [list 1 "invalid-context=before-valid-after-invalid raw-status-retained"]
+        }
+        default {
+            return [list 0 "diagnostic-invalid-context-phase-unexpected-$terminal_phase"]
+        }
+    }
+}
+
+proc capture_completeness_diag_raw_contract {text expected_nonce} {
+    if {![regexp {^capture_attempt=(initial|final) phase=([a-z0-9-]+) nonce=([0-9a-f]{32}) marker=([A-Za-z0-9]+) raw_status=([^ ]+) raw_detail=.+ diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n} $text -> attempt phase nonce marker raw_status]} {
+        return [list 0 "diagnostic-raw-status-header-invalid"]
+    }
+    if {$nonce ne $expected_nonce} {
+        return [list 0 "diagnostic-raw-status-nonce-mismatch"]
+    }
+    return [list 1 "raw_status=$raw_status marker=$marker attempt=$attempt phase=$phase" \
+        $attempt $phase $raw_status $marker]
+}
+
+proc extract_and_validate_capture_completeness_diagnostic {} {
+    global capture_completeness_diag_serial capture_completeness_diag_log
+    global capture_completeness_diag_fbstat media_probe_nonce
+    global media_probe_extension_id media_probe_verdict metricsf scratch
+    global capture_completeness_diag_raw
+
+    set errors {}
+    set serial [read_text $capture_completeness_diag_serial]
+    set terminal [capture_completeness_diag_terminal_disposition $serial \
+        $media_probe_nonce $media_probe_extension_id]
+    lassign $terminal disposition detail payload parsed attempt marker
+    set expected_verdict "DIAGNOSTIC_$disposition"
+    if {$media_probe_verdict ne $expected_verdict} {
+        lappend errors "diagnostic-verdict-mismatch-$media_probe_verdict-expected-$expected_verdict"
+    }
+
+    set guest_log "$::outdir/yt-capture-completeness.log"
+    set guest_status [dump_guest_log_artifact /yt-capture-completeness.log \
+        $guest_log]
+    set guest_contract [capture_completeness_diag_guest_log_contract \
+        $guest_status [read_text $guest_log] $payload \
+        [expr {$disposition eq "INVALID"}]]
+    if {![lindex $guest_contract 0]} {
+        lappend errors [lindex $guest_contract 1]
+    }
+
+    set summary_contract [capture_completeness_diag_log_contract \
+        [read_text $capture_completeness_diag_log] $attempt $media_probe_nonce \
+        $disposition $payload]
+    if {![lindex $summary_contract 0]} {
+        lappend errors [lindex $summary_contract 1]
+    }
+    set raw_contract [capture_completeness_diag_raw_contract \
+        [read_text $capture_completeness_diag_raw] $media_probe_nonce]
+    if {![lindex $raw_contract 0]} {
+        lappend errors [lindex $raw_contract 1]
+    }
+    set fbstat_contract [capture_completeness_diag_fbstat_contract \
+        [read_text $capture_completeness_diag_fbstat]]
+    if {![lindex $fbstat_contract 0] && $disposition eq "INVALID" &&
+        [lindex $raw_contract 0]} {
+        set fbstat_contract [capture_completeness_diag_invalid_fbstat_contract \
+            [read_text $capture_completeness_diag_fbstat] $media_probe_nonce \
+            [lindex $raw_contract 3]]
+    }
+    if {![lindex $fbstat_contract 0]} {
+        lappend errors [lindex $fbstat_contract 1]
+    }
+    if {[regexp {(^|[\r\n])(presented_fps|bo_present_fps)_} \
+            [read_text $metricsf]]} {
+        lappend errors "diagnostic-fps-metric-present"
+    }
+    af $metricsf "capture_completeness_terminal=$disposition detail=$detail marker=$marker attempt=$attempt diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "terminal=$disposition [lindex $fbstat_contract 1] [lindex $raw_contract 1] no_fps_claim=1 no_semantic_success=1"]
+}
+
 proc extract_and_validate_forensics {} {
     global outdir launcher_log mesa_trace_log forensic_manifest
     global dynamic_process_log artifact_manifest egl_trace_dir runlog
@@ -1468,44 +2263,131 @@ proc extract_and_validate_forensics {} {
     return [list 1 "verdict=$forensic_verdict no_fps_claim=1 trace_files=[llength $trace_files] [lindex $cap_result 1]"]
 }
 
+# Keep the primary diagnostic disposition/raw status authoritative even when
+# post-stop artifact validation discovers a second fault.  COMPLETE or
+# INCOMPLETE becomes a failing process status when its evidence is corrupt, but
+# the label remains diagnostic and retains the original raw status instead of
+# being replaced by a generic extractor verdict.
+proc capture_completeness_diag_finish_result {code label} {
+    set artifact_result [extract_and_validate_capture_completeness_diagnostic]
+    if {![lindex $artifact_result 0]} {
+        if {$code == 0} { set code 8 }
+        append label " diagnostic_artifact_validation=FAIL detail=[lindex $artifact_result 1]"
+    }
+    return [list $code $label]
+}
+
+# A diagnostic may fail before its explicit bootstrap/collector owner is
+# reached (for example a launcher ownership or signal path).  Never let that
+# generic finish enter the diagnostic extractor without first minting the same
+# nonce-bound raw INVALID terminal used by explicit bootstrap failures.
+proc capture_completeness_diag_ensure_terminal {code label} {
+    global capture_completeness_diag media_probe_verdict
+    if {$capture_completeness_diag ne "1" ||
+        [string match "DIAGNOSTIC_*" $media_probe_verdict]} {
+        return [list $code $label]
+    }
+    lassign [capture_completeness_diag_bootstrap_outcome bootstrap-finish \
+        DIAG_BOOTSTRAP_FINISH "" "diagnostic-generic-finish-without-owner"] \
+        terminal_code terminal_label terminal
+    if {[lindex $terminal 0] ne "INVALID"} {
+        set terminal_code 8
+        append terminal_label " diagnostic-bootstrap-terminal-not-invalid=1"
+    }
+    append terminal_label " original_finish_code=$code original_finish_label=[string map [list "\n" " " "\r" " "] $label]"
+    return [list $terminal_code $terminal_label]
+}
+
+# Cleanup status remains authoritative for process ownership, but must append
+# to—not replace—the nonce-bound diagnostic disposition/raw status.
+proc capture_completeness_diag_finish_cleanup {code label owned lingering} {
+    if {$owned ne ""} {
+        set code 9
+        append label " cleanup_lingering_owned_process_group=$owned"
+    }
+    if {$lingering ne ""} {
+        set code 9
+        append label " cleanup_lingering_qemu=$lingering"
+    }
+    return [list $code $label]
+}
+
 proc finish {code label} {
     global finishing statusf outdir scratch monitor qemu_pid qemu_started
     global metricsf runlog owned_group_remaining egl_forensics
-    global media_probe media_probe_verdict
+    global media_probe media_probe_verdict capture_completeness_diag
     # A second signal while the first finish path is draining must not bypass
     # the process-group kill and exact-name postcondition.
     if {$finishing} { return }
     set finishing 1
 
+    lassign [capture_completeness_diag_ensure_terminal $code $label] code label
+
     stop_qemu
     catch {file delete -force $monitor}
 
-    if {$code == 0} {
-        if {$egl_forensics eq "1"} {
+    set extraction_path [finish_extraction_path $code \
+        $capture_completeness_diag $egl_forensics $media_probe \
+        $media_probe_verdict]
+    switch -- $extraction_path {
+        capture-completeness-diagnostic {
+            # Never call extract_available_guest_evidence here: it extracts
+            # normal pre/steady/window/media artifacts and would turn an
+            # opt-in timing diagnostic into a semantic/FPS success shape.
+            lassign [capture_completeness_diag_finish_result $code $label] \
+                code label
+        }
+        forensics {
             set artifact_result [extract_and_validate_forensics]
-        } elseif {$media_probe eq "1" &&
-                  $media_probe_verdict eq "SOURCE_UNPROVEN"} {
+            if {![lindex $artifact_result 0]} {
+                set code 8
+                set label "FAIL artifact-validation [lindex $artifact_result 1]"
+            }
+        }
+        media-probe-null {
             set artifact_result [extract_and_validate_media_probe_null]
-        } else {
+            if {![lindex $artifact_result 0]} {
+                set code 8
+                set label "FAIL artifact-validation [lindex $artifact_result 1]"
+            }
+        }
+        normal-success {
             set artifact_result [extract_and_validate_success]
+            if {![lindex $artifact_result 0]} {
+                set code 8
+                set label "FAIL artifact-validation [lindex $artifact_result 1]"
+            }
         }
-        if {![lindex $artifact_result 0]} {
+        evidence-only {
+            extract_available_guest_evidence
+        }
+        default {
             set code 8
-            set label "FAIL artifact-validation [lindex $artifact_result 1]"
+            set label "FAIL unknown-finish-extraction-path-$extraction_path"
         }
-    } else {
-        extract_available_guest_evidence
     }
-
-    if {$owned_group_remaining ne ""} {
-        set code 9
-        set label "FAIL lingering-owned-process-group exact=$owned_group_remaining"
+    if {$capture_completeness_diag eq "1"} {
+        if {[string first "no_fps_claim=1" $label] < 0} {
+            append label " no_fps_claim=1"
+        }
+        if {[string first "no_semantic_success=1" $label] < 0} {
+            append label " no_semantic_success=1"
+        }
     }
 
     set lingering [exact_qemu_lines]
-    if {$lingering ne ""} {
-        set code 9
-        set label "FAIL lingering-qemu exact=$lingering"
+    if {$capture_completeness_diag eq "1"} {
+        lassign [capture_completeness_diag_finish_cleanup $code $label \
+            $owned_group_remaining $lingering] code label
+    } else {
+        if {$owned_group_remaining ne ""} {
+            set code 9
+            set label "FAIL lingering-owned-process-group exact=$owned_group_remaining"
+        }
+        if {$lingering ne ""} {
+            set code 9
+            set label "FAIL lingering-qemu exact=$lingering"
+        }
     }
     af $statusf "[iso_now] result_code=$code result=$label exact_qemu_after=[expr {$lingering eq "" ? "none" : $lingering}]"
     if {$code == 0} {
@@ -1564,7 +2446,11 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
             set timeout $old_timeout
             set frame [guest_command_frame_parse $buf $marker]
             if {![lindex $frame 0]} {
-                return [list FRAME_INVALID $buf [lindex $frame 1]]
+                # Keep the locally minted marker even on a malformed terminal
+                # frame.  The diagnostic-only arm records that raw framing
+                # failure inside its own nonce-bound INVALID artifact instead
+                # of handing it to require_guest()/normal extraction.
+                return [list FRAME_INVALID $buf [lindex $frame 1] $marker]
             }
             return [list [lindex $frame 2] $buf pass $marker]
         }
@@ -1604,9 +2490,13 @@ proc require_guest_ok_with_marker {result label} {
 }
 
 proc require_kvm_proof {} {
-    global runlog
+    global runlog capture_completeness_diag
     set text [read_text $runlog]
     if {![regexp {run-qemu: using KVM acceleration} $text]} {
+        if {$capture_completeness_diag eq "1"} {
+            capture_completeness_diag_bootstrap_terminal bootstrap-kvm \
+                DIAG_BOOTSTRAP_KVM "$text" "diagnostic-missing-kvm-proof"
+        }
         finish 8 "FAIL missing-kvm-proof"
     }
 }
@@ -2037,14 +2927,37 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             fail_preflight "static-check-force-hd720-arm-contract case=$contract_case parsed=$parsed_contract"
         }
     }
+    foreach contract_case {
+        {1 1 0 1 1 0 1}
+        {1 1 0 1 1 1 1}
+        {1 1 0 1 0 1 0}
+        {1 1 0 0 1 1 0}
+        {0 1 0 1 1 1 0}
+        {1 0 0 1 1 1 0}
+        {1 1 1 1 1 1 0}
+        {1 1 0 1 1 2 0}
+    } {
+        lassign $contract_case mp audio forensic probe force diagnostic expected
+        set parsed_contract [capture_completeness_diag_arm_contract \
+            $mp $audio $forensic $probe $force $diagnostic]
+        if {[lindex $parsed_contract 0] ne $expected} {
+            fail_preflight "static-check-capture-completeness-arm-contract case=$contract_case parsed=$parsed_contract"
+        }
+    }
     set static_nonce 0123456789abcdef0123456789abcdef
     set static_base_url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
     if {$force_hd720 eq "1"} {
-        if {$arm ne "media-probe-hd720" ||
-            $url ne "$static_base_url#xv6ytprobe=$media_probe_nonce&xv6ythd720=1"} {
+        set expected_force_arm [expr {$capture_completeness_diag eq "1" ?
+            "media-probe-hd720-capturediag" : "media-probe-hd720"}]
+        set expected_force_url "$static_base_url#xv6ytprobe=$media_probe_nonce&xv6ythd720=1"
+        if {$capture_completeness_diag eq "1"} {
+            append expected_force_url "&xv6ytcapturediag=1"
+        }
+        if {$arm ne $expected_force_arm || $url ne $expected_force_url} {
             fail_preflight "static-check-force-hd720-arm-url arm=$arm url=$url"
         }
-    } elseif {[string first {xv6ythd720} $url] >= 0} {
+    } elseif {[string first {xv6ythd720} $url] >= 0 ||
+              [string first {xv6ytcapturediag} $url] >= 0} {
         fail_preflight "static-check-force-hd720-selector-leaked url=$url"
     } elseif {$media_probe eq "0" && $url ne $static_base_url} {
         fail_preflight "static-check-normal-arm-url-mutated url=$url"
@@ -2075,6 +2988,1402 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     }
     set force_media_60 [synthetic_media_probe_evidence $static_nonce \
         [dict create force_hd720 1]]
+    # Separate diagnostic transactions are intentionally incapable of changing
+    # the semantic parser.  Exercise complete, frozen, replayed, reordered,
+    # duplicate, wrong-nonce, injected, and truncated forms before any boot.
+    proc static_capture_completeness_wire {payload nonce attempt marker} {
+        set begin "YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=$nonce status=oneshot byte_cap=16384"
+        set end "YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=$nonce status=oneshot byte_cap=16384"
+        set separator "\r\n"
+        set payload_wire [string map [list "\n" $separator] $payload]
+        return "[capture_completeness_diag_host_envelope $attempt $nonce $marker]\033\[?2004hsynthetic-preamble\r\n\033\[?2004l\r$begin$separator${payload_wire}$separator$end$separator$separator${marker}:RC:0$separator${marker}:FENCE$separator"
+    }
+    set static_capture_marker YTCAPTURESTATICC7
+    set diagnostic_complete_payload [synthetic_capture_completeness_diagnostic \
+        $static_nonce]
+    set diagnostic_complete_wire [static_capture_completeness_wire \
+        $diagnostic_complete_payload $static_nonce initial $static_capture_marker]
+    set diagnostic_complete [capture_completeness_diag_disposition \
+        $diagnostic_complete_wire $static_nonce $media_probe_extension_id \
+        $static_capture_marker initial]
+    set diagnostic_freeze_continued_payload \
+        [synthetic_capture_completeness_diagnostic $static_nonce 4 1]
+    set diagnostic_freeze_stopped_payload \
+        [synthetic_capture_completeness_diagnostic $static_nonce 4 0]
+    set diagnostic_freeze_continued [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_freeze_continued_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_freeze_stopped [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_freeze_stopped_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_lines [split $diagnostic_complete_payload "\n"]
+    set diagnostic_reordered_payload [join [concat \
+        [lrange $diagnostic_lines 1 1] [lrange $diagnostic_lines 0 0] \
+        [lrange $diagnostic_lines 2 end]] "\n"]
+    set diagnostic_duplicate_payload [join [concat $diagnostic_lines \
+        [lrange $diagnostic_lines 0 0]] "\n"]
+    set diagnostic_wrong_nonce_payload [string map \
+        [list "nonce=$static_nonce" "nonce=ffffffffffffffffffffffffffffffff"] \
+        $diagnostic_complete_payload]
+    set diagnostic_replay_payload "$diagnostic_complete_payload\n$diagnostic_complete_payload"
+    set diagnostic_oversized_payload [join [lrepeat 65 \
+        [lindex $diagnostic_lines 0]] "\n"]
+    set diagnostic_long_counter [string repeat 9 150]
+    set diagnostic_total_cap_line [lindex $diagnostic_lines 0]
+    regsub {rvfc_callbacks=[0-9]+} $diagnostic_total_cap_line \
+        "rvfc_callbacks=$diagnostic_long_counter" diagnostic_total_cap_line
+    set diagnostic_total_cap_payload [join [lrepeat 64 \
+        $diagnostic_total_cap_line] "\n"]
+    set diagnostic_reordered [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_reordered_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_duplicate [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_duplicate_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_wrong_nonce [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_wrong_nonce_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_replay [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_replay_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_oversized [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_oversized_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_total_cap [capture_completeness_diag_disposition \
+        [static_capture_completeness_wire $diagnostic_total_cap_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id $static_capture_marker initial]
+    set diagnostic_truncated [capture_completeness_diag_disposition \
+        [string range $diagnostic_complete_wire 0 end-11] $static_nonce \
+        $media_probe_extension_id $static_capture_marker initial]
+    # Terminal selection must be diagnostic-only for every parser outcome.
+    # These POCs exercise the exact serial identity path used by finish(), not
+    # merely the parser in isolation.
+    set diagnostic_missing_payload [join [lrange $diagnostic_lines 1 end] "\n"]
+    set diagnostic_missing_wire [static_capture_completeness_wire \
+        $diagnostic_missing_payload $static_nonce initial $static_capture_marker]
+    set diagnostic_moved_wire [static_capture_completeness_wire \
+        $diagnostic_reordered_payload $static_nonce initial $static_capture_marker]
+    set diagnostic_host_wrong_nonce_wire [string map \
+        [list "nonce=$static_nonce" "nonce=ffffffffffffffffffffffffffffffff"] \
+        $diagnostic_complete_wire]
+    set diagnostic_terminal_complete [capture_completeness_diag_terminal_disposition \
+        $diagnostic_complete_wire $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_freeze [capture_completeness_diag_terminal_disposition \
+        [static_capture_completeness_wire $diagnostic_freeze_continued_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_missing [capture_completeness_diag_terminal_disposition \
+        $diagnostic_missing_wire $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_moved [capture_completeness_diag_terminal_disposition \
+        $diagnostic_moved_wire $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_replay [capture_completeness_diag_terminal_disposition \
+        [static_capture_completeness_wire $diagnostic_replay_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_wrong_nonce [capture_completeness_diag_terminal_disposition \
+        $diagnostic_host_wrong_nonce_wire $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_duplicate [capture_completeness_diag_terminal_disposition \
+        [static_capture_completeness_wire $diagnostic_duplicate_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_cap [capture_completeness_diag_terminal_disposition \
+        [static_capture_completeness_wire $diagnostic_oversized_payload \
+            $static_nonce initial $static_capture_marker] \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_truncated [capture_completeness_diag_terminal_disposition \
+        [string range $diagnostic_complete_wire 0 end-11] \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_terminal_summary "capture_attempt=[lindex $diagnostic_terminal_complete 4] nonce=$static_nonce disposition=[lindex $diagnostic_terminal_complete 0] detail=[lindex $diagnostic_terminal_complete 1] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n[lindex $diagnostic_terminal_complete 2]"
+    set diagnostic_terminal_summary_contract [capture_completeness_diag_log_contract \
+        $diagnostic_terminal_summary [lindex $diagnostic_terminal_complete 4] \
+        $static_nonce [lindex $diagnostic_terminal_complete 0] \
+        [lindex $diagnostic_terminal_complete 2]]
+    set diagnostic_terminal_guest_contract [capture_completeness_diag_guest_log_contract \
+        present [lindex $diagnostic_terminal_complete 2] \
+        [lindex $diagnostic_terminal_complete 2]]
+    set diagnostic_fbstat_complete [capture_completeness_diag_fbstat_contract \
+        "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=after flips=101 presents=91 host_ms=2000 diagnostic_only=1 nonsemantic=1\n"]
+    set diagnostic_fbstat_duplicate [capture_completeness_diag_fbstat_contract \
+        "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=before flips=101 presents=91 host_ms=2000 diagnostic_only=1 nonsemantic=1\n"]
+    set diagnostic_credit_summary [string map \
+        [list "no_semantic_success=1" "semantic_success=1"] \
+        $diagnostic_terminal_summary]
+    set diagnostic_credit_summary_contract [capture_completeness_diag_log_contract \
+        $diagnostic_credit_summary [lindex $diagnostic_terminal_complete 4] \
+        $static_nonce [lindex $diagnostic_terminal_complete 0] \
+        [lindex $diagnostic_terminal_complete 2]]
+    set diagnostic_finish_complete [finish_extraction_path 0 1 0 1 SOURCE_PROVEN]
+    set diagnostic_finish_freeze [finish_extraction_path 0 1 0 1 DIAGNOSTIC_INCOMPLETE]
+    set diagnostic_finish_invalid [finish_extraction_path 8 1 0 1 DIAGNOSTIC_INVALID]
+    set normal_finish_success [finish_extraction_path 0 0 0 1 SOURCE_PROVEN]
+    set normal_finish_null [finish_extraction_path 0 0 0 1 SOURCE_UNPROVEN]
+    set normal_finish_forensics [finish_extraction_path 0 0 1 0 NOT_RUN]
+    set normal_finish_failure [finish_extraction_path 8 0 0 1 SOURCE_PROVEN]
+    set diagnostic_normal_frames [capture_completeness_diag_requires_normal_frames 1]
+    set normal_normal_frames [capture_completeness_diag_requires_normal_frames 0]
+    set diagnostic_injected_semantic [parse_media_probe_evidence \
+        "$media_60\n$diagnostic_complete_payload" $static_nonce \
+        $media_probe_extension_id]
+    # fbstat may be useful context in an artifact, but it is not an input to
+    # this parser.  A pristine-looking snapshot cannot upgrade missing timer
+    # facts to COMPLETE.
+    set diagnostic_healthy_fbstat_context {backend virgl renderer OpenGL_via_virtio_gpu_virgl virgl_bo_presents=99999}
+    set diagnostic_without_rows [parse_capture_completeness_diagnostic "" \
+        $static_nonce $media_probe_extension_id]
+    # A thrown or blocked console call contributes no trusted diagnostic row;
+    # both producer failures therefore fail closed at the host boundary.
+    set diagnostic_console_throw [parse_capture_completeness_diagnostic "" \
+        $static_nonce $media_probe_extension_id]
+    set diagnostic_console_block [parse_capture_completeness_diagnostic "" \
+        $static_nonce $media_probe_extension_id]
+
+    # Static reachability guard: the actual diag1 runner may contain only its
+    # owned launch/context/capture/terminal primitives.  Keep this source
+    # check beside the parser corpus so future helper additions fail before a
+    # boot instead of turning a diagnostic into a normal measurement route.
+    proc static_capture_diag_proc_body {source name} {
+        set start [string first "proc $name " $source]
+        if {$start < 0} { return "" }
+        set next [string first "\nproc " [string range $source [expr {$start + 1}] end]]
+        if {$next < 0} { return [string range $source $start end] }
+        set end [expr {$start + 1 + $next}]
+        return [string range $source $start [expr {$end - 1}]]
+    }
+    # Source contracts reason about Tcl commands, rather than their physical
+    # wrapping.  Keep this deliberately narrow: it removes only a literal
+    # continuation backslash, its newline, and indentation.
+    proc capture_completeness_diag_source_normalize {source} {
+        regsub -all {\\\r?\n[ \t]*} $source { } source
+        return $source
+    }
+    # Mutate only the production proc body consumed by the source contract.
+    # Whole-source string maps can accidentally rewrite the POC's own expected
+    # token, turning a negative case into a tautology.  Require exactly one
+    # rewrite and re-extract that same body before the caller may use it.
+    proc capture_completeness_diag_mutate_proc {
+        source proc_name pattern replacement label
+    } {
+        set source [capture_completeness_diag_source_normalize $source]
+        set body [static_capture_diag_proc_body $source $proc_name]
+        if {$body eq ""} {
+            return [list 0 "mutation-$label-proc-missing" $source]
+        }
+        set count [regsub -all $pattern $body $replacement mutated]
+        if {$count != 1} {
+            return [list 0 "mutation-$label-match-count-$count" $source]
+        }
+        if {[regexp -- $pattern $mutated]} {
+            return [list 0 "mutation-$label-token-retained" $source]
+        }
+        set start [string first $body $source]
+        if {$start < 0} {
+            return [list 0 "mutation-$label-body-not-found" $source]
+        }
+        set end [expr {$start + [string length $body] - 1}]
+        set source [string replace $source $start $end $mutated]
+        if {[static_capture_diag_proc_body $source $proc_name] ne $mutated} {
+            return [list 0 "mutation-$label-reextract-mismatch" $source]
+        }
+        return [list 1 "mutation-$label-applied" $source]
+    }
+    proc capture_completeness_diag_reserve_contract {outer_ms reserve_ms} {
+        set command_caps {35000 35000 30000 35000}
+        if {![string is integer -strict $outer_ms] ||
+            ![string is integer -strict $reserve_ms] ||
+            $reserve_ms != 5000 || $outer_ms != 165000} {
+            return [list 0 "diagnostic-reserve-invariant-invalid outer=$outer_ms reserve=$reserve_ms"]
+        }
+        set expected [expr {25000 + 35000 + 35000 + 30000 + 35000 + 5000}]
+        if {$outer_ms != $expected} {
+            return [list 0 "diagnostic-reserve-invariant-sum-invalid expected=$expected outer=$outer_ms"]
+        }
+        # At every command pre/post decision, leave a real one-second
+        # command minimum after the dedicated diagnostic tail reserve.
+        set starts {0 60000 95000 125000}
+        set errors {}
+        foreach start_ms $starts cap_ms $command_caps {
+            foreach now_ms [list $start_ms [expr {$start_ms + 1000}]] {
+                set remaining [expr {$outer_ms - $now_ms}]
+                set available [expr {$remaining - $reserve_ms}]
+                set plan [media_probe_final_timeout_seconds $outer_ms $now_ms \
+                    $cap_ms 1000 $reserve_ms]
+                if {$available < 1000 || ![lindex $plan 0] ||
+                    [lindex $plan 1] < 1 || [lindex $plan 1] > ($cap_ms / 1000)} {
+                    lappend errors "stage=$start_ms now=$now_ms cap=$cap_ms remaining=$remaining available=$available plan=$plan"
+                }
+            }
+        }
+        if {[llength $errors] == 0} {
+            return [list 1 diagnostic-reserve-165s-pass]
+        }
+        return [list 0 [join $errors {|}]]
+    }
+    proc capture_completeness_diag_reserve_source_contract {source} {
+        set source [capture_completeness_diag_source_normalize $source]
+        set errors {}
+        set collect [static_capture_diag_proc_body $source \
+            capture_completeness_diag_collect]
+        set fbstat [static_capture_diag_proc_body $source \
+            capture_completeness_diag_fbstat_snapshot]
+        set run [static_capture_diag_proc_body $source \
+            capture_completeness_diag_run]
+        set command [static_capture_diag_proc_body $source \
+            capture_completeness_diag_command_result]
+        set generic [static_capture_diag_proc_body $source guest_cmd]
+        if {[string first {set capture_completeness_diag_outer_deadline_ms 165000} $source] < 0 ||
+            [string first {set capture_completeness_diag_reserve_ms 5000} $source] < 0} {
+            lappend errors config
+        }
+        if {[string first {30 $deadline_ms $reserve_ms} $collect] < 0} {
+            lappend errors collector-callee
+        }
+        if {[string first {35 $deadline_ms $reserve_ms} $fbstat] < 0} {
+            lappend errors fbstat-callee
+        }
+        foreach {name pattern} [list \
+            launch {capture-completeness-diagnostic-launch[[:space:]]+35[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+            before {capture_completeness_diag_fbstat_snapshot[[:space:]]+before[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+            collector {capture_completeness_diag_collect[[:space:]]+initial[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+            after {capture_completeness_diag_fbstat_snapshot[[:space:]]+after[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms}] {
+            if {![regexp -- $pattern $run]} {
+                lappend errors "run-$name"
+            }
+        }
+        # The generic APIs stay default-zero; only diag1 callers receive the
+        # reviewed explicit reserve.
+        if {[string first {{reserve_ms 0}} $command] < 0 ||
+            [string first {{reserve_ms 0}} $generic] < 0} {
+            lappend errors generic-default
+        }
+        return [list [expr {[llength $errors] == 0}] [join $errors ,]]
+    }
+    # The run owner reaches the terminal serializer by delegation: the normal
+    # capture result comes through collect(), while launch/fbstat failures use
+    # owned_terminal().  Require both paths and their real serializer rather
+    # than incorrectly demanding terminalize() text directly in the runner.
+    proc capture_completeness_diag_terminal_chain_contract {source} {
+        set source [capture_completeness_diag_source_normalize $source]
+        set errors {}
+        set run [static_capture_diag_proc_body $source \
+            capture_completeness_diag_run]
+        set collect [static_capture_diag_proc_body $source \
+            capture_completeness_diag_collect]
+        set owned [static_capture_diag_proc_body $source \
+            capture_completeness_diag_owned_terminal]
+        foreach required {
+            capture_completeness_diag_collect
+            capture_completeness_diag_owned_terminal
+            finish
+        } {
+            if {[string first $required $run] < 0} {
+                lappend errors "run-missing-$required"
+            }
+        }
+        if {[string first capture_completeness_diag_terminalize $collect] < 0} {
+            lappend errors collector-bypasses-terminalize
+        }
+        if {[string first capture_completeness_diag_terminalize $owned] < 0} {
+            lappend errors owned-terminal-bypasses-terminalize
+        }
+        return [list [expr {[llength $errors] == 0}] [join $errors ,]]
+    }
+    set static_present_source [read_text [info script]]
+    set static_diag_source_normalized \
+        [capture_completeness_diag_source_normalize $static_present_source]
+    set static_diag_run_body [static_capture_diag_proc_body \
+        $static_diag_source_normalized capture_completeness_diag_run]
+    set static_diag_begin_marker "# DIAG1-RUNTIME-ONLY-"
+    append static_diag_begin_marker "BEGIN"
+    set static_diag_end_marker "# DIAG1-RUNTIME-ONLY-"
+    append static_diag_end_marker "END"
+    set static_diag_branch_start [string first $static_diag_begin_marker \
+        $static_present_source]
+    set static_diag_branch_end [string first $static_diag_end_marker \
+        $static_present_source]
+    set static_diag_branch [expr {$static_diag_branch_start < 0 ||
+        $static_diag_branch_end < $static_diag_branch_start ? "" :
+        [string range $static_present_source $static_diag_branch_start \
+            $static_diag_branch_end]}]
+    set static_diag_source_order \
+        [capture_completeness_diag_runtime_order_contract $static_present_source]
+    set static_diag_bootstrap_order \
+        [capture_completeness_diag_bootstrap_order_contract $static_present_source]
+    set static_diag_source_order_mutated [string range \
+        $static_present_source 0 [expr {$static_diag_branch_start - 1}]]
+    append static_diag_source_order_mutated {set idle [fb_sample idle]}
+    append static_diag_source_order_mutated [string range \
+        $static_present_source $static_diag_branch_start end]
+    set static_diag_source_order_reject \
+        [capture_completeness_diag_runtime_order_contract \
+            $static_diag_source_order_mutated]
+    proc static_capture_diag_marker_occurrences {source marker} {
+        set count 0
+        set offset 0
+        while {1} {
+            set found [string first $marker $source $offset]
+            if {$found < 0} { break }
+            incr count
+            set offset [expr {$found + [string length $marker]}]
+        }
+        return $count
+    }
+    # Keep the POC's own source free of the exact token.  The one runtime
+    # comment is the only baseline occurrence subject to this source contract.
+    set static_diag_bootstrap_begin "# DIAG1-BOOTSTRAP-SERIAL-"
+    append static_diag_bootstrap_begin "BEGIN"
+    set static_diag_bootstrap_end "# DIAG1-BOOTSTRAP-SERIAL-"
+    append static_diag_bootstrap_end "END"
+    set static_diag_bootstrap_marker_counts [list \
+        [static_capture_diag_marker_occurrences $static_present_source \
+            $static_diag_bootstrap_begin] \
+        [static_capture_diag_marker_occurrences $static_present_source \
+            $static_diag_bootstrap_end]]
+    set static_diag_bootstrap_marker_positive \
+        [expr {$static_diag_bootstrap_marker_counts eq {1 1}}]
+    set static_diag_bootstrap_start [string first $static_diag_bootstrap_begin \
+        $static_present_source]
+    set static_diag_bootstrap_mutated $static_present_source
+    if {$static_diag_bootstrap_start >= 0} {
+        set static_diag_bootstrap_mutated [string range \
+            $static_present_source 0 [expr {$static_diag_bootstrap_start - 1}]]
+        append static_diag_bootstrap_mutated $static_diag_bootstrap_begin
+        append static_diag_bootstrap_mutated {set idle [fb_sample idle]}
+        append static_diag_bootstrap_mutated [string range $static_present_source \
+            [expr {$static_diag_bootstrap_start + [string length $static_diag_bootstrap_begin]}] end]
+    }
+    set static_diag_bootstrap_order_reject \
+        [capture_completeness_diag_bootstrap_order_contract \
+            $static_diag_bootstrap_mutated]
+    set static_diag_bootstrap_duplicate "$static_present_source\n$static_diag_bootstrap_begin\n"
+    set static_diag_bootstrap_missing [string map [list \
+        $static_diag_bootstrap_begin ""] $static_present_source]
+    set static_diag_bootstrap_reordered [string map [list \
+        $static_diag_bootstrap_begin $static_diag_bootstrap_end \
+        $static_diag_bootstrap_end $static_diag_bootstrap_begin] \
+        $static_present_source]
+    # This models a future assertion that spells the full token in a source
+    # literal.  Its source-input must fail the same uniqueness contract.
+    set static_diag_bootstrap_literal_poison $static_present_source
+    append static_diag_bootstrap_literal_poison [format \
+        "\nset bootstrap_test_literal {%s}\n" $static_diag_bootstrap_begin]
+    set static_diag_bootstrap_marker_negatives [list \
+        [capture_completeness_diag_bootstrap_order_contract \
+            $static_diag_bootstrap_duplicate] \
+        [capture_completeness_diag_bootstrap_order_contract \
+            $static_diag_bootstrap_missing] \
+        [capture_completeness_diag_bootstrap_order_contract \
+            $static_diag_bootstrap_reordered] \
+        [capture_completeness_diag_bootstrap_order_contract \
+            $static_diag_bootstrap_literal_poison]]
+    set static_diag_bootstrap_marker_negative_reject 1
+    foreach static_diag_bootstrap_marker_negative \
+        $static_diag_bootstrap_marker_negatives {
+        if {[lindex $static_diag_bootstrap_marker_negative 0] ||
+            [lindex $static_diag_bootstrap_marker_negative 1] ne \
+                "diagnostic-bootstrap-marker-invalid"} {
+            set static_diag_bootstrap_marker_negative_reject 0
+        }
+    }
+    # KVM proof runs after the root prompt but before KDE/normal paths.  Its
+    # diag1 failure must own a bootstrap-kvm raw terminal instead of reaching
+    # the generic `finish` fallback.  This independent source route check is
+    # deliberately separate from the synthetic bootstrap terminal row below.
+    proc capture_completeness_diag_kvm_bootstrap_route_contract {source} {
+        set begin "# DIAG1-BOOTSTRAP-SERIAL-"
+        append begin "BEGIN"
+        set end "# DIAG1-BOOTSTRAP-SERIAL-"
+        append end "END"
+        set base [capture_completeness_diag_bootstrap_order_contract $source]
+        if {![lindex $base 0]} {
+            return [list 0 "kvm-bootstrap-base-[lindex $base 1]"]
+        }
+        set begin_at [string first $begin $source]
+        set end_at [string first $end $source]
+        set block [string range $source $begin_at \
+            [expr {$end_at + [string length $end] - 1}]]
+        set calls [regexp -all -inline -line \
+            {^[ \t]*require_kvm_proof[ \t]*$} $block]
+        if {[llength $calls] != 1} {
+            return [list 0 "kvm-bootstrap-call-count-[llength $calls]"]
+        }
+        set kvm_body [static_capture_diag_proc_body $source require_kvm_proof]
+        if {$kvm_body eq ""} {
+            return [list 0 kvm-bootstrap-proc-missing]
+        }
+        set terminal_at [string first \
+            {capture_completeness_diag_bootstrap_terminal bootstrap-kvm} \
+            $kvm_body]
+        set status_at [string first DIAG_BOOTSTRAP_KVM $kvm_body]
+        set finish_at [string first {finish 8 "FAIL missing-kvm-proof"} \
+            $kvm_body]
+        if {$terminal_at < 0 || $status_at < 0 || $finish_at < 0} {
+            return [list 0 "kvm-bootstrap-binding-missing terminal=$terminal_at status=$status_at finish=$finish_at"]
+        }
+        if {$terminal_at > $finish_at || $status_at > $finish_at} {
+            return [list 0 "kvm-bootstrap-terminal-after-generic-finish terminal=$terminal_at status=$status_at finish=$finish_at"]
+        }
+        if {[string first {if {$capture_completeness_diag eq "1"}} \
+                $kvm_body] < 0} {
+            return [list 0 kvm-bootstrap-diag1-guard-missing]
+        }
+        return [list 1 kvm-bootstrap-live-route-before-normal]
+    }
+    proc capture_completeness_diag_mutate_bootstrap_block {
+        source pattern replacement label
+    } {
+        set begin "# DIAG1-BOOTSTRAP-SERIAL-"
+        append begin "BEGIN"
+        set end "# DIAG1-BOOTSTRAP-SERIAL-"
+        append end "END"
+        set begin_at [string first $begin $source]
+        set end_at [string first $end $source]
+        if {$begin_at < 0 || $end_at <= $begin_at} {
+            return [list 0 "mutation-$label-bootstrap-markers-invalid" $source]
+        }
+        set block_end [expr {$end_at + [string length $end] - 1}]
+        set block [string range $source $begin_at $block_end]
+        set count [regsub -all $pattern $block $replacement mutated]
+        if {$count != 1} {
+            return [list 0 "mutation-$label-match-count-$count" $source]
+        }
+        if {[regexp -- $pattern $mutated]} {
+            return [list 0 "mutation-$label-token-retained" $source]
+        }
+        set source [string replace $source $begin_at $block_end $mutated]
+        set reloaded [string range $source $begin_at \
+            [expr {$begin_at + [string length $mutated] - 1}]]
+        if {$reloaded ne $mutated} {
+            return [list 0 "mutation-$label-reextract-mismatch" $source]
+        }
+        return [list 1 "mutation-$label-applied" $source]
+    }
+    set static_diag_kvm_bootstrap_route \
+        [capture_completeness_diag_kvm_bootstrap_route_contract \
+            $static_present_source]
+    set static_diag_kvm_call_mutation \
+        [capture_completeness_diag_mutate_bootstrap_block \
+            $static_present_source {require_kvm_proof} \
+            kvm_proof_bypassed kvm-call]
+    set static_diag_kvm_terminal_mutation \
+        [capture_completeness_diag_mutate_proc \
+            $static_present_source require_kvm_proof \
+            {capture_completeness_diag_bootstrap_terminal[[:space:]]+bootstrap-kvm} \
+            {capture_completeness_diag_bootstrap_terminal bootstrap-root} \
+            kvm-terminal]
+    set static_diag_kvm_status_mutation \
+        [capture_completeness_diag_mutate_proc \
+            $static_present_source require_kvm_proof \
+            {DIAG_BOOTSTRAP_KVM} DIAG_BOOTSTRAP_ROOT_TIMEOUT kvm-status]
+    set static_diag_kvm_mutations [list \
+        $static_diag_kvm_call_mutation \
+        $static_diag_kvm_terminal_mutation \
+        $static_diag_kvm_status_mutation]
+    set static_diag_kvm_mutation_contracts {}
+    set static_diag_kvm_mutation_reject 1
+    foreach static_diag_kvm_mutation $static_diag_kvm_mutations {
+        set static_diag_kvm_mutation_contract \
+            [capture_completeness_diag_kvm_bootstrap_route_contract \
+                [lindex $static_diag_kvm_mutation 2]]
+        lappend static_diag_kvm_mutation_contracts \
+            $static_diag_kvm_mutation_contract
+        if {![lindex $static_diag_kvm_mutation 0] ||
+            [lindex $static_diag_kvm_mutation_contract 0]} {
+            set static_diag_kvm_mutation_reject 0
+        }
+    }
+    set static_diag_guest_cmd_body [static_capture_diag_proc_body \
+        $static_present_source capture_completeness_diag_guest_cmd]
+    set static_diag_command_body [static_capture_diag_proc_body \
+        $static_present_source capture_completeness_diag_command_result]
+    set static_diag_reserve_contract [capture_completeness_diag_reserve_contract \
+        165000 5000]
+    set static_diag_reserve_zero [capture_completeness_diag_reserve_contract \
+        165000 0]
+    set static_diag_reserve_too_large [capture_completeness_diag_reserve_contract \
+        165000 5001]
+    set static_diag_reserve_wrong_outer [capture_completeness_diag_reserve_contract \
+        164999 5000]
+    set static_diag_reserve_source [capture_completeness_diag_reserve_source_contract \
+        $static_diag_source_normalized]
+    set static_diag_reserve_launch_mutation \
+        [capture_completeness_diag_mutate_proc \
+            $static_diag_source_normalized capture_completeness_diag_run \
+            {capture-completeness-diagnostic-launch[[:space:]]+35[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+            {capture-completeness-diagnostic-launch 35 $deadline_ms 0} launch]
+    set static_diag_reserve_collect_mutation \
+        [capture_completeness_diag_mutate_proc \
+            $static_diag_source_normalized capture_completeness_diag_collect \
+            {30[[:space:]]+\$deadline_ms[[:space:]]+\$reserve_ms} \
+            {30 $deadline_ms 0} collector]
+    set static_diag_reserve_launch_mutated \
+        [lindex $static_diag_reserve_launch_mutation 2]
+    set static_diag_reserve_collect_mutated \
+        [lindex $static_diag_reserve_collect_mutation 2]
+    set static_diag_reserve_before_mutated $static_diag_source_normalized
+    regsub {capture_completeness_diag_fbstat_snapshot[[:space:]]+before[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+        $static_diag_reserve_before_mutated \
+        {capture_completeness_diag_fbstat_snapshot before $deadline_ms} \
+        static_diag_reserve_before_mutated
+    set static_diag_reserve_after_mutated $static_diag_source_normalized
+    regsub {capture_completeness_diag_fbstat_snapshot[[:space:]]+after[[:space:]]+\$deadline_ms[[:space:]]+\$capture_completeness_diag_reserve_ms} \
+        $static_diag_reserve_after_mutated \
+        {capture_completeness_diag_fbstat_snapshot after $deadline_ms} \
+        static_diag_reserve_after_mutated
+    set static_diag_reserve_mutations [list \
+        [capture_completeness_diag_reserve_source_contract $static_diag_reserve_launch_mutated] \
+        [capture_completeness_diag_reserve_source_contract $static_diag_reserve_collect_mutated] \
+        [capture_completeness_diag_reserve_source_contract $static_diag_reserve_before_mutated] \
+        [capture_completeness_diag_reserve_source_contract $static_diag_reserve_after_mutated]]
+    set static_diag_reserve_mutation_reject 1
+    foreach static_diag_reserve_mutation $static_diag_reserve_mutations {
+        if {[lindex $static_diag_reserve_mutation 0]} {
+            set static_diag_reserve_mutation_reject 0
+        }
+    }
+    set static_diag_reserve_mutation_application [list \
+        [lrange $static_diag_reserve_launch_mutation 0 1] \
+        [lrange $static_diag_reserve_collect_mutation 0 1]]
+    foreach static_diag_reserve_mutation_applied \
+        $static_diag_reserve_mutation_application {
+        if {![lindex $static_diag_reserve_mutation_applied 0]} {
+            set static_diag_reserve_mutation_reject 0
+        }
+    }
+    set static_diag_terminal_chain \
+        [capture_completeness_diag_terminal_chain_contract \
+            $static_diag_source_normalized]
+    set static_diag_terminal_bypass_mutated [string map [list \
+        {return [capture_completeness_diag_terminalize $attempt capture $result]} \
+        {return [list INVALID bypassed DIAG_TIMEOUT STATICBYPASSC1]}] \
+        $static_diag_source_normalized]
+    set static_diag_terminal_bypass_reject \
+        [capture_completeness_diag_terminal_chain_contract \
+            $static_diag_terminal_bypass_mutated]
+    set static_diag_terminal_api_forbidden {}
+    foreach forbidden {{[guest_cmd } {fail_timeout $label}} {
+        if {[string first $forbidden $static_diag_guest_cmd_body] >= 0 ||
+            [string first $forbidden $static_diag_command_body] >= 0} {
+            lappend static_diag_terminal_api_forbidden $forbidden
+        }
+    }
+    foreach required {DIAG_TIMEOUT DIAG_EOF DIAG_CRASH DIAG_DEADLINE_PRE_SEND DIAG_DEADLINE_POST_SEND} {
+        if {[string first $required $static_diag_guest_cmd_body] < 0} {
+            lappend static_diag_terminal_api_forbidden "missing-$required"
+        }
+    }
+    # The timeout fixture owns ordinary global spawn_id restoration; the
+    # intentional missing-global control must instead stage a private stale
+    # child in ::spawn_id and restore the prior global after both reaps.  Keep
+    # this source contract narrow so it cannot change live command behavior.
+    proc static_capture_diag_stdout_restore_source_contract {source} {
+        set errors {}
+        set transport [static_capture_diag_proc_body $source \
+            static_capture_diag_transport]
+        set missing [static_capture_diag_proc_body $source \
+            static_capture_diag_transport_missing_global]
+        foreach required {
+            {set had_spawn_id [info exists spawn_id]}
+            {set spawn_id $saved_spawn_id}
+            {unset -nocomplain spawn_id}
+            {wait -i $child_spawn_id}
+        } {
+            if {[string first $required $transport] < 0} {
+                lappend errors "transport-missing-$required"
+            }
+        }
+        foreach required {
+            {set ::spawn_id $stale_spawn_id}
+            {set ::spawn_id $saved_global_spawn_id}
+            {unset -nocomplain ::spawn_id}
+            {wait -i $child_spawn_id}
+            {wait -i $stale_spawn_id}
+        } {
+            if {[string first $required $missing] < 0} {
+                lappend errors "missing-global-missing-$required"
+            }
+        }
+        return [list [expr {[llength $errors] == 0}] [join $errors ,]]
+    }
+    set static_diag_stdout_restore_source \
+        [static_capture_diag_stdout_restore_source_contract \
+            $static_present_source]
+    set static_diag_stdout_restore_mutation \
+        [capture_completeness_diag_mutate_proc \
+            $static_present_source static_capture_diag_transport_missing_global \
+            {set ::spawn_id \$saved_global_spawn_id} \
+            {set ::spawn_id $stale_spawn_id} stdout-restore]
+    set static_diag_stdout_restore_mutation_source \
+        [static_capture_diag_stdout_restore_source_contract \
+            [lindex $static_diag_stdout_restore_mutation 2]]
+    set static_diag_stdout_restore_mutation_reject [expr {
+        [lindex $static_diag_stdout_restore_mutation 0] &&
+        ![lindex $static_diag_stdout_restore_mutation_source 0]}]
+
+    # These transport reducers use real Expect send/expect against bounded
+    # local shell children.  They do not mock command_result or guest_cmd, and
+    # therefore prove that timeout/EOF/panic/frame/deadline statuses survive
+    # into the same owned nonce/raw terminal used by the live diagnostic.
+    proc static_capture_diag_transport {
+        shell command label seconds deadline_ms expected_status {reserve_ms 0}
+    } {
+        # The timeout reducer must retain the spawned child's PTY until the
+        # diagnostic expect timeout itself wins.  A bare shell body was not a
+        # deterministic ownership witness here: two bounded runs reported EOF
+        # instead.  Each timeout caller now uses `exec /bin/sleep`, and this
+        # helper verifies the exact child inherited a live stdout descriptor
+        # before exercising the real serial command path.
+        # Expect scopes spawn_id to a proc unless it is explicitly global.
+        # capture_completeness_diag_command_result is a nested proc, so bind
+        # the exact live child in the global it will actually consume, then
+        # restore the caller's channel after synchronous cleanup.
+        global spawn_id
+        set had_spawn_id [info exists spawn_id]
+        if {$had_spawn_id} {
+            set saved_spawn_id $spawn_id
+        } else {
+            set saved_spawn_id ""
+        }
+        spawn -noecho sh -c $shell
+        set child [exp_pid]
+        set child_spawn_id $spawn_id
+        if {$child <= 0} {
+            error "diagnostic-actual-transport-$label-child-pid-invalid=$child"
+        }
+        if {[catch {file readlink "/proc/$child/fd/1"} child_stdout] ||
+            $child_stdout eq ""} {
+            error "diagnostic-actual-transport-$label-child-stdout-not-live=$child_stdout"
+        }
+        set command_caught [catch {
+            capture_completeness_diag_command_result $command $label \
+                $seconds $deadline_ms $reserve_ms
+        } result]
+        catch {exec kill -TERM -- $child}
+        catch {close -i $child_spawn_id}
+        set wait_caught [catch {wait -i $child_spawn_id} wait_result]
+        if {![catch {exec kill -0 -- $child}]} {
+            error "diagnostic-actual-transport-$label-child-still-live=$child"
+        }
+        if {$had_spawn_id} {
+            set spawn_id $saved_spawn_id
+        } else {
+            unset -nocomplain spawn_id
+        }
+        if {$command_caught} {
+            error "diagnostic-actual-transport-$label-command-error=$result"
+        }
+        if {$wait_caught} {
+            error "diagnostic-actual-transport-$label-wait-error=$wait_result"
+        }
+        if {[lindex $result 0] ne $expected_status} {
+            error "diagnostic-actual-transport-$label expected=$expected_status result=$result"
+        }
+        return $result
+    }
+    proc static_capture_diag_transport_missing_global {
+        shell command label seconds deadline_ms
+    } {
+        # Negative control: intentionally omit `global spawn_id`.  The nested
+        # helper must consume a stale channel, return a diagnostic EOF, and
+        # never convert this scope bug into a timeout pass.  Letting it consume
+        # Expect's implicit exp0 channel would instead close the harness user
+        # stdout on EOF.  Stage an owned stale child in ::spawn_id, then fully
+        # restore the prior global after both children are synchronously reaped.
+        if {[info exists ::spawn_id]} {
+            set had_global_spawn_id 1
+            set saved_global_spawn_id $::spawn_id
+        } else {
+            set had_global_spawn_id 0
+            set saved_global_spawn_id ""
+        }
+        spawn -noecho sh -c {exit 0}
+        set stale_child [exp_pid]
+        set stale_spawn_id $spawn_id
+        if {$stale_child <= 0} {
+            error "diagnostic-actual-scope-negative-$label-stale-child-pid-invalid=$stale_child"
+        }
+        set ::spawn_id $stale_spawn_id
+        spawn -noecho sh -c $shell
+        set child [exp_pid]
+        set child_spawn_id $spawn_id
+        if {$child <= 0 ||
+            [catch {file readlink "/proc/$child/fd/1"} child_stdout] ||
+            $child_stdout eq ""} {
+            error "diagnostic-actual-scope-negative-$label-child-not-live=$child stdout=$child_stdout"
+        }
+        set command_caught [catch {
+            capture_completeness_diag_command_result $command $label \
+                $seconds $deadline_ms
+        } result]
+        catch {exec kill -TERM -- $child}
+        catch {close -i $child_spawn_id}
+        set wait_caught [catch {wait -i $child_spawn_id} wait_result]
+        catch {close -i $stale_spawn_id}
+        set stale_wait_caught [catch {wait -i $stale_spawn_id} stale_wait_result]
+        if {![catch {exec kill -0 -- $child}]} {
+            error "diagnostic-actual-scope-negative-$label-child-still-live=$child"
+        }
+        if {![catch {exec kill -0 -- $stale_child}]} {
+            error "diagnostic-actual-scope-negative-$label-stale-child-still-live=$stale_child"
+        }
+        if {$had_global_spawn_id} {
+            set ::spawn_id $saved_global_spawn_id
+        } else {
+            unset -nocomplain ::spawn_id
+        }
+        if {$command_caught || $wait_caught || $stale_wait_caught ||
+            [lindex $result 0] ne "DIAG_EOF"} {
+            error "diagnostic-actual-scope-negative-$label caught=$command_caught result=$result wait=$wait_caught,$wait_result stale_wait=$stale_wait_caught,$stale_wait_result"
+        }
+        return $result
+    }
+    proc static_capture_diag_stdout_contract {label} {
+        if {[catch {puts stdout ""} write_error]} {
+            error "diagnostic-stdout-liveness-$label-write-failed=$write_error"
+        }
+        return "$label=stdout-open"
+    }
+    proc static_capture_diag_raw_contract_layout {raw phase expected_status} {
+        if {[llength $raw] != 6 || [lindex $raw 0] != 1 ||
+            [lindex $raw 2] ne "initial" || [lindex $raw 3] ne $phase ||
+            [lindex $raw 4] ne $expected_status ||
+            ![regexp {^[A-Za-z0-9]+$} [lindex $raw 5]]} {
+            return [list 0 "raw-contract-layout=$raw"]
+        }
+        return [list 1 raw-contract-layout-pass]
+    }
+    set static_diag_raw_layout_positive [static_capture_diag_raw_contract_layout \
+        [list 1 raw-contract-detail initial launch DIAG_TIMEOUT STATICDIAGC1] \
+        launch DIAG_TIMEOUT]
+    set static_diag_raw_layout_mutated [list 1 raw-contract-detail initial \
+        launch launch STATICDIAGC1]
+    set static_diag_raw_layout_negative [static_capture_diag_raw_contract_layout \
+        $static_diag_raw_layout_mutated launch DIAG_TIMEOUT]
+    if {![lindex $static_diag_raw_layout_positive 0] ||
+        [lindex $static_diag_raw_layout_negative 0]} {
+        error "diagnostic-raw-contract-layout-positive=$static_diag_raw_layout_positive negative=$static_diag_raw_layout_negative"
+    }
+    proc static_capture_diag_actual_terminal {
+        phase result expected_status fbstat_text expected_context
+    } {
+        global capture_completeness_diag_fbstat capture_completeness_diag_raw
+        global media_probe_nonce media_probe_verdict
+        wf $capture_completeness_diag_fbstat $fbstat_text
+        set media_probe_verdict NOT_RUN
+        lassign [capture_completeness_diag_owned_terminal $phase $result] \
+            code label terminal
+        set raw [capture_completeness_diag_raw_contract \
+            [read_text $capture_completeness_diag_raw] $media_probe_nonce]
+        set raw_layout [static_capture_diag_raw_contract_layout $raw $phase \
+            $expected_status]
+        if {$code != 8 || [lindex $terminal 0] ne "INVALID" ||
+            [lindex $terminal 2] ne $expected_status || ![lindex $raw_layout 0] ||
+            $media_probe_verdict ne "DIAGNOSTIC_INVALID" ||
+            [string first "raw_status=$expected_status" $label] < 0} {
+            error "diagnostic-actual-terminal-$phase terminal=$terminal raw=$raw code=$code label=$label verdict=$media_probe_verdict"
+        }
+        if {$expected_context eq "full"} {
+            if {![lindex [capture_completeness_diag_fbstat_contract $fbstat_text] 0]} {
+                error "diagnostic-actual-terminal-$phase-full-context-invalid"
+            }
+        } else {
+            if {![lindex [capture_completeness_diag_invalid_fbstat_contract \
+                    $fbstat_text $media_probe_nonce $phase] 0]} {
+                error "diagnostic-actual-terminal-$phase-invalid-context-invalid"
+            }
+        }
+        return $label
+    }
+    set static_actual_saved_slow $send_slow
+    set send_slow {1 .005}
+    set static_diag_stdout_liveness {}
+    set static_actual_scope_missing [static_capture_diag_transport_missing_global \
+        {exec /bin/sleep 30} true static-actual-scope-missing-global 1 0]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract scope-missing]
+    set static_actual_timeout [static_capture_diag_transport \
+        {exec /bin/sleep 30} true static-actual-timeout 1 0 DIAG_TIMEOUT]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract timeout]
+    set static_actual_eof [static_capture_diag_transport \
+        {exit 0} true static-actual-eof 2 0 DIAG_EOF]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract eof]
+    set static_actual_panic [static_capture_diag_transport \
+        {printf 'PANIC\n'; exec /bin/sleep 1} true static-actual-panic 2 0 DIAG_CRASH]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract panic]
+    # Negative C5 control: delayed-but-early emission lands after the first
+    # slow serial byte and before the diagnostic line is consumed, so the
+    # strict line-start marker grammar must reject it as DIAG_EOF.
+    set static_actual_frame_early_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
+    set static_actual_frame_early [static_capture_diag_transport \
+        [format {sleep .02; printf '%s:FENCE\n'; exec /bin/sleep 1} \
+            $static_actual_frame_early_marker] \
+        true static-actual-frame-early 2 0 DIAG_EOF]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract frame-early]
+    # Positive C5 fixture: consume and verify the complete serial command
+    # first, then emit the whole deliberately malformed frame in one printf.
+    # It cannot run ahead of, or splice into, the host's slow serial send.
+    set static_actual_frame_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
+    set static_actual_frame_shell [format \
+        {IFS= read -r line; case "$line" in *"m=%s;printf"*) printf '%s:FENCE\n'; exec /bin/sleep 1;; *) exit 23;; esac} \
+        $static_actual_frame_marker $static_actual_frame_marker]
+    set static_actual_frame [static_capture_diag_transport \
+        $static_actual_frame_shell \
+        true static-actual-frame 2 0 FRAME_INVALID]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract frame]
+    set static_actual_deadline_pre [capture_completeness_diag_command_result \
+        true static-actual-deadline-pre 30 [expr {[clock clicks -milliseconds] - 1}]]
+    if {[lindex $static_actual_deadline_pre 0] ne "DIAG_DEADLINE_PRE_SEND" ||
+        [string first {final-timeout-parameter-invalid} \
+            [lindex $static_actual_deadline_pre 2]] < 0} {
+        error "diagnostic-actual-deadline-pre result=$static_actual_deadline_pre"
+    }
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract deadline-pre]
+    # This must be a genuinely valid pre-send plan: one 1 s command window
+    # inside an 1.8 s absolute deadline.  The real slow send is longer than
+    # the remaining window, so only the helper's post-send deadline check may
+    # produce DIAG_DEADLINE_POST_SEND.
+    set static_actual_deadline_post_deadline [expr {[clock clicks -milliseconds] + 1800}]
+    set static_actual_deadline_post_preplan [media_probe_final_timeout_seconds \
+        $static_actual_deadline_post_deadline [clock clicks -milliseconds] \
+        1000 1000 1]
+    if {![lindex $static_actual_deadline_post_preplan 0] ||
+        [lindex $static_actual_deadline_post_preplan 1] != 1} {
+        error "diagnostic-actual-deadline-post-preplan=$static_actual_deadline_post_preplan"
+    }
+    set static_actual_deadline_post [static_capture_diag_transport \
+        {exec /bin/cat >/dev/null} [string repeat x 350] static-actual-deadline-post 1 \
+        $static_actual_deadline_post_deadline DIAG_DEADLINE_POST_SEND 1]
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract deadline-post]
+    set send_slow $static_actual_saved_slow
+    set static_actual_context_full "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=after flips=101 presents=91 host_ms=2000 diagnostic_only=1 nonsemantic=1\n"
+    set static_actual_context_before "phase=before status=INVALID raw_status=DIAG_EOF raw_detail=synthetic nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1\n"
+    set static_actual_context_after "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=after status=INVALID raw_status=DIAG_CRASH raw_detail=synthetic nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1\n"
+    set static_actual_scope_missing_label [static_capture_diag_actual_terminal bootstrap-owner \
+        $static_actual_scope_missing DIAG_EOF "" invalid]
+    set static_actual_frame_early_label [static_capture_diag_actual_terminal capture \
+        $static_actual_frame_early DIAG_EOF $static_actual_context_full full]
+    set static_actual_launch_label [static_capture_diag_actual_terminal launch \
+        $static_actual_timeout DIAG_TIMEOUT "" invalid]
+    set static_actual_frame_label [static_capture_diag_actual_terminal capture \
+        $static_actual_frame FRAME_INVALID $static_actual_context_full full]
+    set static_actual_before_label [static_capture_diag_actual_terminal fbstat-before \
+        $static_actual_eof DIAG_EOF $static_actual_context_before invalid]
+    set static_actual_after_label [static_capture_diag_actual_terminal fbstat-after \
+        $static_actual_panic DIAG_CRASH $static_actual_context_after invalid]
+    set static_actual_deadline_pre_label [static_capture_diag_actual_terminal launch \
+        $static_actual_deadline_pre DIAG_DEADLINE_PRE_SEND "" invalid]
+    set static_actual_deadline_post_label [static_capture_diag_actual_terminal launch \
+        $static_actual_deadline_post DIAG_DEADLINE_POST_SEND "" invalid]
+    set static_actual_bootstrap_label [static_capture_diag_actual_terminal bootstrap-root \
+        $static_actual_timeout DIAG_TIMEOUT "" invalid]
+    set static_actual_bootstrap_kde_label [static_capture_diag_actual_terminal bootstrap-kde \
+        $static_actual_timeout DIAG_TIMEOUT "" invalid]
+    set static_actual_bootstrap_kvm_label [static_capture_diag_actual_terminal bootstrap-kvm \
+        $static_actual_timeout DIAG_TIMEOUT "" invalid]
+    set static_full_finish_cleanup [capture_completeness_diag_finish_cleanup 8 \
+        $static_actual_bootstrap_label "77 pgid=77 stat=D comm=qemu-system-x86_64" \
+        "88 exe=/usr/bin/qemu-system-x86_64"]
+    if {[lindex $static_full_finish_cleanup 0] != 9 ||
+        [string first {raw_status=DIAG_TIMEOUT} [lindex $static_full_finish_cleanup 1]] < 0 ||
+        [string first {cleanup_lingering_owned_process_group=} [lindex $static_full_finish_cleanup 1]] < 0 ||
+        [string first {cleanup_lingering_qemu=} [lindex $static_full_finish_cleanup 1]] < 0} {
+        error "diagnostic-full-finish-cleanup-preservation result=$static_full_finish_cleanup"
+    }
+    set static_diag0_bootstrap_arm $capture_completeness_diag
+    set capture_completeness_diag 0
+    set static_diag0_bootstrap_terminal [capture_completeness_diag_bootstrap_terminal \
+        bootstrap-root DIAG_TEST "" static-diag0-must-not-terminalize]
+    set capture_completeness_diag $static_diag0_bootstrap_arm
+    if {$static_diag0_bootstrap_terminal != 0} {
+        error "diagnostic-diag0-bootstrap-terminal-reached"
+    }
+    # In-process diag1 call trace: the real runner must carry the exact
+    # reserve through launch, collector, and both routes through the shared
+    # fbstat helper.  Command outcomes are synthetic only so this proves
+    # argument ownership without a guest or normal measurement path.
+    set static_diag_reserve_fb {backend virgl flags 0x1 renderer OpenGL via virtio-gpu virgl
+backend_opengl_submit 1
+backend_virgl_opengl 1
+kms_page_flip_events=1
+virgl_bo_presents 1
+}
+    set static_diag_reserve_trace {}
+    set static_diag_reserve_finish {}
+    rename capture_completeness_diag_command_result \
+        static_diag_reserve_saved_command_result
+    proc capture_completeness_diag_command_result {args} {
+        lappend ::static_diag_reserve_trace $args
+        set label [lindex $args 1]
+        if {[string match {capture-completeness-fbstat-*} $label]} {
+            return [list 0 $::static_diag_reserve_fb pass STATICDIAGRESERVEC1]
+        }
+        return [list 0 "" pass STATICDIAGRESERVEC1]
+    }
+    rename after static_diag_reserve_saved_after
+    proc after {args} { return "" }
+    rename finish static_diag_reserve_saved_finish
+    proc finish {code label} {
+        set ::static_diag_reserve_finish [list $code $label]
+        return -code error static-diag-reserve-finish
+    }
+    set static_diag_reserve_run_caught [catch {capture_completeness_diag_run} \
+        static_diag_reserve_run_result]
+    rename finish {}
+    rename static_diag_reserve_saved_finish finish
+    rename after {}
+    rename static_diag_reserve_saved_after after
+    rename capture_completeness_diag_command_result {}
+    rename static_diag_reserve_saved_command_result \
+        capture_completeness_diag_command_result
+    set static_diag_reserve_labels {}
+    set static_diag_reserve_values {}
+    foreach call $static_diag_reserve_trace {
+        lappend static_diag_reserve_labels [lindex $call 1]
+        lappend static_diag_reserve_values [lindex $call 4]
+    }
+    set static_diag0_reserve_arm $capture_completeness_diag
+    set capture_completeness_diag 0
+    rename capture_completeness_diag_command_result \
+        static_diag0_reserve_saved_command_result
+    proc capture_completeness_diag_command_result {args} {
+        error "poisoned-diagnostic-command-result-reached-under-diag0"
+    }
+    set static_diag0_reserve_dispatch [capture_completeness_diag_dispatch]
+    rename capture_completeness_diag_command_result {}
+    rename static_diag0_reserve_saved_command_result \
+        capture_completeness_diag_command_result
+    set capture_completeness_diag $static_diag0_reserve_arm
+    if {!$static_diag_reserve_run_caught ||
+        $static_diag_reserve_run_result ne "static-diag-reserve-finish" ||
+        [lindex $static_diag_reserve_finish 0] != 8 ||
+        $static_diag_reserve_labels ne {capture-completeness-diagnostic-launch capture-completeness-fbstat-before capture-completeness-diagnostic-initial capture-completeness-fbstat-after} ||
+        $static_diag_reserve_values ne {5000 5000 5000 5000} ||
+        $static_diag0_reserve_dispatch} {
+        error "diagnostic-reserve-inprocess run=$static_diag_reserve_run_caught,$static_diag_reserve_run_result finish=$static_diag_reserve_finish labels=$static_diag_reserve_labels values=$static_diag_reserve_values diag0=$static_diag0_reserve_dispatch"
+    }
+    foreach static_actual_label [list $static_actual_scope_missing_label \
+        $static_actual_frame_early_label $static_actual_launch_label \
+        $static_actual_frame_label $static_actual_before_label \
+        $static_actual_after_label $static_actual_deadline_pre_label \
+        $static_actual_deadline_post_label $static_actual_bootstrap_label \
+        $static_actual_bootstrap_kde_label $static_actual_bootstrap_kvm_label] {
+        if {[string first {no_fps_claim=1} $static_actual_label] < 0 ||
+            [string first {no_semantic_success=1} $static_actual_label] < 0} {
+            error "diagnostic-reserve-raw-terminal-credit-leak label=$static_actual_label"
+        }
+    }
+    rename static_capture_diag_actual_terminal {}
+    rename static_capture_diag_transport {}
+    rename static_capture_diag_transport_missing_global {}
+    set static_invalid_launch_fbstat \
+        [capture_completeness_diag_invalid_fbstat_contract "" $static_nonce launch]
+    set static_invalid_bootstrap_root_fbstat \
+        [capture_completeness_diag_invalid_fbstat_contract "" $static_nonce bootstrap-root]
+    set static_invalid_before_fbstat \
+        [capture_completeness_diag_invalid_fbstat_contract \
+            "phase=before status=INVALID raw_status=DIAG_TIMEOUT raw_detail=synthetic nonce=$static_nonce diagnostic_only=1 nonsemantic=1\n" \
+            $static_nonce fbstat-before]
+    set static_invalid_after_fbstat \
+        [capture_completeness_diag_invalid_fbstat_contract \
+            "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=after status=INVALID raw_status=DIAG_EOF raw_detail=synthetic nonce=$static_nonce diagnostic_only=1 nonsemantic=1\n" \
+            $static_nonce fbstat-after]
+    set static_invalid_after_reordered \
+        [capture_completeness_diag_invalid_fbstat_contract \
+            "phase=after status=INVALID raw_status=DIAG_EOF raw_detail=synthetic nonce=$static_nonce diagnostic_only=1 nonsemantic=1\nphase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\n" \
+            $static_nonce fbstat-after]
+    set static_finish_body [static_capture_diag_proc_body \
+        $static_present_source finish]
+    set static_diag_finish_body [static_capture_diag_proc_body \
+        $static_present_source capture_completeness_diag_finish_result]
+    rename extract_and_validate_capture_completeness_diagnostic \
+        static_capture_diag_saved_extractor
+    proc extract_and_validate_capture_completeness_diagnostic {} {
+        return $::static_capture_diag_extractor_result
+    }
+    set static_diag_raw_label \
+        "DIAGNOSTIC-ONLY capture-completeness disposition=INVALID raw_status=DIAG_TIMEOUT detail=synthetic no_fps_claim=1 no_semantic_success=1"
+    set static_capture_diag_extractor_result [list 1 pass]
+    set static_finish_invalid_preserved \
+        [capture_completeness_diag_finish_result 8 $static_diag_raw_label]
+    set static_capture_diag_extractor_result [list 0 poisoned-artifact]
+    set static_finish_complete_validation_failure \
+        [capture_completeness_diag_finish_result 0 \
+            "DIAGNOSTIC-ONLY capture-completeness disposition=COMPLETE raw_status=0 detail=synthetic no_fps_claim=1 no_semantic_success=1"]
+    rename extract_and_validate_capture_completeness_diagnostic {}
+    rename static_capture_diag_saved_extractor \
+        extract_and_validate_capture_completeness_diagnostic
+    set static_diag_forbidden {}
+    foreach forbidden {
+        require_guest
+        require_guest_ok
+        require_guest_ok_with_marker
+        fb_sample
+        capture_guest_fb
+        monitor_screendump
+        require_treatment_gpu_role
+        /ytmediaprobe.sh
+        media_probe_capture_disposition
+        extract_and_validate_success
+        presented_fps
+        bo_present_fps
+    } {
+        if {[string first $forbidden $static_diag_run_body] >= 0 ||
+            [string first $forbidden $static_diag_branch] >= 0} {
+            lappend static_diag_forbidden $forbidden
+        }
+    }
+    foreach required {
+        capture_completeness_diag_command_result
+        capture_completeness_diag_fbstat_snapshot
+        capture_completeness_diag_collect
+        capture_completeness_diag_owned_terminal
+        {no_fps_claim=1}
+        {no_semantic_success=1}
+    } {
+        if {[string first $required $static_diag_run_body] < 0} {
+            lappend static_diag_forbidden "missing-$required"
+        }
+    }
+
+    # Dynamic poisoned-reachability reducer.  It invokes the real diag1
+    # runner under synthetic COMPLETE, INCOMPLETE, and three independent
+    # command/context INVALID outcomes.  Every normal helper is poisoned; any
+    # accidental call therefore aborts the reducer instead of being hidden by
+    # a benign fake.  The tiny real dispatcher is also exercised with diag0
+    # while its diagnostic runner is poisoned, proving the normal arm cannot
+    # enter the collector.
+    set static_diag_saved_arm $capture_completeness_diag
+    rename capture_completeness_diag_run static_capture_diag_saved_run
+    proc capture_completeness_diag_run {} { error "poisoned-diagnostic-run-reached-under-diag0" }
+    set capture_completeness_diag 0
+    set static_diag0_dispatch [capture_completeness_diag_dispatch]
+    rename capture_completeness_diag_run {}
+    rename static_capture_diag_saved_run capture_completeness_diag_run
+    set capture_completeness_diag 1
+
+    rename after static_capture_diag_saved_after
+    proc after {args} { lappend ::static_capture_diag_trace settle; return "" }
+    rename finish static_capture_diag_saved_finish
+    proc finish {code label} {
+        lappend ::static_capture_diag_trace "finish:$code"
+        set ::static_capture_diag_finish_code $code
+        set ::static_capture_diag_finish_label $label
+        return -code error "capture-diag-static-terminal"
+    }
+    foreach poison_name {
+        require_guest_ok
+        require_guest_ok_with_marker
+        fb_sample
+        capture_guest_fb
+        monitor_screendump
+        require_treatment_gpu_role
+    } {
+        rename $poison_name "static_capture_diag_saved_$poison_name"
+        proc $poison_name {args} { error "poisoned-normal-helper-reached" }
+    }
+    rename capture_completeness_diag_command_result \
+        static_capture_diag_saved_command_result
+    proc capture_completeness_diag_command_result {args} {
+        lappend ::static_capture_diag_trace command
+        return $::static_capture_diag_launch_result
+    }
+    rename capture_completeness_diag_fbstat_snapshot \
+        static_capture_diag_saved_fbstat_snapshot
+    proc capture_completeness_diag_fbstat_snapshot {phase args} {
+        lappend ::static_capture_diag_trace "fbstat-$phase"
+        if {$phase eq "before"} { return $::static_capture_diag_before_result }
+        return $::static_capture_diag_after_result
+    }
+    rename capture_completeness_diag_collect static_capture_diag_saved_collect
+    proc capture_completeness_diag_collect {attempt args} {
+        lappend ::static_capture_diag_trace collect
+        return $::static_capture_diag_collect_result
+    }
+    proc static_capture_diag_runtime_case {
+        name launch before collect after_result expected_disposition expected_code expected_trace
+    } {
+        global media_probe_verdict media_probe_nonce media_probe_extension_id
+        global capture_completeness_diag_serial capture_completeness_diag_raw
+        set ::static_capture_diag_launch_result $launch
+        set ::static_capture_diag_before_result $before
+        set ::static_capture_diag_collect_result $collect
+        set ::static_capture_diag_after_result $after_result
+        set ::static_capture_diag_trace {}
+        set ::static_capture_diag_finish_code -1
+        set ::static_capture_diag_finish_label ""
+        set media_probe_verdict NOT_RUN
+        set caught [catch {capture_completeness_diag_run} result]
+        if {!$caught || $result ne "capture-diag-static-terminal" ||
+            $::static_capture_diag_finish_code != $expected_code ||
+            $media_probe_verdict ne "DIAGNOSTIC_$expected_disposition" ||
+            $::static_capture_diag_trace ne $expected_trace} {
+            error "diagnostic-runtime-$name caught=$caught result=$result code=$::static_capture_diag_finish_code verdict=$media_probe_verdict trace=$::static_capture_diag_trace label=$::static_capture_diag_finish_label"
+        }
+        if {$expected_disposition eq "INVALID"} {
+            set terminal [capture_completeness_diag_terminal_disposition \
+                [read_text $capture_completeness_diag_serial] \
+                $media_probe_nonce $media_probe_extension_id]
+            set raw [capture_completeness_diag_raw_contract \
+                [read_text $capture_completeness_diag_raw] $media_probe_nonce]
+            if {[lindex $terminal 0] ne "INVALID" || ![lindex $raw 0]} {
+                error "diagnostic-runtime-$name-invalid-artifact terminal=$terminal raw=$raw"
+            }
+        }
+    }
+    set static_diag_marker YTCAPTURESTATICC7
+    set static_diag_command_ok [list 0 {diagnostic-command-ok} pass $static_diag_marker]
+    set static_diag_command_bad [list FRAME_INVALID {diagnostic-command-raw} poisoned-frame $static_diag_marker]
+    set static_diag_fb_ok [list 1 100 200 $static_diag_command_ok]
+    set static_diag_fb_bad [list 0 poisoned-fbstat $static_diag_command_bad]
+    set static_diag_complete [list COMPLETE synthetic-complete 0 $static_diag_marker]
+    set static_diag_incomplete [list INCOMPLETE synthetic-freeze 0 $static_diag_marker]
+    set static_diag_dynamic_error ""
+    foreach runtime_case [list \
+        [list complete $static_diag_command_ok $static_diag_fb_ok $static_diag_complete $static_diag_fb_ok COMPLETE 0 {command settle fbstat-before collect fbstat-after finish:0}] \
+        [list incomplete $static_diag_command_ok $static_diag_fb_ok $static_diag_incomplete $static_diag_fb_ok INCOMPLETE 0 {command settle fbstat-before collect fbstat-after finish:0}] \
+        [list launch-invalid $static_diag_command_bad $static_diag_fb_ok $static_diag_complete $static_diag_fb_ok INVALID 8 {command finish:8}] \
+        [list before-invalid $static_diag_command_ok $static_diag_fb_bad $static_diag_complete $static_diag_fb_ok INVALID 8 {command settle fbstat-before finish:8}] \
+        [list after-invalid $static_diag_command_ok $static_diag_fb_ok $static_diag_complete $static_diag_fb_bad INVALID 8 {command settle fbstat-before collect fbstat-after finish:8}]] {
+        if {[catch {static_capture_diag_runtime_case {*}$runtime_case} static_case_error]} {
+            lappend static_diag_dynamic_error $static_case_error
+        }
+    }
+    rename static_capture_diag_runtime_case {}
+    rename capture_completeness_diag_collect {}
+    rename static_capture_diag_saved_collect capture_completeness_diag_collect
+    rename capture_completeness_diag_fbstat_snapshot {}
+    rename static_capture_diag_saved_fbstat_snapshot capture_completeness_diag_fbstat_snapshot
+    rename capture_completeness_diag_command_result {}
+    rename static_capture_diag_saved_command_result capture_completeness_diag_command_result
+    foreach poison_name {
+        require_guest_ok
+        require_guest_ok_with_marker
+        fb_sample
+        capture_guest_fb
+        monitor_screendump
+        require_treatment_gpu_role
+    } {
+        rename $poison_name {}
+        rename "static_capture_diag_saved_$poison_name" $poison_name
+    }
+    rename finish {}
+    rename static_capture_diag_saved_finish finish
+    rename after {}
+    rename static_capture_diag_saved_after after
+    set capture_completeness_diag $static_diag_saved_arm
+    lappend static_diag_stdout_liveness \
+        [static_capture_diag_stdout_contract aggregate-cleanup]
+    set static_diag_stdout_liveness_expected [list \
+        scope-missing=stdout-open timeout=stdout-open eof=stdout-open \
+        panic=stdout-open frame-early=stdout-open frame=stdout-open \
+        deadline-pre=stdout-open deadline-post=stdout-open \
+        aggregate-cleanup=stdout-open]
+    set static_diag_stdout_liveness_pass [expr {
+        $static_diag_stdout_liveness eq $static_diag_stdout_liveness_expected
+    }]
+    # Forensic-only aggregate ledger.  Keep the established aggregate below
+    # intact; this reports every one of its named predicates in compact form
+    # before that gate decides whether to fail.  It never reaches guest/QEMU
+    # code and has no production effect outside YT_STATIC_CHECK.
+    proc static_capture_diag_aggregate_predicate {
+        name expected observed pass
+    } {
+        set observed [string map [list "\n" {\\n} "\r" {\\r}] $observed]
+        if {[string length $observed] > 240} {
+            set observed "[string range $observed 0 239]..."
+        }
+        set pass [expr {$pass ? 1 : 0}]
+        puts stderr [list YT-CAPTURE-DIAG-AGGREGATE-PREDICATE \
+            name $name expected $expected observed $observed pass $pass]
+        return $pass
+    }
+    set static_diag_aggregate_predicates [list \
+        [list diagnostic-complete COMPLETE [lindex $diagnostic_complete 0] [expr {[lindex $diagnostic_complete 0] eq "COMPLETE"}]] \
+        [list freeze-continued INCOMPLETE [lindex $diagnostic_freeze_continued 0] [expr {[lindex $diagnostic_freeze_continued 0] eq "INCOMPLETE"}]] \
+        [list freeze-continued-detail timer-freeze-arm-4-no-fire-rvfc-continued [lindex $diagnostic_freeze_continued 1] [expr {[lindex $diagnostic_freeze_continued 1] eq "timer-freeze-arm-4-no-fire-rvfc-continued"}]] \
+        [list freeze-stopped INCOMPLETE [lindex $diagnostic_freeze_stopped 0] [expr {[lindex $diagnostic_freeze_stopped 0] eq "INCOMPLETE"}]] \
+        [list freeze-stopped-detail timer-freeze-arm-4-no-fire-rvfc-stopped [lindex $diagnostic_freeze_stopped 1] [expr {[lindex $diagnostic_freeze_stopped 1] eq "timer-freeze-arm-4-no-fire-rvfc-stopped"}]] \
+        [list reordered INVALID [lindex $diagnostic_reordered 0] [expr {[lindex $diagnostic_reordered 0] eq "INVALID"}]] \
+        [list duplicate INVALID [lindex $diagnostic_duplicate 0] [expr {[lindex $diagnostic_duplicate 0] eq "INVALID"}]] \
+        [list wrong-nonce INVALID [lindex $diagnostic_wrong_nonce 0] [expr {[lindex $diagnostic_wrong_nonce 0] eq "INVALID"}]] \
+        [list replay INVALID [lindex $diagnostic_replay 0] [expr {[lindex $diagnostic_replay 0] eq "INVALID"}]] \
+        [list oversized INVALID [lindex $diagnostic_oversized 0] [expr {[lindex $diagnostic_oversized 0] eq "INVALID"}]] \
+        [list total-cap INVALID [lindex $diagnostic_total_cap 0] [expr {[lindex $diagnostic_total_cap 0] eq "INVALID"}]] \
+        [list total-cap-detail diagnostic-total-byte-cap-exceeded-* [lindex $diagnostic_total_cap 1] [string match {diagnostic-total-byte-cap-exceeded-*} [lindex $diagnostic_total_cap 1]]] \
+        [list truncated INVALID [lindex $diagnostic_truncated 0] [expr {[lindex $diagnostic_truncated 0] eq "INVALID"}]] \
+        [list terminal-complete COMPLETE [lindex $diagnostic_terminal_complete 0] [expr {[lindex $diagnostic_terminal_complete 0] eq "COMPLETE"}]] \
+        [list terminal-freeze INCOMPLETE [lindex $diagnostic_terminal_freeze 0] [expr {[lindex $diagnostic_terminal_freeze 0] eq "INCOMPLETE"}]] \
+        [list terminal-missing INVALID [lindex $diagnostic_terminal_missing 0] [expr {[lindex $diagnostic_terminal_missing 0] eq "INVALID"}]] \
+        [list terminal-moved INVALID [lindex $diagnostic_terminal_moved 0] [expr {[lindex $diagnostic_terminal_moved 0] eq "INVALID"}]] \
+        [list terminal-replay INVALID [lindex $diagnostic_terminal_replay 0] [expr {[lindex $diagnostic_terminal_replay 0] eq "INVALID"}]] \
+        [list terminal-wrong-nonce INVALID [lindex $diagnostic_terminal_wrong_nonce 0] [expr {[lindex $diagnostic_terminal_wrong_nonce 0] eq "INVALID"}]] \
+        [list terminal-duplicate INVALID [lindex $diagnostic_terminal_duplicate 0] [expr {[lindex $diagnostic_terminal_duplicate 0] eq "INVALID"}]] \
+        [list terminal-cap INVALID [lindex $diagnostic_terminal_cap 0] [expr {[lindex $diagnostic_terminal_cap 0] eq "INVALID"}]] \
+        [list terminal-truncated INVALID [lindex $diagnostic_terminal_truncated 0] [expr {[lindex $diagnostic_terminal_truncated 0] eq "INVALID"}]] \
+        [list terminal-summary true $diagnostic_terminal_summary_contract [lindex $diagnostic_terminal_summary_contract 0]] \
+        [list terminal-guest true $diagnostic_terminal_guest_contract [lindex $diagnostic_terminal_guest_contract 0]] \
+        [list fbstat-complete true $diagnostic_fbstat_complete [lindex $diagnostic_fbstat_complete 0]] \
+        [list fbstat-duplicate false $diagnostic_fbstat_duplicate [expr {![lindex $diagnostic_fbstat_duplicate 0]}]] \
+        [list credit-summary false $diagnostic_credit_summary_contract [expr {![lindex $diagnostic_credit_summary_contract 0]}]] \
+        [list diagnostic-finish-complete capture-completeness-diagnostic $diagnostic_finish_complete [expr {$diagnostic_finish_complete eq "capture-completeness-diagnostic"}]] \
+        [list diagnostic-finish-freeze capture-completeness-diagnostic $diagnostic_finish_freeze [expr {$diagnostic_finish_freeze eq "capture-completeness-diagnostic"}]] \
+        [list diagnostic-finish-invalid capture-completeness-diagnostic $diagnostic_finish_invalid [expr {$diagnostic_finish_invalid eq "capture-completeness-diagnostic"}]] \
+        [list normal-finish-success normal-success $normal_finish_success [expr {$normal_finish_success eq "normal-success"}]] \
+        [list normal-finish-null media-probe-null $normal_finish_null [expr {$normal_finish_null eq "media-probe-null"}]] \
+        [list normal-finish-forensics forensics $normal_finish_forensics [expr {$normal_finish_forensics eq "forensics"}]] \
+        [list normal-finish-failure evidence-only $normal_finish_failure [expr {$normal_finish_failure eq "evidence-only"}]] \
+        [list diagnostic-normal-frames false $diagnostic_normal_frames [expr {!$diagnostic_normal_frames}]] \
+        [list normal-normal-frames true $normal_normal_frames $normal_normal_frames] \
+        [list injected-semantic-parse true [lindex $diagnostic_injected_semantic 0] [lindex $diagnostic_injected_semantic 0]] \
+        [list injected-semantic-source true [lindex $diagnostic_injected_semantic 1] [lindex $diagnostic_injected_semantic 1]] \
+        [list without-rows INCOMPLETE [lindex $diagnostic_without_rows 0] [expr {[lindex $diagnostic_without_rows 0] eq "INCOMPLETE"}]] \
+        [list console-throw INCOMPLETE [lindex $diagnostic_console_throw 0] [expr {[lindex $diagnostic_console_throw 0] eq "INCOMPLETE"}]] \
+        [list console-block INCOMPLETE [lindex $diagnostic_console_block 0] [expr {[lindex $diagnostic_console_block 0] eq "INCOMPLETE"}]] \
+        [list healthy-fbstat-context nonempty $diagnostic_healthy_fbstat_context [expr {$diagnostic_healthy_fbstat_context ne ""}]] \
+        [list source-order true $static_diag_source_order [lindex $static_diag_source_order 0]] \
+        [list source-order-mutation false $static_diag_source_order_reject [expr {![lindex $static_diag_source_order_reject 0]}]] \
+        [list bootstrap-order true $static_diag_bootstrap_order [lindex $static_diag_bootstrap_order 0]] \
+        [list bootstrap-order-mutation false $static_diag_bootstrap_order_reject [expr {![lindex $static_diag_bootstrap_order_reject 0]}]] \
+        [list bootstrap-marker-counts {1 1} $static_diag_bootstrap_marker_counts $static_diag_bootstrap_marker_positive] \
+        [list bootstrap-marker-negatives-rejected true $static_diag_bootstrap_marker_negatives $static_diag_bootstrap_marker_negative_reject] \
+        [list kvm-bootstrap-live-route true $static_diag_kvm_bootstrap_route [lindex $static_diag_kvm_bootstrap_route 0]] \
+        [list kvm-bootstrap-mutations-rejected true [list $static_diag_kvm_mutations $static_diag_kvm_mutation_contracts] $static_diag_kvm_mutation_reject] \
+        [list kvm-bootstrap-synthetic-terminal true $static_actual_bootstrap_kvm_label [expr {[string first {raw_status=DIAG_TIMEOUT} $static_actual_bootstrap_kvm_label] >= 0}]] \
+        [list terminal-api-forbidden empty $static_diag_terminal_api_forbidden [expr {[llength $static_diag_terminal_api_forbidden] == 0}]] \
+        [list invalid-launch-fbstat true $static_invalid_launch_fbstat [lindex $static_invalid_launch_fbstat 0]] \
+        [list invalid-bootstrap-root-fbstat true $static_invalid_bootstrap_root_fbstat [lindex $static_invalid_bootstrap_root_fbstat 0]] \
+        [list invalid-before-fbstat true $static_invalid_before_fbstat [lindex $static_invalid_before_fbstat 0]] \
+        [list invalid-after-fbstat true $static_invalid_after_fbstat [lindex $static_invalid_after_fbstat 0]] \
+        [list invalid-after-reordered false $static_invalid_after_reordered [expr {![lindex $static_invalid_after_reordered 0]}]] \
+        [list finish-invalid-code 8 [lindex $static_finish_invalid_preserved 0] [expr {[lindex $static_finish_invalid_preserved 0] == 8}]] \
+        [list finish-invalid-label $static_diag_raw_label [lindex $static_finish_invalid_preserved 1] [expr {[lindex $static_finish_invalid_preserved 1] eq $static_diag_raw_label}]] \
+        [list finish-complete-validation-code 8 [lindex $static_finish_complete_validation_failure 0] [expr {[lindex $static_finish_complete_validation_failure 0] == 8}]] \
+        [list finish-complete-validation-disposition present [string first {disposition=COMPLETE} [lindex $static_finish_complete_validation_failure 1]] [expr {[string first {disposition=COMPLETE} [lindex $static_finish_complete_validation_failure 1]] >= 0}]] \
+        [list finish-complete-validation-detail present [string first {diagnostic_artifact_validation=FAIL detail=poisoned-artifact} [lindex $static_finish_complete_validation_failure 1]] [expr {[string first {diagnostic_artifact_validation=FAIL detail=poisoned-artifact} [lindex $static_finish_complete_validation_failure 1]] >= 0}]] \
+        [list finish-body-diagnostic-function present [string first {capture_completeness_diag_finish_result} $static_finish_body] [expr {[string first {capture_completeness_diag_finish_result} $static_finish_body] >= 0}]] \
+        [list finish-body-generic-artifact-fail absent [string first {FAIL capture-completeness-artifact-validation} $static_finish_body] [expr {[string first {FAIL capture-completeness-artifact-validation} $static_finish_body] < 0}]] \
+        [list diagnostic-finish-extractor present [string first {extract_and_validate_capture_completeness_diagnostic} $static_diag_finish_body] [expr {[string first {extract_and_validate_capture_completeness_diagnostic} $static_diag_finish_body] >= 0}]] \
+        [list diag0-dispatch false $static_diag0_dispatch [expr {!$static_diag0_dispatch}]] \
+        [list diag-forbidden empty $static_diag_forbidden [expr {[llength $static_diag_forbidden] == 0}]] \
+        [list dynamic-errors empty $static_diag_dynamic_error [expr {[llength $static_diag_dynamic_error] == 0}]] \
+        [list stdout-restore-source true $static_diag_stdout_restore_source [lindex $static_diag_stdout_restore_source 0]] \
+        [list stdout-restore-mutation-rejected true [list $static_diag_stdout_restore_mutation $static_diag_stdout_restore_mutation_source] $static_diag_stdout_restore_mutation_reject] \
+        [list stdout-liveness true $static_diag_stdout_liveness $static_diag_stdout_liveness_pass] \
+        [list reserve-contract true $static_diag_reserve_contract [lindex $static_diag_reserve_contract 0]] \
+        [list reserve-zero false $static_diag_reserve_zero [expr {![lindex $static_diag_reserve_zero 0]}]] \
+        [list reserve-too-large false $static_diag_reserve_too_large [expr {![lindex $static_diag_reserve_too_large 0]}]] \
+        [list reserve-wrong-outer false $static_diag_reserve_wrong_outer [expr {![lindex $static_diag_reserve_wrong_outer 0]}]] \
+        [list reserve-source true $static_diag_reserve_source [lindex $static_diag_reserve_source 0]] \
+        [list reserve-mutations-rejected true [list $static_diag_reserve_mutations $static_diag_reserve_mutation_application] $static_diag_reserve_mutation_reject] \
+        [list terminal-chain true $static_diag_terminal_chain [lindex $static_diag_terminal_chain 0]] \
+        [list terminal-bypass-rejected false $static_diag_terminal_bypass_reject [expr {![lindex $static_diag_terminal_bypass_reject 0]}]]]
+    set static_diag_aggregate_failures {}
+    foreach static_diag_aggregate_predicate_row \
+        $static_diag_aggregate_predicates {
+        lassign $static_diag_aggregate_predicate_row name expected observed pass
+        if {![static_capture_diag_aggregate_predicate \
+                $name $expected $observed $pass]} {
+            lappend static_diag_aggregate_failures $name
+        }
+    }
+    puts stderr [list YT-CAPTURE-DIAG-AGGREGATE-SUMMARY \
+        failures $static_diag_aggregate_failures]
+    if {[lindex $diagnostic_complete 0] ne "COMPLETE" ||
+        [lindex $diagnostic_freeze_continued 0] ne "INCOMPLETE" ||
+        [lindex $diagnostic_freeze_continued 1] ne \
+            "timer-freeze-arm-4-no-fire-rvfc-continued" ||
+        [lindex $diagnostic_freeze_stopped 0] ne "INCOMPLETE" ||
+        [lindex $diagnostic_freeze_stopped 1] ne \
+            "timer-freeze-arm-4-no-fire-rvfc-stopped" ||
+        [lindex $diagnostic_reordered 0] ne "INVALID" ||
+        [lindex $diagnostic_duplicate 0] ne "INVALID" ||
+        [lindex $diagnostic_wrong_nonce 0] ne "INVALID" ||
+        [lindex $diagnostic_replay 0] ne "INVALID" ||
+        [lindex $diagnostic_oversized 0] ne "INVALID" ||
+        [lindex $diagnostic_total_cap 0] ne "INVALID" ||
+        ![string match {diagnostic-total-byte-cap-exceeded-*} \
+        [lindex $diagnostic_total_cap 1]] ||
+        [lindex $diagnostic_truncated 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_complete 0] ne "COMPLETE" ||
+        [lindex $diagnostic_terminal_freeze 0] ne "INCOMPLETE" ||
+        [lindex $diagnostic_terminal_missing 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_moved 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_replay 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_wrong_nonce 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_duplicate 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_cap 0] ne "INVALID" ||
+        [lindex $diagnostic_terminal_truncated 0] ne "INVALID" ||
+        ![lindex $diagnostic_terminal_summary_contract 0] ||
+        ![lindex $diagnostic_terminal_guest_contract 0] ||
+        ![lindex $diagnostic_fbstat_complete 0] ||
+        [lindex $diagnostic_fbstat_duplicate 0] ||
+        [lindex $diagnostic_credit_summary_contract 0] ||
+        $diagnostic_finish_complete ne "capture-completeness-diagnostic" ||
+        $diagnostic_finish_freeze ne "capture-completeness-diagnostic" ||
+        $diagnostic_finish_invalid ne "capture-completeness-diagnostic" ||
+        $normal_finish_success ne "normal-success" ||
+        $normal_finish_null ne "media-probe-null" ||
+        $normal_finish_forensics ne "forensics" ||
+        $normal_finish_failure ne "evidence-only" ||
+        $diagnostic_normal_frames || !$normal_normal_frames ||
+        ![lindex $diagnostic_injected_semantic 0] ||
+        ![lindex $diagnostic_injected_semantic 1] ||
+        [lindex $diagnostic_without_rows 0] ne "INCOMPLETE" ||
+        [lindex $diagnostic_console_throw 0] ne "INCOMPLETE" ||
+        [lindex $diagnostic_console_block 0] ne "INCOMPLETE" ||
+        $diagnostic_healthy_fbstat_context eq "" ||
+        ![lindex $static_diag_source_order 0] ||
+        [lindex $static_diag_source_order_reject 0] ||
+        ![lindex $static_diag_bootstrap_order 0] ||
+        [lindex $static_diag_bootstrap_order_reject 0] ||
+        !$static_diag_bootstrap_marker_positive ||
+        !$static_diag_bootstrap_marker_negative_reject ||
+        ![lindex $static_diag_kvm_bootstrap_route 0] ||
+        !$static_diag_kvm_mutation_reject ||
+        [string first {raw_status=DIAG_TIMEOUT} $static_actual_bootstrap_kvm_label] < 0 ||
+        [llength $static_diag_terminal_api_forbidden] != 0 ||
+        ![lindex $static_invalid_launch_fbstat 0] ||
+        ![lindex $static_invalid_bootstrap_root_fbstat 0] ||
+        ![lindex $static_invalid_before_fbstat 0] ||
+        ![lindex $static_invalid_after_fbstat 0] ||
+        [lindex $static_invalid_after_reordered 0] ||
+        [lindex $static_finish_invalid_preserved 0] != 8 ||
+        [lindex $static_finish_invalid_preserved 1] ne $static_diag_raw_label ||
+        [lindex $static_finish_complete_validation_failure 0] != 8 ||
+        [string first {disposition=COMPLETE} [lindex $static_finish_complete_validation_failure 1]] < 0 ||
+        [string first {diagnostic_artifact_validation=FAIL detail=poisoned-artifact} [lindex $static_finish_complete_validation_failure 1]] < 0 ||
+        [string first {capture_completeness_diag_finish_result} $static_finish_body] < 0 ||
+        [string first {FAIL capture-completeness-artifact-validation} $static_finish_body] >= 0 ||
+        [string first {extract_and_validate_capture_completeness_diagnostic} $static_diag_finish_body] < 0 ||
+        $static_diag0_dispatch || [llength $static_diag_forbidden] != 0 ||
+        [llength $static_diag_dynamic_error] != 0 ||
+        ![lindex $static_diag_stdout_restore_source 0] ||
+        !$static_diag_stdout_restore_mutation_reject ||
+        !$static_diag_stdout_liveness_pass ||
+        ![lindex $static_diag_reserve_contract 0] ||
+        [lindex $static_diag_reserve_zero 0] ||
+        [lindex $static_diag_reserve_too_large 0] ||
+        [lindex $static_diag_reserve_wrong_outer 0] ||
+        ![lindex $static_diag_reserve_source 0] ||
+        !$static_diag_reserve_mutation_reject ||
+        ![lindex $static_diag_terminal_chain 0] ||
+        [lindex $static_diag_terminal_bypass_reject 0]} {
+        fail_preflight "static-check-capture-completeness diagnostic_complete=$diagnostic_complete freeze_continued=$diagnostic_freeze_continued freeze_stopped=$diagnostic_freeze_stopped reordered=$diagnostic_reordered duplicate=$diagnostic_duplicate wrong_nonce=$diagnostic_wrong_nonce replay=$diagnostic_replay oversized=$diagnostic_oversized total_cap=$diagnostic_total_cap truncated=$diagnostic_truncated terminal_complete=$diagnostic_terminal_complete terminal_freeze=$diagnostic_terminal_freeze terminal_missing=$diagnostic_terminal_missing terminal_moved=$diagnostic_terminal_moved terminal_replay=$diagnostic_terminal_replay terminal_wrong_nonce=$diagnostic_terminal_wrong_nonce terminal_duplicate=$diagnostic_terminal_duplicate terminal_cap=$diagnostic_terminal_cap terminal_truncated=$diagnostic_terminal_truncated terminal_summary=$diagnostic_terminal_summary_contract terminal_guest=$diagnostic_terminal_guest_contract fbstat=$diagnostic_fbstat_complete fbstat_duplicate=$diagnostic_fbstat_duplicate credit_summary=$diagnostic_credit_summary_contract finish=$diagnostic_finish_complete,$diagnostic_finish_freeze,$diagnostic_finish_invalid normal=$normal_finish_success,$normal_finish_null,$normal_finish_forensics,$normal_finish_failure frames=$diagnostic_normal_frames,$normal_normal_frames injected_semantic=$diagnostic_injected_semantic no_rows=$diagnostic_without_rows console_throw=$diagnostic_console_throw console_block=$diagnostic_console_block source_order=$static_diag_source_order,$static_diag_source_order_reject bootstrap=$static_diag_bootstrap_order,$static_diag_bootstrap_order_reject,$static_diag_bootstrap_marker_counts,$static_diag_bootstrap_marker_negatives terminal_api=$static_diag_terminal_api_forbidden invalid_context=$static_invalid_launch_fbstat,$static_invalid_before_fbstat,$static_invalid_after_fbstat,$static_invalid_after_reordered finish_preserve=$static_finish_invalid_preserved,$static_finish_complete_validation_failure diag0_dispatch=$static_diag0_dispatch forbidden=$static_diag_forbidden dynamic=$static_diag_dynamic_error stdout=$static_diag_stdout_restore_source,$static_diag_stdout_restore_mutation,$static_diag_stdout_restore_mutation_source,$static_diag_stdout_liveness reserve=$static_diag_reserve_contract,$static_diag_reserve_zero,$static_diag_reserve_too_large,$static_diag_reserve_wrong_outer,$static_diag_reserve_source mutations=$static_diag_reserve_mutations mutation_application=$static_diag_reserve_mutation_application terminal_chain=$static_diag_terminal_chain,$static_diag_terminal_bypass_reject"
+    }
     # Byte-for-byte corpus from the retained 20260710T170400Z retry.  Its
     # 1.565-second main-world long task coalesced rVFC delivery: callback 1
     # reported presentedFrames=88, while sample 1 saw only 7 callbacks but
@@ -2672,6 +4981,18 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [string first {probe.js} $production_media_helper] >= 0} {
         fail_preflight "static-check-media-helper-grep-or-trust-contract lines=[llength $helper_grep_lines]"
     }
+    set production_capture_diag_helper \
+        [capture_completeness_diag_guest_helper_script $static_nonce]
+    set capture_diag_helper_contract [guest_helper_grep_option_contract \
+        /ytcapturediag.sh $production_capture_diag_helper]
+    if {![lindex $capture_diag_helper_contract 0] ||
+        [string first {YT_CAPTURE_COMPLETENESS_V1 kind=.* schema=1 nonce=} \
+            $production_capture_diag_helper] < 0 ||
+        [string first {/bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=16} \
+            $production_capture_diag_helper] < 0 ||
+        [string first {YT_MEDIA_PROBE_V1} $production_capture_diag_helper] >= 0} {
+        fail_preflight "static-check-capture-completeness-helper-contract parsed=$capture_diag_helper_contract"
+    }
     set process_filter_command [media_probe_process_filter_command]
     if {$process_filter_command ne {ps 2>/dev/null | grep hrom}} {
         fail_preflight "static-check-media-process-filter-command command=$process_filter_command"
@@ -2687,7 +5008,8 @@ cat /kde-chromium-process-evidence.log
         /ytargv.sh {#!/bin/bash
 cat /host-gui-wayland-chromium.log
 } \
-        /ytmediaprobe.sh $production_media_helper]
+        /ytmediaprobe.sh $production_media_helper \
+        /ytcapturediag.sh $production_capture_diag_helper]
     dict for {helper_name helper_script_text} $static_media_arm_helpers {
         set helper_contract [guest_helper_grep_option_contract \
             $helper_name $helper_script_text]
@@ -2815,6 +5137,26 @@ cat /host-gui-wayland-chromium.log
         # Host semantics see only the parser's post-validation LF form.
         return "$text\n"
     }
+    proc static_capture_completeness_helper_wire {text nonce marker} {
+        if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+            error "invalid static capture-completeness frame marker"
+        }
+        set wire "[capture_completeness_diag_host_envelope initial $nonce $marker]\033\[?2004hhost-helper-preamble\r\n"
+        set lines [split $text "\n"]
+        set last [expr {[llength $lines] - 1}]
+        set index -1
+        foreach line $lines {
+            incr index
+            if {$index == $last && $line eq ""} { continue }
+            if {[string first {YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN } $line] == 0} {
+                append wire "\033\[?2004l\r$line\r\n"
+            } else {
+                append wire "$line\r\n"
+            }
+        }
+        append wire "\r\n${marker}:RC:0\r\n${marker}:FENCE\r\n"
+        return $wire
+    }
 
     set wrong_nonce fedcba9876543210fedcba9876543210
     set wrong_media [string map [list $static_nonce $wrong_nonce] $media_60]
@@ -2857,6 +5199,46 @@ cat /host-gui-wayland-chromium.log
         ![lindex [lindex $force_complete_disposition 3] 1] ||
         ![static_media_helper_clean $helper_temp_prefix]} {
         fail_preflight "static-check-force-media-helper-complete-envelope run=$force_complete_run capture=$force_complete_capture disposition=$force_complete_disposition"
+    }
+
+    # The two grep reducers see one mixed Chromium log.  They must retain only
+    # their own marker family; otherwise a diagnostic injection could corrupt
+    # the 30-row media parser or a semantic row could forge timer evidence.
+    set capture_diag_source "$helper_reducer_dir/capture-diag-source.log"
+    set capture_diag_capture "$helper_reducer_dir/capture-diag.log"
+    set capture_diag_temp_prefix "$helper_reducer_dir/capture-diag-work"
+    set capture_diag_script "$helper_reducer_dir/ytcapturediag.sh"
+    set capture_diag_options [dict create \
+        grep_bin $guest_grep_primitive \
+        source_log $capture_diag_source \
+        capture_log $capture_diag_capture \
+        temp_prefix $capture_diag_temp_prefix \
+        do_sync 0]
+    wf $capture_diag_script [capture_completeness_diag_guest_helper_script \
+        $static_nonce $capture_diag_options]
+    if {[catch {exec bash -n $capture_diag_script 2>@1} capture_diag_syntax]} {
+        fail_preflight "static-check-capture-completeness-helper-bash-syntax error=$capture_diag_syntax"
+    }
+    set mixed_helper_source "$force_media_60\n$diagnostic_complete_payload\n"
+    set media_mixed_run [static_media_helper_run $force_helper_script \
+        $helper_source $mixed_helper_source]
+    set media_mixed_disposition [static_media_helper_disposition \
+        [lindex $media_mixed_run 1] $static_nonce $media_probe_extension_id 1]
+    set capture_diag_run [static_media_helper_run $capture_diag_script \
+        $capture_diag_source $mixed_helper_source]
+    set capture_diag_wire [static_capture_completeness_helper_wire \
+        [lindex $capture_diag_run 1] $static_nonce YTCAPTURESTATICC7]
+    set capture_diag_disposition [capture_completeness_diag_disposition \
+        $capture_diag_wire $static_nonce $media_probe_extension_id \
+        YTCAPTURESTATICC7 initial]
+    if {![lindex $media_mixed_run 0] ||
+        [read_text $helper_capture] ne "$force_media_60\n" ||
+        [lindex $media_mixed_disposition 0] ne "COMPLETE" ||
+        ![lindex $capture_diag_run 0] ||
+        [read_text $capture_diag_capture] ne "$diagnostic_complete_payload\n" ||
+        [lindex $capture_diag_disposition 0] ne "COMPLETE" ||
+        ![static_media_helper_clean $capture_diag_temp_prefix]} {
+        fail_preflight "static-check-capture-completeness-helper-isolation media=$media_mixed_disposition diagnostic=$capture_diag_disposition"
     }
 
     # A later invocation must remove the prior complete capture before
@@ -4093,6 +6475,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set reducer_host "$outdir/debugfs-stderr-reducer.sh"
     set reducer_missing_image "$outdir/debugfs-definitely-missing.img"
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    puts "YT-CAPTURE-COMPLETENESS-DIAGNOSTIC-STATIC-PASS terminal_complete=PASS terminal_freeze=INCOMPLETE terminal_invalid=REJECT missing_moved_replay_wrong_nonce_order_duplicate_cap_truncation=REJECT dedicated_finish=PASS no_normal_success_route=PASS no_normal_frames=PASS normal_finish_parity=PASS noncredit_summary=PASS"
     set reducer_fh [open $reducer_image wb]
     seek $reducer_fh [expr {8 * 1024 * 1024 - 1}] start
     puts -nonewline $reducer_fh "\0"
@@ -4119,14 +6502,15 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS fbstat_absent_mixed=PASS finish_raw_preservation=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime_noncredit=UNEXECUTED"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
-af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720"
-af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=$egl_forensics fps_claim_gated_by_media_source=$media_probe"
+af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag"
+af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=[expr {$egl_forensics || $capture_completeness_diag}] fps_claim_gated_by_media_source=$media_probe"
 wf "$outdir/chromium-url.txt" "$url\n"
-wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_FORCE_HD720=$force_hd720\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
+wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_FORCE_HD720=$force_hd720\nYT_CAPTURE_COMPLETENESS_DIAG=$capture_completeness_diag\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
 
 exec cp --reflink=auto --sparse=always -- $fsimg $scratch
 if {$media_probe eq "1"} {
@@ -4145,7 +6529,7 @@ puts $fh "#!/bin/bash"
 puts $fh "set +e"
 puts $fh "echo YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=$disable_audio force_hd720=$force_hd720"
 puts $fh "if ! mkdir /tmp/yt-presentfps-launch.lock 2>/dev/null; then echo YT_LAUNCH_DUP; exit 0; fi"
-puts $fh "rm -f /host-gui-wayland-chromium.log /tmp/host-gui-wayland-chromium.log /chrome_debug.log /tmp/chrome_debug.log /yt-launch-stdio.log /yt-media-probe.log /kde-chromium-process-evidence.log /yt-role-*.log /yt-role-*-stdio.log /chromium-egl-trace.*.log /mesa-egl-context-trace.log /yt-egl-forensics-manifest.txt /yt-egl-dynamic-processes.log"
+puts $fh "rm -f /host-gui-wayland-chromium.log /tmp/host-gui-wayland-chromium.log /chrome_debug.log /tmp/chrome_debug.log /yt-launch-stdio.log /yt-media-probe.log /yt-capture-completeness.log /kde-chromium-process-evidence.log /yt-role-*.log /yt-role-*-stdio.log /chromium-egl-trace.*.log /mesa-egl-context-trace.log /yt-egl-forensics-manifest.txt /yt-egl-dynamic-processes.log"
 puts $fh "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
 puts $fh "export WAYLAND_DISPLAY=wayland-0"
 puts $fh "export WAYLAND_CHROMIUM_MULTIPROCESS=$multiprocess"
@@ -4162,7 +6546,7 @@ if {$egl_forensics eq "1"} {
     puts $fh "export LD_PRELOAD=/opt/host-gui/wayland-chromium/lib/chromium-egl-trace-preload.so"
 }
 puts $fh "U='$url'"
-puts $fh "echo YT_ENV multiprocess=\$WAYLAND_CHROMIUM_MULTIPROCESS disable_audio_output=\$WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT media_probe=$media_probe force_hd720=$force_hd720"
+puts $fh "echo YT_ENV multiprocess=\$WAYLAND_CHROMIUM_MULTIPROCESS disable_audio_output=\$WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag"
 puts $fh "echo YT_ACTUAL /bin/wayland-chromium \"\$U\""
 puts $fh "/bin/wayland-chromium \"\$U\" >/yt-launch-stdio.log 2>&1 &"
 puts $fh "p=\$!"
@@ -4171,6 +6555,30 @@ puts $fh "sleep 1"
 puts $fh [media_probe_process_filter_command]
 puts $fh "echo YT_LAUNCH_END arm=$arm"
 close $fh
+
+# This is deliberately not /ytlaunch.sh with a diagnostic flag.  The diag1
+# path owns a minimal launch transcript and never stages or invokes the normal
+# launcher/argv/role/frame helper set.
+set capture_completeness_diag_launch_host "$outdir/ytcapturediaglaunch.sh"
+if {$capture_completeness_diag eq "1"} {
+    set fh [open $capture_completeness_diag_launch_host w]
+    puts $fh "#!/bin/bash"
+    puts $fh "set +e"
+    puts $fh "echo YT_CAPTURE_COMPLETENESS_LAUNCH_BEGIN nonce=$media_probe_nonce"
+    puts $fh "rm -f /host-gui-wayland-chromium.log /tmp/host-gui-wayland-chromium.log /yt-capture-completeness.log /yt-capture-completeness-launch-stdio.log"
+    puts $fh "export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root"
+    puts $fh "export WAYLAND_DISPLAY=wayland-0"
+    puts $fh "export WAYLAND_CHROMIUM_MULTIPROCESS=$multiprocess"
+    puts $fh "export WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT=$disable_audio"
+    puts $fh "export WAYLAND_CHROMIUM_EXTRA_FLAGS='$chromium_extra_flags'"
+    puts $fh "U='$url'"
+    puts $fh "/bin/wayland-chromium \"\$U\" >/yt-capture-completeness-launch-stdio.log 2>&1 &"
+    puts $fh "p=\$!"
+    puts $fh "echo YT_CAPTURE_COMPLETENESS_LAUNCH_CHILD=\$p nonce=$media_probe_nonce"
+    puts $fh "sleep 1"
+    puts $fh "echo YT_CAPTURE_COMPLETENESS_LAUNCH_END nonce=$media_probe_nonce"
+    close $fh
+}
 
 set forensic_host "$outdir/yteglforensics.sh"
 if {$egl_forensics eq "1"} {
@@ -4238,13 +6646,27 @@ set media_host "$outdir/ytmediaprobe.sh"
 if {$media_probe eq "1"} {
     wf $media_host [media_probe_guest_helper_script $media_probe_nonce]
 }
-
-set helper_pairs [list $launch_host /ytlaunch.sh $fbs_host /fbs.sh $role_host /ytrole.sh $argv_host /ytargv.sh]
-if {$egl_forensics eq "1"} {
-    lappend helper_pairs $forensic_host /yteglforensics.sh
+set capture_completeness_diag_host "$outdir/ytcapturediag.sh"
+if {$capture_completeness_diag eq "1"} {
+    wf $capture_completeness_diag_host \
+        [capture_completeness_diag_guest_helper_script $media_probe_nonce]
 }
-if {$media_probe eq "1"} {
-    lappend helper_pairs $media_host /ytmediaprobe.sh
+
+if {$capture_completeness_diag eq "1"} {
+    # DIAG1 stages only the two diagnostic commands.  Keeping the ordinary
+    # helper files out of this image makes accidental runtime fall-through
+    # into frame/FPS/media extraction observable and fail-closed.
+    set helper_pairs [list \
+        $capture_completeness_diag_launch_host /ytcapturediaglaunch.sh \
+        $capture_completeness_diag_host /ytcapturediag.sh]
+} else {
+    set helper_pairs [list $launch_host /ytlaunch.sh $fbs_host /fbs.sh $role_host /ytrole.sh $argv_host /ytargv.sh]
+    if {$egl_forensics eq "1"} {
+        lappend helper_pairs $forensic_host /yteglforensics.sh
+    }
+    if {$media_probe eq "1"} {
+        lappend helper_pairs $media_host /ytmediaprobe.sh
+    }
 }
 if {$media_probe eq "1"} {
     set guest_grep_contract_rows {}
@@ -4283,9 +6705,15 @@ set qemu_pid [exp_pid]
 set qemu_started 1
 match_max 2000000
 after 50
+# DIAG1-BOOTSTRAP-SERIAL-BEGIN
 set owner_snapshot [owned_process_group_lines]
 set owner_pattern [format {^%s pgid=%s } $qemu_pid $qemu_pid]
 if {![regexp $owner_pattern $owner_snapshot]} {
+    if {$capture_completeness_diag eq "1"} {
+        capture_completeness_diag_bootstrap_terminal bootstrap-owner \
+            DIAG_BOOTSTRAP_OWNER "$owner_snapshot" \
+            "diagnostic-owned-process-group-missing"
+    }
     finish 13 "FAIL direct-spawn-owned-group-missing leader=$qemu_pid snapshot=$owner_snapshot"
 }
 af $statusf "[iso_now] direct_spawn_owner leader=$qemu_pid snapshot=$owner_snapshot"
@@ -4293,10 +6721,31 @@ af $statusf "[iso_now] direct_spawn_owner leader=$qemu_pid snapshot=$owner_snaps
 expect {
     -re {root:/# } {}
     -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
+        if {$capture_completeness_diag eq "1"} {
+            capture_completeness_diag_bootstrap_terminal bootstrap-root \
+                DIAG_BOOTSTRAP_ROOT_PANIC $expect_out(buffer) \
+                "diagnostic-root-prompt-panic"
+        }
         finish 4 "FAIL crash-before-root-prompt"
     }
-    timeout { fail_timeout root-prompt 12 }
-    eof { finish 13 "FAIL qemu-exited-before-root-prompt" }
+    timeout {
+        if {$capture_completeness_diag eq "1"} {
+            set diagnostic_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            capture_completeness_diag_bootstrap_terminal bootstrap-root \
+                DIAG_BOOTSTRAP_ROOT_TIMEOUT $diagnostic_raw \
+                "diagnostic-root-prompt-deadline"
+        }
+        fail_timeout root-prompt 12
+    }
+    eof {
+        if {$capture_completeness_diag eq "1"} {
+            set diagnostic_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            capture_completeness_diag_bootstrap_terminal bootstrap-root \
+                DIAG_BOOTSTRAP_ROOT_EOF $diagnostic_raw \
+                "diagnostic-root-prompt-eof"
+        }
+        finish 13 "FAIL qemu-exited-before-root-prompt"
+    }
 }
 require_kvm_proof
 
@@ -4306,23 +6755,57 @@ expect {
     -re {kde-session: KWin and plasmashell are running} {}
     -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory} {
         set timeout $old_timeout
+        if {$capture_completeness_diag eq "1"} {
+            capture_completeness_diag_bootstrap_terminal bootstrap-kde \
+                DIAG_BOOTSTRAP_KDE_PANIC $expect_out(buffer) \
+                "diagnostic-kde-ready-panic"
+        }
         finish 4 "FAIL crash-before-kde-ready"
     }
     timeout {
         set timeout $old_timeout
+        if {$capture_completeness_diag eq "1"} {
+            set diagnostic_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            capture_completeness_diag_bootstrap_terminal bootstrap-kde \
+                DIAG_BOOTSTRAP_KDE_TIMEOUT $diagnostic_raw \
+                "diagnostic-kde-ready-deadline"
+        }
         fail_timeout kde-ready 14
     }
     eof {
         set timeout $old_timeout
+        if {$capture_completeness_diag eq "1"} {
+            set diagnostic_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            capture_completeness_diag_bootstrap_terminal bootstrap-kde \
+                DIAG_BOOTSTRAP_KDE_EOF $diagnostic_raw \
+                "diagnostic-kde-ready-eof"
+        }
         finish 15 "FAIL qemu-exited-before-kde-ready"
     }
 }
 set timeout $old_timeout
+# DIAG1-BOOTSTRAP-SERIAL-END
+
+# POST-KDE-READY-DISPATCH-BEGIN
+# DIAG1-RUNTIME-ONLY-BEGIN
+# This terminal branch must remain ahead of every normal idle/render/media
+# phase.  capture_completeness_diag_run() always calls finish(), so execution
+# cannot fall through to a normal frame, semantic, or FPS helper.
+if {$capture_completeness_diag eq "1"} {
+    capture_completeness_diag_dispatch
+    finish 8 "FAIL capture-completeness-diagnostic-branch-returned no_fps_claim=1 no_semantic_success=1"
+}
+# DIAG1-RUNTIME-ONLY-END
+
+# NORMAL-RUNTIME-ONLY-BEGIN
 after 4000
 
 set idle [fb_sample idle]
-capture_guest_fb pre
-monitor_screendump pre
+if {[capture_completeness_diag_requires_normal_frames \
+        $capture_completeness_diag]} {
+    capture_guest_fb pre
+    monitor_screendump pre
+}
 
 set launch_buf [require_guest_ok [guest_cmd "/bin/bash /ytlaunch.sh" chromium-launch 35] chromium-launch]
 if {![regexp "YT_LAUNCH_BEGIN arm=$arm multiprocess=$multiprocess audio=1" $launch_buf] ||
@@ -4407,6 +6890,12 @@ if {$media_probe eq "1"} {
     if {![media_probe_phase_budget_valid $media_probe_outer_ceiling_ms \
         $media_probe_phase_budget_ms $media_probe_deadline_margin_ms]} {
         finish 8 "FAIL media-probe-phase-budget-invalid outer_ms=$media_probe_outer_ceiling_ms phase_ms=$media_probe_phase_budget_ms margin_ms=$media_probe_deadline_margin_ms no_fps_claim=1"
+    }
+    # This context snapshot is deliberately outside the semantic capture
+    # deadline.  Otherwise an opt-in diagnostic could steal time from the
+    # existing 30+60+final bounded media transaction.
+    if {$capture_completeness_diag eq "1"} {
+        capture_completeness_diag_fbstat_snapshot before
     }
     set media_phase_start_ms [clock clicks -milliseconds]
     set media_phase_deadline_ms [expr {$media_phase_start_ms +
@@ -4523,7 +7012,8 @@ if {$media_probe eq "1"} {
         set capture_disposition [media_probe_capture_disposition $final_capture_text \
             $media_probe_nonce $media_probe_extension_id $force_hd720 \
             $final_capture_marker final]
-        if {[lindex $capture_disposition 0] ne "COMPLETE"} {
+        if {[lindex $capture_disposition 0] ne "COMPLETE" &&
+            $capture_completeness_diag ne "1"} {
             wf $media_probe_serial $serial_evidence
             set media_probe_verdict "INVALID"
             af $metricsf "media_probe_verdict=INVALID no_fps_claim=1 capture_path=$capture_path detail=final-[lindex $capture_disposition 1]"
@@ -4546,6 +7036,19 @@ if {$media_probe eq "1"} {
         $media_phase_end_ms 0]} {
         set media_probe_verdict "INVALID"
         finish 8 "FAIL media-probe-deadline-after-final-logging elapsed_ms=$media_phase_elapsed_ms phase_budget_ms=$media_probe_phase_budget_ms no_fps_claim=1"
+    }
+    if {$capture_completeness_diag eq "1"} {
+        set diagnostic_attempt [expr {$capture_path eq "fast" ? "initial" : "final"}]
+        set diagnostic_disposition [capture_completeness_diag_collect \
+            $diagnostic_attempt]
+        capture_completeness_diag_fbstat_snapshot after
+        af $metricsf "capture_completeness_diagnostic attempt=$diagnostic_attempt semantic_capture_disposition=[lindex $capture_disposition 0] semantic_detail=[lindex $capture_disposition 1] disposition=[lindex $diagnostic_disposition 0] detail=[lindex $diagnostic_disposition 1] diagnostic_only=1 no_fps_claim=1"
+        if {[lindex $diagnostic_disposition 0] eq "INVALID"} {
+            set media_probe_verdict "DIAGNOSTIC_INVALID"
+            finish 8 "FAIL capture-completeness-diagnostic-invalid detail=[lindex $diagnostic_disposition 1] no_fps_claim=1"
+        }
+        set media_probe_verdict "DIAGNOSTIC_[lindex $diagnostic_disposition 0]"
+        finish 0 "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $diagnostic_disposition 0] semantic_capture=[lindex $capture_disposition 0] detail=[lindex $diagnostic_disposition 1] no_fps_claim=1"
     }
     capture_guest_fb mediaProbe
     monitor_screendump mediaProbe
