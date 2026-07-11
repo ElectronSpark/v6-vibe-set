@@ -289,6 +289,29 @@ success. It does not explain the guest failure or create any performance fact.
 Next queue item is an independent no-boot adversarial review of this receipt;
 only then may a fresh A1 execution gate be formed.
 
+**A1 render-start receipt independent adversarial review — FAIL / NO-BOOT
+(2026-07-11):** fresh normal `media=1,capturediag=0` static replay
+`/tmp/xv6-render-receipt-independent.ZxoU6d` (external log
+`/tmp/xv6-render-receipt-independent-log.o8YXJp`) exited 0 with exact QEMU
+counts zero before and after, and independently re-confirmed nonce/probe
+framing, frame binding, source-status/role negatives, threshold retention, and
+diag0/V3 isolation. It does **not** prove the claimed tail integrity. The real
+parser accepted the named adversarial frame in
+`/tmp/xv6-render-receipt-tail-adversary-log.gI1Rk7`: `source_status=regular`,
+`source_cursor=2048`, `source_bytes=0`, empty-frame digest, and falsely
+`source_tail_truncated=0` parsed `pass` and classified `OBSERVED` for 104/5
+against idle 3/4. The parser checks only `source_bytes <= source_cursor` and
+the flag's syntax; regular-source tail truth is not enforced. In the live
+loop, an OBSERVED receipt avoids the no-credit-invalid path, so this is a
+receipt-integrity failure even though it cannot forge host fbstat.
+
+No source change is made here. The minimal repair contract is: for regular
+source require `source_tail_truncated == (source_cursor > source_bytes)`;
+carry a bounded `role_total` and enforce the analogous role-tail invariant;
+static adversaries for both false/true tail mismatches must parse INVALID and
+cannot reach OBSERVED. Re-run this independent review after that narrow repair;
+no A1 VM gate, retry, FPS, semantic, audio, or fullscreen authority exists.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -378,11 +401,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 6. **A1 windowed execution — CONSUMED/INVALID:** the later passive-quiescence
    trial had no overlap and clean owned reap, but failed
    `chromium-render-start-missing`, yielding N=0 valid samples. Its flip gate
-   is localized but Chromium's no-presentation cause is not: first add and
-   review the bounded render-start receipt no-boot, then form a new gate; do
-   not reuse either consumed session. Every future conductor must pass the
-   passive all-arch zero-QEMU interval and immediate prelaunch check. Clear
-   >=52 before pursuing about 55-60.
+   is localized but Chromium's no-presentation cause is not. The new receipt
+   has a tail-integrity FAIL: first repair/review that narrow no-boot contract,
+   then form a new gate; do not reuse either consumed session. Every future
+   conductor must pass the passive all-arch zero-QEMU interval and immediate
+   prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
