@@ -792,7 +792,7 @@ proc capture_completeness_diag_disposition {
 # can be written as nonce-bound raw evidence before finish() ever runs.
 proc capture_completeness_diag_guest_cmd {
     command label {seconds 30} {deadline_ms 0} {reserve_ms 0}
-    {min_timeout_ms 1000}
+    {min_timeout_ms 1000} {allow_zero_inner_tail 0}
 } {
     global timeout serial_counter serial_nonce send_slow
     incr serial_counter
@@ -802,7 +802,8 @@ proc capture_completeness_diag_guest_cmd {
     if {$deadline_ms != 0} {
         set before_send_ms [clock clicks -milliseconds]
         set before_send_plan [media_probe_final_timeout_seconds $deadline_ms \
-            $before_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+            $before_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms \
+            $allow_zero_inner_tail]
         if {![lindex $before_send_plan 0]} {
             return [list DIAG_DEADLINE_PRE_SEND "" \
                 "diagnostic-deadline-before-send-$label-[lindex $before_send_plan 2]" \
@@ -816,7 +817,8 @@ proc capture_completeness_diag_guest_cmd {
     if {$deadline_ms != 0} {
         set after_send_ms [clock clicks -milliseconds]
         set after_send_plan [media_probe_final_timeout_seconds $deadline_ms \
-            $after_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms]
+            $after_send_ms [expr {$seconds * 1000}] $min_timeout_ms $reserve_ms \
+            $allow_zero_inner_tail]
         if {![lindex $after_send_plan 0]} {
             set timeout $old_timeout
             return [list DIAG_DEADLINE_POST_SEND "" \
@@ -860,10 +862,10 @@ proc capture_completeness_diag_guest_cmd {
 # escaping into require_guest() or the normal result/extractor path.
 proc capture_completeness_diag_command_result {
     command label {seconds 30} {deadline_ms 0} {reserve_ms 0}
-    {min_timeout_ms 1000}
+    {min_timeout_ms 1000} {allow_zero_inner_tail 0}
 } {
     set result [capture_completeness_diag_guest_cmd $command $label $seconds \
-        $deadline_ms $reserve_ms $min_timeout_ms]
+        $deadline_ms $reserve_ms $min_timeout_ms $allow_zero_inner_tail]
     set raw_status [lindex $result 0]
     set raw_text [lindex $result 1]
     set raw_detail [expr {[llength $result] >= 3 ? [lindex $result 2] : "missing-result-detail"}]
@@ -1404,10 +1406,11 @@ proc capture_completeness_diag_v3_command_result {
             "${serial_nonce}V3${serial_counter}"]
     }
     # Admission has retained the sole global tail and all downstream caps.
-    # The inner deadline is only this stage endpoint; do not subtract the
-    # reserve again for each stage.
+    # Pass the generic helper an explicit V3-only zero inner tail: its stage
+    # deadline must still cover the command, but must not debit the one global
+    # reserve a second time.  Every other generic caller keeps zero disabled.
     return [capture_completeness_diag_command_result $command $label $seconds \
-        $stage_deadline_ms 0]
+        $stage_deadline_ms 0 1000 1]
 }
 
 proc capture_completeness_diag_v3_capture_payload {raw_text nonce marker} {
@@ -2068,11 +2071,24 @@ proc media_probe_deadline_allows {deadline_ms now_ms required_ms} {
                   $required_ms}]
 }
 
-proc media_probe_final_timeout_seconds {deadline_ms now_ms cap_ms min_ms post_ms} {
-    foreach value [list $cap_ms $min_ms $post_ms] {
+proc media_probe_final_timeout_seconds {
+    deadline_ms now_ms cap_ms min_ms post_ms {allow_zero_inner_tail 0}
+} {
+    foreach value [list $cap_ms $min_ms] {
         if {![string is integer -strict $value] || $value < 1} {
             return [list 0 0 "final-timeout-parameter-invalid"]
         }
+    }
+    # The default generic contract requires a positive post-send tail.  V3
+    # may opt in only to an exact zero inner tail after its separate admission
+    # has retained the sole global reserve.  Reject negative, malformed,
+    # unspecified-zero, and nonzero-opt-in values before any deadline math.
+    if {![string is integer -strict $post_ms] || $post_ms < 0 ||
+        ![string is integer -strict $allow_zero_inner_tail] ||
+        ($allow_zero_inner_tail != 0 && $allow_zero_inner_tail != 1) ||
+        ($post_ms == 0 && $allow_zero_inner_tail != 1) ||
+        ($post_ms > 0 && $allow_zero_inner_tail != 0)} {
+        return [list 0 0 "final-timeout-parameter-invalid"]
     }
     set available [expr {[media_probe_deadline_remaining_ms \
         $deadline_ms $now_ms] - $post_ms}]
@@ -4611,6 +4627,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     # into the same owned nonce/raw terminal used by the live diagnostic.
     proc static_capture_diag_transport {
         shell command label seconds deadline_ms expected_status {reserve_ms 0}
+        {v3_outer_deadline_ms ""} {v3_downstream_ms ""}
     } {
         # The timeout reducer must retain the spawned child's PTY until the
         # diagnostic expect timeout itself wins.  A bare shell body was not a
@@ -4639,10 +4656,23 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             $child_stdout eq ""} {
             error "diagnostic-actual-transport-$label-child-stdout-not-live=$child_stdout"
         }
-        set command_caught [catch {
-            capture_completeness_diag_command_result $command $label \
-                $seconds $deadline_ms $reserve_ms
-        } result]
+        # The optional pair is static-only plumbing for the production V3
+        # wrapper.  It drives the same local PTY command path so the V3
+        # zero-inner-tail reaches the real generic pre/post-send planner.
+        if {$v3_outer_deadline_ms eq "" && $v3_downstream_ms eq ""} {
+            set command_caught [catch {
+                capture_completeness_diag_command_result $command $label \
+                    $seconds $deadline_ms $reserve_ms
+            } result]
+        } elseif {$v3_outer_deadline_ms eq "" || $v3_downstream_ms eq ""} {
+            error "diagnostic-actual-transport-$label-v3-arguments-partial"
+        } else {
+            set command_caught [catch {
+                capture_completeness_diag_v3_command_result $command $label \
+                    $seconds $deadline_ms $v3_outer_deadline_ms \
+                    $v3_downstream_ms
+            } result]
+        }
         catch {exec kill -TERM -- $child}
         catch {close -i $child_spawn_id}
         set wait_caught [catch {wait -i $child_spawn_id} wait_result]
@@ -4846,6 +4876,44 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         $static_actual_deadline_post_deadline DIAG_DEADLINE_POST_SEND 1]
     lappend static_diag_stdout_liveness \
         [static_capture_diag_stdout_contract deadline-post]
+    # Exercise the real V3 command wrapper, not the retained V1 static
+    # dispatch.  V3 retains its 5 s outer reserve in admission, then the
+    # local PTY reaches the generic pre/post-send planner with the explicit
+    # zero inner tail.  The shell receives the complete slow serial command
+    # and returns its owned RC/FENCE frame; no guest, JS, or VM is involved.
+    set static_v3_inner_tail_now [clock clicks -milliseconds]
+    set static_v3_inner_tail_stage [expr {$static_v3_inner_tail_now + 3000}]
+    set static_v3_inner_tail_outer [expr {$static_v3_inner_tail_now + 7000}]
+    set static_v3_inner_tail_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
+    set static_v3_inner_tail_shell [format \
+        {IFS= read -r line; case "$line" in *"m=%s;printf"*) printf '\n%s:RC:0\n%s:FENCE\n'; exec /bin/sleep 1;; *) exit 23;; esac} \
+        $static_v3_inner_tail_marker $static_v3_inner_tail_marker \
+        $static_v3_inner_tail_marker]
+    set static_v3_inner_tail_valid [static_capture_diag_transport \
+        $static_v3_inner_tail_shell true static-v3-inner-tail-valid 1 \
+        $static_v3_inner_tail_stage 0 0 $static_v3_inner_tail_outer 0]
+    set static_v3_inner_tail_expired [capture_completeness_diag_v3_command_result \
+        true static-v3-inner-tail-expired 1 \
+        [expr {[clock clicks -milliseconds] - 1}] \
+        [expr {[clock clicks -milliseconds] + 10000}] 0]
+    set static_v3_inner_tail_generic_deadline \
+        [expr {[clock clicks -milliseconds] + 5000}]
+    set static_v3_inner_tail_unspecified \
+        [capture_completeness_diag_command_result true \
+            static-v3-inner-tail-unspecified 1 \
+            $static_v3_inner_tail_generic_deadline]
+    set static_v3_inner_tail_negative \
+        [capture_completeness_diag_command_result true \
+            static-v3-inner-tail-negative 1 \
+            $static_v3_inner_tail_generic_deadline -1 1000 1]
+    set static_v3_inner_tail_malformed \
+        [capture_completeness_diag_command_result true \
+            static-v3-inner-tail-malformed 1 \
+            $static_v3_inner_tail_generic_deadline malformed 1000 1]
+    set static_v3_inner_tail_bad_optin \
+        [capture_completeness_diag_command_result true \
+            static-v3-inner-tail-bad-optin 1 \
+            $static_v3_inner_tail_generic_deadline 0 1000 malformed]
     set send_slow $static_actual_saved_slow
     set static_actual_context_full "phase=before flips=100 presents=90 host_ms=1000 diagnostic_only=1 nonsemantic=1\nphase=after flips=101 presents=91 host_ms=2000 diagnostic_only=1 nonsemantic=1\n"
     set static_actual_context_before "phase=before status=INVALID raw_status=DIAG_EOF raw_detail=synthetic nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1\n"
@@ -7743,6 +7811,24 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     foreach result $static_v3_210_edges expected {1 0 1 0 1 0 1 0 1 0 1 0} {
         lappend static_v3_210_edge_shape [expr {[lindex $result 0] == $expected}]
     }
+    # Exact zero slack is intentional: V3 admission owns one 5 s reserve in
+    # the outer envelope, while the generic stage planner receives only the
+    # explicit zero inner tail.  A second debit would reject this exact plan.
+    set static_v3_inner_tail_one_reserve [list \
+        [capture_completeness_diag_v3_admission 0 1000 6000 1000 0 5000] \
+        [capture_completeness_diag_v3_admission 0 1000 5999 1000 0 5000]]
+    set static_v3_inner_tail_zero_slack \
+        [media_probe_final_timeout_seconds 1000 0 1000 1000 0 1]
+    set static_v3_inner_tail_invalid_pass 1
+    foreach result [list $static_v3_inner_tail_unspecified \
+            $static_v3_inner_tail_negative $static_v3_inner_tail_malformed \
+            $static_v3_inner_tail_bad_optin] {
+        if {[lindex $result 0] ne "DIAG_DEADLINE_PRE_SEND" ||
+            [string first {final-timeout-parameter-invalid} \
+                [lindex $result 2]] < 0} {
+            set static_v3_inner_tail_invalid_pass 0
+        }
+    }
 
     set static_v3_saved_capture_diag $capture_completeness_diag
     rename capture_completeness_diag_v3_run static_capture_diag_v3_saved_runner
@@ -7800,12 +7886,19 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [lindex $static_v3_165_reject 0] ||
         [lindex $static_v3_165_reject 1] ne "v3-admission-global-reserve" ||
         $static_v3_210_edge_shape ne {1 1 1 1 1 1 1 1 1 1 1 1} ||
+        [lindex $static_v3_inner_tail_valid 0] ne "0" ||
+        [lindex $static_v3_inner_tail_expired 0] ne "DIAG_V3_ADMISSION" ||
+        [lindex $static_v3_inner_tail_expired 2] ne "v3-admission-stage-deadline" ||
+        [lindex [lindex $static_v3_inner_tail_one_reserve 0] 0] != 1 ||
+        [lindex [lindex $static_v3_inner_tail_one_reserve 1] 0] != 0 ||
+        $static_v3_inner_tail_zero_slack ne {1 1 remaining-1000-post-0} ||
+        !$static_v3_inner_tail_invalid_pass ||
         $static_v3_diag0_dispatch != 0 || !$static_v3_diag0_contract ||
         $static_v3_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-capture-completeness-v3 source=$static_v3_source_order early=$static_v3_early_as_ready_reject ready_before_selector=$static_v3_ready_before_selector_reject missing_hd720=$static_v3_missing_hd720_reject receipts=$static_v3_receipt_statuses start=$static_v3_start_receipt ready=$static_v3_ready_receipt collect=$static_v3_collect_raw0_receipt phase_start=$static_v3_phase_substitution_start phase_ready=$static_v3_phase_substitution_ready ready_digest=$static_v3_ready_digest_substitution raw0_pre=$static_v3_raw0_pre raw0_post=$static_v3_raw0_post complete=$static_v3_complete pre_ready=$static_v3_pre_ready pre_empty=$static_v3_pre_ready_empty ready_empty=$static_v3_ready_empty freeze_continued=$static_v3_freeze_continued freeze_stopped=$static_v3_freeze_stopped reordered=$static_v3_reordered duplicate=$static_v3_duplicate terminal=$static_v3_terminal reparse=$static_v3_terminal_reparse raw=$static_v3_terminal_raw_reparse 165=$static_v3_165_reject edges=$static_v3_210_edges diag0=$static_v3_diag0_dispatch contract=$static_v3_diag0_contract js=$static_v3_js_guest_runtime"
+        fail_preflight "static-check-capture-completeness-v3 source=$static_v3_source_order early=$static_v3_early_as_ready_reject ready_before_selector=$static_v3_ready_before_selector_reject missing_hd720=$static_v3_missing_hd720_reject receipts=$static_v3_receipt_statuses start=$static_v3_start_receipt ready=$static_v3_ready_receipt collect=$static_v3_collect_raw0_receipt phase_start=$static_v3_phase_substitution_start phase_ready=$static_v3_phase_substitution_ready ready_digest=$static_v3_ready_digest_substitution raw0_pre=$static_v3_raw0_pre raw0_post=$static_v3_raw0_post complete=$static_v3_complete pre_ready=$static_v3_pre_ready pre_empty=$static_v3_ready_empty freeze_continued=$static_v3_freeze_continued freeze_stopped=$static_v3_freeze_stopped reordered=$static_v3_reordered duplicate=$static_v3_duplicate terminal=$static_v3_terminal reparse=$static_v3_terminal_reparse raw=$static_v3_terminal_raw_reparse 165=$static_v3_165_reject edges=$static_v3_210_edges inner_tail_valid=$static_v3_inner_tail_valid inner_tail_expired=$static_v3_inner_tail_expired inner_tail_one_reserve=$static_v3_inner_tail_one_reserve inner_tail_zero_slack=$static_v3_inner_tail_zero_slack inner_tail_invalid=$static_v3_inner_tail_invalid_pass diag0=$static_v3_diag0_dispatch contract=$static_v3_diag0_contract js=$static_v3_js_guest_runtime"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
+    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }

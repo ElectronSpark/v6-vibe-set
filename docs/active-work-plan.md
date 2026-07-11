@@ -96,10 +96,35 @@ produce this raw status but must be explicitly reviewed. The passing static
 route does not execute real V3 dispatch: under `YT_STATIC_CHECK=1` it selects
 the retained V1 runner, directly tests V3 admission edges, and its generic
 pre-send fixture itself expects the same zero-tail parameter failure. **Next
-dependency:** narrow NO-BOOT V3 inner-tail repair plus static/adversarial review:
-permit an explicit zero inner post-send tail without re-debiting the 5 s global
-reserve, prove valid/expired V3 pre-send cases through the real V3 command
-path, and decide the zero-slack admission policy. No VM retry or new gate.
+dependency:** narrow NO-BOOT V3 inner-tail repair plus static/adversarial review.
+
+**V3 inner-tail repair — targeted static PASS / NO-BOOT (2026-07-11):** the
+generic final-timeout API now defaults to rejecting zero as before, and admits
+zero only with the explicit `allow_zero_inner_tail=1` opt-in; it rejects
+negative, malformed, unspecified-zero, and nonzero-opt-in values before
+deadline arithmetic. Only the V3 wrapper supplies `post_ms=0, min=1000,
+allow_zero_inner_tail=1`, after V3 admission has retained the single global
+5 s reserve. Fresh empty host-only replay
+`/tmp/xv6-v3-inner-tail-static.84iOko` (external log
+`/tmp/xv6-v3-inner-tail-static-log.nbvZpN`) exited 0 and exercised the real V3
+wrapper over a synchronously reaped local PTY: valid pre-send returned raw 0,
+an expired stage returned `DIAG_V3_ADMISSION/v3-admission-stage-deadline`, and
+unspecified/negative/malformed tail cases returned
+`DIAG_DEADLINE_PRE_SEND/final-timeout-parameter-invalid`. It proves the exact
+zero-slack `1000 command + 5000 reserve = 6000 outer` boundary passes while
+5999 fails, so no second reserve debit occurs. The retained V1 static dispatch
+remains diag0-off/no-credit and reports `js_guest_runtime=UNEXECUTED`. Exact
+`/proc/*/exe` scans immediately before and after found zero QEMU processes.
+This is source/static credit only; it is not an independent review, VM,
+diagnostic, semantic, audio, fullscreen, or FPS result.
+
+**Post-replay external VM context (2026-07-11):** after the completed replay,
+one non-owned process appeared in the exact `/proc/*/exe` scan:
+PID 2014209 `/usr/bin/qemu-system-riscv64`, parent 2014208, with a `-machine
+virt -nographic -m 1024M` command line. It was absent in both replay-boundary
+scans, was neither launched nor touched by this source-only work, and does not
+change the static verdict. It blocks every future VM authorization until its
+owner has synchronously reaped it and a fresh exact count is zero.
 
 ### V3 source protocol: host-only review PASS
 
@@ -181,18 +206,20 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    named assets match exactly. The historical disposable clone was not
    enumerated without a retained pathname; base freshness is independently
    accepted, while no broader `/tmp` absence claim is made.
-4. **NEXT — NO-BOOT V3 inner-tail repair and review:** repair the localized
-   zero-inner-tail API mismatch without double-debiting the 5 s reserve; add
-   exact real-V3 pre-send coverage and review the zero-slack admission policy.
-   No retry, new VM gate, performance, audio, or fullscreen work is authorized
-   until that source/static review passes.
-5. **A1 windowed:** only after valid diagnostic success/review and a new gate,
+4. **V3 inner-tail source/static repair — PASS:** explicit V3-only zero inner
+   tail reached the real generic pre-send path; exact single-reserve and
+   fail-closed negative controls passed host-only.
+5. **NEXT — independent NO-BOOT adversarial review:** inspect the generic
+   opt-in boundary, real-V3 static fixture, exact zero-slack policy, and
+   diag0/no-credit isolation. No retry, new VM gate, performance, audio, or
+   fullscreen work is authorized until that review passes.
+6. **A1 windowed:** only after valid diagnostic success/review and a new gate,
    run N>=2 forced-hd720 trials; clear >=52 before pursuing about 55-60.
-6. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
+7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed.
-7. **A2/A4 localization and repair:** only after windowed A1 N>=2; then
+8. **A2/A4 localization and repair:** only after windowed A1 N>=2; then
    validate audio-on in both windowed and actual fullscreen modes.
-8. **Residual present work and default batteries:** compare each accepted mode
+9. **Residual present work and default batteries:** compare each accepted mode
    with matching Linux-VM/local baselines, then use the standard batteries.
 
 No rootfs refresh, VM, performance, audio, fullscreen, or default work may
