@@ -174,6 +174,25 @@ touched. The session was never launched or consumed, its token was not issued,
 and a fresh authority is required only after its owner reaps it and a new gate
 again observes exact QEMU count zero.
 
+**Fresh A1 windowed execution session — CONSUMED / INVALID (2026-07-11):**
+the conductor replaced the unissued session with a live execution gate at
+`6a7c9ac5110a8636f86dee34a15abd8ee4b299a4`, equal to the explicit origin
+branch. Immediately before the sole launch, no VM worker was active, exact
+QEMU count was zero, KVM/D3D12/GL/X11/Wayland prerequisites and all three
+base-image hashes passed, and only unrelated KDE-smoke dirt existed. Trial 1,
+windowed MP=1/audio-disable=1/media=1/forced-HD720=1/EGL=0/capturediag=0,
+started in `/tmp/xv6-a1-windowed-t1.7zGOJ9` (external log
+`/tmp/xv6-a1-windowed-t1-log.qCIalN`). Its owned QEMU was PID 2029259; during
+bootstrap a non-owned RISC-V QEMU PID 2031440 appeared, making the exact count
+two. The external process was never touched. The owner was terminated to
+abort overlap; its driver recorded code 143 and synchronously reaped only its
+own group (`cleanup-finished remaining=none wait=waited:2029259 exp4 0 0`),
+then the exact final count was zero. It reached an idle virgl/OpenGL-submit
+fbstat only; no active 1280x720 source, yt-presentfps, PERF-VIDEO, drop, VPQ,
+retire, audio, fullscreen, or semantic measurement exists. This is one
+consumed INVALID attempt and N=0 valid samples, not N=1 performance credit;
+trial 2 was correctly not launched. A new fresh gate is required.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -260,10 +279,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 5. **Independent V3 inner-tail adversarial review — PASS:** generic opt-in
    boundary, real-V3 local-PTY fixture, zero-slack single-reserve policy, and
    diag0/no-credit isolation all passed without a VM.
-6. **A1 windowed session gate — BLOCKED/unissued:** the post-push exact QEMU
-   count was one external RISC-V VM. After it is synchronously reaped by its
-   owner, form a fresh gate and repeat all preflight conditions; do not reuse
-   this session or launch a VM. Clear >=52 before pursuing about 55-60.
+6. **A1 windowed execution — CONSUMED/INVALID:** one fresh-gated launch was
+   aborted when an external QEMU appeared; it yielded N=0 valid samples and
+   no second trial. Form a new gate before any retry; do not reuse this
+   session. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
