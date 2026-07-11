@@ -136,9 +136,10 @@ Newest runtime artifact and stop verdict:
   `#`, `%:`, enabled trigraph, and splice/comment forms reproduce it; include
   marker flags are forgeable. Positive dependency/snapshot checks, stress,
   configured build, and Sparse are insufficient.
-- Separate independent NO-BOOT review **REJECTED** raw function-pointer escape
-  `kqueue_guard_review_consume_poll(f->ops->poll);`: it passes although
-  assignment captures reject. TSan is non-evidence.
+- The separate raw-function-pointer report was pre-tenth/stale, not a current
+  gate regression. Fresh disposable-mirror reproduction at current
+  `95f241a`/`ed80857`, using the current reducer and compile DB, rejects exact
+  `kqueue_guard_review_consume_poll(f->ops->poll);` with `rc=1`; no boot ran.
 - Tenth guard now has an independent adversarial NO-BOOT **PASS**. It
   normalizes the relevant C translation phases before provenance parsing,
   authenticates the physical compiler-marker/include stack, and snapshots
@@ -160,10 +161,11 @@ Newest runtime artifact and stop verdict:
   exact `/proc/*/exe` QEMU count was zero before and after checks. The full
   ASan compiler-expanded guard run exited on a host limitation before it
   reported, so it receives **no credit**.
-- This PASS lifts the kqueue *review* gate only. It does not authorize a boot:
-  first create and push the verified deepest-first checkpoint, then separately
-  establish live same-name-origin, no-VM-worker, and fresh exact-zero-QEMU
-  state before the conductor may authorize one VM.
+- This PASS lifted the kqueue *review* gate only. Verified checkpoints are
+  pushed deepest-first at kernel `ed808576` then top-level `95f241af`; they do
+  not themselves authorize a boot. The conductor must separately establish a
+  fresh live same-name-origin match, no active VM worker, and fresh exact-zero
+  QEMU state before authorizing one VM.
 - Preserve scan-local high-water, unlocked/pinned dispatch,
   identity/generation/ABA/deferred reclaim, `-ENOSPC`/cycle admission,
   stale-ready rejection, callback coalescing, and `EV_CLEAR`/oneshot fairness.
@@ -256,12 +258,13 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Create the verified checkpoint deepest-first (kernel first, then top-level
-   plan/reducer/submodule pointer) and push this approved lineage; no boot.
-2. Separately establish live same-name-origin, no active VM worker, and a fresh
-   exact `/proc/*/exe` zero-QEMU gate; only then may the conductor authorize
-   one sole-VM A1 serial windowed N>=2 forced-hd720 measurement. Invalids are
-   NULL.
+1. Latest live authorization gate: **REJECTED only for material uncommitted
+   `docs/active-work-plan.md` dirt**. The kernel worktree, no-active-VM,
+   exact-zero-QEMU, KVM/virgl prerequisites, and prior checkpoint/origin
+   checks otherwise passed. Commit/push this plan-only checkpoint, then take a
+   fresh same-name-origin/no-VM/exact-zero-QEMU gate before any boot.
+2. Only after that fresh gate may the conductor authorize one sole-VM A1 serial
+   windowed N>=2 forced-hd720 measurement. Invalids are NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
 4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.
 5. Validate audio-on windowed and fullscreen parity; close each mode's
