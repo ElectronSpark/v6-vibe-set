@@ -54,6 +54,24 @@ BEGIN/END plus RC/FENCE. The helper's raw status 0 proves neither source-log
 presence nor a marker match. Treat that run as invalid evidence, not a kernel,
 codec, or presentation conclusion.
 
+**Consumed V3 diag1 gate — INVALID/NULL (2026-07-11):** token
+`V3-DIAG1-5d8521a-20260711T172315Z-Q0` was consumed by exactly one fresh run,
+`20260711T172454Z-pid2002542-mp1-audio1-media1-hd7201-capturediag1`.
+Prelaunch branch/origin and exact-QEMU gates passed; image preflight passed all
+three current asset hashes. The owned run proved KVM launch and WSL D3D12 virgl
+host selection, and the guest reported virgl capsets/render node, but it
+returned driver code 8 before diagnostic launch send:
+`INVALID command-launch-status-DIAG_DEADLINE_PRE_SEND`. All three terminal
+receipts are the retained nonregular/zero empty state; fbstat is absent and
+there are no producer, post-video, collect, timer, rVFC, FPS, audio, fullscreen,
+or semantic facts. Serial and summary terminal tuples match, raw witness is
+zero-byte, and `media_probe_image_assets=PASS` records the three exact hashes.
+The owned QEMU group was synchronously reaped (`waited:2002846 exp4 0 0`) and
+the final exact QEMU count was zero. Preserve named evidence in
+`/tmp/xv6-v3-diag1.dvKyhE`, log `/tmp/xv6-v3-diag1-log.wzCwlG`, and retained
+scratch image `/tmp/xv6-yt-20260711T172454Z-pid2002542-mp1-audio1-media1-hd7201-capturediag1.fs.img`.
+This is INVALID/NULL and consumes the gate; no retry or VM authority exists.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -134,13 +152,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    named assets match exactly. The historical disposable clone was not
    enumerated without a retained pathname; base freshness is independently
    accepted, while no broader `/tmp` absence claim is made.
-4. **Fresh V3 diag1 gate — FORMING in this plan checkpoint:** the initial
-   named-branch/origin, no-active-VM-worker, exact-zero-QEMU, KVM, and WSL
-   D3D12/virgl prerequisite audit passed. If the required post-push repeat
-   audit also passes, this checkpoint authorizes exactly one diagnostic worker
-   to run MP=1/audio-disable=1/media=1/forced-hd720=1/EGL=0/capture-diag=1.
-   That worker must repeat the prelaunch zero-QEMU check, owns/reaps its QEMU,
-   and consumes the authority. It grants no FPS or semantic credit.
+4. **NEXT — NO-BOOT pre-send-deadline forensic and review:** localize the
+   owned `DIAG_DEADLINE_PRE_SEND` path using retained named artifacts and
+   source/reducer evidence only. No retry, new VM gate, performance, audio, or
+   fullscreen work is authorized until that invalid terminal is understood and
+   independently reviewed.
 5. **A1 windowed:** only after valid diagnostic success/review and a new gate,
    run N>=2 forced-hd720 trials; clear >=52 before pursuing about 55-60.
 6. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
