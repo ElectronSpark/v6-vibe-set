@@ -245,13 +245,84 @@ capture_log='@CAPTURE_LOG@'
 temp_prefix='@TEMP_PREFIX@'
 do_sync='@DO_SYNC@'
 capture_tmp="${temp_prefix}.capture"
-rm -f "$capture_tmp" "$capture_log"
-"$grep_bin" 'YT_CAPTURE_COMPLETENESS_V1 kind=.* schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
-/bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=16 2>/dev/null
-echo YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot byte_cap=16384
-cat "$capture_log" 2>/dev/null
-echo YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=@NONCE@ status=oneshot byte_cap=16384
-rm -f "$capture_tmp"
+source_tmp="${temp_prefix}.source"
+ready_tmp="${temp_prefix}.ready"
+mode="${1:-legacy}"
+rm -f "$capture_tmp" "$capture_log" "$source_tmp" "$ready_tmp"
+case "$mode" in
+  legacy)
+    "$grep_bin" 'YT_CAPTURE_COMPLETENESS_V1 kind=.* schema=1 nonce=@NONCE@ ' "$source_log" > "$capture_tmp" 2>/dev/null
+    /bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=16 2>/dev/null
+    echo YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot byte_cap=16384
+    cat "$capture_log" 2>/dev/null
+    echo YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=@NONCE@ status=oneshot byte_cap=16384
+    ;;
+  producer-start|post-video-hd720|collect)
+    source_status=missing
+    source_bytes=0
+    source_digest=unavailable
+    grep_status=unavailable
+    matched_rows=0
+    matched_bytes=0
+    ready_digest=unavailable
+    case "$mode" in
+      producer-start)
+        phase=producer_start
+        capture_pattern='YT_CAPTURE_COMPLETENESS_V2 kind=producer_start schema=2 nonce=@NONCE@ '
+        need_ready_digest=0
+        ;;
+      post-video-hd720)
+        phase=post_video_hd720
+        capture_pattern='YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=@NONCE@ '
+        need_ready_digest=1
+        ;;
+      collect)
+        phase=collect
+        capture_pattern='YT_CAPTURE_COMPLETENESS_V2 kind=\(timer_arm\|timer_fire\|rvfc_checkpoint\|done\) schema=2 nonce=@NONCE@ '
+        need_ready_digest=1
+        ;;
+    esac
+    if [ -e "$source_log" ] || [ -L "$source_log" ]; then
+      if [ ! -r "$source_log" ]; then
+        source_status=unreadable
+      elif [ ! -f "$source_log" ] || [ -L "$source_log" ]; then
+        source_status=nonregular
+      else
+        source_status=readable
+        /bin/dd if="$source_log" of="$source_tmp" bs=1024 count=64 2>/dev/null
+        source_bytes=$(wc -c < "$source_tmp" 2>/dev/null)
+        source_bytes=${source_bytes//[[:space:]]/}
+        source_digest=$(sha256sum "$source_tmp" 2>/dev/null | awk '{print $1}')
+        if [ -z "$source_digest" ]; then source_digest=unavailable; fi
+        "$grep_bin" "$capture_pattern" "$source_log" > "$capture_tmp" 2>/dev/null
+        grep_status=$?
+        /bin/dd if="$capture_tmp" of="$capture_log" bs=1024 count=16 2>/dev/null
+        matched_rows=$(wc -l < "$capture_log" 2>/dev/null)
+        matched_rows=${matched_rows//[[:space:]]/}
+        matched_bytes=$(wc -c < "$capture_log" 2>/dev/null)
+        matched_bytes=${matched_bytes//[[:space:]]/}
+        if [ "$need_ready_digest" = 1 ]; then
+          "$grep_bin" 'YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=@NONCE@ ' "$source_log" > "$ready_tmp" 2>/dev/null
+          ready_grep_status=$?
+          ready_rows=$(wc -l < "$ready_tmp" 2>/dev/null)
+          ready_rows=${ready_rows//[[:space:]]/}
+          if [ "$ready_grep_status" = 0 ] && [ "$ready_rows" = 1 ]; then
+            ready_digest=$(sha256sum "$ready_tmp" 2>/dev/null | awk '{print $1}')
+            if [ -z "$ready_digest" ]; then ready_digest=unavailable; fi
+          fi
+        fi
+      fi
+    fi
+    echo YT_CAPTURE_COMPLETENESS_SOURCE_V2 nonce=@NONCE@ phase=$phase source_status=$source_status source_bytes=$source_bytes source_digest=$source_digest grep_status=$grep_status matched_rows=$matched_rows matched_bytes=$matched_bytes ready_digest=$ready_digest
+    echo YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=@NONCE@ status=oneshot byte_cap=16384
+    cat "$capture_log" 2>/dev/null
+    echo YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=@NONCE@ status=oneshot byte_cap=16384
+    ;;
+  *)
+    echo YT_CAPTURE_COMPLETENESS_SOURCE_V2 nonce=@NONCE@ phase=producer_start source_status=nonregular source_bytes=0 source_digest=unavailable grep_status=unavailable matched_rows=0 matched_bytes=0 ready_digest=unavailable
+    ;;
+esac
+rm -f "$capture_tmp" "$source_tmp" "$ready_tmp"
 if [ "$do_sync" = 1 ]; then sync; fi
 }]
 }
@@ -385,7 +456,7 @@ set media_probe_phase_budget_ms 130000
 set media_probe_deadline_margin_ms 10000
 set media_probe_final_min_ms 20000
 set media_probe_final_post_ms 5000
-set capture_completeness_diag_outer_deadline_ms 165000
+set capture_completeness_diag_outer_deadline_ms 210000
 set capture_completeness_diag_reserve_ms 5000
 set media_probe_host_dir "$root/rootfs-overlay/share/chromium-youtube-media-probe"
 set media_probe_guest_dir "/share/chromium-youtube-media-probe"
@@ -633,7 +704,34 @@ proc verify_media_probe_image_assets {image} {
     return [list 1 "assets=3 hashes=match"]
 }
 
-source "$root/scripts/gpu/chromium-youtube-media-probe-parser.tcl"
+# The shared parser's V3 post-ready pattern originally put `[0-9]` inside a
+# double-quoted Tcl word.  Tcl therefore attempted command substitution before
+# `regexp` could validate the synthetic lifecycle row.  Patch that one loaded
+# expression into a braced `format` pattern, and fail closed if the shared
+# source drifts instead of silently evaluating an unsafe character class.
+set media_probe_parser_path "$root/scripts/gpu/chromium-youtube-media-probe-parser.tcl"
+set media_probe_parser_fh [open $media_probe_parser_path r]
+set media_probe_parser_source [read $media_probe_parser_fh]
+close $media_probe_parser_fh
+set media_probe_parser_unsafe_post_pattern {set post_pattern "^YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=$expected_nonce selected=hd720 video_width=1280 video_height=720 stable_count=([0-9]+)$"}
+set media_probe_parser_safe_post_pattern {set post_pattern [format {^YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=%s selected=hd720 video_width=1280 video_height=720 stable_count=([0-9]+)$} $expected_nonce]}
+set media_probe_parser_post_at [string first $media_probe_parser_unsafe_post_pattern \
+    $media_probe_parser_source]
+if {$media_probe_parser_post_at < 0 || [string first \
+        $media_probe_parser_unsafe_post_pattern $media_probe_parser_source \
+        [expr {$media_probe_parser_post_at + 1}]] >= 0} {
+    error "capture-completeness parser post-ready pattern guard failed"
+}
+set media_probe_parser_source [string replace $media_probe_parser_source \
+    $media_probe_parser_post_at [expr {$media_probe_parser_post_at +
+    [string length $media_probe_parser_unsafe_post_pattern] - 1}] \
+    $media_probe_parser_safe_post_pattern]
+if {[string first $media_probe_parser_unsafe_post_pattern \
+        $media_probe_parser_source] >= 0 || [string first \
+        $media_probe_parser_safe_post_pattern $media_probe_parser_source] < 0} {
+    error "capture-completeness parser post-ready replacement guard failed"
+}
+uplevel #0 $media_probe_parser_source
 
 # Classify one raw, nonce-bound snapshot using only host-side framing and the
 # authoritative semantic parser.  INCOMPLETE is deliberately narrow: it is
@@ -972,13 +1070,834 @@ proc capture_completeness_diag_run {} {
     finish $terminal_code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
 }
 
+# V2 owns a source receipt before it makes any lifecycle claim.  It is kept
+# beside (not inside) the retained V1 runner above so static replays can still
+# exercise the exact historical wire grammar while a real diag1 boot uses the
+# repaired contract below.
+proc capture_completeness_diag_v2_empty_receipt {} {
+    return [dict create phase ready source_status nonregular source_bytes 0 \
+        source_digest unavailable grep_status unavailable matched_rows 0 \
+        matched_bytes 0]
+}
+
+proc capture_completeness_diag_v2_source_result {raw_text nonce} {
+    set parsed [capture_completeness_diag_v2_source_receipt $raw_text $nonce]
+    if {![lindex $parsed 0]} {
+        return [list 0 [lindex $parsed 1] [capture_completeness_diag_v2_empty_receipt]]
+    }
+    return [list 1 pass [lindex $parsed 2]]
+}
+
+proc capture_completeness_diag_v2_payload_result {
+    raw_text nonce marker extension_id
+} {
+    set wire "[capture_completeness_diag_v2_host_envelope initial $nonce $marker]$raw_text"
+    set captured [capture_completeness_diag_v2_capture_payload $wire $nonce $marker]
+    if {![lindex $captured 0]} {
+        return [list 0 [lindex $captured 1] "" $wire]
+    }
+    set parsed [parse_capture_completeness_diagnostic_v2 [lindex $captured 2] \
+        $nonce $extension_id 1]
+    return [list 1 pass [lindex $captured 2] $wire $parsed]
+}
+
+proc capture_completeness_diag_v2_reason_token {detail} {
+    regsub -all {[^A-Za-z0-9_-]} $detail {-} detail
+    if {$detail eq ""} { set detail diagnostic-unspecified }
+    return $detail
+}
+
+proc capture_completeness_diag_v2_text_digest {text} {
+    global outdir serial_counter
+    incr serial_counter
+    set path "$outdir/.capture-completeness-v2-digest-[pid]-$serial_counter"
+    wf $path $text
+    set digest [sha256_file $path]
+    catch {file delete -force $path}
+    if {![regexp {^[0-9a-f]{64}$} $digest]} {
+        error "capture-completeness V2 digest unavailable"
+    }
+    return $digest
+}
+
+proc capture_completeness_diag_v2_terminal_tuple {
+    nonce attempt marker raw_status disposition reason receipt capture_payload before_shape after_shape
+} {
+    foreach value [list $nonce $attempt $marker $raw_status $disposition $reason \
+            $before_shape $after_shape] {
+        if {[string first " " $value] >= 0 || [string first "\n" $value] >= 0} {
+            error "capture-completeness V2 terminal token contains whitespace"
+        }
+    }
+    set capture_digest [capture_completeness_diag_v2_text_digest $capture_payload]
+    return "YT_CAPTURE_COMPLETENESS_TERMINAL_V2 nonce=$nonce attempt=$attempt marker=$marker raw_status=$raw_status disposition=$disposition reason=$reason source_status=[dict get $receipt source_status] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] grep_status=[dict get $receipt grep_status] matched_rows=[dict get $receipt matched_rows] matched_bytes=[dict get $receipt matched_bytes] capture_digest=$capture_digest fbstat_before=$before_shape fbstat_after=$after_shape diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+}
+
+proc capture_completeness_diag_v2_terminal_reparse {text expected_nonce} {
+    set lines [split [string trimright $text "\n"] "\n"]
+    if {[llength $lines] != 1} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    set line [lindex $lines 0]
+    set token " tuple_digest="
+    set digest_at [string last $token $line]
+    if {$digest_at < 0} { return [list 0 terminal-reparse-drift {}] }
+    set tuple [string range $line 0 [expr {$digest_at - 1}]]
+    set digest [string range $line [expr {$digest_at + [string length $token]}] end]
+    set pattern {^YT_CAPTURE_COMPLETENESS_TERMINAL_V2 nonce=([0-9a-f]{32}) attempt=(initial) marker=([A-Za-z0-9]+) raw_status=([^ ]+) disposition=(COMPLETE|INCOMPLETE|INVALID) reason=([A-Za-z0-9_-]+) source_status=(missing|unreadable|nonregular|readable) source_bytes=([0-9]+) source_digest=([0-9a-f]{64}|unavailable) grep_status=([0-9]+|unavailable) matched_rows=([0-9]+) matched_bytes=([0-9]+) capture_digest=([0-9a-f]{64}) fbstat_before=(absent|valid|invalid) fbstat_after=(absent|valid|invalid) diagnostic_only=1 no_fps_claim=1 no_semantic_success=1$}
+    if {![regexp $pattern $tuple -> nonce attempt marker raw_status disposition \
+            reason source_status source_bytes source_digest grep_status matched_rows \
+            matched_bytes capture_digest before_shape after_shape] ||
+        $nonce ne $expected_nonce || ![regexp {^[0-9a-f]{64}$} $digest]} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    set recomputed [capture_completeness_diag_v2_text_digest $tuple]
+    if {$recomputed ne $digest} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    return [list 1 pass [dict create nonce $nonce attempt $attempt marker $marker \
+        raw_status $raw_status disposition $disposition reason $reason \
+        source_status $source_status source_bytes $source_bytes \
+        source_digest $source_digest grep_status $grep_status \
+        matched_rows $matched_rows matched_bytes $matched_bytes \
+        capture_digest $capture_digest fbstat_before $before_shape \
+        fbstat_after $after_shape tuple_digest $digest]]
+}
+
+proc capture_completeness_diag_v2_write_terminal {
+    attempt marker raw_status disposition reason receipt capture_payload before_shape after_shape
+} {
+    global media_probe_nonce capture_completeness_diag_serial
+    global capture_completeness_diag_log capture_completeness_diag_raw metricsf
+    set reason [capture_completeness_diag_v2_reason_token $reason]
+    set tuple [capture_completeness_diag_v2_terminal_tuple $media_probe_nonce \
+        $attempt $marker $raw_status $disposition $reason $receipt \
+        $capture_payload $before_shape $after_shape]
+    set line "$tuple tuple_digest=[capture_completeness_diag_v2_text_digest $tuple]\n"
+    wf $capture_completeness_diag_serial $line
+    wf $capture_completeness_diag_log $line
+    set serial_reparse [capture_completeness_diag_v2_terminal_reparse $line \
+        $media_probe_nonce]
+    set summary_reparse [capture_completeness_diag_v2_terminal_reparse \
+        [read_text $capture_completeness_diag_log] $media_probe_nonce]
+    if {![lindex $serial_reparse 0] || ![lindex $summary_reparse 0] ||
+        [read_text $capture_completeness_diag_serial] ne \
+            [read_text $capture_completeness_diag_log]} {
+        set disposition INVALID
+        set reason terminal-reparse-drift
+        set tuple [capture_completeness_diag_v2_terminal_tuple $media_probe_nonce \
+            $attempt $marker $raw_status $disposition $reason $receipt \
+            $capture_payload $before_shape $after_shape]
+        set line "$tuple tuple_digest=[capture_completeness_diag_v2_text_digest $tuple]\n"
+        wf $capture_completeness_diag_serial $line
+        wf $capture_completeness_diag_log $line
+    }
+    af $capture_completeness_diag_raw "terminal_v2=1 attempt=$attempt marker=$marker raw_status=$raw_status disposition=$disposition reason=$reason diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    af $metricsf "capture_completeness_diagnostic_v2 disposition=$disposition reason=$reason raw_status=$raw_status diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    return [list $disposition $reason $raw_status $marker]
+}
+
+proc capture_completeness_diag_v2_terminalize {
+    phase result receipt capture_payload before_shape after_shape {classification {}}
+} {
+    lassign $result raw_status raw_text raw_detail marker
+    set disposition INVALID
+    set reason "command-$phase-status-$raw_status"
+    if {$raw_status eq "0"} {
+        set source_status [dict get $receipt source_status]
+        if {$source_status ne "readable"} {
+            set reason "source-$source_status"
+        } elseif {[dict get $receipt grep_status] ni {0 1}} {
+            set reason source-grep-failed
+        } elseif {$classification ne {}} {
+            set disposition [lindex $classification 0]
+            set reason [lindex $classification 1]
+        } elseif {[dict get $receipt grep_status] eq "1"} {
+            set disposition INCOMPLETE
+            set reason producer-not-ready
+        } else {
+            set reason producer-ready-missing-or-order
+        }
+    }
+    return [capture_completeness_diag_v2_write_terminal initial $marker \
+        $raw_status $disposition $reason $receipt $capture_payload \
+        $before_shape $after_shape]
+}
+
+proc capture_completeness_diag_v2_readiness {stage_deadline_ms} {
+    global media_probe_nonce media_probe_extension_id
+    global capture_completeness_diag_reserve_ms
+    set last_result [list 0 "" no-readiness-attempt YTCAPTUREV2READYMISSING]
+    set last_receipt [capture_completeness_diag_v2_empty_receipt]
+    set last_payload ""
+    while {[clock clicks -milliseconds] <
+           [expr {$stage_deadline_ms - $capture_completeness_diag_reserve_ms}]} {
+        set result [capture_completeness_diag_command_result \
+            "/bin/bash /ytcapturediag.sh ready" capture-completeness-v2-ready \
+            3 $stage_deadline_ms $capture_completeness_diag_reserve_ms]
+        set last_result $result
+        lassign $result raw_status raw_text raw_detail marker
+        if {$raw_status ne "0"} { break }
+        set receipt_result [capture_completeness_diag_v2_source_result $raw_text \
+            $media_probe_nonce]
+        if {![lindex $receipt_result 0]} {
+            return [list INVALID [lindex $receipt_result 1] $result $last_receipt ""]
+        }
+        set last_receipt [lindex $receipt_result 2]
+        if {[dict get $last_receipt source_status] ne "readable" ||
+            [dict get $last_receipt grep_status] ni {0 1}} {
+            return [list INVALID source-receipt-unavailable $result $last_receipt ""]
+        }
+        if {[dict get $last_receipt grep_status] eq "1"} {
+            after 1000
+            continue
+        }
+        set payload_result [capture_completeness_diag_v2_payload_result $raw_text \
+            $media_probe_nonce $marker $media_probe_extension_id]
+        if {![lindex $payload_result 0]} {
+            return [list INVALID [lindex $payload_result 1] $result $last_receipt ""]
+        }
+        set last_payload [lindex $payload_result 2]
+        set lifecycle [lindex $payload_result 4]
+        if {[lindex $lifecycle 0] eq "INVALID"} {
+            return [list INVALID [lindex $lifecycle 1] $result $last_receipt \
+                $last_payload]
+        }
+        return [list READY producer-ready-authenticated $result $last_receipt \
+            $last_payload]
+    }
+    return [list INCOMPLETE producer-not-ready $last_result $last_receipt \
+        $last_payload]
+}
+
+proc capture_completeness_diag_v2_run {} {
+    global media_probe_verdict metricsf media_probe_nonce media_probe_extension_id
+    global capture_completeness_diag_outer_deadline_ms
+    global capture_completeness_diag_reserve_ms
+    set start_ms [clock clicks -milliseconds]
+    set launch_deadline [expr {$start_ms + 35000}]
+    set ready_deadline [expr {$start_ms + 60000}]
+    set before_deadline [expr {$start_ms + 95000}]
+    set collect_deadline [expr {$start_ms + 125000}]
+    set after_deadline [expr {$start_ms + 160000}]
+    if {$capture_completeness_diag_outer_deadline_ms != 165000 ||
+        $capture_completeness_diag_reserve_ms != 5000} {
+        finish 8 "FAIL capture-completeness-v2-envelope-invalid no_fps_claim=1 no_semantic_success=1"
+    }
+    set launch [capture_completeness_diag_command_result \
+        "/bin/bash /ytcapturediaglaunch.sh" capture-completeness-v2-launch \
+        35 $launch_deadline $capture_completeness_diag_reserve_ms]
+    if {[lindex $launch 0] ne "0"} {
+        set terminal [capture_completeness_diag_v2_terminalize launch $launch \
+            [capture_completeness_diag_v2_empty_receipt] "" absent absent]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        finish 8 "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set readiness [capture_completeness_diag_v2_readiness $ready_deadline]
+    lassign $readiness readiness_state readiness_detail ready_result receipt ready_payload
+    if {$readiness_state ne "READY"} {
+        set terminal [capture_completeness_diag_v2_terminalize readiness $ready_result \
+            $receipt $ready_payload absent absent [list $readiness_state $readiness_detail]]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        set code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+        finish $code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set before [capture_completeness_diag_fbstat_snapshot before $before_deadline \
+        $capture_completeness_diag_reserve_ms]
+    if {![lindex $before 0]} {
+        set terminal [capture_completeness_diag_v2_terminalize fbstat-before \
+            [lindex $before 2] $receipt "" invalid absent]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        finish 8 "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set collected [capture_completeness_diag_command_result \
+        "/bin/bash /ytcapturediag.sh collect" capture-completeness-v2-collect \
+        30 $collect_deadline $capture_completeness_diag_reserve_ms]
+    lassign $collected collected_status collected_text collected_detail collected_marker
+    set collect_receipt_result [capture_completeness_diag_v2_source_result \
+        $collected_text $media_probe_nonce]
+    set collect_receipt [expr {[lindex $collect_receipt_result 0] ? \
+        [lindex $collect_receipt_result 2] : $receipt}]
+    set collect_payload ""
+    set classification {}
+    if {$collected_status eq "0" && [lindex $collect_receipt_result 0] &&
+        [dict get $collect_receipt source_status] eq "readable" &&
+        [dict get $collect_receipt grep_status] eq "0"} {
+        set payload_result [capture_completeness_diag_v2_payload_result \
+            $collected_text $media_probe_nonce $collected_marker \
+            $media_probe_extension_id]
+        if {[lindex $payload_result 0]} {
+            set collect_payload [lindex $payload_result 2]
+            set classification [lindex $payload_result 4]
+        } else {
+            set classification [list INVALID [lindex $payload_result 1]]
+        }
+    } elseif {$collected_status eq "0" && ![lindex $collect_receipt_result 0]} {
+        set classification [list INVALID [lindex $collect_receipt_result 1]]
+    }
+    set after [capture_completeness_diag_fbstat_snapshot after $after_deadline \
+        $capture_completeness_diag_reserve_ms]
+    set after_shape [expr {[lindex $after 0] ? "valid" : "invalid"}]
+    set terminal [capture_completeness_diag_v2_terminalize collect $collected \
+        $collect_receipt $collect_payload valid $after_shape $classification]
+    set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+    af $metricsf "capture_completeness_diagnostic_terminal_v2 disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    set code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+    finish $code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+}
+
+# V3 keeps the V2 marker family but replaces its unsafe early admission with a
+# phase-bound producer-start -> post-video-HD720-ready lifecycle.  The helper
+# receipts, not elapsed sleep, bind every transition.
+proc capture_completeness_diag_v3_empty_receipt {phase} {
+    return [dict create phase $phase source_status nonregular source_bytes 0 \
+        source_digest unavailable grep_status unavailable matched_rows 0 \
+        matched_bytes 0 ready_digest unavailable]
+}
+
+proc capture_completeness_diag_v3_receipt_canonical {receipt expected_ready_digest} {
+    return "phase=[dict get $receipt phase] source_status=[dict get $receipt source_status] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] grep_status=[dict get $receipt grep_status] matched_rows=[dict get $receipt matched_rows] matched_bytes=[dict get $receipt matched_bytes] expected_ready_digest=$expected_ready_digest observed_ready_digest=[dict get $receipt ready_digest]"
+}
+
+proc capture_completeness_diag_v3_receipt_digest {receipt expected_ready_digest} {
+    set canonical [capture_completeness_diag_v3_receipt_canonical $receipt \
+        $expected_ready_digest]
+    return [capture_completeness_diag_v2_text_digest $canonical]
+}
+
+proc capture_completeness_diag_v3_receipt_tuple_fields {
+    prefix receipt expected_ready_digest
+} {
+    return "$prefix\_phase=[dict get $receipt phase] $prefix\_source_status=[dict get $receipt source_status] $prefix\_source_bytes=[dict get $receipt source_bytes] $prefix\_source_digest=[dict get $receipt source_digest] $prefix\_grep_status=[dict get $receipt grep_status] $prefix\_matched_rows=[dict get $receipt matched_rows] $prefix\_matched_bytes=[dict get $receipt matched_bytes] $prefix\_expected_ready_digest=$expected_ready_digest $prefix\_observed_ready_digest=[dict get $receipt ready_digest] $prefix\_receipt_digest=[capture_completeness_diag_v3_receipt_digest $receipt $expected_ready_digest]"
+}
+
+proc capture_completeness_diag_v3_admission {
+    now_ms stage_deadline_ms outer_deadline_ms command_ms downstream_ms reserve_ms
+} {
+    foreach value [list $now_ms $stage_deadline_ms $outer_deadline_ms \
+            $command_ms $downstream_ms $reserve_ms] {
+        if {![string is wideinteger -strict $value] || $value < 0} {
+            return [list 0 v3-admission-parameter-invalid]
+        }
+    }
+    if {$stage_deadline_ms - $now_ms < $command_ms} {
+        return [list 0 v3-admission-stage-deadline]
+    }
+    if {$outer_deadline_ms - $now_ms <
+        $command_ms + $downstream_ms + $reserve_ms} {
+        return [list 0 v3-admission-global-reserve]
+    }
+    return [list 1 v3-admission-pass]
+}
+
+proc capture_completeness_diag_v3_command_result {
+    command label seconds stage_deadline_ms outer_deadline_ms downstream_ms
+} {
+    global capture_completeness_diag_reserve_ms serial_counter serial_nonce
+    set admitted [capture_completeness_diag_v3_admission \
+        [clock clicks -milliseconds] $stage_deadline_ms $outer_deadline_ms \
+        [expr {$seconds * 1000}] $downstream_ms \
+        $capture_completeness_diag_reserve_ms]
+    if {![lindex $admitted 0]} {
+        incr serial_counter
+        return [list DIAG_V3_ADMISSION "" [lindex $admitted 1] \
+            "${serial_nonce}V3${serial_counter}"]
+    }
+    # Admission has retained the sole global tail and all downstream caps.
+    # The inner deadline is only this stage endpoint; do not subtract the
+    # reserve again for each stage.
+    return [capture_completeness_diag_command_result $command $label $seconds \
+        $stage_deadline_ms 0]
+}
+
+proc capture_completeness_diag_v3_capture_payload {raw_text nonce marker} {
+    set wire "[capture_completeness_diag_v2_host_envelope initial $nonce $marker]$raw_text"
+    set captured [capture_completeness_diag_v2_capture_payload $wire $nonce $marker]
+    if {![lindex $captured 0]} {
+        return [list 0 [lindex $captured 1] ""]
+    }
+    return [list 1 pass [lindex $captured 2]]
+}
+
+proc capture_completeness_diag_v3_terminal_tuple {
+    nonce marker raw_status disposition reason start_receipt ready_receipt
+    collect_receipt capture_payload before_shape after_shape
+} {
+    set capture_digest [capture_completeness_diag_v2_text_digest $capture_payload]
+    set start_expected unavailable
+    set ready_expected unavailable
+    set collect_expected [dict get $ready_receipt ready_digest]
+    return "YT_CAPTURE_COMPLETENESS_TERMINAL_V3 nonce=$nonce attempt=initial marker=$marker raw_status=$raw_status disposition=$disposition reason=$reason [capture_completeness_diag_v3_receipt_tuple_fields start $start_receipt $start_expected] [capture_completeness_diag_v3_receipt_tuple_fields ready $ready_receipt $ready_expected] [capture_completeness_diag_v3_receipt_tuple_fields collect $collect_receipt $collect_expected] capture_bytes=[media_probe_byte_length $capture_payload] capture_digest=$capture_digest fbstat_before=$before_shape fbstat_after=$after_shape diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+}
+
+proc capture_completeness_diag_v3_terminal_fields {tuple} {
+    set words [split $tuple " "]
+    set expected {
+        YT_CAPTURE_COMPLETENESS_TERMINAL_V3
+        nonce attempt marker raw_status disposition reason
+        start_phase start_source_status start_source_bytes start_source_digest
+        start_grep_status start_matched_rows start_matched_bytes
+        start_expected_ready_digest start_observed_ready_digest start_receipt_digest
+        ready_phase ready_source_status ready_source_bytes ready_source_digest
+        ready_grep_status ready_matched_rows ready_matched_bytes
+        ready_expected_ready_digest ready_observed_ready_digest ready_receipt_digest
+        collect_phase collect_source_status collect_source_bytes collect_source_digest
+        collect_grep_status collect_matched_rows collect_matched_bytes
+        collect_expected_ready_digest collect_observed_ready_digest collect_receipt_digest
+        capture_bytes capture_digest fbstat_before fbstat_after
+        diagnostic_only no_fps_claim no_semantic_success
+    }
+    if {[llength $words] != [llength $expected] ||
+        [lindex $words 0] ne [lindex $expected 0]} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    set fields [dict create]
+    foreach key [lrange $expected 1 end] word [lrange $words 1 end] {
+        if {![regexp {^([a-z0-9_]+)=([^ ]+)$} $word -> actual value] ||
+            $actual ne $key || [dict exists $fields $actual]} {
+            return [list 0 terminal-reparse-drift {}]
+        }
+        dict set fields $actual $value
+    }
+    return [list 1 pass $fields]
+}
+
+proc capture_completeness_diag_v3_receipt_reparse {
+    fields prefix expected_phase expected_ready_digest
+} {
+    foreach key {source_status source_bytes source_digest grep_status matched_rows \
+            matched_bytes expected_ready_digest observed_ready_digest receipt_digest} {
+        if {![dict exists $fields "$prefix\_$key"]} {
+            return [list 0 terminal-reparse-drift]
+        }
+    }
+    set phase [dict get $fields "$prefix\_phase"]
+    set source_status [dict get $fields "$prefix\_source_status"]
+    set source_bytes [dict get $fields "$prefix\_source_bytes"]
+    set source_digest [dict get $fields "$prefix\_source_digest"]
+    set grep_status [dict get $fields "$prefix\_grep_status"]
+    set matched_rows [dict get $fields "$prefix\_matched_rows"]
+    set matched_bytes [dict get $fields "$prefix\_matched_bytes"]
+    set expected_digest [dict get $fields "$prefix\_expected_ready_digest"]
+    set observed_digest [dict get $fields "$prefix\_observed_ready_digest"]
+    set receipt_digest [dict get $fields "$prefix\_receipt_digest"]
+    if {$phase ne $expected_phase || $expected_digest ne $expected_ready_digest ||
+        $source_status ni {missing unreadable nonregular readable} ||
+        ![media_probe_is_uint $source_bytes] || ![media_probe_is_uint $matched_rows] ||
+        ![media_probe_is_uint $matched_bytes] || [string length $source_bytes] > 5 ||
+        $source_bytes > 65536 || [string length $matched_rows] > 2 ||
+        $matched_rows > 64 || [string length $matched_bytes] > 5 ||
+        $matched_bytes > 16384 ||
+        ![regexp {^(unavailable|[0-9a-f]{64})$} $source_digest] ||
+        ![regexp {^(unavailable|[0-9a-f]{64})$} $observed_digest] ||
+        ![regexp {^[0-9a-f]{64}$} $receipt_digest]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    if {$source_status eq "readable"} {
+        if {$source_digest eq "unavailable" || $grep_status ni {0 1} ||
+            ($grep_status eq "0" && $matched_rows == 0) ||
+            ($grep_status eq "1" && ($matched_rows != 0 || $matched_bytes != 0))} {
+            return [list 0 terminal-reparse-drift]
+        }
+    } elseif {$source_bytes != 0 || $source_digest ne "unavailable" ||
+              $grep_status ne "unavailable" || $matched_rows != 0 ||
+              $matched_bytes != 0 || $observed_digest ne "unavailable"} {
+        return [list 0 terminal-reparse-drift]
+    }
+    if {($expected_phase eq "producer_start" &&
+         ($expected_digest ne "unavailable" || $observed_digest ne "unavailable")) ||
+        ($expected_phase eq "post_video_hd720" &&
+         (($source_status eq "readable" && $grep_status eq "0" &&
+           ![regexp {^[0-9a-f]{64}$} $observed_digest]) ||
+          ($source_status eq "readable" && $grep_status eq "1" &&
+           $observed_digest ne "unavailable"))) ||
+        ($expected_phase eq "collect" && $source_status eq "readable" &&
+         ($expected_digest eq "unavailable" || $observed_digest ne $expected_digest))} {
+        return [list 0 terminal-reparse-drift]
+    }
+    set receipt [dict create phase $phase source_status $source_status \
+        source_bytes $source_bytes source_digest $source_digest \
+        grep_status $grep_status matched_rows $matched_rows \
+        matched_bytes $matched_bytes ready_digest $observed_digest]
+    if {[capture_completeness_diag_v3_receipt_digest $receipt $expected_digest] ne \
+        $receipt_digest} {
+        return [list 0 terminal-reparse-drift]
+    }
+    return [list 1 pass $receipt]
+}
+
+proc capture_completeness_diag_v3_terminal_reparse {
+    text expected_nonce {capture_payload ""} {payload_bound 0}
+} {
+    set lines [split [string trimright $text "\n"] "\n"]
+    if {[llength $lines] != 1} { return [list 0 terminal-reparse-drift {}] }
+    set line [lindex $lines 0]
+    set token " tuple_digest="
+    set at [string last $token $line]
+    if {$at < 0} { return [list 0 terminal-reparse-drift {}] }
+    set tuple [string range $line 0 [expr {$at - 1}]]
+    set digest [string range $line [expr {$at + [string length $token]}] end]
+    set parsed [capture_completeness_diag_v3_terminal_fields $tuple]
+    if {![lindex $parsed 0] || ![regexp {^[0-9a-f]{64}$} $digest] ||
+        [capture_completeness_diag_v2_text_digest $tuple] ne $digest} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    set fields [lindex $parsed 2]
+    if {[dict get $fields nonce] ne $expected_nonce ||
+        [dict get $fields attempt] ne "initial" ||
+        ![regexp {^[A-Za-z0-9]+$} [dict get $fields marker]] ||
+        ![regexp {^[^ ]+$} [dict get $fields raw_status]] ||
+        [dict get $fields disposition] ni {COMPLETE INCOMPLETE INVALID} ||
+        ![regexp {^[A-Za-z0-9_-]+$} [dict get $fields reason]] ||
+        [dict get $fields fbstat_before] ni {absent valid invalid} ||
+        [dict get $fields fbstat_after] ni {absent valid invalid} ||
+        [dict get $fields diagnostic_only] ne 1 ||
+        [dict get $fields no_fps_claim] ne 1 ||
+        [dict get $fields no_semantic_success] ne 1} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    set start [capture_completeness_diag_v3_receipt_reparse $fields start \
+        producer_start unavailable]
+    if {![lindex $start 0]} { return [list 0 terminal-reparse-drift {}] }
+    set ready [capture_completeness_diag_v3_receipt_reparse $fields ready \
+        post_video_hd720 unavailable]
+    if {![lindex $ready 0]} { return [list 0 terminal-reparse-drift {}] }
+    set collect_expected [dict get [lindex $ready 2] ready_digest]
+    set collect [capture_completeness_diag_v3_receipt_reparse $fields collect \
+        collect $collect_expected]
+    if {![lindex $collect 0]} { return [list 0 terminal-reparse-drift {}] }
+    if {$payload_bound ni {0 1} || ![media_probe_is_uint [dict get $fields capture_bytes]] ||
+        [string length [dict get $fields capture_bytes]] > 5 ||
+        [dict get $fields capture_bytes] > 16384 ||
+        ![regexp {^[0-9a-f]{64}$} [dict get $fields capture_digest]]} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    if {$payload_bound &&
+        ([dict get $fields capture_bytes] != [media_probe_byte_length $capture_payload] ||
+         [dict get $fields capture_digest] ne \
+            [capture_completeness_diag_v2_text_digest $capture_payload])} {
+        return [list 0 terminal-reparse-drift {}]
+    }
+    return [list 1 pass [dict create nonce [dict get $fields nonce] \
+        marker [dict get $fields marker] raw_status [dict get $fields raw_status] \
+        disposition [dict get $fields disposition] reason [dict get $fields reason] \
+        start_receipt [lindex $start 2] ready_receipt [lindex $ready 2] \
+        collect_receipt [lindex $collect 2] capture_digest [dict get $fields capture_digest] \
+        tuple_digest $digest]]
+}
+
+proc capture_completeness_diag_v3_raw_payload {text expected_nonce expected_marker} {
+    set newline [string first "\n" $text]
+    if {$newline < 0} { return [list 0 terminal-reparse-drift ""] }
+    set header [string range $text 0 [expr {$newline - 1}]]
+    set payload [string range $text [expr {$newline + 1}] end]
+    if {![regexp {^YT_CAPTURE_COMPLETENESS_RAW_V3 nonce=([0-9a-f]{32}) marker=([A-Za-z0-9]+) capture_bytes=([0-9]+) capture_digest=([0-9a-f]{64})$} $header -> nonce marker bytes digest] ||
+        $nonce ne $expected_nonce || $marker ne $expected_marker ||
+        ![media_probe_is_uint $bytes] || $bytes != [media_probe_byte_length $payload] ||
+        $digest ne [capture_completeness_diag_v2_text_digest $payload]} {
+        return [list 0 terminal-reparse-drift ""]
+    }
+    return [list 1 pass $payload]
+}
+
+proc capture_completeness_diag_v3_write_terminal {
+    result disposition reason start_receipt ready_receipt collect_receipt
+    capture_payload before_shape after_shape
+} {
+    global media_probe_nonce capture_completeness_diag_serial
+    global capture_completeness_diag_log capture_completeness_diag_raw metricsf
+    lassign $result raw_status raw_text raw_detail marker
+    set reason [capture_completeness_diag_v2_reason_token $reason]
+    set tuple [capture_completeness_diag_v3_terminal_tuple $media_probe_nonce \
+        $marker $raw_status $disposition $reason $start_receipt $ready_receipt \
+        $collect_receipt $capture_payload $before_shape $after_shape]
+    set line "$tuple tuple_digest=[capture_completeness_diag_v2_text_digest $tuple]\n"
+    wf $capture_completeness_diag_serial $line
+    wf $capture_completeness_diag_log $line
+    set raw_header "YT_CAPTURE_COMPLETENESS_RAW_V3 nonce=$media_probe_nonce marker=$marker capture_bytes=[media_probe_byte_length $capture_payload] capture_digest=[capture_completeness_diag_v2_text_digest $capture_payload]"
+    wf $capture_completeness_diag_raw "$raw_header\n$capture_payload"
+    set serial [capture_completeness_diag_v3_terminal_reparse $line $media_probe_nonce \
+        $capture_payload 1]
+    set summary [capture_completeness_diag_v3_terminal_reparse \
+        [read_text $capture_completeness_diag_log] $media_probe_nonce \
+        $capture_payload 1]
+    if {![lindex $serial 0] || ![lindex $summary 0] ||
+        [read_text $capture_completeness_diag_serial] ne \
+            [read_text $capture_completeness_diag_log]} {
+        set disposition INVALID
+        set reason terminal-reparse-drift
+        set tuple [capture_completeness_diag_v3_terminal_tuple $media_probe_nonce \
+            $marker $raw_status $disposition $reason $start_receipt $ready_receipt \
+            $collect_receipt $capture_payload $before_shape $after_shape]
+        set line "$tuple tuple_digest=[capture_completeness_diag_v2_text_digest $tuple]\n"
+        wf $capture_completeness_diag_serial $line
+        wf $capture_completeness_diag_log $line
+        wf $capture_completeness_diag_raw "$raw_header\n$capture_payload"
+        set serial [capture_completeness_diag_v3_terminal_reparse $line \
+            $media_probe_nonce $capture_payload 1]
+        set summary [capture_completeness_diag_v3_terminal_reparse \
+            [read_text $capture_completeness_diag_log] $media_probe_nonce \
+            $capture_payload 1]
+        if {![lindex $serial 0] || ![lindex $summary 0] ||
+            [read_text $capture_completeness_diag_serial] ne \
+                [read_text $capture_completeness_diag_log]} {
+            error "terminal-reparse-drift-writer"
+        }
+    }
+    af $metricsf "capture_completeness_diagnostic_v3 disposition=$disposition reason=$reason raw_status=$raw_status diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    return [list $disposition $reason $raw_status $marker]
+}
+
+proc capture_completeness_diag_v3_terminalize {
+    phase result start_receipt ready_receipt collect_receipt capture_payload
+    before_shape after_shape classification
+} {
+    lassign $result raw_status raw_text raw_detail marker
+    set disposition INVALID
+    set reason "command-$phase-status-$raw_status"
+    if {$raw_status eq "0" && $classification ne {}} {
+        set disposition [lindex $classification 0]
+        set reason [lindex $classification 1]
+    }
+    return [capture_completeness_diag_v3_write_terminal $result $disposition \
+        $reason $start_receipt $ready_receipt $collect_receipt $capture_payload \
+        $before_shape $after_shape]
+}
+
+proc capture_completeness_diag_v3_fbstat_snapshot {
+    phase stage_deadline_ms outer_deadline_ms downstream_ms
+} {
+    global capture_completeness_diag_fbstat capture_completeness_diag_raw
+    global media_probe_nonce metricsf outdir
+    set result [capture_completeness_diag_v3_command_result "fbstat 2>&1" \
+        "capture-completeness-v3-fbstat-$phase" 35 $stage_deadline_ms \
+        $outer_deadline_ms $downstream_ms]
+    lassign $result raw_status raw_text raw_detail marker
+    wf "$outdir/capture-completeness-fbstat-$phase.raw.txt" \
+        "phase=$phase nonce=$media_probe_nonce marker=$marker raw_status=$raw_status raw_detail=$raw_detail diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n$raw_text"
+    if {$raw_status ne "0"} {
+        af $capture_completeness_diag_fbstat "phase=$phase status=INVALID raw_status=$raw_status raw_detail=$raw_detail nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1"
+        return [list 0 "diagnostic-fbstat-command-$phase-status-$raw_status-$raw_detail" $result]
+    }
+    set parsed [capture_completeness_diag_fbstat_context $raw_text]
+    if {![lindex $parsed 0]} {
+        af $capture_completeness_diag_fbstat "phase=$phase status=INVALID raw_status=0 raw_detail=[lindex $parsed 1] nonce=$media_probe_nonce diagnostic_only=1 nonsemantic=1"
+        return [list 0 [lindex $parsed 1] $result]
+    }
+    af $capture_completeness_diag_fbstat "phase=$phase flips=[lindex $parsed 1] presents=[lindex $parsed 2] host_ms=[clock milliseconds] diagnostic_only=1 nonsemantic=1"
+    return [list 1 [lindex $parsed 1] [lindex $parsed 2] $result]
+}
+
+proc capture_completeness_diag_v3_run {} {
+    global media_probe_verdict metricsf media_probe_nonce media_probe_extension_id
+    global capture_completeness_diag_outer_deadline_ms
+    global capture_completeness_diag_reserve_ms
+    set start_ms [clock clicks -milliseconds]
+    set outer_deadline [expr {$start_ms + 210000}]
+    set launch_deadline [expr {$start_ms + 35000}]
+    set ready_deadline [expr {$start_ms + 105000}]
+    set before_deadline [expr {$start_ms + 140000}]
+    set collect_deadline [expr {$start_ms + 170000}]
+    set after_deadline [expr {$start_ms + 205000}]
+    set start_receipt [capture_completeness_diag_v3_empty_receipt producer_start]
+    set ready_receipt [capture_completeness_diag_v3_empty_receipt post_video_hd720]
+    set collect_receipt [capture_completeness_diag_v3_empty_receipt collect]
+    set start_payload ""
+    set ready_payload ""
+    if {$capture_completeness_diag_outer_deadline_ms != 210000 ||
+        $capture_completeness_diag_reserve_ms != 5000} {
+        finish 8 "FAIL capture-completeness-v3-envelope-invalid no_fps_claim=1 no_semantic_success=1"
+    }
+    set launch [capture_completeness_diag_v3_command_result \
+        "/bin/bash /ytcapturediaglaunch.sh" capture-completeness-v3-launch \
+        35 $launch_deadline $outer_deadline 170000]
+    if {[lindex $launch 0] ne "0"} {
+        set terminal [capture_completeness_diag_v3_terminalize launch $launch \
+            $start_receipt $ready_receipt $collect_receipt "" absent absent {}]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        finish 8 "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set last_ready_result [list DIAG_V3_NOT_ATTEMPTED "" producer-start-not-observed YTCAPTUREV3START]
+    set start_failure {}
+    set start_authenticated 0
+    while {[clock clicks -milliseconds] < $ready_deadline} {
+        set probe [capture_completeness_diag_v3_command_result \
+            "/bin/bash /ytcapturediag.sh producer-start" \
+            capture-completeness-v3-producer-start 3 $ready_deadline \
+            $outer_deadline 100000]
+        set last_ready_result $probe
+        lassign $probe raw_status raw_text raw_detail marker
+        if {$raw_status ne "0"} { break }
+        set receipt_result [capture_completeness_diag_v2_source_receipt \
+            $raw_text $media_probe_nonce producer_start]
+        if {![lindex $receipt_result 0]} {
+            set start_failure [list INVALID [lindex $receipt_result 1]]
+            break
+        }
+        set start_receipt [lindex $receipt_result 2]
+        if {[dict get $start_receipt source_status] ne "readable"} {
+            set start_failure [list INVALID "source-[dict get $start_receipt source_status]"]
+            break
+        }
+        if {[dict get $start_receipt grep_status] ni {0 1}} {
+            set start_failure [list INVALID source-grep-failed]
+            break
+        }
+        if {[dict get $start_receipt grep_status] eq "1"} {
+            set start_failure [list INCOMPLETE producer-not-ready]
+            after 1000
+            continue
+        }
+        set captured [capture_completeness_diag_v3_capture_payload $raw_text \
+            $media_probe_nonce $marker]
+        if {![lindex $captured 0]} {
+            set start_failure [list INVALID [lindex $captured 1]]
+            break
+        }
+        set start_payload_check [capture_completeness_diag_v2_producer_start_payload \
+            [lindex $captured 2] $media_probe_nonce $media_probe_extension_id]
+        if {![lindex $start_payload_check 0]} {
+            set start_failure [list INVALID [lindex $start_payload_check 1]]
+            break
+        }
+        set start_payload [lindex $captured 2]
+        set start_authenticated 1
+        break
+    }
+    if {!$start_authenticated} {
+        set terminal [capture_completeness_diag_v3_terminalize post-video-ready \
+            $last_ready_result $start_receipt $ready_receipt $collect_receipt \
+            "" absent absent $start_failure]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        set code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+        finish $code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set post_authenticated 0
+    set post_failure {}
+    while {[clock clicks -milliseconds] < $ready_deadline} {
+        set probe [capture_completeness_diag_v3_command_result \
+            "/bin/bash /ytcapturediag.sh post-video-hd720" \
+            capture-completeness-v3-post-video-hd720 3 $ready_deadline \
+            $outer_deadline 100000]
+        set last_ready_result $probe
+        lassign $probe raw_status raw_text raw_detail marker
+        if {$raw_status ne "0"} { break }
+        set receipt_result [capture_completeness_diag_v2_source_receipt \
+            $raw_text $media_probe_nonce post_video_hd720]
+        if {![lindex $receipt_result 0]} {
+            set post_failure [list INVALID [lindex $receipt_result 1]]
+            break
+        }
+        set ready_receipt [lindex $receipt_result 2]
+        if {[dict get $ready_receipt source_status] ne "readable"} {
+            set post_failure [list INVALID "source-[dict get $ready_receipt source_status]"]
+            break
+        }
+        if {[dict get $ready_receipt grep_status] ni {0 1}} {
+            set post_failure [list INVALID source-grep-failed]
+            break
+        }
+        if {[dict get $ready_receipt grep_status] eq "1"} {
+            set post_failure [list INCOMPLETE producer-not-ready]
+            after 1000
+            continue
+        }
+        set captured [capture_completeness_diag_v3_capture_payload $raw_text \
+            $media_probe_nonce $marker]
+        if {![lindex $captured 0]} {
+            set post_failure [list INVALID [lindex $captured 1]]
+            break
+        }
+        set ready_payload_check [capture_completeness_diag_v2_post_video_ready_payload \
+            [lindex $captured 2] $media_probe_nonce $media_probe_extension_id]
+        if {![lindex $ready_payload_check 0]} {
+            set post_failure [list INVALID [lindex $ready_payload_check 1]]
+            break
+        }
+        set ready_payload [lindex $captured 2]
+        if {[capture_completeness_diag_v2_text_digest $ready_payload] ne \
+            [dict get $ready_receipt ready_digest]} {
+            set post_failure [list INVALID ready-digest-mismatch]
+            break
+        }
+        set post_authenticated 1
+        break
+    }
+    if {!$post_authenticated} {
+        set terminal [capture_completeness_diag_v3_terminalize post-video-ready \
+            $last_ready_result $start_receipt $ready_receipt $collect_receipt \
+            "" absent absent $post_failure]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        set code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+        finish $code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set before [capture_completeness_diag_v3_fbstat_snapshot before $before_deadline \
+        $outer_deadline 65000]
+    if {![lindex $before 0]} {
+        set terminal [capture_completeness_diag_v3_terminalize fbstat-before \
+            [lindex $before 2] $start_receipt $ready_receipt $collect_receipt \
+            "" invalid absent {}]
+        set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+        finish 8 "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+    }
+    set collected [capture_completeness_diag_v3_command_result \
+        "/bin/bash /ytcapturediag.sh collect" capture-completeness-v3-collect \
+        30 $collect_deadline $outer_deadline 35000]
+    lassign $collected collected_status collected_text collected_detail collected_marker
+    set classification {}
+    set collection_payload ""
+    if {$collected_status eq "0"} {
+        set receipt_result [capture_completeness_diag_v2_source_receipt \
+            $collected_text $media_probe_nonce collect \
+            [dict get $ready_receipt ready_digest]]
+        if {![lindex $receipt_result 0]} {
+            set classification [list INVALID [lindex $receipt_result 1]]
+        } else {
+            set collect_receipt [lindex $receipt_result 2]
+            if {[dict get $collect_receipt source_status] ne "readable"} {
+                set classification [list INVALID "source-[dict get $collect_receipt source_status]"]
+            } elseif {[dict get $collect_receipt grep_status] eq "1"} {
+                set classification [list INCOMPLETE ready-but-no-markers]
+            } elseif {[dict get $collect_receipt grep_status] ne "0"} {
+                set classification [list INVALID source-grep-failed]
+            } else {
+                set captured [capture_completeness_diag_v3_capture_payload \
+                    $collected_text $media_probe_nonce $collected_marker]
+                if {![lindex $captured 0]} {
+                    set classification [list INVALID [lindex $captured 1]]
+                } else {
+                    set collection_payload [lindex $captured 2]
+                    set classification [parse_capture_completeness_diagnostic_v2 \
+                        "$start_payload$ready_payload$collection_payload" \
+                        $media_probe_nonce $media_probe_extension_id 1]
+                }
+            }
+        }
+    }
+    set after [capture_completeness_diag_v3_fbstat_snapshot after $after_deadline \
+        $outer_deadline 0]
+    set after_shape [expr {[lindex $after 0] ? "valid" : "invalid"}]
+    set terminal [capture_completeness_diag_v3_terminalize collect $collected \
+        $start_receipt $ready_receipt $collect_receipt $collection_payload valid \
+        $after_shape $classification]
+    set media_probe_verdict "DIAGNOSTIC_[lindex $terminal 0]"
+    set code [expr {[lindex $terminal 0] eq "INVALID" ? 8 : 0}]
+    finish $code "DIAGNOSTIC-ONLY capture-completeness disposition=[lindex $terminal 0] raw_status=[lindex $terminal 2] detail=[lindex $terminal 1] no_fps_claim=1 no_semantic_success=1"
+}
+
 # Kept as a tiny, separately testable branch predicate.  The static reducer
 # poisons the diagnostic runner under diag0 and every normal helper under
 # diag1, so a future edit cannot silently cross the two routes.
 proc capture_completeness_diag_dispatch {} {
     global capture_completeness_diag
     if {$capture_completeness_diag eq "1"} {
-        capture_completeness_diag_run
+        # Retain the V1 runner only for the immutable no-boot replay harness.
+        # A real diagnostic boot always takes the repaired V3 lifecycle.
+        if {[info exists ::env(YT_STATIC_CHECK)] && $::env(YT_STATIC_CHECK) eq "1"} {
+            capture_completeness_diag_run
+        } else {
+            capture_completeness_diag_v3_run
+        }
         return 1
     }
     return 0
@@ -2125,12 +3044,71 @@ proc capture_completeness_diag_raw_contract {text expected_nonce} {
         $attempt $phase $raw_status $marker]
 }
 
+proc extract_and_validate_capture_completeness_diagnostic_v2 {} {
+    global capture_completeness_diag_serial capture_completeness_diag_log
+    global media_probe_nonce media_probe_verdict metricsf
+    set serial [read_text $capture_completeness_diag_serial]
+    set summary [read_text $capture_completeness_diag_log]
+    set serial_parsed [capture_completeness_diag_v2_terminal_reparse $serial \
+        $media_probe_nonce]
+    set summary_parsed [capture_completeness_diag_v2_terminal_reparse $summary \
+        $media_probe_nonce]
+    if {![lindex $serial_parsed 0] || ![lindex $summary_parsed 0] ||
+        $serial ne $summary || [lindex $serial_parsed 2] ne [lindex $summary_parsed 2]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    set terminal [lindex $serial_parsed 2]
+    if {$media_probe_verdict ne "DIAGNOSTIC_[dict get $terminal disposition]" ||
+        [regexp {(^|[\r\n])(presented_fps|bo_present_fps)_} [read_text $metricsf]]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    return [list 1 "terminal=[dict get $terminal disposition] reason=[dict get $terminal reason] source=[dict get $terminal source_status] no_fps_claim=1 no_semantic_success=1"]
+}
+
+proc extract_and_validate_capture_completeness_diagnostic_v3 {} {
+    global capture_completeness_diag_serial capture_completeness_diag_log
+    global capture_completeness_diag_raw media_probe_nonce media_probe_verdict metricsf
+    set serial [read_text $capture_completeness_diag_serial]
+    set summary [read_text $capture_completeness_diag_log]
+    set serial_header [capture_completeness_diag_v3_terminal_reparse \
+        $serial $media_probe_nonce]
+    if {![lindex $serial_header 0]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    set raw [capture_completeness_diag_v3_raw_payload \
+        [read_text $capture_completeness_diag_raw] $media_probe_nonce \
+        [dict get [lindex $serial_header 2] marker]]
+    if {![lindex $raw 0]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    set capture_payload [lindex $raw 2]
+    set serial_parsed [capture_completeness_diag_v3_terminal_reparse $serial \
+        $media_probe_nonce $capture_payload 1]
+    set summary_parsed [capture_completeness_diag_v3_terminal_reparse $summary \
+        $media_probe_nonce $capture_payload 1]
+    if {![lindex $serial_parsed 0] || ![lindex $summary_parsed 0] ||
+        $serial ne $summary || [lindex $serial_parsed 2] ne [lindex $summary_parsed 2] ||
+        $media_probe_verdict ne "DIAGNOSTIC_[dict get [lindex $serial_parsed 2] disposition]" ||
+        [regexp {(^|[\r\n])(presented_fps|bo_present_fps)_} [read_text $metricsf]]} {
+        return [list 0 terminal-reparse-drift]
+    }
+    return [list 1 "terminal=[dict get [lindex $serial_parsed 2] disposition] reason=[dict get [lindex $serial_parsed 2] reason] no_fps_claim=1 no_semantic_success=1"]
+}
+
 proc extract_and_validate_capture_completeness_diagnostic {} {
     global capture_completeness_diag_serial capture_completeness_diag_log
     global capture_completeness_diag_fbstat media_probe_nonce
     global media_probe_extension_id media_probe_verdict metricsf scratch
     global capture_completeness_diag_raw
 
+    if {[string first {YT_CAPTURE_COMPLETENESS_TERMINAL_V3 } \
+            [read_text $capture_completeness_diag_serial]] == 0} {
+        return [extract_and_validate_capture_completeness_diagnostic_v3]
+    }
+    if {[string first {YT_CAPTURE_COMPLETENESS_TERMINAL_V2 } \
+            [read_text $capture_completeness_diag_serial]] == 0} {
+        return [extract_and_validate_capture_completeness_diagnostic_v2]
+    }
     set errors {}
     set serial [read_text $capture_completeness_diag_serial]
     set terminal [capture_completeness_diag_terminal_disposition $serial \
@@ -6501,8 +7479,333 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     if {[lindex $reducer_bad_image 0]} {
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
+
+    # V3 POCs are deliberately host/static only.  These replays are staged
+    # here for a later explicit YT_STATIC_CHECK invocation; this source edit
+    # does not execute them, a guest JS runtime, or any VM.
+    proc static_capture_diag_v3_console {payload line extension_id} {
+        return "\[412:412:0710/120000.123456:INFO:CONSOLE:$line\] \"$payload\", source: chrome-extension://$extension_id/probe.js ($line)"
+    }
+    proc static_capture_diag_v3_receipt_row {
+        nonce phase source_status source_digest grep_status matched_rows
+        matched_bytes ready_digest
+    } {
+        if {$source_status eq "readable"} {
+            set source_bytes 64
+        } else {
+            set source_bytes 0
+            set source_digest unavailable
+            set grep_status unavailable
+            set matched_rows 0
+            set matched_bytes 0
+            set ready_digest unavailable
+        }
+        return "YT_CAPTURE_COMPLETENESS_SOURCE_V2 nonce=$nonce phase=$phase source_status=$source_status source_bytes=$source_bytes source_digest=$source_digest grep_status=$grep_status matched_rows=$matched_rows matched_bytes=$matched_bytes ready_digest=$ready_digest"
+    }
+    proc static_capture_diag_v3_raw0_classification {
+        phase receipt ready_authenticated
+    } {
+        if {[dict get $receipt source_status] ne "readable" ||
+            [dict get $receipt grep_status] ne "1"} {
+            return [list INVALID static-raw0-fixture-shape]
+        }
+        if {!$ready_authenticated || $phase ne "collect"} {
+            return [list INCOMPLETE producer-not-ready]
+        }
+        return [list INCOMPLETE ready-but-no-markers]
+    }
+    proc static_capture_diag_v3_drift_only {result} {
+        return [expr {![lindex $result 0] &&
+            [llength $result] >= 2 &&
+            [lindex $result 1] eq "terminal-reparse-drift"}]
+    }
+    proc static_capture_diag_v3_source_order_contract {source} {
+        set errors {}
+        set producer_call "diagnosticV2ProducerStart();"
+        set selector_call "const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();"
+        set ready_call "diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);"
+        set producer_at [string first $producer_call $source]
+        set selector_at [string first $selector_call $source]
+        set ready_at [string first $ready_call $source]
+        if {$producer_at < 0 || $selector_at < 0 || $ready_at < 0 ||
+            !($producer_at < $selector_at && $selector_at < $ready_at)} {
+            lappend errors lifecycle-order
+        }
+        foreach required {
+            {proof.selected !== "hd720"}
+            {proof.videoWidth !== 1280 ||}
+            {proof.videoHeight !== 720}
+            {proof.stableCount < FORCE_STABLE_OBSERVATIONS}
+            {!proof.selectorPrerequisites}
+            {!proof.rangeInvoked}
+            {proof.rangeThrew}
+            {!proof.qualityInvoked}
+            {proof.qualityThrew}
+            {!proof.progressed}
+        } {
+            if {[string first $required $source] < 0} {
+                lappend errors "missing-[string map [list { } _] $required]"
+            }
+        }
+        if {[string first {emitDiagnosticV2("producer_ready"} $source] >= 0} {
+            lappend errors stale-early-ready
+        }
+        return [list [expr {[llength $errors] == 0}] $errors]
+    }
+    proc static_capture_diag_v3_diag0_contract {source} {
+        set dispatch [static_capture_diag_proc_body $source \
+            capture_completeness_diag_dispatch]
+        set runner [static_capture_diag_proc_body $source \
+            capture_completeness_diag_v3_run]
+        if {$dispatch eq "" || $runner eq "" ||
+            [string first {if {$capture_completeness_diag eq "1"}} $dispatch] < 0 ||
+            [string first {capture_completeness_diag_v3_run} $dispatch] < 0 ||
+            [string first {return 0} $dispatch] < 0 ||
+        [string first {no_fps_claim=1 no_semantic_success=1} \
+                $runner] < 0 ||
+            [regexp {(presented_fps|bo_present_fps)} $runner]} {
+            return 0
+        }
+        return 1
+    }
+    set static_v3_probe_source [read_text "$media_probe_host_dir/probe.js"]
+    set static_v3_source_order [static_capture_diag_v3_source_order_contract \
+        $static_v3_probe_source]
+    set static_v3_early_as_ready [string map [list \
+        {diagnosticV2ProducerStart();} \
+        {diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);}] \
+        $static_v3_probe_source]
+    set static_v3_ready_before_selector [string map [list \
+        {const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();} \
+        {diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);
+    const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();}] \
+        $static_v3_probe_source]
+    set static_v3_missing_hd720 [string map [list \
+        {proof.videoWidth !== 1280 ||} {}] $static_v3_probe_source]
+    set static_v3_early_as_ready_reject \
+        [static_capture_diag_v3_source_order_contract $static_v3_early_as_ready]
+    set static_v3_ready_before_selector_reject \
+        [static_capture_diag_v3_source_order_contract $static_v3_ready_before_selector]
+    set static_v3_missing_hd720_reject \
+        [static_capture_diag_v3_source_order_contract $static_v3_missing_hd720]
+
+    set static_v3_source_digest [string repeat a 64]
+    set static_v3_ready_digest [string repeat b 64]
+    set static_v3_receipt_statuses {}
+    foreach phase {producer_start post_video_hd720 collect} {
+        foreach source_status {missing unreadable nonregular readable} {
+            set ready_digest [expr {$phase eq "collect" &&
+                $source_status eq "readable" ? $static_v3_ready_digest : "unavailable"}]
+            set row [static_capture_diag_v3_receipt_row $static_nonce $phase \
+                $source_status $static_v3_source_digest 1 0 0 $ready_digest]
+            lappend static_v3_receipt_statuses \
+                [capture_completeness_diag_v2_source_receipt $row $static_nonce \
+                $phase]
+        }
+    }
+    set static_v3_start_row [static_capture_diag_v3_receipt_row $static_nonce \
+        producer_start readable $static_v3_source_digest 0 1 64 unavailable]
+    set static_v3_pre_raw0_row [static_capture_diag_v3_receipt_row $static_nonce \
+        producer_start readable $static_v3_source_digest 1 0 0 unavailable]
+    set static_v3_ready_row [static_capture_diag_v3_receipt_row $static_nonce \
+        post_video_hd720 readable $static_v3_source_digest 0 1 64 \
+        $static_v3_ready_digest]
+    set static_v3_collect_raw0_row [static_capture_diag_v3_receipt_row \
+        $static_nonce collect readable $static_v3_source_digest 1 0 0 \
+        $static_v3_ready_digest]
+    set static_v3_start_receipt [capture_completeness_diag_v2_source_receipt \
+        $static_v3_start_row $static_nonce producer_start]
+    set static_v3_pre_raw0_receipt [capture_completeness_diag_v2_source_receipt \
+        $static_v3_pre_raw0_row $static_nonce producer_start]
+    set static_v3_ready_receipt [capture_completeness_diag_v2_source_receipt \
+        $static_v3_ready_row $static_nonce post_video_hd720]
+    set static_v3_collect_raw0_receipt \
+        [capture_completeness_diag_v2_source_receipt $static_v3_collect_raw0_row \
+        $static_nonce collect $static_v3_ready_digest]
+    set static_v3_phase_substitution_start \
+        [capture_completeness_diag_v2_source_receipt $static_v3_start_row \
+        $static_nonce post_video_hd720]
+    set static_v3_phase_substitution_ready \
+        [capture_completeness_diag_v2_source_receipt $static_v3_ready_row \
+        $static_nonce collect $static_v3_ready_digest]
+    set static_v3_ready_digest_substitution \
+        [capture_completeness_diag_v2_source_receipt $static_v3_collect_raw0_row \
+        $static_nonce collect [string repeat c 64]]
+    set static_v3_raw0_pre \
+        [static_capture_diag_v3_raw0_classification producer_start \
+        [lindex $static_v3_pre_raw0_receipt 2] 0]
+    set static_v3_raw0_post \
+        [static_capture_diag_v3_raw0_classification collect \
+        [lindex $static_v3_collect_raw0_receipt 2] 1]
+
+    set static_v3_start_payload [static_capture_diag_v3_console \
+        "YT_CAPTURE_COMPLETENESS_V2 kind=producer_start schema=2 nonce=$static_nonce" \
+        420 $media_probe_extension_id]
+    set static_v3_ready_payload [static_capture_diag_v3_console \
+        "YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=$static_nonce selected=hd720 video_width=1280 video_height=720 stable_count=4" \
+        421 $media_probe_extension_id]
+    set static_v3_complete_tail [string map [list \
+        YT_CAPTURE_COMPLETENESS_V1 YT_CAPTURE_COMPLETENESS_V2 \
+        schema=1 schema=2] $diagnostic_complete_payload]
+    set static_v3_complete_payload "$static_v3_start_payload\n$static_v3_ready_payload\n$static_v3_complete_tail"
+    set static_v3_complete [parse_capture_completeness_diagnostic_v2 \
+        $static_v3_complete_payload $static_nonce $media_probe_extension_id 1]
+    set static_v3_pre_ready [parse_capture_completeness_diagnostic_v2 \
+        $static_v3_complete_payload $static_nonce $media_probe_extension_id 0]
+    set static_v3_ready_empty [parse_capture_completeness_diagnostic_v2 "" \
+        $static_nonce $media_probe_extension_id 1]
+    set static_v3_pre_ready_empty [parse_capture_completeness_diagnostic_v2 "" \
+        $static_nonce $media_probe_extension_id 0]
+    set static_v3_freeze_continued_tail [string map [list \
+        YT_CAPTURE_COMPLETENESS_V1 YT_CAPTURE_COMPLETENESS_V2 \
+        schema=1 schema=2] $diagnostic_freeze_continued_payload]
+    set static_v3_freeze_stopped_tail [string map [list \
+        YT_CAPTURE_COMPLETENESS_V1 YT_CAPTURE_COMPLETENESS_V2 \
+        schema=1 schema=2] $diagnostic_freeze_stopped_payload]
+    set static_v3_freeze_continued [parse_capture_completeness_diagnostic_v2 \
+        "$static_v3_start_payload\n$static_v3_ready_payload\n$static_v3_freeze_continued_tail" \
+        $static_nonce $media_probe_extension_id 1]
+    set static_v3_freeze_stopped [parse_capture_completeness_diagnostic_v2 \
+        "$static_v3_start_payload\n$static_v3_ready_payload\n$static_v3_freeze_stopped_tail" \
+        $static_nonce $media_probe_extension_id 1]
+    set static_v3_rows [split $static_v3_complete_payload "\n"]
+    set static_v3_reordered [parse_capture_completeness_diagnostic_v2 [join \
+        [concat [lrange $static_v3_rows 1 1] [lrange $static_v3_rows 0 0] \
+        [lrange $static_v3_rows 2 end]] "\n"] $static_nonce \
+        $media_probe_extension_id 1]
+    set static_v3_duplicate [parse_capture_completeness_diagnostic_v2 \
+        "$static_v3_complete_payload\n[lindex $static_v3_rows 0]" \
+        $static_nonce $media_probe_extension_id 1]
+
+    set static_v3_terminal [capture_completeness_diag_v3_terminalize collect \
+        [list 0 "" static-v3-complete YTCAPTUREV3STATICC7] \
+        [lindex $static_v3_start_receipt 2] [lindex $static_v3_ready_receipt 2] \
+        [lindex $static_v3_collect_raw0_receipt 2] $static_v3_complete_payload \
+        valid valid [list COMPLETE static-complete]]
+    set static_v3_terminal_serial [read_text $capture_completeness_diag_serial]
+    set static_v3_terminal_summary [read_text $capture_completeness_diag_log]
+    set static_v3_terminal_raw [read_text $capture_completeness_diag_raw]
+    set static_v3_terminal_header [capture_completeness_diag_v3_terminal_reparse \
+        $static_v3_terminal_serial $media_probe_nonce]
+    set static_v3_terminal_raw_reparse [capture_completeness_diag_v3_raw_payload \
+        $static_v3_terminal_raw $media_probe_nonce YTCAPTUREV3STATICC7]
+    set static_v3_terminal_reparse [capture_completeness_diag_v3_terminal_reparse \
+        $static_v3_terminal_serial $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_summary_reparse [capture_completeness_diag_v3_terminal_reparse \
+        $static_v3_terminal_summary $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_terminal_nonce_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        "nonce=$media_probe_nonce" "nonce=ffffffffffffffffffffffffffffffff"] \
+        $static_v3_terminal_serial] $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_terminal_phase_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        {start_phase=producer_start} {start_phase=collect}] $static_v3_terminal_serial] \
+        $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_terminal_marker_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        {marker=YTCAPTUREV3STATICC7} {marker=YTCAPTUREV3STATICC8}] \
+        $static_v3_terminal_serial] $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_terminal_payload_drift \
+        [capture_completeness_diag_v3_terminal_reparse $static_v3_terminal_serial \
+        $media_probe_nonce "$static_v3_complete_payload-payload-drift" 1]
+    set static_v3_terminal_tuple_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        {reason=static-complete} {reason=static-tuple-drift}] \
+        $static_v3_terminal_serial] $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_terminal_digest_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        {tuple_digest=} {tuple_digest=f}] $static_v3_terminal_serial] \
+        $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_summary_drift \
+        [capture_completeness_diag_v3_terminal_reparse [string map [list \
+        {reason=static-complete} {reason=static-summary-drift}] \
+        $static_v3_terminal_summary] $media_probe_nonce $static_v3_complete_payload 1]
+    set static_v3_raw_drift [capture_completeness_diag_v3_raw_payload \
+        "$static_v3_terminal_raw-payload-drift" $media_probe_nonce \
+        YTCAPTUREV3STATICC7]
+
+    set static_v3_165_reject [capture_completeness_diag_v3_admission \
+        140000 170000 165000 30000 35000 5000]
+    set static_v3_210_edges [list \
+        [capture_completeness_diag_v3_admission 0 35000 210000 35000 170000 5000] \
+        [capture_completeness_diag_v3_admission 1 35000 210000 35000 170000 5000] \
+        [capture_completeness_diag_v3_admission 35000 105000 210000 70000 100000 5000] \
+        [capture_completeness_diag_v3_admission 35001 105000 210000 70000 100000 5000] \
+        [capture_completeness_diag_v3_admission 105000 140000 210000 35000 65000 5000] \
+        [capture_completeness_diag_v3_admission 105001 140000 210000 35000 65000 5000] \
+        [capture_completeness_diag_v3_admission 140000 170000 210000 30000 35000 5000] \
+        [capture_completeness_diag_v3_admission 140001 170000 210000 30000 35000 5000] \
+        [capture_completeness_diag_v3_admission 170000 205000 210000 35000 0 5000] \
+        [capture_completeness_diag_v3_admission 170001 205000 210000 35000 0 5000] \
+        [capture_completeness_diag_v3_admission 205000 205000 210000 0 0 5000] \
+        [capture_completeness_diag_v3_admission 205001 205000 210000 0 0 5000]]
+    set static_v3_210_edge_shape {}
+    foreach result $static_v3_210_edges expected {1 0 1 0 1 0 1 0 1 0 1 0} {
+        lappend static_v3_210_edge_shape [expr {[lindex $result 0] == $expected}]
+    }
+
+    set static_v3_saved_capture_diag $capture_completeness_diag
+    rename capture_completeness_diag_v3_run static_capture_diag_v3_saved_runner
+    proc capture_completeness_diag_v3_run {} {
+        error "static-v3-diag0-poisoned-runner-invoked"
+    }
+    set capture_completeness_diag 0
+    set static_v3_diag0_dispatch [capture_completeness_diag_dispatch]
+    set capture_completeness_diag $static_v3_saved_capture_diag
+    rename capture_completeness_diag_v3_run {}
+    rename static_capture_diag_v3_saved_runner capture_completeness_diag_v3_run
+    set static_v3_diag0_contract [static_capture_diag_v3_diag0_contract \
+        $static_present_source]
+    set static_v3_js_guest_runtime UNEXECUTED
+
+    set static_v3_receipts_pass 1
+    foreach result $static_v3_receipt_statuses {
+        if {![lindex $result 0]} { set static_v3_receipts_pass 0 }
+    }
+    if {![lindex $static_v3_source_order 0] ||
+        [lindex $static_v3_early_as_ready_reject 0] ||
+        [lindex $static_v3_ready_before_selector_reject 0] ||
+        [lindex $static_v3_missing_hd720_reject 0] ||
+        !$static_v3_receipts_pass ||
+        ![lindex $static_v3_start_receipt 0] ||
+        ![lindex $static_v3_ready_receipt 0] ||
+        ![lindex $static_v3_collect_raw0_receipt 0] ||
+        [lindex $static_v3_phase_substitution_start 0] ||
+        [lindex $static_v3_phase_substitution_ready 0] ||
+        [lindex $static_v3_ready_digest_substitution 0] ||
+        $static_v3_raw0_pre ne {INCOMPLETE producer-not-ready} ||
+        $static_v3_raw0_post ne {INCOMPLETE ready-but-no-markers} ||
+        [lindex $static_v3_complete 0] ne "COMPLETE" ||
+        [lindex $static_v3_pre_ready 0] ne "INVALID" ||
+        [lindex $static_v3_pre_ready_empty 0] ne "INVALID" ||
+        $static_v3_ready_empty ne {INCOMPLETE ready-but-no-markers {}} ||
+        [lindex $static_v3_freeze_continued 0] ne "INCOMPLETE" ||
+        [lindex $static_v3_freeze_stopped 0] ne "INCOMPLETE" ||
+        [lindex $static_v3_reordered 0] ne "INVALID" ||
+        [lindex $static_v3_duplicate 0] ne "INVALID" ||
+        $static_v3_terminal ne {COMPLETE static-complete 0 YTCAPTUREV3STATICC7} ||
+        $static_v3_terminal_serial ne $static_v3_terminal_summary ||
+        ![lindex $static_v3_terminal_header 0] ||
+        ![lindex $static_v3_terminal_raw_reparse 0] ||
+        ![lindex $static_v3_terminal_reparse 0] ||
+        ![lindex $static_v3_summary_reparse 0] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_nonce_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_phase_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_marker_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_payload_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_tuple_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_terminal_digest_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_summary_drift] ||
+        ![static_capture_diag_v3_drift_only $static_v3_raw_drift] ||
+        [lindex $static_v3_165_reject 0] ||
+        [lindex $static_v3_165_reject 1] ne "v3-admission-global-reserve" ||
+        $static_v3_210_edge_shape ne {1 1 1 1 1 1 1 1 1 1 1 1} ||
+        $static_v3_diag0_dispatch != 0 || !$static_v3_diag0_contract ||
+        $static_v3_js_guest_runtime ne "UNEXECUTED"} {
+        fail_preflight "static-check-capture-completeness-v3 source=$static_v3_source_order early=$static_v3_early_as_ready_reject ready_before_selector=$static_v3_ready_before_selector_reject missing_hd720=$static_v3_missing_hd720_reject receipts=$static_v3_receipt_statuses start=$static_v3_start_receipt ready=$static_v3_ready_receipt collect=$static_v3_collect_raw0_receipt phase_start=$static_v3_phase_substitution_start phase_ready=$static_v3_phase_substitution_ready ready_digest=$static_v3_ready_digest_substitution raw0_pre=$static_v3_raw0_pre raw0_post=$static_v3_raw0_post complete=$static_v3_complete pre_ready=$static_v3_pre_ready pre_empty=$static_v3_pre_ready_empty ready_empty=$static_v3_ready_empty freeze_continued=$static_v3_freeze_continued freeze_stopped=$static_v3_freeze_stopped reordered=$static_v3_reordered duplicate=$static_v3_duplicate terminal=$static_v3_terminal reparse=$static_v3_terminal_reparse raw=$static_v3_terminal_raw_reparse 165=$static_v3_165_reject edges=$static_v3_210_edges diag0=$static_v3_diag0_dispatch contract=$static_v3_diag0_contract js=$static_v3_js_guest_runtime"
+    }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS fbstat_absent_mixed=PASS finish_raw_preservation=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime_noncredit=UNEXECUTED"
+    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }

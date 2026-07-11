@@ -6,11 +6,14 @@
   global.__xv6YouTubeMediaProbeStarted = true;
 
   const lib = global.__xv6YouTubeMediaProbeLib;
-  const nonceMatch = /^#xv6ytprobe=([0-9a-f]{32})(?:&xv6ythd720=(1))?$/.exec(
+  const nonceMatch = /^#xv6ytprobe=([0-9a-f]{32})(?:&xv6ythd720=(1))?(?:&xv6ytcapturediag=(1))?$/.exec(
     global.location.hash);
   const nonce = nonceMatch ? nonceMatch[1] : "unavailable";
   const forceHd720 = Boolean(nonceMatch && nonceMatch[2] === "1");
+  const captureCompletenessDiagnostic = Boolean(nonceMatch && nonceMatch[3] === "1");
   const MAX_ROWS = forceHd720 ? 30 : 24;
+  const MAX_DIAGNOSTIC_ROWS = 64;
+  const MAX_DIAGNOSTIC_ROW_BYTES = 320;
   const SAMPLE_COUNT = 20;
   const SAMPLE_INTERVAL_MS = 1000;
   const FORCE_READY_ATTEMPTS = 120;
@@ -33,6 +36,205 @@
         emittedRows++;
       }
       return false;
+    }
+  }
+
+  // This is intentionally a different wire marker from semantic media rows.
+  // The host captures it through a separate nonce-bound transaction, so these
+  // facts cannot alter semantic row count, source classification, or FPS
+  // credit.  A console failure suppresses DONE: the host must report only an
+  // incomplete/invalid diagnostic, never a fabricated complete observation.
+  const diagnostic = {
+    enabled: captureCompletenessDiagnostic,
+    failed: false,
+    rows: 0,
+    arms: 0,
+    fires: 0,
+    rvfcCheckpoints: 0,
+    currentSeq: 0,
+    lastRvfcSeq: 0
+  };
+
+  // V2 is a separate diagnostic-only lifecycle.  Keep V1 emission intact so
+  // its retained transport corpus stays byte-stable; the host selects V2
+  // explicitly and never mixes either marker family into media semantics.
+  const diagnosticV2 = {
+    enabled: captureCompletenessDiagnostic,
+    failed: false,
+    rows: 0,
+    arms: 0,
+    fires: 0,
+    rvfcCheckpoints: 0,
+    currentSeq: 0,
+    lastRvfcSeq: 0,
+    started: false,
+    postVideoHd720Ready: false,
+    postVideoProof: null
+  };
+
+  function emitDiagnosticV2(kind, fields) {
+    if (!diagnosticV2.enabled || diagnosticV2.failed ||
+        diagnosticV2.rows >= MAX_DIAGNOSTIC_ROWS)
+      return false;
+    try {
+      const pieces = [
+        "YT_CAPTURE_COMPLETENESS_V2",
+        `kind=${lib.boundedToken(kind, 24)}`,
+        "schema=2",
+        `nonce=${nonce}`
+      ];
+      for (const [key, rawValue] of Object.entries(fields)) {
+        if (!/^[a-z][a-z0-9_]*$/.test(key))
+          throw new Error("invalid diagnostic V2 key");
+        pieces.push(`${key}=${lib.boundedToken(rawValue, 64)}`);
+      }
+      const row = pieces.join(" ");
+      if (row.length > MAX_DIAGNOSTIC_ROW_BYTES)
+        throw new Error("diagnostic V2 row exceeds bound");
+      console.info(row);
+      diagnosticV2.rows++;
+      return true;
+    } catch (_) {
+      diagnosticV2.failed = true;
+      return false;
+    }
+  }
+
+  // `producer_start` is liveness only.  The host must not admit collection
+  // from it: the only V2 admission is emitted below after the bounded HD720
+  // selector has itself established active 1280x720 playback stability.
+  function diagnosticV2ProducerStart() {
+    if (!diagnosticV2.enabled || diagnosticV2.failed || diagnosticV2.started)
+      return;
+    diagnosticV2.started = emitDiagnosticV2("producer_start", {});
+  }
+
+  function diagnosticV2PostVideoHd720Ready(proof) {
+    if (!diagnosticV2.enabled || diagnosticV2.failed ||
+        diagnosticV2.postVideoHd720Ready || !proof ||
+        proof.selected !== "hd720" || proof.videoWidth !== 1280 ||
+        proof.videoHeight !== 720 || proof.stableCount < FORCE_STABLE_OBSERVATIONS ||
+        !proof.selectorPrerequisites || !proof.rangeInvoked || proof.rangeThrew ||
+        !proof.qualityInvoked || proof.qualityThrew || !proof.progressed)
+      return false;
+    diagnosticV2.postVideoHd720Ready = emitDiagnosticV2("post_video_hd720_ready", {
+      selected: proof.selected,
+      video_width: proof.videoWidth,
+      video_height: proof.videoHeight,
+      stable_count: proof.stableCount
+    });
+    return diagnosticV2.postVideoHd720Ready;
+  }
+
+  function emitDiagnostic(kind, fields) {
+    if (!diagnostic.enabled || diagnostic.failed ||
+        diagnostic.rows >= MAX_DIAGNOSTIC_ROWS)
+      return false;
+    try {
+      const pieces = [
+        "YT_CAPTURE_COMPLETENESS_V1",
+        `kind=${lib.boundedToken(kind, 24)}`,
+        "schema=1",
+        `nonce=${nonce}`
+      ];
+      for (const [key, rawValue] of Object.entries(fields)) {
+        if (!/^[a-z][a-z0-9_]*$/.test(key))
+          throw new Error("invalid diagnostic key");
+        pieces.push(`${key}=${lib.boundedToken(rawValue, 64)}`);
+      }
+      const row = pieces.join(" ");
+      if (row.length > MAX_DIAGNOSTIC_ROW_BYTES)
+        throw new Error("diagnostic row exceeds bound");
+      console.info(row);
+      diagnostic.rows++;
+      return true;
+    } catch (_) {
+      diagnostic.failed = true;
+      return false;
+    }
+  }
+
+  function diagnosticTimerArm(seq, rvfc) {
+    if (!diagnostic.enabled || diagnostic.failed)
+      return;
+    diagnostic.currentSeq = seq;
+    if (emitDiagnostic("timer_arm", {
+      seq,
+      rvfc_available: rvfc.available ? 1 : 0,
+      rvfc_callbacks: rvfc.callbacks
+    })) {
+      diagnostic.arms++;
+    }
+    diagnosticV2.currentSeq = seq;
+    if (diagnosticV2.postVideoHd720Ready && emitDiagnosticV2("timer_arm", {
+      seq,
+      rvfc_available: rvfc.available ? 1 : 0,
+      rvfc_callbacks: rvfc.callbacks
+    })) {
+      diagnosticV2.arms++;
+    }
+  }
+
+  function diagnosticTimerFire(seq, rvfc) {
+    if (!diagnostic.enabled || diagnostic.failed)
+      return;
+    if (emitDiagnostic("timer_fire", {
+      seq,
+      rvfc_available: rvfc.available ? 1 : 0,
+      rvfc_callbacks: rvfc.callbacks
+    })) {
+      diagnostic.fires++;
+    }
+    if (diagnosticV2.postVideoHd720Ready && emitDiagnosticV2("timer_fire", {
+      seq,
+      rvfc_available: rvfc.available ? 1 : 0,
+      rvfc_callbacks: rvfc.callbacks
+    })) {
+      diagnosticV2.fires++;
+    }
+  }
+
+  function diagnosticRvfcCheckpoint(rvfc) {
+    const seq = diagnostic.currentSeq;
+    if (!diagnostic.enabled || diagnostic.failed || !seq ||
+        diagnostic.lastRvfcSeq === seq)
+      return;
+    if (emitDiagnostic("rvfc_checkpoint", {
+      seq,
+      rvfc_callbacks: rvfc.callbacks
+    })) {
+      diagnostic.lastRvfcSeq = seq;
+      diagnostic.rvfcCheckpoints++;
+    }
+    const v2Seq = diagnosticV2.currentSeq;
+    if (diagnosticV2.postVideoHd720Ready && v2Seq && diagnosticV2.lastRvfcSeq !== v2Seq &&
+        emitDiagnosticV2("rvfc_checkpoint", {
+          seq: v2Seq,
+          rvfc_callbacks: rvfc.callbacks
+        })) {
+      diagnosticV2.lastRvfcSeq = v2Seq;
+      diagnosticV2.rvfcCheckpoints++;
+    }
+  }
+
+  function diagnosticDone() {
+    if (!diagnostic.enabled || diagnostic.failed)
+      return;
+    emitDiagnostic("done", {
+      status: "complete",
+      arms: diagnostic.arms,
+      fires: diagnostic.fires,
+      rvfc_checkpoints: diagnostic.rvfcCheckpoints,
+      rows: diagnostic.rows + 1
+    });
+    if (diagnosticV2.postVideoHd720Ready) {
+      emitDiagnosticV2("done", {
+        status: "complete",
+        arms: diagnosticV2.arms,
+        fires: diagnosticV2.fires,
+        rvfc_checkpoints: diagnosticV2.rvfcCheckpoints,
+        rows: diagnosticV2.rows + 1
+      });
     }
   }
 
@@ -238,6 +440,18 @@
       current_time_last: lib.fixed(lastTime, 3, -1)
     });
 
+    diagnosticV2.postVideoProof = {
+      selected: quality.selected,
+      videoWidth: video ? video.videoWidth : 0,
+      videoHeight: video ? video.videoHeight : 0,
+      stableCount,
+      selectorPrerequisites,
+      rangeInvoked,
+      rangeThrew,
+      qualityInvoked,
+      qualityThrew,
+      progressed: firstTime >= 0 && lastTime - firstTime >= 0.5
+    };
     return video && video.isConnected ? video : null;
   }
 
@@ -295,16 +509,22 @@
       console.info(`YT_MEDIA_PROBE_V1 kind=failure schema=1 nonce=${nonce} reason=library-missing`);
       return;
     }
+
     if (!nonceMatch) {
       emit("failure", { reason: "nonce-missing" });
       return;
     }
+
+    // This is deliberately before video discovery but is liveness only.
+    diagnosticV2ProducerStart();
 
     const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();
     if (!video) {
       emit("failure", { reason: "video-timeout" });
       return;
     }
+    if (forceHd720)
+      diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);
 
     const longTasks = { available: 0, count: 0, durationMs: 0 };
     let observer = null;
@@ -345,6 +565,7 @@
       if (!rvfc.active)
         return;
       rvfc.callbacks++;
+      diagnosticRvfcCheckpoint(rvfc);
 
       const presented = Number(metadata.presentedFrames);
       const presentedValid = Number.isSafeInteger(presented) && presented >= 0;
@@ -407,7 +628,9 @@
     let firstWebkit = null;
     let lastWebkit = null;
     for (let sampleIndex = 1; sampleIndex <= SAMPLE_COUNT; sampleIndex++) {
+      diagnosticTimerArm(sampleIndex, rvfc);
       await sleep(SAMPLE_INTERVAL_MS);
+      diagnosticTimerFire(sampleIndex, rvfc);
       if (!video.isConnected) {
         emit("failure", { reason: `video-detached-${sampleIndex}` });
         rvfc.active = false;
@@ -534,6 +757,7 @@
       samples: SAMPLE_COUNT,
       rows: emittedRows + 1
     });
+    diagnosticDone();
   }
 
   run().catch(() => emit("failure", { reason: "uncaught-probe-error" }));

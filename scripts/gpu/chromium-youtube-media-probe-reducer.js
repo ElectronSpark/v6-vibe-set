@@ -112,6 +112,8 @@ function rowFields(row) {
 
 async function runProbeScenario(options = {}) {
   const rows = [];
+  const diagnosticRows = [];
+  const diagnosticV2Rows = [];
   const calls = [];
   let selected = options.initialQuality || "medium";
   let qualityReads = 0;
@@ -122,6 +124,7 @@ async function runProbeScenario(options = {}) {
   let mediaTime = 1;
   let totalVideoFrames = 1000;
   let coalescedAdvanceDone = false;
+  let sampleTimerArms = 0;
   const available = options.available || ["hd1080", "hd720", "large"];
   const video = {
     isConnected: options.videoMissing ? false : true,
@@ -236,9 +239,31 @@ async function runProbeScenario(options = {}) {
       href: "https://www.youtube.com/watch?v=fixture",
       hash: options.normalArm
         ? "#xv6ytprobe=0123456789abcdef0123456789abcdef"
-        : "#xv6ytprobe=0123456789abcdef0123456789abcdef&xv6ythd720=1"
+        : "#xv6ytprobe=0123456789abcdef0123456789abcdef&xv6ythd720=1" +
+          (options.captureDiagnostic ? "&xv6ytcapturediag=1" : "")
     },
-    console: { info(row) { rows.push(String(row)); } },
+    console: {
+      info(row) {
+        const text = String(row);
+        if (text.startsWith("YT_CAPTURE_COMPLETENESS_V1 ")) {
+          if (options.consoleThrowDiagnostic)
+            throw new Error("synthetic diagnostic console throw");
+          if (options.consoleBlockDiagnostic)
+            return;
+          diagnosticRows.push(text);
+          return;
+        }
+        if (text.startsWith("YT_CAPTURE_COMPLETENESS_V2 ")) {
+          if (options.consoleThrowDiagnostic)
+            throw new Error("synthetic diagnostic console throw");
+          if (options.consoleBlockDiagnostic)
+            return;
+          diagnosticV2Rows.push(text);
+          return;
+        }
+        rows.push(text);
+      }
+    },
     document: {
       getElementById(id) {
         return id === "movie_player" && !options.playerMissing ? player : null;
@@ -252,6 +277,15 @@ async function runProbeScenario(options = {}) {
       disconnect() {}
     },
     setTimeout(resolve, milliseconds) {
+      if (milliseconds === 1000)
+        sampleTimerArms++;
+      if (options.freezeTimerAt === sampleTimerArms && milliseconds === 1000) {
+        if (options.rvfcContinuesAfterFreeze) {
+          for (let index = 0; index < 8; index++)
+            advance(16.667);
+        }
+        return 1;
+      }
       Promise.resolve().then(() => {
         advance(milliseconds);
         resolve();
@@ -269,9 +303,12 @@ async function runProbeScenario(options = {}) {
       break;
     await new Promise(resolve => setImmediate(resolve));
   }
-  assert(rows.some(row => row.includes(" kind=done ") || row.includes(" kind=failure ")),
-    "probe did not terminate within the reducer bound");
-  return { rows, calls, fields: rows.map(rowFields) };
+  const terminal = rows.some(row => row.includes(" kind=done ") ||
+    row.includes(" kind=failure "));
+  if (!options.allowIncomplete)
+    assert(terminal, "probe did not terminate within the reducer bound");
+  return { rows, diagnosticRows, diagnosticV2Rows, calls,
+    fields: rows.map(rowFields), terminal };
 }
 
 function forcePrelude(result) {
@@ -304,6 +341,73 @@ function forcePrelude(result) {
   assert.strictEqual(normal.fields[0].kind, "start");
   assert.strictEqual(normal.calls.length, 0);
   assert(!normal.rows.some(row => row.includes("kind=force_")));
+
+  const diagnostic = await runProbeScenario({ captureDiagnostic: true });
+  assert.strictEqual(diagnostic.rows.length, 30,
+    "diagnostic arm changed the fixed semantic row count");
+  assert.deepStrictEqual(diagnostic.rows, pass.rows,
+    "diagnostic arm changed semantic row bytes");
+  assert.strictEqual(diagnostic.diagnosticRows.length, 61);
+  assert(diagnostic.diagnosticRows.every(row =>
+    row.startsWith("YT_CAPTURE_COMPLETENESS_V1 ") && row.length <= 320));
+  assert.strictEqual(diagnostic.diagnosticRows.filter(row =>
+    row.includes(" kind=timer_arm ")).length, 20);
+  assert.strictEqual(diagnostic.diagnosticRows.filter(row =>
+    row.includes(" kind=timer_fire ")).length, 20);
+  assert.strictEqual(diagnostic.diagnosticRows.filter(row =>
+    row.includes(" kind=rvfc_checkpoint ")).length, 20);
+  assert.strictEqual(diagnostic.diagnosticRows.filter(row =>
+    row.includes(" kind=done ")).length, 1);
+  assert.strictEqual(diagnostic.diagnosticV2Rows.length, 63);
+  assert(diagnostic.diagnosticV2Rows.every(row =>
+    row.startsWith("YT_CAPTURE_COMPLETENESS_V2 ") && row.length <= 320));
+  assert(diagnostic.diagnosticV2Rows[0].includes(" kind=producer_start "));
+  assert(diagnostic.diagnosticV2Rows[1].includes(" kind=post_video_hd720_ready "));
+  assert.strictEqual(diagnostic.diagnosticV2Rows.filter(row =>
+    row.includes(" kind=timer_arm ")).length, 20);
+  assert.strictEqual(diagnostic.diagnosticV2Rows.filter(row =>
+    row.includes(" kind=timer_fire ")).length, 20);
+
+  const frozenContinued = await runProbeScenario({
+    captureDiagnostic: true,
+    freezeTimerAt: 4,
+    rvfcContinuesAfterFreeze: true,
+    allowIncomplete: true
+  });
+  assert.strictEqual(frozenContinued.terminal, false);
+  assert(frozenContinued.diagnosticRows.some(row =>
+    row.includes(" kind=timer_arm ") && row.includes(" seq=4 ")));
+  assert(!frozenContinued.diagnosticRows.some(row =>
+    row.includes(" kind=timer_fire ") && row.includes(" seq=4 ")));
+  assert(frozenContinued.diagnosticRows.some(row =>
+    row.includes(" kind=rvfc_checkpoint ") && row.includes(" seq=4 ")));
+  assert(!frozenContinued.diagnosticRows.some(row => row.includes(" kind=done ")));
+  assert(frozenContinued.diagnosticV2Rows.some(row =>
+    row.includes(" kind=post_video_hd720_ready ")));
+
+  const frozenStopped = await runProbeScenario({
+    captureDiagnostic: true,
+    freezeTimerAt: 4,
+    allowIncomplete: true
+  });
+  assert.strictEqual(frozenStopped.terminal, false);
+  assert(!frozenStopped.diagnosticRows.some(row =>
+    row.includes(" kind=rvfc_checkpoint ") && row.includes(" seq=4 ")));
+
+  const consoleThrow = await runProbeScenario({
+    captureDiagnostic: true,
+    consoleThrowDiagnostic: true
+  });
+  assert.strictEqual(consoleThrow.rows.length, 30);
+  assert.strictEqual(consoleThrow.diagnosticRows.length, 0);
+  assert.strictEqual(consoleThrow.diagnosticV2Rows.length, 0);
+  const consoleBlock = await runProbeScenario({
+    captureDiagnostic: true,
+    consoleBlockDiagnostic: true
+  });
+  assert.strictEqual(consoleBlock.rows.length, 30);
+  assert.strictEqual(consoleBlock.diagnosticRows.length, 0);
+  assert.strictEqual(consoleBlock.diagnosticV2Rows.length, 0);
 
   const unavailable = await runProbeScenario({ available: ["hd1080", "large"] });
   assert.strictEqual(unavailable.calls.length, 0,
@@ -364,7 +468,9 @@ function forcePrelude(result) {
     "extension_id=edfilgocpdgbkehcgdillfgnnhclphol missing_api=PASS " +
     "force_main_world=PASS force_exact_order=PASS force_api_throw=RAW " +
     "force_noop=RAW force_delayed=BOUNDED normal_isolation=PASS " +
-    "coalesced_rvfc=RAW\n");
+    "coalesced_rvfc=RAW capture_diag_off_parity=PASS " +
+    "capture_diag_timer_freeze=RAW capture_diag_rvfc_split=RAW " +
+    "capture_diag_console_throw_block=FAIL_CLOSED\n");
 })().catch(error => {
   process.stderr.write(`${error.stack || error}\n`);
   process.exitCode = 1;

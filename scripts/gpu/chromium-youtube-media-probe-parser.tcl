@@ -1627,7 +1627,9 @@ proc media_probe_capture_separator_length {text offset} {
     return 0
 }
 
-proc media_probe_capture_payload_canonical {text start end separator} {
+proc media_probe_capture_payload_canonical {
+    text start end separator {required_marker "YT_MEDIA_PROBE_V1 "}
+} {
     # Validate raw rows and separators before changing a single byte.  The
     # canonical LF result is the only representation semantic parsing sees;
     # it cannot reclassify a mixed-endian wire transcript as valid.
@@ -1649,7 +1651,7 @@ proc media_probe_capture_payload_canonical {text start end separator} {
             [string first "\n" $body] >= 0} {
             return [list 0 "capture-payload-mixed-or-control-line" ""]
         }
-        if {[string first "YT_MEDIA_PROBE_V1 " $body] < 0} {
+        if {[string first $required_marker $body] < 0} {
             return [list 0 "capture-payload-noise" ""]
         }
         append canonical "$body\n"
@@ -1659,6 +1661,123 @@ proc media_probe_capture_payload_canonical {text start end separator} {
         return [list 0 "capture-payload-boundary-invalid" ""]
     }
     return [list 1 "pass" $canonical]
+}
+
+# Capture-completeness rows intentionally travel in a separate transaction
+# from YT_MEDIA_PROBE_V1.  That keeps timer/rVFC diagnostics incapable of
+# changing the fixed semantic row count, parser, or FPS criteria.
+proc capture_completeness_diag_host_envelope {attempt nonce marker} {
+    if {$attempt ni {initial final} ||
+        ![regexp {^[0-9a-f]{32}$} $nonce] ||
+        ![regexp {^[A-Za-z0-9]+$} $marker]} {
+        error "invalid capture-completeness host envelope arguments"
+    }
+    return "YT_CAPTURE_COMPLETENESS_HOST_CAPTURE_V1 attempt=$attempt nonce=$nonce marker=$marker command=/bin/bash,/ytcapturediag.sh phase=capture-completeness-diagnostic-$attempt\n"
+}
+
+proc capture_completeness_diag_capture_payload {
+    text expected_nonce expected_marker {expected_attempt initial}
+} {
+    if {![regexp {^[0-9a-f]{32}$} $expected_nonce]} {
+        return [list 0 "capture-diag-nonce-invalid" ""]
+    }
+    if {![regexp {^[A-Za-z0-9]+$} $expected_marker]} {
+        return [list 0 "capture-diag-frame-marker-invalid" ""]
+    }
+    if {$expected_attempt ni {initial final}} {
+        return [list 0 "capture-diag-attempt-invalid" ""]
+    }
+    set begin "YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN nonce=$expected_nonce status=oneshot byte_cap=16384"
+    set end "YT_CAPTURE_COMPLETENESS_CAPTURE_END nonce=$expected_nonce status=oneshot byte_cap=16384"
+    set begin_tag {YT_CAPTURE_COMPLETENESS_CAPTURE_BEGIN }
+    set end_tag {YT_CAPTURE_COMPLETENESS_CAPTURE_END }
+    set enable "\033\[?2004h"
+    set disable "\033\[?2004l"
+    set rc_wire "$expected_marker:RC:0"
+    set fence_wire "$expected_marker:FENCE"
+    set host_envelope [capture_completeness_diag_host_envelope $expected_attempt \
+        $expected_nonce $expected_marker]
+
+    if {[string range $text 0 [expr {[string length $host_envelope] - 1}]] \
+        ne $host_envelope} {
+        return [list 0 "capture-diag-host-envelope-invalid" ""]
+    }
+    set begin_pos [string first $begin $text]
+    set end_pos [string first $end $text]
+    if {[media_probe_capture_literal_count $text $begin_tag] != 1 ||
+        [media_probe_capture_literal_count $text $begin] != 1 ||
+        $begin_pos < [string length $host_envelope]} {
+        return [list 0 "capture-diag-begin-shape-invalid" ""]
+    }
+    if {[media_probe_capture_literal_count $text $end_tag] != 1 ||
+        [media_probe_capture_literal_count $text $end] != 1 || $end_pos < 0} {
+        return [list 0 "capture-diag-end-shape-invalid" ""]
+    }
+    set preamble [string range $text [string length $host_envelope] \
+        [expr {$begin_pos - 1}]]
+    set boundary "$disable\r$begin"
+    set boundary_pos [expr {$begin_pos - [string length $disable] - 1}]
+    if {[media_probe_capture_literal_count $preamble $enable] != 1 ||
+        [media_probe_capture_literal_count $preamble $disable] != 1 ||
+        $boundary_pos < [string length $host_envelope] ||
+        [string range $text $boundary_pos \
+            [expr {$boundary_pos + [string length $boundary] - 1}]] ne $boundary} {
+        return [list 0 "capture-diag-begin-transition-invalid" ""]
+    }
+    set begin_separator_pos [expr {$begin_pos + [string length $begin]}]
+    set separator_length [media_probe_capture_separator_length $text \
+        $begin_separator_pos]
+    if {$separator_length == 0} {
+        return [list 0 "capture-diag-begin-separator-invalid" ""]
+    }
+    set separator [string range $text $begin_separator_pos \
+        [expr {$begin_separator_pos + $separator_length - 1}]]
+    set payload_start [expr {$begin_separator_pos + $separator_length}]
+    if {$end_pos < $payload_start} {
+        return [list 0 "capture-diag-end-wire-invalid" ""]
+    }
+    if {[media_probe_capture_literal_count $text $rc_wire] != 1 ||
+        [media_probe_capture_literal_count $text $fence_wire] != 1} {
+        return [list 0 "capture-diag-tail-marker-count-invalid" ""]
+    }
+    set end_separator_pos [expr {$end_pos + [string length $end]}]
+    if {[string range $text $end_separator_pos \
+            [expr {$end_separator_pos + $separator_length - 1}]] ne $separator} {
+        return [list 0 "capture-diag-end-wire-invalid" ""]
+    }
+    set tail_start [expr {$end_separator_pos + $separator_length}]
+    if {[string range $text $tail_start \
+            [expr {$tail_start + $separator_length - 1}]] ne $separator} {
+        return [list 0 "capture-diag-tail-blank-separator-invalid" ""]
+    }
+    set rc_start [expr {$tail_start + $separator_length}]
+    if {[string range $text $rc_start \
+            [expr {$rc_start + [string length $rc_wire] - 1}]] ne $rc_wire} {
+        return [list 0 "capture-diag-tail-rc-invalid" ""]
+    }
+    set rc_separator_pos [expr {$rc_start + [string length $rc_wire]}]
+    if {[string range $text $rc_separator_pos \
+            [expr {$rc_separator_pos + $separator_length - 1}]] ne $separator} {
+        return [list 0 "capture-diag-tail-rc-separator-invalid" ""]
+    }
+    set fence_start [expr {$rc_separator_pos + $separator_length}]
+    if {[string range $text $fence_start \
+            [expr {$fence_start + [string length $fence_wire] - 1}]] ne $fence_wire} {
+        return [list 0 "capture-diag-tail-fence-invalid" ""]
+    }
+    set fence_separator_pos [expr {$fence_start + [string length $fence_wire]}]
+    if {[string range $text $fence_separator_pos \
+            [expr {$fence_separator_pos + $separator_length - 1}]] ne $separator} {
+        return [list 0 "capture-diag-tail-grammar-invalid" ""]
+    }
+    set fence_end [expr {$fence_separator_pos + $separator_length - 1}]
+    set transaction_wire [media_probe_capture_transaction_wire $text $begin_pos \
+        $fence_end]
+    if {![lindex $transaction_wire 0]} {
+        return [list 0 [lindex $transaction_wire 1] ""]
+    }
+    return [media_probe_capture_payload_canonical $text $payload_start $end_pos \
+        $separator "YT_CAPTURE_COMPLETENESS_V1 "]
 }
 
 proc media_probe_capture_transaction_wire {text begin_pos end_pos} {
@@ -1818,4 +1937,488 @@ proc media_probe_capture_payload {
         return [list 0 [lindex $payload_wire 1] ""]
     }
     return [list 1 "pass" [lindex $payload_wire 2]]
+}
+
+proc capture_completeness_diag_expected_keys {kind} {
+    switch -- $kind {
+        timer_arm - timer_fire {
+            return {kind schema nonce seq rvfc_available rvfc_callbacks}
+        }
+        rvfc_checkpoint { return {kind schema nonce seq rvfc_callbacks} }
+        done { return {kind schema nonce status arms fires rvfc_checkpoints rows} }
+        default { return {} }
+    }
+}
+
+proc capture_completeness_diag_row_fields {row expected_nonce} {
+    set fields [dict create]
+    if {[media_probe_byte_length $row] > 320} {
+        return [list 0 "diagnostic-row-byte-cap-exceeded" $fields]
+    }
+    set words [split $row " "]
+    if {[lindex $words 0] ne "YT_CAPTURE_COMPLETENESS_V1"} {
+        return [list 0 "diagnostic-marker-missing" $fields]
+    }
+    foreach word [lrange $words 1 end] {
+        if {![regexp {^([a-z][a-z0-9_]*)=([^ ]+)$} $word -> key value]} {
+            return [list 0 "diagnostic-invalid-field-$word" $fields]
+        }
+        if {[dict exists $fields $key]} {
+            return [list 0 "diagnostic-duplicate-field-$key" $fields]
+        }
+        dict set fields $key $value
+    }
+    if {![dict exists $fields schema] || [dict get $fields schema] ne "1" ||
+        ![dict exists $fields kind]} {
+        return [list 0 "diagnostic-schema-or-kind-missing" $fields]
+    }
+    set expected [lsort [capture_completeness_diag_expected_keys \
+        [dict get $fields kind]]]
+    if {$expected eq {} || [lsort [dict keys $fields]] ne $expected} {
+        return [list 0 "diagnostic-exact-key-set-mismatch-[dict get $fields kind]" $fields]
+    }
+    if {![dict exists $fields nonce] ||
+        ![regexp {^[0-9a-f]{32}$} [dict get $fields nonce]] ||
+        [dict get $fields nonce] ne $expected_nonce} {
+        return [list 0 "diagnostic-nonce-mismatch" $fields]
+    }
+    foreach key {seq rvfc_callbacks} {
+        if {[dict exists $fields $key] &&
+            ![media_probe_is_uint [dict get $fields $key]]} {
+            return [list 0 "diagnostic-unsigned-$key" $fields]
+        }
+    }
+    if {[dict get $fields kind] in {timer_arm timer_fire} &&
+        [dict get $fields rvfc_available] ni {0 1}} {
+        return [list 0 "diagnostic-rvfc-available-invalid" $fields]
+    }
+    if {[dict get $fields kind] eq "done" &&
+        ([dict get $fields status] ne "complete" ||
+         ![media_probe_is_uint [dict get $fields arms]] ||
+         ![media_probe_is_uint [dict get $fields fires]] ||
+         ![media_probe_is_uint [dict get $fields rvfc_checkpoints]] ||
+         ![media_probe_is_uint [dict get $fields rows]])} {
+        return [list 0 "diagnostic-done-field-invalid" $fields]
+    }
+    return [list 1 "pass" $fields]
+}
+
+proc capture_completeness_diag_enveloped_rows {
+    text expected_nonce extension_id
+} {
+    set rows {}
+    set total_bytes 0
+    set marker_lines 0
+    set qid [regex_quote $extension_id]
+    set pattern [format {^\[([1-9][0-9]*):([1-9][0-9]*):([0-9]{4}/[0-9]{6}\.[0-9]{6}):INFO:CONSOLE:([0-9]+)\] "(YT_CAPTURE_COMPLETENESS_V1 [^"]+)", source: chrome-extension://%s/probe\.js \(([0-9]+)\)$} $qid]
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[string first "YT_CAPTURE_COMPLETENESS_V1 " $line] < 0} {
+            continue
+        }
+        incr marker_lines
+        if {![regexp $pattern $line -> pid tid stamp console_line payload source_line]} {
+            return [list 0 "diagnostic-untrusted-marker-envelope" {}]
+        }
+        if {$console_line ne $source_line} {
+            return [list 0 "diagnostic-console-source-line-mismatch" {}]
+        }
+        set parsed [capture_completeness_diag_row_fields $payload $expected_nonce]
+        if {![lindex $parsed 0]} {
+            return [list 0 [lindex $parsed 1] {}]
+        }
+        incr total_bytes [media_probe_byte_length $payload]
+        lappend rows [lindex $parsed 2]
+    }
+    if {$marker_lines == 0} {
+        return [list 1 "diagnostic-no-marker-rows" {}]
+    }
+    if {$marker_lines > 64} {
+        return [list 0 "diagnostic-row-cap-exceeded-$marker_lines" {}]
+    }
+    if {$total_bytes > 16384} {
+        return [list 0 "diagnostic-total-byte-cap-exceeded-$total_bytes" {}]
+    }
+    return [list 1 "pass" $rows]
+}
+
+# Return COMPLETE only for a fully ordered 20-slot diagnostic.  An intact
+# prefix remains diagnostic INCOMPLETE: it is useful localization evidence but
+# cannot substitute for media semantics, GPU evidence, or presented FPS.
+proc parse_capture_completeness_diagnostic {
+    text expected_nonce extension_id
+} {
+    set envelope [capture_completeness_diag_enveloped_rows $text $expected_nonce \
+        $extension_id]
+    if {![lindex $envelope 0]} {
+        return [list INVALID [lindex $envelope 1] {}]
+    }
+    set rows [lindex $envelope 2]
+    if {[llength $rows] == 0} {
+        return [list INCOMPLETE [lindex $envelope 1] {}]
+    }
+    set arms [dict create]
+    set fires [dict create]
+    set checkpoints [dict create]
+    set last_arm 0
+    set last_fire 0
+    set done_seen 0
+    set position 0
+    foreach fields $rows {
+        incr position
+        if {$done_seen} {
+            return [list INVALID "diagnostic-row-after-done-$position" {}]
+        }
+        set kind [dict get $fields kind]
+        switch -- $kind {
+            timer_arm {
+                set seq [dict get $fields seq]
+                if {$seq != $last_arm + 1 || $seq > 20 ||
+                    ($seq > 1 && $last_fire != $seq - 1) ||
+                    [dict exists $arms $seq]} {
+                    return [list INVALID "diagnostic-arm-order-or-duplicate-$seq" {}]
+                }
+                dict set arms $seq $fields
+                set last_arm $seq
+            }
+            timer_fire {
+                set seq [dict get $fields seq]
+                if {$seq != $last_fire + 1 || $seq != $last_arm || $seq > 20 ||
+                    [dict exists $fires $seq]} {
+                    return [list INVALID "diagnostic-fire-order-or-duplicate-$seq" {}]
+                }
+                dict set fires $seq $fields
+                set last_fire $seq
+            }
+            rvfc_checkpoint {
+                set seq [dict get $fields seq]
+                if {$seq < 1 || $seq != $last_arm || $seq > 20 ||
+                    [dict exists $checkpoints $seq]} {
+                    return [list INVALID "diagnostic-rvfc-order-or-duplicate-$seq" {}]
+                }
+                dict set checkpoints $seq $fields
+            }
+            done {
+                set done_seen 1
+                if {$last_arm != 20 || $last_fire != 20 ||
+                    [dict get $fields arms] != 20 ||
+                    [dict get $fields fires] != 20 ||
+                    [dict get $fields rvfc_checkpoints] != [dict size $checkpoints] ||
+                    [dict get $fields rows] != $position} {
+                    return [list INVALID "diagnostic-done-count-or-order-invalid" {}]
+                }
+            }
+            default { return [list INVALID "diagnostic-kind-invalid-$kind" {}] }
+        }
+    }
+    if {!$done_seen} {
+        set stalled_seq $last_arm
+        if {$stalled_seq < 1} {
+            return [list INCOMPLETE "diagnostic-no-timer-arm" {}]
+        }
+        if {![dict exists $fires $stalled_seq]} {
+            set arm [dict get $arms $stalled_seq]
+            set rvfc_state [expr {[dict get $arm rvfc_available] &&
+                [dict exists $checkpoints $stalled_seq] ? "continued" : "stopped"}]
+                return [list INCOMPLETE \
+                "timer-freeze-arm-$stalled_seq-no-fire-rvfc-$rvfc_state" \
+                [dict create arms $last_arm fires $last_fire rvfc_checkpoints [dict size $checkpoints]]]
+        }
+        return [list INCOMPLETE "diagnostic-done-missing-arms-$last_arm-fires-$last_fire" \
+            [dict create arms $last_arm fires $last_fire rvfc_checkpoints [dict size $checkpoints]]]
+    }
+    return [list COMPLETE "timer-arms=20 timer-fires=20 rvfc-checkpoints=[dict size $checkpoints] diagnostic_only=1" \
+        [dict create arms 20 fires 20 rvfc_checkpoints [dict size $checkpoints]]]
+}
+
+proc capture_completeness_diag_console_line {payload {line_number 421} {extension_id edfilgocpdgbkehcgdillfgnnhclphol}} {
+    return "\[412:412:0710/120000.123456:INFO:CONSOLE:$line_number\] \"$payload\", source: chrome-extension://$extension_id/probe.js ($line_number)"
+}
+
+# Reducer-only raw diagnostic fixture.  It deliberately has no semantic media
+# rows: callers must prove that a diagnostic prefix cannot earn semantic or FPS
+# credit, even when fbstat context is healthy.
+proc synthetic_capture_completeness_diagnostic {nonce {freeze_arm 0} {rvfc_continues 1}} {
+    if {![regexp {^[0-9a-f]{32}$} $nonce] ||
+        ![string is integer -strict $freeze_arm] ||
+        $freeze_arm < 0 || $freeze_arm > 20 ||
+        $rvfc_continues ni {0 1}} {
+        error "invalid synthetic capture-completeness diagnostic option"
+    }
+    set payloads {}
+    set rows 0
+    set checkpoints 0
+    set fires 0
+    for {set seq 1} {$seq <= 20} {incr seq} {
+        lappend payloads "YT_CAPTURE_COMPLETENESS_V1 kind=timer_arm schema=1 nonce=$nonce seq=$seq rvfc_available=1 rvfc_callbacks=[expr {$seq * 60}]"
+        incr rows
+        if {$rvfc_continues} {
+            lappend payloads "YT_CAPTURE_COMPLETENESS_V1 kind=rvfc_checkpoint schema=1 nonce=$nonce seq=$seq rvfc_callbacks=[expr {$seq * 60 + 1}]"
+            incr rows
+            incr checkpoints
+        }
+        if {$freeze_arm == $seq} { break }
+        lappend payloads "YT_CAPTURE_COMPLETENESS_V1 kind=timer_fire schema=1 nonce=$nonce seq=$seq rvfc_available=1 rvfc_callbacks=[expr {$seq * 60 + 2}]"
+        incr rows
+        incr fires
+    }
+    if {$freeze_arm == 0} {
+        lappend payloads "YT_CAPTURE_COMPLETENESS_V1 kind=done schema=1 nonce=$nonce status=complete arms=20 fires=$fires rvfc_checkpoints=$checkpoints rows=[expr {$rows + 1}]"
+    }
+    set lines {}
+    set line_number 421
+    foreach payload $payloads {
+        lappend lines [capture_completeness_diag_console_line $payload $line_number]
+        incr line_number
+    }
+    return [join $lines "\n"]
+}
+
+# V2 is intentionally a parallel diagnostic wire.  The V1 parser above stays
+# available for retained real-PTY replays; production diag1 selects these V2
+# helpers so a source receipt and producer-ready fact are mandatory before
+# timer/rVFC classification can begin.
+proc capture_completeness_diag_v2_host_envelope {attempt nonce marker} {
+    if {$attempt ne "initial" || ![regexp {^[0-9a-f]{32}$} $nonce] ||
+        ![regexp {^[A-Za-z0-9]+$} $marker]} {
+        error "invalid capture-completeness V2 host envelope arguments"
+    }
+    return "YT_CAPTURE_COMPLETENESS_HOST_CAPTURE_V2 attempt=$attempt nonce=$nonce marker=$marker command=/bin/bash,/ytcapturediag.sh phase=capture-completeness-diagnostic-v2-$attempt\n"
+}
+
+proc capture_completeness_diag_v2_capture_payload {
+    text expected_nonce expected_marker {expected_attempt initial}
+} {
+    # Keep the retained transaction-byte grammar in one implementation.  V2
+    # changes only the authenticated host and lifecycle marker versions; the
+    # map is one-to-one and deliberately excludes source-receipt lines, which
+    # occur in the opaque pre-BEGIN helper preamble.
+    set v1_text [string map [list \
+        YT_CAPTURE_COMPLETENESS_HOST_CAPTURE_V2 YT_CAPTURE_COMPLETENESS_HOST_CAPTURE_V1 \
+        {capture-completeness-diagnostic-v2-} {capture-completeness-diagnostic-} \
+        YT_CAPTURE_COMPLETENESS_V2 YT_CAPTURE_COMPLETENESS_V1] $text]
+    set parsed [capture_completeness_diag_capture_payload $v1_text \
+        $expected_nonce $expected_marker $expected_attempt]
+    if {![lindex $parsed 0]} { return $parsed }
+    return [list 1 [lindex $parsed 1] [string map \
+        [list YT_CAPTURE_COMPLETENESS_V1 YT_CAPTURE_COMPLETENESS_V2] \
+        [lindex $parsed 2]]]
+}
+
+proc capture_completeness_diag_v2_source_receipt {
+    text expected_nonce {expected_phase ""} {expected_ready_digest ""}
+} {
+    if {![regexp {^[0-9a-f]{32}$} $expected_nonce]} {
+        return [list 0 source-receipt-nonce-invalid {}]
+    }
+    set rows {}
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[string first {YT_CAPTURE_COMPLETENESS_SOURCE_V2 } $line] == 0} {
+            lappend rows $line
+        }
+    }
+    if {[llength $rows] != 1} {
+        return [list 0 "source-receipt-count-[llength $rows]" {}]
+    }
+    set row [lindex $rows 0]
+    if {$expected_phase ne "" &&
+        $expected_phase ni {producer_start post_video_hd720 collect}} {
+        return [list 0 source-receipt-expected-phase-invalid {}]
+    }
+    if {$expected_ready_digest ne "" &&
+        ![regexp {^[0-9a-f]{64}$} $expected_ready_digest]} {
+        return [list 0 source-receipt-expected-ready-digest-invalid {}]
+    }
+    set pattern {^YT_CAPTURE_COMPLETENESS_SOURCE_V2 nonce=([0-9a-f]{32}) phase=(producer_start|post_video_hd720|collect) source_status=(missing|unreadable|nonregular|readable) source_bytes=([0-9]+) source_digest=([0-9a-f]{64}|unavailable) grep_status=([0-9]+|unavailable) matched_rows=([0-9]+) matched_bytes=([0-9]+) ready_digest=([0-9a-f]{64}|unavailable)$}
+    if {![regexp $pattern $row -> nonce phase source_status source_bytes \
+            source_digest grep_status matched_rows matched_bytes ready_digest]} {
+        return [list 0 source-receipt-shape-invalid {}]
+    }
+    if {$nonce ne $expected_nonce} {
+        return [list 0 source-receipt-nonce-mismatch {}]
+    }
+    if {$expected_phase ne "" && $phase ne $expected_phase} {
+        return [list 0 source-receipt-phase-mismatch {}]
+    }
+    foreach value [list $source_bytes $matched_rows $matched_bytes] {
+        if {![media_probe_is_uint $value]} {
+            return [list 0 source-receipt-unsigned-invalid {}]
+        }
+    }
+    if {[string length $source_bytes] > 5 || $source_bytes > 65536 ||
+        [string length $matched_rows] > 2 || $matched_rows > 64 ||
+        [string length $matched_bytes] > 5 || $matched_bytes > 16384} {
+        return [list 0 source-receipt-cap-invalid {}]
+    }
+    if {$source_status eq "readable"} {
+        if {$source_digest eq "unavailable" || $grep_status ni {0 1}} {
+            return [list 0 source-receipt-readable-provenance-invalid {}]
+        }
+        if {$grep_status eq "0" && $matched_rows == 0} {
+            return [list 0 source-receipt-grep-match-count-invalid {}]
+        }
+        if {$grep_status eq "1" && ($matched_rows != 0 || $matched_bytes != 0)} {
+            return [list 0 source-receipt-grep-nomatch-count-invalid {}]
+        }
+        if {$phase eq "producer_start" && $ready_digest ne "unavailable"} {
+            return [list 0 source-receipt-start-ready-digest-present {}]
+        }
+        if {$phase eq "post_video_hd720" &&
+            (($grep_status eq "0" && ![regexp {^[0-9a-f]{64}$} $ready_digest]) ||
+             ($grep_status eq "1" && $ready_digest ne "unavailable"))} {
+            return [list 0 source-receipt-post-video-ready-digest-invalid {}]
+        }
+        if {$phase eq "collect" && ![regexp {^[0-9a-f]{64}$} $ready_digest]} {
+            return [list 0 source-receipt-collect-ready-digest-invalid {}]
+        }
+    } elseif {$source_bytes != 0 || $source_digest ne "unavailable" ||
+              $grep_status ne "unavailable" || $matched_rows != 0 ||
+              $matched_bytes != 0 || $ready_digest ne "unavailable"} {
+        return [list 0 source-receipt-nonreadable-provenance-invalid {}]
+    }
+    if {$expected_ready_digest ne "" && $ready_digest ne $expected_ready_digest} {
+        return [list 0 source-receipt-ready-digest-mismatch {}]
+    }
+    return [list 1 pass [dict create phase $phase source_status $source_status \
+        source_bytes $source_bytes source_digest $source_digest \
+        grep_status $grep_status matched_rows $matched_rows \
+        matched_bytes $matched_bytes ready_digest $ready_digest]]
+}
+
+proc capture_completeness_diag_v2_enveloped_rows {
+    text expected_nonce extension_id
+} {
+    set rows {}
+    set total_bytes 0
+    set marker_lines 0
+    set qid [regex_quote $extension_id]
+    set pattern [format {^\[([1-9][0-9]*):([1-9][0-9]*):([0-9]{4}/[0-9]{6}\.[0-9]{6}):INFO:CONSOLE:([0-9]+)\] "(YT_CAPTURE_COMPLETENESS_V2 [^"]+)", source: chrome-extension://%s/probe\.js \(([0-9]+)\)$} $qid]
+    foreach raw_line [split $text "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[string first "YT_CAPTURE_COMPLETENESS_V2 " $line] < 0} {
+            continue
+        }
+        incr marker_lines
+        if {![regexp $pattern $line -> pid tid stamp console_line payload source_line] ||
+            $console_line ne $source_line} {
+            return [list 0 v2-diagnostic-untrusted-marker-envelope {}]
+        }
+        if {[string first {kind=producer_start } $payload] >= 0} {
+            if {$payload ne "YT_CAPTURE_COMPLETENESS_V2 kind=producer_start schema=2 nonce=$expected_nonce"} {
+                return [list 0 producer-start-shape-invalid {}]
+            }
+            lappend rows [dict create kind producer_start nonce $expected_nonce]
+            incr total_bytes [media_probe_byte_length $payload]
+            continue
+        }
+        if {[string first {kind=post_video_hd720_ready } $payload] >= 0} {
+            set post_pattern "^YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready schema=2 nonce=$expected_nonce selected=hd720 video_width=1280 video_height=720 stable_count=([0-9]+)$"
+            if {![regexp $post_pattern $payload -> stable_count] ||
+                ![media_probe_is_uint $stable_count] || $stable_count < 4 ||
+                $stable_count > 40} {
+                return [list 0 post-video-hd720-ready-shape-invalid {}]
+            }
+            lappend rows [dict create kind post_video_hd720_ready nonce $expected_nonce \
+                stable_count $stable_count]
+            incr total_bytes [media_probe_byte_length $payload]
+            continue
+        }
+        set v1_row [string map [list YT_CAPTURE_COMPLETENESS_V2 \
+            YT_CAPTURE_COMPLETENESS_V1 schema=2 schema=1] $payload]
+        set parsed [capture_completeness_diag_row_fields $v1_row $expected_nonce]
+        if {![lindex $parsed 0]} {
+            return [list 0 "v2-[lindex $parsed 1]" {}]
+        }
+        incr total_bytes [media_probe_byte_length $payload]
+        lappend rows [lindex $parsed 2]
+    }
+    if {$marker_lines > 64 || $total_bytes > 16384} {
+        return [list 0 "v2-diagnostic-cap-exceeded-$marker_lines-$total_bytes" {}]
+    }
+    return [list 1 pass $rows]
+}
+
+proc parse_capture_completeness_diagnostic_v2 {
+    text expected_nonce extension_id ready_authenticated
+} {
+    if {$ready_authenticated ni {0 1}} {
+        return [list INVALID v2-ready-authentication-flag-invalid {}]
+    }
+    set envelope [capture_completeness_diag_v2_enveloped_rows $text \
+        $expected_nonce $extension_id]
+    if {![lindex $envelope 0]} {
+        return [list INVALID [lindex $envelope 1] {}]
+    }
+    set rows [lindex $envelope 2]
+    if {[llength $rows] == 0} {
+        return [list [expr {$ready_authenticated ? "INCOMPLETE" : "INVALID"}] \
+            [expr {$ready_authenticated ? "ready-but-no-markers" : "pre-ready-collection"}] {}]
+    }
+    if {!$ready_authenticated || [llength $rows] < 2 ||
+        [dict get [lindex $rows 0] kind] ne "producer_start" ||
+        [dict get [lindex $rows 1] kind] ne "post_video_hd720_ready"} {
+        return [list INVALID post-video-hd720-ready-missing-or-order {}]
+    }
+    set start_count 0
+    set ready_count 0
+    foreach fields $rows {
+        if {[dict get $fields kind] eq "producer_start"} { incr start_count }
+        if {[dict get $fields kind] eq "post_video_hd720_ready"} { incr ready_count }
+    }
+    if {$start_count != 1 || $ready_count != 1} {
+        return [list INVALID producer-start-or-post-video-ready-duplicate-or-late {}]
+    }
+    set lifecycle_lines {}
+    foreach raw_line [split $text "\n"] {
+        if {[string first "YT_CAPTURE_COMPLETENESS_V2 kind=producer_start " $raw_line] >= 0 ||
+            [string first "YT_CAPTURE_COMPLETENESS_V2 kind=post_video_hd720_ready " $raw_line] >= 0} {
+            continue
+        }
+        lappend lifecycle_lines $raw_line
+    }
+    set v1_text [string map [list YT_CAPTURE_COMPLETENESS_V2 \
+        YT_CAPTURE_COMPLETENESS_V1 schema=2 schema=1] [join $lifecycle_lines "\n"]]
+    set parsed [parse_capture_completeness_diagnostic $v1_text $expected_nonce \
+        $extension_id]
+    if {[lindex $parsed 0] eq "INCOMPLETE" &&
+        [lindex $parsed 1] eq "diagnostic-no-marker-rows"} {
+        return [list INCOMPLETE ready-but-no-markers {}]
+    }
+    return $parsed
+}
+
+# The post-video helper deliberately captures only the admitting fact, rather
+# than the earlier liveness row.  Authenticate its exact bounded shape here;
+# the collection parser above later requires start then ready before lifecycle.
+proc capture_completeness_diag_v2_post_video_ready_payload {
+    text expected_nonce extension_id
+} {
+    set envelope [capture_completeness_diag_v2_enveloped_rows $text \
+        $expected_nonce $extension_id]
+    if {![lindex $envelope 0]} {
+        return [list 0 [lindex $envelope 1] {}]
+    }
+    set rows [lindex $envelope 2]
+    if {[llength $rows] != 1 ||
+        [dict get [lindex $rows 0] kind] ne "post_video_hd720_ready"} {
+        return [list 0 post-video-hd720-ready-capture-shape-invalid {}]
+    }
+    return [list 1 post-video-hd720-ready-authenticated [lindex $rows 0]]
+}
+
+proc capture_completeness_diag_v2_producer_start_payload {
+    text expected_nonce extension_id
+} {
+    set envelope [capture_completeness_diag_v2_enveloped_rows $text \
+        $expected_nonce $extension_id]
+    if {![lindex $envelope 0]} {
+        return [list 0 [lindex $envelope 1] {}]
+    }
+    set rows [lindex $envelope 2]
+    if {[llength $rows] != 1 ||
+        [dict get [lindex $rows 0] kind] ne "producer_start"} {
+        return [list 0 producer-start-capture-shape-invalid {}]
+    }
+    return [list 1 producer-start-authenticated [lindex $rows 0]]
 }
