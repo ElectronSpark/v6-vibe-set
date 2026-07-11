@@ -509,6 +509,17 @@ was consumed. This is another incomplete transport record, not evidence of
 quiescence or an external QEMU; it grants no VM authority and must not be
 silently retried without a fresh authorization.
 
+**Control-plane synchronous-wait control — PASS / NO-BOOT (2026-07-11):**
+foreground local-shell evidence `/tmp/xv6-control-plane-wait.log` recorded
+START 19:54:43Z and END 19:55:48Z after its full 65 s sleep, followed only by
+EXIT rc=0 (no HUP/INT/TERM trap). The actual exec-command path returned session
+49215 after the <=30 s initial yield; one exact `write_stdin` wait returned
+exit 0 with no successor session. Exact all-arch QEMU counts were zero before
+and after. The earlier incomplete gate is not evidence of a child signal or
+external QEMU. A future authorized passive 60 s gate may use this proven
+foreground mechanism only: initial <=30 s yield, then one exact synchronous
+session wait <=60 s; this control forms no gate itself.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
