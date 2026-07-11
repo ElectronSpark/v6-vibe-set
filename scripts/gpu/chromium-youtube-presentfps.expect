@@ -539,9 +539,10 @@ source "$root/scripts/gpu/chromium-youtube-media-probe-parser.tcl"
 # selected arm's required row count.  Malformed, duplicate, reordered, failed,
 # or overlong evidence is INVALID and never earns a delayed retry.
 proc media_probe_capture_disposition {
-    text nonce extension_id force_hd720 expected_marker
+    text nonce extension_id force_hd720 expected_marker {expected_attempt initial}
 } {
-    set captured [media_probe_capture_payload $text $nonce $expected_marker]
+    set captured [media_probe_capture_payload $text $nonce $expected_marker \
+        $expected_attempt]
     if {![lindex $captured 0]} {
         return [list INVALID [lindex $captured 1] "" {}]
     }
@@ -2151,13 +2152,22 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     set capture_begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$static_nonce status=oneshot polls=0 byte_cap=49152"
     set capture_end "YT_MEDIA_PROBE_CAPTURE_END nonce=$static_nonce status=oneshot polls=0 byte_cap=49152"
     set capture_frame_marker YTCAPTUREC7
-    set media_60_wire [string map [list "\n" "\r\n"] $media_60]
-    set capture_payload_wire "$media_60_wire\r\n"
-    set capture_fixture "noise before\n\033\[?2004l\r$capture_begin\r\n$capture_payload_wire$capture_end\r\n\r\n$capture_frame_marker:RC:0\r\n$capture_frame_marker:FENCE\r\nnoise after"
+    set capture_host_envelope [media_probe_capture_host_envelope initial \
+        $static_nonce $capture_frame_marker]
+    set capture_e "\r\n"
+    set media_60_wire [string map [list "\n" $capture_e] $media_60]
+    set capture_payload_wire "$media_60_wire$capture_e"
+    set capture_payload_canonical "$media_60\n"
+    set capture_transition "\033\[?2004l"
+    # The preamble is intentionally not line-normalized.  It contains the
+    # live prompt/BEL/echo shape but exactly one enable, while H itself is the
+    # byte-zero host provenance envelope consumed by the parser.
+    set host_capture_preamble "${capture_host_envelope}\033\[?2004hroot:/# \atrue;/bin/bash /ytmediaprobe.sh;rc=\$?;m=$capture_frame_marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\"\r\r\n"
+    set capture_fixture "${host_capture_preamble}${capture_transition}\r$capture_begin$capture_e$capture_payload_wire$capture_end$capture_e$capture_e$capture_frame_marker:RC:0$capture_e$capture_frame_marker:FENCE$capture_e"
     set captured_fixture [media_probe_capture_payload $capture_fixture $static_nonce \
         $capture_frame_marker]
     if {![lindex $captured_fixture 0] ||
-        [lindex $captured_fixture 2] ne $capture_payload_wire} {
+        [lindex $captured_fixture 2] ne $capture_payload_canonical} {
         fail_preflight "static-check-media-probe-capture-bracketing parsed=$captured_fixture"
     }
 
@@ -2167,9 +2177,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     # the exact same-nonce BEGIN.  The command frame must independently retain
     # its one RC/fence pair, and any content-bearing marker lookalike remains a
     # hard reject rather than a prefix to skip.
-    set host_capture_preamble "YT_MEDIA_PROBE_HOST_CAPTURE attempt=initial nonce=$static_nonce\n\033\[?2004hroot:/# \atrue;/bin/bash /ytmediaprobe.sh;rc=\$?;m=$capture_frame_marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\"\r\r\n"
-    set capture_transition "\033\[?2004l"
-    set bracketed_capture_fixture "${host_capture_preamble}${capture_transition}\r$capture_begin\r\n$capture_payload_wire$capture_end\r\n\r\n$capture_frame_marker:RC:0\r\n$capture_frame_marker:FENCE\r\n"
+    set bracketed_capture_fixture $capture_fixture
     set bracketed_capture [media_probe_capture_payload \
         $bracketed_capture_fixture $static_nonce $capture_frame_marker]
     set bracketed_capture_frame [guest_command_frame_parse \
@@ -2226,8 +2234,67 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [string map [list "$capture_end\r\n" \
             "${capture_transition}\r$capture_begin\r\n$capture_end\r\n"] \
             $bracketed_capture_fixture] $static_nonce $capture_frame_marker]
+    set capture_duplicate_end [media_probe_capture_payload \
+        [string map [list "$capture_end\r\n" \
+            "$capture_end\r\n$capture_end\r\n"] \
+            $bracketed_capture_fixture] $static_nonce $capture_frame_marker]
+    set capture_extra_enable [media_probe_capture_payload \
+        [string map [list "$capture_transition\r$capture_begin" \
+            "\033\[?2004h$capture_transition\r$capture_begin"] \
+            $bracketed_capture_fixture] $static_nonce $capture_frame_marker]
+    set capture_extra_disable [media_probe_capture_payload \
+        [string map [list "$capture_transition\r$capture_begin" \
+            "${capture_transition}\033\[?2004l\r$capture_begin"] \
+            $bracketed_capture_fixture] $static_nonce $capture_frame_marker]
+    set capture_forged_host [media_probe_capture_payload \
+        [string map [list {phase=media-probe-capture-initial} \
+            {phase=media-probe-capture-final}] $bracketed_capture_fixture] \
+        $static_nonce $capture_frame_marker]
+    set capture_forged_host_command [media_probe_capture_payload \
+        [string map [list {command=/bin/bash,/ytmediaprobe.sh} \
+            {command=/bin/bash,/forged.sh}] $bracketed_capture_fixture] \
+        $static_nonce $capture_frame_marker]
+    set capture_forged_host_marker [media_probe_capture_payload \
+        [string map [list "marker=$capture_frame_marker" \
+            {marker=YTINJECTEDC7}] $bracketed_capture_fixture] \
+        $static_nonce $capture_frame_marker]
+    set capture_wrong_host_label [media_probe_capture_payload \
+        [string map [list YT_MEDIA_PROBE_HOST_CAPTURE_V1 \
+            YT_MEDIA_PROBE_HOST_CAPTURE_FORGED] $bracketed_capture_fixture] \
+        $static_nonce $capture_frame_marker]
+    set capture_cross_channel_host [media_probe_capture_payload \
+        "[media_probe_capture_host_envelope initial $static_nonce YTOTHERCHANNELC7][string range $bracketed_capture_fixture [string length $capture_host_envelope] end]" \
+        $static_nonce $capture_frame_marker]
+    set capture_truncated_host [media_probe_capture_payload \
+        [string range $bracketed_capture_fixture 0 \
+            [expr {[string length $capture_host_envelope] - 2}]] \
+        $static_nonce $capture_frame_marker]
+    set capture_truncated_fence_separator [media_probe_capture_payload \
+        [string map [list "$capture_frame_marker:FENCE\r\n" \
+            "$capture_frame_marker:FENCE\r"] $bracketed_capture_fixture] \
+        $static_nonce $capture_frame_marker]
+    set final_capture_fixture "[media_probe_capture_host_envelope final \
+        $static_nonce $capture_frame_marker][string range \
+        $bracketed_capture_fixture [string length $capture_host_envelope] end]"
+    set final_capture [media_probe_capture_payload $final_capture_fixture \
+        $static_nonce $capture_frame_marker final]
+    set final_capture_as_initial [media_probe_capture_payload \
+        $final_capture_fixture $static_nonce $capture_frame_marker initial]
+    # A true PTY frame chooses CRCRLF once and uses it for every owned line;
+    # its preamble remains the same opaque prompt/echo witness as the CRLF
+    # debugcon channel.  Semantic rows receive LF only after raw validation.
+    set pty_e "\r\r\n"
+    set pty_payload_wire "[string map [list "\n" $pty_e] $media_60]$pty_e"
+    set pty_capture_fixture "${host_capture_preamble}${capture_transition}\r$capture_begin$pty_e$pty_payload_wire$capture_end$pty_e$pty_e$capture_frame_marker:RC:0$pty_e$capture_frame_marker:FENCE$pty_e"
+    set pty_capture [media_probe_capture_payload $pty_capture_fixture \
+        $static_nonce $capture_frame_marker]
+    set pty_capture_disposition [media_probe_capture_disposition \
+        $pty_capture_fixture $static_nonce $media_probe_extension_id 0 \
+        $capture_frame_marker]
+    set pty_capture_frame [guest_command_frame_parse $pty_capture_fixture \
+        $capture_frame_marker]
     if {![lindex $bracketed_capture 0] ||
-        [lindex $bracketed_capture 2] ne $capture_payload_wire ||
+        [lindex $bracketed_capture 2] ne $capture_payload_canonical ||
         ![lindex $bracketed_capture_frame 0] ||
         [lindex $bracketed_capture_frame 2] ne "0" ||
         [lindex $capture_spoof_prefix 0] ||
@@ -2242,8 +2309,26 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [lindex $capture_noise_payload 0] ||
         [lindex $capture_payload_crcrlf 0] ||
         [lindex $capture_wrong_nonce 0] ||
-        [lindex $capture_duplicate_begin 0]} {
-        fail_preflight "static-check-media-probe-capture-terminal-preamble valid=$bracketed_capture frame=$bracketed_capture_frame spoof=$capture_spoof_prefix paste_mode=$capture_wrong_paste_mode echo=$capture_echo_spoof missing_fence=$capture_missing_fence begin_crcrlf=$capture_begin_crcrlf end_crcrlf=$capture_end_crcrlf transition_end=$capture_transition_before_end moved=$capture_moved_fake_begin transition_payload=$capture_transition_payload noise_payload=$capture_noise_payload payload_crcrlf=$capture_payload_crcrlf wrong_nonce=$capture_wrong_nonce duplicate=$capture_duplicate_begin"
+        [lindex $capture_duplicate_begin 0] ||
+        [lindex $capture_duplicate_end 0] ||
+        [lindex $capture_extra_enable 0] ||
+        [lindex $capture_extra_disable 0] ||
+        [lindex $capture_forged_host 0] ||
+        [lindex $capture_forged_host_command 0] ||
+        [lindex $capture_forged_host_marker 0] ||
+        [lindex $capture_wrong_host_label 0] ||
+        [lindex $capture_cross_channel_host 0] ||
+        [lindex $capture_truncated_host 0] ||
+        [lindex $capture_truncated_fence_separator 0] ||
+        ![lindex $final_capture 0] ||
+        [lindex $final_capture 2] ne $capture_payload_canonical ||
+        [lindex $final_capture_as_initial 0] ||
+        ![lindex $pty_capture 0] ||
+        [lindex $pty_capture 2] ne $capture_payload_canonical ||
+        [lindex $pty_capture_disposition 0] ne "COMPLETE" ||
+        ![lindex $pty_capture_frame 0] ||
+        [lindex $pty_capture_frame 2] ne "0"} {
+        fail_preflight "static-check-media-probe-capture-terminal-preamble valid=$bracketed_capture frame=$bracketed_capture_frame spoof=$capture_spoof_prefix paste_mode=$capture_wrong_paste_mode echo=$capture_echo_spoof missing_fence=$capture_missing_fence begin_crcrlf=$capture_begin_crcrlf end_crcrlf=$capture_end_crcrlf transition_end=$capture_transition_before_end moved=$capture_moved_fake_begin transition_payload=$capture_transition_payload noise_payload=$capture_noise_payload payload_crcrlf=$capture_payload_crcrlf wrong_nonce=$capture_wrong_nonce duplicate_begin=$capture_duplicate_begin duplicate_end=$capture_duplicate_end enable=$capture_extra_enable disable=$capture_extra_disable forged_host=$capture_forged_host forged_command=$capture_forged_host_command forged_marker=$capture_forged_host_marker host_label=$capture_wrong_host_label cross_channel=$capture_cross_channel_host truncated_host=$capture_truncated_host truncated_fence=$capture_truncated_fence_separator final=$final_capture final_as_initial=$final_capture_as_initial pty_capture=$pty_capture pty_disposition=$pty_capture_disposition pty_frame=$pty_capture_frame"
     }
 
     # The envelope and the command-frame parser are separate consumers of the
@@ -2251,32 +2336,53 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     # line endings retain capture + semantic COMPLETE + frame PASS, while no
     # terminal control sequence injected anywhere after BEGIN may be silently
     # ignored by the frame parser and thereby obtain media credit.
-    set capture_frame_terminator_results {}
-    foreach terminator [list "\n" "\r\n" "\r\r\n"] {
-        set terminal_fixture [string map [list \
-            "$capture_frame_marker:RC:0\r\n" "$capture_frame_marker:RC:0$terminator" \
-            "$capture_frame_marker:FENCE\r\n" "$capture_frame_marker:FENCE$terminator"] \
-            $bracketed_capture_fixture]
-        lappend capture_frame_terminator_results [list \
-            [media_probe_capture_payload $terminal_fixture $static_nonce \
+    set capture_uniform_results [list \
+        [list \
+            [media_probe_capture_payload $bracketed_capture_fixture \
+                $static_nonce $capture_frame_marker] \
+            [media_probe_capture_disposition $bracketed_capture_fixture \
+                $static_nonce $media_probe_extension_id 0 $capture_frame_marker] \
+            [guest_command_frame_parse $bracketed_capture_fixture \
+                $capture_frame_marker]] \
+        [list \
+            [media_probe_capture_payload $pty_capture_fixture $static_nonce \
                 $capture_frame_marker] \
-            [media_probe_capture_disposition $terminal_fixture $static_nonce \
-                $media_probe_extension_id 0 $capture_frame_marker] \
-            [guest_command_frame_parse $terminal_fixture $capture_frame_marker]]
-    }
-    set capture_frame_terminators_ok 1
-    foreach terminal_result $capture_frame_terminator_results {
-        lassign $terminal_result terminal_capture terminal_disposition terminal_frame
-        if {![lindex $terminal_capture 0] ||
-            [lindex $terminal_capture 2] ne $capture_payload_wire ||
-            [lindex $terminal_disposition 0] ne "COMPLETE" ||
-            ![lindex $terminal_frame 0] ||
-            [lindex $terminal_frame 2] ne "0"} {
-            set capture_frame_terminators_ok 0
+            [media_probe_capture_disposition $pty_capture_fixture \
+                $static_nonce $media_probe_extension_id 0 $capture_frame_marker] \
+            [guest_command_frame_parse $pty_capture_fixture \
+                $capture_frame_marker]]]
+    set capture_uniform_ok 1
+    foreach uniform_result $capture_uniform_results {
+        lassign $uniform_result uniform_capture uniform_disposition uniform_frame
+        if {![lindex $uniform_capture 0] ||
+            [lindex $uniform_capture 2] ne $capture_payload_canonical ||
+            [lindex $uniform_disposition 0] ne "COMPLETE" ||
+            ![lindex $uniform_frame 0] || [lindex $uniform_frame 2] ne "0"} {
+            set capture_uniform_ok 0
         }
     }
-    if {!$capture_frame_terminators_ok} {
-        fail_preflight "static-check-media-probe-capture-frame-terminators results=$capture_frame_terminator_results"
+    # Change precisely one owned component from the selected CRLF to CRCRLF.
+    # Every component has its own POC so a later refactor cannot normalize a
+    # single mixed separator behind the raw validator's back.
+    set capture_mixed_eol_cases [list \
+        [list begin "$capture_begin\r\n" "$capture_begin\r\r\n"] \
+        [list payload $capture_payload_wire "[string map [list \"\n\" \"\r\r\n\"] $media_60]\r\r\n"] \
+        [list end "$capture_end\r\n" "$capture_end\r\r\n"] \
+        [list blank "$capture_end\r\n\r\n" "$capture_end\r\n\r\r\n"] \
+        [list rc "$capture_frame_marker:RC:0\r\n" "$capture_frame_marker:RC:0\r\r\n"] \
+        [list fence "$capture_frame_marker:FENCE\r\n" "$capture_frame_marker:FENCE\r\r\n"]]
+    set capture_mixed_eol_failures {}
+    foreach mixed_case $capture_mixed_eol_cases {
+        lassign $mixed_case mixed_name mixed_from mixed_to
+        set mixed_capture [media_probe_capture_payload \
+            [media_probe_mutate_once $bracketed_capture_fixture $mixed_from \
+                $mixed_to] $static_nonce $capture_frame_marker]
+        if {[lindex $mixed_capture 0]} {
+            lappend capture_mixed_eol_failures "$mixed_name=$mixed_capture"
+        }
+    }
+    if {!$capture_uniform_ok || [llength $capture_mixed_eol_failures] != 0} {
+        fail_preflight "static-check-media-probe-capture-eol-mode uniform=$capture_uniform_results mixed=$capture_mixed_eol_failures"
     }
 
     # The named terminal forms cover both bracketed-paste modes, malformed or
@@ -2453,7 +2559,21 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             ne $retained_prompt_wire} {
         fail_preflight "static-check-media-probe-retained-command-boundary fence_pos=$retained_fence_pos"
     }
-    set retained_capture_transaction $retained_capture_text
+    set retained_capture_begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$retained_capture_nonce status=oneshot polls=0 byte_cap=49152"
+    set retained_capture_begin_pos [string first $retained_capture_begin \
+        $retained_capture_text]
+    set retained_capture_enable_pos [string last "\033\[?2004h" \
+        $retained_capture_text [expr {$retained_capture_begin_pos - 1}]]
+    # Debugcon is a CRLF witness.  Its historical stream predates the new H
+    # record, so authenticate the exact host-created H and retain the genuine
+    # byte slice beginning at the one live enable through the post-fence
+    # prompt.  Nothing inside that slice is normalized before parser entry.
+    if {$retained_capture_begin_pos < 0 || $retained_capture_enable_pos < 0} {
+        fail_preflight "static-check-media-probe-retained-debugcon-boundary begin=$retained_capture_begin_pos enable=$retained_capture_enable_pos"
+    }
+    set retained_capture_transaction "[media_probe_capture_host_envelope initial \
+        $retained_capture_nonce $retained_capture_frame_marker][string range \
+        $retained_capture_text $retained_capture_enable_pos end]"
     set retained_capture [media_probe_capture_payload $retained_capture_transaction \
         $retained_capture_nonce $retained_capture_frame_marker]
     set retained_capture_frame [guest_command_frame_parse $retained_capture_transaction \
@@ -2462,11 +2582,72 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         $retained_capture_transaction $retained_capture_nonce \
         $media_probe_extension_id 1 $retained_capture_frame_marker]
     if {![lindex $retained_capture 0] ||
-        [string first "\r" [lindex $retained_capture 2]] < 0 ||
+        [string first "\r" [lindex $retained_capture 2]] >= 0 ||
         ![lindex $retained_capture_frame 0] ||
         [lindex $retained_capture_frame 2] ne "0" ||
         [lindex $retained_capture_disposition 0] ne "COMPLETE"} {
         fail_preflight "static-check-media-probe-retained-artifact-parse capture=$retained_capture frame=$retained_capture_frame disposition=$retained_capture_disposition"
+    }
+
+    # These are the two immutable real PTY witnesses that exposed the old
+    # CRLF-only grammar.  Their historical H line contains only attempt/N, so
+    # preserve and hash it, then replace only that host-created line with the
+    # current exact H binding before parsing the untouched PTY bytes.  Both
+    # must prove CRCRLF uniformly from BEGIN through FENCE.
+    set retained_pty_replays [list \
+        [list \
+            "$root/build-x86_64/chromium-youtube-m7/20260711T082215Z-a1-windowed-n2-t1-mp1-audio1-media1-hd7201/yt-media-probe.serial.txt" \
+            2a7fda2c0ec0b79b30929b010eaf343cceac08713aec37b355f1c6214f4c0d43 \
+            4daf914957670e9581ed927448b3b63e \
+            YTP15305211783758135763331C7 COMPLETE] \
+        [list \
+            "$root/build-x86_64/chromium-youtube-m7/20260711T095541Z-a1-windowed-n2-framingfixed-t1-mp1-audio1-media1-hd7201/yt-media-probe.serial.txt" \
+            60e470f054d2ffccee64f09bd63eb8f23256d5dbd0328ba12c1e796ee2b530c5 \
+            6dbd01b3aa3ae180ad4f9248efcef5a3 \
+            YTP16046251783763741555241C8 INCOMPLETE]]
+    set retained_pty_results {}
+    foreach replay $retained_pty_replays {
+        lassign $replay replay_path replay_sha replay_nonce replay_marker \
+            replay_expected_disposition
+        if {![file exists $replay_path] || [file type $replay_path] ne "file" ||
+            [file size $replay_path] > [expr {64 * 1024 * 1024}] ||
+            [sha256_file $replay_path] ne $replay_sha} {
+            fail_preflight "static-check-media-probe-pty-artifact-invalid path=$replay_path"
+        }
+        set replay_file [open $replay_path rb]
+        fconfigure $replay_file -translation binary -encoding binary
+        set replay_text [read $replay_file]
+        close $replay_file
+        set legacy_h "YT_MEDIA_PROBE_HOST_CAPTURE attempt=initial nonce=$replay_nonce\n"
+        set raw_pty [string range $replay_text [string length $legacy_h] end]
+        set replay_begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$replay_nonce status=oneshot polls=0 byte_cap=49152"
+        set replay_wire "\033\[?2004l\r$replay_begin\r\r\n"
+        set authenticated_pty "[media_probe_capture_host_envelope initial \
+            $replay_nonce $replay_marker]$raw_pty"
+        lappend retained_pty_results [list \
+            [expr {[string range $replay_text 0 \
+                [expr {[string length $legacy_h] - 1}]] eq $legacy_h}] \
+            [expr {[string first $replay_wire $raw_pty] >= 0}] \
+            $replay_expected_disposition \
+            [media_probe_capture_payload $authenticated_pty $replay_nonce \
+                $replay_marker] \
+            [media_probe_capture_disposition $authenticated_pty $replay_nonce \
+                $media_probe_extension_id 1 $replay_marker] \
+            [guest_command_frame_parse $authenticated_pty $replay_marker]]
+    }
+    set retained_pty_ok 1
+    foreach replay_result $retained_pty_results {
+        lassign $replay_result legacy_ok crcrlf_ok replay_expected_disposition \
+            replay_capture replay_disposition replay_frame
+        if {!$legacy_ok || !$crcrlf_ok || ![lindex $replay_capture 0] ||
+            [string first "\r" [lindex $replay_capture 2]] >= 0 ||
+            [lindex $replay_disposition 0] ne $replay_expected_disposition ||
+            ![lindex $replay_frame 0] || [lindex $replay_frame 2] ne "0"} {
+            set retained_pty_ok 0
+        }
+    }
+    if {!$retained_pty_ok} {
+        fail_preflight "static-check-media-probe-retained-pty-crcrlf results=$retained_pty_results"
     }
 
     # The live guest helper is intentionally a byte/order-preserving capture
@@ -2600,11 +2781,11 @@ cat /host-gui-wayland-chromium.log
     # transcript adds the terminal transition and CRLF transport framing, so
     # reducer tests must model that boundary rather than granting the helper's
     # bare stdout a looser parser path.
-    proc static_media_capture_wire {text marker} {
+    proc static_media_capture_wire {text nonce marker} {
         if {![regexp {^[A-Za-z0-9]+$} $marker]} {
             error "invalid static media frame marker"
         }
-        set wire "host-helper-preamble\r\n"
+        set wire "[media_probe_capture_host_envelope initial $nonce $marker]\033\[?2004hhost-helper-preamble\r\n"
         set lines [split $text "\n"]
         set last [expr {[llength $lines] - 1}]
         set index -1
@@ -2622,16 +2803,17 @@ cat /host-gui-wayland-chromium.log
     }
     proc static_media_helper_capture {text nonce} {
         return [media_probe_capture_payload \
-            [static_media_capture_wire $text YTMEDIASTATICC7] $nonce \
+            [static_media_capture_wire $text $nonce YTMEDIASTATICC7] $nonce \
             YTMEDIASTATICC7]
     }
     proc static_media_helper_disposition {text nonce extension_id force_hd720} {
         return [media_probe_capture_disposition \
-            [static_media_capture_wire $text YTMEDIASTATICC7] \
+            [static_media_capture_wire $text $nonce YTMEDIASTATICC7] \
             $nonce $extension_id $force_hd720 YTMEDIASTATICC7]
     }
     proc static_media_payload_wire {text} {
-        return "[string map [list "\n" "\r\n"] $text]\r\n"
+        # Host semantics see only the parser's post-validation LF form.
+        return "$text\n"
     }
 
     set wrong_nonce fedcba9876543210fedcba9876543210
@@ -2820,9 +3002,11 @@ cat /host-gui-wayland-chromium.log
         set begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$nonce status=oneshot polls=0 byte_cap=49152"
         set end "YT_MEDIA_PROBE_CAPTURE_END nonce=$nonce status=oneshot polls=0 byte_cap=49152"
         set payload_wire ""
-        if {$payload ne ""} { set payload_wire [static_media_payload_wire $payload] }
+        if {$payload ne ""} {
+            set payload_wire "[string map [list "\n" "\r\n"] $payload]\r\n"
+        }
         return [media_probe_capture_disposition \
-            "synthetic-preamble\r\n\033\[?2004l\r$begin\r\n${payload_wire}$end\r\n\r\nYTMEDIASTATICC7:RC:0\r\nYTMEDIASTATICC7:FENCE\r\n" \
+            "[media_probe_capture_host_envelope initial $nonce YTMEDIASTATICC7]\033\[?2004hsynthetic-preamble\r\n\033\[?2004l\r$begin\r\n${payload_wire}$end\r\n\r\nYTMEDIASTATICC7:RC:0\r\nYTMEDIASTATICC7:FENCE\r\n" \
             $nonce $extension_id $force_hd720 YTMEDIASTATICC7]
     }
     set prefix_matrix_errors {}
@@ -3935,7 +4119,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-debugfs-bogus-image-accepted"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
@@ -4253,10 +4437,12 @@ if {$media_probe eq "1"} {
         $initial_end_ms $media_probe_final_post_ms]} {
         finish 8 "FAIL media-probe-deadline-after-initial remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $initial_end_ms] reserve_ms=$media_probe_final_post_ms no_fps_claim=1"
     }
-    set serial_evidence "YT_MEDIA_PROBE_HOST_CAPTURE attempt=initial nonce=$media_probe_nonce\n$initial_buf"
-    set capture_disposition [media_probe_capture_disposition $initial_buf \
+    set initial_capture_text "[media_probe_capture_host_envelope initial \
+        $media_probe_nonce $initial_capture_marker]$initial_buf"
+    set serial_evidence $initial_capture_text
+    set capture_disposition [media_probe_capture_disposition $initial_capture_text \
         $media_probe_nonce $media_probe_extension_id $force_hd720 \
-        $initial_capture_marker]
+        $initial_capture_marker initial]
     set initial_parse_end_ms [clock clicks -milliseconds]
     if {![media_probe_deadline_allows $media_phase_deadline_ms \
         $initial_parse_end_ms $media_probe_final_post_ms]} {
@@ -4325,17 +4511,18 @@ if {$media_probe eq "1"} {
                 $media_probe_final_min_ms] \
             media-probe-capture-final] final_buf final_capture_marker
         set final_capture_end_ms [clock clicks -milliseconds]
-        append serial_evidence \
-            "YT_MEDIA_PROBE_HOST_CAPTURE attempt=final nonce=$media_probe_nonce\n$final_buf"
+        set final_capture_text "[media_probe_capture_host_envelope final \
+            $media_probe_nonce $final_capture_marker]$final_buf"
+        append serial_evidence $final_capture_text
         if {![media_probe_deadline_allows $media_phase_deadline_ms \
             $final_capture_end_ms $media_probe_final_post_ms]} {
             wf $media_probe_serial $serial_evidence
             set media_probe_verdict "INVALID"
             finish 8 "FAIL media-probe-deadline-after-final remaining_ms=[media_probe_deadline_remaining_ms $media_phase_deadline_ms $final_capture_end_ms] reserve_ms=$media_probe_final_post_ms no_fps_claim=1"
         }
-        set capture_disposition [media_probe_capture_disposition $final_buf \
+        set capture_disposition [media_probe_capture_disposition $final_capture_text \
             $media_probe_nonce $media_probe_extension_id $force_hd720 \
-            $final_capture_marker]
+            $final_capture_marker final]
         if {[lindex $capture_disposition 0] ne "COMPLETE"} {
             wf $media_probe_serial $serial_evidence
             set media_probe_verdict "INVALID"

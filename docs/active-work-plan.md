@@ -13,16 +13,13 @@ cannot close fullscreen or the overall goal. Use real KVM+virgl yt-presentfps
 and PERF-VIDEO only; software is invalid. Each mode needs N>=2 comparable
 trials, never pooled; N=1 is diagnostic.
 
-Every concrete job is delegated to an opus worker. The A1 authorization gate
-that preceded the already-pushed `74d449e` plan checkpoint passed with
-same-name HEAD/origin, no VM worker, exact `/proc/*/exe` QEMU count zero,
-clean kernel worktree, only unrelated KDE harness dirt, and usable `/dev/kvm`.
-The newest post-checkpoint gate is **INVALID/NULL**: it used the known-misbound
-`@{upstream}` (`80783a`), not the explicit same-name
-`origin/codex/host-linux-abi-shell-port-ff`, so it proves no current
-divergence and authorizes no boot. Its separate live-state checks PASS: no
-active VM worker, exact QEMU zero, clean kernel, and usable `/dev/kvm`.
-Rerun the gate binding HEAD to that explicit origin ref only.
+Every concrete job is delegated to an opus worker. The misbound post-checkpoint
+`@{upstream}` gate (`80783a`) remains INVALID/NULL and grants no authority. The
+fresh explicit same-name `21ff39f` gate was consumed by one A1 *windowed* boot;
+its later framing INVALID/NULL grants no FPS credit or retry authority. No VM is
+authorized now: repair/review first, then establish a new same-name live gate
+with no VM worker and exact `/proc/*/exe` QEMU zero. It never authorizes
+fullscreen or A2.
 
 ## Host and VM safety (binding)
 
@@ -105,6 +102,16 @@ Newest runtime artifact and stop verdict:
   grant no FPS credit. Attempt 2 was correctly stopped, QEMU ended at zero,
   and its scratch image is retained. Repair and adversarially review framing
   NO-BOOT before a fresh gate/retry.
+- `chromium-youtube-m7/20260711T095541Z-a1-windowed-n2-framingfixed-t1...`
+  is N=0 **INVALID/NULL**: the one real KVM+virgl boot passed GPU-role and
+  staged-asset gates, and later showed active hd720 1280x720 source, but exited
+  code 8 `capture-begin-transition-invalid` before yt-presentfps/PERF-VIDEO.
+  Raw host `YT_MEDIA_PROBE_HOST_CAPTURE attempt` text plus
+  `ESC[?2004h` root-prompt `CRCRLF` and `ESC[?2004l` before real `BEGIN`
+  triggered the failure. It proves no FPS; t2 was stopped, QEMU is zero, and
+  scratch is retained. A NO-BOOT forensic repair/review must distinguish that
+  arbitrary outside-transaction preamble from the valid route without reopening
+  any spoof/control rejection, then a new live gate is required.
 - Capture-framing repair is **REJECTED** by independent NO-BOOT review. The
   self-PASS accepts an exact `ESC[?2004l`+CR immediately before real `END` and
   `BEGIN` followed by `CRCRCRLF`; moving a fake transition/`BEGIN`, or injecting
@@ -165,6 +172,36 @@ Newest runtime artifact and stop verdict:
   CRCRLF tail positives pass. This lifts the framing *review* gate only:
   checkpoint/push the repair, then rerun the explicit same-name live A1 gate;
   neither result itself authorizes a VM.
+- New PTY transcript forensics **REJECTS** the current hardcoded-CRLF route.
+  Both real live serial samples begin with `H` at offset zero, have opaque host
+  preamble, then bracketed-paste disable + `CR BEGIN CRCRLF`, and use CRCRLF
+  uniformly for payload, `END`, separator, `RC`, and `FENCE`; debugcon is a
+  separate CRLF channel. The implementation therefore rejects the real PTY
+  witness. No VM/gate is authorized.
+- Replacement review contract is mode-bound: authenticate the exact host
+  `H N/M command/phase` envelope; accept opaque preamble, one enable before
+  and one disable adjacent to `BEGIN`, globally unique tags/tail, and one
+  uniform `E in {CRLF, CRCRLF}` across the owned transaction. Validate raw
+  bytes first, then canonicalize only owned separators; keep `BEGIN` through
+  `FENCE` strict. Require rich positive/mutation POCs (mixed endings,
+  moved/duplicate controls, forged envelope/tag/tail, injected payload/tail,
+  cross-channel replay, and malformed/truncated bytes). This is integrity
+  framing, not cryptographic protection against a root guest.
+- Independent adversarial NO-BOOT PTY-mode review **PASSES**. Parser static
+  checks and Expect replay proof pass: byte-0 V1 binds attempt/N/M,
+  command/phase; exactly one enable/adjacent-disable and globally unique tail
+  select one uniform `E in {CRLF, CRCRLF}` before canonicalization. The
+  SHA-256-bound CRLF debugcon witness
+  `6ab0c6493c33c3df914f93a36b9e8212da681c7ad82862ba8cd1c6845ce2b8da` and
+  CRCRLF PTY1 `2a7fda2c0ec0b79b30929b010eaf343cceac08713aec37b355f1c6214f4c0d43`
+  reach capture/semantic/frame COMPLETE; CRCRLF PTY2
+  `60e470f054d2ffccee64f09bd63eb8f23256d5dbd0328ba12c1e796ee2b530c5`
+  remains honestly semantic INCOMPLETE (no credit). Mixed/moved/duplicate
+  controls, forged envelope/tag/tail, payload/tail injection, cross-channel,
+  malformed, and truncated mutations reject. The matching `FENCE` ends the
+  owned slice; the later bracketed-paste root prompt is outside it. This lifts
+  the framing *review* gate only: checkpoint/push parser+harness+plan, then
+  establish a fresh explicit same-name live A1 gate; no VM is authorized now.
 - Independent NO-BOOT forensics PASS is durable at live HEAD/origin `a2a5f6a`.
   Linux permits arbitrary `.poll` to wake synchronously; xv6 invoked it under
   the kqueue lock in rescan, stale-ready, `EV_CLEAR`, and nested paths; the
@@ -335,16 +372,13 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Checkpoint and push the verified capture-framing repair, then run a fresh
-   A1 authorization gate against explicit
-   `origin/codex/host-linux-abi-shell-port-ff` (never `@{upstream}`), then
-   establish live same-name HEAD/origin, no active VM worker, and exact QEMU
-   zero; `74d449e` is the already-pushed plan checkpoint. The runner must
-   prove real KVM+virgl GL GPU role and reject llvmpipe/software. The invalid
-   upstream-based gate and prior gate do not authorize a boot after state
-   changes.
-2. Only after the pushed framing repair and fresh live gate may the conductor authorize one sole-VM
-   A1 serial windowed N>=2 forced-hd720 measurement. Invalids are NULL.
+1. Checkpoint/push the verified PTY parser+harness+plan repair. Then establish
+   a fresh explicit same-name, exact-zero live gate with no VM worker; the
+   PTY review PASS itself grants no boot authority.
+2. Only after that gate passes, authorize one sole-VM A1 serial windowed N>=2
+   forced-hd720 measurement. The runner must prove real KVM+virgl GL GPU role
+   and reject llvmpipe/software; invalids are NULL. Reauthorize only after
+   synchronous finish, owned cleanup, and a new exact-zero gate.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
 4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.
 5. Validate audio-on windowed and fullscreen parity; close each mode's
