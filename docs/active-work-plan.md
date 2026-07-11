@@ -134,11 +134,13 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    named assets match exactly. The historical disposable clone was not
    enumerated without a retained pathname; base freshness is independently
    accepted, while no broader `/tmp` absence claim is made.
-4. **NEXT — fresh conductor gate, then exactly one diag1 KVM+virgl boot:**
-   require named-branch
-   origin, no active VM worker, exact zero QEMU, real virgl prerequisites, and
-   MP=1/audio-disable=1/media=1/forced-hd720=1/EGL=0/capture-diag=1. It owns
-   and reaps QEMU and remains no-FPS/no-semantic credit.
+4. **Fresh V3 diag1 gate — FORMING in this plan checkpoint:** the initial
+   named-branch/origin, no-active-VM-worker, exact-zero-QEMU, KVM, and WSL
+   D3D12/virgl prerequisite audit passed. If the required post-push repeat
+   audit also passes, this checkpoint authorizes exactly one diagnostic worker
+   to run MP=1/audio-disable=1/media=1/forced-hd720=1/EGL=0/capture-diag=1.
+   That worker must repeat the prelaunch zero-QEMU check, owns/reaps its QEMU,
+   and consumes the authority. It grants no FPS or semantic credit.
 5. **A1 windowed:** only after valid diagnostic success/review and a new gate,
    run N>=2 forced-hd720 trials; clear >=52 before pursuing about 55-60.
 6. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
