@@ -529,6 +529,34 @@ the shell continuing to the passive control. No QEMU was launched. This is not
 a complete authorization gate and grants no VM authority or retry under this
 task; retain it as a no-boot negative-control record.
 
+**Fresh A1 corrected-KVM windowed trial — INVALID / N=0 (2026-07-11):** at
+`0a10a73ebca47240a74b2c51685e3cbdb5846514`, equal to explicit
+`origin/codex/host-linux-abi-shell-port-ff`, the fresh named gate had no
+staged source state, only the preserved KDE-smoke dirt, and passed the exact
+`[ -r /dev/kvm ] && [ -w /dev/kvm ]` test, DXG/D3D12/GL/X11/Wayland and
+kernel/base checks, plus all three current overlay/base asset receipts. Its
+one foreground passive screen at
+`/tmp/xv6-a1-windowed-gate-final.Nxerur/passive-qemu-screen.txt` recorded
+zero all-arch QEMU at 20:00:32Z and 20:01:32Z, `status=pass`, then an immediate
+zero at 20:01:48Z. Exactly one windowed MP=1/audio-disable=1/media=1/
+forced-HD720=1/EGL=0/capturediag=0 run followed:
+`/tmp/xv6-a1-windowed-final-t1.I68u9s` (driver log
+`/tmp/xv6-a1-windowed-final-t1-driver.fq4Ily.log`). Its fixed natural-bootstrap
+audit saw exactly one owned x86 QEMU PID 2118598 (driver PID 2118396), zero
+foreign QEMU, KVM, virgl GL, and explicit GTK `full-screen=off` and
+`zoom-to-fit=off`; final all-arch count was zero after the driver's owned
+synchronous cleanup (`waited:2118598 exp4 0 0`).
+
+Idle/probe fbstat proved `backend virgl`, `backend_opengl_submit 1`, and an
+open virgl gate; the render predicate confirmed flips/presents 868/869. The
+driver nevertheless returned code 8 at the first nonce-bound render receipt:
+`chromium-render-start-receipt-invalid ... receipt-role-live-drift`. It stopped
+before accepted media/HD720 semantic proof, `yt-presentfps`, or `PERF-VIDEO`,
+so there is no FPS/drop/VPQ/retire, audio, or fullscreen fact. This consumes
+the sole authorized windowed trial as INVALID/N=0; do not launch a second VM.
+The next item is a no-boot localization of the retained role-live drift, not
+an inference about codec, presentation throughput, or audio.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
