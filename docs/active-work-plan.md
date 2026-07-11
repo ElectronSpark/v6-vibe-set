@@ -456,6 +456,31 @@ paths reject. This is source/static-only; no guest, VM, FPS, HD720, semantic,
 audio, or fullscreen fact exists. An independent no-boot review remains
 required before any future gate.
 
+**Render-receipt helper portability independent adversarial review — PASS /
+NO-BOOT (2026-07-11):** extracted actual helper `ea7d30f` was executed
+host-only with the matching current sysroot `wc`/`xxd`/`openssl` binaries (and
+only its census command replaced by a deterministic live-role producer). The
+named reducer `/tmp/xv6-render-portability-independent.bZmOp0` and external log
+`/tmp/xv6-render-portability-independent-log.uZ8rm4` prove valid empty,
+binary, multiline, source-tail (2050/2048), and role-tail (>4096/4096) frames.
+All are regular/live, parse against the real host parser, and classify
+`OBSERVED` only at the retained 104/5 threshold; the parser result is retained
+in `/tmp/xv6-render-portability-parser-log.mMz1UV`.
+
+Every independently injected empty/extra/nondecimal/negative/over-cap `wc`,
+uppercase/nonhex/length-drift `xxd`, uppercase/wrong-path/extra `openssl`, and
+command failure for count/`dd`/hex/digest exited 70 without any receipt-meta
+line, so a regular source cannot be silently demoted to `unreadable` or enter
+the no-credit object sequence. The actual frames also rejected nonce, probe,
+launch/argv digest, and command-marker drift. A fresh normal static replay
+`/tmp/xv6-render-portability-independent-static.MRlJCU` (external log
+`/tmp/xv6-render-portability-independent-static-log.JqaLy9`) exited 0 with
+exact QEMU zero before/after and re-confirmed caps/tails, the unchanged 5x30 s
+threshold, and `capturediag=0`/V3 isolation. No guest, VM, FPS, semantic,
+audio, HD720, or fullscreen result exists. This clears only helper portability:
+the consumed trial remains unreusable, but a new serialized A1 gate may now be
+formed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -552,7 +577,8 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    now-reconciled local/origin branch drift before QEMU. A subsequently
    authorized post-reconciliation sole trial is now also CONSUMED/INVALID:
    receipt-helper guest-tool incompatibility stopped it before HD720/FPS/media
-   proof, so no retry is authorized. Every future
+   proof. The helper repair and independent review now pass host-only, which
+   permits forming (never reusing) a fresh serialized gate. Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
