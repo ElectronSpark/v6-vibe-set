@@ -312,6 +312,22 @@ static adversaries for both false/true tail mismatches must parse INVALID and
 cannot reach OBSERVED. Re-run this independent review after that narrow repair;
 no A1 VM gate, retry, FPS, semantic, audio, or fullscreen authority exists.
 
+**A1 render-start receipt tail-integrity repair — STATIC PASS / NO-BOOT
+(2026-07-11):** the normal receipt now carries bounded `role_total`; the
+parser rejects regular source unless `source_tail_truncated` exactly equals
+`source_cursor > source_bytes`, and rejects roles unless the analogous
+`role_total > role_bytes` relation (and `role_bytes <= role_total`) holds.
+Fresh host-only replay `/tmp/xv6-render-tail-integrity-static.EO673i`
+(external log `/tmp/xv6-render-tail-integrity-static.EO673i.log`) exited 0.
+It rejects both false/true directions for source and role tails as `INVALID`,
+keeps valid untruncated and valid truncated receipts non-OBSERVED/OBSERVED as
+appropriate, and retains nonce/probe/digest caps, the 5x30 s flip/present
+predicate, and diag0/V3 isolation with `js_guest_runtime=UNEXECUTED`. Exact
+all-arch QEMU counts before and after were zero. This is source/static-only,
+does not explain Chromium rendering, and supplies no FPS, semantic, audio, or
+fullscreen credit. The independent adversarial review must now be rerun before
+any A1 VM authority or fresh gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -401,9 +417,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 6. **A1 windowed execution — CONSUMED/INVALID:** the later passive-quiescence
    trial had no overlap and clean owned reap, but failed
    `chromium-render-start-missing`, yielding N=0 valid samples. Its flip gate
-   is localized but Chromium's no-presentation cause is not. The new receipt
-   has a tail-integrity FAIL: first repair/review that narrow no-boot contract,
-   then form a new gate; do not reuse either consumed session. Every future
+   is localized but Chromium's no-presentation cause is not. The receipt's
+   tail-integrity repair now has a source/static PASS, but its independent
+   adversarial review must be rerun before forming a new gate; do not reuse
+   either consumed session. Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
