@@ -580,6 +580,22 @@ This is a static source checkpoint only: no guest, VM, FPS, HD720, audio, or
 fullscreen fact exists. An independent no-boot adversarial review of this
 repair remains mandatory; VM authority is closed.
 
+**A1 role-state independent-review harness — INCOMPLETE / NO-BOOT
+(2026-07-11):** the final named host-only attempt
+`/tmp/xv6-role-state-independent-review-linepass.xyq1D9.log` loaded the actual
+source under intercepted static exit, extracted and executed the actual helper
+shell block, and called the actual host parser. It verified newline-framed
+PASS-only `none_or_exited`, a valid semantic fast Chromium line `live`, and a
+nonzero census `command_failed`; baseline live-claim, role-state binding, and
+threshold checks then began. It did not complete the adversarial matrix: its
+intended unrelated broad-role input retained literal escaped quotes, so it did
+not exercise the parser's `comm="chrome" role="..."` branch and the expected
+`broad_asserted_role_rejected` assertion failed. This is harness input framing,
+not a verdict on the repair. Exact all-arch QEMU counts were zero at 20:25:09Z
+and 20:25:22Z; no VM, source edit, build, rootfs, serial, or launcher action
+occurred. Do not treat it as independent PASS or FAIL; a fresh complete
+host-only review remains required and VM authority stays closed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
