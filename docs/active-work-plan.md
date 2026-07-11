@@ -596,6 +596,18 @@ and 20:25:22Z; no VM, source edit, build, rootfs, serial, or launcher action
 occurred. Do not treat it as independent PASS or FAIL; a fresh complete
 host-only review remains required and VM authority stays closed.
 
+**A1 role-state actual-source independent review — INCOMPLETE / NO-BOOT
+(2026-07-11):** the subsequently authorized single host-only attempt
+`/tmp/xv6-role-state-independent-review-actual.20260711.log` stopped before
+the matrix, helper shell, or parser ran: its Tcl procedure extractor tested
+`info complete` one character at a time and evaluated the initial `p` as a
+command, yielding `invalid command name "p"` while loading the actual source.
+This is a harness-construction defect, not a verdict on the role-state repair;
+per the one-attempt rule it was not modified or retried. Exact all-arch QEMU
+inventories were 1 at start and 0 at end. No VM, source edit, build, rootfs,
+serial, or launcher action occurred. Independent review remains incomplete and
+VM authority stays closed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
