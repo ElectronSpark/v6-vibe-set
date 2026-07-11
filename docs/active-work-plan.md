@@ -481,6 +481,18 @@ audio, HD720, or fullscreen result exists. This clears only helper portability:
 the consumed trial remains unreusable, but a new serialized A1 gate may now be
 formed.
 
+**Unrecorded A1 passive gate forensic — NO-BOOT / NO AUTHORITY (2026-07-11):**
+the named worker gate `/tmp/xv6-final-a1-gate.J359ka/qemu.log` retains only
+its initial exact scan at 19:45:24Z (`count=0`); it has no post-60-second row
+or terminal PASS/FAIL marker. The owned tool wait handle then disappeared
+before emitting command completion, so this is an incomplete gate transport/
+execution record, not a timeout, inaccessible-`/proc`, or external-QEMU
+finding. One fresh exact `/proc/*/exe` inventory afterwards found zero
+`qemu-system-*`/`qemu-kvm` processes. No process was touched and no VM,
+serial, build, rootfs, source, or performance work occurred. The mandatory
+two-endpoint passive screen is therefore unproved; it grants no gate or VM
+authority and must not be silently repeated under the consumed trial policy.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
