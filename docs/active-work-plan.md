@@ -17,8 +17,12 @@ Every concrete job is delegated to an opus worker. The A1 authorization gate
 that preceded the already-pushed `74d449e` plan checkpoint passed with
 same-name HEAD/origin, no VM worker, exact `/proc/*/exe` QEMU count zero,
 clean kernel worktree, only unrelated KDE harness dirt, and usable `/dev/kvm`.
-The next action is a fresh live same-name-origin, no-active-VM, exact-zero-QEMU
-gate before the sole A1 boot can be authorized.
+The newest post-checkpoint gate is **INVALID/NULL**: it used the known-misbound
+`@{upstream}` (`80783a`), not the explicit same-name
+`origin/codex/host-linux-abi-shell-port-ff`, so it proves no current
+divergence and authorizes no boot. Its separate live-state checks PASS: no
+active VM worker, exact QEMU zero, clean kernel, and usable `/dev/kvm`.
+Rerun the gate binding HEAD to that explicit origin ref only.
 
 ## Host and VM safety (binding)
 
@@ -262,10 +266,12 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Fresh A1 authorization gate **NEXT**: establish live same-name HEAD/origin,
-   no active VM worker, and exact QEMU zero; `74d449e` is the already-pushed
-   plan checkpoint. The runner must prove real KVM+virgl GL GPU role and reject
-   llvmpipe/software. The prior gate does not authorize a boot after state
+1. Fresh A1 authorization gate **NEXT**: rerun against explicit
+   `origin/codex/host-linux-abi-shell-port-ff` (never `@{upstream}`), then
+   establish live same-name HEAD/origin, no active VM worker, and exact QEMU
+   zero; `74d449e` is the already-pushed plan checkpoint. The runner must
+   prove real KVM+virgl GL GPU role and reject llvmpipe/software. The invalid
+   upstream-based gate and prior gate do not authorize a boot after state
    changes.
 2. Only after that fresh live gate may the conductor authorize one sole-VM
    A1 serial windowed N>=2 forced-hd720 measurement. Invalids are NULL.
