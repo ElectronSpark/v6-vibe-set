@@ -224,6 +224,26 @@ all-arch audit is currently zero, and a synchronous passive 20 s zero-QEMU
 interval was zero at both ends. This validates only the screen, grants no VM
 authority, and cannot prevent a later external launch.
 
+**A1 passive-quiescence windowed trial — INVALID / N=0 (2026-07-11):** a
+fresh all-architecture screen was zero, followed by one passive synchronous
+60 s wait with no polling, then a second zero count and immediate prelaunch
+audit at `3a6c2326dbfdeae96e3ad05e04893bdbcb55bb54`, equal to origin. KVM,
+D3D12/GL/X11/Wayland, and all three image assets passed. The one permitted
+windowed MP=1/audio-disable=1/media=1/forced-HD720=1/EGL=0/capturediag=0 run
+is `/tmp/xv6-a1-windowed-quiescent-t1.pKZQwy` (external log
+`/tmp/xv6-a1-windowed-quiescent-t1-log.WcYJXz`). At its single 75 s bootstrap
+audit, exact all-arch count was one: owned x86 QEMU PID 2041507 (parent driver
+2041348), with zero foreign processes; its command records GTK
+`full-screen=off` and `zoom-to-fit=off`. The driver then returned code 8,
+`chromium-render-start-missing`; its owned cleanup synchronously reaped PID
+2041507 (`waited:2041507 exp4 0 0`) and the final all-arch count was zero.
+Current assets passed, as did idle/probe virgl fbstat, but no Chromium render,
+active HD720 source, yt-presentfps, PERF-VIDEO duration/FPS/drop/VPQ/retire,
+audio, or fullscreen fact exists. This consumed the one-trial session as
+INVALID/N=0, not performance credit; no overlap and no second guest occurred.
+A fresh gate and a no-boot localization of `chromium-render-start-missing` are
+required before another A1 trial.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -310,12 +330,12 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 5. **Independent V3 inner-tail adversarial review — PASS:** generic opt-in
    boundary, real-V3 local-PTY fixture, zero-slack single-reserve policy, and
    diag0/no-credit isolation all passed without a VM.
-6. **A1 windowed execution — CONSUMED/INVALID:** one fresh-gated launch was
-   aborted when an external QEMU appeared; it yielded N=0 valid samples and
-   no second trial. Form a new no-boot gate before any retry; do not reuse this
-   session. Its conductor must pass the passive all-arch zero-QEMU interval
-   and immediate prelaunch check, while recognizing that either can race with
-   a later external launch. Clear >=52 before pursuing about 55-60.
+6. **A1 windowed execution — CONSUMED/INVALID:** the later passive-quiescence
+   trial had no overlap and clean owned reap, but failed
+   `chromium-render-start-missing`, yielding N=0 valid samples. Localize that
+   failure no-boot, then form a new gate; do not reuse either consumed session.
+   Every future conductor must pass the passive all-arch zero-QEMU interval
+   and immediate prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
