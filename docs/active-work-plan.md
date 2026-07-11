@@ -351,6 +351,20 @@ audio, or fullscreen fact was produced. This clears only receipt integrity: a
 new serialized A1 execution gate may now be formed; do not reuse the consumed
 session.
 
+**Fresh A1 windowed live gate — BLOCKED / NO-BOOT (2026-07-11):** the exact
+all-architecture QEMU scan was zero before and after the required one passive,
+synchronous 60 s interval (`/tmp/xv6-a1-windowed-live-gate.fxNUC9`), and the
+immediate KVM, WSL `/dev/dxg`/D3D12+GL, X11+Wayland display, kernel/base-image,
+and all three named media-asset hash checks passed. The mandatory
+branch-lineage check failed: live `HEAD` was
+`fb6d28249e35dfc4bb55f52823ed12b42f678016`, while explicit
+`origin/codex/host-linux-abi-shell-port-ff` was
+`29d050f1416475e306b092bd94f7ff0e144b14f6`. No QEMU was spawned, no trial was
+consumed, and no render receipt, HD720, PERF-VIDEO, FPS, semantic, audio, or
+fullscreen fact exists. This gate is a no-boot rejection, not permission to
+repeat it; a fresh authorization is required after the explicit branch lineage
+is reconciled.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -443,7 +457,8 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    is localized but Chromium's no-presentation cause is not. The receipt's
    tail-integrity repair and its independent adversarial review now pass
    host-only; this authorizes only forming a fresh serialized gate, never
-   reusing either consumed session. Every future
+   reusing either consumed session. The newly formed gate then rejected the
+   local/origin branch drift before QEMU, so it grants no retry. Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
