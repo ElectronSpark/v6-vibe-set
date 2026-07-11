@@ -162,6 +162,18 @@ nonconsuming gate failure requiring fresh authority; any launched trial is
 consumed even if INVALID. This grants no fullscreen, audio-on, default, or
 semantic credit; only valid `yt-presentfps` + `PERF-VIDEO` samples count.
 
+**A1 windowed session post-push re-audit — BLOCKED / NO-BOOT (2026-07-11):**
+at gate checkpoint `5e5694f91b3cd40985852960598062893b82bd50`, equal to the
+explicit origin branch, the repeat audit again found no staged source state,
+only unrelated KDE-smoke dirt, no active VM worker, usable KVM, present
+D3D12/GL/display prerequisites, and all three current base assets at the
+accepted byte/hash receipt. It failed the mandatory exact QEMU condition:
+one non-owned process, PID 2024690 `/usr/bin/qemu-system-riscv64` with
+`-machine virt -nographic -m 1024M`, was live after the push. It was not
+touched. The session was never launched or consumed, its token was not issued,
+and a fresh authority is required only after its owner reaps it and a new gate
+again observes exact QEMU count zero.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -248,10 +260,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 5. **Independent V3 inner-tail adversarial review — PASS:** generic opt-in
    boundary, real-V3 local-PTY fixture, zero-slack single-reserve policy, and
    diag0/no-credit isolation all passed without a VM.
-6. **A1 windowed session gate — formed:** post-push branch/origin, worker,
-   exact-QEMU, KVM/D3D12/virgl/display, asset, and staged-state re-audit must
-   pass before its one-use two-trial token is issued. No other VM worker may
-   be active; clear >=52 before pursuing about 55-60.
+6. **A1 windowed session gate — BLOCKED/unissued:** the post-push exact QEMU
+   count was one external RISC-V VM. After it is synchronously reaped by its
+   owner, form a fresh gate and repeat all preflight conditions; do not reuse
+   this session or launch a VM. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
