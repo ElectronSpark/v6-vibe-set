@@ -96,6 +96,75 @@ Newest runtime artifact and stop verdict:
   the exact treatment arm plus 3/3 staged media assets, but panicked during
   probe 1 before media, GPU-role, yt-presentfps, or PERF-VIDEO evidence. It
   proves no FPS and makes no fullscreen claim; attempt 2 was correctly stopped.
+- `chromium-youtube-m7/20260711T082215Z-a1-windowed-n2-t1-mp1-audio1-media1-hd7201`
+  is likewise N=0 **INVALID/NULL**: its sole real KVM+virgl boot passed the
+  GPU-role/treatment and 3/3 staged-asset gates, but `result=8
+  media-probe-capture-invalid` because capture began on the host
+  `YT_MEDIA_PROBE_HOST_CAPTURE attempt` line plus bracketed-paste echo before
+  a valid `BEGIN`. Later capture facts prove hd720/1280x720/cadence only; they
+  grant no FPS credit. Attempt 2 was correctly stopped, QEMU ended at zero,
+  and its scratch image is retained. Repair and adversarially review framing
+  NO-BOOT before a fresh gate/retry.
+- Capture-framing repair is **REJECTED** by independent NO-BOOT review. The
+  self-PASS accepts an exact `ESC[?2004l`+CR immediately before real `END` and
+  `BEGIN` followed by `CRCRCRLF`; moving a fake transition/`BEGIN`, or injecting
+  a transition/noise payload, also still reaches semantic PASS. That is an
+  unbounded ignored-content grammar, not a safe normalization. Repair must
+  normalize only the one exact transition immediately before real `BEGIN`, use
+  exact permitted line endings, and reject every injected/moved/noise token;
+  retain the valid host-preamble/shell-echo route and all earlier nonce/fence,
+  spoof, wrong-mode, echoed-`BEGIN`, and missing-fence rejections. QEMU was
+  zero; no VM is authorized.
+- The boundary repair now has a NO-BOOT **self-PASS**, not boot authority. Its
+  byte grammar accepts only exact `ESC[?2004l`+CR+`BEGIN`+CRLF, with raw
+  payload (no trimming); it rejects CRCRLF at `BEGIN`/`END`/payload,
+  transition at `END`/payload/noise, and moved, fake, duplicate, spoofed,
+  wrong-nonce/mode, or missing-fence frames. The retained 20260711 debugcon
+  capture and semantic RC/fence proof pass; full static checks and the prior
+  fence matrix pass; QEMU is zero. Independent adversarial review remains
+  required before a new live gate or VM.
+- Independent NO-BOOT boundary review now **REJECTS** that self-PASS. A
+  standalone CSI+CRLF after `END`, after `RC`, or before/after `FENCE` still
+  reaches capture+semantic COMPLETE+frame across bracketed-paste
+  enable/disable, noncanonical/truncated, SGR, cursor, and randomized forms;
+  only literal disable was barred. This is a control-byte hole. A replacement
+  must enforce a strict byte/control policy from `BEGIN` through the complete
+  `RC`/`FENCE`: no ignored CSI/control content there, while retaining the valid
+  20260711 debugcon preamble/shell-echo route, valid LF/CRLF/CRCRLF
+  `RC`/`FENCE` lines, and the earlier positive/rejection matrix. QEMU is zero;
+  no gate or VM is authorized.
+- The strict-region boundary replacement has a NO-BOOT **self-PASS** only:
+  from authenticated `BEGIN` through unique `RC`/`FENCE`, it permits only
+  CR/LF controls. All 28 CSI/C0/DEL/C1 forms at each of six placements cause
+  capture rejection, semantic non-COMPLETE, and no valid frame; LF, CRLF, and
+  CRCRLF positives pass. The retained SHA-bound debugcon capture is sliced at
+  the unique fence, leaving its post-frame prompt outside capture. Static/diff
+  checks pass and QEMU is zero; independent adversarial review is next and no
+  gate or VM is authorized.
+- Independent strict-region NO-BOOT review **REJECTS** that self-PASS. All 108
+  control mutations reject, but printable `NOISE`, foreign, or long rows after
+  `END`, before/after `RC`, or before `FENCE` still triple-pass capture,
+  semantic COMPLETE, and frame validation. Repair needs an exact lexical tail
+  grammar after `END`: only its permitted separator, then exactly matching
+  `RC`/`FENCE` with valid terminators—no printable, extra, or trailing data.
+  Retain the unique retained-slice/tail positive and all 108 rejections. QEMU
+  is zero; no gate or VM is authorized.
+- The lexical-tail repair has a NO-BOOT **self-PASS** only. Its marker-bound
+  grammar is exact `END`+CRLF, blank, then unique `RC:0`/`FENCE` tokens with
+  valid terminators; the control scan ends at `FENCE`. The full SHA-bound
+  debugcon capture, including its prompt, passes. All three consumers reject
+  printable, foreign, long, blank, extra, marker-mismatched, or duplicate-
+  `FENCE` tails, while valid tail/prompt positives pass. Static/parser/diff
+  checks and exact QEMU zero pass; independent adversarial review is required
+  before any gate or boot.
+- Independent lexical-tail NO-BOOT review now **PASSES**. The complete
+  SHA-bound retained debugcon triple-passes capture, semantics, and frame
+  validation with the prompt outside the fence; static checks pass. All 62
+  adversarial mutations across framing, tail, marker, control, and their
+  compositions yield zero invalid triple-passes, while valid LF, CRLF, and
+  CRCRLF tail positives pass. This lifts the framing *review* gate only:
+  checkpoint/push the repair, then rerun the explicit same-name live A1 gate;
+  neither result itself authorizes a VM.
 - Independent NO-BOOT forensics PASS is durable at live HEAD/origin `a2a5f6a`.
   Linux permits arbitrary `.poll` to wake synchronously; xv6 invoked it under
   the kqueue lock in rescan, stale-ready, `EV_CLEAR`, and nested paths; the
@@ -266,14 +335,15 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Fresh A1 authorization gate **NEXT**: rerun against explicit
+1. Checkpoint and push the verified capture-framing repair, then run a fresh
+   A1 authorization gate against explicit
    `origin/codex/host-linux-abi-shell-port-ff` (never `@{upstream}`), then
    establish live same-name HEAD/origin, no active VM worker, and exact QEMU
    zero; `74d449e` is the already-pushed plan checkpoint. The runner must
    prove real KVM+virgl GL GPU role and reject llvmpipe/software. The invalid
    upstream-based gate and prior gate do not authorize a boot after state
    changes.
-2. Only after that fresh live gate may the conductor authorize one sole-VM
+2. Only after the pushed framing repair and fresh live gate may the conductor authorize one sole-VM
    A1 serial windowed N>=2 forced-hd720 measurement. Invalids are NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
 4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.

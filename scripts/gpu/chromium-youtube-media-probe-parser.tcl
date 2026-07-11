@@ -1587,40 +1587,168 @@ proc media_probe_mutate_first {text from to} {
     return [string replace $text $first [expr {$first + [string length $from] - 1}] $to]
 }
 
-proc media_probe_capture_payload {text expected_nonce} {
+proc media_probe_capture_literal_count {text needle} {
+    if {$needle eq ""} { error "capture literal must be nonempty" }
+    set count 0
+    set offset 0
+    while {1} {
+        set found [string first $needle $text $offset]
+        if {$found < 0} { break }
+        incr count
+        set offset [expr {$found + [string length $needle]}]
+    }
+    return $count
+}
+
+proc media_probe_capture_payload_wire {payload} {
+    # This helper deliberately validates without rewriting the payload.  The
+    # capture helper emits a grep-reduced sequence of Chromium console rows;
+    # any extra shell/control/noise line is evidence of an ambiguous boundary,
+    # not something the semantic row parser may silently ignore.
+    # A clean zero-row one-shot is a valid transport frame.  The caller alone
+    # decides whether it is an initial INCOMPLETE observation or a final
+    # non-creditable result; do not turn absence into a framing rewrite.
+    if {$payload eq ""} { return [list 1 "pass"] }
+    if {[string first "\033" $payload] >= 0} {
+        return [list 0 "capture-payload-control-byte"]
+    }
+    set raw_lines [split $payload "\n"]
+    if {[lindex $raw_lines end] ne ""} {
+        return [list 0 "capture-payload-missing-final-newline"]
+    }
+    set rows [lrange $raw_lines 0 end-1]
+    foreach raw_line $rows {
+        # Payload rows have exactly CRLF framing.  Do not trim or repair CRs:
+        # semantic parsing later receives the original byte sequence.
+        if {[string length $raw_line] < 2 ||
+            [string index $raw_line end] ne "\r" ||
+            [string first "\r" [string range $raw_line 0 end-1]] >= 0} {
+            return [list 0 "capture-payload-line-ending-invalid"]
+        }
+        set body [string range $raw_line 0 end-1]
+        if {[string first "YT_MEDIA_PROBE_V1 " $body] < 0} {
+            return [list 0 "capture-payload-noise"]
+        }
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_capture_transaction_wire {text begin_pos end_pos} {
+    # The transition immediately *before* BEGIN is authenticated separately.
+    # From the first byte of the real BEGIN through the complete command
+    # frame fence, however, this is a strict terminal-byte grammar: only CR/LF are
+    # control bytes.  In particular, do not let the independent RC/FENCE
+    # parser silently skip a CSI, an incomplete escape sequence, a C1 control,
+    # or another C0 control after a semantically valid END.  Printable bytes
+    # remain opaque here; payload semantics stay the responsibility of the
+    # nonce-bound media parser below.
+    if {$begin_pos < 0 || $end_pos < $begin_pos ||
+        $end_pos >= [string length $text]} {
+        return [list 0 "capture-transaction-begin-offset-invalid"]
+    }
+    # The caller has already proven this exact end position is the unique
+    # matching fence newline.  Do not scan a following prompt: it belongs to
+    # the next serial transaction, not to this nonce-bound capture.
+    set transaction [string range $text $begin_pos $end_pos]
+    # Tcl 8.6's portable byte format is signed `c`; normalize it ourselves.
+    binary scan $transaction c* octets
+    set offset -1
+    foreach octet $octets {
+        incr offset
+        if {$octet < 0} { set octet [expr {$octet + 256}] }
+        if {(($octet <= 0x1f && $octet != 0x0a && $octet != 0x0d) ||
+             ($octet >= 0x7f && $octet <= 0x9f))} {
+            return [list 0 [format \
+                "capture-transaction-control-byte-offset-%d-0x%02X" \
+                $offset $octet]]
+        }
+    }
+    return [list 1 "pass"]
+}
+
+proc media_probe_capture_payload {text expected_nonce expected_marker} {
     if {![regexp {^[0-9a-f]{32}$} $expected_nonce]} {
         return [list 0 "capture-nonce-invalid" ""]
     }
+    if {![regexp {^[A-Za-z0-9]+$} $expected_marker]} {
+        return [list 0 "capture-frame-marker-invalid" ""]
+    }
     set begin "YT_MEDIA_PROBE_CAPTURE_BEGIN nonce=$expected_nonce status=oneshot polls=0 byte_cap=49152"
     set end "YT_MEDIA_PROBE_CAPTURE_END nonce=$expected_nonce status=oneshot polls=0 byte_cap=49152"
-    set lines [split $text "\n"]
-    set begin_indices {}
-    set end_indices {}
-    set line_index -1
-    foreach raw_line $lines {
-        incr line_index
-        set line [string trimright $raw_line "\r"]
-        if {[string first {YT_MEDIA_PROBE_CAPTURE_BEGIN } $line] >= 0} {
-            if {$line ne $begin} {
-                return [list 0 "capture-begin-shape-invalid" ""]
-            }
-            lappend begin_indices $line_index
-        }
-        if {[string first {YT_MEDIA_PROBE_CAPTURE_END } $line] >= 0} {
-            if {$line ne $end} {
-                return [list 0 "capture-end-shape-invalid" ""]
-            }
-            lappend end_indices $line_index
-        }
+    set begin_tag {YT_MEDIA_PROBE_CAPTURE_BEGIN }
+    set end_tag {YT_MEDIA_PROBE_CAPTURE_END }
+    set transition "\033\[?2004l"
+    set begin_wire "$transition\r$begin\r\n"
+    set end_wire "$end\r\n"
+    set rc_wire "$expected_marker:RC:0"
+    set fence_wire "$expected_marker:FENCE"
+
+    # The sole tolerated terminal transition is the exact disable sequence
+    # immediately adjacent to the real BEGIN.  Its BEGIN line is CRLF only:
+    # CRCRLF/CRCRCRLF and any moved transition remain malformed input.
+    set begin_pos [string first $begin $text]
+    set end_pos [string first $end $text]
+    # Earlier serial commands legitimately have their own bracketed-paste
+    # transitions in the host preamble.  Only the last one before BEGIN is the
+    # candidate boundary; none may occur from BEGIN onward.
+    set transition_pos [string last $transition $text [expr {$begin_pos - 1}]]
+    if {[media_probe_capture_literal_count $text $begin_tag] != 1 ||
+        [media_probe_capture_literal_count $text $begin] != 1 ||
+        $begin_pos < 0} {
+        return [list 0 "capture-begin-shape-invalid" ""]
     }
-    if {[llength $begin_indices] != 1 || [llength $end_indices] != 1 ||
-        [lindex $end_indices 0] <= [lindex $begin_indices 0]} {
-        return [list 0 "capture-markers-invalid" ""]
+    if {[media_probe_capture_literal_count $text $end_tag] != 1 ||
+        [media_probe_capture_literal_count $text $end] != 1 ||
+        $end_pos < 0} {
+        return [list 0 "capture-end-shape-invalid" ""]
     }
-    set payload_lines {}
-    for {set index [expr {[lindex $begin_indices 0] + 1}]} \
-        {$index < [lindex $end_indices 0]} {incr index} {
-        lappend payload_lines [string trimright [lindex $lines $index] "\r"]
+    if {$transition_pos < 0 ||
+        $transition_pos != [expr {$begin_pos - [string length $transition] - 1}] ||
+        [string first $begin_wire $text] != $transition_pos ||
+        [string first $transition $text $begin_pos] >= 0} {
+        return [list 0 "capture-begin-transition-invalid" ""]
     }
-    return [list 1 "pass" [string trim [join $payload_lines "\n"]]]
+    if {[string first $end_wire $text] != $end_pos ||
+        [media_probe_capture_literal_count $text $end_wire] != 1 ||
+        $end_pos < [expr {$begin_pos + [string length $begin] + 2}]} {
+        return [list 0 "capture-end-wire-invalid" ""]
+    }
+
+    # The command transcript owns exactly one terminal tail.  The retained
+    # serial route is END CRLF, one blank CRLF separator, then a successful
+    # same-command RC/FENCE pair.  Treat it as one lexical byte grammar rather
+    # than letting a separate line scanner skip arbitrary rows after END.
+    # RC/FENCE terminators retain the three serial forms accepted by guest_cmd.
+    # The unique FENCE newline ends this owned capture; a following shell
+    # prompt is deliberately outside the slice.
+    if {[media_probe_capture_literal_count $text $rc_wire] != 1 ||
+        [media_probe_capture_literal_count $text $fence_wire] != 1} {
+        return [list 0 "capture-tail-marker-count-invalid" ""]
+    }
+    set tail_start [expr {$end_pos + [string length $end_wire]}]
+    set tail [string range $text $tail_start end]
+    set tail_pattern [format {^\r\n%s:RC:0(?:\r\r\n|\r\n|\n)%s:FENCE(?:\r\r\n|\r\n|\n)} \
+        $expected_marker $expected_marker]
+    if {![regexp -indices -- $tail_pattern $tail tail_indices]} {
+        return [list 0 "capture-tail-grammar-invalid" ""]
+    }
+    set fence_end [expr {$tail_start + [lindex $tail_indices 1]}]
+
+    # Do this through the unique matching fence, rather than only through the
+    # media payload.  No terminal control before that fence can be ignored and
+    # still reach semantic COMPLETE plus frame PASS; the next prompt is not
+    # part of this transaction.
+    set transaction_wire [media_probe_capture_transaction_wire $text $begin_pos \
+        $fence_end]
+    if {![lindex $transaction_wire 0]} {
+        return [list 0 [lindex $transaction_wire 1] ""]
+    }
+
+    set payload_start [expr {$begin_pos + [string length $begin] + 2}]
+    set payload [string range $text $payload_start [expr {$end_pos - 1}]]
+    set payload_wire [media_probe_capture_payload_wire $payload]
+    if {![lindex $payload_wire 0]} {
+        return [list 0 [lindex $payload_wire 1] ""]
+    }
+    return [list 1 "pass" $payload]
 }
