@@ -258,11 +258,12 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Latest live authorization gate: **REJECTED only for material uncommitted
-   `docs/active-work-plan.md` dirt**. The kernel worktree, no-active-VM,
-   exact-zero-QEMU, KVM/virgl prerequisites, and prior checkpoint/origin
-   checks otherwise passed. Commit/push this plan-only checkpoint, then take a
-   fresh same-name-origin/no-VM/exact-zero-QEMU gate before any boot.
+1. Plan checkpoint `f1568d8` is pushed. Its predecessor gate was **REJECTED
+   only for material uncommitted `docs/active-work-plan.md` dirt**; kernel
+   worktree, no-active-VM, exact-zero-QEMU, KVM/virgl prerequisites, and the
+   prior checkpoint/origin checks otherwise passed. The fresh live
+   same-name-origin/no-VM/exact-zero-QEMU authorization gate is **NOW NEXT**;
+   no boot is authorized until it passes.
 2. Only after that fresh gate may the conductor authorize one sole-VM A1 serial
    windowed N>=2 forced-hd720 measurement. Invalids are NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
