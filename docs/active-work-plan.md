@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-11. Sole live plan; history is in git/the archive, with runtime proofs under `build-x86_64/`.
 
-Before checkpointing or dispatch, verify live HEAD against its same-name origin. This plan records the first authorized boot after fullscreen-plan checkpoint `fdb628e`. Preserve unrelated KDE harness work.
+Before dispatch, verify live HEAD against its same-name origin. This plan checkpoint is pushed at `74d449e`; preserve unrelated KDE harness work.
 
 ## Objective and operating state
 
@@ -13,8 +13,12 @@ cannot close fullscreen or the overall goal. Use real KVM+virgl yt-presentfps
 and PERF-VIDEO only; software is invalid. Each mode needs N>=2 comparable
 trials, never pooled; N=1 is diagnostic.
 
-Every concrete job is delegated to an opus worker. No VM worker is authorized;
-an exact `/proc/*/exe` scan finds zero QEMU processes.
+Every concrete job is delegated to an opus worker. The A1 authorization gate
+that preceded the already-pushed `74d449e` plan checkpoint passed with
+same-name HEAD/origin, no VM worker, exact `/proc/*/exe` QEMU count zero,
+clean kernel worktree, only unrelated KDE harness dirt, and usable `/dev/kvm`.
+The next action is a fresh live same-name-origin, no-active-VM, exact-zero-QEMU
+gate before the sole A1 boot can be authorized.
 
 ## Host and VM safety (binding)
 
@@ -258,14 +262,13 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Plan checkpoint `f1568d8` is pushed. Its predecessor gate was **REJECTED
-   only for material uncommitted `docs/active-work-plan.md` dirt**; kernel
-   worktree, no-active-VM, exact-zero-QEMU, KVM/virgl prerequisites, and the
-   prior checkpoint/origin checks otherwise passed. The fresh live
-   same-name-origin/no-VM/exact-zero-QEMU authorization gate is **NOW NEXT**;
-   no boot is authorized until it passes.
-2. Only after that fresh gate may the conductor authorize one sole-VM A1 serial
-   windowed N>=2 forced-hd720 measurement. Invalids are NULL.
+1. Fresh A1 authorization gate **NEXT**: establish live same-name HEAD/origin,
+   no active VM worker, and exact QEMU zero; `74d449e` is the already-pushed
+   plan checkpoint. The runner must prove real KVM+virgl GL GPU role and reject
+   llvmpipe/software. The prior gate does not authorize a boot after state
+   changes.
+2. Only after that fresh live gate may the conductor authorize one sole-VM
+   A1 serial windowed N>=2 forced-hd720 measurement. Invalids are NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
 4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.
 5. Validate audio-on windowed and fullscreen parity; close each mode's
