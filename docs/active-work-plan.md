@@ -557,6 +557,29 @@ the sole authorized windowed trial as INVALID/N=0; do not launch a second VM.
 The next item is a no-boot localization of the retained role-live drift, not
 an inference about codec, presentation throughput, or audio.
 
+**A1 role-state localization and static repair — PASS / NO-BOOT (2026-07-11):**
+the failed run's helper had treated a broad `comm="chrome" role="..."` grep as
+`role_state=live`; that is not a semantic fast-census witness and let a
+PASS-only/baseline role capture disagree with the parser. The narrow repair
+keeps `command_failed` for a nonzero census status and otherwise asserts
+`live` only for a single bounded line beginning
+`kde_chromium_process_evidence fast`, containing ordered
+`comm="chrome"`, an `[A-Za-z0-9_-]+` role, and `cmd="`; all other successful
+captures are `none_or_exited`. It changes neither launch, parser thresholds,
+audio, nor any VM/launcher/rootfs path.
+
+Fresh host-only `YT_STATIC_CHECK=1` replay
+`/tmp/xv6-role-state-static-independent.2uV6nv.log` exited 0 with exact
+all-arch QEMU zero before (20:12:54Z) and after (20:13:07Z). The source-locked
+helper reducer proves a PASS-only baseline cannot claim live, the exact valid
+fast Chromium row can, and spoofed/malformed role claims plus nonce, probe,
+role-digest, and role-cap drift reject. Existing source/role tail, bounded
+frame, threshold (103/4 and 104/4 reject; 104/5 retained), and
+capturediag0/V3-isolation checks remain green; `js_guest_runtime=UNEXECUTED`.
+This is a static source checkpoint only: no guest, VM, FPS, HD720, audio, or
+fullscreen fact exists. An independent no-boot adversarial review of this
+repair remains mandatory; VM authority is closed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
