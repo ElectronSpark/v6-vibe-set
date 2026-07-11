@@ -206,7 +206,6 @@ if [ "$do_sync" = 1 ]; then sync; fi
 # launcher/role text cannot forge a receipt delimiter on the serial stream.
 proc render_start_receipt_guest_helper_script {} {
     return {#!/bin/bash
-set +e
 nonce="$1"
 probe="$2"
 launch_marker="$3"
@@ -222,6 +221,46 @@ if [ "${#launch_digest}" -ne 64 ] || [ "${#argv_digest}" -ne 64 ]; then exit 64;
 case "$launch_digest" in *[!0-9a-f]*) exit 64 ;; esac
 case "$argv_digest" in *[!0-9a-f]*) exit 64 ;; esac
 
+# The current guest intentionally has neither awk/tr/od/sha256sum nor a
+# `wc -c` option parser.  These helpers accept only the exact output grammar
+# from the tools we stage in the current rootfs; a utility/format failure is a
+# failed command, never a fabricated receipt status.
+set -f
+strict_count() {
+  count_text=$(/bin/wc < "$1") || return 1
+  set -- $count_text
+  [ "$#" -eq 3 ] || return 1
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  case "$2" in ''|*[!0-9]*) return 1 ;; esac
+  case "$3" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$3" -le 2147483647 ] 2>/dev/null || return 1
+  STRICT_COUNT=$3
+}
+strict_hex() {
+  hex_path=$1
+  hex_bytes=$2
+  hex_text=$(/bin/xxd -p "$hex_path") || return 1
+  set -- $hex_text
+  joined_hex=
+  for hex_token in "$@"; do
+    case "$hex_token" in ''|*[!0-9a-f]*) return 1 ;; esac
+    joined_hex="${joined_hex}${hex_token}"
+  done
+  [ "${#joined_hex}" -eq $((2 * hex_bytes)) ] 2>/dev/null || return 1
+  STRICT_HEX=$joined_hex
+}
+strict_digest() {
+  digest_path=$1
+  digest_text=$(/bin/openssl dgst -sha256 -r "$digest_path") || return 1
+  set -- $digest_text
+  [ "$#" -eq 2 ] || return 1
+  [ "${#1}" -eq 64 ] || return 1
+  case "$1" in *[!0-9a-f]*) return 1 ;; esac
+  [ "$2" = "*$digest_path" ] || return 1
+  STRICT_DIGEST=$1
+}
+cleanup() { rm -f "$source_frame" "$role_all" "$role_frame"; }
+fail() { exit 70; }
 source_log=/host-gui-wayland-chromium.log
 source_cap=2048
 role_cap=4096
@@ -230,6 +269,7 @@ source_frame="$tmp.source"
 role_all="$tmp.role.all"
 role_frame="$tmp.role"
 rm -f "$source_frame" "$role_all" "$role_frame"
+trap cleanup EXIT
 : > "$source_frame"
 : > "$role_frame"
 
@@ -245,20 +285,18 @@ if [ -e "$source_log" ] || [ -L "$source_log" ]; then
     source_status=nonregular
   else
     source_status=regular
-    source_cursor=$(wc -c < "$source_log" 2>/dev/null)
-    source_cursor=${source_cursor//[[:space:]]/}
-    case "$source_cursor" in ''|*[!0-9]*) source_status=unreadable; source_cursor=0 ;; esac
-    if [ "$source_status" = regular ]; then
-      source_offset=0
-      if [ "$source_cursor" -gt "$source_cap" ]; then
-        source_offset=$((source_cursor - source_cap))
-      fi
-      /bin/dd if="$source_log" of="$source_frame" bs=1 skip="$source_offset" count="$source_cap" 2>/dev/null
-      source_bytes=$(wc -c < "$source_frame" 2>/dev/null)
-      source_bytes=${source_bytes//[[:space:]]/}
-      source_digest=$(sha256sum "$source_frame" 2>/dev/null | awk '{print $1}')
-      if [ "$source_cursor" -gt "$source_bytes" ]; then source_tail_truncated=1; fi
+    strict_count "$source_log" || fail
+    source_cursor=$STRICT_COUNT
+    source_offset=0
+    if [ "$source_cursor" -gt "$source_cap" ]; then
+      source_offset=$((source_cursor - source_cap))
     fi
+    /bin/dd if="$source_log" of="$source_frame" bs=1 skip="$source_offset" count="$source_cap" 2>/dev/null || fail
+    strict_count "$source_frame" || fail
+    source_bytes=$STRICT_COUNT
+    strict_digest "$source_frame" || fail
+    source_digest=$STRICT_DIGEST
+    if [ "$source_cursor" -gt "$source_bytes" ]; then source_tail_truncated=1; fi
   fi
 fi
 
@@ -266,12 +304,13 @@ KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe \
   --chromium-fast-census-only --fast-census-ms 500 --fast-census-interval-ms 100 \
   > "$role_all" 2>&1
 role_status=$?
-/bin/dd if="$role_all" of="$role_frame" bs=1024 count=4 2>/dev/null
-role_total=$(wc -c < "$role_all" 2>/dev/null)
-role_total=${role_total//[[:space:]]/}
-role_bytes=$(wc -c < "$role_frame" 2>/dev/null)
-role_bytes=${role_bytes//[[:space:]]/}
-role_digest=$(sha256sum "$role_frame" 2>/dev/null | awk '{print $1}')
+/bin/dd if="$role_all" of="$role_frame" bs=1024 count=4 2>/dev/null || fail
+strict_count "$role_all" || fail
+role_total=$STRICT_COUNT
+strict_count "$role_frame" || fail
+role_bytes=$STRICT_COUNT
+strict_digest "$role_frame" || fail
+role_digest=$STRICT_DIGEST
 role_tail_truncated=0
 if [ "$role_total" -gt "$role_bytes" ]; then role_tail_truncated=1; fi
 role_state=none_or_exited
@@ -280,8 +319,10 @@ if [ "$role_status" -ne 0 ]; then
 elif /bin/grep 'comm="chrome" role="' "$role_frame" >/dev/null 2>&1; then
   role_state=live
 fi
-source_hex=$(od -An -tx1 -v "$source_frame" 2>/dev/null | tr -d ' \n')
-role_hex=$(od -An -tx1 -v "$role_frame" 2>/dev/null | tr -d ' \n')
+strict_hex "$source_frame" "$source_bytes" || fail
+source_hex=$STRICT_HEX
+strict_hex "$role_frame" "$role_bytes" || fail
+role_hex=$STRICT_HEX
 printf 'YT_RENDER_START_RECEIPT_BEGIN nonce=%s probe=%s\n' "$nonce" "$probe"
 printf 'YT_RENDER_START_RECEIPT_META nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s source_status=%s source_cursor=%s source_bytes=%s source_digest=%s source_tail_truncated=%s role_command=fast-census-v1 role_status=%s role_total=%s role_bytes=%s role_digest=%s role_tail_truncated=%s role_state=%s\n' \
   "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" \
@@ -290,7 +331,6 @@ printf 'YT_RENDER_START_RECEIPT_META nonce=%s probe=%s launch_marker=%s launch_d
 printf 'YT_RENDER_START_RECEIPT_SOURCE_HEX %s\n' "$source_hex"
 printf 'YT_RENDER_START_RECEIPT_ROLE_HEX %s\n' "$role_hex"
 printf 'YT_RENDER_START_RECEIPT_END nonce=%s probe=%s\n' "$nonce" "$probe"
-rm -f "$source_frame" "$role_all" "$role_frame"
 exit 0
 }
 }
@@ -7894,6 +7934,28 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         if {![lindex $parsed 0]} { return INVALID }
         return [lindex [render_start_receipt_classify [lindex $parsed 2] {3 4} {104 5}] 0]
     }
+    proc static_render_helper_count_valid {text} {
+        set fields [regexp -all -inline {[^\s]+} $text]
+        if {[llength $fields] != 3} { return 0 }
+        foreach field $fields {
+            if {![regexp {^[0-9]+$} $field]} { return 0 }
+        }
+        return [expr {[lindex $fields 2] <= 2147483647}]
+    }
+    proc static_render_helper_hex_valid {text expected_bytes} {
+        set joined ""
+        foreach token [regexp -all -inline {[^\s]+} $text] {
+            if {![regexp {^[0-9a-f]+$} $token]} { return 0 }
+            append joined $token
+        }
+        return [expr {[string length $joined] == 2 * $expected_bytes}]
+    }
+    proc static_render_helper_digest_valid {text path} {
+        set fields [regexp -all -inline {[^\s]+} $text]
+        return [expr {[llength $fields] == 2 &&
+            [regexp {^[0-9a-f]{64}$} [lindex $fields 0]] &&
+            [lindex $fields 1] eq "*$path"}]
+    }
     set static_render_nonce $static_nonce
     set static_render_launch_marker YTSTATICLAUNCHC1
     set static_render_argv_marker YTSTATICARGVC2
@@ -8092,6 +8154,34 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     rename capture_completeness_diag_v3_run {}
     rename static_render_saved_v3_runner capture_completeness_diag_v3_run
     set static_render_js_guest_runtime UNEXECUTED
+    set static_render_helper [render_start_receipt_guest_helper_script]
+    set static_render_portability_counts [list \
+        [static_render_helper_count_valid "0 0 0\n"] \
+        [static_render_helper_count_valid "1 2 2147483647\n"] \
+        [static_render_helper_count_valid ""] \
+        [static_render_helper_count_valid "1 2 3 4"] \
+        [static_render_helper_count_valid "1 x 3"] \
+        [static_render_helper_count_valid "1 2 2147483648"]]
+    set static_render_portability_hex [list \
+        [static_render_helper_hex_valid "" 0] \
+        [static_render_helper_hex_valid "000a\n6162" 4] \
+        [static_render_helper_hex_valid "00zz" 2] \
+        [static_render_helper_hex_valid "00" 2]]
+    set static_render_digest [string repeat a 64]
+    set static_render_portability_digest [list \
+        [static_render_helper_digest_valid "$static_render_digest */tmp/receipt" /tmp/receipt] \
+        [static_render_helper_digest_valid "[string repeat A 64] */tmp/receipt" /tmp/receipt] \
+        [static_render_helper_digest_valid "$static_render_digest */tmp/wrong" /tmp/receipt] \
+        [static_render_helper_digest_valid "$static_render_digest */tmp/receipt extra" /tmp/receipt]]
+    set static_render_portability_failclosed [expr {
+        [string first {strict_count "$source_log" || fail} $static_render_helper] >= 0 &&
+        [string first {/bin/dd if="$source_log"} $static_render_helper] >= 0 &&
+        [string first {strict_hex "$source_frame" "$source_bytes" || fail} $static_render_helper] >= 0 &&
+        [string first {sha256sum "$} $static_render_helper] < 0 &&
+        [string first {| awk} $static_render_helper] < 0 &&
+        [string first {| tr} $static_render_helper] < 0 &&
+        [string first {od -An} $static_render_helper] < 0
+    }]
     if {![lindex $static_render_valid 0] ||
         $static_render_valid_class ne {INCOMPLETE live-roles-insufficient-flips} ||
         $static_render_source_classes ne {{INCOMPLETE source-missing} {INCOMPLETE source-unreadable} {INCOMPLETE source-nonregular}} ||
@@ -8106,13 +8196,17 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [lindex $static_render_oversize 0] ||
         [lindex $static_render_cursor_drift 0] ||
         $static_render_tail_outcomes ne {INVALID INVALID INVALID INVALID OBSERVED OBSERVED} ||
+        $static_render_portability_counts ne {1 1 0 0 0 0} ||
+        $static_render_portability_hex ne {1 1 0 0} ||
+        $static_render_portability_digest ne {1 0 0 0} ||
+        !$static_render_portability_failclosed ||
         !$static_render_sequence_good || $static_render_sequence_bad ||
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED missing_unreadable_nonregular=PASS role_exit_live_no_present=PASS tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_exit_live_no_present=PASS tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;

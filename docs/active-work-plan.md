@@ -440,6 +440,22 @@ output, and over-cap totals before any fresh A1 gate. No source, rootfs,
 QEMU-script, VM, media, FPS, semantic, audio, or fullscreen authority is
 created by this forensic.
 
+**Render-receipt helper portability repair — STATIC PASS / NO-BOOT
+(2026-07-11):** the staged helper now uses only guest-present `/bin/wc`,
+`/bin/dd`, `/bin/xxd -p`, and `/bin/openssl dgst -sha256 -r`, with globbing
+disabled and strict count/hex/digest grammars. Utility, `dd`, count, hex, or
+digest failure exits nonzero before receipt emission; it cannot falsely relabel
+a regular source `unreadable` or serialize malformed metadata. The existing
+2048/4096 caps, cursor/role-tail equations, nonce/digest bindings, render
+threshold, and diag0/V3 isolation are unchanged. Fresh host-only replay
+`/tmp/xv6-render-receipt-portability-static.VScGYs` (external log
+`/tmp/xv6-render-receipt-portability-static.VScGYs.log`) exited 0 with exact
+QEMU zero: empty/binary/multiline controls pass and malformed/extra/nondecimal
+/over-cap counts, malformed hex/length/path digests, and fail-closed `dd`
+paths reject. This is source/static-only; no guest, VM, FPS, HD720, semantic,
+audio, or fullscreen fact exists. An independent no-boot review remains
+required before any future gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
