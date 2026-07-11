@@ -33,8 +33,14 @@ fallback, llvmpipe, N=1 timing wins, and diagnostic-only output do not.
 - The conductor authorizes at most one VM worker. Before a VM authorization,
   require no active VM worker and an exact `/proc/*/exe` count of zero for
   `qemu-system-*`/`qemu-kvm`; repeat after owned process-group cleanup and
-  synchronous reap. Never edit QEMU/launcher scripts to enforce this. Guest
-  RAM is not capped; concurrent VMs are.
+  synchronous reap. For a performance-VM gate, add one conductor-only,
+  synchronous passive zero-QEMU interval of at most 60 s (exact all-arch
+  checks only at its beginning and end, no monitor loop), followed by one
+  immediate all-arch prelaunch check. This is a short stability screen, not a
+  lock: an external QEMU can still launch after the last check, so the
+  conductor must abort overlap and reap only its own group. Never edit
+  QEMU/launcher scripts to enforce this. Guest RAM is not capped; concurrent
+  VMs are.
 - Every authorization is named-branch specific: compare HEAD with
   `origin/<current-branch>`, never `@{upstream}`. A consumed gate needs a new
   gate. Preserve unrelated dirt and never touch an external QEMU.
@@ -193,6 +199,31 @@ retire, audio, fullscreen, or semantic measurement exists. This is one
 consumed INVALID attempt and N=0 valid samples, not N=1 performance credit;
 trial 2 was correctly not launched. A new fresh gate is required.
 
+**External-QEMU overlap forensic — INSUFFICIENT PROVENANCE / NO-BOOT
+(2026-07-11):** the three observed processes (PIDs 2014209, 2024690, and the
+overlap 2031440) are proved only to be non-owned RISC-V QEMU relative to the
+then-active xv6 owner. The plan retains `-machine virt -nographic -m 1024M`
+for the first two, but no retained parent PID, cwd, complete argv, or launch
+record attributes any of the three to a user, an agent, or another worktree.
+The retained A1 launch command and run log prove the owned process was only
+the x86 KVM+virgl launch (PID 2029259). At the exact trial commit `6a7c9ac`,
+the repository RISC-V launcher instead hard-coded `-m 256M`; guarded source
+search found neither `qemu-system-riscv64` nor the 1024M command shape. That
+excludes this committed launcher shape, not an unrecorded manual/other-tree
+launch; strongest supportable attribution is therefore **insufficient**, not
+user/external attribution.
+
+The historical driver had an x86-only `exact_qemu_lines` predicate, so it did
+**not** detect PID 2031440 itself. Its SIGTERM (code 143) was the conductor's
+correct overlap abort, and its owned-only cleanup/reap passed; it reached idle
+fbstat/probes but no Chromium launch, active HD720 source, yt-presentfps, or
+PERF-VIDEO capture. Thus no performance sample exists. The x86-only predicate
+is not singleton enforcement; per the user direction, no QEMU/launcher-script
+change is authorized or needed for the conductor-owned policy. A fresh exact
+all-arch audit is currently zero, and a synchronous passive 20 s zero-QEMU
+interval was zero at both ends. This validates only the screen, grants no VM
+authority, and cannot prevent a later external launch.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -281,8 +312,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    diag0/no-credit isolation all passed without a VM.
 6. **A1 windowed execution — CONSUMED/INVALID:** one fresh-gated launch was
    aborted when an external QEMU appeared; it yielded N=0 valid samples and
-   no second trial. Form a new gate before any retry; do not reuse this
-   session. Clear >=52 before pursuing about 55-60.
+   no second trial. Form a new no-boot gate before any retry; do not reuse this
+   session. Its conductor must pass the passive all-arch zero-QEMU interval
+   and immediate prelaunch check, while recognizing that either can race with
+   a later external launch. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
