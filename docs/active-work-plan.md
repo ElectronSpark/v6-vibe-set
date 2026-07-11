@@ -405,6 +405,41 @@ trial as INVALID/N=0. Do not retry or boot again under this authority; repair
 the helper's actual guest-tool contract and repeat independent no-boot review
 before requesting a new gate.
 
+**Render-receipt guest-tool compatibility forensic — PASS / NO-BOOT
+(2026-07-11):** named staged helper
+`/tmp/xv6-a1-windowed-ff-t1.6GdOdZ/ytrenderstartreceipt.sh` proves the fault is
+local to lines 41/50/61/63 (`wc -c`), 52/65 (`sha256sum | awk`), and 74/75
+(`od | tr`). Its named serial receipt records `awk: command not found`,
+`tr: command not found`, and `wc:cannotopen-c`; the latter was serialized as
+both role totals and bytes, while the source-log `wc` failure falsely demoted a
+regular source to `unreadable`. The host parser therefore correctly rejected
+the malformed meta, and the run's real flip increase is still no-credit.
+
+Both the current base and retained trial scratch rootfs have `/bin/bash`,
+`/bin/wc`, `/bin/dd`, `/bin/xxd`, and `/bin/openssl`, and lack `awk`, `tr`,
+`od`, `sha256sum`, and `stat`. The current `wc` source has no option parser:
+stdin invocation emits exactly `lines words bytes` (with only trailing
+whitespace), so a pure-shell repair can disable globbing, split it, require
+exactly three decimal fields, retain field three only when `<=2147483647`, and
+reject empty, extra, nondecimal, negative, or over-cap output. `/bin/xxd -p`
+can be split and concatenated only after every token is lowercase hex and its
+final length is exactly `2*bytes`; this accepts empty frames and rejects bad
+hex or length drift. `/bin/openssl dgst -sha256 -r` emits lowercase digest plus
+`*path`; require exactly those two fields, a 64-hex digest, and the expected
+temporary path. A host-only contract reducer passed empty, binary/multiline,
+malformed, path-drift, and cap cases; QEMU was zero before and after.
+
+The minimal source repair is restricted to this helper: use those three
+available commands plus shell builtins, preserve the existing 2048/4096 frame
+caps and source/role total-tail equations, and check every `dd`, count, hex,
+and digest operation. An internal helper/tool/format failure must exit nonzero
+so the existing command-frame path becomes `INVALID`; it must not claim an
+actual source is `unreadable` or emit a malformed receipt. Add static and
+independent no-boot adversaries for empty frames, malformed count/hex/digest
+output, and over-cap totals before any fresh A1 gate. No source, rootfs,
+QEMU-script, VM, media, FPS, semantic, audio, or fullscreen authority is
+created by this forensic.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
