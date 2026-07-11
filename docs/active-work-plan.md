@@ -145,6 +145,23 @@ no-VM, noncredit evidence. The formerly observed external QEMU is absent in
 this audit, but every future VM gate still requires a fresh exact zero-QEMU
 preflight; any external QEMU blocks authorization and is never touched.
 
+**A1 windowed N>=2 measurement-session gate — FORMED (2026-07-11):** initial
+no-boot audit at `d621eac33ebb6c9d66608e04fbf05b2cbfd5cea8` found exact equality
+with `origin/codex/host-linux-abi-shell-port-ff`, no staged source state, only
+the unrelated KDE-smoke dirt, no active VM worker, exact QEMU count zero,
+read/write `/dev/kvm`, WSL `/dev/dxg` + D3D12/GL dependencies, both X11 and
+Wayland display sockets, and all three overlay/base image assets at the
+accepted byte/hash receipt. Subject to a repeat post-push audit, token
+`A1-WINDOWED-N2-d621eac-20260711-Q0` permits exactly two sequential, separately
+valid **windowed** real-KVM+virgl trials only: MP=1, audio-disable=1,
+media=1, forced-HD720=1, EGL=0, capturediag=0. Each trial needs its own fresh
+run directory and exact zero-QEMU check immediately before launch; its worker
+must own/synchronously reap its QEMU group, verify exact zero QEMU before the
+next trial, and abort rather than overlap. An external nonzero QEMU is a
+nonconsuming gate failure requiring fresh authority; any launched trial is
+consumed even if INVALID. This grants no fullscreen, audio-on, default, or
+semantic credit; only valid `yt-presentfps` + `PERF-VIDEO` samples count.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -231,9 +248,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
 5. **Independent V3 inner-tail adversarial review — PASS:** generic opt-in
    boundary, real-V3 local-PTY fixture, zero-slack single-reserve policy, and
    diag0/no-credit isolation all passed without a VM.
-6. **NEXT — A1 windowed:** only after a new gate and fresh exact zero-QEMU
-   preflight, run N>=2 forced-hd720 trials; clear >=52 before pursuing about
-   55-60. No other VM worker may be active.
+6. **A1 windowed session gate — formed:** post-push branch/origin, worker,
+   exact-QEMU, KVM/D3D12/virgl/display, asset, and staged-state re-audit must
+   pass before its one-use two-trial token is issued. No other VM worker may
+   be active; clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
