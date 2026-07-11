@@ -3,8 +3,9 @@
 Last updated: 2026-07-10. Sole live plan; history is in git and the archived
 full-history plan, with runtime proofs under `build-x86_64/`.
 
-Branch `codex/host-linux-abi-shell-port-ff`: HEAD and same-name origin are
-`da4a4265d2c4b7916c91dc455078562c0aaf6438`, including the passed wide-integer correction. Preserve unrelated KDE harness work.
+Before checkpointing or dispatch, verify live HEAD against its same-name
+origin. This plan records the first authorized boot after fullscreen-plan
+checkpoint `fdb628e`. Preserve unrelated KDE harness work.
 
 ## Objective and operating state
 
@@ -83,22 +84,22 @@ Verified harness closures, in order:
    cases, all arms, and JS/static/diff checks. Placement, budgets, framing,
    and FPS logic are unchanged.
 
-Newest runtime artifact:
+Newest runtime artifact and stop verdict:
 
-- `chromium-youtube-m7/20260710T211500Z-a1-hd720-fencefix-t1-mp1-audio1`
-  is INVALID/NULL. Real KVM+virgl, 3/3 staged media assets, GPU role, and
-  rendered Chromium passed, then the correctly placed initial media deadline
-  gate returned `remaining_ms=-1 required115000`. Capture was never sent, so
-  there is no source, FPS, or PERF-VIDEO evidence and no T2 was spent.
-- Root cause is the Tcl 32-bit type gate, not fence placement or capture. The
-  artifact did not log a phase-start value because the gate precedes that log;
-  epoch values used in the reducer are synthetic and must not be attributed to
-  the artifact.
-
-Next: after a fresh zero-QEMU/no-active-worker gate, one sole VM worker runs
-serial real-KVM+virgl windowed trials for at least two valid samples. One retry
-may replace a harness-invalid run; invalids remain NULL. Hold A2 VM work until
-the A1 windowed N>=2 gate and exact QEMU zero.
+- `build-x86_64/chromium-youtube-m7/20260710T-windowed-watchpage-n2-fdb-t1/`
+  is N=0 INVALID/NULL: the sole authorized boot used real KVM+virgl and passed
+  the exact treatment arm plus 3/3 staged media assets, but panicked during
+  probe 1 before media, GPU-role, yt-presentfps, or PERF-VIDEO evidence. It
+  proves no FPS and makes no fullscreen claim; attempt 2 was correctly stopped.
+- The panic was in `kwin_wayland` thread 62: `spin_lock` reentry on `kqueue`.
+  The observed source chain is kqueue rescan/poll -> syncobj fence signal
+  callback -> knote notify -> reacquire of the same kqueue lock. Treat this as
+  a focused kernel event-wait/syncobj callback-locking defect, not frame-supply
+  performance evidence.
+- Owned cleanup completed with exact QEMU count zero; scratch was retained.
+  Windowed N>=2, fullscreen, and A2 remain open. **BOOT PROHIBITED** pending
+  independent NO-BOOT forensics, a focused kernel fix/model, and adversarial
+  review of that fix.
 
 ## Fullscreen acceptance mode
 
@@ -186,10 +187,12 @@ user-VM cpumask completeness.
 
 ## Immediate queue
 
-1. Checkpoint this plan on the pre-approved branch lineage.
-2. Sole-VM A1 serial windowed N>=2 forced-hd720 measurement; invalids are NULL.
+1. Independent NO-BOOT panic forensics; design, implement, model-check, and
+   adversarially review the narrow kqueue/syncobj callback-locking fix.
+2. Only after review PASS, fresh no-worker/exact-zero gate, and authorization:
+   sole-VM A1 serial windowed N>=2 forced-hd720 measurement; invalids are NULL.
 3. Add/review deterministic fullscreen evidence; then sole-VM fullscreen N>=2.
-4. Sole-VM A2 Pulse localization and reviewed stream fix.
+4. Sole-VM A2 Pulse localization and reviewed stream fix, still held behind A1.
 5. Validate audio-on windowed and fullscreen parity; close each mode's
    fullscreen-scaling/present-retire residual before the overall goal.
 6. Run kickoff+tooltip promotion battery, then the both-mode video-pair battery
