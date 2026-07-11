@@ -365,6 +365,21 @@ fullscreen fact exists. This gate is a no-boot rejection, not permission to
 repeat it; a fresh authorization is required after the explicit branch lineage
 is reconciled.
 
+**Explicit branch-lineage reconciliation — PASS / NO-BOOT (2026-07-11):** the
+historical gate mismatch was configuration, not divergence: local
+`codex/host-linux-abi-shell-port-ff` tracks
+`refs/heads/codex/host-linux-abi-shell-port`, the truncated remote name. Thus
+the earlier default push correctly refused the mismatched upstream and its
+then-used fallback updated the truncated ref, not the required `-ff` ref.
+Fresh advertised-ref, bidirectional-ancestry, and tree checks found both local
+and explicit `origin/codex/host-linux-abi-shell-port-ff` at
+`feccc0f2b2457996a6da745c8c3014a9df6a7f9e`; the two commits after `29d050f`
+are reviewed plan-only checkpoints (`fb6d282`, `feccc0f`), and the sole dirt is
+the preserved KDE-smoke file. This checkpoint is pushed only by the exact
+`HEAD:refs/heads/codex/host-linux-abi-shell-port-ff` refspec and re-read after
+push. It removes the stale lineage block only: the prior gate remains rejected
+and still grants no VM, retry, FPS, semantic, audio, or fullscreen authority.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -458,7 +473,8 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    tail-integrity repair and its independent adversarial review now pass
    host-only; this authorizes only forming a fresh serialized gate, never
    reusing either consumed session. The newly formed gate then rejected the
-   local/origin branch drift before QEMU, so it grants no retry. Every future
+   now-reconciled local/origin branch drift before QEMU, so it grants no retry.
+   Every future
    conductor must pass the passive all-arch zero-QEMU interval and immediate
    prelaunch check. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
