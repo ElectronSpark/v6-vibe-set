@@ -1569,6 +1569,38 @@ QEMU inventories before and after were total/informational-RISC-V/conflicting
 This PASS clears only formation of a fresh serialized gate; it is no VM,
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
 
+**A1 C7-authorized windowed sole trial — CONSUMED / INVALID / N=0
+(2026-07-12):** conductor passive screen
+`/tmp/xv6-conductor-a1-c7-passive-20260712.log` passed at 14:07:55/14:08:55;
+the immediate one-run prelaunch check found immutable
+`6b4b9d285ca2e50224952cccf58e67c060552a67` equal to explicit origin, KVM
+read/write, zero total/conflicting QEMU, and only unrelated KDE-smoke dirt.
+The one real KVM+virgl/OpenGL-submit **windowed** treatment was
+`/tmp/xv6-a1-c7-windowed-20260712T1410Z` (external log
+`/tmp/xv6-a1-c7-windowed-20260712T1410Z.log`): MP=1, audio-disable=1,
+media=1, forced-HD720=1, EGL=0, capturediag=0, GTK `full-screen=off` and
+`zoom-to-fit=off`. The direct expect owner PID 2597026 owned x86 QEMU PID
+2597195; final exact all-architecture inventory was zero.
+
+Virgl/OpenGL fbstat transport was valid, with idle 3/4 flips/presents and
+five probes 16/17, 20/21, 21/22, 23/24, 24/25. Present advanced, but the
+largest flip delta was only 21, never the retained strict `> idle+100` gate.
+Every C6 receipt was nonce/frame-bound and `role_state=live`; its full role
+file was 65663 then 69617 bytes while the unchanged C6 carried its truthful
+4096-byte prefix. The regular source tail had no media rows, so navigation,
+player readiness, and progress are all unavailable. Each C7 sidecar artifact
+is honestly `INCOMPLETE census-frame-count-3 no_subtype_claim=1`; it supplies
+no full digest or subtype presence/absence fact and did not affect C6 or the
+threshold. The driver ended code 8,
+`chromium-render-start-missing` with all five receipts
+`live-roles-insufficient-flips`; owned cleanup/reap passed.
+
+There is no active-HD720 proof, `yt-presentfps`, `PERF-VIDEO`, FPS, drop, VPQ,
+retire, audio, fullscreen, or local-baseline fact. This consumed the sole
+fresh gate as INVALID/N=0, not N=1 credit; no retry is authorized. Next is a
+no-boot forensic of the C7 three-candidate live transport observation and the
+pre-threshold no-presentation plateau, before any new gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1690,9 +1722,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    digest/vector claim. A distinct C7-only, cap-preserving full-census
    diagnostic design is now reviewed; it leaves the 4096-byte admitting C6
    receipt unchanged. Its narrow `c7_marker` META-tokenizer correction,
-   strengthened host-only static matrix, and independent C7 review now pass;
-   this clears only formation of a fresh serialized gate. Do not lower the
-   threshold. Clear >=52 before pursuing about 55-60.
+   strengthened host-only static matrix, and independent C7 review passed;
+   their sole fresh windowed gate is now consumed INVALID/N=0 at the unchanged
+   live-role/no-presentation threshold, with C7 itself diagnostic-INCOMPLETE.
+   No retry is authorized. Do not lower the threshold. Clear >=52 before
+   pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
