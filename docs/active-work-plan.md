@@ -2480,3 +2480,113 @@ panic/timed-lock cases plus shared-path source locks; x86 kernel and
 `_consolerecord` user builds only; then independent adversarial review. This
 is design evidence only and supplies no A1, HD720, fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, FPS, or performance credit.
+
+**C1 record-atomic/V2 adversarial design review — REVISE / NO-BOOT
+(2026-07-12):** this supersedes the preceding provisional design PASS; it is
+not an implementation result. Exact post-review QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`. No VM, build, test, rootfs,
+source, launcher, default, or KDE action occurred; the only unrelated dirt is
+still `scripts/gpu/kde-plasma-desktop-smoke.expect`.
+
+The old `chunk_hex_max=384` is physically impossible under its own bounded
+record rule. With `tag<=16`, `nonce<=32`, `seq=697`, and
+`hex_offset=262072`, a CHUNK content row is 518 bytes; its final LF is 519
+input bytes and normal CRLF emission is 520 physical bytes. V2 must instead
+cap tag at 16 ASCII token bytes, nonce at 32, and use exact rows carrying both
+tag and nonce on *every* row, including CHUNK. Its fixed maximum CHUNK form
+is `YT_FBSTAT_TRANSPORT_V2_CHUNK tag=<16> nonce=<32> seq=697
+hex_offset=262072 hex_bytes=376 data=<376>\n`: 510 content + LF = 511 input,
+then 512 physical CRLF bytes. Thus `chunk_hex_max=376`, `total_hex<=262144`,
+and `total_chunks<=698`; the final maximum-cap chunk is 72 hex bytes. The
+shared v1 request is exactly four naturally aligned fixed-width fields
+`uint32 version`, `uint32 flags`, `uint64 data_ptr`, `uint32 data_len`,
+`uint32 reserved` (24 bytes; offsets 0/4/8/16/20; compile-time size/offset
+assertions). A single shared UAPI `_IOW` constant with fixed magic/number and
+that exact size is required; all other command encodings, versions, flags,
+reserved bits, null pointers, and lengths outside 1..511 fail before output.
+The copied payload must contain exactly one terminal LF and no other LF, CR,
+or NUL. Therefore `data_len+1<=512` is the physical invariant, not an
+ambiguous post-hoc estimate.
+
+`sys_vfs_ioctl` deliberately passes unknown ioctl arguments as raw user
+pointers, and `vfs_ioctl` dispatches `/dev/console` through
+`console_cdev.dev.ops.ioctl`, not its cdev file operation. The x86 handler
+must consequently use `either_copyin` for the 24-byte request and then a
+fixed 511-byte kernel buffer *before* taking any wire lock; it must never
+dereference a post-lock user pointer. Route both console ioctl entry points
+through one common handler, preserve ordinary tty commands exactly, and make
+the record command root-only (`current_euid()==0`, otherwise `-EPERM`). The
+current device ioctl has no `vfs_file`, hence cannot honestly enforce an
+open-mode check without wider VFS ABI work: `_consolerecord` opens
+`/dev/console` write-only, while a root read-only descriptor is intentionally
+not an extra rejection condition. This decision, invalid-pointer/copy-fault
+`-EFAULT`, malformed `-EINVAL`, unavailable/panic `-EAGAIN`, and timed
+contention `-ETIMEDOUT` must be tested as zero-byte *pre-emission* failures.
+`_consolerecord` takes exactly one argv record *without* its final LF, rejects
+empty, >510-byte, CR, or LF input, appends the LF in its private 511-byte
+buffer, performs the ioctl, and never writes stdout/stderr or falls back to
+`write(2)`. The generated Bash helper must construct each row with a silent
+assignment/`printf -v` and invoke that binary; direct `YT_FBSTAT_TRANSPORT*`
+`printf`/`echo` to the console is forbidden. The existing fbstat capture and
+retained input remain fresh regular, nonsymlink files and retain their own
+file-type/short-read checks.
+
+The wire lock design also needs correction. On x86 only, introduce a
+sleepable `console_wire` mutex with a 50-ms `mutex_lock_timed` only for the
+record ioctl. `consolewrite` locks it per existing <=64-byte postprocessed
+batch, consoled per existing <=32-byte step, and tty drain per <=64-byte
+batch; they hold no `pr`, async-ring, TTY, or pipe spinlock. The only normal
+order is `console_wire -> uart_tx_lock` (each existing `uartputc_sync` still
+locks one character); do not bulk-hold `uart_tx_lock` for a 44-ms record and
+do not claim `pr.lock -> console_wire`. Normal process/kthread `consputs`
+must use this same emitter. Early boot, panic, interrupt, no-current-thread,
+or spin-held emission explicitly bypasses it. Every such bypass increments an
+x86 emergency generation; the ioctl samples it while locked and returns
+no-credit failure if it changed. A concurrent emergency/panic can already
+have dirtied a row and cannot be rolled back, so it is never described as a
+zero-byte failure; the helper must stop and return nonzero, leaving the host
+with an incomplete/corrupt frame to reject. No locking/error path may call
+`printf`. All new code and changed normal x86 emitters must be `__x86_64__`
+gated; RISC-V retains its old ioctl and output behaviour byte-for-byte.
+
+V2 must use exact BEGIN/META/CHUNK/END schemas with `version=2`; BEGIN,
+META, and END repeat cap, total-hex, total-chunks, and SHA-256 digest, while
+META additionally binds status/raw/payload/cursor/truncation/chunk maximum.
+CHUNK binds tag, nonce, contiguous zero-based sequence, exact
+`hex_offset=seq*376`, exact nonfinal/final length, and lower-hex data. The
+host accepts only one complete ordered envelope and treats **any** raw record
+starting `YT_FBSTAT_TRANSPORT_` (unknown version, V1, foreign, malformed, or
+extra included) as a candidate that rejects. It may retain bounded count,
+byte count, and binary-safe first/last gap digests only for wholly
+noncandidate records outside intact candidates; no global CR normalization,
+fragment splicing, unbounded diagnostic text, or candidate after END is
+allowed. It must cap the scanned raw serial at the existing 2-MiB ceiling,
+record candidate indexes, and require the unique outer `RC:0` then `FENCE`.
+
+`131072` decoded bytes now mean 697 full 512-byte records plus one 208-byte
+final CHUNK and 740 bytes of maximal BEGIN/META/END rows: 357812 physical
+bytes before the marker-dependent outer rows, or 31.06 seconds at 115200 8N1
+before capture, hashing, 698 ioctls, scheduling, and up to 50-ms contention
+waits. The existing 35-second
+`fb_sample` command limit is therefore unsound. Before implementation, pin a
+single calculated C1 timeout (including successful-lock and helper reserve,
+not an arbitrary retry) and make its algebra a host static assertion; the
+driver must fail closed if that budget cannot fit its enclosing prelaunch
+deadline.
+
+Implementation is now sliced and blocked on these no-boot tests: (1) replace
+the current V1 parser/helper/static frame generator with V2 vectors covering
+empty and binary payloads, cap/max-row arithmetic, LF/CRLF/CRCRLF,
+known prompt preamble, valid bounded noisy gaps, actual mid-row weave, unknown
+or V1 candidates, every binding/order/count/offset/hex/digest/cursor failure,
+and bounded gap diagnostics; (2) add a host fake-UART kernel unit plus source
+locks proving all three normal x86 producers share the mutex, record
+contiguity, no malformed/copy/privilege/timed/panic-pre bytes, and emergency
+generation no-credit; (3) add silent host-glibc `_consolerecord` under the
+existing automatic `user/programs/*` discovery/stage path (not the unused
+user CMake path), with no stdout/stderr or fallback write, then statically
+cover its input-line edges and the capture regular/symlink/FIFO/short-read
+edges; (4) x86 kernel and helper builds only, followed by a fresh independent
+adversarial review. No kernel boot or performance attempt is authorized until
+those slices pass. This remains A1 N=0 and supplies no video, fullscreen,
+audio, or responsiveness credit.
