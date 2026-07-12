@@ -1186,6 +1186,44 @@ exact QEMU total/conflicting/informational-RISC-V was `0/0/0`; no second VM or
 foreign process was touched. Next: narrow NO-BOOT CRCRLF-normalization and
 actual-wire static review before any fresh gate; no performance credit exists.
 
+**A1 fbstat CRCRLF transport-wire forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** named capture
+`/tmp/xv6-a1-fbstat-transport-windowed.xWxE8v/fbstat-idle-attempt1.txt`
+is 113815 bytes, SHA-256
+`ee62fd7a3b4b09f31bb9b976ef4d55051b35930c191fb114be073f85f1985e90`.
+Its BEGIN, META, HEX, and END rows each end `0d 0d 0a`; the generated guest
+helper itself emits LF only. The installed Expect/Tcl evaluator confirms the
+current sequential map `{\r\n -> \n, \r -> \n}` produces LF `0a`, CRLF
+`0a`, but CRCRLF `0a0a`; it is therefore the sole cause of this capture's
+four otherwise ordered rows acquiring blank logical rows and failing
+`transport-frame-noncontiguous`. Independently extracting the named HEX row
+gave exactly 112844 characters and decoded SHA-256
+`8f40d235a58afdc5dbbbe67cd77416dc87698dba1a12236924be33a7fc44900a`,
+which equals META; this localizes the observed rejection without treating the
+frame as accepted evidence. A global strict-CR rewrite is wrong: unrelated
+serial control noise includes `ESC[?2004l\r[`, so it would reject a valid
+outer command stream.
+
+The minimal future repair is record-local, not a global `string map`: split
+raw serial only on LF and retain every raw record index; for a record starting
+with a transport label, accept only terminal LF, CRLF, or CRCRLF (strip zero,
+one, or two trailing CRs respectively) and reject any remaining/mid-row CR or
+three-or-more trailing CRs as `transport-wire-cr`. Keep every intervening raw
+record when proving BEGIN/META/HEX/END adjacency, and count all candidate
+transport records, so a blank/interleave still breaks contiguity and a
+duplicate still exceeds four; unrelated non-transport serial noise remains
+byte-preserved. Required actual-wire static matrix: LF, CRLF, and CRCRLF for
+all transport and outer C1 rows must decode to the identical payload/digest;
+CRLFCRLF between protocol rows must remain an empty record and reject
+noncontiguous; a lone/mid-row CR (and a three-CR suffix) must reject
+`transport-wire-cr`; injected blank/interleave and duplicate frames must keep
+their current noncontiguous/count rejection; tag, nonce, count, cap, length,
+hex, digest, and truncation negatives must remain strict. This is forensic
+specification only: no source/static replay/VM authorization, no performance,
+HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit. Exact
+QEMU inventories before/after this review were
+total/conflicting/informational-RISC-V `0/0/0`; no process was touched.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1298,7 +1336,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    consumed INVALID because the complete probe1 fbstat frame had a
    console-interleaved KMS provenance token. The fail-closed transport repair
    and independent review now pass; they permit forming, never reusing, a
-   fresh serialized A1 gate. Clear >=52 before pursuing about 55-60.
+   fresh serialized A1 gate. That gate's sole run is consumed INVALID at the
+   fbstat transport gate: CRCRLF expands to blank rows under the current
+   global map. A scoped normalization repair, the actual-wire static matrix,
+   and an independent no-boot review are required before another gate may be
+   formed. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
