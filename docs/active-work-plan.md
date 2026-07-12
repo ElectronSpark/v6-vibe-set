@@ -2086,3 +2086,46 @@ total/informational-RISC-V/conflicting `0/0/0`. The next authority must first
 repair the C8 generator's Tcl bracing while retaining the C5/C7 validators
 byte-for-byte, then perform one new canonical static suite; no C8 credit or
 A1 interpretation is changed.
+
+**C8 Tcl/Bash decimal-template forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** independent source/log review after `afc3e4a` pins the load
+failure to line 4519, not to the anchored Bash regexp. The generated helper
+is a Tcl braced template beginning at line 4488; its new Bash
+`if [ "${YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY:-0}" = 1 ]; then` was closed
+with a raw `}` rather than Bash `fi`. Its `${...}` pair is Tcl-brace-balanced,
+but the standalone `}` closes the enclosing Tcl template early; following
+Bash text then yields `extra characters after close-brace`. Had it loaded,
+the same line would also be invalid Bash. In that braced template, literal
+`[[`, `]]`, `$1`, `(`, `)`, `|`, and `[0-9]` need no Tcl escaping; the exact
+literal `[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]` is safe and preserves the required
+anchored decimal grammar. A narrowly retained inline branch would need only
+`fi`, never `}`, but it is not the safest final design.
+
+Remove the production `YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY` environment
+hook altogether: the C8 contract permits only the already reviewed source-log
+and temp-prefix test overrides, and a runtime mode that emits no four-row C8
+frame is unnecessary even though it would fail closed. The safest static-only
+route is one braced Tcl producer for the literal Bash function, inserted via
+an `@VALID_DECIMAL@` `string map` token into the real helper and also written
+to a dedicated host-static checker ending in braced Tcl text
+`valid_decimal "$1"`. Run that checker as the direct Tcl list
+`/bin/bash <checker> <value>` (no shell and no environment assignment), and
+source-lock the exact shared literal in the emitted real helper. Braced Tcl
+literals preserve checker `$1` and regex brackets; do not put either in a
+double-quoted Tcl string, where `$1` substitutes and `[...]` command-
+substitutes. The present `list` plus `exec {*}$command 2>@1` runner otherwise
+passes values as one argument without re-interpolation, so its accept/reject
+matrix is sound once detached from the production hook.
+
+The replacement checker must accept exactly `0`, each `1..9`, and representative
+`10+` values, and reject empty, `+1`, `-1`, leading/trailing/internal spaces,
+`1x`/`10x` (and decimal punctuation), and `00`/`01`; retain the actual helper
+empty/multiline/binary/over-cap, exact no-player/prefix, cleanup, wire, and
+no-credit assertions. `git diff --check` is clean. The C7 generated-helper
+range is byte-identical to committed `6d2daca` (SHA-256
+`3cced3bfd6a86ed7312305ceff83c96015b893e52414cfcc888626f0bf79391b`), and
+its C7 `valid_decimal` remains the old glob; only C8 carries the attempted
+regex/test route. No other source or KDE edit, test/replay, VM, build, rootfs,
+serial, launcher, or process action occurred. Exact start inventory was
+total/informational-RISC-V/conflicting `0/0/0`. This review grants no C8, A1,
+HD720, FPS, audio, fullscreen, or performance credit.
