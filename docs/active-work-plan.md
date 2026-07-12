@@ -632,6 +632,27 @@ does not reopen or clear VM authority. A future review needs an authorized
 source checkpoint that supplies the missing built-in actual-helper coverage;
 do not create another external harness.
 
+**A1 role-state actual-helper static coverage — PASS / NO-BOOT
+(2026-07-12):** the production generated Bash now owns its bounded
+`classify_role_state` decision, and the canonical `YT_STATIC_CHECK=1` reducer
+executes that generated helper's static-only role route rather than a Tcl
+mirror or external extractor. The source-defined `role_synthetic` and all
+five role fixtures are newline-terminated with raw quotes: PASS-only,
+semantic fast Chromium, unrelated broad `comm`/`role`, spoof, malformed, and
+nonzero census produce exactly `none_or_exited`, `live`, `none_or_exited`,
+`none_or_exited`, `none_or_exited`, and `command_failed`. Existing parser
+binding/reject, tail/cap, 103/4 and 104/4 reject versus 104/5 observe, and
+diag0/V3-isolation checks remain in the same canonical reducer.
+
+Fresh final canonical replay
+`/tmp/xv6-role-state-canonical-static-final.20260712.log` exited 0 with
+output directory `/tmp/xv6-role-state-canonical-static-final.20260712`; its
+static PASS row names the actual-Bash newline role matrix. Exact all-arch QEMU
+counts were 0 at start and 1 at end; no process was touched and no VM, build,
+rootfs, serial, or launcher action occurred. This closes only the built-in
+static coverage hole; independent adversarial review remains required and VM
+authority stays closed.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

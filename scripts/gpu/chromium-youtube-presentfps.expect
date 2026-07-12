@@ -259,6 +259,28 @@ strict_digest() {
   [ "$2" = "*$digest_path" ] || return 1
   STRICT_DIGEST=$1
 }
+classify_role_state() {
+  role_state=none_or_exited
+  if [ "$role_status" -ne 0 ]; then
+    role_state=command_failed
+  else
+    while IFS= read -r role_line; do
+      if [[ "$role_line" =~ ^kde_chromium_process_evidence[[:space:]]+fast[[:space:]].*comm=\"chrome\"[[:space:]]+role=\"[A-Za-z0-9_-]+\"[[:space:]].*cmd=\" ]]; then
+        role_state=live
+        break
+      fi
+    done < "$role_frame"
+  fi
+}
+if [ "${YT_RENDER_START_ROLE_TEST_ONLY:-0}" = 1 ]; then
+  role_status=${YT_RENDER_START_ROLE_TEST_STATUS-}
+  role_frame=${YT_RENDER_START_ROLE_TEST_FRAME-}
+  case "$role_status" in ''|*[!0-9]*) exit 64 ;; esac
+  [ -n "$role_frame" ] && [ -r "$role_frame" ] && [ -f "$role_frame" ] || exit 64
+  classify_role_state
+  printf 'YT_RENDER_START_ROLE_TEST_STATE %s\n' "$role_state"
+  exit 0
+fi
 cleanup() { rm -f "$source_frame" "$role_all" "$role_frame"; }
 fail() { exit 70; }
 source_log=/host-gui-wayland-chromium.log
@@ -313,17 +335,7 @@ strict_digest "$role_frame" || fail
 role_digest=$STRICT_DIGEST
 role_tail_truncated=0
 if [ "$role_total" -gt "$role_bytes" ]; then role_tail_truncated=1; fi
-role_state=none_or_exited
-if [ "$role_status" -ne 0 ]; then
-  role_state=command_failed
-else
-  while IFS= read -r role_line; do
-    if [[ "$role_line" =~ ^kde_chromium_process_evidence[[:space:]]+fast[[:space:]].*comm=\"chrome\"[[:space:]]+role=\"[A-Za-z0-9_-]+\"[[:space:]].*cmd=\" ]]; then
-      role_state=live
-      break
-    fi
-  done < "$role_frame"
-fi
+classify_role_state
 strict_hex "$source_frame" "$source_bytes" || fail
 source_hex=$STRICT_HEX
 strict_hex "$role_frame" "$role_bytes" || fail
@@ -7899,7 +7911,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             fail_preflight "static-check-gpu-init-marker signature=$signature"
         }
     }
-    set role_synthetic {kde_chromium_process_evidence fast phase=fast-001 pid=412 ppid=300 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process --use-gl=angle" role_source="type_arg" type_arg="gpu-process" argv0="exe" use_gl="angle"}
+    set role_synthetic {kde_chromium_process_evidence fast phase=fast-001 pid=412 ppid=300 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process --use-gl=angle" role_source="type_arg" type_arg="gpu-process" argv0="exe" use_gl="angle"
+}
     if {![chromium_gpu_role_marker $role_synthetic]} {
         fail_preflight "static-check-semantic-gpu-role"
     }
@@ -7935,18 +7948,30 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         }
         return "YT_RENDER_START_RECEIPT_BEGIN nonce=$nonce probe=$probe\nYT_RENDER_START_RECEIPT_META nonce=$nonce probe=$probe launch_marker=$launch_marker launch_digest=$launch_digest argv_marker=$argv_marker argv_digest=$argv_digest source_status=$source_status source_cursor=$source_cursor source_bytes=$source_bytes source_digest=$source_digest source_tail_truncated=$source_tail_truncated role_command=fast-census-v1 role_status=$role_status role_total=$role_total role_bytes=$role_bytes role_digest=$role_digest role_tail_truncated=$role_tail_truncated role_state=$role_state\nYT_RENDER_START_RECEIPT_SOURCE_HEX [binary encode hex $source_frame]\nYT_RENDER_START_RECEIPT_ROLE_HEX [binary encode hex $role_frame]\nYT_RENDER_START_RECEIPT_END nonce=$nonce probe=$probe\n${command_marker}:RC:0\n${command_marker}:FENCE\n"
     }
-    # The guest helper must not infer a live Chromium role from the probe's
-    # PASS-only baseline.  Mirror its line-bounded shell predicate here and
-    # source-lock the generated helper below; the parser's looser check then
-    # turns any asserted-live mismatch into a fail-closed receipt rejection.
-    proc static_render_helper_role_state {role_status role_frame} {
-        if {$role_status != 0} { return command_failed }
-        foreach role_line [split $role_frame "\n"] {
-            if {[regexp {^kde_chromium_process_evidence[ \t]+fast[ \t]+.*comm="chrome"[ \t]+role="[A-Za-z0-9_-]+"[ \t]+.*cmd="} $role_line]} {
-                return live
-            }
+    # Execute the generated Bash helper's own role decision, rather than a
+    # Tcl mirror.  The test-only route ends before the normal guest paths and
+    # accepts only a regular newline-framed role fixture plus a decimal status.
+    proc static_render_generated_helper_role_state {helper nonce role_status role_frame tag} {
+        global outdir
+        set role_path "$outdir/static-render-role-state-$tag-[pid].txt"
+        wf $role_path $role_frame
+        set launch_digest [string repeat a 64]
+        set argv_digest [string repeat b 64]
+        set output {}
+        set command [list /usr/bin/env YT_RENDER_START_ROLE_TEST_ONLY=1 \
+            "YT_RENDER_START_ROLE_TEST_STATUS=$role_status" \
+            "YT_RENDER_START_ROLE_TEST_FRAME=$role_path" /bin/bash $helper \
+            $nonce 1 YTSTATICLAUNCHC1 $launch_digest YTSTATICARGVC2 $argv_digest]
+        if {[catch {exec {*}$command} output]} {
+            catch {file delete -force $role_path}
+            error "static generated helper role-state execution failed tag=$tag error=$output"
         }
-        return none_or_exited
+        catch {file delete -force $role_path}
+        if {![regexp {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed)$} \
+                $output -> state]} {
+            error "static generated helper role-state output invalid tag=$tag output=$output"
+        }
+        return $state
     }
     proc static_render_receipt_outcome {parsed} {
         if {![lindex $parsed 0]} { return INVALID }
@@ -7994,20 +8019,36 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_argv_digest $static_render_command_marker]
     set static_render_valid_class [expr {[lindex $static_render_valid 0] ? \
         [render_start_receipt_classify [lindex $static_render_valid 2] {3 4} {20 21}] : {INVALID parse}}]
-    set static_render_baseline_role {kde_app_launch_probe chromium_fast_census_only=1 samples=6 duration_ms=500 interval_ms=100 status=PASS}
-    set static_render_spoof_role {spoof kde_chromium_process_evidence fast phase=fast-001 pid=412 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process"}
-    set static_render_malformed_role {kde_chromium_process_evidence fast phase=fast-001 pid=412 comm="chrome" role="gpu process" cmd="/proc/self/exe --type=gpu-process"}
+    set static_render_baseline_role {kde_app_launch_probe chromium_fast_census_only=1 samples=6 duration_ms=500 interval_ms=100 status=PASS
+}
+    set static_render_broad_role {unrelated broad text comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process"
+}
+    set static_render_spoof_role {spoof kde_chromium_process_evidence fast phase=fast-001 pid=412 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process"
+}
+    set static_render_malformed_role {kde_chromium_process_evidence fast phase=fast-001 pid=412 comm="chrome" role="gpu process" cmd="/proc/self/exe --type=gpu-process"
+}
     set static_render_helper [render_start_receipt_guest_helper_script]
+    set static_render_helper_path "$outdir/static-render-role-helper.sh"
+    wf $static_render_helper_path $static_render_helper
     set static_render_helper_role_source_contract [expr {
+        [string first {classify_role_state()} $static_render_helper] >= 0 &&
+        [string first {YT_RENDER_START_ROLE_TEST_ONLY} $static_render_helper] >= 0 &&
         [string first {while IFS= read -r role_line; do} $static_render_helper] >= 0 &&
         [string first {if [[ "$role_line" =~ ^kde_chromium_process_evidence[[:space:]]+fast[[:space:]].*comm=\"chrome\"[[:space:]]+role=\"[A-Za-z0-9_-]+\"[[:space:]].*cmd=\" ]]; then} $static_render_helper] >= 0
     }]
     set static_render_helper_role_states [list \
-        [static_render_helper_role_state 0 $static_render_baseline_role] \
-        [static_render_helper_role_state 0 $static_render_live_role] \
-        [static_render_helper_role_state 0 $static_render_spoof_role] \
-        [static_render_helper_role_state 0 $static_render_malformed_role] \
-        [static_render_helper_role_state 17 $static_render_live_role]]
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 0 $static_render_baseline_role baseline] \
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 0 $static_render_live_role semantic] \
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 0 $static_render_broad_role broad] \
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 0 $static_render_spoof_role spoof] \
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 0 $static_render_malformed_role malformed] \
+        [static_render_generated_helper_role_state $static_render_helper_path \
+            $static_render_nonce 17 $static_render_live_role command-failed]]
     set static_render_spoof_frame [static_render_start_receipt_fixture \
         $static_render_nonce 1 $static_render_launch_marker \
         $static_render_launch_digest $static_render_argv_marker \
@@ -8267,7 +8308,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     if {![lindex $static_render_valid 0] ||
         $static_render_valid_class ne {INCOMPLETE live-roles-insufficient-flips} ||
         !$static_render_helper_role_source_contract ||
-        $static_render_helper_role_states ne {none_or_exited live none_or_exited none_or_exited command_failed} ||
+        $static_render_helper_role_states ne {none_or_exited live none_or_exited none_or_exited none_or_exited command_failed} ||
         [lindex $static_render_spoof_reject 0] ||
         [lindex $static_render_malformed_reject 0] ||
         [lindex $static_render_nonce_drift 0] ||
@@ -8296,7 +8337,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
         fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_exit_live_no_present=PASS role_helper_baseline_valid_spoof_malformed=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_newline_baseline_valid_broad_spoof_malformed=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;
