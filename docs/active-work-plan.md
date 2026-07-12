@@ -977,6 +977,53 @@ parser/producer mismatch (including the accepted idle provenance) before any
 new gate; no role, audio, presentation, default, or fullscreen conclusion is
 opened by this invalid sample.
 
+**A1 probe1 fbstat provenance-frame forensic — TRANSPORT INTEGRITY DEFECT
+LOCALIZED / NO-BOOT (2026-07-12):** the named retained probe raw artifact
+`fbstat-probe1-attempt1.txt` is complete (58,986 bytes, SHA-256
+`73bb30ab91f903b96133626360c7749b8ac77e0278d2ebc171b8baa1fd829b2e`): it
+has `YT_FBSTAT_BEGIN tag=probe1`, `YT_FBSTAT_END tag=probe1`, and the one
+owned C5 `RC:0`/`FENCE`. Its outer command status is therefore not the cause.
+There is no separate fbstat payload digest or small capture cap in this
+protocol; `guest_cmd` retains the complete serial buffer under `match_max
+2000000`, and the retained 59 KiB frame is far below that ceiling. The
+same-run idle raw is likewise complete (58,497 bytes, SHA-256
+`b8a3a89d28c0c3ff4a1204f4a9ef5446f72ad7e2ecd112aabaad27c979ce309e`) and
+its clean line-34 current schema
+`d3d12_native_completion_not_kms_matrix ... kms_page_flip_events=3 ...`
+was accepted with `virgl_bo_presents=4`. Thus neither a renamed/conditionally
+omitted producer field nor a parser overrequirement explains the rejection.
+
+Probe line 34 starts that same provenance matrix but is split/interleaved by
+the concurrent kernel `virtio_gpu: page-flip present ...` console diagnostic;
+the required `kms_page_flip_events=<decimal>` bytes no longer form one exact
+matrix token. Its continuation at line 35 starts `_software_blit=4 ...`.
+The parser deliberately accepts the flip only from a line anchored at that
+matrix and an exact token, so it correctly returns
+`missing-kms_page_flip_events` rather than reconstructing a counter from
+corrupted fragments. The producer is not absent: `FB_GPU_GET_STATS` snapshots
+the stats under `fb_state.lock`, and the current fbstat producer's relevant
+path prints that matrix with `stats.kms_vblank_page_flip_events`; the injected raw
+bytes match the bounded `virtio_gpu_scanout.c` page-flip `printf`. This is
+serial-output interleaving after the snapshot, not a trustworthy observed
+flip value, truncation, status drift, or performance result.
+
+The smallest fail-closed repair is a generated `/fbs.sh` transport change, not
+a parser relaxation: write `fbstat` stdout/stderr to a fresh tag-bound regular
+guest file, retain its inner exit status, then serialize a bounded encoded
+payload with tag, byte count, and digest. Host code must bind that frame to C5,
+verify all framing/count/hex/digest/cap invariants, decode it, and run the
+unchanged current parser only on the verified payload. Any interleaving,
+missing/duplicate/wrong tag, incomplete hex, cap/length/digest drift, nonregular
+file, or nonzero inner command must stay INVALID/no-credit; never recover a
+substring from raw serial. Required host-only static evidence: clean current
+idle/probe schema; injected page-flip console interleaving; incomplete or
+duplicate frame; tag/status/cap/length/digest/hex drift; and retained strict
+backend/virgl-present/flip threshold plus diag0/V3 isolation. An independent
+no-boot adversarial review must follow. No source change or VM authority is
+granted by this localization. The named owner cleanup was already synchronous
+(`waited:2276159 exp4 0 0`); this forensic's exact start/end inventories were
+total/conflicting/informational-RISC-V `0/0/0`, with no process touched.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1085,8 +1132,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    localizes the missing semantic rows to the receipt's diagnostic-stream
    capture (the rows were written to the separate evidence file). The
    fail-closed repair and independent no-boot review now pass; they permit
-   forming, never reusing, a fresh serialized A1 gate. Clear >=52 before
-   pursuing about 55-60.
+   forming, never reusing, a fresh serialized A1 gate. Its sole trial is
+   consumed INVALID because the complete probe1 fbstat frame had a
+   console-interleaved KMS provenance token; repair and independently review
+   that fail-closed transport before another gate. Clear >=52 before pursuing
+   about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
