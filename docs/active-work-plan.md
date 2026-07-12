@@ -2204,3 +2204,39 @@ implementation edit is evidenced. No source edit, test/replay, VM, build,
 rootfs, serial, launcher, KDE, or process action occurred; exact start
 inventory was total/informational-RISC-V/conflicting `0/0/0`. This grants no
 C8, C7, C5, A1, HD720, audio, fullscreen, FPS, or performance credit.
+
+**C8 per-case reporter canonical replay — FAIL / NO-BOOT (2026-07-12):** the
+one fresh canonical host-only static command with MP=1, audio-disable=1,
+media=1, forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-reporter-static.OggPZN` exited 2 (external log
+`/tmp/xv6-c8-reporter-static.OggPZN.log`). Its bounded static reporter
+persisted every actual-helper source/frame/wire artifact before the shared
+source fixture was overwritten, under
+`source-prethreshold-helper-reducer/actual-{progress,no_player,binary,empty,overcap}.{source,frame,wire}`.
+The new terminal vector localizes the formerly opaque C8 aggregate exactly:
+`progress` passed (run/rows/parser/exact/derive/cleanup
+`1/4/pass/1/COMPLETE-source-observation-progressing/1`), `no_player` passed
+(`1/4/pass/1/INCOMPLETE-source-extension-executed-no-player/1`), `empty`
+passed (`1/4/pass/1/INCOMPLETE-source-force-ready-unobserved-ambiguous/1`),
+and `overcap` passed (`1/4/pass`, cursor/payload/cap/truncated/hex
+`16385/16384/16384/1/32768`, exact-prefix `1`, cleanup `1`). Only `binary`
+failed: its helper run and four-row label check passed and cleanup was `1`,
+but the C8 parser returned `source-prethreshold-hex-roundtrip`; therefore its
+META/payload/derive fields remain unavailable and its exact-payload bit is
+`0`. This is a localized static transport/fixture observation, not a licensed
+production-helper or derive change.
+
+The C5 fbstat-marker adversary now reports its intended negative honestly as
+`c5_marker_drift_rejected=1`, with both C5 emitted-helper SHA and validator
+guards `1`. The prescribed C7 emitted-helper expectation still produced guard
+`0` (terminal C7 tuple `1,1,1,1,1,0,1`); no C7 helper implementation was
+changed, so the mismatch requires separate static forensic rather than a
+claim that C7 behavior regressed. Per the one-suite stop rule, no driver
+correction, second replay, VM, build, rootfs, serial, launcher, default,
+kernel, or KDE action followed. The driver remains unstaged and unrelated
+KDE-smoke dirt remains untouched. Exact `/proc/*/exe` inventories immediately
+before and after were total/informational-RISC-V/conflicting `0/0/0`. This
+grants no C8/C7/C5/A1, HD720, audio, fullscreen, FPS, or performance credit;
+the next authority must first forensically isolate the binary roundtrip and
+C7 emitted-hash expectations before any narrow repair and one new canonical
+static suite.
