@@ -26,13 +26,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At forensic checkpoint `98a4a56549bde12ac4624ca647eadbc7f2bb3ed1`, the one
-canonical C1 observer static suite remains consumed: empty passed, but binary
-stopped pre-recorder at raw `CHILDSTATUS ... 68`. The pending, unstaged C1
-only correction is now ready for independent no-boot review; it has no static
+At review checkpoint `fc2fca74ab38885793ca9d0c957b3aaf4a4acb27`, the pending
+C1 binary correction fails adversarial source review: its observer still tests
+`CHILDKSTATUS` rather than Tcl's exact `CHILDSTATUS`. The prior suite remains
+consumed; make only that static-observer spelling correction, then obtain a
+fresh review before any new canonical host-only suite. There is no static
 retry, VM, performance, audio, fullscreen, default, or credit authority.
-Preserve the named artifacts and review the production-helper, observer, and
-host binary-decoder corrections separately before any suite authorization.
 
 ## Binding host and VM discipline
 
@@ -3405,3 +3404,35 @@ is readiness only: the driver remains unstaged and requires independent
 adversarial no-boot review before any fresh static suite; no V2/A1/HD720,
 audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit is
 claimed.
+
+**C1 V2 wc/observer/binary-decoder adversarial review — FAIL / NO-RUN
+(2026-07-12):** direct source review at
+`fc2fca74ab38885793ca9d0c957b3aaf4a4acb27` confirms the C1-only generated
+Bash literal is Tcl-braced and emits exactly
+`[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]`; both no-option `wc` triples now check all
+three fields, no production test hook exists, and C7/C8 helpers retain their
+separate existing implementations. The V2 decoder correctly replaces its
+Unicode-sensitive payload `string bytelength` test with lower-hex
+re-encode/length/text equality, while retaining its existing `wb`, binary
+translation/encoding digest path. The exact four-byte binary fixture, its
+full hex/SHA/size checks, bounded input snapshot, 1-MiB observer limit,
+protocol rows, 376-byte chunks, timeout algebra, and no-credit/runtime paths
+remain correctly scoped; no kernel, user, rootfs, default, or KDE file is
+touched.
+
+The observer status repair itself is nevertheless wrong. Tcl emits the exact
+three-element exit errorcode `CHILDSTATUS <pid> <status>` (also used correctly
+by the existing debugfs helper), but `static_fb_v2_child_status` still tests
+the misspelled `CHILDKSTATUS`; it will again leave an ordinary nonzero child
+with `exit=unavailable`. Its `CHILDKILLED` signal branch and explicit
+other-errorcode retention do not repair that exit-status loss, and there is no
+meaningful static assertion of the `CHILDSTATUS` mapping. Thus the observer
+cannot honestly report the next first helper failure and must not authorize a
+fresh suite. The smallest correction is static-observer-only: replace that
+one selector with exact `CHILDSTATUS`, then add source/static checks for a
+three-element exit code, `CHILDKILLED`, and an unrelated errorcode before a
+new adversarial review. Do not alter the production helper/parser/protocol or
+run the consumed canonical suite. No test, build, rootfs, VM, serial, KDE, or
+QEMU action occurred; exact inventory was total/informational-RISC-V/
+conflicting `1/1/0`, and the RISC-V QEMU was untouched. This FAIL grants no
+performance or retry credit.
