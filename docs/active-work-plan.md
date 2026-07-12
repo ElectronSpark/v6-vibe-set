@@ -26,10 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `c45eb50936ea407cb04096e1364db7f1dc8fe0b8`, the pending
-static role-LF correction now includes its required explicit embedded-LF
-adversary and is ready for independent no-boot review. There is no retry, VM,
-performance, audio, fullscreen, default, or credit authority.
+At review checkpoint `035c2828097f8d5cdbe98f4d378c387e3fcad124`, the static
+role-LF correction has passed independent no-boot review. Exactly one fresh
+canonical MP=1/media=1 host-only static suite is authorized; it is not a
+retry and grants no VM, performance, audio, fullscreen, default, or credit
+authority unless that one suite passes.
 
 ## Binding host and VM discipline
 
@@ -3632,3 +3633,28 @@ KDE/default, or QEMU action occurred; exact pre-edit inventory was
 total/informational-RISC-V/conflicting `0/0/0`. The driver remains unstaged and
 requires independent no-boot review before any suite, with no performance,
 HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit.
+
+**Static render-role embedded-LF fixture independent re-review — PASS / NO-RUN
+(2026-07-12):** at source checkpoint
+`035c2828097f8d5cdbe98f4d378c387e3fcad124`, exact `/proc/*/exe` inventory
+was total/informational-RISC-V/conflicting `0/0/0`. The added pure fixture is
+genuinely plausible observer input: it starts with the otherwise exact
+anchored role-state line, appends the nonempty `embedded-observer-line`, and
+ends in LF. It therefore reaches the parser's pre-final-LF check rather than
+being merely an empty/double delimiter; its required false result joins the
+same role-output contract as the canonical one-LF pass, legacy no-LF pass, and
+CRLF/bare-CR/double-LF rejects. That contract is required by the static
+render-helper matrix and terminal static gate.
+
+The parser remains static-only under `YT_STATIC_CHECK=1`, has no trim or
+normalization path, rejects CR before the line-ending decision, and preserves
+the anchored state/total/bytes/truncation/digest grammar. The generated role
+helper/classifier, C1 V2 generated helper/parser, 376-chunk/timeout algebra,
+and production/no-credit paths remain unchanged. No test, build, rootfs, VM,
+boot, serial, KDE/default, or QEMU action occurred. This PASS authorizes
+exactly one fresh canonical clean-PATH host-only static suite with
+`YT_STATIC_CHECK=1`, MP=1, audio-disable=1, media=1, forced-HD720=0, EGL=0,
+capturediag=0, pinned window/crop/delta/video inputs, and a nonexistent
+`YT_OUTDIR`; retain its first result and artifacts without retry. It is no VM,
+HD720/fullscreen, audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance
+authority.
