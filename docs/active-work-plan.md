@@ -2847,3 +2847,56 @@ first-failure rule, there was no PATH amendment, rerun, build, rootfs refresh,
 or source repair. The uncommitted V2-only driver edit remains preserved; A1 is
 still N=0 with no HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
 performance credit.
+
+**C1 slice-2 V2 static host-tool/PATH forensic — REVISE / NO-RUN
+(2026-07-12):** exact preflight QEMU total/informational-RISC-V/conflicting
+inventory was `0/0/0`; no process, test/replay, build, rootfs, VM, boot,
+KDE/default, or driver edit occurred. The failure above is fully explained by
+ordering and PATH: `/usr/bin/expect` starts the driver; before static dispatch
+it resolves `sh` for the repository root, validates the two required and all
+selected arm variables, creates the fresh outdir, runs the exact-QEMU
+`sh`/`readlink` screen, requires kernel/fsimg, and `auto_execok`s `debugfs`,
+`convert`, `compare`, and `nc`. Thus `/usr/bin:/bin` cannot find installed
+`debugfs=/usr/sbin/debugfs`. The static branch subsequently really executes
+the offline ext2 reducer through `mke2fs=/usr/sbin/mke2fs` and `debugfs`, so
+neither of those may be deferred or treated as a QEMU-only tool.
+
+Read-only resolver proof fixes the static host closure at `/usr/bin/sh` and
+`/usr/bin/bash` (both Bash), `/usr/bin/env`, `/usr/bin/sha256sum`,
+`/usr/bin/{cat,dd,wc,xxd,openssl,rm,mkdir,chmod,readlink,kill}`, and the two
+`/usr/sbin` e2fsprogs binaries; every hard-coded `/bin/...` spelling resolves
+to its `/usr/bin` counterpart. Static also executes the exact regular
+`build-x86_64/sysroot/bin/grep` and local shell PTY fixtures; `od` and `tr`
+are only in the pre-static media-nonce branch and are avoided by inert
+`YT_MEDIA_PROBE=0`. `convert`, `compare`, and `nc` are currently resolved by
+the unconditional pre-static check but are not executed by static; `cp`, QEMU,
+monitor, image copy, and runtime `ps`/`awk` paths occur only after static
+exit. Guarded `rg`/`safe-rg` is an audit-only conductor dependency, not a
+driver/static PATH dependency, and must remain outside the clean invocation.
+
+The next proposed command only (not run here) is
+`d=/tmp/yt-c1-v2-static-path-<fresh>; test ! -e "$d" && env -i
+PATH=/usr/sbin:/usr/bin:/sbin:/bin YT_STATIC_CHECK=1 YT_MULTIPROCESS=0
+YT_DISABLE_AUDIO_OUTPUT=1 YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=0
+YT_FORCE_HD720=0 YT_CAPTURE_COMPLETENESS_DIAG=0 YT_WINDOW_SECONDS=60
+YT_PLAYER_CROP=960x540+160+130 YT_PLAYER_DELTA_MIN=1000
+YT_VIDEO_ID=aqz-KE-bpKQ YT_OUTDIR="$d" /usr/bin/expect
+scripts/gpu/chromium-youtube-presentfps.expect`. This pins every required/inert
+driver variable and excludes inherited `YT_*`, display, QEMU, and user-PATH
+state; MP remains explicitly `0`, never omitted. The conventional four-dir
+PATH is deterministic; its observed minimal resolving subset is
+`/usr/sbin:/usr/bin`.
+
+Two narrow source items remain before that one rerun. First, safely move only
+the kernel/fsimg existence checks and `convert`/`compare`/`nc` availability
+checks behind the static exit (or a non-static branch); retain exact-QEMU,
+`debugfs`, and static `mke2fs` fail-closed validation, and preserve every
+runtime check before its first use. This removes unrelated runtime-artifact
+requirements without weakening static or live behavior. Second, the V2 helper
+now correctly emits through `recorder=/bin/_consolerecord`, but the older C5
+static guard still searches for the obsolete literal `_consolerecord "$1"`;
+it will make `static_c5_helper_unchanged` false after the PATH repair. Update
+that guard to bind both the default absolute assignment and the variable call,
+matching the already stronger V2 source lock. Re-review this narrow ordering/
+lock correction, then perform exactly one fresh canonical static suite; no
+performance/fullscreen/audio/HD720 credit exists and A1 remains N=0.
