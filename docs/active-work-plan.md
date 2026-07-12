@@ -778,6 +778,31 @@ existing synchronous-reap/zero-conflicting-QEMU postcondition. Do not repair
 or request another VM gate until that narrow change and independent review
 pass.
 
+**A1 render-start EOF control-evidence repair — STATIC PASS / NO-BOOT
+(2026-07-12):** at source checkpoint `37d80e48d39ea96823d47254eb20088b110a52ed`,
+the `guest_cmd` EOF arm now retains bounded `eof-control-<phase>-<marker>.txt`
+before `finish 5` can enter `stop_qemu`, plus a separate pre-cleanup snapshot.
+The raw record is marker/phase-bound and hex-encoded with `raw_bytes`,
+`retained_bytes`, and explicit `truncated=0|1`; it keeps only the final 8192
+bytes in production. The snapshot precedes cleanup and records timestamp,
+source, owned leader, and owned-PGID rows with PID/PPID/PGID/SID/state/live
+classification. This is forensic evidence only: it neither supplies a command
+result nor relaxes receipt, threshold, sender-identity, semantic, FPS, or
+no-credit rules.
+
+Fresh canonical host-only replay
+`/tmp/xv6-eof-control-static-final.awKlCM` exited 0 with
+`YT-PRESENTFPS-STATIC-CHECK-PASS`. Its actual-writer matrix retained a 100-byte
+partial C6 echo at a 128-byte test cap with phase/marker/snapshot exactness;
+retained helper bytes containing `RC:0` but no `FENCE` without admitting a
+frame; truthfully marked a 181-byte input as `retained_bytes=128,truncated=1`
+and retained its exact tail; and kept a complete `RC:0`/`FENCE` frame valid.
+It also proves source order is retain/snapshot before `finish`/`stop_qemu` and
+that EOF remains code 5/evidence-only while the partial/helper forms cannot
+enter credit. No VM, QEMU, build, rootfs, serial, launcher, media, audio,
+fullscreen, semantic, or FPS action occurred. An independent no-boot
+adversarial review remains mandatory before any VM gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

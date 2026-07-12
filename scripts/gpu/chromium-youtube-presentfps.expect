@@ -623,6 +623,7 @@ set media_probe_verdict "NOT_RUN"
 set owned_group_remaining ""
 set serial_counter 0
 set render_start_receipt_counter 0
+set eof_control_raw_cap 8192
 set serial_nonce "YTP[pid][clock clicks]"
 regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
 set required_guest_frames {pre steady0 windowA windowB}
@@ -2334,6 +2335,71 @@ proc owned_process_group_lines {{live_only 0}} {
     return [string trim $out]
 }
 
+# EOF control evidence is forensic-only.  It records the local serial tail and
+# owned process-group state before finish() can enter monitor/TERM cleanup; it
+# never supplies a command result, receipt, semantic fact, or FPS credit.
+proc eof_control_snapshot_text {timestamp source leader rows} {
+    set clean_rows [string trim $rows]
+    set count [expr {$clean_rows eq "" ? 0 : [llength [split $clean_rows "\n"]]}]
+    set header "EOF_CONTROL_PRE_CLEANUP_SNAPSHOT timestamp=$timestamp source=$source leader=$leader records=$count"
+    if {$count == 0} {
+        return "$header state=unavailable live=0\n"
+    }
+    return "$header\n$clean_rows\n"
+}
+
+proc owned_qemu_pre_cleanup_snapshot {} {
+    global qemu_pid qemu_started
+    set timestamp [iso_now]
+    if {!$qemu_started || $qemu_pid <= 0} {
+        return [eof_control_snapshot_text $timestamp not-started none ""]
+    }
+    set script {
+        ps -eo pid=,ppid=,pgid=,sid=,stat=,comm= 2>/dev/null |
+            awk -v want="$1" '$3 == want {
+                live = ($5 ~ /^Z/) ? 0 : 1
+                print "pid=" $1 " ppid=" $2 " pgid=" $3 " sid=" $4 \
+                    " state=" $5 " live=" live " comm=" $6
+            }'
+    }
+    if {[catch {exec sh -c $script sh $qemu_pid} rows]} {
+        return [eof_control_snapshot_text $timestamp ps-owned-pgid-error \
+            $qemu_pid "snapshot_error=[string map [list "\n" _ " " _] $rows] state=unavailable live=0"]
+    }
+    return [eof_control_snapshot_text $timestamp ps-owned-pgid $qemu_pid $rows]
+}
+
+proc eof_control_evidence_text {timestamp phase marker raw snapshot cap} {
+    if {![regexp {^[A-Za-z0-9_.-]+$} $phase] ||
+        ![regexp {^[A-Za-z0-9]+$} $marker] ||
+        ![string is integer -strict $cap] || $cap < 1} {
+        error "invalid EOF control evidence parameters"
+    }
+    set raw_hex [binary encode hex $raw]
+    set raw_bytes [expr {[string length $raw_hex] / 2}]
+    set retained_bytes [expr {$raw_bytes > $cap ? $cap : $raw_bytes}]
+    set truncated [expr {$raw_bytes > $cap ? 1 : 0}]
+    set tail_hex [string range $raw_hex [expr {2 * ($raw_bytes - $retained_bytes)}] end]
+    return "EOF_CONTROL_EVIDENCE version=1 timestamp=$timestamp phase=$phase marker=$marker source=guest_cmd_eof raw_bytes=$raw_bytes retained_bytes=$retained_bytes truncated=$truncated\nEOF_CONTROL_RAW_HEX $tail_hex\nEOF_CONTROL_PRE_CLEANUP_SNAPSHOT_BEGIN\n${snapshot}EOF_CONTROL_PRE_CLEANUP_SNAPSHOT_END\n"
+}
+
+proc retain_eof_control_evidence {phase marker raw {snapshot ""}} {
+    global outdir statusf eof_control_raw_cap
+    if {$snapshot eq ""} { set snapshot [owned_qemu_pre_cleanup_snapshot] }
+    set timestamp [iso_now]
+    set safe_phase $phase
+    regsub -all {[^A-Za-z0-9_.-]} $safe_phase _ safe_phase
+    set stem "eof-control-$safe_phase-$marker"
+    set evidence_path "$outdir/$stem.txt"
+    set snapshot_path "$outdir/$stem.pre-cleanup.txt"
+    set evidence [eof_control_evidence_text $timestamp $safe_phase $marker $raw \
+        $snapshot $eof_control_raw_cap]
+    wf $evidence_path $evidence
+    wf $snapshot_path $snapshot
+    af $statusf "[iso_now] eof-control-evidence phase=$safe_phase marker=$marker raw=$evidence_path snapshot=$snapshot_path"
+    return [list $evidence_path $snapshot_path]
+}
+
 set existing [exact_qemu_lines]
 if {$existing ne ""} {
     af $statusf "[iso_now] ABORT exact-qemu-preflight=$existing"
@@ -3610,6 +3676,10 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
         }
         eof {
             set timeout $old_timeout
+            set eof_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
+            if {[catch {retain_eof_control_evidence $label $marker $eof_raw} eof_evidence_error]} {
+                catch {af $::statusf "[iso_now] eof-control-evidence-write-failed phase=$label marker=$marker error=$eof_evidence_error"}
+            }
             finish 5 "FAIL eof phase=$label"
         }
     }
@@ -7682,6 +7752,89 @@ cat /host-gui-wayland-chromium.log
     set unknown_frame [guest_command_frame_parse \
         "$marker_reducer:RC:notnumeric\n$marker_reducer:FENCE\n" \
         $marker_reducer]
+
+    # EOF is a terminal control condition, not a receipt result.  Exercise the
+    # actual artifact writer with a partial C6 echo and helper bytes, a truthful
+    # cap/truncation case, and a synthetic pre-cleanup owned-group snapshot.
+    set static_eof_phase render-start-receipt-probe1
+    set static_eof_marker YTEOFSTATICC6
+    set static_eof_snapshot [eof_control_snapshot_text \
+        2026-07-12T00:00:00Z ps-owned-pgid 4242 \
+        {pid=4242 ppid=17 pgid=4242 sid=4242 state=Ssl live=1 comm=qemu-system-x86_64}]
+    set static_eof_cap_saved $eof_control_raw_cap
+    set eof_control_raw_cap 128
+    set static_eof_partial "true;/bin/bash /ytrenderstartreceipt.sh deadbeef 1;rc=\$?;m=$static_eof_marker;printf partial-helper-bytes"
+    set static_eof_partial_paths [retain_eof_control_evidence \
+        $static_eof_phase $static_eof_marker $static_eof_partial $static_eof_snapshot]
+    set static_eof_partial_artifact [read_text [lindex $static_eof_partial_paths 0]]
+    set static_eof_partial_snapshot [read_text [lindex $static_eof_partial_paths 1]]
+    set static_eof_partial_meta [regexp -line \
+        {^EOF_CONTROL_EVIDENCE version=1 timestamp=[^ ]+ phase=render-start-receipt-probe1 marker=YTEOFSTATICC6 source=guest_cmd_eof raw_bytes=([0-9]+) retained_bytes=([0-9]+) truncated=([01])$} \
+        $static_eof_partial_artifact -> static_eof_partial_raw_bytes \
+        static_eof_partial_retained_bytes static_eof_partial_truncated]
+    set static_eof_partial_hex_ok [regexp -line {^EOF_CONTROL_RAW_HEX ([0-9a-f]*)$} \
+        $static_eof_partial_artifact -> static_eof_partial_hex]
+    set static_eof_partial_decoded ""
+    if {$static_eof_partial_hex_ok &&
+        ![catch {binary decode hex $static_eof_partial_hex} static_eof_partial_decoded]} {
+        set static_eof_partial_hex_ok [expr {$static_eof_partial_decoded eq $static_eof_partial}]
+    } else {
+        set static_eof_partial_hex_ok 0
+    }
+    set static_eof_partial_frame [guest_command_frame_parse \
+        $static_eof_partial $static_eof_marker]
+    set static_eof_helper_bytes "$static_eof_marker:RC:0\nYT_RENDER_START_RECEIPT_BEGIN nonce=deadbeef probe=1\n"
+    set static_eof_helper_paths [retain_eof_control_evidence \
+        $static_eof_phase $static_eof_marker $static_eof_helper_bytes $static_eof_snapshot]
+    set static_eof_helper_artifact [read_text [lindex $static_eof_helper_paths 0]]
+    regexp -line {^EOF_CONTROL_RAW_HEX ([0-9a-f]*)$} $static_eof_helper_artifact \
+        -> static_eof_helper_hex
+    set static_eof_helper_decoded ""
+    set static_eof_helper_decode_ok [expr {![catch {binary decode hex $static_eof_helper_hex} static_eof_helper_decoded] &&
+        $static_eof_helper_decoded eq $static_eof_helper_bytes}]
+    set static_eof_helper_frame [guest_command_frame_parse \
+        $static_eof_helper_bytes $static_eof_marker]
+    set static_eof_over_raw "prefix-$static_eof_marker-[string repeat X 160]"
+    set static_eof_over_paths [retain_eof_control_evidence \
+        $static_eof_phase $static_eof_marker $static_eof_over_raw $static_eof_snapshot]
+    set static_eof_over_artifact [read_text [lindex $static_eof_over_paths 0]]
+    set static_eof_over_meta [regexp -line \
+        {^EOF_CONTROL_EVIDENCE version=1 timestamp=[^ ]+ phase=render-start-receipt-probe1 marker=YTEOFSTATICC6 source=guest_cmd_eof raw_bytes=([0-9]+) retained_bytes=([0-9]+) truncated=([01])$} \
+        $static_eof_over_artifact -> static_eof_over_raw_bytes \
+        static_eof_over_retained_bytes static_eof_over_truncated]
+    regexp -line {^EOF_CONTROL_RAW_HEX ([0-9a-f]*)$} $static_eof_over_artifact \
+        -> static_eof_over_hex
+    set static_eof_over_decoded ""
+    set static_eof_over_decode_ok [expr {![catch {binary decode hex $static_eof_over_hex} static_eof_over_decoded] &&
+        $static_eof_over_decoded eq [string range $static_eof_over_raw end-127 end]}]
+    set static_eof_complete "$static_eof_marker:RC:0\n$static_eof_marker:FENCE\n"
+    set static_eof_complete_frame [guest_command_frame_parse \
+        $static_eof_complete $static_eof_marker]
+    set static_eof_guest_cmd_body [info body guest_cmd]
+    set static_eof_finish_body [info body finish]
+    set static_eof_retain_body [info body retain_eof_control_evidence]
+    set static_eof_eof_branch [string first "eof \{\n            set timeout \$old_timeout" \
+        $static_eof_guest_cmd_body]
+    set static_eof_retain_index [string first \
+        {retain_eof_control_evidence $label $marker $eof_raw} $static_eof_guest_cmd_body]
+    set static_eof_finish_index [string first {finish 5 "FAIL eof phase=$label"} \
+        $static_eof_guest_cmd_body]
+    set static_eof_order_ok [expr {
+        $static_eof_eof_branch >= 0 && $static_eof_retain_index > $static_eof_eof_branch &&
+        $static_eof_finish_index > $static_eof_retain_index &&
+        [string first {set snapshot [owned_qemu_pre_cleanup_snapshot]} $static_eof_retain_body] >= 0 &&
+        [string first {stop_qemu} $static_eof_finish_body] >= 0
+    }]
+    set static_eof_no_credit [expr {
+        [finish_extraction_path 5 0 0 1 NOT_RUN] eq "evidence-only" &&
+        [lindex $static_eof_complete_frame 0] && [lindex $static_eof_complete_frame 2] eq "0" &&
+        ![lindex $static_eof_partial_frame 0] && ![lindex $static_eof_helper_frame 0]
+    }]
+    set eof_control_raw_cap $static_eof_cap_saved
+    foreach static_eof_paths [list $static_eof_partial_paths $static_eof_helper_paths \
+            $static_eof_over_paths] {
+        foreach static_eof_path $static_eof_paths { catch {file delete -force $static_eof_path} }
+    }
     if {![lindex $valid_frame_parse 0] ||
         [lindex $valid_frame_parse 2] ne "73" ||
         ![lindex $expect_frame_parse 0] ||
@@ -7705,8 +7858,17 @@ cat /host-gui-wayland-chromium.log
         [lindex $missing_rc_frame 0] ||
         [lindex $reversed_frame 0] ||
         [lindex $duplicate_fence_frame 0] ||
-        [lindex $unknown_frame 0]} {
-        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse newline=$newline_frames three_cr=$three_cr_parse missing_newline=$missing_newline_parse wrong_nonce=$wrong_nonce_parse spoof=$spoof_parse unknown_spoof=$unknown_spoof_parse retained=$retained_fence_results fatal_timeout=$fatal_timeout_contract conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame"
+        [lindex $unknown_frame 0] ||
+        !$static_eof_partial_meta || $static_eof_partial_raw_bytes != [string length $static_eof_partial] ||
+        $static_eof_partial_retained_bytes != [string length $static_eof_partial] ||
+        $static_eof_partial_truncated != 0 || !$static_eof_partial_hex_ok ||
+        [string first $static_eof_snapshot $static_eof_partial_artifact] < 0 ||
+        $static_eof_partial_snapshot ne $static_eof_snapshot ||
+        !$static_eof_helper_decode_ok ||
+        !$static_eof_over_meta || $static_eof_over_raw_bytes != [string length $static_eof_over_raw] ||
+        $static_eof_over_retained_bytes != 128 || $static_eof_over_truncated != 1 ||
+        !$static_eof_over_decode_ok || !$static_eof_order_ok || !$static_eof_no_credit} {
+        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse newline=$newline_frames three_cr=$three_cr_parse missing_newline=$missing_newline_parse wrong_nonce=$wrong_nonce_parse spoof=$spoof_parse unknown_spoof=$unknown_spoof_parse retained=$retained_fence_results fatal_timeout=$fatal_timeout_contract conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame eof_partial=$static_eof_partial_meta,$static_eof_partial_raw_bytes,$static_eof_partial_retained_bytes,$static_eof_partial_truncated,$static_eof_partial_hex_ok eof_helper=$static_eof_helper_decode_ok eof_over=$static_eof_over_meta,$static_eof_over_raw_bytes,$static_eof_over_retained_bytes,$static_eof_over_truncated,$static_eof_over_decode_ok eof_order=$static_eof_order_ok eof_no_credit=$static_eof_no_credit"
     }
 
     # Exact relevant t2 rows from completed C1.  FB_GPU_GET_STATS is one locked
