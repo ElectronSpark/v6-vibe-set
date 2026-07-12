@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At forensic checkpoint `a3cd0a2bfd93180ccbd55e4a988f653c6b5c165b`, the
+At forensic checkpoint `23b08a40ca8b11fd2b1a0099a14f196c0aa6d6f3`, the
 consumed C1 observer static suite's later render-role baseline rejection is
 localized to a static-observer final-LF mismatch, not C1 or generated-helper
-behavior. The next item is a narrow observer-only LF-contract correction and
-independent no-boot review; no retry, VM, performance, audio, fullscreen,
+behavior. The pending narrow observer-only LF-contract correction is ready
+for independent no-boot review; no retry, VM, performance, audio, fullscreen,
 default, or credit authority exists.
 
 ## Binding host and VM discipline
@@ -3566,3 +3566,26 @@ no-LF/CR/double-LF forms, then take a fresh independent no-boot review before
 any new canonical suite. No test, build, rootfs, VM, boot, serial, KDE/default,
 or QEMU action occurred; no retry, V2/A1, HD720/fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, or performance credit exists.
+
+**Static render-role final-LF observer correction — READY / NO-RUN
+(2026-07-12):** the pending unstaged driver-only change is confined to the
+`YT_STATIC_CHECK=1` role-output observer. It replaces the stale direct-exec
+no-LF-only match with an explicit parser that first rejects any CR, then
+accepts either the canonical one-final-LF artifact form or the explicit legacy
+no-LF direct-exec form. It does not trim, normalize, or accept embedded or
+double LF; after the exact line-ending contract, the existing anchored role
+state/total/bytes/truncated/digest grammar still matches the evidence line.
+
+Pure in-memory static fixtures bind the baseline output's total and bytes to
+the exact baseline evidence length and its digest to the evidence-only digest:
+canonical one-LF passes with `final_lf=1`, the compatibility no-LF form passes
+with `final_lf=0`, while CRLF, bare CR, and double LF reject. The fixture
+contract is source-locked to the anchored matcher and absence of any `string
+trim` path, and it is required by the existing static render-helper aggregate.
+No generated role helper/classification, C1 V2 helper/parser/protocol, timeout,
+credit, kernel/user/rootfs/default/KDE path, test, build, VM, boot, serial, or
+QEMU action occurred. Exact pre-edit inventory was total/informational-RISC-V/
+conflicting `0/0/0`; the driver remains unstaged. This readiness requires an
+independent no-boot review before any new static suite and grants no V2/A1,
+HD720, audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance
+credit.
