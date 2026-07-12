@@ -1,6 +1,6 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-11. This is the sole live plan. Superseded V2/V3
+Last updated: 2026-07-12. This is the sole live plan. Superseded V2/V3
 self-failure chronology and disposable artifacts remain in git history.
 
 ## Objective and acceptance
@@ -652,6 +652,32 @@ counts were 0 at start and 1 at end; no process was touched and no VM, build,
 rootfs, serial, or launcher action occurred. This closes only the built-in
 static coverage hole; independent adversarial review remains required and VM
 authority stays closed.
+
+**A1 role-state final independent review — PASS / NO-BOOT (2026-07-12):** at
+the immutable source checkpoint `152ae29835bf8ee09b96bba08579ffbc310b6e99`,
+direct source audit found production `classify_role_state` used by the
+generated helper and its built-in actual-Bash test-only route. Its
+newline-terminated raw fixtures cover PASS-only, semantic fast Chromium,
+unrelated broad `comm`/`role`, spoof, malformed, and nonzero census with the
+required `none_or_exited`, `live`, `none_or_exited`, `none_or_exited`,
+`none_or_exited`, and `command_failed` states. The same canonical reducer
+binds parser nonce/probe, launch/argv marker+digest, command frame,
+role digest/total/tail/cap, tail integrity, and marker drift; it retains the
+103/4 and 104/4 rejects versus 104/5 observe threshold and diag0/V3
+no-credit isolation.
+
+The single fresh canonical command, with `YT_STATIC_CHECK=1`, exited 0 in
+`/tmp/xv6-role-state-final-static.7YBkhD.log` (outdir
+`/tmp/xv6-role-state-final-static.uBWPr4`) and emitted
+`role_helper_actual_bash_newline_baseline_valid_broad_spoof_malformed=PASS`,
+`role_claim_nonce_probe_digest_cap=REJECT`,
+`threshold_3over4_103over4=RETAINED`, and `capturediag0_no_v3=PASS`. Exact
+all-architecture QEMU inventories were 0 before and 1 after; the final
+process was the untouched external RISC-V QEMU PID 2208696, which is allowed
+for this host-only review but blocks later VM authorization pending a fresh
+zero preflight. This clears only fresh serialized A1 gate formation; it adds
+no guest, HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
+performance credit.
 
 ### V3 source protocol: host-only review PASS
 
