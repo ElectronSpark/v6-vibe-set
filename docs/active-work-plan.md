@@ -2963,3 +2963,23 @@ and requires a 32-hex `media_probe_nonce` wherever static owned-terminal or V3
 fixtures consume the global, while preserving direct fixtures' `static_nonce`.
 Do not change the three-argument parser API or relax the nonce check. This is
 no performance/fullscreen/audio/HD720 credit; A1 remains N=0.
+
+**C1 V2 canonical-static-profile attempt — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** after `e773716`, exactly one fresh host-only canonical suite
+used `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin`, MP=1, audio-disable=1,
+media=1, forced-HD720=0, EGL=0, capturediag=0, and the pinned window/crop/
+delta/video inputs with a nonexistent output directory. The new static-only
+global-nonce assertion boundedly recorded each V1/V3 fixture's three relevant
+arguments and required a lowercase 32-hex current nonce before its existing
+terminal invocation; the old `nonce=off` envelope exception did not recur.
+The replay reached the capture-completeness aggregate predicates, then exited
+2 at the later V2 actual-helper binary case:
+`static-check-fbstat-v2-helper-binary-exit output=child process exited
+abnormally`. It emitted neither `YT-C1-V2-STATIC-PASS` nor the overall static
+PASS marker, so no V2/parser/helper, performance, HD720, audio, fullscreen,
+`yt-presentfps`, or `PERF-VIDEO` credit is claimed. Exact QEMU inventories
+immediately before and after were total/informational-RISC-V/conflicting
+`0/0/0`; no VM, build, rootfs, boot, kernel/user/default/KDE action, or retry
+occurred. Per the single-suite rule the driver patch remains unstaged and the
+unrelated KDE-smoke dirt remains untouched; a new forensic authority is needed
+before any V2 helper repair or another static run.
