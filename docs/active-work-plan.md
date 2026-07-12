@@ -1164,6 +1164,28 @@ inventories before and after were total/conflicting/informational-RISC-V
 serialized A1 gate, never a VM authorization or any HD720, fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, or performance credit.
 
+**A1 fbstat-transport sole windowed trial — CONSUMED / INVALID / N=0
+(2026-07-12):** with HEAD/origin
+`73c139bb158db466c348325e1556b9516eeedba4` equal after the retained passive
+screen, the one owned x86 KVM+virgl/OpenGL-submit windowed run
+`/tmp/xv6-a1-fbstat-transport-windowed.xWxE8v` used MP1, audio-disable1,
+media1, forced-HD7201, EGL0, capturediag0, GTK fullscreen/zoom-to-fit off,
+and 4 GiB guest RAM. It naturally booted with owned leader `2314233`, zero
+foreign conflict, and real virgl startup, but stopped code 8 at the **idle**
+fbstat gate: `transport-frame-noncontiguous`. The raw frame declares
+`status=OK`, raw/payload `56422/56422`, cap 131072, truncation 0, 112844 hex
+bytes and digest, BEGIN/META/HEX/END, plus outer C1 `RC:0`/`FENCE`.
+
+No fbstat/parser sample was accepted. The named raw bytes show every transport
+row terminated `0d 0d 0a`; current host CR normalization turns that UART form
+into blank rows, so strict contiguous-row admission correctly rejects rather
+than splicing it. There is no role receipt, HD720/media semantic result,
+`yt-presentfps`, `PERF-VIDEO`, FPS/drop/VPQ/retire, audio-on, or fullscreen
+fact. The owner was synchronously reaped (`waited:2314233 exp4 0 0`) and final
+exact QEMU total/conflicting/informational-RISC-V was `0/0/0`; no second VM or
+foreign process was touched. Next: narrow NO-BOOT CRCRLF-normalization and
+actual-wire static review before any fresh gate; no performance credit exists.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
