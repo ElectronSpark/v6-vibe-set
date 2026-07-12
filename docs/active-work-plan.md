@@ -1540,6 +1540,35 @@ and after were both zero. This is host/static diagnostic-only credit: no VM,
 HD720, media, FPS, audio, fullscreen, or default authority is granted; an
 independent C7 adversarial review remains required before another gate.
 
+**A1 C7 full-census sidecar independent review — PASS / NO-BOOT
+(2026-07-12):** immutable `ba775231e34b4973fb89cb41984eb418a4d1967d`
+equals explicit origin and preserves the sole unrelated KDE-smoke dirt. Direct
+audit confirms C6 remains the capped 4096-byte admitting receipt and its
+role/flip classifier has no C7 input. C7 is a distinct 45 s outer command,
+bound to nonce/probe, C3/C4 marker+digest, C5, and its locally reserved C7
+marker. Its 131072-byte decoded cap yields at most 262144 lower-hex bytes plus
+the short envelope, below `match_max 2000000`. Candidate-local CR handling and
+raw-record adjacency precede complete untruncated host decode/rehash; only
+host-derived exact-evidence bytes supply subtype counts. No guest vector or
+full-digest field is accepted. Overflow, non-OK/missing, or malformed/corrupt
+transport maps to diagnostic-INCOMPLETE with `no_subtype_claim=1` and cannot
+alter C6 liveness, threshold, HD720/media, FPS, or any admission.
+
+The key grammar accepts lowercase-leading digit-after `c7_marker` and rejects
+leading-digit, uppercase, and punctuation keys. The actual static matrix
+requires each negative's own detail: outer RC/FENCE, duplicate,
+interleave/mid-row-CR, META extras/key grammar, tag/nonce/probe/C3/C4/C5/C7
+drift, count/cap/tail/length/hex/digest/status/over-cap, and semantic spoof.
+Fresh canonical host-only replay, outdir
+`/tmp/xv6-a1-c7-independent-static.20260712`, external log
+`/tmp/xv6-a1-c7-independent-static.20260712.log`, exited 0 with C7, existing
+C6/role/threshold, diag0/V3, and no-credit groups green
+(`YT-PRESENTFPS-STATIC-CHECK-PASS`, `js_guest_runtime=UNEXECUTED`). Exact
+QEMU inventories before and after were total/informational-RISC-V/conflicting
+`0/0/0`. No VM, source, build, rootfs, serial, or launcher action occurred.
+This PASS clears only formation of a fresh serialized gate; it is no VM,
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1660,9 +1689,9 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    role/player diagnostic's first static attempt has an untrusted full-census
    digest/vector claim. A distinct C7-only, cap-preserving full-census
    diagnostic design is now reviewed; it leaves the 4096-byte admitting C6
-   receipt unchanged. Its narrow `c7_marker` META-tokenizer correction and
-   strengthened host-only static matrix now pass; an independent C7
-   adversarial review remains required before another gate. Do not lower the
+   receipt unchanged. Its narrow `c7_marker` META-tokenizer correction,
+   strengthened host-only static matrix, and independent C7 review now pass;
+   this clears only formation of a fresh serialized gate. Do not lower the
    threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
