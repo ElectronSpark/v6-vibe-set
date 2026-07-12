@@ -1224,6 +1224,35 @@ HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit. Exact
 QEMU inventories before/after this review were
 total/conflicting/informational-RISC-V `0/0/0`; no process was touched.
 
+**A1 candidate-local CRCRLF transport normalization — STATIC PASS / NO-BOOT
+(2026-07-12):** at plan checkpoint `5e41015`, the host scanner now splits the
+raw serial buffer only on LF, retains each raw-record index, and considers
+only exact `YT_FBSTAT_TRANSPORT_{BEGIN,META,HEX,END}` prefixes.  It removes a
+trailing CR run only from such a candidate before the existing exact parser;
+noncandidate bytes (including lone-CR prompt/control noise) are not mutated,
+and a residual/mid-row candidate CR is INVALID `transport-wire-cr`.  The
+contiguous-four-row and all existing tag/nonce/status/count/cap/length/digest/
+hex/truncation rules are unchanged, so blank/interleaved records still reject
+on raw-record adjacency and duplicates still reject on count.  This supersedes
+the preceding forensic's provisional two-CR suffix wording: the implemented
+candidate terminator rule deliberately accepts a complete trailing CR run,
+while never normalizing unrelated serial records.
+
+One fresh canonical static replay exited 0 (log
+`/tmp/xv6-fbstat-crcrlf-static.iiINjA.log`) with
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=1 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0`.  Its actual-wire matrix admits equivalent
+LF, CRLF, and CRCRLF four-row/C1 transport frames; rejects CRLFCRLF blank-row
+insertion as `transport-frame-noncontiguous` and a candidate mid-row CR as
+`transport-wire-cr`; and proves lone noncandidate CR noise does not mutate a
+clean frame.  The retained interleave, duplicate, and all prior strict
+transport negatives stayed green.  Exact QEMU inventories immediately before
+and after were total/conflicting/informational-RISC-V `0/0/0`; no VM, build,
+rootfs, serial, launcher, or process was touched.  This is no performance,
+HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit.  An
+independent no-boot adversarial review is mandatory before any VM gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

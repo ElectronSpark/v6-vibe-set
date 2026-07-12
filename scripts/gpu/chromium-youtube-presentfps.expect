@@ -4115,13 +4115,20 @@ proc fbstat_transport_decode {serial expected_tag expected_nonce expected_marker
         return [list 0 "transport-command-status-[lindex $command_frame 2]" ""]
     }
 
-    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $serial]
     set transport_lines {}
-    set line_number 0
-    foreach line [split $normalized "\n"] {
-        incr line_number
-        if {[regexp {^YT_FBSTAT_TRANSPORT_(BEGIN|META|HEX|END)([ \t]|$)} $line]} {
-            lappend transport_lines [list $line_number $line]
+    set raw_record_number 0
+    foreach raw_record [split $serial "\n"] {
+        incr raw_record_number
+        if {[regexp {^YT_FBSTAT_TRANSPORT_(BEGIN|META|HEX|END)([ \t]|$)} $raw_record]} {
+            # UART CRCRLF is one transport terminator, not an intervening
+            # protocol record.  Preserve every noncandidate record exactly;
+            # only a candidate's trailing CR run is removed before its exact
+            # parser.  A CR anywhere else in that candidate is corruption.
+            set line [string trimright $raw_record "\r"]
+            if {[string first "\r" $line] >= 0} {
+                return [list 0 "transport-wire-cr record=$raw_record_number" ""]
+            }
+            lappend transport_lines [list $raw_record_number $line]
         }
     }
     if {[llength $transport_lines] != 4} {
@@ -8264,17 +8271,44 @@ virgl_bo_presents 6198
     append static_fb_payload [string repeat x [expr {$static_fb_target_bytes - [string bytelength $static_fb_payload]}]]
     set static_fb_frame [fbstat_transport_static_frame $static_fb_tag \
         $static_fb_nonce $static_fb_payload]
-    set static_fb_serial "$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
-    set static_fb_decoded [fbstat_transport_decode $static_fb_serial \
-        $static_fb_tag $static_fb_nonce $static_fb_marker]
-    set static_fb_classified [expr {[lindex $static_fb_decoded 0] ? \
-        [classify_fbstat_sample [lindex $static_fb_decoded 2] 1] : {INVALID {}}}]
-    if {![lindex $static_fb_decoded 0] ||
-        [string bytelength [lindex $static_fb_decoded 2]] != $static_fb_target_bytes ||
-        [lindex $static_fb_classified 0] ne "PASS"} {
-        fail_preflight "static-check-fbstat-transport-clean decoded=$static_fb_decoded classified=$static_fb_classified"
-    }
     set static_fb_frame_lines [split [string trimright $static_fb_frame "\n"] "\n"]
+    set static_fb_logical "$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_wire_results {}
+    foreach static_fb_wire_case [list \
+            [list lf "\n"] [list crlf "\r\n"] [list crcrlf "\r\r\n"]] {
+        lassign $static_fb_wire_case wire_name wire_eol
+        set static_fb_serial [string map [list "\n" $wire_eol] $static_fb_logical]
+        set static_fb_decoded [fbstat_transport_decode $static_fb_serial \
+            $static_fb_tag $static_fb_nonce $static_fb_marker]
+        set static_fb_classified [expr {[lindex $static_fb_decoded 0] ? \
+            [classify_fbstat_sample [lindex $static_fb_decoded 2] 1] : {INVALID {}}}]
+        lappend static_fb_wire_results [list $wire_name $static_fb_decoded $static_fb_classified]
+        if {![lindex $static_fb_decoded 0] ||
+            [string bytelength [lindex $static_fb_decoded 2]] != $static_fb_target_bytes ||
+            [lindex $static_fb_classified 0] ne "PASS"} {
+            fail_preflight "static-check-fbstat-transport-wire-$wire_name decoded=$static_fb_decoded classified=$static_fb_classified"
+        }
+    }
+    set static_fb_crlf_blank "[lindex $static_fb_frame_lines 0]\r\n[lindex $static_fb_frame_lines 1]\r\n\r\n[lindex $static_fb_frame_lines 2]\r\n[lindex $static_fb_frame_lines 3]\r\n$static_fb_marker:RC:0\r\n$static_fb_marker:FENCE\r\n"
+    set static_fb_noise [binary decode hex {1b5b3f323030346c0d5b0a}]
+    set static_fb_lone_cr_noise "$static_fb_noise[string map [list "\n" "\r\r\n"] $static_fb_logical]"
+    set static_fb_noise_decoded [fbstat_transport_decode $static_fb_lone_cr_noise \
+        $static_fb_tag $static_fb_nonce $static_fb_marker]
+    set static_fb_noise_classified [expr {[lindex $static_fb_noise_decoded 0] ? \
+        [classify_fbstat_sample [lindex $static_fb_noise_decoded 2] 1] : {INVALID {}}}]
+    if {![lindex $static_fb_noise_decoded 0] ||
+        [lindex $static_fb_noise_classified 0] ne "PASS"} {
+        fail_preflight "static-check-fbstat-transport-lone-cr-noise decoded=$static_fb_noise_decoded classified=$static_fb_noise_classified"
+    }
+    set static_fb_midrow [string map \
+        [list "tag=$static_fb_tag nonce=" "tag=$static_fb_tag\r nonce="] \
+        [string map [list "\n" "\r\n"] $static_fb_logical]]
+    set static_fb_decode_body [info body fbstat_transport_decode]
+    if {[string first {foreach raw_record [split $serial "\n"]} $static_fb_decode_body] < 0 ||
+        [string first {set line [string trimright $raw_record "\r"]} $static_fb_decode_body] < 0 ||
+        [string first {set normalized [string map} $static_fb_decode_body] >= 0} {
+        fail_preflight "static-check-fbstat-transport-candidate-local-scanner"
+    }
     set static_fb_interleaved [join [list \
         [lindex $static_fb_frame_lines 0] [lindex $static_fb_frame_lines 1] \
         {virtio_gpu: page-flip present resource=4 size=1280x800} \
@@ -8293,6 +8327,8 @@ virgl_bo_presents 6198
     set static_fb_capped_payload [string repeat x $fbstat_transport_payload_cap]
     set static_fb_truthful_truncated "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_capped_payload [dict create raw_bytes [expr {$fbstat_transport_payload_cap + 1}] truncated 1]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
     foreach static_fb_case [list \
+        [list crlfcrlf_blank $static_fb_crlf_blank transport-frame-noncontiguous] \
+        [list midrow_cr $static_fb_midrow transport-wire-cr] \
         [list interleaved $static_fb_interleaved transport-frame-noncontiguous] \
         [list duplicate $static_fb_duplicate transport-frame-count-8] \
         [list tag $static_fb_wrong_tag transport-tag-or-nonce-drift] \
