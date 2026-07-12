@@ -1601,6 +1601,37 @@ fresh gate as INVALID/N=0, not N=1 credit; no retry is authorized. Next is a
 no-boot forensic of the C7 three-candidate live transport observation and the
 pre-threshold no-presentation plateau, before any new gate.
 
+**C7 wire and source-order forensic — PASS / no boot (2026-07-12):** named
+artifact replay of every C7 serial capture proves four complete, adjacent
+protocol rows, valid RC/FENCE, and 65,663/69,617-byte raw payloads (131,326/
+139,234 hex bytes), all below the 2,000,000 matcher cap. In all five, only
+`BEGIN` is coalesced with the literal terminal transition `ESC[?2004l CR` at
+the start of its raw record; `META`, `HEX`, and `END` begin cleanly. The
+anchored parser therefore selects three rows. There is no kernel interleave
+inside a row, truncation, CR corruption, match-cap event, or C7-marker fault.
+The smallest repair contract is a C7-BEGIN-only, once-only acceptance of that
+exact preamble, retaining raw-record adjacency and rejecting every other
+prefix/control placement; chunking is not evidence-justified. It needs actual
+wire replay plus foreign-prefix, duplicate, and non-BEGIN negative cases
+before any gate, and remains sidecar/no-credit.
+
+The source conclusion is corrected: `/ytmediaprobe.sh` is a post-gate grep
+reader, but MAIN-world `probe.js` emits `YT_MEDIA_PROBE_V1` autonomously from
+document-idle. Forced-HD720 emits `force_ready` by at most 60 s even without a
+player, then emits observation/start as applicable. The C7 source log has zero
+such rows over receipts spanning about 338 s; successful high-flip controls
+contain the same extension's `force_ready` and later rows (one has 60 rows).
+Thus `source-media-marker-missing` is not an expected collection-timing null:
+it localizes an extension injection/execution or navigation pipeline failure,
+without separating those alternatives. Existing pre-gate facts need no rootfs
+change: diagnostic-V2 `producer_start` (capturediag arm) proves extension
+liveness after document-idle, `force_ready` exposes player/video state, and
+`force_observation` exposes progress. Launcher argv/child_exec proves launch
+only. A reviewed host-side pre-gate reader can use those existing diagnostic
+facts; if unchanged-arm injection-vs-navigation separation is required, new
+instrumentation is unavoidable. No performance, HD720, FPS, or threshold fact
+is supplied by this forensic.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1725,8 +1756,13 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    strengthened host-only static matrix, and independent C7 review passed;
    their sole fresh windowed gate is now consumed INVALID/N=0 at the unchanged
    live-role/no-presentation threshold, with C7 itself diagnostic-INCOMPLETE.
-   No retry is authorized. Do not lower the threshold. Clear >=52 before
-   pursuing about 55-60.
+   The retained no-boot wire replay now localizes C7's three rows to the exact
+   bracketed-paste-disable prefix on BEGIN; its no-credit, literal-preamble
+   repair needs review before a gate. The source-marker forensic also proves
+   that its absence after 338 s is an extension/navigation pipeline failure,
+   not a post-gate collection null; use existing V2/force pre-gate facts or
+   add reviewed unchanged-arm instrumentation. No retry is authorized. Do not
+   lower the threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
