@@ -2155,3 +2155,52 @@ and after the failed suite were both total/informational-RISC-V/conflicting
 no-credit. The next authority must forensically localize the failed
 actual-helper aggregate and C5 receipt predicate before any narrowly scoped
 repair and one newly authorized canonical static replay.
+
+**C8 aggregate/C5-C7 static-reporter forensic — ROOT CAUSE PARTIAL / NO-BOOT
+(2026-07-12):** independent inspection of named scratch
+`/tmp/xv6-c8-tcl-safe-static.WIdXt2`, its 13,857-byte external log, and the
+unstaged driver separates three facts that the single terminal tuple obscured.
+First, C8's actual-helper aggregate really is false (`c8=1,1,1,1,0,1,1,1,1`):
+source/static predicate, direct decimal checker, exact emitted-literal lock,
+progress LF/CRLF/CRCRLF wire matrix, wire adversaries, and no-credit are all
+one; only the combined empty/multiline/binary/over-cap helper expression is
+zero. Every helper invocation returned normally and passed its four-row label
+check, but the source retains only the final 16,385-byte over-cap input and
+not each helper stdout, parsed META, or component boolean. The aggregate is a
+long inline `expr` with no detail vector, so the retained evidence cannot
+honestly distinguish its no-player, binary, empty, over-cap, or earlier
+cleanup conjunct. No production helper correction is localized from it.
+
+Before one new static suite, replace that one opaque boolean with bounded
+per-case records (`progress`, `no_player`, `binary`, `empty`, `over_cap`) that
+retain command success/error code, row count, parser pass/detail, META
+status/cursor/payload/cap/truncated/hex count, exact-payload or exact-prefix
+boolean, semantic detail where applicable, and cleanup boolean—never a large
+payload in the terminal line. Persist each already bounded helper frame under
+the static outdir before the next source overwrite (the over-cap frame is at
+most 32,768 lower-hex bytes plus its short envelope), and append this detail
+vector to `fail_preflight`. This is instrumentation only; preserve the exact
+helper and every existing wire negative until a named component fails.
+
+Second, C5's displayed `c5=0 receipt-fbstat-marker-drift {}` is the intended
+fail-closed negative result, not a new C5 failure: the terminal condition has
+always required `[lindex $static_render_fbstat_drift 0]` to be false. The
+same construction and condition are byte-for-byte present at `6d2daca`,
+`a262911`, and current source; print a named `c5_marker_drift_rejected=1`
+summary rather than the raw parser tuple to avoid another false alarm. The
+C5 emitted helper is unchanged at SHA-256
+`a0c6d5a831789dd49221b3cf20f6b72ffe53b18c8e8a7becd831b3a6a15e9ef8`.
+
+Third, the terminal has a separate C7 reporter defect: its new
+`static_c7_helper_unchanged` compares the *emitted* helper against
+`3cced3...`, which is a prior larger source-range hash, not that helper's
+bytes. The current, `6d2daca`, and `a262911` emitted C7 helper all hash to
+`cce4b2b01f8a69f06d466a0a84cb75a0b258ad97b9c34e85879e7e908f377842`, so
+the guard's `0` is an expectation error, not a C7 behavior change. Correct
+only that expected emitted hash (and preferably use the same exact hash form
+for C5); retain C7's old local decimal validator byte-for-byte. C5/C7 source
+slices also match all three checkpoints, so no C8 interaction or accidental
+implementation edit is evidenced. No source edit, test/replay, VM, build,
+rootfs, serial, launcher, KDE, or process action occurred; exact start
+inventory was total/informational-RISC-V/conflicting `0/0/0`. This grants no
+C8, C7, C5, A1, HD720, audio, fullscreen, FPS, or performance credit.
