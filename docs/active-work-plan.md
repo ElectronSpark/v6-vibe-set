@@ -5,19 +5,33 @@ self-failure chronology and disposable artifacts remain in git history.
 
 ## Objective and acceptance
 
-Close YouTube 720p60 to the comparable Linux VM on this KVM+virgl host in two
-separate, mandatory modes:
+Deliver Linux-VM-parity YouTube 720p60 from one owned x86 real-KVM+virgl guest:
+stable roughly 55–60 presented fps with low drops, proven GPU acceleration,
+and real Pulse/virtio-snd userspace audio enabled—never the
+`--disable-audio-output` workaround. Acceptance is separate N>=2 valid
+`yt-presentfps` + `PERF-VIDEO` evidence for each condition: a windowed watch
+page and a nonce-proven actual player/document fullscreen with settled active
+1280x720 playback. A maximized window is not fullscreen; samples never pool,
+and software fallback, llvmpipe, N=1 timing wins, and diagnostic-only output
+do not count.
 
-1. **Windowed watch page:** N>=2 valid real KVM+virgl runs, first >=52
-   presented fps, then about 55-60 with low drops and stable pacing.
-2. **Actual player/document fullscreen:** a separate nonce-bound proof of real
-   player or document fullscreen, settled active 1280x720 playback, then N>=2
-   valid runs with the same thresholds.
+Prioritize work in this order. Trustworthy evidence transport is an enabler,
+not the destination; use it only to support the next performance decision.
+First take A1 MP1 from the current 28.9 fps state to >=52. Then repair the
+real Chromium Pulse stream path and validate audio-on. Next attack the
+measured 52–53 local host-retire/present-throughput wall to roughly 55–60.
+Only after those gates may default batteries run. Every diagnostic must end in
+an implementation decision, an honest close/null verdict, or the next ranked
+lever—evidence plumbing must not substitute for performance progress.
 
-A maximized window is not fullscreen. Windowed and fullscreen samples never
-pool, and either mode missing its own evidence leaves the overall goal open.
-Only `yt-presentfps` plus `PERF-VIDEO` on real KVM+virgl GL count; software
-fallback, llvmpipe, N=1 timing wins, and diagnostic-only output do not.
+## Immediate queue
+
+At explicit `-ff` HEAD `dd5b6df394feb85cf2d5089fc5179d661eafa18c`, there is
+no run authority. First re-review the pending C1 V2 observer remediation
+(1-MiB static wrapper bound plus per-case count artifacts); do not run it yet.
+Only a passing adversarial review may authorize one fresh canonical host-only
+suite. No VM, performance, audio, fullscreen, default, or credit action is
+opened by that suite.
 
 ## Binding host and VM discipline
 
@@ -30,6 +44,10 @@ fallback, llvmpipe, N=1 timing wins, and diagnostic-only output do not.
   is not completion: use short marker commands, allow the known first
   bracketed-paste character drop, wait for the owned command, then reacquire a
   prompt. Never use `pgrep`.
+- The conductor delegates every concrete audit, measurement, implementation,
+  battery, and forensic to a scoped worker, and records an honest verdict
+  before the next queue item. Evidence work never bypasses the prioritized
+  performance path above.
 - The conductor authorizes at most one x86 KVM+virgl performance VM worker.
   Exact all-architecture `/proc/*/exe` inventories remain required, without
   `pgrep`, but prospectively an independent, non-owned
