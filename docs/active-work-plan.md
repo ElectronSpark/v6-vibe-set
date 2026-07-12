@@ -1253,6 +1253,37 @@ rootfs, serial, launcher, or process was touched.  This is no performance,
 HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit.  An
 independent no-boot adversarial review is mandatory before any VM gate.
 
+**A1 candidate-local CRCRLF transport normalization — INDEPENDENT REVIEW PASS /
+NO-BOOT (2026-07-12):** immutable
+`1328b356a1cf11270758ba942e0e0c6e208e2624` equals current HEAD and the
+explicit origin branch. Its only production change is the fbstat transport
+decoder plus its canonical static cases (the companion plan change grants no
+runtime behavior): raw serial is split only on LF, every raw-record index is
+retained, and only a record beginning with one of the four transport prefixes
+has its trailing CR run removed. A remaining candidate CR fails
+`transport-wire-cr`; noncandidate bytes, including `ESC[?2004l\r[`, are not
+rewritten. The unchanged exact-four count and raw-record adjacency retain
+blank/interleave rejection, while duplicates and all tag/nonce/status/count/
+cap/length/digest/hex/truncation checks remain fail-closed. The decoded fbstat
+parser, receipt/role logic, thresholds, diagnostic route, and no-credit policy
+are outside the source diff.
+
+The one fresh canonical replay, outdir
+`/tmp/xv6-fbstat-crcrlf-independent-static.zHkDka`, log
+`/tmp/xv6-fbstat-crcrlf-independent-static.zHkDka.log`, synchronously exited
+0 and reached `YT-PRESENTFPS-STATIC-CHECK-PASS`. Its fail-preflight
+actual-wire matrix therefore accepted identical LF/CRLF/CRCRLF payloads,
+preserved CRLFCRLF as a noncontiguous blank, rejected mid-row candidate CR,
+and tolerated unrelated lone-CR noise; retained interleave/duplicate and all
+prior strict negatives stayed invalid. The same replay retained actual-Bash
+role evidence, receipt tail/digest rejection, 103/4 and 104/4 rejects versus
+104/5 retention, `capturediag0_no_v3=PASS`, V3 diag0-off parity, and
+`js_guest_runtime=UNEXECUTED`. Exact QEMU inventories before/after were
+total/conflicting/informational-RISC-V `0/0/0`; no process was touched. This
+PASS clears only formation of a fresh serialized A1 gate—never a VM launch or
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance
+credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1366,10 +1397,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    console-interleaved KMS provenance token. The fail-closed transport repair
    and independent review now pass; they permit forming, never reusing, a
    fresh serialized A1 gate. That gate's sole run is consumed INVALID at the
-   fbstat transport gate: CRCRLF expands to blank rows under the current
-   global map. A scoped normalization repair, the actual-wire static matrix,
-   and an independent no-boot review are required before another gate may be
-   formed. Clear >=52 before pursuing about 55-60.
+   fbstat transport gate: CRCRLF expanded to blank rows under the old global
+   map. The scoped candidate-local repair, its actual-wire matrix, and its
+   independent no-boot review now pass; they permit forming (never reusing) a
+   fresh serialized A1 gate only. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
