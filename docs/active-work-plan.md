@@ -1520,6 +1520,26 @@ META-token failure, followed by independent review. No test was rerun and no
 source, VM, QEMU, build, rootfs, serial, or launcher action occurred; exact
 QEMU inventories before/after were `0/0/0`.
 
+**A1 C7 META-tokenizer correction and static matrix — PASS / NO-BOOT
+(2026-07-12):** the narrow parser correction now admits only lowercase-leading
+META keys under `^[a-z][a-z0-9_]*$`, allowing required `c7_marker` while
+rejecting leading-digit, uppercase, and punctuation keys. The one fresh
+canonical replay (outdir `/tmp/xv6-a1-c7-token-static.F4q8Lc`, log
+`/tmp/xv6-a1-c7-token-static.F4q8Lc.log`) exited 0 and reports the C7 PASS
+row. Its 70,000-byte full-census control (within the named 65--82 KiB range)
+and clean LF/CRLF/CRCRLF frames reach host decode/rehash/vector success.
+Each negative now asserts its own invariant: outer RC/FENCE; candidate
+duplicate/interleave/mid-row-CR; tag/nonce/probe/C3/C4/C5/C7 META drift;
+extra full-digest/vector claims; invalid key grammar; raw/payload/cap/tail/
+length/digest/hex/status; and truthful over-cap. A malformed semantic row
+cannot forge audio/network/utility claims because host derivation counts only
+the exact evidence grammar. The unchanged C6 receipt, 4096-byte cap, role and
+flip thresholds, diag0/V3 isolation, no-credit latch, and all existing static
+groups are green. Exact all-architecture QEMU inventories immediately before
+and after were both zero. This is host/static diagnostic-only credit: no VM,
+HD720, media, FPS, audio, fullscreen, or default authority is granted; an
+independent C7 adversarial review remains required before another gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1640,10 +1660,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    role/player diagnostic's first static attempt has an untrusted full-census
    digest/vector claim. A distinct C7-only, cap-preserving full-census
    diagnostic design is now reviewed; it leaves the 4096-byte admitting C6
-   receipt unchanged. Its current C7 static control is blocked at the
-   `c7_marker` META-key tokenizer, so the one narrow grammar correction,
-   fresh static pass, and independent review remain required before another
-   gate. Do not lower the threshold. Clear >=52 before pursuing about 55-60.
+   receipt unchanged. Its narrow `c7_marker` META-tokenizer correction and
+   strengthened host-only static matrix now pass; an independent C7
+   adversarial review remains required before another gate. Do not lower the
+   threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
