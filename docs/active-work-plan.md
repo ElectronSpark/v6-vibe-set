@@ -1460,6 +1460,23 @@ controls; and LF/CRLF/CRCRLF, blank/interleave, mid-row-CR, and duplicate
 candidate adversaries. No source, VM, build, rootfs, serial, or launcher
 action occurred; exact QEMU inventories before/after were `0/0/0`.
 
+**A1 C7 full-census diagnostic static implementation — INCOMPLETE / NO-BOOT
+(2026-07-12):** the one fresh canonical `YT_STATIC_CHECK=1` replay (outdir
+`/tmp/xv6-a1-c7-static.7M3dQp`, log
+`/tmp/xv6-a1-c7-static.7M3dQp.log`) reached the existing static terminal but
+failed `static-check-render-start-receipt`: C7 tuple
+`complete,wire,rejects,source,no-credit = 0,0,1,1,1`. Thus the complete
+65--82 KiB control and LF/CRLF/CRCRLF controls are not proved; all C7
+rejection, source-contract, and no-credit controls did hold, as did the
+unchanged C6 baseline gates. Likely defect is C7 META binding's local-name
+lookup (`expected_nonce`/`expected_probe` versus field-name variables); this
+is a localization, not a verified repair. Per the one-run rule no correction,
+rerun, VM, rootfs, build, serial, launcher, or default action followed; the
+driver patch remains unstaged. Exact pre-run inventory saw only one unrelated
+informational RISC-V QEMU (PID 2370035); exact post-run inventory was zero.
+This grants no full-census, role/subtype, HD720, media, FPS, audio, fullscreen,
+or VM authority.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
