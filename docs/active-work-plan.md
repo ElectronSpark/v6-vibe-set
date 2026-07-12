@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `15b6369ed7d4a72d098cb0f161f52c363ae33341`, the pending
-C1 correction's static-observer spelling repair is ready for a fresh
-independent no-boot review. The prior suite remains consumed; there is no
-static retry, VM, performance, audio, fullscreen, default, or credit
-authority.
+At review checkpoint `80aabb0caa50a7103b24f394428eec13109035ec`, the C1 V2
+observer-status correction has passed independent no-boot review. Exactly one
+fresh canonical MP=1/media=1 host-only static suite is authorized; it is not a
+retry of either consumed suite and grants no VM, performance, audio,
+fullscreen, default, or credit authority unless that one suite passes.
 
 ## Binding host and VM discipline
 
@@ -3453,3 +3453,29 @@ conflicting `0/0/0`; no process was touched. `git diff --check` is clean; the
 driver remains unstaged. This is readiness only and requires independent
 adversarial no-boot review before any new static suite, with no V2/A1/HD720,
 audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
+**C1 V2 observer-status correction adversarial re-review — PASS / NO-RUN
+(2026-07-12):** at source checkpoint
+`80aabb0caa50a7103b24f394428eec13109035ec`, guarded source audit finds zero
+`CHILDKSTATUS` occurrences. `static_fb_v2_child_status` now parses exactly
+three-element `CHILDSTATUS <pid> <status>` into `exit_code`, parses
+`CHILDKILLED` into its signal field, and retains unrelated errorcodes with an
+unavailable exit/no signal. Its pure in-memory Tcl fixtures use list-safe
+`CHILDSTATUS 4242 68`, `CHILDKILLED 4243 SIGTERM observer-test`, and
+`POSIX EACCES observer-test` values; no fixture starts a child. The matrix is
+both an immediate static preflight and a required member of the C1 V2 and
+terminal static aggregates, all inside the `YT_STATIC_CHECK=1` branch, so it
+cannot supply production or performance credit.
+
+The prior C1 V2 production checks remain intact: the shared anchored Bash
+decimal predicate validates all three fields of both no-option `wc` triples,
+the binary decoder verifies lower-hex re-encoding rather than Tcl byte length,
+and the four-byte binary input snapshot remains source-locked to its exact
+hex/SHA. No test, build, rootfs, VM, boot, serial, KDE/default, or QEMU action
+occurred; exact `/proc/*/exe` inventory was total/informational-RISC-V/
+conflicting `0/0/0`. This PASS authorizes exactly one fresh canonical clean-
+PATH host-only static suite with `YT_STATIC_CHECK=1`, MP=1,
+audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, pinned
+window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`. Retain its
+first result and artifacts without retry. It is no VM, HD720/fullscreen,
+audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance authority.
