@@ -26,14 +26,15 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At source checkpoint `95d3ee4997ecaa0e31ac4b657a9feb705537b11b`, the one
+At source checkpoint `e079eacc1297e450c4e68e21ca3d0ba2376f7ac5`, the one
 review-authorized C1 V2 observer suite is consumed but failed before its
-actual-helper cases on a static max-row arithmetic assertion. There is no
-further static or VM authority. First correct/re-review only that observer
-assertion, retaining its 1-MiB wrapper and per-case count artifacts; then a
-new authority may decide whether one fresh canonical host-only suite is
-warranted. No VM, performance, audio, fullscreen, default, or credit action
-is opened by the failed suite.
+actual-helper cases on a static max-row arithmetic assertion. The reviewed
+inner-row correction is ready in the pending static harness and awaits
+adversarial review; there is no further static or VM authority. Retain the
+1-MiB wrapper and per-case count artifacts. Only a new authority after review
+may decide whether one fresh canonical host-only suite is warranted. No VM,
+performance, audio, fullscreen, default, or credit action is opened by the
+failed suite.
 
 ## Binding host and VM discipline
 
@@ -2583,9 +2584,10 @@ fragment splicing, unbounded diagnostic text, or candidate after END is
 allowed. It must cap the scanned raw serial at the existing 2-MiB ceiling,
 record candidate indexes, and require the unique outer `RC:0` then `FENCE`.
 
-`131072` decoded bytes now mean 697 full 512-byte records plus one 208-byte
-final CHUNK and 740 bytes of maximal BEGIN/META/END rows: 357812 physical
-bytes before the marker-dependent outer rows, or 31.06 seconds at 115200 8N1
+`131072` decoded bytes now mean 697 full 512-byte records plus one 207-byte
+final CHUNK and 710 bytes of maximal BEGIN/META/END rows: 357781 inner CRLF
+recorder bytes before the separately accounted marker-dependent outer rows, or
+31.06 seconds at 115200 8N1
 before capture, hashing, 698 ioctls, scheduling, and up to 50-ms contention
 waits. The existing 35-second
 `fb_sample` command limit is therefore unsound. Before implementation, pin a
@@ -3130,7 +3132,7 @@ pending, unstaged static-harness-only correction changes the C1 actual-helper
 wrapper's inherited file limit from 128 to 2048 512-byte blocks (1 MiB). A
 source/static arithmetic guard locks that value against the generated helper's
 999999-byte raw-capture guard, the 131072-byte valid payload cap plus the
-one-byte over-cap fixture, and the calculated 357812-byte maximum exact-cap
+one-byte over-cap fixture, and the calculated 357781-byte inner CRLF
 recorder envelope; the wrapper remains the finite capture/output bound, so it
 cannot manufacture the prior 64-KiB valid-case failure or allow unbounded
 child artifacts. Each C1 case now preserves `$dir/count` before the next
@@ -3153,12 +3155,12 @@ unstaged observer change remains inside `YT_STATIC_CHECK`: it does not alter
 the production V2 helper/parser/protocol, timeout algebra, runtime aggregate
 or credit path, C8/render observers, kernel/user/rootfs/defaults, or QEMU.
 The current generated V2 source still has the reviewed `raw_bytes <= 999999`
-guard, 131072-byte transport cap, and 357812-byte exact-cap physical recorder
+guard, 131072-byte transport cap, and 357781-byte inner CRLF recorder
 envelope.
 
 The C1 wrapper's `ulimit -f 2048` is 2048 512-byte blocks = 1048576 bytes,
 strictly above the 999999-byte raw capture, 131072-byte valid input,
-131073-byte over-cap fixture, and 357812-byte recorder envelope while still
+131073-byte over-cap fixture, and 357781-byte inner CRLF recorder envelope while still
 bounding each child-created capture, rows, and combined-output file. Each
 named case now snapshots `$dir/count` before the next case's cleanup, copies it
 to unique `actual-<case>.count.txt`, and reports bounded source and copied
@@ -3248,3 +3250,18 @@ valid raw-capture guard, and leave production helper/parser/protocol/timeout
 behavior unchanged. A new adversarial review is required before any new
 canonical host-only suite; no V2/A1/performance/HD720/fullscreen/audio credit
 exists.
+
+**C1 V2 observer arithmetic correction — READY / NO-RUN (2026-07-12):** the
+pending, unstaged static-only hunk now names `physical_bytes` as the inner CRLF
+recorder bound and pins it to `357781`; it separately derives the static
+LF-row-file bound `357080` (`physical_bytes - 701`). The pre-existing timeout
+contract remains behaviorally unchanged but its static source lock now
+explicitly retains the current 16-byte-marker outer cost `47`, normal writer
+`128`, timed-wire total `357956`, `wire_ms=31073`, `lock_ms=35050`, reserve
+`5000`, and timeout `72`. Historical explanatory prose above now distinguishes
+these inner and separately accounted terms; the failed-suite evidence itself
+continues to record the rejected `357812` assertion. No helper/parser/protocol,
+runtime timeout, C8/render, kernel/user/rootfs/default/KDE, build, test,
+serial, VM, boot, or QEMU action occurred. This is correction readiness only:
+the driver remains unstaged and a new adversarial review is required before
+any further canonical static suite or credit.
