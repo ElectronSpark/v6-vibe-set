@@ -955,6 +955,28 @@ touched. This PASS permits only formation of a fresh serialized A1 gate. It
 does not authorize a VM or create HD720, fullscreen, audio, `yt-presentfps`,
 `PERF-VIDEO`, or performance credit.
 
+**A1 evidence-file-repair gate — WINDOWED INVALID, N=0 (2026-07-12):** the
+sole authorized owned x86 KVM+virgl/OpenGL-submit trial,
+`/tmp/xv6-a1-role-evidence-windowed.JWr2U5`, started at immutable
+HEAD/origin `a7e85bcc461d79a47bbdaacf81a094101e9266ba` with MP1, audio-disable1,
+media1, forced-HD7201, EGL0, capturediag0, and a 60-second window. The GTK
+launch command has neither fullscreen nor zoom-to-fit enabled; this is a
+windowed-only sample and creates no fullscreen credit. Idle fbstat admitted
+the real `backend=virgl`, `backend_opengl_submit=1` path (3 flips/4 presents),
+and Chromium's recorded argv contains the multiprocess/HD720 media arm and
+`--disable-audio-output`. At probe1 the driver rejected its sole fbstat sample
+as `missing-kms_page_flip_events` (`fbstat-probe1-attempt1.txt`), then stopped
+with code 8 before the role receipt/canonical evidence, HD720 semantic proof,
+media probe, or any `yt-presentfps`/`PERF-VIDEO` interval. Thus FPS, drops,
+VPQ, retire, audio-on behavior, and fullscreen behavior are all absent—not
+zero, and not comparable. The owner `2276159` was synchronously waited/reaped
+(`waited:2276159 exp4 0 0`); final exact `/proc/*/exe` inventory was
+total/conflicting/informational-RISC-V `0/0/0`. No second VM ran. Next is
+no-boot forensic/static review of the probe1 fbstat `kms_page_flip_events`
+parser/producer mismatch (including the accepted idle provenance) before any
+new gate; no role, audio, presentation, default, or fullscreen conclusion is
+opened by this invalid sample.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
