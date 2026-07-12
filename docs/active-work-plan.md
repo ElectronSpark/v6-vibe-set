@@ -2349,3 +2349,39 @@ permits only formation of a fresh serialized **windowed** A1 gate; it is not a
 VM authorization and supplies no HD720, fullscreen, audio, `yt-presentfps`,
 `PERF-VIDEO`, or performance credit. Actual fullscreen remains a separate
 later N>=2 requirement.
+
+**Authorized A1 C8-repair windowed trial — CONSUMED / INVALID / N=0
+(2026-07-12):** the fresh conductor authority at HEAD/origin
+`16af28fe8a04aa8a9f9a51e8bf485b915f579bc2` passed this worker's immediate
+explicit-ref check, `/dev/kvm` read/write check, no other VM worker, and exact
+prelaunch total/informational-RISC-V/conflicting QEMU inventory `0/0/0`. The
+one and only owned x86 KVM+virgl trial is
+`/tmp/xv6-a1-windowed-c8-live.6vPv1Z` (external driver log
+`/tmp/xv6-a1-windowed-c8-live.6vPv1Z.driver.log`), with scratch image
+`/tmp/xv6-yt-20260712T163225Z-pid2696377-mp1-audio1-media1-hd7201.fs.img`.
+It used the windowed GTK KVM/host-DRI/virtio-vga-gl-primary launch contract,
+4 GiB RAM, MP=1, audio-disable=1, media=1, forced-HD720=1, EGL=0,
+capturediag=0, `QEMU_AUDIO=none`, and the standard 60-second A1 windows; it
+is not fullscreen and carries no audio-on/default claim.
+
+The driver stopped at the very first **idle C1** transport before Chromium
+launch, C6 receipt, C7/C8 sidecars, HD720/media proof, or either FPS window:
+`code=8 FAIL invalid-fbstat-transport tag=idle attempt=1
+detail=transport-frame-noncontiguous`. The retained raw artifact
+`fbstat-idle-attempt1.txt` is 114441 bytes/17 lines and contains an inner
+`status=OK`, raw/payload `56422/56422`, cap `131072`, truncation `0`, and
+hex-length `112844` frame, but it was correctly not admitted as an fbstat
+sample. `metrics.txt` consequently has only the arm header and
+`media_probe_image_assets=PASS`; there is no `PERF-VIDEO`, `yt-presentfps`,
+drop, VPQ, retire, C6/C7/C8 diagnostic, active-HD720, audio, or fullscreen
+fact. This is an INVALID/N=0 consumed trial, not an N=1 timing sample or
+performance credit; no retry is authorized under this gate.
+
+The driver owned leader `2696539`; cleanup observed it zombie-only, synchronously
+reaped it (`waited:2696539 exp4 0 0`), and recorded `exact_qemu_after=none`.
+Fresh post-run and final exact inventories were total/informational-RISC-V/
+conflicting `0/0/0`; no external QEMU was touched. No source, rootfs, build,
+launcher, default, fullscreen, audio-path, kernel, or KDE change occurred;
+unrelated KDE-smoke dirt remains untouched. The next authority must localize
+this fresh idle C1 transport noncontiguity no-boot before forming another A1
+gate.
