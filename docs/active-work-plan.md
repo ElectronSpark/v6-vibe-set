@@ -2286,3 +2286,34 @@ source edit, test/replay, VM, build, rootfs, serial, launcher, KDE, or process
 action occurred; exact start inventory was total/informational-RISC-V/
 conflicting `0/0/0`. This grants no C8/C7/A1, HD720, audio, fullscreen, FPS,
 or performance credit.
+
+**C8 binary host-accounting correction — STATIC PASS / NO-BOOT
+(2026-07-12):** one fresh canonical host-only static command with MP=1,
+audio-disable=1, media=1, forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-binary-static.H0iy5h` exited 0 (external log
+`/tmp/xv6-c8-binary-static.H0iy5h.log`) and emitted both
+`YT-RENDER-START-RECEIPT-STATIC-PASS` and
+`YT-PRESENTFPS-STATIC-CHECK-PASS`. C8 now decodes lower hex, re-encodes it as
+`decoded_hex`, requires that ASCII length to equal META `hex_bytes` and exact
+text equality to the encoded payload, and computes the host digest through a
+C8-local `wb`/binary-translation/binary-encoding/no-newline temporary file.
+The valid exact binary fixture `6d756c74696c696e650a00ff410a` passes the
+actual generated helper and parser with cursor/payload/cap/truncated/hex
+`14/14/16384/0/28`, parsed re-encode equality, and matching helper/META/host
+SHA-256 `30553a5bfa023e59853ee00f3caf7af2070486170a371e3f7d5b5c1aae514d31`.
+The retained progress, no-player, empty, and truthful-over-cap actual-helper
+records, LF/CRLF/CRCRLF/preamble/outer-RC-FENCE wire matrix, all wire
+negatives, decimal matrix/source lock, C5 marker-drift negative, and cleanup
+remain green. The C7 emitted-helper guard now passes against the direct
+`role_census_diag_guest_helper_script` SHA-256
+`1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5`; C7's
+old decimal glob and implementation remain untouched.
+
+This changes only C8 host byte accounting/digest validation and its static
+fixture/assertions plus the C7 static expected digest; it does not alter the
+C8 guest helper/frame grammar/derive behavior, C5/C7 parser behavior, or any
+VM/rootfs/build/launcher/default/kernel/KDE path. Exact `/proc/*/exe`
+inventories immediately before and after were total/informational-RISC-V/
+conflicting `0/0/0`; no process was touched. This is source/static-only and
+grants no C8/C7/A1, HD720, audio, fullscreen, FPS, or performance credit. The
+next work remains an independent no-boot review before any gate.

@@ -4460,11 +4460,44 @@ exit 0
 }
 }
 
+proc source_prethreshold_valid_decimal_bash {} {
+    return {valid_decimal() {
+    [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]
+}}
+}
+
+proc source_prethreshold_valid_decimal_checker_bash {} {
+    return [join [list [source_prethreshold_valid_decimal_bash] \
+        {valid_decimal "$1"}] "\n"]
+}
+
 # C8 is a bounded, fresh reader for the canonical launcher source.  It is
 # separate from C6's small tail and C7's role census: its evidence remains
 # diagnostic-only and cannot participate in render-start admission.
-proc source_prethreshold_guest_helper_script {} {
-    return {#!/bin/bash
+proc source_prethreshold_guest_helper_script {{overrides {}}} {
+    set config [dict create \
+        source_log /host-gui-wayland-chromium.log \
+        temp_prefix /dev/shm/yt-source-prethreshold]
+    if {[catch {dict size $overrides}]} {
+        error "source-prethreshold helper overrides must be a dictionary"
+    }
+    dict for {key value} $overrides {
+        if {![dict exists $config $key]} {
+            error "unknown source-prethreshold helper option: $key"
+        }
+        dict set config $key $value
+    }
+    foreach key {source_log temp_prefix} {
+        set value [dict get $config $key]
+        if {![regexp {^/[A-Za-z0-9._/+:-]+$} $value] ||
+            [regexp {(^|/)\.\.?(/|$)} $value]} {
+            error "invalid source-prethreshold helper path for $key"
+        }
+    }
+    return [string map [list \
+        @SOURCE_LOG@ [dict get $config source_log] \
+        @TEMP_PREFIX@ [dict get $config temp_prefix] \
+        @VALID_DECIMAL@ [source_prethreshold_valid_decimal_bash]] {#!/bin/bash
 set -f
 nonce=$1
 probe=$2
@@ -4476,7 +4509,7 @@ fbstat_marker=$7
 c8_marker=$8
 cap=16384
 source_path=host-gui-wayland-chromium.log
-source_log=/host-gui-wayland-chromium.log
+source_log='@SOURCE_LOG@'
 status=OK
 source_cursor=0
 payload_bytes=0
@@ -4489,10 +4522,7 @@ valid_marker() {
     case "$1" in ''|*[!A-Za-z0-9]*) return 1 ;; esac
     return 0
 }
-valid_decimal() {
-    case "$1" in 0|[1-9][0-9]*) return 0 ;; esac
-    return 1
-}
+@VALID_DECIMAL@
 if [ "${#nonce}" -ne 32 ]; then status=PARAM_INVALID; fi
 case "$nonce" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
 case "$probe" in ''|*[!0-9]*) status=PARAM_INVALID ;; esac
@@ -4506,7 +4536,7 @@ fi
 case "$launch_digest" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
 case "$argv_digest" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
 
-base=/dev/shm/yt-source-prethreshold-${nonce}-${probe}-$$
+base=@TEMP_PREFIX@-${nonce}-${probe}-$$
 retained=${base}.payload
 rm -f "$retained"
 if [ "$status" = OK ] && { [ -e "$retained" ] || [ -L "$retained" ]; }; then
@@ -4596,7 +4626,7 @@ printf 'YT_SOURCE_PRETHRESHOLD_END tag=source-prethreshold-v1 nonce=%s probe=%s 
     "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" "$fbstat_marker" "$c8_marker"
 rm -f "$retained"
 exit 0
-}
+}]
 }
 
 proc fb_sample {tag} {
@@ -4925,6 +4955,19 @@ proc role_census_diag_probe {
 # C8 has its own nonce/probe/C3/C4/C5/outer-marker binding.  A valid C8
 # transport is still not a success predicate: it only allows the host to say
 # which already-emitted extension lifecycle fact is absent or present.
+proc source_prethreshold_binary_digest {payload} {
+    global outdir source_prethreshold_binary_digest_counter
+    incr source_prethreshold_binary_digest_counter
+    set path "$outdir/.source-prethreshold-binary-digest-[pid]-$source_prethreshold_binary_digest_counter"
+    set fh [open $path wb]
+    fconfigure $fh -translation binary -encoding binary
+    puts -nonewline $fh $payload
+    close $fh
+    set digest [sha256_file $path]
+    catch {file delete -force $path}
+    return $digest
+}
+
 proc source_prethreshold_parse {
     serial expected_nonce expected_probe launch_marker launch_digest argv_marker
     argv_digest fbstat_marker c8_marker
@@ -4952,11 +4995,33 @@ proc source_prethreshold_parse {
     }
 
     set rows {}
+    # C8 can see the same terminal transition as C7: accept exactly one
+    # literal bracketed-paste-disable sequence only before C8 BEGIN.  This is
+    # record-local transport handling, never a normalization of unrelated
+    # serial bytes or a way to synthesize frame adjacency.
+    set bracketed_paste_disable [binary format H* 1b5b3f323030346c0d]
+    set bracketed_paste_tag [binary format H* 1b5b3f323030346c]
+    set bracketed_paste_seen 0
     set raw_record_number 0
     foreach raw_record [split $serial "\n"] {
         incr raw_record_number
-        if {[regexp {^YT_SOURCE_PRETHRESHOLD_(BEGIN|META|HEX|END)([ \t]|$)} $raw_record]} {
-            set line [string trimright $raw_record "\r"]
+        set candidate_record $raw_record
+        if {[string first $bracketed_paste_tag $raw_record] >= 0} {
+            if {[string first $bracketed_paste_disable $raw_record] != 0} {
+                return [list 0 "source-prethreshold-preamble-invalid record=$raw_record_number" {}]
+            }
+            set candidate_record [string range $raw_record \
+                [string length $bracketed_paste_disable] end]
+            if {![regexp {^YT_SOURCE_PRETHRESHOLD_BEGIN([ \t]|$)} $candidate_record]} {
+                return [list 0 "source-prethreshold-preamble-placement record=$raw_record_number" {}]
+            }
+            if {$bracketed_paste_seen} {
+                return [list 0 "source-prethreshold-preamble-duplicate record=$raw_record_number" {}]
+            }
+            set bracketed_paste_seen 1
+        }
+        if {[regexp {^YT_SOURCE_PRETHRESHOLD_(BEGIN|META|HEX|END)([ \t]|$)} $candidate_record]} {
+            set line [string trimright $candidate_record "\r"]
             if {[string first "\r" $line] >= 0} {
                 return [list 0 "source-prethreshold-wire-cr record=$raw_record_number" {}]
             }
@@ -5061,12 +5126,15 @@ proc source_prethreshold_parse {
     if {![regexp {^[0-9a-f]{64}$} [dict get $meta digest]]} {
         return [list 0 source-prethreshold-digest-shape {}]
     }
-    if {[catch {binary decode hex $payload_hex} payload] ||
-        [string bytelength $payload] != [dict get $meta payload_bytes] ||
-        [binary encode hex $payload] ne $payload_hex} {
+    if {[catch {binary decode hex $payload_hex} payload]} {
         return [list 0 source-prethreshold-hex-roundtrip {}]
     }
-    set host_digest [render_start_receipt_digest $payload]
+    set decoded_hex [binary encode hex $payload]
+    if {[string length $decoded_hex] != [dict get $meta hex_bytes] ||
+        $decoded_hex ne $payload_hex} {
+        return [list 0 source-prethreshold-hex-roundtrip {}]
+    }
+    set host_digest [source_prethreshold_binary_digest $payload]
     if {$host_digest ne [dict get $meta digest]} {
         return [list 0 source-prethreshold-digest-drift {}]
     }
@@ -5075,7 +5143,7 @@ proc source_prethreshold_parse {
     return [list 1 pass $meta]
 }
 
-proc source_prethreshold_fields {row marker expected_nonce} {
+proc source_prethreshold_fields {row expected_nonce} {
     set fields {}
     foreach token [lrange [split $row " "] 1 end] {
         if {![regexp {^([a-z][a-z0-9_]*)=([^ ]+)$} $token -> key value] ||
@@ -5084,8 +5152,7 @@ proc source_prethreshold_fields {row marker expected_nonce} {
         }
         dict set fields $key $value
     }
-    set schema [expr {$marker eq "YT_MEDIA_PROBE_V1" ? "1" : "2"}]
-    foreach {key expected} [list schema $schema nonce $expected_nonce] {
+    foreach {key expected} [list schema 1 nonce $expected_nonce] {
         if {![dict exists $fields $key] || [dict get $fields $key] ne $expected} {
             return [list 0 "source-prethreshold-row-$key-drift" {}]
         }
@@ -5105,18 +5172,16 @@ proc source_prethreshold_signed {value} {
 }
 
 proc source_prethreshold_derive {payload expected_nonce extension_id} {
-    set result [dict create state INCOMPLETE detail source-no-injection-or-liveness rows 0 \
-        producer missing navigation missing player missing progress missing first_time unavailable \
+    set result [dict create state INCOMPLETE detail source-force-ready-unobserved-ambiguous rows 0 \
+        force_ready missing player missing progress missing first_time unavailable \
         last_time unavailable]
     set qid [regex_quote $extension_id]
-    set pattern [format {^\[([1-9][0-9]*):([1-9][0-9]*):([0-9]{4}/[0-9]{6}\.[0-9]{6}):INFO:CONSOLE:([0-9]+)\] "(YT_(?:MEDIA_PROBE_V1|CAPTURE_COMPLETENESS_V2) [^"]+)", source: chrome-extension://%s/probe\.js \(([0-9]+)\)$} $qid]
-    set producer_seen 0
+    set pattern [format {^\[([1-9][0-9]*):([1-9][0-9]*):([0-9]{4}/[0-9]{6}\.[0-9]{6}):INFO:CONSOLE:([0-9]+)\] "(YT_MEDIA_PROBE_V1 [^"]+)", source: chrome-extension://%s/probe\.js \(([0-9]+)\)$} $qid]
     set ready_seen 0
     set observation_seen 0
     foreach raw_line [split $payload "\n"] {
         set line [string trimright $raw_line "\r"]
-        if {[string first "YT_MEDIA_PROBE_V1 " $line] < 0 &&
-            [string first "YT_CAPTURE_COMPLETENESS_V2 " $line] < 0} {
+        if {[string first "YT_MEDIA_PROBE_V1 " $line] < 0} {
             continue
         }
         dict incr result rows
@@ -5131,7 +5196,12 @@ proc source_prethreshold_derive {payload expected_nonce extension_id} {
             return $result
         }
         set marker [lindex [split $row " "] 0]
-        set parsed [source_prethreshold_fields $row $marker $expected_nonce]
+        if {$marker ne "YT_MEDIA_PROBE_V1"} {
+            dict set result state INVALID
+            dict set result detail source-prethreshold-marker-drift
+            return $result
+        }
+        set parsed [source_prethreshold_fields $row $expected_nonce]
         if {![lindex $parsed 0]} {
             dict set result state INVALID
             dict set result detail [lindex $parsed 1]
@@ -5139,28 +5209,7 @@ proc source_prethreshold_derive {payload expected_nonce extension_id} {
         }
         set fields [lindex $parsed 2]
         set kind [dict get $fields kind]
-        if {$marker eq "YT_CAPTURE_COMPLETENESS_V2" && $kind eq "producer_start"} {
-            if {[dict size $fields] != 3 || $producer_seen} {
-                dict set result state INVALID
-                dict set result detail source-prethreshold-producer-shape-or-duplicate
-                return $result
-            }
-            set producer_seen 1
-            dict set result producer observed
-            continue
-        }
-        if {$marker ne "YT_MEDIA_PROBE_V1"} { continue }
         switch -- $kind {
-            start {
-                if {[dict exists $fields samples] &&
-                    [lindex [render_start_source_diagnostic_decimal [dict get $fields samples]] 0]} {
-                    dict set result navigation observed
-                } else {
-                    dict set result state INVALID
-                    dict set result detail source-prethreshold-start-shape
-                    return $result
-                }
-            }
             force_ready {
                 if {$ready_seen || $observation_seen} {
                     dict set result state INVALID
@@ -5176,6 +5225,7 @@ proc source_prethreshold_derive {payload expected_nonce extension_id} {
                     }
                 }
                 set ready_seen 1
+                dict set result force_ready observed
                 if {[dict get $fields player_present] == 1 &&
                     [dict get $fields video_present] == 1 &&
                     [dict get $fields ready_state] >= 2 &&
@@ -5215,12 +5265,15 @@ proc source_prethreshold_derive {payload expected_nonce extension_id} {
     if {[dict get $result rows] == 0} {
         return $result
     }
-    if {!$producer_seen && !$ready_seen} {
-        dict set result detail source-injected-no-player-or-navigation
-    } elseif {$producer_seen && !$ready_seen} {
-        dict set result detail source-injected-no-navigation
+    if {!$ready_seen} {
+        # V1 rows alone do not prove document-idle/selector completion.  In
+        # normal capturediag=0 A1, V2 producer_start is unavailable, so this
+        # must stay an honest ambiguity rather than an injection verdict.
+        dict set result detail source-force-ready-unobserved-ambiguous
     } elseif {[dict get $result player] ne "ready"} {
-        dict set result detail source-injected-no-player
+        dict set result detail source-extension-executed-no-player
+    } elseif {!$observation_seen} {
+        dict set result detail source-player-observation-pending
     } elseif {[dict get $result progress] ne "advancing"} {
         dict set result detail source-player-no-progress
     } else {
@@ -5240,7 +5293,7 @@ proc source_prethreshold_probe {
     set serial [lindex $result 1]
     wf "$outdir/source-prethreshold-probe$probe.serial.txt" $serial
     set diagnostic [dict create state INCOMPLETE detail source-prethreshold-command-rc-[lindex $result 0] rows 0 \
-        producer missing navigation missing player missing progress missing first_time unavailable \
+        force_ready missing player missing progress missing first_time unavailable \
         last_time unavailable source_path unavailable source_status unavailable source_cursor unavailable \
         payload_bytes unavailable cap unavailable digest unavailable c8_marker $c8_marker no_credit 1]
     if {[llength $result] == 4 && [lindex $result 0] eq "0"} {
@@ -5265,7 +5318,7 @@ proc source_prethreshold_probe {
             }
         }
     }
-    set canonical "probe=$probe state=[dict get $diagnostic state] detail=[dict get $diagnostic detail] c8_marker=$c8_marker source_path=[dict get $diagnostic source_path] source_status=[dict get $diagnostic source_status] source_cursor=[dict get $diagnostic source_cursor] payload_bytes=[dict get $diagnostic payload_bytes] cap=[dict get $diagnostic cap] digest=[dict get $diagnostic digest] rows=[dict get $diagnostic rows] producer=[dict get $diagnostic producer] navigation=[dict get $diagnostic navigation] player=[dict get $diagnostic player] progress=[dict get $diagnostic progress] no_credit=1"
+    set canonical "probe=$probe state=[dict get $diagnostic state] detail=[dict get $diagnostic detail] c8_marker=$c8_marker source_path=[dict get $diagnostic source_path] source_status=[dict get $diagnostic source_status] source_cursor=[dict get $diagnostic source_cursor] payload_bytes=[dict get $diagnostic payload_bytes] cap=[dict get $diagnostic cap] digest=[dict get $diagnostic digest] rows=[dict get $diagnostic rows] force_ready=[dict get $diagnostic force_ready] player=[dict get $diagnostic player] progress=[dict get $diagnostic progress] no_credit=1"
     wf "$outdir/source-prethreshold-probe$probe.txt" "$canonical\n"
     af $metricsf "source_prethreshold_diag $canonical no_fps_claim=1"
     return $diagnostic
@@ -5673,7 +5726,7 @@ proc render_start_receipt_probe {
     set source_diagnostic [source_prethreshold_probe $probe $launch_marker $launch_digest \
         $argv_marker $argv_digest $fbstat_marker]
     dict set receipt source_diagnostic $source_diagnostic
-    set canonical "nonce=[dict get $receipt nonce] probe=[dict get $receipt probe] launch_marker=[dict get $receipt launch_marker] launch_digest=[dict get $receipt launch_digest] argv_marker=[dict get $receipt argv_marker] argv_digest=[dict get $receipt argv_digest] fbstat_marker=[dict get $receipt fbstat_marker] source_status=[dict get $receipt source_status] source_cursor=[dict get $receipt source_cursor] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] source_tail_truncated=[dict get $receipt source_tail_truncated] role_command=[dict get $receipt role_command] role_status=[dict get $receipt role_status] role_total=[dict get $receipt role_total] role_bytes=[dict get $receipt role_bytes] role_digest=[dict get $receipt role_digest] role_tail_truncated=[dict get $receipt role_tail_truncated] role_state=[dict get $receipt role_state] fbstat_host_ms=[lindex $sample 2] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] diagnostic_rows=[dict get $source_diagnostic rows] diagnostic_producer=[dict get $source_diagnostic producer] diagnostic_navigation=[dict get $source_diagnostic navigation] diagnostic_player=[dict get $source_diagnostic player] diagnostic_progress=[dict get $source_diagnostic progress] diagnostic_first_time=[dict get $source_diagnostic first_time] diagnostic_last_time=[dict get $source_diagnostic last_time] diagnostic_source_path=[dict get $source_diagnostic source_path] diagnostic_source_status=[dict get $source_diagnostic source_status] diagnostic_source_cursor=[dict get $source_diagnostic source_cursor] diagnostic_payload_bytes=[dict get $source_diagnostic payload_bytes] diagnostic_cap=[dict get $source_diagnostic cap] diagnostic_digest=[dict get $source_diagnostic digest] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] census_no_subtype_claim=[dict get $census_diagnostic no_subtype_claim] flips=[lindex $sample 0] presents=[lindex $sample 1]"
+    set canonical "nonce=[dict get $receipt nonce] probe=[dict get $receipt probe] launch_marker=[dict get $receipt launch_marker] launch_digest=[dict get $receipt launch_digest] argv_marker=[dict get $receipt argv_marker] argv_digest=[dict get $receipt argv_digest] fbstat_marker=[dict get $receipt fbstat_marker] source_status=[dict get $receipt source_status] source_cursor=[dict get $receipt source_cursor] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] source_tail_truncated=[dict get $receipt source_tail_truncated] role_command=[dict get $receipt role_command] role_status=[dict get $receipt role_status] role_total=[dict get $receipt role_total] role_bytes=[dict get $receipt role_bytes] role_digest=[dict get $receipt role_digest] role_tail_truncated=[dict get $receipt role_tail_truncated] role_state=[dict get $receipt role_state] fbstat_host_ms=[lindex $sample 2] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] diagnostic_rows=[dict get $source_diagnostic rows] diagnostic_force_ready=[dict get $source_diagnostic force_ready] diagnostic_player=[dict get $source_diagnostic player] diagnostic_progress=[dict get $source_diagnostic progress] diagnostic_first_time=[dict get $source_diagnostic first_time] diagnostic_last_time=[dict get $source_diagnostic last_time] diagnostic_source_path=[dict get $source_diagnostic source_path] diagnostic_source_status=[dict get $source_diagnostic source_status] diagnostic_source_cursor=[dict get $source_diagnostic source_cursor] diagnostic_payload_bytes=[dict get $source_diagnostic payload_bytes] diagnostic_cap=[dict get $source_diagnostic cap] diagnostic_digest=[dict get $source_diagnostic digest] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] census_no_subtype_claim=[dict get $census_diagnostic no_subtype_claim] flips=[lindex $sample 0] presents=[lindex $sample 1]"
     wf "$outdir/render-start-receipt-probe$probe.txt" "$canonical\n"
     af $metricsf "render_start_receipt probe=$probe class=[lindex $classified 0] detail=[lindex $classified 1] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] diagnostic_only=1 no_fps_claim=1"
     return [list [lindex $classified 0] [lindex $classified 1] $receipt]
@@ -9629,6 +9682,178 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     proc static_source_prethreshold_console {payload extension_id {line_number 321}} {
         return "\[412:412:0710/120000.123456:INFO:CONSOLE:$line_number\] \"$payload\", source: chrome-extension://$extension_id/probe.js ($line_number)"
     }
+    # C8's static harness executes the production-generated Bash with only
+    # source/temp overrides, then subjects its literal stdout to the same C8
+    # serial parser used at runtime.  It is host-only: no guest/rootfs claim.
+    proc static_source_prethreshold_write_binary {path payload} {
+        set fh [open $path wb]
+        fconfigure $fh -translation binary -encoding binary
+        puts -nonewline $fh $payload
+        close $fh
+    }
+    proc static_source_prethreshold_helper_run {
+        helper source source_payload nonce probe launch_marker launch_digest
+        argv_marker argv_digest fbstat_marker c8_marker
+    } {
+        static_source_prethreshold_write_binary $source $source_payload
+        set command [list /bin/bash $helper $nonce $probe $launch_marker \
+            $launch_digest $argv_marker $argv_digest $fbstat_marker $c8_marker]
+        set caught [catch {exec {*}$command 2>@1} output options]
+        if {$caught} {
+            set errorcode [expr {[dict exists $options -errorcode] ?
+                [dict get $options -errorcode] : "unavailable"}]
+            return [list 0 $output $errorcode]
+        }
+        return [list 1 $output {}]
+    }
+    proc static_source_prethreshold_decimal_validator_run {checker value} {
+        set command [list /bin/bash $checker $value]
+        return [expr {![catch {exec {*}$command 2>@1}]}]
+    }
+    proc static_source_prethreshold_helper_clean {prefix} {
+        return [expr {[llength [glob -nocomplain "${prefix}-*"]] == 0}]
+    }
+    proc static_source_prethreshold_rows {text} {
+        set rows [split [string trimright $text "\n"] "\n"]
+        if {[llength $rows] != 4} {
+            error "static source-prethreshold helper row count [llength $rows]"
+        }
+        foreach {index label} {0 BEGIN 1 META 2 HEX 3 END} {
+            if {![string match "YT_SOURCE_PRETHRESHOLD_${label} *" [lindex $rows $index]]} {
+                error "static source-prethreshold helper row $index is not $label"
+            }
+        }
+        return $rows
+    }
+    proc static_source_prethreshold_rows_report {text} {
+        set trimmed [string trimright $text "\n"]
+        if {$trimmed eq ""} {
+            return [dict create ok 0 count 0 detail empty rows {}]
+        }
+        set rows [split $trimmed "\n"]
+        set count [llength $rows]
+        if {$count != 4} {
+            return [dict create ok 0 count $count detail "count-$count" rows {}]
+        }
+        foreach {index label} {0 BEGIN 1 META 2 HEX 3 END} {
+            if {![string match "YT_SOURCE_PRETHRESHOLD_${label} *" [lindex $rows $index]]} {
+                return [dict create ok 0 count $count \
+                    detail "label-$index-$label" rows {}]
+            }
+        }
+        return [dict create ok 1 count $count detail pass rows $rows]
+    }
+    proc static_source_prethreshold_report_token {value {cap 128}} {
+        set value [string map [list " " _ "\n" _ "\r" _ "\t" _] $value]
+        if {$value eq ""} { return none }
+        return [string range $value 0 [expr {$cap - 1}]]
+    }
+    # Preserve each actual-helper input/output before the next case overwrites
+    # the shared source fixture.  The terminal record contains only bounded
+    # metadata; the binary source/frame/wire artifacts remain under YT_OUTDIR.
+    proc static_source_prethreshold_actual_case {
+        name helper source source_payload artifact_dir temp_prefix nonce probe
+        launch_marker launch_digest argv_marker argv_digest fbstat_marker c8_marker
+        eol preamble expected_payload match_kind extension_id
+    } {
+        if {![regexp {^[a-z_]+$} $name] || $match_kind ni {exact overcap_prefix}} {
+            error "invalid static source-prethreshold actual case"
+        }
+        set source_artifact "$artifact_dir/actual-$name.source"
+        set frame_artifact "$artifact_dir/actual-$name.frame"
+        set wire_artifact "$artifact_dir/actual-$name.wire"
+        static_source_prethreshold_write_binary $source_artifact $source_payload
+        set run [static_source_prethreshold_helper_run $helper $source $source_payload \
+            $nonce $probe $launch_marker $launch_digest $argv_marker $argv_digest \
+            $fbstat_marker $c8_marker]
+        set frame [lindex $run 1]
+        static_source_prethreshold_write_binary $frame_artifact $frame
+        set rows_report [static_source_prethreshold_rows_report $frame]
+        set parsed [list 0 [dict get $rows_report detail] {}]
+        if {[dict get $rows_report ok]} {
+            set wire [static_source_prethreshold_wire [dict get $rows_report rows] \
+                $c8_marker $eol $preamble]
+            static_source_prethreshold_write_binary $wire_artifact $wire
+            if {[catch {
+                source_prethreshold_parse $wire $nonce $probe $launch_marker $launch_digest \
+                    $argv_marker $argv_digest $fbstat_marker $c8_marker
+            } parse_error]} {
+                set parsed [list 0 "parser-error-[static_source_prethreshold_report_token $parse_error]" {}]
+            } else {
+                set parsed $parse_error
+            }
+        } else {
+            static_source_prethreshold_write_binary $wire_artifact ""
+        }
+        set meta [lindex $parsed 2]
+        set parser_pass [lindex $parsed 0]
+        set parser_detail [lindex $parsed 1]
+        foreach key {status source_cursor payload_bytes cap truncated hex_bytes} {
+            set "meta_$key" unavailable
+            if {$parser_pass && [dict exists $meta $key]} {
+                set "meta_$key" [dict get $meta $key]
+            }
+        }
+        set payload_match 0
+        set derive_state unavailable
+        set derive_detail unavailable
+        if {$parser_pass && [dict exists $meta payload]} {
+            set expected_hex [binary encode hex $expected_payload]
+            set payload_match [expr {
+                [binary encode hex [dict get $meta payload]] eq $expected_hex
+            }]
+            set derived [source_prethreshold_derive [dict get $meta payload] $nonce $extension_id]
+            set derive_state [dict get $derived state]
+            set derive_detail [dict get $derived detail]
+        }
+        return [dict create name $name run [lindex $run 0] \
+            run_error [lindex $run 2] row_ok [dict get $rows_report ok] \
+            row_count [dict get $rows_report count] row_detail [dict get $rows_report detail] \
+            rows [dict get $rows_report rows] parsed $parsed parser_pass $parser_pass \
+            parser_detail $parser_detail meta_status $meta_status \
+            meta_source_cursor $meta_source_cursor meta_payload_bytes $meta_payload_bytes \
+            meta_cap $meta_cap meta_truncated $meta_truncated meta_hex_bytes $meta_hex_bytes \
+            match_kind $match_kind payload_match $payload_match derive_state $derive_state \
+            derive_detail $derive_detail cleanup [static_source_prethreshold_helper_clean $temp_prefix] \
+            source_artifact $source_artifact frame_artifact $frame_artifact \
+            wire_artifact $wire_artifact]
+    }
+    proc static_source_prethreshold_actual_case_compact {record} {
+        set match_label [dict get $record match_kind]
+        return [format {%s(run=%s,err=%s,rowcount=%s/%s,parse=%s/%s,meta=status:%s,cursor:%s,payload:%s,cap:%s,truncated:%s,hex:%s,%s=%s,derive=%s/%s,clean=%s)} \
+            [dict get $record name] [dict get $record run] \
+            [static_source_prethreshold_report_token [dict get $record run_error]] \
+            [dict get $record row_count] [dict get $record row_detail] \
+            [dict get $record parser_pass] \
+            [static_source_prethreshold_report_token [dict get $record parser_detail]] \
+            [dict get $record meta_status] [dict get $record meta_source_cursor] \
+            [dict get $record meta_payload_bytes] [dict get $record meta_cap] \
+            [dict get $record meta_truncated] [dict get $record meta_hex_bytes] \
+            $match_label [dict get $record payload_match] [dict get $record derive_state] \
+            [static_source_prethreshold_report_token [dict get $record derive_detail]] \
+            [dict get $record cleanup]]
+    }
+    proc static_source_prethreshold_wire {
+        rows marker eol {preamble ""} {outer_rc 0} {outer_fences 1}
+    } {
+        if {![regexp {^[A-Za-z0-9]+$} $marker] ||
+            ![string is integer -strict $outer_fences] || $outer_fences < 0 ||
+            !($outer_rc eq "" || [regexp {^[0-9]+$} $outer_rc])} {
+            error "invalid static source-prethreshold wire arguments"
+        }
+        set wire ""
+        set index -1
+        foreach row $rows {
+            incr index
+            if {$index == 0} { append wire $preamble }
+            append wire "$row$eol"
+        }
+        if {$outer_rc ne ""} { append wire "${marker}:RC:${outer_rc}$eol" }
+        for {set i 0} {$i < $outer_fences} {incr i} {
+            append wire "${marker}:FENCE$eol"
+        }
+        return $wire
+    }
     # Execute the generated Bash helper's own fresh-evidence route.  The
     # test-only producer never starts a guest command, but uses the identical
     # purge, regular-file, cap, digest, and semantic-role decisions.
@@ -10061,6 +10286,10 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_launch_marker $static_render_launch_digest \
         $static_render_argv_marker $static_render_argv_digest \
         $static_render_command_marker $static_render_fbstat_marker]
+    set static_c5_marker_drift_rejected [expr {
+        ![lindex $static_render_fbstat_drift 0] &&
+        [lindex $static_render_fbstat_drift 1] eq "receipt-fbstat-marker-drift"
+    }]
     set static_render_source_diag_good "YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=$static_render_nonce samples=20\nYT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$static_render_nonce player_present=1 video_present=1 ready_state=4 video_width=1280 video_height=720\nYT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$static_render_nonce current_time_first=1.000 current_time_last=2.000\n"
     set static_render_source_diag_stalled [string map [list {current_time_last=2.000} {current_time_last=1.000}] $static_render_source_diag_good]
     set static_render_source_diag_missing {YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=__NONCE__ samples=20
@@ -10276,6 +10505,22 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [dict get $static_c7_semantic_vector audio] == 0 &&
         [dict get $static_c7_semantic_vector network] == 0}]
     set static_c7_helper [role_census_diag_guest_helper_script]
+    set static_c7_helper_unchanged [expr {
+        [render_start_receipt_digest $static_c7_helper] eq
+        "1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5"
+    }]
+    set static_c5_helper [fbstat_transport_guest_helper_script]
+    set static_c5_helper_unchanged [expr {
+        [render_start_receipt_digest $static_c5_helper] eq
+        "a0c6d5a831789dd49221b3cf20f6b72ffe53b18c8e8a7becd831b3a6a15e9ef8"
+    }]
+    set static_c5_validator_unchanged [expr {
+        $static_c5_helper_unchanged &&
+        [string first {case "$1" in 0|[1-9][0-9]*) return 0 ;; esac} \
+            $static_c5_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY} \
+            $static_c5_helper] < 0
+    }]
     set static_c7_source_contract [expr {
         [string first {cap=131072} $static_c7_helper] >= 0 &&
         [string first {--chromium-fast-census-only} $static_c7_helper] >= 0 &&
@@ -10295,12 +10540,12 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [string first {role_full_digest} [info body render_start_receipt_parse]] < 0 &&
         [string first {role_semantic_rows} [info body render_start_receipt_parse]] < 0
     }]
-    # C8 replays the canonical source envelope, not the C6 tail.  Its five
-    # cases distinguish absent injection/liveness from the already-emitted
-    # producer, player, and progress facts without changing any threshold.
+    # Normal A1 has no V2 producer marker.  C8 therefore accepts only the
+    # forced-HD V1 force_ready/force_observation lifecycle: no force_ready is
+    # ambiguous, while a completed force observation pins stalled/progress.
     set static_c8_marker YTSTATICSOURCEC8
-    set static_c8_producer [static_source_prethreshold_console \
-        "YT_CAPTURE_COMPLETENESS_V2 kind=producer_start schema=2 nonce=$static_render_nonce" \
+    set static_c8_start [static_source_prethreshold_console \
+        "YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=$static_render_nonce samples=20" \
         $media_probe_extension_id]
     set static_c8_ready_no_player [static_source_prethreshold_console \
         "YT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$static_render_nonce player_present=0 video_present=0 ready_state=-1 video_width=0 video_height=0" \
@@ -10308,28 +10553,36 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c8_ready_player [static_source_prethreshold_console \
         "YT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$static_render_nonce player_present=1 video_present=1 ready_state=4 video_width=1280 video_height=720" \
         $media_probe_extension_id]
-    set static_c8_observation [static_source_prethreshold_console \
+    set static_c8_observation_stalled [static_source_prethreshold_console \
+        "YT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$static_render_nonce current_time_first=1.000 current_time_last=1.000" \
+        $media_probe_extension_id]
+    set static_c8_observation_progress [static_source_prethreshold_console \
         "YT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$static_render_nonce current_time_first=1.000 current_time_last=2.000" \
         $media_probe_extension_id]
-    set static_c8_progress_payload "$static_c8_ready_player\n$static_c8_observation\n"
+    set static_c8_stalled_payload "$static_c8_ready_player\n$static_c8_observation_stalled\n"
+    set static_c8_progress_payload "$static_c8_ready_player\n$static_c8_observation_progress\n"
     set static_c8_none_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
         $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker ""]
-    set static_c8_producer_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+    set static_c8_start_only_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
-        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_producer\n"]
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_start\n"]
     set static_c8_no_player_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
         $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_ready_no_player\n"]
-    set static_c8_no_progress_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+    set static_c8_pending_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
         $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_ready_player\n"]
+    set static_c8_no_progress_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker $static_c8_stalled_payload]
     set static_c8_progress_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
         $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker $static_c8_progress_payload]
     set static_c8_results {}
-    foreach frame [list $static_c8_none_frame $static_c8_producer_frame \
-            $static_c8_no_player_frame $static_c8_no_progress_frame $static_c8_progress_frame] {
+    foreach frame [list $static_c8_none_frame $static_c8_start_only_frame \
+            $static_c8_no_player_frame $static_c8_pending_frame \
+            $static_c8_no_progress_frame $static_c8_progress_frame] {
         set parsed [source_prethreshold_parse $frame $static_render_nonce 1 \
             $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
             $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker]
@@ -10365,7 +10618,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c8_bad_cap [string map [list {cap=16384} {cap=16383}] $static_c8_progress_frame]
     set static_c8_bad_order_frame [static_source_prethreshold_frame $static_render_nonce 1 \
         $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
-        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_observation\n$static_c8_ready_player\n"]
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_observation_progress\n$static_c8_ready_player\n"]
     set static_c8_adversaries 1
     set static_c8_adversary_details {}
     foreach {name frame expected} [list \
@@ -10404,20 +10657,26 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     }
     set static_c8_cases [expr {
         [dict get [lindex $static_c8_results 0] state] eq "INCOMPLETE" &&
-        [dict get [lindex $static_c8_results 0] detail] eq "source-no-injection-or-liveness" &&
-        [dict get [lindex $static_c8_results 1] detail] eq "source-injected-no-navigation" &&
-        [dict get [lindex $static_c8_results 2] detail] eq "source-injected-no-player" &&
-        [dict get [lindex $static_c8_results 3] detail] eq "source-player-no-progress" &&
-        [dict get [lindex $static_c8_results 4] state] eq "COMPLETE" &&
-        [dict get [lindex $static_c8_results 4] detail] eq "source-observation-progressing" &&
-        $static_c8_row_counts eq {0 1 1 1 2} &&
+        [dict get [lindex $static_c8_results 0] detail] eq "source-force-ready-unobserved-ambiguous" &&
+        [dict get [lindex $static_c8_results 1] detail] eq "source-force-ready-unobserved-ambiguous" &&
+        [dict get [lindex $static_c8_results 2] detail] eq "source-extension-executed-no-player" &&
+        [dict get [lindex $static_c8_results 3] detail] eq "source-player-observation-pending" &&
+        [dict get [lindex $static_c8_results 4] detail] eq "source-player-no-progress" &&
+        [dict get [lindex $static_c8_results 5] state] eq "COMPLETE" &&
+        [dict get [lindex $static_c8_results 5] detail] eq "source-observation-progressing" &&
+        $static_c8_row_counts eq {0 1 1 1 2 2} &&
         [dict get $static_c8_order_derived rows] == 1 &&
         [lindex $static_c8_status 0] && [lindex $static_c8_status 1] eq "source-prethreshold-status-MISSING"
     }]
+    set static_c8_decimal_literal [source_prethreshold_valid_decimal_bash]
+    set static_c8_decimal_checker_tail {valid_decimal "$1"}
+    set static_c8_decimal_checker_bash [source_prethreshold_valid_decimal_checker_bash]
     set static_c8_helper [source_prethreshold_guest_helper_script]
     set static_c8_source_contract [expr {
         [string first {cap=16384} $static_c8_helper] >= 0 &&
-        [string first {source_log=/host-gui-wayland-chromium.log} $static_c8_helper] >= 0 &&
+        [string first {source_log='/host-gui-wayland-chromium.log'} $static_c8_helper] >= 0 &&
+        [string first $static_c8_decimal_literal $static_c8_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY} $static_c8_helper] < 0 &&
         [string first {YT_SOURCE_PRETHRESHOLD_BEGIN} $static_c8_helper] >= 0 &&
         [string first {YT_SOURCE_PRETHRESHOLD_META} $static_c8_helper] >= 0 &&
         [string first {YT_SOURCE_PRETHRESHOLD_HEX} $static_c8_helper] >= 0 &&
@@ -10426,6 +10685,246 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [string first {| awk} $static_c8_helper] < 0 && [string first {| tr} $static_c8_helper] < 0 &&
         [string first {mkdir } $static_c8_helper] < 0 && [string first {chmod } $static_c8_helper] < 0
     }]
+    foreach invalid_c8_helper_case [list \
+            [list non-dict {not-a-dictionary}] \
+            [list unknown [dict create unknown 1]] \
+            [list unsafe-source [dict create source_log {/tmp/../bad}]] \
+            [list unsafe-temp [dict create temp_prefix {/tmp/../bad}]]] {
+        lassign $invalid_c8_helper_case label options
+        if {![catch {source_prethreshold_guest_helper_script $options}]} {
+            fail_preflight "static-check-source-prethreshold-helper-invalid-accepted-$label"
+        }
+    }
+    set static_c8_helper_dir "$outdir/source-prethreshold-helper-reducer"
+    if {[file exists $static_c8_helper_dir]} {
+        fail_preflight "static-check-source-prethreshold-helper-dir-preexists path=$static_c8_helper_dir"
+    }
+    file mkdir $static_c8_helper_dir
+    set static_c8_helper_source "$static_c8_helper_dir/source.log"
+    set static_c8_helper_prefix "$static_c8_helper_dir/work"
+    set static_c8_helper_path "$static_c8_helper_dir/ytsourceprethreshold.sh"
+    set static_c8_decimal_checker_path "$static_c8_helper_dir/valid-decimal.sh"
+    wf $static_c8_helper_path [source_prethreshold_guest_helper_script [dict create \
+        source_log $static_c8_helper_source temp_prefix $static_c8_helper_prefix]]
+    wf $static_c8_decimal_checker_path $static_c8_decimal_checker_bash
+    set static_c8_decimal_source_lock 1
+    set static_c8_decimal_literal_first [string first $static_c8_decimal_literal \
+        [read_text $static_c8_helper_path]]
+    if {$static_c8_decimal_literal_first < 0 ||
+        [string first $static_c8_decimal_literal [read_text $static_c8_helper_path] \
+            [expr {$static_c8_decimal_literal_first + 1}]] >= 0 ||
+        [string first {YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY} \
+            [read_text $static_c8_helper_path]] >= 0 ||
+        [string trimright [read_text $static_c8_decimal_checker_path] "\n"] ne \
+            "$static_c8_decimal_literal\n$static_c8_decimal_checker_tail"} {
+        set static_c8_decimal_source_lock 0
+    }
+    set static_c8_decimal_accepts {}
+    foreach value {0 1 2 3 4 5 6 7 8 9 10 42 2147483647} {
+        lappend static_c8_decimal_accepts \
+            [static_source_prethreshold_decimal_validator_run $static_c8_decimal_checker_path $value]
+    }
+    set static_c8_decimal_rejects {}
+    foreach value [list "" -1 +1 { 1} {1 } {1 0} 1x 10x 1.0 01 00] {
+        lappend static_c8_decimal_rejects [expr {![static_source_prethreshold_decimal_validator_run \
+            $static_c8_decimal_checker_path $value]}]
+    }
+    set static_c8_decimal_validator_matrix [expr {
+        [lsearch -exact $static_c8_decimal_accepts 0] < 0 &&
+        [lsearch -exact $static_c8_decimal_rejects 0] < 0
+    }]
+    set static_c8_preamble [binary format H* 1b5b3f323030346c0d]
+    set static_c8_foreign_preamble [binary format H* 1b5b3f32303034680d]
+    set static_c8_binary_hex 6d756c74696c696e650a00ff410a
+    set static_c8_binary_digest 30553a5bfa023e59853ee00f3caf7af2070486170a371e3f7d5b5c1aae514d31
+    set static_c8_binary_payload [binary decode hex $static_c8_binary_hex]
+    set static_c8_overcap_payload [string repeat x \
+        [expr {$source_prethreshold_payload_cap + 1}]]
+    set static_c8_overcap_prefix [string range $static_c8_overcap_payload 0 \
+        [expr {$source_prethreshold_payload_cap - 1}]]
+    set static_c8_actual_case_records {}
+    foreach {case_name case_payload case_eol case_preamble case_match_kind} [list \
+            progress $static_c8_progress_payload "\n" $static_c8_preamble exact \
+            no_player "$static_c8_ready_no_player\n" "\r\r\n" $static_c8_preamble exact \
+            binary $static_c8_binary_payload "\n" "" exact \
+            empty "" "\n" "" exact \
+            overcap $static_c8_overcap_payload "\r\r\n" $static_c8_preamble overcap_prefix] {
+        set case_expected_payload $case_payload
+        if {$case_name eq "overcap"} {
+            set case_expected_payload $static_c8_overcap_prefix
+        }
+        dict set static_c8_actual_case_records $case_name \
+            [static_source_prethreshold_actual_case $case_name $static_c8_helper_path \
+                $static_c8_helper_source $case_payload $static_c8_helper_dir \
+                $static_c8_helper_prefix $static_render_nonce 1 \
+                $static_render_launch_marker $static_render_launch_digest \
+                $static_render_argv_marker $static_render_argv_digest \
+                $static_render_fbstat_marker $static_c8_marker $case_eol $case_preamble \
+                $case_expected_payload \
+                $case_match_kind $media_probe_extension_id]
+    }
+    set static_c8_actual_progress_record [dict get $static_c8_actual_case_records progress]
+    set static_c8_actual_no_player_record [dict get $static_c8_actual_case_records no_player]
+    set static_c8_actual_binary_record [dict get $static_c8_actual_case_records binary]
+    set static_c8_actual_empty_record [dict get $static_c8_actual_case_records empty]
+    set static_c8_actual_overcap_record [dict get $static_c8_actual_case_records overcap]
+    set static_c8_actual_case_details {}
+    set static_c8_actual_case_ok {}
+    set static_c8_actual_rows [dict get $static_c8_actual_progress_record rows]
+    set static_c8_actual_wire_matrix 1
+    set static_c8_actual_wire_details {}
+    foreach {wire_name wire_eol} [list lf "\n" crlf "\r\n" crcrlf "\r\r\n"] {
+        set wire [static_source_prethreshold_wire $static_c8_actual_rows $static_c8_marker \
+            $wire_eol $static_c8_preamble]
+        set parsed [source_prethreshold_parse $wire $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest \
+            $static_render_fbstat_marker $static_c8_marker]
+        if {![lindex $parsed 0] || [lindex $parsed 1] ne "pass" ||
+            [dict get [lindex $parsed 2] payload] ne $static_c8_progress_payload} {
+            set static_c8_actual_wire_matrix 0
+            lappend static_c8_actual_wire_details "$wire_name:$parsed"
+            continue
+        }
+        set derived [source_prethreshold_derive [dict get [lindex $parsed 2] payload] \
+            $static_render_nonce $media_probe_extension_id]
+        if {[dict get $derived state] ne "COMPLETE" ||
+            [dict get $derived detail] ne "source-observation-progressing"} {
+            set static_c8_actual_wire_matrix 0
+            lappend static_c8_actual_wire_details "$wire_name:derived=$derived"
+        }
+    }
+    set static_c8_actual_no_player_parse [dict get $static_c8_actual_no_player_record parsed]
+    set static_c8_actual_binary_parse [dict get $static_c8_actual_binary_record parsed]
+    set static_c8_actual_empty_parse [dict get $static_c8_actual_empty_record parsed]
+    set static_c8_actual_overcap_parse [dict get $static_c8_actual_overcap_record parsed]
+    set static_c8_progress_clean [dict get $static_c8_actual_progress_record cleanup]
+    set static_c8_no_player_clean [dict get $static_c8_actual_no_player_record cleanup]
+    set static_c8_binary_clean [dict get $static_c8_actual_binary_record cleanup]
+    set static_c8_empty_clean [dict get $static_c8_actual_empty_record cleanup]
+    set static_c8_overcap_clean [dict get $static_c8_actual_overcap_record cleanup]
+    set static_c8_progress_case_ok [expr {
+        [dict get $static_c8_actual_progress_record run] &&
+        [dict get $static_c8_actual_progress_record row_ok] &&
+        [dict get $static_c8_actual_progress_record parser_pass] &&
+        [dict get $static_c8_actual_progress_record parser_detail] eq "pass" &&
+        [dict get $static_c8_actual_progress_record payload_match] &&
+        [dict get $static_c8_actual_progress_record derive_state] eq "COMPLETE" &&
+        [dict get $static_c8_actual_progress_record derive_detail] eq "source-observation-progressing" &&
+        $static_c8_progress_clean
+    }]
+    set static_c8_no_player_case_ok [expr {
+        [dict get $static_c8_actual_no_player_record run] &&
+        [dict get $static_c8_actual_no_player_record row_ok] &&
+        [dict get $static_c8_actual_no_player_record parser_pass] &&
+        [dict get $static_c8_actual_no_player_record parser_detail] eq "pass" &&
+        [dict get $static_c8_actual_no_player_record payload_match] &&
+        [dict get $static_c8_actual_no_player_record meta_source_cursor] ==
+            [string bytelength "$static_c8_ready_no_player\n"] &&
+        [dict get $static_c8_actual_no_player_record derive_detail] eq
+            "source-extension-executed-no-player" && $static_c8_no_player_clean
+    }]
+    set static_c8_binary_case_ok [expr {
+        [dict get $static_c8_actual_binary_record run] &&
+        [dict get $static_c8_actual_binary_record row_ok] &&
+        [dict get $static_c8_actual_binary_record parser_pass] &&
+        [dict get $static_c8_actual_binary_record parser_detail] eq "pass" &&
+        [dict get $static_c8_actual_binary_record payload_match] &&
+        [dict get $static_c8_actual_binary_record meta_status] eq "OK" &&
+        [dict get $static_c8_actual_binary_record meta_source_cursor] == 14 &&
+        [dict get $static_c8_actual_binary_record meta_payload_bytes] == 14 &&
+        [dict get $static_c8_actual_binary_record meta_cap] == $source_prethreshold_payload_cap &&
+        [dict get $static_c8_actual_binary_record meta_truncated] == 0 &&
+        [dict get $static_c8_actual_binary_record meta_hex_bytes] == 28 &&
+        [binary encode hex [dict get [lindex $static_c8_actual_binary_parse 2] payload]] eq
+            $static_c8_binary_hex &&
+        [dict get [lindex $static_c8_actual_binary_parse 2] digest] eq
+            $static_c8_binary_digest &&
+        [dict get [lindex $static_c8_actual_binary_parse 2] host_digest] eq
+            $static_c8_binary_digest && $static_c8_binary_clean
+    }]
+    set static_c8_empty_case_ok [expr {
+        [dict get $static_c8_actual_empty_record run] &&
+        [dict get $static_c8_actual_empty_record row_ok] &&
+        [dict get $static_c8_actual_empty_record parser_pass] &&
+        [dict get $static_c8_actual_empty_record parser_detail] eq "pass" &&
+        [dict get $static_c8_actual_empty_record payload_match] && $static_c8_empty_clean
+    }]
+    set static_c8_overcap_case_ok [expr {
+        [dict get $static_c8_actual_overcap_record run] &&
+        [dict get $static_c8_actual_overcap_record row_ok] &&
+        [dict get $static_c8_actual_overcap_record parser_pass] &&
+        [dict get $static_c8_actual_overcap_record parser_detail] eq "pass" &&
+        [dict get $static_c8_actual_overcap_record payload_match] &&
+        [dict get $static_c8_actual_overcap_record meta_source_cursor] ==
+            $source_prethreshold_payload_cap + 1 &&
+        [dict get $static_c8_actual_overcap_record meta_payload_bytes] ==
+            $source_prethreshold_payload_cap &&
+        [dict get $static_c8_actual_overcap_record meta_truncated] == 1 &&
+        $static_c8_overcap_clean
+    }]
+    foreach case_name {progress no_player binary empty overcap} {
+        set record [dict get $static_c8_actual_case_records $case_name]
+        lappend static_c8_actual_case_details \
+            [static_source_prethreshold_actual_case_compact $record]
+        lappend static_c8_actual_case_ok [set "static_c8_${case_name}_case_ok"]
+    }
+    set static_c8_actual_helper_matrix [expr {
+        $static_c8_progress_case_ok && $static_c8_no_player_case_ok &&
+        $static_c8_binary_case_ok && $static_c8_empty_case_ok &&
+        $static_c8_overcap_case_ok
+    }]
+    set static_c8_actual_wire_adversaries 1
+    set static_c8_actual_wire_adversary_details {}
+    set static_c8_duplicate_rows [linsert $static_c8_actual_rows 2 \
+        [lindex $static_c8_actual_rows 1]]
+    set static_c8_noncontiguous_rows [linsert $static_c8_actual_rows 1 noise]
+    set static_c8_duplicate_preamble_wire [static_source_prethreshold_wire \
+        $static_c8_actual_rows $static_c8_marker "\n" $static_c8_preamble]
+    append static_c8_duplicate_preamble_wire \
+        "$static_c8_preamble[lindex $static_c8_actual_rows 0]\n"
+    set static_c8_nonbegin_preamble_wire [static_source_prethreshold_wire \
+        $static_c8_actual_rows $static_c8_marker "\n"]
+    append static_c8_nonbegin_preamble_wire \
+        "$static_c8_preamble[lindex $static_c8_actual_rows 1]\n"
+    foreach {name wire expected} [list \
+            foreign-preamble [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" $static_c8_foreign_preamble] \
+                source-prethreshold-frame-count-3 \
+            mutated-preamble [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" "${static_c8_preamble}X"] \
+                source-prethreshold-preamble-placement \
+            duplicate-preamble $static_c8_duplicate_preamble_wire \
+                source-prethreshold-preamble-duplicate \
+            nonbegin-preamble $static_c8_nonbegin_preamble_wire \
+                source-prethreshold-preamble-placement \
+            duplicate-rows [static_source_prethreshold_wire $static_c8_duplicate_rows \
+                $static_c8_marker "\n" $static_c8_preamble] \
+                source-prethreshold-frame-count-5 \
+            noncontiguous [static_source_prethreshold_wire $static_c8_noncontiguous_rows \
+                $static_c8_marker "\n" $static_c8_preamble] \
+                source-prethreshold-frame-noncontiguous \
+            outer-nonzero [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" $static_c8_preamble 7] \
+                source-prethreshold-command-status-7 \
+            outer-missing-rc [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" $static_c8_preamble "" 1] \
+                source-prethreshold-command-frame-frame-rc-count-0 \
+            outer-missing-fence [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" $static_c8_preamble 0 0] \
+                source-prethreshold-command-frame-frame-fence-count-0 \
+            outer-duplicate-fence [static_source_prethreshold_wire $static_c8_actual_rows \
+                $static_c8_marker "\n" $static_c8_preamble 0 2] \
+                source-prethreshold-command-frame-frame-fence-count-2] {
+        set parsed [source_prethreshold_parse $wire $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest \
+            $static_render_argv_marker $static_render_argv_digest \
+            $static_render_fbstat_marker $static_c8_marker]
+        if {[lindex $parsed 0] || ![string match "${expected}*" [lindex $parsed 1]]} {
+            set static_c8_actual_wire_adversaries 0
+            lappend static_c8_actual_wire_adversary_details "$name:$parsed"
+        }
+    }
     set static_c8_no_credit [expr {
         [string first {source_diagnostic} [info body render_start_receipt_classify]] < 0 &&
         [string first {source_prethreshold_probe} [info body render_start_receipt_probe]] >= 0 &&
@@ -10442,7 +10941,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [lindex $static_render_nonce_drift 0] ||
         [lindex $static_render_probe_drift 0] ||
         [lindex $static_render_role_digest_drift 0] ||
-        [lindex $static_render_fbstat_drift 0] ||
+        !$static_c5_marker_drift_rejected ||
         [lindex $static_render_role_cap 0] ||
         $static_render_source_classes ne {{INCOMPLETE source-missing} {INCOMPLETE source-unreadable} {INCOMPLETE source-nonregular}} ||
         ![lindex $static_render_role_exit 0] ||
@@ -10459,9 +10958,12 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         !$static_render_source_diag_matrix || !$static_render_fbstat_binding_source ||
         !$static_render_diagnostic_no_credit || !$static_c7_complete || !$static_c7_wire_matrix ||
         !$static_c7_rejects || !$static_c7_semantic_invariant ||
-        !$static_c7_source_contract || !$static_c7_no_credit ||
+        !$static_c7_source_contract || !$static_c7_helper_unchanged ||
+        !$static_c5_validator_unchanged || !$static_c7_no_credit ||
         !$static_c8_cases || !$static_c8_adversaries || !$static_c8_source_contract ||
-        !$static_c8_no_credit ||
+        !$static_c8_actual_wire_matrix || !$static_c8_actual_helper_matrix ||
+        !$static_c8_decimal_validator_matrix || !$static_c8_decimal_source_lock ||
+        !$static_c8_actual_wire_adversaries || !$static_c8_no_credit ||
         $static_render_portability_counts ne {1 1 0 0 0 0} ||
         $static_render_portability_hex ne {1 1 0 0} ||
         $static_render_portability_digest ne {1 0 0 0} ||
@@ -10470,9 +10972,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix c5=$static_render_fbstat_drift source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_no_credit c8_details=$static_c8_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_source_prefix_producer_ready_observation_nonce_order_status_cursor_digest_cap_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_force_ready_ambiguous_no_player_observation_pending_stalled_progress=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;
