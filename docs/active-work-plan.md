@@ -2653,3 +2653,19 @@ misrepresented as the end-to-end transport repair. Correct these items, then
 run the host fake-sink test once, perform the x86-only build, and obtain a new
 independent review before any kernel boot. This verdict remains A1 N=0 with no
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
+**C1 slice-1 correction battery — FAIL / NO-BUILD / NO-BOOT (2026-07-12):**
+exact preflight QEMU total/informational-RISC-V/conflicting inventory was
+`0/0/0`; no VM, boot, rootfs refresh, driver/default/KDE action, or recorder
+build occurred. The canonical first battery command
+`bash kernel/tests/run_console_record_host_test.sh` stopped during host C
+compilation before exercising the fake sink or source locks: its new
+kernel-root calculation correctly finds `kernel/tests`, but its include order
+places `kernel/kernel/inc` ahead of host libc (`<string.h>` resolves to the
+freestanding header), while the test's `kernel/inc/dev/console.h` spelling has
+no matching include root. Therefore it emitted the `types.h` `typeof` parse
+error and then could not locate `dev/console.h`. Per the ordered-battery rule,
+there was no correction, rerun, recorder/kernel build, or performance credit;
+all unstaged kernel/user/script implementation remains preserved for the next
+forensic correction. This is only a host-harness include-path failure and
+remains A1 N=0 with no HD720, fullscreen, audio, or responsiveness credit.
