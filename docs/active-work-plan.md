@@ -854,6 +854,48 @@ audio, or fullscreen. This is N=0 and consumes authority. Next: narrow
 NO-BOOT localization of the production fast-census semantic-row absence, then
 static/adversarial review before a fresh gate; do not infer Chromium exit.
 
+**A1 fast-census receipt-stream forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** named retained evidence from that sole consumed run proves a
+producer/output-routing defect, not a Chromium absence or a role-parser format
+mismatch. C6 invoked `/bin/bash /ytrenderstartreceipt.sh` with the authenticated
+nonce, probe, launch marker/digest, and argv marker/digest; its complete
+BEGIN/META/SOURCE/ROLE/END plus `RC:0`/`FENCE` frame retained the exact 252-byte
+role payload. Decoded, it contains only the probe's redirected baseline stderr
+line and its `chromium_fast_census_only=1 ... status=PASS` stdout summary. The
+receipt consequently and correctly classifies `role_status=0`,
+`role_total=role_bytes=252`, untruncated, as `none_or_exited`; this rules out
+the 4096-byte frame cap as the explanation. In the same named run,
+`kde-chromium-process-evidence.log` contains the required contemporaneous
+`fast-*` semantic rows (including `comm="chrome"` with browser, zygote,
+utility, and gpu-process roles), so dynamic rows existed and `/proc` discovery
+did not fail.
+
+The production fast-census branch redirects stderr to stdout before dispatch,
+but `run_chromium_fast_census_only()` opens the fixed evidence pathname
+`/kde-chromium-process-evidence.log` with `O_APPEND` and writes the semantic
+rows there; its status summary alone is printed on stdout. The receipt helper
+captures only that stdout/stderr stream into `role_all` before framing it.
+Thus `status=0` and only the two nonsemantic lines are the expected result of
+the wrong producer stream; neither another command/mode, process exit, live
+parser relaxation, nor a performance conclusion is justified. No HD720,
+media, `yt-presentfps`, `PERF-VIDEO`, FPS/drop/VPQ/retire, audio, or fullscreen
+credit exists.
+
+The smallest fail-closed repair is confined to the generated receipt helper:
+remove the known evidence pathname before invoking the existing fast census,
+then require its newly created regular evidence artifact; preserve
+stdout/stderr separately for diagnostics and frame that semantic artifact (with
+the existing total/4 KiB cap/digest/tail binding), not the diagnostic stream.
+Missing, unreadable, nonregular, or stale/unfresh
+evidence must make the receipt command fail rather than synthesize a `none`
+result; a genuinely fresh, valid empty census remains `none_or_exited`. Keep
+the strict live-row grammar and all nonce/probe/launch/argv/cap/tail checks
+unchanged. Before any gate, add canonical host static cases for: zero-status
+semantic rows; fresh empty evidence; nonzero census; stale/missing/nonregular
+evidence; cap/tail/digest binding; and parser rejection of spoofed/malformed
+rows, then obtain an independent no-boot adversarial review. No source change
+or VM authorization is granted by this localization.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -958,9 +1000,12 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    control-evidence repair and independent review now permit forming (never
    reusing) a fresh serialized A1 gate. That gate is now CONSUMED/INVALID:
    C6 framing completed, but the authenticated fast census was
-   `none_or_exited`, so no HD720/media/FPS fact exists. Localize that
-   semantic-census absence no-boot before another gate. Clear >=52 before
-   pursuing about 55-60.
+   `none_or_exited`, so no HD720/media/FPS fact exists. No-boot forensic now
+   localizes the missing semantic rows to the receipt's diagnostic-stream
+   capture (the rows were written to the separate evidence file). Repair that
+   producer path fail-closed and pass canonical static plus independent
+   adversarial review before another gate. Clear >=52 before pursuing about
+   55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
