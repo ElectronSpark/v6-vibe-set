@@ -1417,6 +1417,49 @@ No replay, source edit, VM, build, rootfs, serial, or launcher action occurred.
 Exact QEMU inventories before/after were total/conflicting/informational-RISC-V
 `0/0/0`.
 
+**A1 separate full-census diagnostic transport design — SOUND AS C7 ONLY /
+NO-BOOT (2026-07-12):** direct no-boot audit at immutable `038e711` finds
+the proven fbstat lower-hex transport already has a distinct 131072-byte
+decoded cap, four contiguous candidate records, exact tag/nonce/count/tail/
+hex/digest checks, candidate-local CR handling, and host-side recomputation.
+It is suitable for a **separate no-credit census sidecar**, not an increase to
+the 4096-byte admitting role receipt. It is *not* sound to append this frame
+to current C6: the unchanged C6 receipt parser rejects its whole serial text
+above 30000 bytes, while named full censuses are 65--82 KiB (up to 164 KiB
+lower-hex). Keep the existing C6 receipt and role-live/threshold decision
+unchanged; a subsequent C7 command is the only viable placement. Its worst
+case 262144 hex bytes plus the short envelope is below `match_max 2000000`,
+but it must receive its own reviewed output-time budget--C6's 20 s budget is
+not evidence for the capped C7 wire delivery.
+
+The C7 helper may use only the already verified guest Bash, fast census,
+`/bin/wc`, `/bin/dd`, `/bin/xxd -p`, `/bin/openssl dgst -sha256 -r`, and `rm`.
+It must make a fresh regular non-symlink census capture and emit exactly the
+unique four-row `YT_ROLE_CENSUS_DIAG_{BEGIN,META,HEX,END}` frame, bound to
+run nonce, probe, C3 launch marker+digest, C4 argv marker+digest, C5 fbstat
+marker, and the locally minted C7 command frame. META must contain no guest
+full digest or vector: only status, raw_bytes, payload_bytes, cap=131072,
+truncated, **payload** digest, and hex_bytes. Host first validates C7 and the
+four raw-record-adjacent candidate rows with the same candidate-local CR rule,
+then checks exact metadata/no duplicates, bindings, count equation
+`payload=min(raw,cap)`, truthful truncation, lower-hex round-trip, and digest.
+Only `raw==payload<=131072,truncated=0,status=OK` is complete: host derives
+the full-evidence digest and every semantic browser/GPU/renderer/utility/
+zygote/other and network/audio-as-utility count from those exact bytes. Any
+overflow, missing/nonregular/failed census, missing/duplicate/corrupt frame,
+or binding/count/hex/digest failure is `diagnostic-INCOMPLETE`, with no full
+digest or subtype present/absent claim; it cannot alter C6 role live, flips,
+threshold, HD720, media, FPS, or later admission.
+
+Required static matrix before implementation/review: complete valid control;
+C7 outer-RC/FENCE and duplicate/tag/nonce/probe/C3/C4/C5 drift; forged
+full-digest/vector or extra META claim rejection; raw/payload/cap/tail/hex
+length/decode/digest drift; truthful over-cap and missing/nonregular/corrupt
+frames classified only INCOMPLETE/no-claim; byte-derived semantic/subtype
+controls; and LF/CRLF/CRCRLF, blank/interleave, mid-row-CR, and duplicate
+candidate adversaries. No source, VM, build, rootfs, serial, or launcher
+action occurred; exact QEMU inventories before/after were `0/0/0`.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1535,9 +1578,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    independent no-boot review now pass; their sole gate was then consumed
    INVALID at a real `live-roles-insufficient-flips` plateau. The bounded
    role/player diagnostic's first static attempt has an untrusted full-census
-   digest/vector claim; its cap-preserving trust-boundary design above requires
-   a fresh implementation, static pass, and independent review before another
-   gate. Do not lower the threshold. Clear >=52 before pursuing about 55-60.
+   digest/vector claim. A distinct C7-only, cap-preserving full-census
+   diagnostic design is now reviewed; it leaves the 4096-byte admitting C6
+   receipt unchanged and still requires fresh implementation, static pass, and
+   independent review before another gate. Do not lower the threshold. Clear
+   >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
