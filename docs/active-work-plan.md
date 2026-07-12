@@ -26,12 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `fc2fca74ab38885793ca9d0c957b3aaf4a4acb27`, the pending
-C1 binary correction fails adversarial source review: its observer still tests
-`CHILDKSTATUS` rather than Tcl's exact `CHILDSTATUS`. The prior suite remains
-consumed; make only that static-observer spelling correction, then obtain a
-fresh review before any new canonical host-only suite. There is no static
-retry, VM, performance, audio, fullscreen, default, or credit authority.
+At review checkpoint `15b6369ed7d4a72d098cb0f161f52c363ae33341`, the pending
+C1 correction's static-observer spelling repair is ready for a fresh
+independent no-boot review. The prior suite remains consumed; there is no
+static retry, VM, performance, audio, fullscreen, default, or credit
+authority.
 
 ## Binding host and VM discipline
 
@@ -3436,3 +3435,21 @@ run the consumed canonical suite. No test, build, rootfs, VM, serial, KDE, or
 QEMU action occurred; exact inventory was total/informational-RISC-V/
 conflicting `1/1/0`, and the RISC-V QEMU was untouched. This FAIL grants no
 performance or retry credit.
+
+**C1 V2 observer `CHILDSTATUS` correction — READY / NO-RUN (2026-07-12):**
+the pending driver-only correction replaces the static observer's sole
+misspelled selector with Tcl's exact `CHILDSTATUS`; guarded source and pending
+diff audits now find zero `CHILDKSTATUS` occurrences. It adds no child
+execution: pure in-memory static fixtures require `CHILDSTATUS 4242 68` to
+report exit 68/no signal, `CHILDKILLED 4243 SIGTERM observer-test` to report
+unavailable exit/SIGTERM, and `POSIX EACCES observer-test` to retain the other
+errorcode with unavailable exit/no signal. The fixture matrix is source-locked
+to both recognized Tcl forms and is part of the C1 static aggregate.
+
+No production helper/parser/protocol, timeout/chunk algebra, credit path,
+kernel/user/rootfs/default/KDE path, test, build, VM, boot, serial, or QEMU
+action occurred. Exact pre-edit inventory was total/informational-RISC-V/
+conflicting `0/0/0`; no process was touched. `git diff --check` is clean; the
+driver remains unstaged. This is readiness only and requires independent
+adversarial no-boot review before any new static suite, with no V2/A1/HD720,
+audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
