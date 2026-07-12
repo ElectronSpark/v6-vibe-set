@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `035c2828097f8d5cdbe98f4d378c387e3fcad124`, the static
-role-LF correction has passed independent no-boot review. Exactly one fresh
-canonical MP=1/media=1 host-only static suite is authorized; it is not a
-retry and grants no VM, performance, audio, fullscreen, default, or credit
-authority unless that one suite passes.
+At review checkpoint `83986a2bdbfc982dc57810721ed4152b9326046d`, the one
+fresh canonical static suite is consumed: role-output capture progressed, then
+the static compact-report formatter raised a Tcl array-reference error. The
+next item is no-boot forensic of that observer-report failure; no retry, VM,
+performance, audio, fullscreen, default, or credit authority exists.
 
 ## Binding host and VM discipline
 
@@ -3658,3 +3658,30 @@ capturediag=0, pinned window/crop/delta/video inputs, and a nonexistent
 `YT_OUTDIR`; retain its first result and artifacts without retry. It is no VM,
 HD720/fullscreen, audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance
 authority.
+
+**Static render-role embedded-LF canonical static suite — FAIL / NO-BUILD /
+NO-BOOT (2026-07-12):** the one review-authorized clean host-only invocation
+used the pinned clean PATH/static=1/MP=1/audio-disable=1/media=1/
+forced-HD720=0/EGL=0/capturediag=0 profile and fresh outdir
+`/tmp/yt-c1-v2-observer-static-20260712T233342Z-2908170` (external log
+`/tmp/yt-c1-v2-observer-static-20260712T233342Z-2908170.log`); it exited 1
+without either static PASS marker. All bounded C1 actual-helper artifacts are
+present, and role capture now progressed past the former final-LF matcher:
+baseline, semantic, broad, spoof, malformed, command-failed, over-cap, and
+the expected zero-byte failure fixtures all retain their named output
+artifacts. Matching `/dev/shm` residue count is zero.
+
+The first terminal failure is the later static compact reporter, not the role
+helper: `static_render_generated_helper_role_compact` returns an interpolated
+string beginning `$name(success=...)`; Tcl interprets that as an array lookup
+and raises `can't read "name(success=1,exit=0,...": variable isn't array` at
+the first baseline compact record. The baseline output itself is present and
+regular at 151 bytes, and no parser/helper/classification conclusion follows
+from this reporter exception. No retry, driver correction, build, rootfs, VM,
+boot, serial, kernel/user/default/KDE action followed. Exact pre-run inventory
+was total/informational-RISC-V/conflicting `0/0/0`; post-run inventory was
+`1/1/0` (an unrelated RISC-V QEMU only, untouched). The driver and unrelated
+KDE-smoke dirt remain unstaged. This grants no V2/A1, performance, HD720,
+audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit; next authority is
+limited to no-boot forensic of the static compact-report interpolation before
+any source change or suite.
