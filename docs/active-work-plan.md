@@ -1315,6 +1315,44 @@ consumes the sole trial authority. Next is no-boot forensics of the fresh
 render-start role/flip admission mismatch before any new gate; no audio,
 presentation, default, or fullscreen conclusion is opened.
 
+**A1 `live-roles-insufficient-flips` plateau forensic — REAL GATE FAILURE /
+CAUSE UNRESOLVED / NO-BOOT (2026-07-12):** immutable run checkpoint
+`f00621e1ff32b0edbddec4dd4aa99f211584f9fe` equals explicit origin. All five
+fbstat payloads were transport-verified and timestamped at 02:43:09,
+02:44:31, 02:45:37, 02:46:42, 02:47:46, and 02:48:50Z with cumulative
+flips/presents `3/4, 8/9, 86/87, 87/88, 88/89, 89/90`; each fresh C6/C8/C10/
+C12/C14 receipt had exact C3/C4 binding, `RC:0`/`FENCE`, regular source,
+status-0 live role evidence, and truthful tails. This excludes the old
+CRCRLF transport defect, receipt timing, or a lost sampled burst as the gate
+explanation: after the 78-flip early burst, the accepted cumulative counter
+advanced only three times over about 193 seconds. It proves only a real lack
+of sustained *measured* page-flip supply, not HD720, video playback, FPS, or a
+specific app/kernel cause.
+
+Semantic comparison is noncausal but useful. Current fast census retained
+browser, GPU, and `network.mojom.NetworkService` through all six phases, but
+had no AudioService (both 520- and 868-flip named controls had one); none of
+the three runs emitted a `renderer` role label, so that absence does not
+differentiate the plateau. Current source uniquely records two children
+terminating after 15 s without a connection and a network-service restart
+before probe1, then stops advancing after 02:47:23Z; the controls instead show
+ongoing GPU/page-paint activity and their large first-probe bursts. This is
+correlation only: the bound role frame is its first 4096 bytes of a
+65--70 KiB census and `live` requires merely one semantic Chrome row, while no
+nonce-bound player/navigation/readiness or process-exit identity exists. Do
+not lower the flip threshold or repair audio/network from this evidence.
+
+The next bounded diagnostic is a no-credit pre-threshold, nonce/probe-bound
+receipt that retains a fixed-order, capped/digested role/subtype vector
+(browser, GPU, renderer, network, audio, utility, zygote) plus minimal
+watch-page/video readiness and short progress state; missing, malformed,
+reordered, stale, truncated, or contradictory facts must be INVALID or
+INCOMPLETE and must never start media/FPS admission. Static cases must retain
+the current threshold and prove no renderer/network/audio distinction can
+forge presentation. Exact QEMU inventories before/after this forensic were
+total/conflicting/informational-RISC-V `0/0/0`; no process, VM, source, build,
+rootfs, serial, or launcher was touched.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1430,8 +1468,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    fresh serialized A1 gate. That gate's sole run is consumed INVALID at the
    fbstat transport gate: CRCRLF expanded to blank rows under the old global
    map. The scoped candidate-local repair, its actual-wire matrix, and its
-   independent no-boot review now pass; they permit forming (never reusing) a
-   fresh serialized A1 gate only. Clear >=52 before pursuing about 55-60.
+   independent no-boot review now pass; their sole gate was then consumed
+   INVALID at a real `live-roles-insufficient-flips` plateau. The bounded
+   role/player diagnostic above is required before forming another gate; do
+   not lower the threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
