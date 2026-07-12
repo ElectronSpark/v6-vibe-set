@@ -1353,6 +1353,33 @@ forge presentation. Exact QEMU inventories before/after this forensic were
 total/conflicting/informational-RISC-V `0/0/0`; no process, VM, source, build,
 rootfs, serial, or launcher was touched.
 
+**A1 pre-threshold plateau diagnostic — INCOMPLETE / NO-BOOT (2026-07-12):**
+at checkpoint `349b35c4f7da3cd3fca5d9020024f61dedeb8216`, the bounded
+host/receipt-only implementation preserved the verified fbstat command marker
+(C5), added an actual-Bash full-census browser/GPU/renderer/network/audio/
+utility/zygote summary, and derived navigation/player/progress diagnostic
+states from existing nonce-bound launcher-tail media rows. It neither modified
+extension/rootfs/launcher defaults nor changed the role predicate, the
+`flips > idle+100 && presents > idle` threshold, diag0/V3 isolation, or
+credit route.
+
+Its one fresh canonical static replay,
+`/tmp/xv6-a1-plateau-diagnostic-static.z3q7zq.log`, exited 2. The C5 drift
+adversary rejected, and the actual-Bash subtype (including AudioService
+present/absent, reorder/spoof), source navigation/player/progress
+missing/stalled/advancing, cursor/nonce/probe binding, and no-credit latch
+matrices all reached their expected states. The required full-census digest
+drift adversary instead parsed `pass`: a syntactically valid substituted
+`role_full_digest` cannot be recomputed by the host because the existing
+receipt retains only the first 4096 role bytes. Therefore that new binding is
+not proven fail-closed. Per the one-run rule, no source correction or replay
+was made; the source remains unstaged/uncommitted and grants no diagnostic,
+role, HD720, media, FPS, audio, fullscreen, or VM authority. Exact QEMU
+inventories immediately before and after were total/x86/informational-RISC-V/
+conflicting `0/0/0/0`; no process was touched. A fresh no-boot authorization
+must redesign and review the full-summary integrity boundary before any VM
+gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
