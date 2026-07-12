@@ -2983,3 +2983,51 @@ immediately before and after were total/informational-RISC-V/conflicting
 occurred. Per the single-suite rule the driver patch remains unstaged and the
 unrelated KDE-smoke dirt remains untouched; a new forensic authority is needed
 before any V2 helper repair or another static run.
+
+**C1 V2 actual-helper binary-exit forensic — REVISE / NO-RUN
+(2026-07-12):** exact no-boot inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no process, test/replay,
+build, rootfs, VM, boot, KDE/default, or source edit occurred. The failed
+canonical outdir is exactly `/tmp/yt-c1-v2-canonical-static-2782738`; its
+generated helper/stub directory retains only executable `fbs.sh` (3630 B),
+`fbstat` (44 B), `_consolerecord` (305 B), and `payload.bin`. The last file is
+the binary case itself: `wc -c=4`, SHA-256
+`26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d`, exact
+bytes `00 ff 0a 7f`. There is no `records.txt` or `count`, and the exact
+`/dev/shm/yt-fbstat-probe1-fbfstatstaticnonce-*` residual count is zero.
+
+This proves only a pre-recorder nonzero helper exit. The production-generated
+script receives ASCII `tag=probe1`/`nonce=fbfstatstaticnonce`; the raw fixture
+is written binary to a named file, the host `fbstat` stub only runs
+`cat "$YT_FBSTAT_STATIC_PAYLOAD"` into a redirected capture file, and V2 would
+hex-encode that file before constructing any recorder argv. Thus neither an
+argv NUL limit, shell text encoding, overlong V2 record, nor recorder-stub
+failure explains the retained absence of rows. The empty case had already
+passed, while the four-byte binary case can only have failed before its BEGIN
+record (the binary-dependent capture/count/digest/xxd/hex-length region,
+including a possible stub/tool failure); the retained evidence cannot select
+one exit branch or distinguish that branch from host-tool emulation.
+
+The exact child exit code/signal and child stdout/stderr are unrecoverable
+from this one attempt: `static_fb_v2_helper_run` used `catch {exec ... 2>@1}
+output` without the Tcl options dictionary, then returned only success, rows,
+and `output`; Tcl retained only `child process exited abnormally`. No terminal
+or external child log exists. This is a static-harness reporter loss, not
+evidence to alter production helper logic. Related actual-helper audit: media
+captures `-errorcode`; C8 captures it in its runner but its actual-case record
+stores only `run_error=[lindex $run 2]` (child output) and drops the third
+errorcode field; the render-role actual helper likewise returns output without
+Tcl child status. C8's own distinct binary fixture is 14 bytes and was not
+reached by this failed suite, so it is no confirmation or counterexample.
+
+Smallest next source change, subject to adversarial review, is static-harness
+only: make the V2 runner catch into `output options`, retain a bounded
+stdout/stderr token plus `-errorcode` (distinguishing `CHILDKSTATUS` exit from
+`CHILDKILLED` signal), rows/count presence, and cleanup result in the failed
+case diagnostic; thread the already captured C8 errorcode into its case
+record, and give the render-role runner the same bounded status. Do not change
+the production helper, stub behavior, parser, shell invocation, or defaults.
+After that review, authorize at most one fresh canonical static suite; it must
+report this per-case diagnostic before any helper repair decision. No V2,
+performance, HD720/fullscreen, audio, `yt-presentfps`, or `PERF-VIDEO` credit
+exists; A1 remains N=0.
