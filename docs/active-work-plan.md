@@ -1864,3 +1864,24 @@ HD720, FPS, audio, fullscreen, or VM authority. The failed driver patch and
 the unrelated KDE-smoke dirt remain unstaged. Do not retry this static or form
 a VM gate from it; first repair the host-only C8 derivation failure, then take
 one newly authorized canonical static replay and independent review.
+
+**C8 source-derive counter forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** the exact new line is `incr result rows`, not `dict incr
+result rows`. `result` is initialized as the serialized diagnostic dictionary,
+so Tcl attempts to parse that whole dictionary as an integer at the first
+marker-bearing row and raises the retained error. The empty C8 payload itself
+does not reach that line and returns its intended INCOMPLETE state; the next
+canonical `producer_start` fixture is the first row that fails. The smallest
+correct repair is exactly `dict incr result rows`, with no protocol, threshold,
+or C7 change.
+
+The C8 counter audit finds no second instance of this structural error:
+`raw_record_number` is a separately initialized scalar, producer/ready/
+observation are boolean flags, and C8's `serial_counter + 1` reservation is
+paired with the existing `guest_cmd` increment/ownership check. The static
+redo should explicitly retain C8 row counts `0,1,1,1,2` for empty, producer,
+no-player, no-progress, and progressing fixtures (and `1` for the first-row
+order-invalid control), in addition to the existing state/detail, transport,
+binding, status, no-credit, and C7 literal-preamble assertions. No source
+edit, replay, VM, build, rootfs, serial, launcher, or process action occurred;
+the C7/C8 patch and unrelated KDE dirt remain unstaged.
