@@ -1477,6 +1477,21 @@ informational RISC-V QEMU (PID 2370035); exact post-run inventory was zero.
 This grants no full-census, role/subtype, HD720, media, FPS, audio, fullscreen,
 or VM authority.
 
+**A1 C7 META-binding correction — INCOMPLETE / NO-BOOT (2026-07-12):** the
+authorized narrow correction replaced the C7 parser's dynamic field-name local
+lookup with one explicit expected-value mapping for tag, nonce, probe, both
+C3/C4 marker+digest pairs, C5, and C7; the full binding block was audited for
+the same class. Its one fresh canonical replay (outdir
+`/tmp/xv6-a1-c7-binding-static.6Rk2Vm`, log
+`/tmp/xv6-a1-c7-binding-static.6Rk2Vm.log`) still failed
+`static-check-render-start-receipt` with the unchanged tuple
+`complete,wire,rejects,source,no-credit = 0,0,1,1,1`. The previous
+META-local-name diagnosis is therefore disproved/incomplete. C6 and all
+existing static groups remained green. Per the one-run rule no further source
+edit or replay followed; exact all-architecture QEMU inventories immediately
+before and after were both zero. This remains diagnostic-only/no-authority and
+grants no role/subtype, HD720, media, FPS, audio, fullscreen, or VM credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
