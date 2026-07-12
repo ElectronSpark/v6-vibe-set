@@ -1284,6 +1284,37 @@ PASS clears only formation of a fresh serialized A1 gate—never a VM launch or
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance
 credit.
 
+**A1 CRCRLF-repaired sole windowed trial — CONSUMED / INVALID / N=0
+(2026-07-12):** after the conductor's passive screen, immutable HEAD/origin
+`e26745c2f4d53263f95d1545cedef047bfe50330`, and zero conflicting non-RISC-V
+QEMU, one owned x86 KVM+virgl/OpenGL-submit run used MP1, audio-disable1,
+media1, forced-HD7201, EGL0, capturediag0, 4 GiB RAM, and the normal 60-second
+window. GTK fullscreen and zoom-to-fit were explicitly off. It is retained at
+`/tmp/xv6-a1-crcrlf-windowed.qI1K17` (wrapper log
+`/tmp/xv6-a1-crcrlf-windowed.qI1K17.log`); the launcher recorded KVM and WSL
+D3D12 host GL selection, so software fallback is not a result explanation.
+
+The new actual-wire transport path admitted idle and each of five probes
+(`transport=verified`, `backend=virgl-opengl`): idle flips/presents `3/4`, then
+`8/9`, `86/87`, `87/88`, `88/89`, and `89/90`. Thus the previous CRCRLF
+noncontiguous frame defect did not recur. Each nonce-bound render-start receipt
+was fresh and regular with role command status 0 and `role_state=live`, but
+classified `INCOMPLETE:live-roles-insufficient-flips`; all five attempts made
+that same fail-closed result, and the driver exited code 8
+`chromium-render-start-missing`. This stops before HD720 source/1280x720
+semantic proof, media capture, or the `yt-presentfps`/`PERF-VIDEO` windows.
+There are consequently no FPS, drops, VPQ, retire, audio-on, or fullscreen
+facts (absent, not zero); only the pre-frame artifact exists and all steady/
+window/media screenshots are absent.
+
+The driver synchronously reaped owned leader `2336525`
+(`waited:2336525 exp4 0 0`). Exact final `/proc/*/exe` inventory had x86 and
+conflicting non-RISC-V counts `0/0`; the exempt informational RISC-V VM was
+present (it was neither controlled nor affected). No second x86 VM ran. This
+consumes the sole trial authority. Next is no-boot forensics of the fresh
+render-start role/flip admission mismatch before any new gate; no audio,
+presentation, default, or fullscreen conclusion is opened.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
