@@ -2728,3 +2728,49 @@ new-file whitespace diff checks passed. No VM, boot, rootfs refresh, V2
 driver/helper work, video/fullscreen/audio measurement, or performance credit
 occurred. The required independent adversarial review remains before any
 kernel boot; this stays A1 N=0.
+
+**C1 slice-1 committed adversarial review — PASS FOR SLICE-2 SOURCE ONLY /
+NO-BUILD / NO-BOOT (2026-07-12):** exact review inventory was
+total/informational-RISC-V/conflicting `0/0/0`. Explicit lineages are equal
+and published: kernel `b42d1c37f90b2ac48aa416a9eb215a935920f649` equals
+`origin/v6-kernel`, user `a95f8c8a6d0dcb9189b6ec6d51a0f376fc721cc1` equals
+`origin/v6-port`, and superproject
+`2e348407b336f951694392ee7da8330fb099e060` equals the explicit `-ff` origin
+branch. Whitespace checks over all three commits pass. Their name-status
+confirms no driver, rootfs, launcher/default, extension, KDE, or unrelated
+source change: kernel contains only console/UAPI/fake-unit files; user only
+the recorder; the parent only submodule pointers, host-probe staging, and
+plan. The sole current dirt is the preserved KDE-smoke file.
+
+Direct source audit re-confirms the 24-byte 0/4/8/16/20 fixed ABI and full
+command comparison; root check plus request/payload `either_copyin` both
+precede the 50-ms sleepable lock. Printable input is limited to 511 with one
+terminal LF, and x86 text emission makes exactly at most 512 CRLF physical
+bytes; the committed fake covers missing/embedded LF, CR/NUL, ABI/privilege/
+copy faults, timeout/EINTR, post-lock unavailable, and emergency no-credit.
+The repaired handler has one post-timed-lock release path. Normal x86
+consolewrite, consoled/consputs, and tty-drain paths enter the same wire mutex;
+the only direct non-console `uartputc_sync` hit is its declaration, and klog
+releases its async-ring lock before normal consputs. Early/panic/IRQ/spin-held
+paths bypass and advance the generation, so a concurrent emergency returns
+no-credit rather than clean-record success. The common cdev/device ioctl
+dispatch and mutex initialization are present. The shared host test uses
+`-iquote` only for `dev/console.h`, retaining host libc headers and never
+compiling production `console.c`; the host-glibc program is one-argv, silent,
+write-only, and the reviewed staging maps it to `_consolerecord`. RISC-V
+retains the prior `#else` output and TTY ioctl semantics; this is manual
+source evidence, not a RISC-V build.
+
+The battery summary itself retains no named log/artifact pathname, so this
+review can independently verify its committed runner/test and not replay its
+reported execution. Also, a 64-byte consolewrite *input* batch can ONLCR
+expand to 128 physical bytes; it remains mutex-covered and below the 50-ms
+record wait, but slice-2's transport-time algebra must use that actual normal
+segment rather than call it 64 postprocessed bytes. These are provenance/
+budget constraints, not a kernel-source blocker. The result authorizes only
+the next host-driver V2 parser/generated-helper/time-budget implementation;
+it authorizes no additional kernel/user/staging change, build, rootfs refresh,
+VM, or boot. Slice-2 must retain the strict V2 binding/gap vectors and a
+calculated timeout before another independent review. A1 remains N=0 with no
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance
+credit.
