@@ -829,6 +829,31 @@ touched. This clears only fresh serialized A1 gate formation, never a VM
 authorization or guest/HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`
 credit.
 
+**A1 EOF-repair sole windowed trial — CONSUMED / INVALID / N=0 (2026-07-12):**
+the conductor's passive screen `/tmp/xv6-conductor-a1-eof-repair-passive-20260712.log`
+had total/conflicting QEMU zero at 00:56:50Z and 00:57:50Z. Immediate worker
+audit had HEAD=explicit origin `6b34ad9be19f5510458cc2eab452298f05b91785`,
+zero total/conflicting QEMU, read/write KVM, and only preserved KDE-smoke dirt.
+The one real windowed MP=1/audio-disable=1/media=1/forced-HD720=1/EGL=0/
+capturediag=0 run is `/tmp/xv6-a1-eof-repair-windowed.ks2qKJ`; it used KVM +
+WSL D3D12 virgl OpenGL-submit, 4 GiB guest RAM, and no fullscreen/audio-on arm.
+Its owned leader 2249172 was found `Zs` then synchronously reaped
+(`waited:2249172 exp4 0 0`); final exact total/conflicting/informational-RISC-V
+was `0/0/0`. No second VM launched or foreign QEMU was touched.
+
+C6 returned complete receipt BEGIN/META/SOURCE/ROLE/END plus `RC:0`/`FENCE`,
+so no EOF-control artifact was required. Idle/probe fbstat proved virgl/
+OpenGL-submit and advanced 3/4 to 520/521 flips/presents. The receipt is
+`INCOMPLETE chromium-roles-none-or-exited`: fast census returned
+`role_status=0,total=252,bytes=252`, but only baseline/summary lines—not the
+required semantic `kde_chromium_process_evidence fast ... comm="chrome" ...
+role=... cmd=...` row. Launch/argv and source-tail bindings cannot substitute
+for dynamic role liveness. Driver code 8 correctly stopped before active
+HD720/media semantic proof, `yt-presentfps`, `PERF-VIDEO`, FPS/drop/VPQ/retire,
+audio, or fullscreen. This is N=0 and consumes authority. Next: narrow
+NO-BOOT localization of the production fast-census semantic-row absence, then
+static/adversarial review before a fresh gate; do not infer Chromium exit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -931,8 +956,11 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    discipline, including its retained all-architecture inventories. The
    RISC-V-exempt trial is also CONSUMED/INVALID at receipt EOF; its
    control-evidence repair and independent review now permit forming (never
-   reusing) a fresh serialized A1 gate. Clear >=52 before pursuing about
-   55-60.
+   reusing) a fresh serialized A1 gate. That gate is now CONSUMED/INVALID:
+   C6 framing completed, but the authenticated fast census was
+   `none_or_exited`, so no HD720/media/FPS fact exists. Localize that
+   semantic-census absence no-boot before another gate. Clear >=52 before
+   pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
