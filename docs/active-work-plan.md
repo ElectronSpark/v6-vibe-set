@@ -2129,3 +2129,29 @@ regex/test route. No other source or KDE edit, test/replay, VM, build, rootfs,
 serial, launcher, or process action occurred. Exact start inventory was
 total/informational-RISC-V/conflicting `0/0/0`. This review grants no C8, A1,
 HD720, FPS, audio, fullscreen, or performance credit.
+
+**C8 Tcl-safe decimal-literal canonical attempt — FAIL / NO-BOOT
+(2026-07-12):** one fresh canonical host-only static command with MP=1,
+audio-disable=1, media=1, forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-tcl-safe-static.WIdXt2` exited 2 (external log
+`/tmp/xv6-c8-tcl-safe-static.WIdXt2.log`). The new direct `/bin/bash <checker>
+<value>` checker and exact shared emitted literal passed every required decimal
+case: accepts were all `1` for `0`, `1..9`, `10`, `42`, and `2147483647`, and
+rejects were all `1` for empty, signed, spaced, `1x`, `10x`, `1.0`, `00`, and
+`01`. C8 parser/adversary/source-contract/actual-wire/source-lock/wire-
+adversary/no-credit predicates were also `1`; the actual-helper aggregate was
+`0` without a more specific detail, so empty/multiline/binary/over-cap
+end-to-end credit remains unearned. The suite also reported the independent
+render-start C5 receipt fbstat-marker-drift predicate as `0`; this run neither
+changes the C5/C7 helper implementations nor establishes that either failure
+was introduced by C8.
+
+Per the one-suite stop rule, no driver correction or second replay followed;
+there was no VM, build, rootfs, serial, launcher, default/kernel/KDE action.
+The C8 driver patch remains unstaged, and unrelated KDE-smoke dirt remains
+untouched. Exact all-architecture `/proc/*/exe` inventories before source work
+and after the failed suite were both total/informational-RISC-V/conflicting
+`0/0/0`. C8, A1, audio, HD720, fullscreen, FPS, and performance remain
+no-credit. The next authority must forensically localize the failed
+actual-helper aggregate and C5 receipt predicate before any narrowly scoped
+repair and one newly authorized canonical static replay.
