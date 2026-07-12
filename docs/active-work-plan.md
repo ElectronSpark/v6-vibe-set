@@ -2427,3 +2427,56 @@ INVALID/no-credit. No source, test, VM, build, rootfs, launcher/default/kernel/
 KDE change occurred here. This trial remains pre-Chromium INVALID/N=0; its
 owned QEMU was synchronously reaped and this forensic's exact inventories were
 total/informational-RISC-V/conflicting `0/0/0`.
+
+**C1 record-atomic/V2 transport design — PASS / NO-BOOT (2026-07-12):** at
+HEAD `8d00a08fb9b1d2add3a68ce22dfe3c663a264ace`, direct source audit confirms
+three unshared x86 wire producers: `consolewrite()` sends 64-byte batches,
+`consoled` calls `consputs()` in 32-byte steps, and `tty_drain` writes UART
+bytes directly; `uart_tx_lock` covers one character only. The retained C1
+artifact's mid-HEX weave is therefore expected. Exact inventories before and
+after this docs-only audit were total/informational-RISC-V/conflicting
+`0/0/0`; no VM, process, source, build, rootfs, test, launcher, default, or
+KDE action occurred, and the unrelated KDE-smoke dirt remains preserved.
+
+The selected smallest x86 ABI is one `/dev/console` ioctl, not a new syscall:
+`CONSOLE_IOC_WRITE_RECORD` accepts version 1, zero flags/reserved, a user
+pointer, and a record length. It copies request and bytes before locking,
+requires exactly one final LF with no embedded LF/CR/NUL, and limits the
+post-LF-to-CRLF physical record to 512 bytes; copy/shape/panic/timed-lock
+failures emit nothing. `console.c` will add a sleepable console-wire mutex and
+raw emitter shared by the ioctl, normal `consolewrite` batches, `consputs` /
+klog drain, and tty output drain. The recorder holds it for one record only
+(about 45 ms at 115200); timed acquisition fails closed, so there is no
+multi-chunk printk starvation. Normal order is `pr.lock -> console-wire mutex
+-> uart_tx_lock`; copyin and `cons_async`/TTY/pipe spinlocks are released
+before the mutex. Early boot and panic remain explicit terminal bypasses and
+must remain no-credit; RISC-V arch code/behaviour stays untouched.
+
+C1 V2 will emit sealed BEGIN, META, zero or more CHUNK, and END records
+through a silent x86 `consolerecord` user helper, with outer marker-bound
+`RC:0`/`FENCE` still mandatory. META binds tag, nonce, status, raw/payload
+bytes, cursor, cap `131072`, truncation, payload SHA-256, total hex bytes,
+total chunks, and `chunk_hex_max=384`. Each CHUNK binds nonce, contiguous
+`seq`, contiguous `hex_offset`, exact even `hex_bytes<=384`, and lower-hex
+data; BEGIN/META/END repeat the total/digest bindings. The host may ignore
+only wholly noncandidate raw gaps between sealed records, retaining their
+bounded fingerprints; any foreign transport candidate, byte-contaminated
+row, missing/duplicate/reordered/noncontiguous/oversize chunk, count/cursor/
+cap/truncation/hex/digest drift, or nonunique/misordered outer RC/FENCE is
+INVALID/no-credit. It never splices fragments and retains candidate raw
+indexes on rejection. Existing sacrificial `true;` first-character-drop and
+fresh-prompt precautions remain in force.
+
+Rejected: a new syscall expands x86/RISC-V ABI plumbing without benefit;
+newline aggregation is unbounded/ambiguous for the former 112 KiB HEX line
+and misses klog/TTY; reusing `pr.lock`, `cons_async.lock`, or `uart_tx_lock`
+misses a wire producer, protects only staging, or spins per character. Before
+any source repair, require host V2 static vectors for valid noisy gaps, the
+actual mid-HEX weave, LF/CRLF/CRCRLF, prompt/preamble, and all binding/order/
+corruption negatives; generated-helper vectors for empty/binary/multiline/
+cap/over-cap and no direct transport `printf`; a host-only fake-UART kernel
+unit proving one contiguous emit and zero output for malformed/copy-fault/
+panic/timed-lock cases plus shared-path source locks; x86 kernel and
+`_consolerecord` user builds only; then independent adversarial review. This
+is design evidence only and supplies no A1, HD720, fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, FPS, or performance credit.
