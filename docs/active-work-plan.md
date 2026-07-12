@@ -1991,3 +1991,28 @@ launcher, extension, default, fullscreen, audio, or performance action
 occurred. The later primary performance validation remains explicitly both
 windowed and fullscreen YouTube at real KVM+virgl GL; no C8 diagnostic result
 is performance credit.
+
+**C8 normal-A1 honesty/executable-harness attempt — FAIL / NO-BOOT
+(2026-07-12):** one fresh canonical host-only replay with MP=1,
+audio-disable=1, media=1, forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-honesty-static.qIOVlL` exited 2 (external log
+`/tmp/xv6-c8-honesty-static.qIOVlL.log`) before the C8 actual-wire matrix. Its
+new generated-Bash harness invoked the production C8 helper over a scratch
+multiline source and received a correctly framed helper status
+`COUNT_INVALID`; LF/CRLF/CRCRLF, preamble, RC/FENCE, duplicate/noncontiguous,
+binary, and truthful-over-cap assertions were consequently not reached and
+remain unverified.
+
+The source-local root cause is the helper's existing `valid_decimal` case
+`0|[1-9][0-9]*`: its nonzero branch requires at least two leading digit
+characters, so the valid one-digit multiline `wc` line-count is rejected.
+This executable result is a real helper portability/grammar defect, not an
+extension, player, C6 threshold, HD720, audio, fullscreen, FPS, or VM result.
+Per the single-suite stop rule, no correction, replay, rootfs action, or VM
+followed; the C8 driver patch remains unstaged and the unrelated KDE-smoke
+dirt remains untouched. Exact all-architecture `/proc/*/exe` inventories were
+total/informational-RISC-V/conflicting `0/0/0` both before source work and
+after the failed replay. The next authority must first make the narrow
+nonzero-decimal grammar repair and repeat the one canonical static suite;
+until then C8 is no-credit and normal A1 injection/navigation silence remains
+ambiguous.
