@@ -3031,3 +3031,24 @@ After that review, authorize at most one fresh canonical static suite; it must
 report this per-case diagnostic before any helper repair decision. No V2,
 performance, HD720/fullscreen, audio, `yt-presentfps`, or `PERF-VIDEO` credit
 exists; A1 remains N=0.
+
+**C1 V2 observer-only actual-helper reporter patch — READY / NO-RUN
+(2026-07-12):** the pending, unstaged driver-only observer hunk is restricted
+to the host static actual-helper runners; it makes no new change to the
+production generated V2 helper/parser/protocol, kernel/user code, rootfs,
+defaults, KDE, or QEMU command. V2 now redirects each helper child's combined
+stdout/stderr to a per-case capped artifact, catches Tcl's options dictionary,
+retains the exact `-errorcode`, and renders `CHILDKSTATUS` exit separately from
+`CHILDKILLED` signal. Its failure record compactly includes all five named
+actual cases (`empty`, `binary`, `multiline`, `exact_cap`, `overcap`), with
+not-run status where an earlier fatal case stops the suite; each executed case
+keeps input size/SHA, helper SHA, sanitized argv, bounded child-I/O metadata,
+bounded stub-row-file/count/first/last-row metadata, and cleanup/residue
+state. The C8 actual-case record now retains its exit/signal/errorcode and
+bounded child-I/O artifact, while the render-role runner exposes the same
+bounded termination status in its aggregate failure diagnostic. `git diff
+--check` is clean, but no Tcl/static suite, build, test, VM, boot, serial
+command, or QEMU has been run, so this is observer readiness only—not a
+diagnostic verdict or any V2/performance/HD720/fullscreen/audio credit. The
+next action still requires adversarial review and fresh authority for exactly
+one canonical host-only static suite.
