@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `83986a2bdbfc982dc57810721ed4152b9326046d`, the one
-fresh canonical static suite is consumed: role-output capture progressed, then
-the static compact-report formatter raised a Tcl array-reference error. The
-next item is no-boot forensic of that observer-report failure; no retry, VM,
-performance, audio, fullscreen, default, or credit authority exists.
+At forensic checkpoint `659fc64cf0dcf2e1a37bbde1e3765ddfb1e8f89f`, the
+consumed static suite's compact-report Tcl error is localized to one
+static-observer interpolation. The next item is a narrow compact-format
+correction plus independent no-boot review; no retry, VM, performance, audio,
+fullscreen, default, or credit authority exists.
 
 ## Binding host and VM discipline
 
@@ -3685,3 +3685,40 @@ KDE-smoke dirt remain unstaged. This grants no V2/A1, performance, HD720,
 audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit; next authority is
 limited to no-boot forensic of the static compact-report interpolation before
 any source change or suite.
+
+**Static render-role compact-report Tcl interpolation forensic — ROOT CAUSE
+LOCALIZED / NO-RUN (2026-07-12):** at plan HEAD
+`659fc64cf0dcf2e1a37bbde1e3765ddfb1e8f89f`, exact inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no process was touched. The
+named consumed-suite outdir/log are
+`/tmp/yt-c1-v2-observer-static-20260712T233342Z-2908170` and
+`/tmp/yt-c1-v2-observer-static-20260712T233342Z-2908170.log`. All 12 named
+role output artifacts exist. Regular nonempty baseline, semantic, broad,
+spoof, malformed, command-failed, and over-cap records retain their expected
+one-line helper output; missing, stdout-only, stale, nonregular, and unreadable
+are the expected zero-byte helper-failure artifacts. Thus role capture reached
+every tag before the later reporter exception; this is no helper,
+classification, parser, C1, or production conclusion.
+
+The exact sole unsafe scalar-plus-parenthesis occurrence is
+`static_render_generated_helper_role_compact`'s line
+`return "$name(success=...)"`. In Tcl, `$name(` is parsed as an array element
+reference rather than scalar `name` followed by a literal parenthesis, yielding
+the retained `can't read "name(success=1,exit=0,...": variable isn't array`
+error at the first baseline compact record. Full guarded source audit finds no
+`${var}(` occurrence. The other `$var(...)` matches are intentional Tcl
+`env`/`expect_out` arrays; among static compact reporters, C1 uses a completed
+`[dict get ...](` substitution and C8 uses braced `format`, both safe. The
+remaining compact fields use comma/equal delimiters or completed command
+substitutions; their values are not reparsed, so no additional command or
+variable-substitution hazard requiring correction was found.
+
+The smallest repair is static-observer-only: use `${name}(...)` or, preferably,
+one braced `format` template with `name` and each bounded field passed as an
+argument. Add a pure synthetic compact-record fixture whose literal result
+starts `compact-fixture(success=1,...)`, plus a source lock that requires the
+braced formatter and rejects `$name(`. Require that fixture in the existing
+render-helper/terminal static aggregate before a fresh independent no-boot
+review. No test, build, rootfs, VM, boot, serial, KDE/default, or QEMU action
+occurred; no V2/A1, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
+performance credit exists.
