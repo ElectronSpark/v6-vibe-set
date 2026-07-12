@@ -2710,3 +2710,21 @@ x86 gating, and the single timed-lock release path. The fake remains a model,
 not a console.c execution test; retain that distinction and the later x86-only
 kernel build/independent-review gates. This remains A1 N=0 with no HD720,
 fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
+**C1 slice-1 include-boundary battery — PASS / NO-BOOT (2026-07-12):** exact
+preflight QEMU total/informational-RISC-V/conflicting inventory was `0/0/0`.
+The corrected host runner, using only `-iquote kernel/kernel/inc` for the
+quoted shared UAPI while keeping `<...>` host-libc headers, passed its fake
+sink and guarded source locks. The fake now includes the missing-final-LF
+negative and locks the root euid check, x86 gating, device ioctl registration,
+all normal writer gates, and the single post-timed-lock release path. The
+automatic host-glibc staging flow placed executable
+`/bin/_consolerecord` (and no unprefixed sibling) in a fresh temporary sysroot;
+its broader automatic program sweep still emitted unrelated pre-existing
+warnings and a nonfatal `kprofile` compile diagnostic, so that result is only
+the recorder staging proof, not clean-whole-userland credit. The non-boot
+`cmake --build build-x86_64 --target kernel -j2` x86 build and all tracked plus
+new-file whitespace diff checks passed. No VM, boot, rootfs refresh, V2
+driver/helper work, video/fullscreen/audio measurement, or performance credit
+occurred. The required independent adversarial review remains before any
+kernel boot; this stays A1 N=0.

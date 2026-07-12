@@ -28,7 +28,7 @@ mkdir -p "${OUT_DIR}"
 
 "${SCRIPT_DIR}/build-linux-host-libs.sh" "${SYSROOT}"
 
-rm -f "${OUT_DIR}"/_* "${OUT_DIR}/host-sh"
+rm -f "${OUT_DIR}"/_* "${OUT_DIR}/consolerecord" "${OUT_DIR}/host-sh"
 
 "${HOST_CC}" ${HOST_PROBE_WARN_CFLAGS} ${HOST_PROBE_CFLAGS} "${STARTUP_SRC}" \
     -o "${OUT_DIR}/linux-host-startup-dynamic"
@@ -72,14 +72,15 @@ stage_host_wayland_desktop "${HOST_WAYLAND_REF}"
 
 build_host_user_program() {
     local name="$1"
-    shift
+    local output_name="$2"
+    shift 2
 
     "${HOST_CC}" ${HOST_USER_WARN_CFLAGS} ${HOST_USER_CFLAGS} -DHOST_LIBC_PROGRAM \
         -D_GNU_SOURCE -DON_HOST_OS=1 -DCONFIG_ARCH_X86_64=1 \
         -I"${REPO_ROOT}/user/lib" -I"${REPO_ROOT}" -I"${REPO_ROOT}/kernel" \
         -idirafter "${REPO_ROOT}/kernel/kernel/inc" \
         "${REPO_ROOT}/user/programs/${name}/${name}.c" "$@" \
-        -o "${OUT_DIR}/${name}"
+        -o "${OUT_DIR}/${output_name}"
 }
 
 for name in "${HOST_USER_PROGRAMS[@]}"; do
@@ -87,12 +88,16 @@ for name in "${HOST_USER_PROGRAMS[@]}"; do
         sh)
             ;;
         cp|mv|rm)
-            build_host_user_program "${name}" "${REPO_ROOT}/user/lib/fsutil.c"
+            build_host_user_program "${name}" "${name}" \
+                "${REPO_ROOT}/user/lib/fsutil.c"
+            ;;
+        consolerecord)
+            build_host_user_program "${name}" "_${name}"
             ;;
         pngtest)
             if [[ -f "${SYSROOT}/host-tools/include/png.h" &&
                   -f "${SYSROOT}/host-tools/lib/libpng.a" ]]; then
-                build_host_user_program "${name}" \
+                build_host_user_program "${name}" "${name}" \
                     -I"${SYSROOT}/host-tools/include" -I"${SYSROOT}/include" \
                     -L"${SYSROOT}/host-tools/lib" -lpng -lz -lm
             else
@@ -102,7 +107,7 @@ for name in "${HOST_USER_PROGRAMS[@]}"; do
         nouveauabitest)
             if [[ -f "${SYSROOT}/include/libdrm/nouveau/nouveau.h" &&
                   -f "${SYSROOT}/lib/libdrm_nouveau.so" ]]; then
-                build_host_user_program "${name}" \
+                build_host_user_program "${name}" "${name}" \
                     -I"${SYSROOT}/include" \
                     -I"${SYSROOT}/include/libdrm" \
                     -I"${SYSROOT}/include/libdrm/nouveau" \
@@ -150,7 +155,7 @@ for name in "${HOST_USER_PROGRAMS[@]}"; do
             fi
             ;;
         *)
-            build_host_user_program "${name}"
+            build_host_user_program "${name}" "${name}"
             ;;
     esac
 done
