@@ -921,6 +921,40 @@ informational-RISC-V `0/0/0`; no VM, build, rootfs, serial, or launcher action
 occurred. This is source/static-only; independent no-boot adversarial review
 remains mandatory before any VM gate.
 
+**A1 fast-census evidence-file repair — INDEPENDENT REVIEW PASS / NO-BOOT
+(2026-07-12):** immutable `d3043c723b7fd7ab7812034125f3efc378cab6fb` equals
+the explicit origin branch and changes only this receipt helper, its existing
+canonical static route, and the plan; it does not alter QEMU, launcher, rootfs,
+or VM code. Direct audit confirms that the helper removes only the known
+`/kde-chromium-process-evidence.log` pathname, rejects any surviving
+file/symlink before census, routes census stdout/stderr solely to
+`$role_stdout`, and on status 0 requires a readable regular non-symlink before
+copying *that evidence file* to the capped role frame. Existing strict
+count/digest/total/tail handling then binds the frame. Missing, stale,
+stdout-only, nonregular, or unreadable evidence returns failure before a
+receipt; nonzero census keeps an empty frame and is still
+`command_failed`/noncredit. The normal nonce/probe/launch/argv, digest/tail,
+strict helper role grammar, parser, threshold, and diag0/V3/no-credit paths
+were not relaxed. The only removal outside per-receipt `/tmp` frames is that
+canonical evidence pathname itself; static cleanup removes only its fresh
+`YT_OUTDIR` test file.
+
+One fresh existing canonical command,
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=1 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0 YT_OUTDIR=/tmp/xv6-role-evidence-independent-static.2269929
+/usr/bin/expect scripts/gpu/chromium-youtube-presentfps.expect`, exited 0
+(log `/tmp/xv6-role-evidence-independent-static.2269929.log`). It emitted the
+actual-Bash fresh-evidence live/stdout/stale/missing/nonregular/unreadable/
+command/over-cap PASS matrix; retained parser nonce/probe/digest/cap and
+false/true tail-drift rejection, semantic-role controls, 103/4 and 104/4
+reject versus 104/5 retention, `capturediag0_no_v3=PASS`, V3 diag0-off parity,
+and `js_guest_runtime=UNEXECUTED`. Exact `/proc/*/exe` inventories at start
+and end were total/conflicting/informational-RISC-V `0/0/0`; no process was
+touched. This PASS permits only formation of a fresh serialized A1 gate. It
+does not authorize a VM or create HD720, fullscreen, audio, `yt-presentfps`,
+`PERF-VIDEO`, or performance credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1027,10 +1061,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    C6 framing completed, but the authenticated fast census was
    `none_or_exited`, so no HD720/media/FPS fact exists. No-boot forensic now
    localizes the missing semantic rows to the receipt's diagnostic-stream
-   capture (the rows were written to the separate evidence file). Repair that
-   producer path fail-closed and pass canonical static plus independent
-   adversarial review before another gate. Clear >=52 before pursuing about
-   55-60.
+   capture (the rows were written to the separate evidence file). The
+   fail-closed repair and independent no-boot review now pass; they permit
+   forming, never reusing, a fresh serialized A1 gate. Clear >=52 before
+   pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
