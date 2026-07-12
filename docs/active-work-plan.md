@@ -2016,3 +2016,51 @@ after the failed replay. The next authority must first make the narrow
 nonzero-decimal grammar repair and repeat the one canonical static suite;
 until then C8 is no-credit and normal A1 injection/navigation silence remains
 ambiguous.
+
+**C8 helper decimal-grammar forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** independent source/log review at committed checkpoint
+`9c2fc1f7320da3d9864eff42230ff3df14d4e87f` confirms the failed executable
+route is a real C8 helper defect. The named log records a complete four-row
+helper frame with `status=COUNT_INVALID`; C8's parser correctly preserves that
+as `source-prethreshold-status-COUNT_INVALID` for LF, CRLF, and CRCRLF, so no
+actual-wire success was reached or claimed. The C8-local Bash function
+`valid_decimal() { case "$1" in 0|[1-9][0-9]*) ...; esac; }` is not the
+intended `^(0|[1-9][0-9]*)$` grammar: shell `*` is an arbitrary-character
+glob, so it rejects valid one-digit `1..9` (the multiline fixture has a
+one-digit `wc` line count) while accepting malformed two-or-more-character
+suffixes such as `10x`. The helper must instead use an exact Bash test, e.g.
+`[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]`; adding a one-digit glob alternative alone
+would retain the nondecimal-suffix acceptance.
+
+All C8 numeric transport paths otherwise agree and remain fail-closed:
+both source and retained `wc` triples require canonical nonnegative values;
+the byte cursor is capped to 16384, payload is exactly `min(cursor,cap)`, and
+the retained byte count must equal it. The host separately admits canonical
+cursor through 2147483647, requires payload/cap 16384, truthful truncation,
+and exactly twice-as-long lower-hex (at most 32768), while every non-OK status
+must carry zero numeric payload fields and `digest=unavailable`. The only
+separate asymmetry is helper parameter `probe`, which accepts zero/leading
+zeros while the host's expected probe is canonical positive; normal callers
+already pass canonical values and binding rejects a mismatch, so it is not the
+observed count failure and no widening is justified.
+
+`valid_decimal` is not shared: the C5 fbstat and C7 census generated helpers
+each contain their own verbatim faulty function. A C8-only repair is the
+smallest correction for this stopped C8 suite and cannot alter C5/C7 behavior;
+their latent one-digit-count defect needs separately scoped review rather than
+an unreviewed cross-protocol edit. Before one newly authorized canonical C8
+static replay, lock and execute the generated C8 Bash validator for `0`, every
+`1..9`, and `10+`, rejecting empty, signed, spaced, nondecimal, and leading-
+zero forms; retain actual helper empty/multiline/binary/over-cap runs and
+assert their accepted emitted cursor/payload fields after both `wc` triples.
+Strengthen the present harness
+to compare the no-player payload and the over-cap decoded payload to the exact
+source prefix, not only parser-verified count/truncation, while retaining
+cleanup, LF/CRLF/CRCRLF, literal preamble, RC/FENCE, duplicate, and
+noncontiguity negatives. Static harness construction otherwise has no second
+source-local blocker: overrides are path-validated, the helper is executed
+directly with its eight production arguments, and `exec` completion is
+synchronous. No source edit, test/replay, VM, build, rootfs, serial, launcher,
+or process action occurred in this forensic; start inventory was
+total/informational-RISC-V/conflicting `0/0/0`. This is diagnostic-only and
+grants no gate, HD720, FPS, audio, fullscreen, or performance credit.
