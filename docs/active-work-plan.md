@@ -1067,6 +1067,29 @@ or static replay is authorized from this checkpoint. The working transport
 source remains unverified and uncommitted; it supplies no gate or performance
 credit and must receive a fresh no-boot review/authorization before repair.
 
+**A1 fbstat provenance-frame whole-diff audit — INCOMPLETE / NO-BOOT
+(2026-07-12):** a fresh authorization audited every newly introduced transport
+regexp, double-quoted Tcl string, and variable reference at `294cc92` before
+testing. The three dynamic transport regexes (begin, end, and hex) are now
+all `format` calls over braced literals; metadata was already in that form.
+The digest path consistently initializes and increments
+`fbstat_transport_digest_counter`; the remaining new bracket substitutions are
+intentional Tcl calls with initialized operands, while the generated guest
+helper stays braced. This did not change the transport cap, parser, or
+adversary design.
+
+The one fresh empty-outdir canonical replay
+`/tmp/xv6-fbstat-transport-static-audit.jAgsHX.log` entered the existing
+static route but stopped code 2 before the transport adversary matrix at
+`static-check-fbstat-transport-helper-missing fragment=[ -f \"$capture\" ]`.
+The static required-fragment control searched for backslashes before
+`$capture`, whereas the correctly braced generated helper contains plain
+quotes; no guest helper execution or transport-matrix verdict resulted. Exact
+QEMU inventories before and after were total/conflicting/informational-RISC-V
+`0/0/0`; no process was touched and no VM, build, rootfs, serial, or launcher
+action occurred. Per this gate, no further source edit or replay is authorized;
+the transport source remains unverified/uncommitted and grants no credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
