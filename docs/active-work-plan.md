@@ -3052,3 +3052,55 @@ command, or QEMU has been run, so this is observer readiness only—not a
 diagnostic verdict or any V2/performance/HD720/fullscreen/audio credit. The
 next action still requires adversarial review and fresh authority for exactly
 one canonical host-only static suite.
+
+**C1 V2/C8/render observer-patch adversarial review — FAIL / NO-RUN
+(2026-07-12):** direct review at `558d57b0f8cdd0465f918472312f4acbd567315c`
+found that HEAD and the required explicit
+`origin/codex/host-linux-abi-shell-port-ff` are equal at that commit. The
+local tracking upstream remains the historical truncated ref; its advertised
+tip happens also to equal `558d57b` today. It was read only: no ref was pushed
+or otherwise changed. Exact QEMU inventory was total/informational-RISC-V/
+conflicting `0/0/0`; no test/replay, build, rootfs, VM, boot, serial, source,
+KDE/default, or process action occurred. The V2 driver and unrelated KDE-smoke
+files remain the only dirt.
+
+The new status parsing is otherwise sound and static-only: `catch` keeps the
+Tcl options dictionary, `CHILDKSTATUS` maps to its exit field,
+`CHILDKILLED` to its signal field, and other errorcodes remain explicit;
+combined stdout/stderr is redirected to a per-case artifact without a pipeline
+that could mask child status. C1 input/output/row artifacts are uniquely named
+per case, C8 preserves source/frame/wire/child-output artifacts before the
+shared source is overwritten, and render-role output paths are tag-specific.
+Terminal diagnostics contain only bounded hex summaries, hashes, sanitized
+argv, and bounded row metadata. The observer hunks lie inside the
+`YT_STATIC_CHECK` block; direct scope audit finds no observer edit to the
+production generated V2 helper, V2 parser/protocol, timeout algebra, C5/C7,
+or runtime credit/aggregate paths. The retained pre-observer generated helper
+is consistent with the current production template; no production semantic
+change is licensed by this report.
+
+The C1 wrapper is nevertheless not observational. `ulimit -f 128` is inherited
+by the generated helper, `fbstat` stub, and recorder; on this host that is a
+64-KiB file ceiling. It caps the helper's 131072-byte exact-cap capture and
+retained payload before its intended transport logic, and also caps the
+roughly 357-KiB maximum exact-cap recorder rows (701 records). Thus it would
+manufacture a nonzero/SIGXFSZ-style helper failure for valid `exact_cap` and
+`overcap` cases, defeating the stated no-production/no-semantics observer
+rule. The C1 runner also snapshots and copies `records.txt` but does not
+preserve the independently overwritten `$dir/count` file per case; its derived
+row count is useful but not the requested count-file artifact. These are
+blocking defects, so no static suite may run.
+
+C8's 256-KiB inherited ceiling exceeds its 16-KiB source/32-KiB encoded-frame
+contract, and render-role's 64-KiB ceiling exceeds its capped 4-KiB evidence
+and small state output; neither changes their reviewed static cases. Their
+error/status, bounded-I/O, cleanup, and no-credit reporting are adequate,
+though C8 should print its explicit `output_acceptable` bit in the compact
+record for clarity. The next smallest source change is static harness only:
+remove the C1 inherited `ulimit -f` wrapper (keep post-exit bounded snapshots
+and the generated helper's own existing payload/row caps), persist a unique
+per-case count-file artifact/snapshot before deletion, and include its bounded
+metadata in the C1 compact diagnostic. Retain C8/render code unless that
+clarity bit is accepted. Then re-review and authorize at most one fresh
+canonical host-only suite. This FAIL grants no V2/parser/helper, A1,
+performance, HD720/fullscreen, audio, `yt-presentfps`, or `PERF-VIDEO` credit.
