@@ -3104,3 +3104,22 @@ metadata in the C1 compact diagnostic. Retain C8/render code unless that
 clarity bit is accepted. Then re-review and authorize at most one fresh
 canonical host-only suite. This FAIL grants no V2/parser/helper, A1,
 performance, HD720/fullscreen, audio, `yt-presentfps`, or `PERF-VIDEO` credit.
+
+**C1 V2 observer-review remediation — READY / NO-RUN (2026-07-12):** the
+pending, unstaged static-harness-only correction changes the C1 actual-helper
+wrapper's inherited file limit from 128 to 2048 512-byte blocks (1 MiB). A
+source/static arithmetic guard locks that value against the generated helper's
+999999-byte raw-capture guard, the 131072-byte valid payload cap plus the
+one-byte over-cap fixture, and the calculated 357812-byte maximum exact-cap
+recorder envelope; the wrapper remains the finite capture/output bound, so it
+cannot manufacture the prior 64-KiB valid-case failure or allow unbounded
+child artifacts. Each C1 case now preserves `$dir/count` before the next
+case's cleanup as `actual-<case>.count.txt`, with source-file and copied-
+artifact bounded metadata (or explicit absent state) alongside its existing
+row artifact/snapshot. C8/render, the production V2 helper/parser/protocol,
+timeout algebra, kernel/user/rootfs/default/KDE paths, and runtime aggregates
+are untouched. `git diff --check` is clean; no static suite, test, build,
+rootfs, VM, boot, serial command, or QEMU ran. This is repair readiness only,
+not an observer verdict or any C1/V2/A1/HD720/fullscreen/audio/performance
+credit; a renewed adversarial review remains required before one canonical
+host-only suite.
