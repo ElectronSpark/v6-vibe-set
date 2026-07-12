@@ -26,13 +26,14 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At source checkpoint `dd5b6df394feb85cf2d5089fc5179d661eafa18c`, no static
-suite has run since the pending C1 V2 observer remediation; there is no run
-authority. First re-review that remediation
-(1-MiB static wrapper bound plus per-case count artifacts); do not run it yet.
-Only a passing adversarial review may authorize one fresh canonical host-only
-suite. No VM, performance, audio, fullscreen, default, or credit action is
-opened by that suite.
+At source checkpoint `95d3ee4997ecaa0e31ac4b657a9feb705537b11b`, the one
+review-authorized C1 V2 observer suite is consumed but failed before its
+actual-helper cases on a static max-row arithmetic assertion. There is no
+further static or VM authority. First correct/re-review only that observer
+assertion, retaining its 1-MiB wrapper and per-case count artifacts; then a
+new authority may decide whether one fresh canonical host-only suite is
+warranted. No VM, performance, audio, fullscreen, default, or credit action
+is opened by the failed suite.
 
 ## Binding host and VM discipline
 
@@ -3176,3 +3177,31 @@ and a nonexistent `YT_OUTDIR`. It is not a VM/build/rootfs/KDE/default action
 and grants no V2/A1/performance/HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`
 credit unless that one suite actually passes. Preserve its per-case artifacts
 and report the first honest failure; do not retry.
+
+**C1 V2 observer-remediation canonical static suite — FAIL / NO-BUILD /
+NO-BOOT (2026-07-12):** the one review-authorized clean host-only invocation
+used `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin`, static=1, MP=1,
+audio-disable=1, EGL=0, media=1, forced-HD720=0, capturediag=0, the pinned
+60-second/window-crop/delta/video inputs, and a fresh nonexistent outdir
+`/tmp/yt-c1-v2-observer-static-20260712T223030Z-2850189` (external log
+`/tmp/yt-c1-v2-observer-static-20260712T223030Z-2850189.log`). It exited 2
+after the pre-existing capture-completeness static predicates and before any
+C1 actual-helper case: `static-check-fbstat-v2-helper-observer-file-bound
+blocks=2048 bytes=1048576 max_capture=999999 max_input=131072
+fixture_input=131073 max_rows=357781`.
+
+The failure is a static assertion expectation error, not a helper result: the
+new observer guard required `static_fb_timeout physical_bytes == 357812`, but
+the same reviewed timeout contract returned its inner recorder-row value
+`357781`; the plan must not silently equate or infer that value from separately
+accounted envelope terms. The generated static helper/stubs were written, but
+there are zero `actual-*` V2 input/output/row/count artifacts and zero matching
+`/dev/shm/yt-fbstat-probe1-fbfstatstaticnonce-*` residue, so no child
+errorcode, recorder count, or binary-case conclusion exists. This single suite
+is consumed: no source correction, retry, build, rootfs, VM, boot, serial,
+kernel/user/default/KDE action, or performance/HD720/fullscreen/audio credit
+followed. Exact QEMU inventories immediately before and after were
+total/informational-RISC-V/conflicting `0/0/0`; no QEMU was launched or
+touched. The driver remains unstaged and the unrelated KDE-smoke dirt remains
+untouched. Next authority is limited to correcting and adversarially reviewing
+the static observer arithmetic before any further suite.
