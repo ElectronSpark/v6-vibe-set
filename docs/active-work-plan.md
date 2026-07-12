@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `80aabb0caa50a7103b24f394428eec13109035ec`, the C1 V2
-observer-status correction has passed independent no-boot review. Exactly one
-fresh canonical MP=1/media=1 host-only static suite is authorized; it is not a
-retry of either consumed suite and grants no VM, performance, audio,
-fullscreen, default, or credit authority unless that one suite passes.
+At review checkpoint `bfaad162176865ee7244ec737a73016955d187c7`, the one
+fresh canonical C1 observer static suite is consumed: it reached the later
+render-role static helper, then failed its baseline output validation. The
+next item is no-boot forensic of that exact static-render failure; no retry,
+VM, performance, audio, fullscreen, default, or credit authority exists.
 
 ## Binding host and VM discipline
 
@@ -3479,3 +3479,34 @@ audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, pinned
 window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`. Retain its
 first result and artifacts without retry. It is no VM, HD720/fullscreen,
 audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance authority.
+
+**C1 V2 observer-status canonical static suite — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** the one review-authorized clean host-only invocation used
+`env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin`, static=1, MP=1,
+audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, pinned
+window/crop/delta/video inputs, and fresh outdir
+`/tmp/yt-c1-v2-observer-static-20260712T231632Z-2888896` (external log
+`/tmp/yt-c1-v2-observer-static-20260712T231632Z-2888896.log`). It exited 1
+after the capture-completeness predicates and after all named C1 actual-helper
+artifacts were written, without either static PASS marker.
+
+The C1 binary artifact is retained at exactly 4 bytes; empty, binary,
+multiline, exact-cap, over-cap, and injected recorder-failure cases each have
+bounded input/output/row/count artifacts, and matching `/dev/shm` residue is
+zero. The first terminal failure is later and exact: static generated
+render-role capture rejects its `baseline` output despite a present regular
+151-byte artifact, `static-render-role-output-baseline-2888898`, whose output
+begins `YT_RENDER_START_ROLE_TEST_STATE none_or_exited total=103 bytes=103
+truncated=0 digest=...`; bounded child message is empty. The retained error is
+`static generated helper role-capture output invalid tag=baseline`; no
+production-helper, C1 binary-decoder, or render-role cause is inferred from
+that static observer failure.
+
+No retry, driver correction, build, rootfs, VM, boot, serial, kernel/user/
+default/KDE action followed. Exact pre/post `/proc/*/exe` inventories were
+total/informational-RISC-V/conflicting `0/0/0`; no QEMU was launched or
+touched. The driver remains unstaged and unrelated KDE-smoke dirt is
+untouched. This is no V2/A1, performance, HD720, audio, fullscreen,
+`yt-presentfps`, or `PERF-VIDEO` credit. Next authority is limited to no-boot
+forensic of the static render-role baseline-output contract before any source
+change or fresh static suite.
