@@ -26,8 +26,9 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At explicit `-ff` HEAD `dd5b6df394feb85cf2d5089fc5179d661eafa18c`, there is
-no run authority. First re-review the pending C1 V2 observer remediation
+At source checkpoint `dd5b6df394feb85cf2d5089fc5179d661eafa18c`, no static
+suite has run since the pending C1 V2 observer remediation; there is no run
+authority. First re-review that remediation
 (1-MiB static wrapper bound plus per-case count artifacts); do not run it yet.
 Only a passing adversarial review may authorize one fresh canonical host-only
 suite. No VM, performance, audio, fullscreen, default, or credit action is
