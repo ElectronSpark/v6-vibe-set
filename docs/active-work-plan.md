@@ -695,6 +695,19 @@ quiescence; do not retry it under this authorization. A fresh authority is
 required before any VM launch, and windowed/fullscreen/FPS/audio credit remains
 unchanged.
 
+**A1 trial-only authorization — NO-BOOT / PRELAUNCH BLOCKED (2026-07-12):**
+the conductor's replacement passive screen had zero at both retained endpoints
+and supplied this worker a sole windowed trial authority. The worker's required
+immediate independent check found HEAD
+`5441ee413abe4b8f8bba6b2fccaaa6d7b676b9a5` equal to explicit
+`origin/codex/host-linux-abi-shell-port-ff`, but exact all-architecture QEMU
+count was 1. The process was not touched; no driver, serial command, QEMU, VM,
+build, rootfs, source, or launcher action occurred. The only permitted trial
+was never launched or consumed, and there are no role, HD720, yt-presentfps,
+PERF-VIDEO, drop, VPQ, retire, audio, fullscreen, or performance facts. A
+final exact all-architecture inventory was 2, also untouched. A fresh
+zero-QEMU authorization is required; do not retry under this authority.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
