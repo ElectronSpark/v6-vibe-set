@@ -644,6 +644,7 @@ set metricsf "$outdir/metrics.txt"
 set fbcsv "$outdir/fbstat-samples.txt"
 set fbstat_transport_payload_cap 131072
 set role_census_diag_payload_cap 131072
+set source_prethreshold_payload_cap 16384
 set launcher_log "$outdir/host-gui-wayland-chromium.log"
 set chrome_log "$outdir/chrome_debug.log"
 set launch_stdio_log "$outdir/yt-launch-stdio.log"
@@ -4459,6 +4460,145 @@ exit 0
 }
 }
 
+# C8 is a bounded, fresh reader for the canonical launcher source.  It is
+# separate from C6's small tail and C7's role census: its evidence remains
+# diagnostic-only and cannot participate in render-start admission.
+proc source_prethreshold_guest_helper_script {} {
+    return {#!/bin/bash
+set -f
+nonce=$1
+probe=$2
+launch_marker=$3
+launch_digest=$4
+argv_marker=$5
+argv_digest=$6
+fbstat_marker=$7
+c8_marker=$8
+cap=16384
+source_path=host-gui-wayland-chromium.log
+source_log=/host-gui-wayland-chromium.log
+status=OK
+source_cursor=0
+payload_bytes=0
+truncated=0
+digest=unavailable
+hex_bytes=0
+payload_hex=
+
+valid_marker() {
+    case "$1" in ''|*[!A-Za-z0-9]*) return 1 ;; esac
+    return 0
+}
+valid_decimal() {
+    case "$1" in 0|[1-9][0-9]*) return 0 ;; esac
+    return 1
+}
+if [ "${#nonce}" -ne 32 ]; then status=PARAM_INVALID; fi
+case "$nonce" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
+case "$probe" in ''|*[!0-9]*) status=PARAM_INVALID ;; esac
+if ! valid_marker "$launch_marker" || ! valid_marker "$argv_marker" || \
+   ! valid_marker "$fbstat_marker" || ! valid_marker "$c8_marker"; then
+    status=PARAM_INVALID
+fi
+if [ "${#launch_digest}" -ne 64 ] || [ "${#argv_digest}" -ne 64 ]; then
+    status=PARAM_INVALID
+fi
+case "$launch_digest" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
+case "$argv_digest" in *[!0-9a-f]*) status=PARAM_INVALID ;; esac
+
+base=/dev/shm/yt-source-prethreshold-${nonce}-${probe}-$$
+retained=${base}.payload
+rm -f "$retained"
+if [ "$status" = OK ] && { [ -e "$retained" ] || [ -L "$retained" ]; }; then
+    status=FILE_INVALID
+fi
+if [ "$status" = OK ]; then
+    if [ ! -e "$source_log" ] && [ ! -L "$source_log" ]; then
+        status=MISSING
+    elif [ ! -f "$source_log" ] || [ -L "$source_log" ]; then
+        status=NONREGULAR
+    elif [ ! -r "$source_log" ]; then
+        status=UNREADABLE
+    fi
+fi
+if [ "$status" = OK ]; then
+    count_output=$(/bin/wc < "$source_log" 2>/dev/null)
+    set -- $count_output
+    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then
+        status=COUNT_INVALID
+    else
+        source_cursor=$3
+        if [ "$source_cursor" -gt "$cap" ]; then
+            payload_bytes=$cap
+            truncated=1
+        else
+            payload_bytes=$source_cursor
+        fi
+    fi
+fi
+if [ "$status" = OK ]; then
+    /bin/dd if="$source_log" of="$retained" bs=1 count="$payload_bytes" 2>/dev/null
+    if [ "$?" -ne 0 ] || [ ! -f "$retained" ] || [ -L "$retained" ] || [ ! -r "$retained" ]; then
+        status=COPY_FAILED
+    fi
+fi
+if [ "$status" = OK ]; then
+    retained_count=$(/bin/wc < "$retained" 2>/dev/null)
+    set -- $retained_count
+    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then
+        status=COUNT_INVALID
+    fi
+fi
+if [ "$status" = OK ]; then
+    digest_output=$(/bin/openssl dgst -sha256 -r "$retained" 2>/dev/null)
+    set -- $digest_output
+    if [ "$#" -ne 2 ] || [ "$2" != "*$retained" ]; then
+        status=DIGEST_INVALID
+    else
+        digest=$1
+        case "$digest" in ''|*[!0-9a-f]*) status=DIGEST_INVALID ;; esac
+        if [ "${#digest}" -ne 64 ]; then status=DIGEST_INVALID; fi
+    fi
+fi
+if [ "$status" = OK ]; then
+    hex_output=$(/bin/xxd -p "$retained" 2>/dev/null)
+    hex_rc=$?
+    if [ "$hex_rc" -ne 0 ]; then
+        status=HEX_INVALID
+    elif [ -n "$hex_output" ]; then
+        while IFS= read -r hex_line || [ -n "$hex_line" ]; do
+            case "$hex_line" in ''|*[!0-9a-f]*) status=HEX_INVALID; break ;; esac
+            payload_hex=${payload_hex}${hex_line}
+        done <<EOF
+$hex_output
+EOF
+    fi
+fi
+if [ "$status" = OK ]; then
+    hex_bytes=${#payload_hex}
+    if [ "$hex_bytes" -ne $((payload_bytes * 2)) ]; then status=HEX_INVALID; fi
+fi
+if [ "$status" != OK ]; then
+    source_cursor=0
+    payload_bytes=0
+    truncated=0
+    digest=unavailable
+    hex_bytes=0
+    payload_hex=
+fi
+printf 'YT_SOURCE_PRETHRESHOLD_BEGIN tag=source-prethreshold-v1 nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s fbstat_marker=%s c8_marker=%s\n' \
+    "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" "$fbstat_marker" "$c8_marker"
+printf 'YT_SOURCE_PRETHRESHOLD_META tag=source-prethreshold-v1 nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s fbstat_marker=%s c8_marker=%s source_path=%s status=%s source_cursor=%s payload_bytes=%s cap=%s truncated=%s digest=%s hex_bytes=%s\n' \
+    "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" "$fbstat_marker" "$c8_marker" "$source_path" "$status" "$source_cursor" "$payload_bytes" "$cap" "$truncated" "$digest" "$hex_bytes"
+printf 'YT_SOURCE_PRETHRESHOLD_HEX tag=source-prethreshold-v1 nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s fbstat_marker=%s c8_marker=%s data=%s\n' \
+    "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" "$fbstat_marker" "$c8_marker" "$payload_hex"
+printf 'YT_SOURCE_PRETHRESHOLD_END tag=source-prethreshold-v1 nonce=%s probe=%s launch_marker=%s launch_digest=%s argv_marker=%s argv_digest=%s fbstat_marker=%s c8_marker=%s\n' \
+    "$nonce" "$probe" "$launch_marker" "$launch_digest" "$argv_marker" "$argv_digest" "$fbstat_marker" "$c8_marker"
+rm -f "$retained"
+exit 0
+}
+}
+
 proc fb_sample {tag} {
     global fbcsv outdir serial_nonce
     # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
@@ -4567,11 +4707,33 @@ proc role_census_diag_parse {
     }
 
     set rows {}
+    # The serial console can put its literal bracketed-paste-disable control
+    # sequence immediately in front of the first C7 row.  Accept exactly one
+    # such sequence, only there.  This is deliberately per-record handling:
+    # do not normalize the stream or make the later row adjacency synthetic.
+    set bracketed_paste_disable [binary format H* 1b5b3f323030346c0d]
+    set bracketed_paste_tag [binary format H* 1b5b3f323030346c]
+    set bracketed_paste_seen 0
     set raw_record_number 0
     foreach raw_record [split $serial "\n"] {
         incr raw_record_number
-        if {[regexp {^YT_ROLE_CENSUS_DIAG_(BEGIN|META|HEX|END)([ \t]|$)} $raw_record]} {
-            set line [string trimright $raw_record "\r"]
+        set candidate_record $raw_record
+        if {[string first $bracketed_paste_tag $raw_record] >= 0} {
+            if {[string first $bracketed_paste_disable $raw_record] != 0} {
+                return [list 0 "census-preamble-invalid record=$raw_record_number" {}]
+            }
+            set candidate_record [string range $raw_record \
+                [string length $bracketed_paste_disable] end]
+            if {![regexp {^YT_ROLE_CENSUS_DIAG_BEGIN([ \t]|$)} $candidate_record]} {
+                return [list 0 "census-preamble-placement record=$raw_record_number" {}]
+            }
+            if {$bracketed_paste_seen} {
+                return [list 0 "census-preamble-duplicate record=$raw_record_number" {}]
+            }
+            set bracketed_paste_seen 1
+        }
+        if {[regexp {^YT_ROLE_CENSUS_DIAG_(BEGIN|META|HEX|END)([ \t]|$)} $candidate_record]} {
+            set line [string trimright $candidate_record "\r"]
             if {[string first "\r" $line] >= 0} {
                 return [list 0 "census-wire-cr record=$raw_record_number" {}]
             }
@@ -4758,6 +4920,355 @@ proc role_census_diag_probe {
     wf "$outdir/role-census-diag-probe$probe.txt" "$canonical\n"
     af $metricsf "role_census_diag $canonical diagnostic_only=1 no_fps_claim=1"
     return $incomplete
+}
+
+# C8 has its own nonce/probe/C3/C4/C5/outer-marker binding.  A valid C8
+# transport is still not a success predicate: it only allows the host to say
+# which already-emitted extension lifecycle fact is absent or present.
+proc source_prethreshold_parse {
+    serial expected_nonce expected_probe launch_marker launch_digest argv_marker
+    argv_digest fbstat_marker c8_marker
+} {
+    global source_prethreshold_payload_cap
+    foreach {name value pattern} [list \
+            nonce $expected_nonce {^[0-9a-f]{32}$} \
+            probe $expected_probe {^[1-9][0-9]*$} \
+            launch_marker $launch_marker {^[A-Za-z0-9]+$} \
+            launch_digest $launch_digest {^[0-9a-f]{64}$} \
+            argv_marker $argv_marker {^[A-Za-z0-9]+$} \
+            argv_digest $argv_digest {^[0-9a-f]{64}$} \
+            fbstat_marker $fbstat_marker {^[A-Za-z0-9]+$} \
+            c8_marker $c8_marker {^[A-Za-z0-9]+$}] {
+        if {![regexp $pattern $value]} {
+            return [list 0 "source-prethreshold-$name-parameter-invalid" {}]
+        }
+    }
+    set command_frame [guest_command_frame_parse $serial $c8_marker]
+    if {![lindex $command_frame 0]} {
+        return [list 0 "source-prethreshold-command-frame-[lindex $command_frame 1]" {}]
+    }
+    if {[lindex $command_frame 2] ne "0"} {
+        return [list 0 "source-prethreshold-command-status-[lindex $command_frame 2]" {}]
+    }
+
+    set rows {}
+    set raw_record_number 0
+    foreach raw_record [split $serial "\n"] {
+        incr raw_record_number
+        if {[regexp {^YT_SOURCE_PRETHRESHOLD_(BEGIN|META|HEX|END)([ \t]|$)} $raw_record]} {
+            set line [string trimright $raw_record "\r"]
+            if {[string first "\r" $line] >= 0} {
+                return [list 0 "source-prethreshold-wire-cr record=$raw_record_number" {}]
+            }
+            lappend rows [list $raw_record_number $line]
+        }
+    }
+    if {[llength $rows] != 4} {
+        return [list 0 "source-prethreshold-frame-count-[llength $rows]" {}]
+    }
+    lassign [lindex $rows 0] begin_record begin
+    lassign [lindex $rows 1] meta_record meta_line
+    lassign [lindex $rows 2] hex_record hex_line
+    lassign [lindex $rows 3] end_record end
+    if {$meta_record != $begin_record + 1 || $hex_record != $meta_record + 1 ||
+        $end_record != $hex_record + 1} {
+        return [list 0 source-prethreshold-frame-noncontiguous {}]
+    }
+    set binding "tag=source-prethreshold-v1 nonce=$expected_nonce probe=$expected_probe launch_marker=$launch_marker launch_digest=$launch_digest argv_marker=$argv_marker argv_digest=$argv_digest fbstat_marker=$fbstat_marker c8_marker=$c8_marker"
+    if {$begin ne "YT_SOURCE_PRETHRESHOLD_BEGIN $binding" ||
+        $end ne "YT_SOURCE_PRETHRESHOLD_END $binding"} {
+        return [list 0 source-prethreshold-binding-drift {}]
+    }
+    set meta {}
+    foreach token [lrange [split $meta_line " "] 1 end] {
+        if {![regexp {^([a-z][a-z0-9_]*)=([^ ]+)$} $token -> key value] ||
+            [dict exists $meta $key]} {
+            return [list 0 source-prethreshold-meta-parse-drift {}]
+        }
+        dict set meta $key $value
+    }
+    set required {tag nonce probe launch_marker launch_digest argv_marker argv_digest
+        fbstat_marker c8_marker source_path status source_cursor payload_bytes cap truncated
+        digest hex_bytes}
+    if {[dict size $meta] != [llength $required]} {
+        return [list 0 source-prethreshold-meta-field-count-drift {}]
+    }
+    foreach key $required {
+        if {![dict exists $meta $key]} {
+            return [list 0 "source-prethreshold-meta-missing-$key" {}]
+        }
+    }
+    foreach {key expected} [list \
+            tag source-prethreshold-v1 \
+            nonce $expected_nonce \
+            probe $expected_probe \
+            launch_marker $launch_marker \
+            launch_digest $launch_digest \
+            argv_marker $argv_marker \
+            argv_digest $argv_digest \
+            fbstat_marker $fbstat_marker \
+            c8_marker $c8_marker \
+            source_path host-gui-wayland-chromium.log] {
+        if {[dict get $meta $key] ne $expected} {
+            return [list 0 "source-prethreshold-meta-$key-drift" {}]
+        }
+    }
+    set hex_prefix "YT_SOURCE_PRETHRESHOLD_HEX $binding data="
+    if {![string match "${hex_prefix}*" $hex_line]} {
+        return [list 0 source-prethreshold-hex-binding-drift {}]
+    }
+    set payload_hex [string range $hex_line [string length $hex_prefix] end]
+    if {![regexp {^[0-9a-f]*$} $payload_hex]} {
+        return [list 0 source-prethreshold-hex-shape {}]
+    }
+    foreach pair [list [list source_cursor 2147483647] \
+            [list payload_bytes $source_prethreshold_payload_cap] \
+            [list cap $source_prethreshold_payload_cap] \
+            [list truncated 1] [list hex_bytes 32768]] {
+        lassign $pair key cap
+        set checked [render_start_receipt_decimal [dict get $meta $key] $cap]
+        if {![lindex $checked 0]} {
+            return [list 0 "source-prethreshold-$key-invalid" {}]
+        }
+    }
+    if {[dict get $meta cap] != $source_prethreshold_payload_cap} {
+        return [list 0 source-prethreshold-cap-drift {}]
+    }
+    if {[dict get $meta payload_bytes] > [dict get $meta source_cursor]} {
+        return [list 0 source-prethreshold-count-order {}]
+    }
+    set expected_payload [expr {[dict get $meta source_cursor] > $source_prethreshold_payload_cap ?
+        $source_prethreshold_payload_cap : [dict get $meta source_cursor]}]
+    set expected_truncated [expr {[dict get $meta source_cursor] > $source_prethreshold_payload_cap ? 1 : 0}]
+    if {[dict get $meta payload_bytes] != $expected_payload ||
+        [dict get $meta truncated] != $expected_truncated} {
+        return [list 0 source-prethreshold-truncation-drift {}]
+    }
+    if {[dict get $meta hex_bytes] != 2 * [dict get $meta payload_bytes] ||
+        [string length $payload_hex] != [dict get $meta hex_bytes]} {
+        return [list 0 source-prethreshold-hex-length {}]
+    }
+    if {[dict get $meta status] ne "OK"} {
+        if {[dict get $meta status] ni {MISSING NONREGULAR UNREADABLE PARAM_INVALID FILE_INVALID
+                COUNT_INVALID COPY_FAILED DIGEST_INVALID HEX_INVALID} ||
+            [dict get $meta digest] ne "unavailable" || $payload_hex ne "" ||
+            [dict get $meta source_cursor] != 0 || [dict get $meta payload_bytes] != 0 ||
+            [dict get $meta truncated] != 0 || [dict get $meta hex_bytes] != 0} {
+            return [list 0 source-prethreshold-error-status-payload-drift {}]
+        }
+        return [list 1 "source-prethreshold-status-[dict get $meta status]" $meta]
+    }
+    if {![regexp {^[0-9a-f]{64}$} [dict get $meta digest]]} {
+        return [list 0 source-prethreshold-digest-shape {}]
+    }
+    if {[catch {binary decode hex $payload_hex} payload] ||
+        [string bytelength $payload] != [dict get $meta payload_bytes] ||
+        [binary encode hex $payload] ne $payload_hex} {
+        return [list 0 source-prethreshold-hex-roundtrip {}]
+    }
+    set host_digest [render_start_receipt_digest $payload]
+    if {$host_digest ne [dict get $meta digest]} {
+        return [list 0 source-prethreshold-digest-drift {}]
+    }
+    dict set meta payload $payload
+    dict set meta host_digest $host_digest
+    return [list 1 pass $meta]
+}
+
+proc source_prethreshold_fields {row marker expected_nonce} {
+    set fields {}
+    foreach token [lrange [split $row " "] 1 end] {
+        if {![regexp {^([a-z][a-z0-9_]*)=([^ ]+)$} $token -> key value] ||
+            [dict exists $fields $key]} {
+            return [list 0 source-prethreshold-row-token-drift {}]
+        }
+        dict set fields $key $value
+    }
+    set schema [expr {$marker eq "YT_MEDIA_PROBE_V1" ? "1" : "2"}]
+    foreach {key expected} [list schema $schema nonce $expected_nonce] {
+        if {![dict exists $fields $key] || [dict get $fields $key] ne $expected} {
+            return [list 0 "source-prethreshold-row-$key-drift" {}]
+        }
+    }
+    if {![dict exists $fields kind] || ![regexp {^[a-z][a-z0-9_]*$} [dict get $fields kind]]} {
+        return [list 0 source-prethreshold-row-kind-drift {}]
+    }
+    return [list 1 pass $fields]
+}
+
+proc source_prethreshold_signed {value} {
+    if {![regexp {^-?(0|[1-9][0-9]*)$} $value] ||
+        ![string is wideinteger -strict $value] || $value < -1 || $value > 2147483647} {
+        return [list 0 -1]
+    }
+    return [list 1 $value]
+}
+
+proc source_prethreshold_derive {payload expected_nonce extension_id} {
+    set result [dict create state INCOMPLETE detail source-no-injection-or-liveness rows 0 \
+        producer missing navigation missing player missing progress missing first_time unavailable \
+        last_time unavailable]
+    set qid [regex_quote $extension_id]
+    set pattern [format {^\[([1-9][0-9]*):([1-9][0-9]*):([0-9]{4}/[0-9]{6}\.[0-9]{6}):INFO:CONSOLE:([0-9]+)\] "(YT_(?:MEDIA_PROBE_V1|CAPTURE_COMPLETENESS_V2) [^"]+)", source: chrome-extension://%s/probe\.js \(([0-9]+)\)$} $qid]
+    set producer_seen 0
+    set ready_seen 0
+    set observation_seen 0
+    foreach raw_line [split $payload "\n"] {
+        set line [string trimright $raw_line "\r"]
+        if {[string first "YT_MEDIA_PROBE_V1 " $line] < 0 &&
+            [string first "YT_CAPTURE_COMPLETENESS_V2 " $line] < 0} {
+            continue
+        }
+        dict incr result rows
+        if {![regexp $pattern $line -> pid tid stamp console_line row source_line]} {
+            dict set result state INVALID
+            dict set result detail source-prethreshold-untrusted-marker-envelope
+            return $result
+        }
+        if {$console_line ne $source_line} {
+            dict set result state INVALID
+            dict set result detail source-prethreshold-console-source-line-drift
+            return $result
+        }
+        set marker [lindex [split $row " "] 0]
+        set parsed [source_prethreshold_fields $row $marker $expected_nonce]
+        if {![lindex $parsed 0]} {
+            dict set result state INVALID
+            dict set result detail [lindex $parsed 1]
+            return $result
+        }
+        set fields [lindex $parsed 2]
+        set kind [dict get $fields kind]
+        if {$marker eq "YT_CAPTURE_COMPLETENESS_V2" && $kind eq "producer_start"} {
+            if {[dict size $fields] != 3 || $producer_seen} {
+                dict set result state INVALID
+                dict set result detail source-prethreshold-producer-shape-or-duplicate
+                return $result
+            }
+            set producer_seen 1
+            dict set result producer observed
+            continue
+        }
+        if {$marker ne "YT_MEDIA_PROBE_V1"} { continue }
+        switch -- $kind {
+            start {
+                if {[dict exists $fields samples] &&
+                    [lindex [render_start_source_diagnostic_decimal [dict get $fields samples]] 0]} {
+                    dict set result navigation observed
+                } else {
+                    dict set result state INVALID
+                    dict set result detail source-prethreshold-start-shape
+                    return $result
+                }
+            }
+            force_ready {
+                if {$ready_seen || $observation_seen} {
+                    dict set result state INVALID
+                    dict set result detail source-prethreshold-force-ready-order-or-duplicate
+                    return $result
+                }
+                foreach key {player_present video_present ready_state video_width video_height} {
+                    if {![dict exists $fields $key] ||
+                        ![lindex [source_prethreshold_signed [dict get $fields $key]] 0]} {
+                        dict set result state INVALID
+                        dict set result detail "source-prethreshold-force-ready-$key-drift"
+                        return $result
+                    }
+                }
+                set ready_seen 1
+                if {[dict get $fields player_present] == 1 &&
+                    [dict get $fields video_present] == 1 &&
+                    [dict get $fields ready_state] >= 2 &&
+                    [dict get $fields video_width] > 0 && [dict get $fields video_height] > 0} {
+                    dict set result player ready
+                } else {
+                    dict set result player not-ready
+                }
+            }
+            force_observation {
+                if {!$ready_seen || $observation_seen} {
+                    dict set result state INVALID
+                    dict set result detail source-prethreshold-force-observation-order-or-duplicate
+                    return $result
+                }
+                foreach key {current_time_first current_time_last} {
+                    if {![dict exists $fields $key]} {
+                        dict set result state INVALID
+                        dict set result detail "source-prethreshold-force-observation-$key-missing"
+                        return $result
+                    }
+                    set checked [render_start_source_diagnostic_time [dict get $fields $key]]
+                    if {![lindex $checked 0]} {
+                        dict set result state INVALID
+                        dict set result detail "source-prethreshold-force-observation-$key-drift"
+                        return $result
+                    }
+                    dict set result [expr {$key eq "current_time_first" ? "first_time" : "last_time"}] [dict get $fields $key]
+                }
+                set first [lindex [render_start_source_diagnostic_time [dict get $fields current_time_first]] 1]
+                set last [lindex [render_start_source_diagnostic_time [dict get $fields current_time_last]] 1]
+                dict set result progress [expr {$first >= 0 && $last > $first ? "advancing" : "stalled"}]
+                set observation_seen 1
+            }
+        }
+    }
+    if {[dict get $result rows] == 0} {
+        return $result
+    }
+    if {!$producer_seen && !$ready_seen} {
+        dict set result detail source-injected-no-player-or-navigation
+    } elseif {$producer_seen && !$ready_seen} {
+        dict set result detail source-injected-no-navigation
+    } elseif {[dict get $result player] ne "ready"} {
+        dict set result detail source-injected-no-player
+    } elseif {[dict get $result progress] ne "advancing"} {
+        dict set result detail source-player-no-progress
+    } else {
+        dict set result state COMPLETE
+        dict set result detail source-observation-progressing
+    }
+    return $result
+}
+
+proc source_prethreshold_probe {
+    probe launch_marker launch_digest argv_marker argv_digest fbstat_marker
+} {
+    global media_probe_nonce media_probe_extension_id outdir metricsf serial_counter serial_nonce
+    set c8_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
+    set result [guest_cmd "/bin/bash /ytsourceprethreshold.sh $media_probe_nonce $probe $launch_marker $launch_digest $argv_marker $argv_digest $fbstat_marker $c8_marker" \
+        "source-prethreshold-probe$probe" 30 0 0 1000 $c8_marker]
+    set serial [lindex $result 1]
+    wf "$outdir/source-prethreshold-probe$probe.serial.txt" $serial
+    set diagnostic [dict create state INCOMPLETE detail source-prethreshold-command-rc-[lindex $result 0] rows 0 \
+        producer missing navigation missing player missing progress missing first_time unavailable \
+        last_time unavailable source_path unavailable source_status unavailable source_cursor unavailable \
+        payload_bytes unavailable cap unavailable digest unavailable c8_marker $c8_marker no_credit 1]
+    if {[llength $result] == 4 && [lindex $result 0] eq "0"} {
+        set parsed [source_prethreshold_parse $serial $media_probe_nonce $probe \
+            $launch_marker $launch_digest $argv_marker $argv_digest $fbstat_marker $c8_marker]
+        if {![lindex $parsed 0]} {
+            dict set diagnostic detail [lindex $parsed 1]
+        } else {
+            set meta [lindex $parsed 2]
+            foreach key {source_path status source_cursor payload_bytes cap digest} {
+                dict set diagnostic [expr {$key eq "status" ? "source_status" : $key}] [dict get $meta $key]
+            }
+            if {[lindex $parsed 1] ne "pass"} {
+                dict set diagnostic detail [lindex $parsed 1]
+            } elseif {[dict get $meta source_cursor] != [dict get $meta payload_bytes] ||
+                      [dict get $meta truncated] != 0} {
+                dict set diagnostic detail source-prethreshold-over-cap
+            } else {
+                set derived [source_prethreshold_derive [dict get $meta payload] \
+                    $media_probe_nonce $media_probe_extension_id]
+                set diagnostic [dict merge $diagnostic $derived]
+            }
+        }
+    }
+    set canonical "probe=$probe state=[dict get $diagnostic state] detail=[dict get $diagnostic detail] c8_marker=$c8_marker source_path=[dict get $diagnostic source_path] source_status=[dict get $diagnostic source_status] source_cursor=[dict get $diagnostic source_cursor] payload_bytes=[dict get $diagnostic payload_bytes] cap=[dict get $diagnostic cap] digest=[dict get $diagnostic digest] rows=[dict get $diagnostic rows] producer=[dict get $diagnostic producer] navigation=[dict get $diagnostic navigation] player=[dict get $diagnostic player] progress=[dict get $diagnostic progress] no_credit=1"
+    wf "$outdir/source-prethreshold-probe$probe.txt" "$canonical\n"
+    af $metricsf "source_prethreshold_diag $canonical no_fps_claim=1"
+    return $diagnostic
 }
 
 proc render_start_receipt_parse {
@@ -5159,10 +5670,10 @@ proc render_start_receipt_probe {
         $argv_marker $argv_digest $fbstat_marker]
     dict set receipt census_diagnostic $census_diagnostic
     set classified [render_start_receipt_classify $receipt $idle $sample]
-    set source_diagnostic [render_start_source_diagnostic \
-        [dict get $receipt source_status] [dict get $receipt source_frame] $media_probe_nonce]
+    set source_diagnostic [source_prethreshold_probe $probe $launch_marker $launch_digest \
+        $argv_marker $argv_digest $fbstat_marker]
     dict set receipt source_diagnostic $source_diagnostic
-    set canonical "nonce=[dict get $receipt nonce] probe=[dict get $receipt probe] launch_marker=[dict get $receipt launch_marker] launch_digest=[dict get $receipt launch_digest] argv_marker=[dict get $receipt argv_marker] argv_digest=[dict get $receipt argv_digest] fbstat_marker=[dict get $receipt fbstat_marker] source_status=[dict get $receipt source_status] source_cursor=[dict get $receipt source_cursor] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] source_tail_truncated=[dict get $receipt source_tail_truncated] role_command=[dict get $receipt role_command] role_status=[dict get $receipt role_status] role_total=[dict get $receipt role_total] role_bytes=[dict get $receipt role_bytes] role_digest=[dict get $receipt role_digest] role_tail_truncated=[dict get $receipt role_tail_truncated] role_state=[dict get $receipt role_state] fbstat_host_ms=[lindex $sample 2] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] diagnostic_rows=[dict get $source_diagnostic rows] diagnostic_navigation=[dict get $source_diagnostic navigation] diagnostic_player=[dict get $source_diagnostic player] diagnostic_progress=[dict get $source_diagnostic progress] diagnostic_first_time=[dict get $source_diagnostic first_time] diagnostic_last_time=[dict get $source_diagnostic last_time] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] census_no_subtype_claim=[dict get $census_diagnostic no_subtype_claim] flips=[lindex $sample 0] presents=[lindex $sample 1]"
+    set canonical "nonce=[dict get $receipt nonce] probe=[dict get $receipt probe] launch_marker=[dict get $receipt launch_marker] launch_digest=[dict get $receipt launch_digest] argv_marker=[dict get $receipt argv_marker] argv_digest=[dict get $receipt argv_digest] fbstat_marker=[dict get $receipt fbstat_marker] source_status=[dict get $receipt source_status] source_cursor=[dict get $receipt source_cursor] source_bytes=[dict get $receipt source_bytes] source_digest=[dict get $receipt source_digest] source_tail_truncated=[dict get $receipt source_tail_truncated] role_command=[dict get $receipt role_command] role_status=[dict get $receipt role_status] role_total=[dict get $receipt role_total] role_bytes=[dict get $receipt role_bytes] role_digest=[dict get $receipt role_digest] role_tail_truncated=[dict get $receipt role_tail_truncated] role_state=[dict get $receipt role_state] fbstat_host_ms=[lindex $sample 2] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] diagnostic_rows=[dict get $source_diagnostic rows] diagnostic_producer=[dict get $source_diagnostic producer] diagnostic_navigation=[dict get $source_diagnostic navigation] diagnostic_player=[dict get $source_diagnostic player] diagnostic_progress=[dict get $source_diagnostic progress] diagnostic_first_time=[dict get $source_diagnostic first_time] diagnostic_last_time=[dict get $source_diagnostic last_time] diagnostic_source_path=[dict get $source_diagnostic source_path] diagnostic_source_status=[dict get $source_diagnostic source_status] diagnostic_source_cursor=[dict get $source_diagnostic source_cursor] diagnostic_payload_bytes=[dict get $source_diagnostic payload_bytes] diagnostic_cap=[dict get $source_diagnostic cap] diagnostic_digest=[dict get $source_diagnostic digest] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] census_no_subtype_claim=[dict get $census_diagnostic no_subtype_claim] flips=[lindex $sample 0] presents=[lindex $sample 1]"
     wf "$outdir/render-start-receipt-probe$probe.txt" "$canonical\n"
     af $metricsf "render_start_receipt probe=$probe class=[lindex $classified 0] detail=[lindex $classified 1] diagnostic_state=[dict get $source_diagnostic state] diagnostic_detail=[dict get $source_diagnostic detail] census_state=[dict get $census_diagnostic state] census_detail=[dict get $census_diagnostic detail] diagnostic_only=1 no_fps_claim=1"
     return [list [lindex $classified 0] [lindex $classified 1] $receipt]
@@ -9096,6 +9607,28 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         if {$changed != 1} { error "static census META mutation count $changed" }
         return "[join $output \n]\n"
     }
+    proc static_source_prethreshold_frame {
+        nonce probe launch_marker launch_digest argv_marker argv_digest fbstat_marker
+        c8_marker payload {overrides {}}
+    } {
+        global source_prethreshold_payload_cap
+        set payload_bytes [string bytelength $payload]
+        set values [dict create status OK source_cursor $payload_bytes \
+            payload_bytes $payload_bytes cap $source_prethreshold_payload_cap truncated 0 \
+            digest [render_start_receipt_digest $payload] hex_bytes [expr {$payload_bytes * 2}] \
+            payload_hex [binary encode hex $payload]]
+        dict for {key value} $overrides {
+            if {![dict exists $values $key]} {
+                error "static source-prethreshold unknown override $key"
+            }
+            dict set values $key $value
+        }
+        set binding "tag=source-prethreshold-v1 nonce=$nonce probe=$probe launch_marker=$launch_marker launch_digest=$launch_digest argv_marker=$argv_marker argv_digest=$argv_digest fbstat_marker=$fbstat_marker c8_marker=$c8_marker"
+        return "YT_SOURCE_PRETHRESHOLD_BEGIN $binding\nYT_SOURCE_PRETHRESHOLD_META $binding source_path=host-gui-wayland-chromium.log status=[dict get $values status] source_cursor=[dict get $values source_cursor] payload_bytes=[dict get $values payload_bytes] cap=[dict get $values cap] truncated=[dict get $values truncated] digest=[dict get $values digest] hex_bytes=[dict get $values hex_bytes]\nYT_SOURCE_PRETHRESHOLD_HEX $binding data=[dict get $values payload_hex]\nYT_SOURCE_PRETHRESHOLD_END $binding\n${c8_marker}:RC:0\n${c8_marker}:FENCE\n"
+    }
+    proc static_source_prethreshold_console {payload extension_id {line_number 321}} {
+        return "\[412:412:0710/120000.123456:INFO:CONSOLE:$line_number\] \"$payload\", source: chrome-extension://$extension_id/probe.js ($line_number)"
+    }
     # Execute the generated Bash helper's own fresh-evidence route.  The
     # test-only producer never starts a guest command, but uses the identical
     # purge, regular-file, cap, digest, and semantic-role decisions.
@@ -9599,6 +10132,22 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c7_lines [split [string trimright $static_c7_valid_frame "\n"] "\n"]
     set static_c7_protocol "[join [lrange $static_c7_lines 0 3] \n]\n"
     set static_c7_terminal "[join [lrange $static_c7_lines 4 end] \n]\n"
+    set static_c7_preamble [binary format H* 1b5b3f323030346c0d]
+    set static_c7_live_preamble [string map [list \
+        YT_ROLE_CENSUS_DIAG_BEGIN "${static_c7_preamble}YT_ROLE_CENSUS_DIAG_BEGIN"] \
+        $static_c7_valid_frame]
+    set static_c7_preamble_valid [role_census_diag_parse $static_c7_live_preamble \
+        $static_render_nonce 1 $static_render_launch_marker $static_render_launch_digest \
+        $static_render_argv_marker $static_render_argv_digest $static_render_fbstat_marker \
+        $static_c7_marker]
+    set static_c7_preamble_foreign "foreign${static_c7_preamble}[string range $static_c7_valid_frame 0 end]"
+    set static_c7_preamble_mutated [string map [list \
+        YT_ROLE_CENSUS_DIAG_BEGIN "[binary format H* 1b5b3f323030346c]XYT_ROLE_CENSUS_DIAG_BEGIN"] \
+        $static_c7_valid_frame]
+    set static_c7_preamble_duplicate "${static_c7_preamble}${static_c7_protocol}${static_c7_preamble}${static_c7_protocol}${static_c7_terminal}"
+    set static_c7_preamble_nonbegin [string map [list \
+        YT_ROLE_CENSUS_DIAG_META "${static_c7_preamble}YT_ROLE_CENSUS_DIAG_META"] \
+        $static_c7_valid_frame]
     set static_c7_bad_outer_rc [string map [list "${static_c7_marker}:RC:0" "${static_c7_marker}:RC:7"] $static_c7_valid_frame]
     set static_c7_bad_fence [string map [list "${static_c7_marker}:FENCE\n" ""] $static_c7_valid_frame]
     # Duplicate candidate rows while leaving one valid outer C7 RC/FENCE.
@@ -9663,6 +10212,10 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c7_rejects 1
     set static_c7_reject_details {}
     foreach {name frame expected_detail} [list \
+            preamble_foreign $static_c7_preamble_foreign census-preamble-invalid \
+            preamble_mutated $static_c7_preamble_mutated census-preamble-invalid \
+            preamble_duplicate $static_c7_preamble_duplicate census-preamble-duplicate \
+            preamble_nonbegin $static_c7_preamble_nonbegin census-preamble-placement \
             outer_rc $static_c7_bad_outer_rc census-command-status-7 \
             fence $static_c7_bad_fence census-command-frame-frame-fence-count-0 \
             duplicate $static_c7_duplicate census-frame-count-8 \
@@ -9697,6 +10250,12 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             set static_c7_rejects 0
             lappend static_c7_reject_details "$name:$parsed"
         }
+    }
+    if {![lindex $static_c7_preamble_valid 0] ||
+        [dict get [lindex $static_c7_preamble_valid 2] host_digest] ne \
+            [render_start_receipt_digest $static_c7_payload]} {
+        set static_c7_rejects 0
+        lappend static_c7_reject_details "preamble_live:$static_c7_preamble_valid"
     }
     set static_c7_semantic_payload [join [list \
         {kde_chromium_process_evidence fast phase=fast-001 pid=301 ppid=1 comm="chrome" role="browser" cmd="/chrome" role_source="root_chrome"} \
@@ -9736,6 +10295,143 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [string first {role_full_digest} [info body render_start_receipt_parse]] < 0 &&
         [string first {role_semantic_rows} [info body render_start_receipt_parse]] < 0
     }]
+    # C8 replays the canonical source envelope, not the C6 tail.  Its five
+    # cases distinguish absent injection/liveness from the already-emitted
+    # producer, player, and progress facts without changing any threshold.
+    set static_c8_marker YTSTATICSOURCEC8
+    set static_c8_producer [static_source_prethreshold_console \
+        "YT_CAPTURE_COMPLETENESS_V2 kind=producer_start schema=2 nonce=$static_render_nonce" \
+        $media_probe_extension_id]
+    set static_c8_ready_no_player [static_source_prethreshold_console \
+        "YT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$static_render_nonce player_present=0 video_present=0 ready_state=-1 video_width=0 video_height=0" \
+        $media_probe_extension_id]
+    set static_c8_ready_player [static_source_prethreshold_console \
+        "YT_MEDIA_PROBE_V1 kind=force_ready schema=1 nonce=$static_render_nonce player_present=1 video_present=1 ready_state=4 video_width=1280 video_height=720" \
+        $media_probe_extension_id]
+    set static_c8_observation [static_source_prethreshold_console \
+        "YT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$static_render_nonce current_time_first=1.000 current_time_last=2.000" \
+        $media_probe_extension_id]
+    set static_c8_progress_payload "$static_c8_ready_player\n$static_c8_observation\n"
+    set static_c8_none_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker ""]
+    set static_c8_producer_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_producer\n"]
+    set static_c8_no_player_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_ready_no_player\n"]
+    set static_c8_no_progress_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_ready_player\n"]
+    set static_c8_progress_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker $static_c8_progress_payload]
+    set static_c8_results {}
+    foreach frame [list $static_c8_none_frame $static_c8_producer_frame \
+            $static_c8_no_player_frame $static_c8_no_progress_frame $static_c8_progress_frame] {
+        set parsed [source_prethreshold_parse $frame $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+            $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker]
+        if {![lindex $parsed 0] || [lindex $parsed 1] ne "pass"} {
+            lappend static_c8_results [dict create state INVALID detail static-transport-failed rows -1]
+        } else {
+            lappend static_c8_results [source_prethreshold_derive \
+                [dict get [lindex $parsed 2] payload] $static_render_nonce $media_probe_extension_id]
+        }
+    }
+    set static_c8_row_counts {}
+    foreach static_c8_result $static_c8_results {
+        lappend static_c8_row_counts [dict get $static_c8_result rows]
+    }
+    set static_c8_status_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "" \
+        [dict create status MISSING digest unavailable]]
+    set static_c8_bad_nonce [string map [list "nonce=$static_render_nonce" \
+        {nonce=00000000000000000000000000000000}] $static_c8_progress_frame]
+    set static_c8_bad_c3 [string map [list "launch_marker=$static_render_launch_marker" \
+        {launch_marker=YTSTATICLAUNCHC9}] $static_c8_progress_frame]
+    set static_c8_bad_c4 [string map [list "argv_marker=$static_render_argv_marker" \
+        {argv_marker=YTSTATICARGVC9}] $static_c8_progress_frame]
+    set static_c8_bad_c5 [string map [list "fbstat_marker=$static_render_fbstat_marker" \
+        {fbstat_marker=YTSTATICFBSTATC9}] $static_c8_progress_frame]
+    set static_c8_bad_cursor [string map [list \
+        "source_cursor=[string bytelength $static_c8_progress_payload]" \
+        {source_cursor=0}] $static_c8_progress_frame]
+    set static_c8_bad_digest [string map [list \
+        "digest=[render_start_receipt_digest $static_c8_progress_payload]" \
+        "digest=[string repeat 0 64]"] $static_c8_progress_frame]
+    set static_c8_bad_cap [string map [list {cap=16384} {cap=16383}] $static_c8_progress_frame]
+    set static_c8_bad_order_frame [static_source_prethreshold_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker "$static_c8_observation\n$static_c8_ready_player\n"]
+    set static_c8_adversaries 1
+    set static_c8_adversary_details {}
+    foreach {name frame expected} [list \
+            nonce $static_c8_bad_nonce source-prethreshold-binding-drift \
+            c3 $static_c8_bad_c3 source-prethreshold-binding-drift \
+            c4 $static_c8_bad_c4 source-prethreshold-binding-drift \
+            c5 $static_c8_bad_c5 source-prethreshold-binding-drift \
+            cursor $static_c8_bad_cursor source-prethreshold-count-order \
+            digest $static_c8_bad_digest source-prethreshold-digest-drift \
+            cap $static_c8_bad_cap source-prethreshold-cap-drift] {
+        set parsed [source_prethreshold_parse $frame $static_render_nonce 1 \
+            $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+            $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker]
+        if {[lindex $parsed 0] || ![string match "${expected}*" [lindex $parsed 1]]} {
+            set static_c8_adversaries 0
+            lappend static_c8_adversary_details "$name:$parsed"
+        }
+    }
+    set static_c8_status [source_prethreshold_parse $static_c8_status_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker]
+    set static_c8_order [source_prethreshold_parse $static_c8_bad_order_frame $static_render_nonce 1 \
+        $static_render_launch_marker $static_render_launch_digest $static_render_argv_marker \
+        $static_render_argv_digest $static_render_fbstat_marker $static_c8_marker]
+    set static_c8_order_derived [dict create state INVALID detail static-order-transport rows -1]
+    if {[lindex $static_c8_order 0] && [lindex $static_c8_order 1] eq "pass"} {
+        set static_c8_order_derived [source_prethreshold_derive \
+            [dict get [lindex $static_c8_order 2] payload] $static_render_nonce \
+            $media_probe_extension_id]
+    }
+    if {![lindex $static_c8_order 0] || [lindex $static_c8_order 1] ne "pass" ||
+        [dict get $static_c8_order_derived state] ne "INVALID" ||
+        [dict get $static_c8_order_derived rows] != 1} {
+        set static_c8_adversaries 0
+        lappend static_c8_adversary_details "order:$static_c8_order derived=$static_c8_order_derived"
+    }
+    set static_c8_cases [expr {
+        [dict get [lindex $static_c8_results 0] state] eq "INCOMPLETE" &&
+        [dict get [lindex $static_c8_results 0] detail] eq "source-no-injection-or-liveness" &&
+        [dict get [lindex $static_c8_results 1] detail] eq "source-injected-no-navigation" &&
+        [dict get [lindex $static_c8_results 2] detail] eq "source-injected-no-player" &&
+        [dict get [lindex $static_c8_results 3] detail] eq "source-player-no-progress" &&
+        [dict get [lindex $static_c8_results 4] state] eq "COMPLETE" &&
+        [dict get [lindex $static_c8_results 4] detail] eq "source-observation-progressing" &&
+        $static_c8_row_counts eq {0 1 1 1 2} &&
+        [dict get $static_c8_order_derived rows] == 1 &&
+        [lindex $static_c8_status 0] && [lindex $static_c8_status 1] eq "source-prethreshold-status-MISSING"
+    }]
+    set static_c8_helper [source_prethreshold_guest_helper_script]
+    set static_c8_source_contract [expr {
+        [string first {cap=16384} $static_c8_helper] >= 0 &&
+        [string first {source_log=/host-gui-wayland-chromium.log} $static_c8_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_BEGIN} $static_c8_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_META} $static_c8_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_HEX} $static_c8_helper] >= 0 &&
+        [string first {YT_SOURCE_PRETHRESHOLD_END} $static_c8_helper] >= 0 &&
+        [string first {sha256sum} $static_c8_helper] < 0 &&
+        [string first {| awk} $static_c8_helper] < 0 && [string first {| tr} $static_c8_helper] < 0 &&
+        [string first {mkdir } $static_c8_helper] < 0 && [string first {chmod } $static_c8_helper] < 0
+    }]
+    set static_c8_no_credit [expr {
+        [string first {source_diagnostic} [info body render_start_receipt_classify]] < 0 &&
+        [string first {source_prethreshold_probe} [info body render_start_receipt_probe]] >= 0 &&
+        [string first {source_prethreshold} [info body render_start_receipt_classify]] < 0 &&
+        $static_render_threshold_edges eq {0 0 1}
+    }]
     if {![lindex $static_render_valid 0] ||
         $static_render_valid_class ne {INCOMPLETE live-roles-insufficient-flips} ||
         !$static_render_helper_role_source_contract ||
@@ -9764,6 +10460,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         !$static_render_diagnostic_no_credit || !$static_c7_complete || !$static_c7_wire_matrix ||
         !$static_c7_rejects || !$static_c7_semantic_invariant ||
         !$static_c7_source_contract || !$static_c7_no_credit ||
+        !$static_c8_cases || !$static_c8_adversaries || !$static_c8_source_contract ||
+        !$static_c8_no_credit ||
         $static_render_portability_counts ne {1 1 0 0 0 0} ||
         $static_render_portability_hex ne {1 1 0 0} ||
         $static_render_portability_digest ne {1 0 0 0} ||
@@ -9772,9 +10470,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix c5=$static_render_fbstat_drift source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix c5=$static_render_fbstat_drift source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_no_credit c8_details=$static_c8_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_source_prefix_producer_ready_observation_nonce_order_status_cursor_digest_cap_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;
@@ -10311,6 +11009,10 @@ set role_census_diag_host "$outdir/ytrolecensusdiag.sh"
 if {$media_probe eq "1" && $capture_completeness_diag eq "0"} {
     wf $role_census_diag_host [role_census_diag_guest_helper_script]
 }
+set source_prethreshold_host "$outdir/ytsourceprethreshold.sh"
+if {$media_probe eq "1" && $capture_completeness_diag eq "0"} {
+    wf $source_prethreshold_host [source_prethreshold_guest_helper_script]
+}
 
 set media_host "$outdir/ytmediaprobe.sh"
 if {$media_probe eq "1"} {
@@ -10337,6 +11039,7 @@ if {$capture_completeness_diag eq "1"} {
     if {$media_probe eq "1"} {
         lappend helper_pairs $render_start_receipt_host /ytrenderstartreceipt.sh
         lappend helper_pairs $role_census_diag_host /ytrolecensusdiag.sh
+        lappend helper_pairs $source_prethreshold_host /ytsourceprethreshold.sh
         lappend helper_pairs $media_host /ytmediaprobe.sh
     }
 }

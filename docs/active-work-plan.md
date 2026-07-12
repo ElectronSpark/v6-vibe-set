@@ -1885,3 +1885,30 @@ order-invalid control), in addition to the existing state/detail, transport,
 binding, status, no-credit, and C7 literal-preamble assertions. No source
 edit, replay, VM, build, rootfs, serial, launcher, or process action occurred;
 the C7/C8 patch and unrelated KDE dirt remain unstaged.
+
+**C7 literal-preamble/C8 counter correction — STATIC PASS / NO-BOOT
+(2026-07-12):** at reviewed checkpoint
+`473f32c408573f8a537ae6c28ed14b10a3761a3e`, the only counter repair was
+`incr result rows` to `dict incr result rows`. The existing C8 static fixture
+gate now explicitly proves row counts `0,1,1,1,2` for empty, producer-only,
+ready-no-player, ready-player/no-progress, and progressing source payloads,
+plus exactly `1` marker row for the order-invalid observation-first fixture.
+No C8 protocol, C6 receipt/classifier, flip/present threshold, rootfs asset,
+extension, launcher, default, or C7 behavior changed beyond the already
+staged literal BEGIN-only preamble handling.
+
+One fresh canonical host-only command with `YT_STATIC_CHECK=1`, MP=1,
+audio-disable=1, media=1, forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-counter-static-20260712T000000Z-2624562` exited 0 (external log
+`/tmp/xv6-c8-counter-static-20260712T000000Z-2624562.log`) and emitted both
+`YT-RENDER-START-RECEIPT-STATIC-PASS` and
+`YT-PRESENTFPS-STATIC-CHECK-PASS`. It retains the C7 literal
+`ESC[?2004l CR` BEGIN-only acceptance and foreign/mutated/duplicate/non-BEGIN
+rejections; C8 source-prefix producer/ready/observation states; nonce,
+C3/C4/C5, order, status, cursor, digest, and cap negatives; and the
+diagnostic-only/no-credit threshold latch. Exact `/proc/*/exe` inventories
+immediately before and after were total/informational-RISC-V/conflicting
+`0/0/0`. No VM, KVM, QEMU, guest serial, build, rootfs refresh, launcher,
+extension, default, HD720, FPS, audio, fullscreen, or performance action
+occurred. This is source/static-only credit; independent no-boot review is
+still required before any gate.
