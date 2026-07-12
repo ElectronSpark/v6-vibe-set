@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `d5dd287cf4858092b0eb5532a47da947898497d1`, the static
-compact-format correction has passed independent no-boot review. Exactly one
-fresh canonical MP=1/media=1 host-only static suite is authorized; it is not a
-retry and grants no VM, performance, audio, fullscreen, default, or credit
-authority unless that one suite passes.
+At static checkpoint `908b05b2809d2e8ba18eb58c908655ac368f7a45`, the one
+fresh canonical C1 observer host-only suite has passed. The pending complete
+driver/plan checkpoint is ready to commit; next is independent no-boot review
+before any new gate. This PASS grants no VM, performance, audio, fullscreen,
+default, or credit authority.
 
 ## Binding host and VM discipline
 
@@ -3768,3 +3768,29 @@ MP=1, audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, pinned
 window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`; retain its
 first result and artifacts without retry. It is no VM, HD720/fullscreen,
 audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance authority.
+
+**C1 V2 observer canonical static suite — PASS / NO-BUILD / NO-BOOT
+(2026-07-12):** the one review-authorized host-only invocation used the exact
+clean conventional PATH, static=1, MP=1, audio-disable=1, media=1,
+forced-HD720=0, EGL=0, capturediag=0, pinned window/crop/delta/video inputs,
+and fresh outdir `/tmp/yt-c1-v2-observer-static-20260712T234322Z-2924043`
+(external log `/tmp/yt-c1-v2-observer-static-20260712T234322Z-2924043.log`).
+It exited 0 and emitted `YT-C1-V2-STATIC-PASS`,
+`YT-RENDER-START-RECEIPT-STATIC-PASS`,
+`YT-CAPTURE-COMPLETENESS-DIAGNOSTIC-STATIC-PASS`,
+`YT-CAPTURE-DIAG-ROUTE-STATIC-PASS`, and
+`YT-PRESENTFPS-STATIC-CHECK-PASS`; the latter records
+`js_guest_runtime=UNEXECUTED`.
+
+All named C1 actual-helper artifacts are retained: empty/binary/multiline/
+exact-cap/over-cap plus recorder-failure; the binary input is 4 bytes, the
+valid exact-cap/over-cap row artifacts are bounded, and matching `/dev/shm`
+residue count is zero. The actual render-role matrix, C7/C8 protocol and
+adversary matrices, capture-completeness no-credit routes, and static compact
+format fixture all completed. This is a static validation of observer/helper
+contracts only: no build, rootfs, VM, boot, serial, kernel/user/default/KDE,
+actual YouTube, `yt-presentfps`, `PERF-VIDEO`, HD720, audio-on, fullscreen,
+FPS, drop, VPQ, retire, or default claim exists. Exact pre/post inventories
+were total/informational-RISC-V/conflicting `0/0/0`. The full intended
+presentfps driver and this plan checkpoint may now be committed, followed by
+independent no-boot review before any fresh gate.

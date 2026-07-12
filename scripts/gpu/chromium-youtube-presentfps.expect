@@ -643,6 +643,7 @@ set statusf "$outdir/STATUS.txt"
 set metricsf "$outdir/metrics.txt"
 set fbcsv "$outdir/fbstat-samples.txt"
 set fbstat_transport_payload_cap 131072
+set fbstat_transport_chunk_hex_max 376
 set role_census_diag_payload_cap 131072
 set source_prethreshold_payload_cap 16384
 set launcher_log "$outdir/host-gui-wayland-chromium.log"
@@ -2470,16 +2471,8 @@ if {$existing ne ""} {
     af $statusf "[iso_now] ABORT exact-qemu-preflight=$existing"
     fail_preflight "qemu-already-running exact=$existing" 11
 }
-if {![file isfile $kernel] || ![file readable $kernel]} {
-    fail_preflight "kernel-missing path=$kernel"
-}
-if {![file isfile $fsimg] || ![file readable $fsimg]} {
-    fail_preflight "fsimg-missing path=$fsimg"
-}
-foreach tool {debugfs convert compare nc} {
-    if {[auto_execok $tool] eq ""} {
-        fail_preflight "host-tool-missing tool=$tool"
-    }
+if {[auto_execok debugfs] eq ""} {
+    fail_preflight "host-tool-missing tool=debugfs"
 }
 
 proc monitor_cmd {cmd {tmo 6}} {
@@ -4107,12 +4100,23 @@ proc fbstat_transport_digest {payload} {
 # off the UART.  The UART carries only one contiguous, C5-bound lower-hex
 # frame.  Do not tolerate a partial or reconstructed transport: the existing
 # fbstat parser below sees only verified decoded bytes.
+proc fbstat_transport_v2_gap_fingerprint {record_number record} {
+    set bytes [string bytelength $record]
+    set prefix [binary encode hex [string range $record 0 15]]
+    set suffix [binary encode hex [string range $record end-15 end]]
+    return "record=$record_number bytes=$bytes prefix=$prefix suffix=$suffix"
+}
+
+# V2 admits only complete, individually atomic rows.  It preserves ordinary
+# noncandidate records as bounded diagnostics, but never normalizes, joins, or
+# splices a transport candidate with neighboring UART bytes.
 proc fbstat_transport_decode {serial expected_tag expected_nonce expected_marker} {
-    global fbstat_transport_payload_cap
-    foreach {name value} [list tag $expected_tag nonce $expected_nonce marker $expected_marker] {
-        if {![regexp {^[A-Za-z0-9_-]+$} $value]} {
-            return [list 0 "transport-$name-invalid" ""]
-        }
+    global fbstat_transport_payload_cap fbstat_transport_chunk_hex_max
+    global fbstat_transport_last_gap_fingerprints
+    if {![regexp {^[A-Za-z0-9_-]{1,16}$} $expected_tag] ||
+        ![regexp {^[A-Za-z0-9_-]{1,32}$} $expected_nonce] ||
+        ![regexp {^[A-Za-z0-9]+$} $expected_marker]} {
+        return [list 0 "transport-parameter-invalid" ""]
     }
     set command_frame [guest_command_frame_parse $serial $expected_marker]
     if {![lindex $command_frame 0]} {
@@ -4122,208 +4126,257 @@ proc fbstat_transport_decode {serial expected_tag expected_nonce expected_marker
         return [list 0 "transport-command-status-[lindex $command_frame 2]" ""]
     }
 
-    set transport_lines {}
-    set raw_record_number 0
+    set candidates {}
+    set fbstat_transport_last_gap_fingerprints {}
+    set record_number 0
     foreach raw_record [split $serial "\n"] {
-        incr raw_record_number
-        if {[regexp {^YT_FBSTAT_TRANSPORT_(BEGIN|META|HEX|END)([ \t]|$)} $raw_record]} {
-            # UART CRCRLF is one transport terminator, not an intervening
-            # protocol record.  Preserve every noncandidate record exactly;
-            # only a candidate's trailing CR run is removed before its exact
-            # parser.  A CR anywhere else in that candidate is corruption.
-            set line [string trimright $raw_record "\r"]
-            if {[string first "\r" $line] >= 0} {
-                return [list 0 "transport-wire-cr record=$raw_record_number" ""]
-            }
-            lappend transport_lines [list $raw_record_number $line]
+        incr record_number
+        if {[string first YT_FBSTAT_TRANSPORT_ $raw_record] >= 0 &&
+            ![string match {YT_FBSTAT_TRANSPORT_*} $raw_record]} {
+            return [list 0 "transport-candidate-contaminated record=$record_number" ""]
         }
+        if {![string match {YT_FBSTAT_TRANSPORT_*} $raw_record]} {
+            if {[llength $fbstat_transport_last_gap_fingerprints] < 8 &&
+                $raw_record ne ""} {
+                lappend fbstat_transport_last_gap_fingerprints \
+                    [fbstat_transport_v2_gap_fingerprint $record_number $raw_record]
+            }
+            continue
+        }
+        set line [string trimright $raw_record "\r"]
+        set cr_count [expr {[string length $raw_record] - [string length $line]}]
+        if {$cr_count > 2 || [string first "\r" $line] >= 0} {
+            return [list 0 "transport-wire-cr record=$record_number" ""]
+        }
+        if {[llength $candidates] > 0 &&
+            $record_number != [lindex [lindex $candidates end] 0] + 1} {
+            return [list 0 "transport-candidate-noncontiguous record=$record_number" ""]
+        }
+        lappend candidates [list $record_number $line]
     }
-    if {[llength $transport_lines] != 4} {
-        return [list 0 "transport-frame-count-[llength $transport_lines]" ""]
+    if {[llength $candidates] < 3} {
+        return [list 0 "transport-frame-count-[llength $candidates]" ""]
     }
-    lassign [lindex $transport_lines 0] begin_line begin
-    lassign [lindex $transport_lines 1] meta_line meta
-    lassign [lindex $transport_lines 2] hex_line hex
-    lassign [lindex $transport_lines 3] end_line end
-    if {$meta_line != $begin_line + 1 || $hex_line != $meta_line + 1 ||
-        $end_line != $hex_line + 1} {
-        return [list 0 "transport-frame-noncontiguous" ""]
-    }
+
+    lassign [lindex $candidates 0] _ begin
+    lassign [lindex $candidates end] _ end
     set quoted_tag [regex_quote $expected_tag]
     set quoted_nonce [regex_quote $expected_nonce]
-    set begin_pattern [format {^YT_FBSTAT_TRANSPORT_BEGIN tag=%s nonce=%s$} \
-        $quoted_tag $quoted_nonce]
-    set end_pattern [format {^YT_FBSTAT_TRANSPORT_END tag=%s nonce=%s$} \
-        $quoted_tag $quoted_nonce]
-    if {![regexp $begin_pattern $begin] || ![regexp $end_pattern $end]} {
-        return [list 0 "transport-tag-or-nonce-drift" ""]
+    set begin_pattern [format {^YT_FBSTAT_TRANSPORT_V2_BEGIN tag=%s nonce=%s cap=([0-9]+) total_hex=([0-9]+) total_chunks=([0-9]+) digest=([0-9a-f]{64})$} $quoted_tag $quoted_nonce]
+    set end_pattern [format {^YT_FBSTAT_TRANSPORT_V2_END tag=%s nonce=%s cap=([0-9]+) total_hex=([0-9]+) total_chunks=([0-9]+) digest=([0-9a-f]{64})$} $quoted_tag $quoted_nonce]
+    if {![regexp $begin_pattern $begin -> begin_cap begin_hex begin_chunks begin_digest] ||
+        ![regexp $end_pattern $end -> end_cap end_hex end_chunks end_digest]} {
+        return [list 0 "transport-begin-or-end-shape" ""]
     }
-    set meta_pattern [format {^YT_FBSTAT_TRANSPORT_META tag=%s nonce=%s status=([A-Z_]+) raw_bytes=([0-9]+) payload_bytes=([0-9]+) cap=([0-9]+) truncated=([01]) digest=([0-9a-f]{64}|unavailable) hex_bytes=([0-9]+)$} $quoted_tag $quoted_nonce]
-    if {![regexp $meta_pattern $meta -> status raw_bytes payload_bytes cap truncated digest hex_bytes]} {
+    if {$begin_cap != $fbstat_transport_payload_cap || $end_cap != $begin_cap ||
+        $end_hex != $begin_hex || $end_chunks != $begin_chunks ||
+        $end_digest ne $begin_digest} {
+        return [list 0 "transport-envelope-binding-drift" ""]
+    }
+    lassign [lindex $candidates 1] _ meta
+    set meta_pattern [format {^YT_FBSTAT_TRANSPORT_V2_META tag=%s nonce=%s status=([A-Z_]+) raw_bytes=([0-9]+) payload_bytes=([0-9]+) cursor=([0-9]+) truncated=([01]) cap=([0-9]+) total_hex=([0-9]+) total_chunks=([0-9]+) chunk_hex_max=([0-9]+) digest=([0-9a-f]{64})$} $quoted_tag $quoted_nonce]
+    if {![regexp $meta_pattern $meta -> status raw_bytes payload_bytes cursor truncated meta_cap meta_hex meta_chunks chunk_hex_max meta_digest]} {
         return [list 0 "transport-meta-shape" ""]
     }
-    set hex_pattern [format {^YT_FBSTAT_TRANSPORT_HEX tag=%s nonce=%s data=([0-9a-f]*)$} \
-        $quoted_tag $quoted_nonce]
-    if {![regexp $hex_pattern $hex -> payload_hex]} {
-        return [list 0 "transport-hex-shape" ""]
+    if {$meta_cap != $begin_cap || $meta_hex != $begin_hex ||
+        $meta_chunks != $begin_chunks || $meta_digest ne $begin_digest ||
+        $chunk_hex_max != $fbstat_transport_chunk_hex_max} {
+        return [list 0 "transport-meta-binding-drift" ""]
     }
-    if {$status ne "OK"} {
-        return [list 0 "transport-status-$status" ""]
-    }
-    if {$cap != $fbstat_transport_payload_cap} {
-        return [list 0 "transport-cap-$cap" ""]
-    }
-    if {$payload_bytes > $cap || $raw_bytes < $payload_bytes} {
+    if {$status ne "OK"} { return [list 0 "transport-status-$status" ""] }
+    if {$payload_bytes > $meta_cap || $raw_bytes < $payload_bytes ||
+        $cursor != $payload_bytes} {
         return [list 0 "transport-count-order" ""]
     }
-    set expected_truncated [expr {$raw_bytes > $cap ? 1 : 0}]
-    set expected_payload_bytes [expr {$expected_truncated ? $cap : $raw_bytes}]
-    if {$truncated != $expected_truncated || $payload_bytes != $expected_payload_bytes} {
-        return [list 0 "transport-truncation-drift" ""]
+    set expected_truncated [expr {$raw_bytes > $meta_cap ? 1 : 0}]
+    set expected_payload [expr {$expected_truncated ? $meta_cap : $raw_bytes}]
+    if {$truncated != $expected_truncated || $payload_bytes != $expected_payload ||
+        $begin_hex != $payload_bytes * 2 || $begin_hex > $meta_cap * 2} {
+        return [list 0 "transport-truncation-or-hex-drift" ""]
     }
-    if {$hex_bytes != $payload_bytes * 2 || [string length $payload_hex] != $hex_bytes} {
-        return [list 0 "transport-hex-length" ""]
+    set expected_chunks [expr {$begin_hex == 0 ? 0 : ($begin_hex + $chunk_hex_max - 1) / $chunk_hex_max}]
+    if {$begin_chunks != $expected_chunks || $begin_chunks > 698 ||
+        [llength $candidates] != $begin_chunks + 3} {
+        return [list 0 "transport-chunk-count-drift" ""]
     }
-    if {[catch {binary decode hex $payload_hex} payload]} {
-        return [list 0 "transport-hex-decode" ""]
+    set payload_hex ""
+    set offset 0
+    for {set index 0} {$index < $begin_chunks} {incr index} {
+        lassign [lindex $candidates [expr {$index + 2}]] _ chunk
+        set chunk_pattern [format {^YT_FBSTAT_TRANSPORT_V2_CHUNK tag=%s nonce=%s seq=([0-9]+) hex_offset=([0-9]+) hex_bytes=([0-9]+) data=([0-9a-f]+)$} $quoted_tag $quoted_nonce]
+        if {![regexp $chunk_pattern $chunk -> seq chunk_offset chunk_bytes data]} {
+            return [list 0 "transport-chunk-shape seq=$index" ""]
+        }
+        set remaining [expr {$begin_hex - $offset}]
+        set expected_bytes [expr {$remaining > $chunk_hex_max ? $chunk_hex_max : $remaining}]
+        if {$seq != $index || $chunk_offset != $offset || $chunk_bytes != $expected_bytes ||
+            $chunk_bytes <= 0 || $chunk_bytes % 2 != 0 ||
+            $chunk_bytes > $chunk_hex_max || [string length $data] != $chunk_bytes} {
+            return [list 0 "transport-chunk-binding-drift seq=$index" ""]
+        }
+        append payload_hex $data
+        incr offset $chunk_bytes
     }
-    if {[string bytelength $payload] != $payload_bytes ||
-        [binary encode hex $payload] ne $payload_hex} {
-        return [list 0 "transport-hex-roundtrip" ""]
+    if {$offset != $begin_hex || [string length $payload_hex] != $begin_hex ||
+        [catch {binary decode hex $payload_hex} payload]} {
+        return [list 0 "transport-hex-drift" ""]
     }
-    if {[fbstat_transport_digest $payload] ne $digest} {
+    set decoded_hex [binary encode hex $payload]
+    if {[string length $decoded_hex] != $begin_hex || $decoded_hex ne $payload_hex} {
+        return [list 0 "transport-hex-drift" ""]
+    }
+    if {[fbstat_transport_digest $payload] ne $begin_digest} {
         return [list 0 "transport-digest-drift" ""]
     }
-    if {$truncated} {
-        return [list 0 "transport-truncated" ""]
-    }
+    if {$truncated} { return [list 0 "transport-truncated" ""] }
     return [list 1 pass $payload]
 }
 
-proc fbstat_transport_guest_helper_script {} {
-    return {#!/bin/bash
+proc fbstat_transport_v2_valid_decimal_bash {} {
+    return {valid_decimal() {
+    [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]
+}}
+}
+
+proc fbstat_transport_v2_valid_decimal_checker_bash {} {
+    return [join [list [fbstat_transport_v2_valid_decimal_bash] \
+        {valid_decimal "$1"}] "\n"]
+}
+
+proc fbstat_transport_guest_helper_script {{recorder_path /bin/_consolerecord}} {
+    if {![regexp {^/[A-Za-z0-9._/+:-]+$} $recorder_path]} {
+        error "invalid fbstat recorder path"
+    }
+    return [string map [list @RECORDER@ $recorder_path \
+        @VALID_DECIMAL@ [fbstat_transport_v2_valid_decimal_bash]] {#!/bin/bash
 set -f
 tag=$1
 nonce=$2
 cap=131072
-status=OK
-raw_bytes=0
-payload_bytes=0
-truncated=0
-digest=unavailable
-hex_bytes=0
-payload_hex=
+chunk_hex_max=376
+recorder=@RECORDER@
 
 valid_token() {
     case "$1" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
     return 0
 }
-valid_decimal() {
-    case "$1" in 0|[1-9][0-9]*) return 0 ;; esac
-    return 1
-}
-if ! valid_token "$tag" || ! valid_token "$nonce"; then
-    status=TAG_INVALID
-    tag=invalid
-    nonce=invalid
-fi
+@VALID_DECIMAL@
+if ! valid_token "$tag" || ! valid_token "$nonce" || [ "${#tag}" -gt 16 ] || [ "${#nonce}" -gt 32 ]; then exit 64; fi
 base=/dev/shm/yt-fbstat-${tag}-${nonce}-$$
 capture=${base}.capture
 retained=${base}.payload
+trap 'rm -f "$capture" "$retained"' EXIT
 rm -f "$capture" "$retained"
-if [ "$status" = OK ] && { [ -e "$capture" ] || [ -L "$capture" ] || [ -e "$retained" ] || [ -L "$retained" ]; }; then
-    status=FILE_INVALID
-fi
-if [ "$status" = OK ]; then
-    fbstat >"$capture" 2>&1
-    command_rc=$?
-    if [ "$command_rc" -ne 0 ]; then status=COMMAND_FAILED; fi
-fi
-if [ "$status" = OK ] && { [ ! -f "$capture" ] || [ -L "$capture" ] || [ ! -r "$capture" ]; }; then
-    status=FILE_INVALID
-fi
-if [ "$status" = OK ]; then
-    count_output=$(/bin/wc < "$capture" 2>/dev/null)
-    set -- $count_output
-    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then
-        status=COUNT_INVALID
-    else
-        raw_bytes=$3
-        if [ "$raw_bytes" -gt "$cap" ]; then
-            payload_bytes=$cap
-            truncated=1
-        else
-            payload_bytes=$raw_bytes
-        fi
-    fi
-fi
-if [ "$status" = OK ]; then
-    /bin/dd if="$capture" of="$retained" bs=1 count="$payload_bytes" 2>/dev/null
-    if [ "$?" -ne 0 ] || [ ! -f "$retained" ] || [ -L "$retained" ] || [ ! -r "$retained" ]; then
-        status=COPY_FAILED
-    fi
-fi
-if [ "$status" = OK ]; then
-    retained_count=$(/bin/wc < "$retained" 2>/dev/null)
-    set -- $retained_count
-    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then
-        status=COUNT_INVALID
-    fi
-fi
-if [ "$status" = OK ]; then
-    digest_output=$(/bin/openssl dgst -sha256 -r "$retained" 2>/dev/null)
-    set -- $digest_output
-    if [ "$#" -ne 2 ] || [ "$2" != "*$retained" ] || ! valid_decimal 0; then
-        status=DIGEST_INVALID
-    else
-        digest=$1
-        case "$digest" in ''|*[!0-9a-f]*) status=DIGEST_INVALID ;; esac
-        if [ "${#digest}" -ne 64 ]; then status=DIGEST_INVALID; fi
-    fi
-fi
-if [ "$status" = OK ]; then
-    hex_output=$(/bin/xxd -p "$retained" 2>/dev/null)
-    hex_rc=$?
-    if [ "$hex_rc" -ne 0 ]; then
-        status=HEX_INVALID
-    elif [ -n "$hex_output" ]; then
-        while IFS= read -r hex_line || [ -n "$hex_line" ]; do
-            case "$hex_line" in ''|*[!0-9a-f]*) status=HEX_INVALID; break ;; esac
-            payload_hex=${payload_hex}${hex_line}
-        done <<EOF
+if { [ -e "$capture" ] || [ -L "$capture" ] || [ -e "$retained" ] || [ -L "$retained" ]; }; then exit 65; fi
+fbstat >"$capture" 2>&1 || exit 66
+if [ ! -f "$capture" ] || [ -L "$capture" ] || [ ! -r "$capture" ]; then exit 67; fi
+count_output=$(/bin/wc < "$capture" 2>/dev/null); set -- $count_output
+if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then exit 68; fi
+raw_bytes=$3; [ "$raw_bytes" -le 999999 ] || exit 68; payload_bytes=$raw_bytes; truncated=0
+if [ "$raw_bytes" -gt "$cap" ]; then payload_bytes=$cap; truncated=1; fi
+/bin/dd if="$capture" of="$retained" bs=1 count="$payload_bytes" 2>/dev/null || exit 69
+if [ ! -f "$retained" ] || [ -L "$retained" ] || [ ! -r "$retained" ]; then exit 70; fi
+retained_count=$(/bin/wc < "$retained" 2>/dev/null); set -- $retained_count
+if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then exit 71; fi
+digest_output=$(/bin/openssl dgst -sha256 -r "$retained" 2>/dev/null); set -- $digest_output
+if [ "$#" -ne 2 ] || [ "$2" != "*$retained" ] || ! [[ "$1" =~ ^[0-9a-f]{64}$ ]]; then exit 72; fi
+digest=$1; payload_hex=
+hex_output=$(/bin/xxd -p "$retained" 2>/dev/null) || exit 73
+if [ -n "$hex_output" ]; then while IFS= read -r hex_line || [ -n "$hex_line" ]; do
+    case "$hex_line" in ''|*[!0-9a-f]*) exit 74 ;; esac; payload_hex=${payload_hex}${hex_line}
+done <<EOF
 $hex_output
 EOF
-    fi
 fi
-if [ "$status" = OK ]; then
-    hex_bytes=${#payload_hex}
-    expected_hex_bytes=$((payload_bytes * 2))
-    if [ "$hex_bytes" -ne "$expected_hex_bytes" ]; then status=HEX_INVALID; fi
-fi
-printf 'YT_FBSTAT_TRANSPORT_BEGIN tag=%s nonce=%s\n' "$tag" "$nonce"
-printf 'YT_FBSTAT_TRANSPORT_META tag=%s nonce=%s status=%s raw_bytes=%s payload_bytes=%s cap=%s truncated=%s digest=%s hex_bytes=%s\n' "$tag" "$nonce" "$status" "$raw_bytes" "$payload_bytes" "$cap" "$truncated" "$digest" "$hex_bytes"
-printf 'YT_FBSTAT_TRANSPORT_HEX tag=%s nonce=%s data=%s\n' "$tag" "$nonce" "$payload_hex"
-printf 'YT_FBSTAT_TRANSPORT_END tag=%s nonce=%s\n' "$tag" "$nonce"
-rm -f "$capture" "$retained"
+total_hex=${#payload_hex}; [ "$total_hex" -eq $((payload_bytes * 2)) ] || exit 75
+total_chunks=0; [ "$total_hex" -eq 0 ] || total_chunks=$(((total_hex + chunk_hex_max - 1) / chunk_hex_max))
+emit_record() { [ "${#1}" -le 510 ] || exit 76; "$recorder" "$1" || exit 77; }
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_BEGIN tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; emit_record "$record"
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_META tag=%s nonce=%s status=OK raw_bytes=%s payload_bytes=%s cursor=%s truncated=%s cap=%s total_hex=%s total_chunks=%s chunk_hex_max=%s digest=%s' "$tag" "$nonce" "$raw_bytes" "$payload_bytes" "$payload_bytes" "$truncated" "$cap" "$total_hex" "$total_chunks" "$chunk_hex_max" "$digest"; emit_record "$record"
+offset=0; seq=0
+while [ "$offset" -lt "$total_hex" ]; do
+    hex_bytes=$chunk_hex_max; remaining=$((total_hex - offset)); [ "$remaining" -lt "$hex_bytes" ] && hex_bytes=$remaining
+    data=${payload_hex:offset:hex_bytes}
+    [ "$hex_bytes" -gt 0 ] && [ $((hex_bytes % 2)) -eq 0 ] && [ "${#data}" -eq "$hex_bytes" ] || exit 78
+    printf -v record 'YT_FBSTAT_TRANSPORT_V2_CHUNK tag=%s nonce=%s seq=%s hex_offset=%s hex_bytes=%s data=%s' "$tag" "$nonce" "$seq" "$offset" "$hex_bytes" "$data"; emit_record "$record"
+    offset=$((offset + hex_bytes)); seq=$((seq + 1))
+done
+[ "$seq" -eq "$total_chunks" ] || exit 79
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_END tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; emit_record "$record"
 exit 0
-}
+}]
 }
 
 proc fbstat_transport_static_frame {tag nonce payload {overrides {}}} {
     global fbstat_transport_payload_cap
-    set payload_bytes [string bytelength $payload]
+    set chunk_hex_max 376
+    set payload_hex [binary encode hex $payload]
+    set total_hex [string length $payload_hex]
+    set payload_bytes [expr {$total_hex / 2}]
+    set total_chunks [expr {$total_hex == 0 ? 0 : ($total_hex + $chunk_hex_max - 1) / $chunk_hex_max}]
     set values [dict create \
-        status OK raw_bytes $payload_bytes payload_bytes $payload_bytes \
-        cap $fbstat_transport_payload_cap truncated 0 \
-        digest [fbstat_transport_digest $payload] hex_bytes [expr {$payload_bytes * 2}] \
-        payload_hex [binary encode hex $payload]]
+        status OK raw_bytes $payload_bytes payload_bytes $payload_bytes cursor $payload_bytes \
+        cap $fbstat_transport_payload_cap truncated 0 digest [fbstat_transport_digest $payload] \
+        total_hex $total_hex total_chunks $total_chunks chunk_hex_max $chunk_hex_max payload_hex $payload_hex]
     dict for {key value} $overrides {
         if {![dict exists $values $key]} {
             error "unknown fbstat transport static override $key"
         }
         dict set values $key $value
     }
-    return "YT_FBSTAT_TRANSPORT_BEGIN tag=$tag nonce=$nonce\nYT_FBSTAT_TRANSPORT_META tag=$tag nonce=$nonce status=[dict get $values status] raw_bytes=[dict get $values raw_bytes] payload_bytes=[dict get $values payload_bytes] cap=[dict get $values cap] truncated=[dict get $values truncated] digest=[dict get $values digest] hex_bytes=[dict get $values hex_bytes]\nYT_FBSTAT_TRANSPORT_HEX tag=$tag nonce=$nonce data=[dict get $values payload_hex]\nYT_FBSTAT_TRANSPORT_END tag=$tag nonce=$nonce\n"
+    set frame "YT_FBSTAT_TRANSPORT_V2_BEGIN tag=$tag nonce=$nonce cap=[dict get $values cap] total_hex=[dict get $values total_hex] total_chunks=[dict get $values total_chunks] digest=[dict get $values digest]\n"
+    append frame "YT_FBSTAT_TRANSPORT_V2_META tag=$tag nonce=$nonce status=[dict get $values status] raw_bytes=[dict get $values raw_bytes] payload_bytes=[dict get $values payload_bytes] cursor=[dict get $values cursor] truncated=[dict get $values truncated] cap=[dict get $values cap] total_hex=[dict get $values total_hex] total_chunks=[dict get $values total_chunks] chunk_hex_max=[dict get $values chunk_hex_max] digest=[dict get $values digest]\n"
+    set hex [dict get $values payload_hex]
+    for {set seq 0; set offset 0} {$offset < [string length $hex]} {incr seq; incr offset $chunk_hex_max} {
+        set n [expr {min($chunk_hex_max, [string length $hex] - $offset)}]
+        append frame "YT_FBSTAT_TRANSPORT_V2_CHUNK tag=$tag nonce=$nonce seq=$seq hex_offset=$offset hex_bytes=$n data=[string range $hex $offset [expr {$offset + $n - 1}]]\n"
+    }
+    append frame "YT_FBSTAT_TRANSPORT_V2_END tag=$tag nonce=$nonce cap=[dict get $values cap] total_hex=[dict get $values total_hex] total_chunks=[dict get $values total_chunks] digest=[dict get $values digest]\n"
+    return $frame
+}
+
+# The transport timeout is an algebraic upper bound, not a retry.  It charges
+# every max-size V2 record, both outer marker records, one normal 64-byte
+# consolewrite batch at its ONLCR-expanded 128 physical bytes, every
+# possible 50-ms timed acquisition, and a fixed capture/hash reserve.
+proc fbstat_transport_v2_timeout_contract {marker} {
+    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+        error "invalid V2 outer marker"
+    }
+    set cap 131072
+    set chunk_hex_max 376
+    set total_hex [expr {$cap * 2}]
+    set total_chunks [expr {($total_hex + $chunk_hex_max - 1) / $chunk_hex_max}]
+    set tag [string repeat t 16]
+    set nonce [string repeat n 32]
+    set digest [string repeat f 64]
+    set full_data [string repeat a $chunk_hex_max]
+    set final_hex [expr {$total_hex - (($total_chunks - 1) * $chunk_hex_max)}]
+    set final_data [string repeat a $final_hex]
+    set begin "YT_FBSTAT_TRANSPORT_V2_BEGIN tag=$tag nonce=$nonce cap=$cap total_hex=$total_hex total_chunks=$total_chunks digest=$digest"
+    set meta "YT_FBSTAT_TRANSPORT_V2_META tag=$tag nonce=$nonce status=OK raw_bytes=999999 payload_bytes=$cap cursor=$cap truncated=1 cap=$cap total_hex=$total_hex total_chunks=$total_chunks chunk_hex_max=$chunk_hex_max digest=$digest"
+    set chunk "YT_FBSTAT_TRANSPORT_V2_CHUNK tag=$tag nonce=$nonce seq=696 hex_offset=261696 hex_bytes=$chunk_hex_max data=$full_data"
+    set final_chunk "YT_FBSTAT_TRANSPORT_V2_CHUNK tag=$tag nonce=$nonce seq=697 hex_offset=262072 hex_bytes=$final_hex data=$final_data"
+    set end "YT_FBSTAT_TRANSPORT_V2_END tag=$tag nonce=$nonce cap=$cap total_hex=$total_hex total_chunks=$total_chunks digest=$digest"
+    foreach row [list $begin $meta $chunk $final_chunk $end] {
+        if {[string bytelength $row] > 510} { error "V2 record exceeds console content bound" }
+    }
+    set physical [expr {($total_chunks - 1) * ([string bytelength $chunk] + 2) +
+        [string bytelength $final_chunk] + 2 + [string bytelength $begin] + 2 +
+        [string bytelength $meta] + 2 + [string bytelength $end] + 2}]
+    set record_count [expr {$total_chunks + 3}]
+    set marker_bytes [string bytelength $marker]
+    set outer_physical [expr {($marker_bytes + 5 + 2) + ($marker_bytes + 6 + 2)}]
+    set normal_writer_physical 128
+    set wire_ms [expr {int(ceil(double($physical + $outer_physical + $normal_writer_physical) * 10000.0 / 115200.0))}]
+    set lock_ms [expr {$record_count * 50}]
+    set helper_reserve_ms 5000
+    set timeout_seconds [expr {int(ceil(double($wire_ms + $lock_ms + $helper_reserve_ms) / 1000.0))}]
+    return [dict create cap $cap chunk_hex_max $chunk_hex_max total_chunks $total_chunks \
+        record_count $record_count marker_bytes $marker_bytes \
+        physical_bytes $physical outer_physical_bytes $outer_physical \
+        normal_writer_physical_bytes $normal_writer_physical wire_ms $wire_ms \
+        lock_ms $lock_ms helper_reserve_ms $helper_reserve_ms seconds $timeout_seconds]
 }
 
 # C7 is deliberately a second command, not an enlargement of the admitting
@@ -4630,7 +4683,7 @@ exit 0
 }
 
 proc fb_sample {tag} {
-    global fbcsv outdir serial_nonce
+    global fbcsv outdir serial_nonce serial_counter
     # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
     # remain single-shot so retries cannot move a measurement boundary or bias
     # a timed window.  Every raw attempt is retained and guest_cmd supplies a
@@ -4638,12 +4691,17 @@ proc fb_sample {tag} {
     set max_attempts [expr {$tag eq "idle" ? 3 : 1}]
     set failures {}
     for {set attempt 1} {$attempt <= $max_attempts} {incr attempt} {
-        set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" "fbstat-$tag-attempt$attempt" 35]
+        set expected_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
+        set transport_timeout [dict get [fbstat_transport_v2_timeout_contract $expected_marker] seconds]
+        set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" "fbstat-$tag-attempt$attempt" $transport_timeout]
         set buf [lindex $result 1]
         set attempt_path "$outdir/fbstat-$tag-attempt$attempt.txt"
         wf $attempt_path $buf
         if {[lindex $result 0] ne "0"} {
             finish 8 "FAIL guest-command phase=fbstat-$tag-attempt$attempt rc=[lindex $result 0] artifact=$attempt_path"
+        }
+        if {[lindex $result 3] ne $expected_marker} {
+            finish 8 "FAIL fbstat-marker-prediction-drift expected=$expected_marker actual=[lindex $result 3]"
         }
         set decoded [fbstat_transport_decode $buf $tag $serial_nonce [lindex $result 3]]
         if {![lindex $decoded 0]} {
@@ -6669,6 +6727,33 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [lindex $static_diag_raw_layout_negative 0]} {
         error "diagnostic-raw-contract-layout-positive=$static_diag_raw_layout_positive negative=$static_diag_raw_layout_negative"
     }
+    set static_capture_diag_global_nonce_fixture_reports {}
+    proc static_capture_diag_global_nonce_fixture_assert {
+        fixture field_name field_value marker
+    } {
+        global media_probe_nonce static_capture_diag_global_nonce_fixture_reports
+        set report_fields {}
+        foreach {name value cap} [list \
+                fixture $fixture 48 field $field_name 16 value $field_value 32 \
+                nonce $media_probe_nonce 32 marker $marker 64] {
+            set bytes [string bytelength $value]
+            set retained [string range $value 0 [expr {$cap - 1}]]
+            lappend report_fields \
+                "$name.bytes=$bytes,$name.hex=[binary encode hex $retained],$name.truncated=[expr {$bytes > $cap}]"
+        }
+        set report "fixture-envelope-args=3 [join $report_fields { }]"
+        lappend static_capture_diag_global_nonce_fixture_reports $report
+        set field_valid [expr {($field_name eq "attempt" &&
+                $field_value in {initial final}) ||
+            ($field_name eq "phase" &&
+                $field_value in {launch post-video-ready fbstat-before collect})}]
+        if {![regexp {^[A-Za-z0-9_-]{1,48}$} $fixture] || !$field_valid ||
+            ![regexp {^[0-9a-f]{32}$} $media_probe_nonce] ||
+            ![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
+            error "static-capture-diag-global-nonce-invalid $report"
+        }
+        return $report
+    }
     proc static_capture_diag_actual_terminal {
         phase result expected_status fbstat_text expected_context
     } {
@@ -6676,6 +6761,8 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         global media_probe_nonce media_probe_verdict
         wf $capture_completeness_diag_fbstat $fbstat_text
         set media_probe_verdict NOT_RUN
+        static_capture_diag_global_nonce_fixture_assert "actual-$phase" \
+            attempt initial [lindex $result 3]
         lassign [capture_completeness_diag_owned_terminal $phase $result] \
             code label terminal
         set raw [capture_completeness_diag_raw_contract \
@@ -6877,6 +6964,8 @@ virgl_bo_presents 1
         set ::static_diag_reserve_finish [list $code $label]
         return -code error static-diag-reserve-finish
     }
+    static_capture_diag_global_nonce_fixture_assert reserve-run attempt initial \
+        STATICDIAGRESERVEC1
     set static_diag_reserve_run_caught [catch {capture_completeness_diag_run} \
         static_diag_reserve_run_result]
     rename finish {}
@@ -7063,6 +7152,8 @@ virgl_bo_presents 1
         set ::static_capture_diag_finish_code -1
         set ::static_capture_diag_finish_label ""
         set media_probe_verdict NOT_RUN
+        static_capture_diag_global_nonce_fixture_assert "runtime-$name" \
+            attempt initial [lindex $launch 3]
         set caught [catch {capture_completeness_diag_run} result]
         if {!$caught || $result ne "capture-diag-static-terminal" ||
             $::static_capture_diag_finish_code != $expected_code ||
@@ -9359,6 +9450,9 @@ virgl_bo_presents 6198
         fail_preflight "static-check-c1-flip-conflict parsed=$c1_flip_conflict"
     }
 
+    if {0} {
+    # Retired V1 single-HEX static corpus. V2 below is the only C1 transport
+    # oracle; retain this text temporarily as review context, never execution.
     # The transport uses a 128 KiB decoded cap (262144 lower-hex bytes) so the
     # observed 58,986-byte fbstat payload fits with substantial headroom while
     # the UART frame remains far below guest_cmd's 2 MiB match_max.  The
@@ -9460,6 +9554,485 @@ virgl_bo_presents 6198
             fail_preflight "static-check-fbstat-transport-helper-missing fragment=$required_fragment"
         }
     }
+    }
+
+    # C1 V2 static wire corpus: V2 accepts whole ordinary serial gaps but no
+    # foreign, partial, reordered, or binding-drift transport candidate.
+    set static_fb_tag probe1
+    set static_fb_nonce fbfstatstaticnonce
+    set static_fb_marker YTFBSTATSTATICC5
+    set static_fb_payload "$c1_t2_fbstat_excerpt\n"
+    set static_fb_target_bytes 58986
+    append static_fb_payload [string repeat x [expr {$static_fb_target_bytes - [string bytelength $static_fb_payload]}]]
+    set static_fb_frame [fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload]
+    set static_fb_logical "$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    foreach {wire_name wire_eol} [list lf "\n" crlf "\r\n" crcrlf "\r\r\n"] {
+        set decoded [fbstat_transport_decode [string map [list "\n" $wire_eol] $static_fb_logical] \
+            $static_fb_tag $static_fb_nonce $static_fb_marker]
+        if {![lindex $decoded 0] || [string bytelength [lindex $decoded 2]] != $static_fb_target_bytes} {
+            fail_preflight "static-check-fbstat-v2-wire-$wire_name decoded=$decoded"
+        }
+    }
+    set static_fb_preamble [binary format H* 1b5b3f323030346c0d]
+    set static_fb_outside_gap "${static_fb_preamble}\nprompt-before\n${static_fb_frame}ordinary-after-end\n$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    if {![lindex [fbstat_transport_decode $static_fb_outside_gap $static_fb_tag $static_fb_nonce $static_fb_marker] 0]} {
+        fail_preflight "static-check-fbstat-v2-outside-gap"
+    }
+    set static_fb_interior_gap [string map [list "\nYT_FBSTAT_TRANSPORT_V2_META" "\nordinary-interior-gap\nYT_FBSTAT_TRANSPORT_V2_META"] $static_fb_outside_gap]
+    set static_fb_lines [split [string trimright $static_fb_frame "\n"] "\n"]
+    set static_fb_begin [lindex $static_fb_lines 0]
+    set static_fb_meta [lindex $static_fb_lines 1]
+    set static_fb_chunks [lrange $static_fb_lines 2 end-1]
+    set static_fb_end [lindex $static_fb_lines end]
+    set static_fb_mid_hex [string map [list {data=} {data=aa
+virtio_gpu: historical-mid-hex-weave
+bb}] [lindex $static_fb_chunks 0]]
+    set static_fb_mid_hex [join [concat [list $static_fb_begin $static_fb_meta $static_fb_mid_hex] [lrange $static_fb_chunks 1 end] [list $static_fb_end "$static_fb_marker:RC:0" "$static_fb_marker:FENCE"]] "\n"]
+    append static_fb_mid_hex "\n"
+    set static_fb_duplicate "$static_fb_frame$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_missing [join [concat [list $static_fb_begin $static_fb_meta] [lrange $static_fb_chunks 1 end] [list $static_fb_end "$static_fb_marker:RC:0" "$static_fb_marker:FENCE"]] "\n"]
+    append static_fb_missing "\n"
+    set static_fb_reordered [join [concat [list $static_fb_begin $static_fb_meta] [lreverse $static_fb_chunks] [list $static_fb_end "$static_fb_marker:RC:0" "$static_fb_marker:FENCE"]] "\n"]
+    append static_fb_reordered "\n"
+    set static_fb_foreign "YT_FBSTAT_TRANSPORT_V1_BEGIN tag=x nonce=y\n$static_fb_logical"
+    set static_fb_candidate_gap "ordinary\nYT_FBSTAT_TRANSPORT_GARBAGE foreign=1\n$static_fb_logical"
+    set static_fb_bad_tag [string map [list "tag=$static_fb_tag" {tag=wrongtag}] $static_fb_logical]
+    set static_fb_bad_nonce [string map [list "nonce=$static_fb_nonce" {nonce=wrongnonce}] $static_fb_logical]
+    set static_fb_bad_count [string map [list {total_chunks=} {total_chunks=9999 bogus=}] $static_fb_logical]
+    set static_fb_bad_status [string map [list {status=OK} {status=COMMAND_FAILED}] $static_fb_logical]
+    set static_fb_bad_offset [string map [list {hex_offset=0} {hex_offset=2}] $static_fb_logical]
+    set static_fb_bad_len [string map [list {hex_bytes=376} {hex_bytes=375}] $static_fb_logical]
+    set static_fb_bad_oversize [string map [list {chunk_hex_max=376} {chunk_hex_max=377}] $static_fb_logical]
+    set static_fb_bad_hex [string map [list {data=} {data=g}] $static_fb_logical]
+    set static_fb_bad_cursor [string map [list "cursor=$static_fb_target_bytes" {cursor=0}] $static_fb_logical]
+    set static_fb_bad_cap [string map [list {cap=131072} {cap=131071}] $static_fb_logical]
+    set static_fb_bad_truncated [string map [list {truncated=0} {truncated=1}] $static_fb_logical]
+    set static_fb_bad_digest [string map [list "digest=[fbstat_transport_digest $static_fb_payload]" "digest=[string repeat 0 64]"] $static_fb_logical]
+    set static_fb_exact_payload [string repeat x $fbstat_transport_payload_cap]
+    set static_fb_exact "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_exact_payload]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_v2_binary_hex 00ff0a7f
+    set static_fb_v2_binary_sha 26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d
+    set static_fb_v2_binary_payload [binary decode hex $static_fb_v2_binary_hex]
+    set static_fb_v2_binary_frame "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_v2_binary_payload]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_v2_binary_decoded [fbstat_transport_decode $static_fb_v2_binary_frame \
+        $static_fb_tag $static_fb_nonce $static_fb_marker]
+    if {![lindex $static_fb_v2_binary_decoded 0] ||
+        [binary encode hex [lindex $static_fb_v2_binary_decoded 2]] ne $static_fb_v2_binary_hex} {
+        fail_preflight "static-check-fbstat-v2-binary-decoder decoded=$static_fb_v2_binary_decoded"
+    }
+    set static_fb_over_payload [string repeat x [expr {$fbstat_transport_payload_cap + 1}]]
+    set static_fb_over "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_over_payload]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    foreach {name frame} [list interior_gap $static_fb_interior_gap midhex $static_fb_mid_hex duplicate $static_fb_duplicate missing $static_fb_missing reorder $static_fb_reordered foreign $static_fb_foreign candidate_gap $static_fb_candidate_gap tag $static_fb_bad_tag nonce $static_fb_bad_nonce count $static_fb_bad_count status $static_fb_bad_status offset $static_fb_bad_offset len $static_fb_bad_len oversize $static_fb_bad_oversize hex $static_fb_bad_hex cursor $static_fb_bad_cursor cap $static_fb_bad_cap truncation $static_fb_bad_truncated digest $static_fb_bad_digest overcap $static_fb_over] {
+        if {[lindex [fbstat_transport_decode $frame $static_fb_tag $static_fb_nonce $static_fb_marker] 0]} {
+            fail_preflight "static-check-fbstat-v2-adversary-accepted name=$name"
+        }
+    }
+    if {![lindex [fbstat_transport_decode $static_fb_exact $static_fb_tag $static_fb_nonce $static_fb_marker] 0]} {
+        fail_preflight "static-check-fbstat-v2-exact-cap"
+    }
+    foreach bad_outer [list \
+            [string map [list "$static_fb_marker:RC:0" "$static_fb_marker:RC:7"] $static_fb_logical] \
+            [string map [list "$static_fb_marker:FENCE\n" {}] $static_fb_logical] \
+            "${static_fb_logical}$static_fb_marker:FENCE\n"] {
+        if {[lindex [fbstat_transport_decode $bad_outer $static_fb_tag $static_fb_nonce $static_fb_marker] 0]} {
+            fail_preflight "static-check-fbstat-v2-outer-adversary-accepted"
+        }
+    }
+    set static_fb_timeout [fbstat_transport_v2_timeout_contract $static_fb_marker]
+    set static_fb_v2_timed_wire_bytes [expr {
+        [dict get $static_fb_timeout physical_bytes] +
+        [dict get $static_fb_timeout outer_physical_bytes] +
+        [dict get $static_fb_timeout normal_writer_physical_bytes]
+    }]
+    if {[dict get $static_fb_timeout chunk_hex_max] != 376 ||
+        [dict get $static_fb_timeout total_chunks] != 698 ||
+        [dict get $static_fb_timeout record_count] != 701 ||
+        [dict get $static_fb_timeout marker_bytes] != [string bytelength $static_fb_marker] ||
+        [dict get $static_fb_timeout physical_bytes] != 357781 ||
+        [dict get $static_fb_timeout outer_physical_bytes] != 47 ||
+        [dict get $static_fb_timeout normal_writer_physical_bytes] != 128 ||
+        $static_fb_v2_timed_wire_bytes != 357956 ||
+        [dict get $static_fb_timeout wire_ms] != 31073 ||
+        [dict get $static_fb_timeout lock_ms] != 35050 ||
+        [dict get $static_fb_timeout helper_reserve_ms] != 5000 ||
+        [dict get $static_fb_timeout seconds] != 72} {
+        fail_preflight "static-check-fbstat-v2-timeout-algebra value=$static_fb_timeout"
+    }
+    set static_fb_helper [fbstat_transport_guest_helper_script]
+    set static_fb_v2_decimal_literal [fbstat_transport_v2_valid_decimal_bash]
+    set static_fb_v2_decimal_checker_bash [fbstat_transport_v2_valid_decimal_checker_bash]
+    set static_fb_v2_initial_wc_guard {if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then exit 68; fi}
+    set static_fb_v2_retained_wc_guard {if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then exit 71; fi}
+    set static_fb_v2_decoder_source_lock [expr {
+        [string first {set decoded_hex [binary encode hex $payload]} [info body fbstat_transport_decode]] >= 0 &&
+        [string first {[string length $decoded_hex] != $begin_hex || $decoded_hex ne $payload_hex} [info body fbstat_transport_decode]] >= 0 &&
+        [string first {[string bytelength $payload] != $payload_bytes} [info body fbstat_transport_decode]] < 0 &&
+        [string first {open $path wb} [info body fbstat_transport_digest]] >= 0 &&
+        [string first {-translation binary -encoding binary} [info body fbstat_transport_digest]] >= 0
+    }]
+    if {[string first {printf -v record} $static_fb_helper] < 0 ||
+        [string first {recorder=/bin/_consolerecord} $static_fb_helper] < 0 ||
+        [string first $static_fb_v2_decimal_literal $static_fb_helper] < 0 ||
+        [string first $static_fb_v2_initial_wc_guard $static_fb_helper] < 0 ||
+        [string first $static_fb_v2_retained_wc_guard $static_fb_helper] < 0 ||
+        [string first {if [ "$#" -ne 3 ] || ! valid_decimal "$3"; then exit 68; fi} $static_fb_helper] >= 0 ||
+        !$static_fb_v2_decoder_source_lock ||
+        [string first {retained_count=$(/bin/wc < "$retained"} $static_fb_helper] < 0 ||
+        [string first {transport-candidate-noncontiguous} [info body fbstat_transport_decode]] < 0 ||
+        [string first {YT_FBSTAT_TRANSPORT_V2_CHUNK} $static_fb_helper] < 0 ||
+        [regexp {printf[[:space:]]+['\"]YT_FBSTAT_TRANSPORT} $static_fb_helper]} {
+        fail_preflight "static-check-fbstat-v2-helper-source-contract"
+    }
+    set static_fb_helper_dir "$outdir/fbstat-v2-helper-static"
+    if {[file exists $static_fb_helper_dir]} {
+        fail_preflight "static-check-fbstat-v2-helper-dir-preexists"
+    }
+    file mkdir $static_fb_helper_dir
+    set static_fb_helper_path "$static_fb_helper_dir/fbs.sh"
+    set static_fb_v2_decimal_checker_path "$static_fb_helper_dir/valid-decimal.sh"
+    set static_fb_payload_path "$static_fb_helper_dir/payload.bin"
+    set static_fb_records_path "$static_fb_helper_dir/records.txt"
+    set static_fb_bin "$static_fb_helper_dir/fbstat"
+    set static_fb_recorder "$static_fb_helper_dir/_consolerecord"
+    set static_fb_stub_helper [fbstat_transport_guest_helper_script $static_fb_recorder]
+    if {[string first "recorder=$static_fb_recorder" $static_fb_stub_helper] < 0 ||
+        [string first {recorder=/bin/_consolerecord} $static_fb_stub_helper] >= 0} {
+        fail_preflight "static-check-fbstat-v2-stub-route"
+    }
+    wf $static_fb_helper_path $static_fb_stub_helper
+    wf $static_fb_v2_decimal_checker_path $static_fb_v2_decimal_checker_bash
+    file attributes $static_fb_helper_path -permissions 0755
+    file attributes $static_fb_v2_decimal_checker_path -permissions 0755
+    wf $static_fb_bin {#!/bin/bash
+cat "$YT_FBSTAT_STATIC_PAYLOAD"
+}
+    wf $static_fb_recorder {#!/bin/bash
+set -f
+case "$1" in *$'\n'*) exit 91;; esac
+printf '%s\n' "$1" >> "$YT_FBSTAT_STATIC_RECORDS"
+n=0; [ -f "$YT_FBSTAT_STATIC_COUNT" ] && n=$(cat "$YT_FBSTAT_STATIC_COUNT")
+n=$((n + 1)); printf '%s\n' "$n" > "$YT_FBSTAT_STATIC_COUNT"
+[ "${YT_FBSTAT_STATIC_FAIL_AT:-0}" = "$n" ] && exit 77
+exit 0
+}
+    file attributes $static_fb_bin -permissions 0755
+    file attributes $static_fb_recorder -permissions 0755
+    proc static_fb_v2_decimal_validator_run {checker value} {
+        set command [list /bin/bash $checker $value]
+        return [expr {![catch {exec {*}$command 2>@1}]}]
+    }
+    set static_fb_v2_decimal_source_lock 1
+    set static_fb_v2_decimal_literal_first [string first $static_fb_v2_decimal_literal \
+        [read_text $static_fb_helper_path]]
+    if {$static_fb_v2_decimal_literal_first < 0 ||
+        [string first $static_fb_v2_decimal_literal [read_text $static_fb_helper_path] \
+            [expr {$static_fb_v2_decimal_literal_first + 1}]] >= 0 ||
+        [string first {case "$1" in 0|[1-9][0-9]*)} [read_text $static_fb_helper_path]] >= 0 ||
+        [string trimright [read_text $static_fb_v2_decimal_checker_path] "\n"] ne \
+            "$static_fb_v2_decimal_literal\nvalid_decimal \"\$1\""} {
+        set static_fb_v2_decimal_source_lock 0
+    }
+    set static_fb_v2_decimal_accepts {}
+    foreach value {0 1 2 3 4 5 6 7 8 9 10 42 2147483647} {
+        lappend static_fb_v2_decimal_accepts \
+            [static_fb_v2_decimal_validator_run $static_fb_v2_decimal_checker_path $value]
+    }
+    set static_fb_v2_decimal_rejects {}
+    foreach value [list "" -1 +1 { 1} {1 } {1 0} 1x 10x 1.0 01 00] {
+        lappend static_fb_v2_decimal_rejects [expr {![static_fb_v2_decimal_validator_run \
+            $static_fb_v2_decimal_checker_path $value]}]
+    }
+    set static_fb_v2_decimal_validator_matrix [expr {
+        [lsearch -exact $static_fb_v2_decimal_accepts 0] < 0 &&
+        [lsearch -exact $static_fb_v2_decimal_rejects 0] < 0
+    }]
+    # Static C1 actual-helper children keep a finite rlimit without changing
+    # the generated helper's own capture/transport behavior.  2048 512-byte
+    # blocks are 1 MiB: above the helper's 999999-byte capture guard, the
+    # 131072-byte valid input cap (and its one-byte over-cap fixture), and the
+    # calculated 357781-byte inner CRLF recorder envelope (the static stub's
+    # LF rows file is 357080 bytes).  Outer marker and normal-writer terms
+    # remain in the timeout algebra, not this child-file bound.  The child
+    # cannot create an unbounded capture, row, or combined-output artifact.
+    set static_fb_v2_file_limit_blocks 2048
+    set static_fb_v2_file_limit_bytes [expr {$static_fb_v2_file_limit_blocks * 512}]
+    set static_fb_v2_max_capture_bytes 999999
+    set static_fb_v2_max_valid_input_bytes $fbstat_transport_payload_cap
+    set static_fb_v2_max_fixture_input_bytes [expr {$fbstat_transport_payload_cap + 1}]
+    set static_fb_v2_max_recorder_rows_bytes [dict get $static_fb_timeout physical_bytes]
+    set static_fb_v2_max_stub_rows_bytes [expr {
+        $static_fb_v2_max_recorder_rows_bytes - [dict get $static_fb_timeout record_count]
+    }]
+    if {$static_fb_v2_file_limit_blocks != 2048 ||
+        $static_fb_v2_file_limit_bytes != 1048576 ||
+        $static_fb_v2_max_valid_input_bytes != 131072 ||
+        $static_fb_v2_max_capture_bytes >= $static_fb_v2_file_limit_bytes ||
+        $static_fb_v2_max_fixture_input_bytes >= $static_fb_v2_file_limit_bytes ||
+        $static_fb_v2_max_recorder_rows_bytes != 357781 ||
+        $static_fb_v2_max_stub_rows_bytes != 357080 ||
+        $static_fb_v2_max_recorder_rows_bytes >= $static_fb_v2_file_limit_bytes ||
+        $static_fb_v2_max_stub_rows_bytes >= $static_fb_v2_file_limit_bytes ||
+        [string first {raw_bytes=$3; [ "$raw_bytes" -le 999999 ] || exit 68} $static_fb_helper] < 0} {
+        fail_preflight "static-check-fbstat-v2-helper-observer-file-bound blocks=$static_fb_v2_file_limit_blocks bytes=$static_fb_v2_file_limit_bytes max_capture=$static_fb_v2_max_capture_bytes max_input=$static_fb_v2_max_valid_input_bytes fixture_input=$static_fb_v2_max_fixture_input_bytes max_rows=$static_fb_v2_max_recorder_rows_bytes max_stub_rows=$static_fb_v2_max_stub_rows_bytes"
+    }
+    proc static_fb_v2_write_binary {path payload} {
+        set fh [open $path wb]
+        fconfigure $fh -translation binary -encoding binary
+        puts -nonewline $fh $payload
+        close $fh
+    }
+    proc static_fb_v2_bounded_report {value {cap 128}} {
+        set bytes [string bytelength $value]
+        set first [string range $value 0 [expr {$cap - 1}]]
+        set last [expr {$bytes > $cap ? [string range $value end-[expr {$cap - 1}] end] : $first}]
+        return "bytes=$bytes first_hex=[binary encode hex $first] last_hex=[binary encode hex $last] truncated=[expr {$bytes > $cap}]"
+    }
+    proc static_fb_v2_file_snapshot {path {cap 256}} {
+        if {[catch {file type $path} type] || $type ne "file"} {
+            return [dict create present 0 regular 0 bytes 0 first_hex {} last_hex {} truncated 0]
+        }
+        set bytes [file size $path]
+        if {[catch {open $path rb} fh]} {
+            return [dict create present 1 regular 1 bytes $bytes first_hex {} last_hex {} truncated 1]
+        }
+        fconfigure $fh -translation binary -encoding binary
+        set first [read $fh [expr {$bytes < $cap ? $bytes : $cap}]]
+        if {$bytes > $cap} {
+            seek $fh [expr {$bytes - $cap}] start
+            set last [read $fh $cap]
+        } else {
+            set last $first
+        }
+        close $fh
+        return [dict create present 1 regular 1 bytes $bytes \
+            first_hex [binary encode hex $first] last_hex [binary encode hex $last] \
+            truncated [expr {$bytes > $cap}]]
+    }
+    proc static_fb_v2_child_status {caught options} {
+        set errorcode {}
+        if {$caught && [dict exists $options -errorcode]} {
+            set errorcode [dict get $options -errorcode]
+        }
+        set exit_code [expr {$caught ? "unavailable" : 0}]
+        set signal none
+        if {[lindex $errorcode 0] eq "CHILDSTATUS" && [llength $errorcode] == 3} {
+            set exit_code [lindex $errorcode 2]
+        } elseif {[lindex $errorcode 0] eq "CHILDKILLED" && [llength $errorcode] >= 3} {
+            set signal [lindex $errorcode 2]
+        }
+        return [dict create caught $caught errorcode $errorcode exit_code $exit_code signal $signal]
+    }
+    set static_fb_v2_childstatus_fixture [static_fb_v2_child_status 1 \
+        [dict create -errorcode [list CHILDSTATUS 4242 68]]]
+    set static_fb_v2_childkilled_fixture [static_fb_v2_child_status 1 \
+        [dict create -errorcode [list CHILDKILLED 4243 SIGTERM observer-test]]]
+    set static_fb_v2_other_errorcode_fixture [static_fb_v2_child_status 1 \
+        [dict create -errorcode [list POSIX EACCES observer-test]]]
+    set static_fb_v2_child_status_source_lock [expr {
+        [string first {eq "CHILDSTATUS"} [info body static_fb_v2_child_status]] >= 0 &&
+        [string first {eq "CHILDKILLED"} [info body static_fb_v2_child_status]] >= 0
+    }]
+    set static_fb_v2_child_status_fixture_matrix [expr {
+        $static_fb_v2_child_status_source_lock &&
+        [dict get $static_fb_v2_childstatus_fixture caught] &&
+        [dict get $static_fb_v2_childstatus_fixture errorcode] eq {CHILDSTATUS 4242 68} &&
+        [dict get $static_fb_v2_childstatus_fixture exit_code] == 68 &&
+        [dict get $static_fb_v2_childstatus_fixture signal] eq "none" &&
+        [dict get $static_fb_v2_childkilled_fixture caught] &&
+        [dict get $static_fb_v2_childkilled_fixture errorcode] eq {CHILDKILLED 4243 SIGTERM observer-test} &&
+        [dict get $static_fb_v2_childkilled_fixture exit_code] eq "unavailable" &&
+        [dict get $static_fb_v2_childkilled_fixture signal] eq "SIGTERM" &&
+        [dict get $static_fb_v2_other_errorcode_fixture caught] &&
+        [dict get $static_fb_v2_other_errorcode_fixture errorcode] eq {POSIX EACCES observer-test} &&
+        [dict get $static_fb_v2_other_errorcode_fixture exit_code] eq "unavailable" &&
+        [dict get $static_fb_v2_other_errorcode_fixture signal] eq "none"
+    }]
+    if {!$static_fb_v2_child_status_fixture_matrix} {
+        fail_preflight "static-check-fbstat-v2-helper-observer-child-status exit=$static_fb_v2_childstatus_fixture killed=$static_fb_v2_childkilled_fixture other=$static_fb_v2_other_errorcode_fixture"
+    }
+    proc static_fb_v2_row_metadata {row} {
+        return "bytes=[string bytelength $row] sha256=[fbstat_transport_digest $row] [static_fb_v2_bounded_report $row 64]"
+    }
+    proc static_fb_v2_stub_rows_snapshot {path {cap 524288}} {
+        set snapshot [static_fb_v2_file_snapshot $path 128]
+        dict set snapshot count unavailable
+        dict set snapshot rows {}
+        dict set snapshot first_row none
+        dict set snapshot last_row none
+        if {![dict get $snapshot present] || ![dict get $snapshot regular] ||
+            [dict get $snapshot bytes] > $cap} {
+            return $snapshot
+        }
+        set fh [open $path rb]
+        fconfigure $fh -translation binary -encoding binary
+        set text [read $fh]
+        close $fh
+        set trimmed [string trimright $text "\n"]
+        set rows [expr {$trimmed eq "" ? {} : [split $trimmed "\n"]}]
+        dict set snapshot count [llength $rows]
+        dict set snapshot rows $rows
+        if {[llength $rows] > 0} {
+            dict set snapshot first_row [static_fb_v2_row_metadata [lindex $rows 0]]
+            dict set snapshot last_row [static_fb_v2_row_metadata [lindex $rows end]]
+        }
+        return $snapshot
+    }
+    proc static_fb_v2_residue_snapshot {tag nonce} {
+        set paths [glob -nocomplain "/dev/shm/yt-fbstat-${tag}-${nonce}-*"]
+        set names {}
+        foreach path [lrange $paths 0 3] {
+            lappend names [file tail $path]
+        }
+        return [dict create count [llength $paths] names [join $names ,] \
+            truncated [expr {[llength $paths] > 4}]]
+    }
+    proc static_fb_v2_case_not_run {name} {
+        return [dict create name $name ran 0 status not-run exit_code unavailable \
+            signal none errorcode {} child_message none child_io {} input_size unavailable \
+            input_sha unavailable input_file [dict create present 0 regular 0 bytes 0 first_hex {} last_hex {} truncated 0] \
+            helper_sha unavailable argv {} row_count unavailable \
+            first_row none last_row none cleanup unavailable rows {} \
+            row_file [dict create present 0 regular 0 bytes 0 first_hex {} last_hex {} truncated 0] \
+            count_file [dict create present 0 regular 0 bytes 0 first_hex {} last_hex {} truncated 0] \
+            count_artifact_file [dict create present 0 regular 0 bytes 0 first_hex {} last_hex {} truncated 0] \
+            residue [dict create count unavailable names none truncated 0]]
+    }
+    proc static_fb_v2_case_compact {record} {
+        set errorcode [dict get $record errorcode]
+        set errorcode [expr {$errorcode eq {} ? "none" : [join $errorcode ,]}]
+        set row_file [dict get $record row_file]
+        set count_file [dict get $record count_file]
+        set count_artifact_file [dict get $record count_artifact_file]
+        set residue [dict get $record residue]
+        return "[dict get $record name](ran=[dict get $record ran],status=[dict get $record status],exit=[dict get $record exit_code],signal=[dict get $record signal],errorcode=$errorcode,msg=[dict get $record child_message],input=[dict get $record input_size]/[dict get $record input_sha],helper=[dict get $record helper_sha],argv=[dict get $record argv],io=[dict get $record child_io],rows=present:[dict get $row_file present],regular:[dict get $row_file regular],bytes:[dict get $row_file bytes],count:[dict get $record row_count],first:[dict get $record first_row],last:[dict get $record last_row],count_file=present:[dict get $count_file present],regular:[dict get $count_file regular],bytes:[dict get $count_file bytes],first_hex:[dict get $count_file first_hex],last_hex:[dict get $count_file last_hex],count_artifact=present:[dict get $count_artifact_file present],regular:[dict get $count_artifact_file regular],bytes:[dict get $count_artifact_file bytes],first_hex:[dict get $count_artifact_file first_hex],last_hex:[dict get $count_artifact_file last_hex],cleanup:[dict get $record cleanup],residue:[dict get $residue count]/[dict get $residue names]/[dict get $residue truncated])"
+    }
+    proc static_fb_v2_case_records_compact {records} {
+        set report {}
+        foreach name {empty binary multiline exact_cap overcap} {
+            lappend report [static_fb_v2_case_compact [dict get $records $name]]
+        }
+        return [join $report { | }]
+    }
+    proc static_fb_v2_helper_run {name dir helper payload_path records_path payload fail_at} {
+        if {![regexp {^[a-z_]+$} $name]} {
+            error "invalid static fbstat V2 case name"
+        }
+        set input_artifact "$dir/actual-$name.input.bin"
+        set child_output "$dir/actual-$name.child-output.txt"
+        set rows_artifact "$dir/actual-$name.rows.txt"
+        set count_artifact "$dir/actual-$name.count.txt"
+        static_fb_v2_write_binary $input_artifact $payload
+        static_fb_v2_write_binary $payload_path $payload
+        catch {file delete -force $records_path "$dir/count" $child_output $rows_artifact $count_artifact}
+        set command [list /bin/bash -c {ulimit -f 2048; exec "$@"} \
+            static-fbstat-v2-io-limit env "PATH=$dir:$::env(PATH)" "YT_FBSTAT_STATIC_PAYLOAD=$payload_path" \
+            "YT_FBSTAT_STATIC_RECORDS=$records_path" "YT_FBSTAT_STATIC_COUNT=$dir/count" \
+            "YT_FBSTAT_STATIC_FAIL_AT=$fail_at" bash $helper probe1 fbfstatstaticnonce]
+        set caught [catch {exec {*}$command >$child_output 2>@1} child_message options]
+        set child_status [static_fb_v2_child_status $caught $options]
+        set child_io [static_fb_v2_file_snapshot $child_output 256]
+        set rows_snapshot [static_fb_v2_stub_rows_snapshot $records_path]
+        set count_snapshot [static_fb_v2_file_snapshot "$dir/count" 64]
+        if {[dict get $rows_snapshot present] && [dict get $rows_snapshot regular] &&
+            [dict get $rows_snapshot bytes] <= 524288} {
+            catch {file copy -force $records_path $rows_artifact}
+        }
+        if {[dict get $count_snapshot present] && [dict get $count_snapshot regular] &&
+            [dict get $count_snapshot bytes] <= 64} {
+            catch {file copy -force "$dir/count" $count_artifact}
+        }
+        set count_artifact_snapshot [static_fb_v2_file_snapshot $count_artifact 64]
+        set input_snapshot [static_fb_v2_file_snapshot $input_artifact 64]
+        set residue [static_fb_v2_residue_snapshot probe1 fbfstatstaticnonce]
+        set command_argv {bash -c <bounded-io-wrapper> env PATH=<case-dir> YT_FBSTAT_STATIC_PAYLOAD=<payload> YT_FBSTAT_STATIC_RECORDS=<rows> YT_FBSTAT_STATIC_COUNT=<count> YT_FBSTAT_STATIC_FAIL_AT=<controlled> bash <helper> probe1 fbfstatstaticnonce}
+        return [dict create name $name ran 1 status [expr {$caught ? "failed" : "ok"}] \
+            exit_code [dict get $child_status exit_code] signal [dict get $child_status signal] \
+            errorcode [dict get $child_status errorcode] \
+            child_message [static_fb_v2_bounded_report $child_message] child_io $child_io \
+            input_size [dict get $input_snapshot bytes] input_sha [sha256_file $input_artifact] \
+            input_file $input_snapshot \
+            helper_sha [sha256_file $helper] argv $command_argv row_file $rows_snapshot \
+            count_file $count_snapshot \
+            count_artifact_file $count_artifact_snapshot \
+            row_count [dict get $rows_snapshot count] first_row [dict get $rows_snapshot first_row] \
+            last_row [dict get $rows_snapshot last_row] \
+            cleanup [expr {[dict get $residue count] == 0}] residue $residue \
+            rows [dict get $rows_snapshot rows] input_artifact $input_artifact \
+            child_output $child_output rows_artifact $rows_artifact count_artifact $count_artifact]
+    }
+    if {[string first {ulimit -f 2048; exec "$@"} [info body static_fb_v2_helper_run]] < 0} {
+        fail_preflight "static-check-fbstat-v2-helper-observer-rlimit-source"
+    }
+    proc static_fb_v2_helper_clean {tag nonce} {
+        return [expr {[llength [glob -nocomplain "/dev/shm/yt-fbstat-${tag}-${nonce}-*"]] == 0}]
+    }
+    set static_fb_v2_case_records {}
+    foreach name {empty binary multiline exact_cap overcap} {
+        dict set static_fb_v2_case_records $name [static_fb_v2_case_not_run $name]
+    }
+    foreach {name payload expect_pass} [list \
+            empty {} 1 binary $static_fb_v2_binary_payload 1 \
+            multiline "first\nsecond\nthird\n" 1 \
+            exact_cap [string repeat x $fbstat_transport_payload_cap] 1 \
+            overcap [string repeat x [expr {$fbstat_transport_payload_cap + 1}]] 0] {
+        set run [static_fb_v2_helper_run $name $static_fb_helper_dir $static_fb_helper_path \
+            $static_fb_payload_path $static_fb_records_path $payload 0]
+        dict set static_fb_v2_case_records $name $run
+        if {[dict get $run status] ne "ok"} {
+            fail_preflight "static-check-fbstat-v2-helper-case-failed cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records]"
+        }
+        if {$name eq "binary"} {
+            set input_file [dict get $run input_file]
+            if {[dict get $run input_size] != 4 ||
+                [dict get $run input_sha] ne $static_fb_v2_binary_sha ||
+                ![dict get $input_file present] || ![dict get $input_file regular] ||
+                [dict get $input_file bytes] != 4 ||
+                [dict get $input_file first_hex] ne $static_fb_v2_binary_hex ||
+                [dict get $input_file last_hex] ne $static_fb_v2_binary_hex} {
+                fail_preflight "static-check-fbstat-v2-helper-binary-fixture record=[static_fb_v2_case_compact $run]"
+            }
+        }
+        set rows [dict get $run rows]
+        foreach row $rows {
+            if {[string first "\n" $row] >= 0 || [string bytelength $row] > 510} {
+                fail_preflight "static-check-fbstat-v2-helper-case-record-bound cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records]"
+            }
+        }
+        set wire "[join $rows \n]\n$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+        set decoded [fbstat_transport_decode $wire probe1 fbfstatstaticnonce $static_fb_marker]
+        if {[lindex $decoded 0] != $expect_pass ||
+            ($expect_pass && [binary encode hex [lindex $decoded 2]] ne [binary encode hex $payload]) ||
+            (!$expect_pass && ![string match {transport-truncated*} [lindex $decoded 1]])} {
+            fail_preflight "static-check-fbstat-v2-helper-case-decoded cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records] decoded=[static_fb_v2_bounded_report $decoded 256]"
+        }
+        if {![dict get $run cleanup]} {
+            fail_preflight "static-check-fbstat-v2-helper-case-cleanup cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records]"
+        }
+    }
+    set recorder_failure [static_fb_v2_helper_run recorder_failure $static_fb_helper_dir $static_fb_helper_path \
+        $static_fb_payload_path $static_fb_records_path "failure" 2]
+    if {[dict get $recorder_failure status] eq "ok"} {
+        fail_preflight "static-check-fbstat-v2-recorder-failure-claimed record=[static_fb_v2_case_compact $recorder_failure]"
+    }
+    if {![dict get $recorder_failure cleanup]} {
+        fail_preflight "static-check-fbstat-v2-recorder-failure-cleanup record=[static_fb_v2_case_compact $recorder_failure]"
+    }
+    set static_c1_v2_contiguity [expr {![lindex [fbstat_transport_decode $static_fb_interior_gap $static_fb_tag $static_fb_nonce $static_fb_marker] 0] && [lindex [fbstat_transport_decode $static_fb_outside_gap $static_fb_tag $static_fb_nonce $static_fb_marker] 0]}]
+    set static_c1_v2_wc_route [expr {
+        [string first {retained_count=$(/bin/wc < "$retained"} $static_fb_helper] >= 0 &&
+        [string first {/bin/wc -c} $static_fb_helper] < 0 &&
+        $static_fb_v2_decimal_source_lock && $static_fb_v2_decimal_validator_matrix &&
+        $static_fb_v2_decoder_source_lock
+    }]
+    set static_c1_v2_recorder_route [expr {[string first {recorder=/bin/_consolerecord} $static_fb_helper] >= 0 && [string first "recorder=$static_fb_recorder" $static_fb_stub_helper] >= 0}]
+    set static_c1_v2_cleanup [static_fb_v2_helper_clean probe1 fbfstatstaticnonce]
+    set static_c1_v2_timeout_expected [expr {int(ceil(double([dict get $static_fb_timeout wire_ms] + 35050 + 5000) / 1000.0))}]
+    set static_c1_v2_timeout [expr {[dict get $static_fb_timeout record_count] == 701 && [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 && [dict get $static_fb_timeout lock_ms] == 35050 && [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected}]
+    set static_c1_v2_case_matrix [expr {
+        $static_c1_v2_contiguity && $static_c1_v2_wc_route &&
+        $static_c1_v2_recorder_route && $static_c1_v2_cleanup &&
+        $static_c1_v2_timeout && $static_fb_v2_child_status_fixture_matrix
+    }]
 
     # Exact relevant shape from T1 idle attempt 1: scalar/backend rows were
     # clean, but an asynchronous virtio log split the separation matrix.  The
@@ -9693,18 +10266,29 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     }
     proc static_source_prethreshold_helper_run {
         helper source source_payload nonce probe launch_marker launch_digest
-        argv_marker argv_digest fbstat_marker c8_marker
+        argv_marker argv_digest fbstat_marker c8_marker child_output
     } {
         static_source_prethreshold_write_binary $source $source_payload
-        set command [list /bin/bash $helper $nonce $probe $launch_marker \
-            $launch_digest $argv_marker $argv_digest $fbstat_marker $c8_marker]
-        set caught [catch {exec {*}$command 2>@1} output options]
-        if {$caught} {
-            set errorcode [expr {[dict exists $options -errorcode] ?
-                [dict get $options -errorcode] : "unavailable"}]
-            return [list 0 $output $errorcode]
+        catch {file delete -force $child_output}
+        set command [list /bin/bash -c {ulimit -f 512; exec "$@"} \
+            static-source-prethreshold-io-limit /bin/bash $helper $nonce $probe \
+            $launch_marker $launch_digest $argv_marker $argv_digest $fbstat_marker $c8_marker]
+        set caught [catch {exec {*}$command >$child_output 2>@1} child_message options]
+        set child_status [static_fb_v2_child_status $caught $options]
+        set child_io [static_fb_v2_file_snapshot $child_output 256]
+        set output {}
+        set readable [expr {[dict get $child_io present] && [dict get $child_io regular] &&
+            [dict get $child_io bytes] <= 131072}]
+        if {$readable} {
+            set fh [open $child_output rb]
+            fconfigure $fh -translation binary -encoding binary
+            set output [read $fh]
+            close $fh
         }
-        return [list 1 $output {}]
+        return [dict create run [expr {!$caught && $readable}] output $output \
+            errorcode [dict get $child_status errorcode] child_status $child_status \
+            child_io $child_io child_message [static_fb_v2_bounded_report $child_message] \
+            output_acceptable $readable]
     }
     proc static_source_prethreshold_decimal_validator_run {checker value} {
         set command [list /bin/bash $checker $value]
@@ -9762,11 +10346,12 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         set source_artifact "$artifact_dir/actual-$name.source"
         set frame_artifact "$artifact_dir/actual-$name.frame"
         set wire_artifact "$artifact_dir/actual-$name.wire"
+        set child_output_artifact "$artifact_dir/actual-$name.child-output.txt"
         static_source_prethreshold_write_binary $source_artifact $source_payload
         set run [static_source_prethreshold_helper_run $helper $source $source_payload \
             $nonce $probe $launch_marker $launch_digest $argv_marker $argv_digest \
-            $fbstat_marker $c8_marker]
-        set frame [lindex $run 1]
+            $fbstat_marker $c8_marker $child_output_artifact]
+        set frame [dict get $run output]
         static_source_prethreshold_write_binary $frame_artifact $frame
         set rows_report [static_source_prethreshold_rows_report $frame]
         set parsed [list 0 [dict get $rows_report detail] {}]
@@ -9806,8 +10391,14 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             set derive_state [dict get $derived state]
             set derive_detail [dict get $derived detail]
         }
-        return [dict create name $name run [lindex $run 0] \
-            run_error [lindex $run 2] row_ok [dict get $rows_report ok] \
+        return [dict create name $name run [dict get $run run] \
+            run_error [dict get $run errorcode] \
+            run_exit_code [dict get [dict get $run child_status] exit_code] \
+            run_signal [dict get [dict get $run child_status] signal] \
+            run_child_message [dict get $run child_message] \
+            run_child_io [dict get $run child_io] \
+            run_output_acceptable [dict get $run output_acceptable] \
+            row_ok [dict get $rows_report ok] \
             row_count [dict get $rows_report count] row_detail [dict get $rows_report detail] \
             rows [dict get $rows_report rows] parsed $parsed parser_pass $parser_pass \
             parser_detail $parser_detail meta_status $meta_status \
@@ -9816,13 +10407,18 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             match_kind $match_kind payload_match $payload_match derive_state $derive_state \
             derive_detail $derive_detail cleanup [static_source_prethreshold_helper_clean $temp_prefix] \
             source_artifact $source_artifact frame_artifact $frame_artifact \
-            wire_artifact $wire_artifact]
+            wire_artifact $wire_artifact child_output_artifact $child_output_artifact \
+            input_size [string bytelength $source_payload] input_sha [sha256_file $source_artifact] \
+            helper_sha [sha256_file $helper] \
+            argv {bash -c <bounded-io-wrapper> bash <helper> <nonce> <probe> <launch-marker> <launch-digest> <argv-marker> <argv-digest> <fbstat-marker> <c8-marker>}]
     }
     proc static_source_prethreshold_actual_case_compact {record} {
         set match_label [dict get $record match_kind]
-        return [format {%s(run=%s,err=%s,rowcount=%s/%s,parse=%s/%s,meta=status:%s,cursor:%s,payload:%s,cap:%s,truncated:%s,hex:%s,%s=%s,derive=%s/%s,clean=%s)} \
+        return [format {%s(run=%s,exit=%s,signal=%s,err=%s,msg=%s,io=%s,rowcount=%s/%s,parse=%s/%s,meta=status:%s,cursor:%s,payload:%s,cap:%s,truncated:%s,hex:%s,%s=%s,derive=%s/%s,input=%s/%s,helper=%s,argv=%s,clean=%s)} \
             [dict get $record name] [dict get $record run] \
+            [dict get $record run_exit_code] [dict get $record run_signal] \
             [static_source_prethreshold_report_token [dict get $record run_error]] \
+            [dict get $record run_child_message] [dict get $record run_child_io] \
             [dict get $record row_count] [dict get $record row_detail] \
             [dict get $record parser_pass] \
             [static_source_prethreshold_report_token [dict get $record parser_detail]] \
@@ -9831,6 +10427,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             [dict get $record meta_truncated] [dict get $record meta_hex_bytes] \
             $match_label [dict get $record payload_match] [dict get $record derive_state] \
             [static_source_prethreshold_report_token [dict get $record derive_detail]] \
+            [dict get $record input_size] [dict get $record input_sha] \
+            [dict get $record helper_sha] [dict get $record argv] \
             [dict get $record cleanup]]
     }
     proc static_source_prethreshold_wire {
@@ -9857,16 +10455,39 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     # Execute the generated Bash helper's own fresh-evidence route.  The
     # test-only producer never starts a guest command, but uses the identical
     # purge, regular-file, cap, digest, and semantic-role decisions.
+    proc static_render_generated_helper_role_output_parse {output} {
+        if {[string first "\r" $output] >= 0} {
+            return [list 0 role-output-cr]
+        }
+        set final_lf 0
+        set body $output
+        if {[string first "\n" $output] >= 0} {
+            if {[string index $output end] ne "\n" ||
+                [string first "\n" [string range $output 0 end-1]] >= 0} {
+                return [list 0 role-output-lf-shape]
+            }
+            set final_lf 1
+            set body [string range $output 0 end-1]
+        }
+        if {![regexp {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed) total=([0-9]+) bytes=([0-9]+) truncated=([01]) digest=([0-9a-f]{64})$} \
+                $body -> state total bytes truncated digest]} {
+            return [list 0 role-output-shape]
+        }
+        return [list 1 $state $total $bytes $truncated $digest $final_lf]
+    }
     proc static_render_generated_helper_role_capture {
         helper nonce mode evidence stdout tag {stale ""}
     } {
         global outdir
         set evidence_path "$outdir/static-render-role-evidence-$tag-[pid]"
+        set output_path "$outdir/static-render-role-output-$tag-[pid]"
         if {$stale ne ""} { wf $evidence_path $stale }
         set launch_digest [string repeat a 64]
         set argv_digest [string repeat b 64]
         set output {}
-        set command [list /usr/bin/env YT_RENDER_START_ROLE_TEST_ONLY=1 \
+        catch {file delete -force $output_path}
+        set command [list /bin/bash -c {ulimit -f 128; exec "$@"} \
+            static-render-role-io-limit /usr/bin/env YT_RENDER_START_ROLE_TEST_ONLY=1 \
             "YT_RENDER_START_ROLE_TEST_MODE=$mode" \
             "YT_RENDER_START_ROLE_TEST_EVIDENCE=$evidence" \
             "YT_RENDER_START_ROLE_TEST_STDOUT=$stdout" \
@@ -9874,19 +10495,75 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             /bin/bash $helper \
             $nonce 1 YTSTATICLAUNCHC1 $launch_digest YTSTATICARGVC2 $argv_digest \
             YTSTATICFBSTATC5]
-        set succeeded [expr {![catch {exec {*}$command} output]}]
+        set caught [catch {exec {*}$command >$output_path 2>@1} child_message options]
+        set child_status [static_fb_v2_child_status $caught $options]
+        set child_io [static_fb_v2_file_snapshot $output_path 256]
+        set readable [expr {[dict get $child_io present] && [dict get $child_io regular] &&
+            [dict get $child_io bytes] <= 32768}]
+        if {$readable} {
+            set fh [open $output_path rb]
+            fconfigure $fh -translation binary -encoding binary
+            set output [read $fh]
+            close $fh
+        }
+        set succeeded [expr {!$caught && $readable}]
         set residual [file exists $evidence_path]
         if {!$residual && ![catch {file type $evidence_path}]} { set residual 1 }
         catch {file attributes $evidence_path -permissions 0644}
         catch {file delete -force $evidence_path}
         if {!$succeeded} {
-            return [list 0 $output $residual]
+            return [list 0 [static_fb_v2_bounded_report $child_message] $residual \
+                $child_status $child_io $output_path]
         }
-        if {![regexp {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed) total=([0-9]+) bytes=([0-9]+) truncated=([01]) digest=([0-9a-f]{64})$} \
-                $output -> state total bytes truncated digest]} {
-            error "static generated helper role-capture output invalid tag=$tag output=$output"
+        set parsed_output [static_render_generated_helper_role_output_parse $output]
+        if {![lindex $parsed_output 0]} {
+            error "static generated helper role-capture output invalid tag=$tag detail=[lindex $parsed_output 1] io=$child_io message=[static_fb_v2_bounded_report $child_message]"
         }
-        return [list 1 $state $total $bytes $truncated $digest $residual]
+        lassign [lrange $parsed_output 1 5] state total bytes truncated digest
+        return [list 1 $state $total $bytes $truncated $digest $residual \
+            $child_status $child_io $output_path]
+    }
+    proc static_render_generated_helper_role_compact {name record} {
+        set succeeded [lindex $record 0]
+        if {$succeeded} {
+            set child_status [lindex $record 7]
+            set child_io [lindex $record 8]
+            set output_path [lindex $record 9]
+            set message none
+        } else {
+            set child_status [lindex $record 3]
+            set child_io [lindex $record 4]
+            set output_path [lindex $record 5]
+            set message [lindex $record 1]
+        }
+        set errorcode [dict get $child_status errorcode]
+        set errorcode [expr {$errorcode eq {} ? "none" : [join $errorcode ,]}]
+        return [format {%s(success=%s,exit=%s,signal=%s,errorcode=%s,msg=%s,io=%s,artifact=%s)} \
+            $name $succeeded [dict get $child_status exit_code] \
+            [dict get $child_status signal] $errorcode $message $child_io \
+            [file tail $output_path]]
+    }
+    set static_render_role_compact_fixture_record [list \
+        1 none_or_exited 0 0 0 [string repeat 0 64] 0 \
+        [dict create caught 0 errorcode {} exit_code 0 signal none] \
+        [dict create present 1 regular 1 bytes 42 first_hex aa last_hex bb truncated 0] \
+        /tmp/compact-fixture-artifact]
+    set static_render_role_compact_fixture \
+        [static_render_generated_helper_role_compact compact-fixture \
+            $static_render_role_compact_fixture_record]
+    set static_render_role_compact_expected \
+        {compact-fixture(success=1,exit=0,signal=none,errorcode=none,msg=none,io=present 1 regular 1 bytes 42 first_hex aa last_hex bb truncated 0,artifact=compact-fixture-artifact)}
+    set static_render_role_compact_source_lock [expr {
+        [string first {return [format {%s(success=%s,exit=%s,signal=%s,errorcode=%s,msg=%s,io=%s,artifact=%s)}} \
+            [info body static_render_generated_helper_role_compact]] >= 0 &&
+        [string first {$name(} [info body static_render_generated_helper_role_compact]] < 0
+    }]
+    set static_render_role_compact_contract [expr {
+        $static_render_role_compact_source_lock &&
+        $static_render_role_compact_fixture eq $static_render_role_compact_expected
+    }]
+    if {!$static_render_role_compact_contract} {
+        fail_preflight "static-check-render-role-compact-contract observed=$static_render_role_compact_fixture expected=$static_render_role_compact_expected source_lock=$static_render_role_compact_source_lock"
     }
     proc static_render_receipt_outcome {parsed} {
         if {![lindex $parsed 0]} { return INVALID }
@@ -9937,6 +10614,59 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [render_start_receipt_classify [lindex $static_render_valid 2] {3 4} {20 21}] : {INVALID parse}}]
     set static_render_baseline_role {kde_app_launch_probe chromium_fast_census_only=1 samples=6 duration_ms=500 interval_ms=100 status=PASS
 }
+    set static_render_role_output_evidence_bytes [string length $static_render_baseline_role]
+    set static_render_role_output_evidence_digest \
+        [render_start_receipt_digest $static_render_baseline_role]
+    set static_render_role_output_line \
+        "YT_RENDER_START_ROLE_TEST_STATE none_or_exited total=$static_render_role_output_evidence_bytes bytes=$static_render_role_output_evidence_bytes truncated=0 digest=$static_render_role_output_evidence_digest"
+    set static_render_role_output_canonical "$static_render_role_output_line\n"
+    set static_render_role_output_legacy $static_render_role_output_line
+    set static_render_role_output_crlf "$static_render_role_output_line\r\n"
+    set static_render_role_output_bare_cr "$static_render_role_output_line\r"
+    set static_render_role_output_double_lf "$static_render_role_output_line\n\n"
+    set static_render_role_output_embedded_lf \
+        "$static_render_role_output_line\nembedded-observer-line\n"
+    set static_render_role_output_canonical_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_canonical]
+    set static_render_role_output_legacy_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_legacy]
+    set static_render_role_output_crlf_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_crlf]
+    set static_render_role_output_bare_cr_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_bare_cr]
+    set static_render_role_output_double_lf_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_double_lf]
+    set static_render_role_output_embedded_lf_parsed \
+        [static_render_generated_helper_role_output_parse $static_render_role_output_embedded_lf]
+    set static_render_role_output_source_lock [expr {
+        [string first {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed)} \
+            [info body static_render_generated_helper_role_output_parse]] >= 0 &&
+        [string first {string trim} [info body static_render_generated_helper_role_output_parse]] < 0
+    }]
+    set static_render_role_output_contract [expr {
+        $static_render_role_output_source_lock &&
+        [lindex $static_render_role_output_canonical_parsed 0] &&
+        [lindex $static_render_role_output_canonical_parsed 1] eq "none_or_exited" &&
+        [lindex $static_render_role_output_canonical_parsed 2] == $static_render_role_output_evidence_bytes &&
+        [lindex $static_render_role_output_canonical_parsed 3] == $static_render_role_output_evidence_bytes &&
+        [lindex $static_render_role_output_canonical_parsed 4] == 0 &&
+        [lindex $static_render_role_output_canonical_parsed 5] eq $static_render_role_output_evidence_digest &&
+        [lindex $static_render_role_output_canonical_parsed 6] == 1 &&
+        [lindex $static_render_role_output_legacy_parsed 0] &&
+        [lindex $static_render_role_output_legacy_parsed 1] eq "none_or_exited" &&
+        [lindex $static_render_role_output_legacy_parsed 2] == $static_render_role_output_evidence_bytes &&
+        [lindex $static_render_role_output_legacy_parsed 3] == $static_render_role_output_evidence_bytes &&
+        [lindex $static_render_role_output_legacy_parsed 4] == 0 &&
+        [lindex $static_render_role_output_legacy_parsed 5] eq $static_render_role_output_evidence_digest &&
+        [lindex $static_render_role_output_legacy_parsed 6] == 0 &&
+        ![lindex $static_render_role_output_crlf_parsed 0] &&
+        ![lindex $static_render_role_output_bare_cr_parsed 0] &&
+        ![lindex $static_render_role_output_double_lf_parsed 0] &&
+        ![lindex $static_render_role_output_embedded_lf_parsed 0]
+    }]
+    if {!$static_render_role_output_contract} {
+        fail_preflight "static-check-render-role-output-contract canonical=$static_render_role_output_canonical_parsed legacy=$static_render_role_output_legacy_parsed crlf=$static_render_role_output_crlf_parsed bare_cr=$static_render_role_output_bare_cr_parsed double_lf=$static_render_role_output_double_lf_parsed embedded_lf=$static_render_role_output_embedded_lf_parsed"
+    }
     set static_render_broad_role {unrelated broad text comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process"
 }
     set static_render_spoof_role {spoof kde_chromium_process_evidence fast phase=fast-001 pid=412 comm="chrome" role="gpu-process" cmd="/proc/self/exe --type=gpu-process"
@@ -10004,6 +10734,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [lindex $static_render_helper_malformed 1] \
         [lindex $static_render_helper_command_failed 1]]
     set static_render_helper_file_matrix [expr {
+        $static_render_role_output_contract && $static_render_role_compact_contract &&
         [lindex $static_render_helper_baseline 0] &&
         [lindex $static_render_helper_live 0] &&
         [lindex $static_render_helper_broad 0] &&
@@ -10022,6 +10753,19 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [lindex $static_render_helper_over_cap 5] eq
             [render_start_receipt_digest [string range $static_render_over_role 0 4095]]
     }]
+    set static_render_helper_role_records [join [list \
+        [static_render_generated_helper_role_compact baseline $static_render_helper_baseline] \
+        [static_render_generated_helper_role_compact semantic $static_render_helper_live] \
+        [static_render_generated_helper_role_compact broad $static_render_helper_broad] \
+        [static_render_generated_helper_role_compact spoof $static_render_helper_spoof] \
+        [static_render_generated_helper_role_compact malformed $static_render_helper_malformed] \
+        [static_render_generated_helper_role_compact command_failed $static_render_helper_command_failed] \
+        [static_render_generated_helper_role_compact stdout_only $static_render_helper_stdout_only] \
+        [static_render_generated_helper_role_compact stale $static_render_helper_stale] \
+        [static_render_generated_helper_role_compact missing $static_render_helper_missing] \
+        [static_render_generated_helper_role_compact nonregular $static_render_helper_nonregular] \
+        [static_render_generated_helper_role_compact unreadable $static_render_helper_unreadable] \
+        [static_render_generated_helper_role_compact overcap $static_render_helper_over_cap]] { | }]
     set static_render_spoof_frame [static_render_start_receipt_fixture \
         $static_render_nonce 1 $static_render_launch_marker \
         $static_render_launch_digest $static_render_argv_marker \
@@ -10511,15 +11255,20 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     }]
     set static_c5_helper [fbstat_transport_guest_helper_script]
     set static_c5_helper_unchanged [expr {
-        [render_start_receipt_digest $static_c5_helper] eq
-        "a0c6d5a831789dd49221b3cf20f6b72ffe53b18c8e8a7becd831b3a6a15e9ef8"
+        [string first {YT_FBSTAT_TRANSPORT_V2_BEGIN} $static_c5_helper] >= 0 &&
+        [string first {YT_FBSTAT_TRANSPORT_V2_META} $static_c5_helper] >= 0 &&
+        [string first {YT_FBSTAT_TRANSPORT_V2_CHUNK} $static_c5_helper] >= 0 &&
+        [string first {YT_FBSTAT_TRANSPORT_V2_END} $static_c5_helper] >= 0 &&
+        [string first {chunk_hex_max=376} $static_c5_helper] >= 0 &&
+        [string first {recorder=/bin/_consolerecord} $static_c5_helper] >= 0 &&
+        [string first {"$recorder" "$1"} $static_c5_helper] >= 0 &&
+        [string first {YT_FBSTAT_TRANSPORT_HEX} $static_c5_helper] < 0
     }]
     set static_c5_validator_unchanged [expr {
         $static_c5_helper_unchanged &&
-        [string first {case "$1" in 0|[1-9][0-9]*) return 0 ;; esac} \
-            $static_c5_helper] >= 0 &&
-        [string first {YT_SOURCE_PRETHRESHOLD_DECIMAL_TEST_ONLY} \
-            $static_c5_helper] < 0
+        [string first {fbstat_transport_v2_timeout_contract} [info body fb_sample]] >= 0 &&
+        [string first {normal_writer_physical_bytes} \
+            [info body fbstat_transport_v2_timeout_contract]] >= 0
     }]
     set static_c7_source_contract [expr {
         [string first {cap=131072} $static_c7_helper] >= 0 &&
@@ -10959,7 +11708,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         !$static_render_diagnostic_no_credit || !$static_c7_complete || !$static_c7_wire_matrix ||
         !$static_c7_rejects || !$static_c7_semantic_invariant ||
         !$static_c7_source_contract || !$static_c7_helper_unchanged ||
-        !$static_c5_validator_unchanged || !$static_c7_no_credit ||
+        !$static_c5_validator_unchanged || !$static_c1_v2_case_matrix || !$static_c7_no_credit ||
         !$static_c8_cases || !$static_c8_adversaries || !$static_c8_source_contract ||
         !$static_c8_actual_wire_matrix || !$static_c8_actual_helper_matrix ||
         !$static_c8_decimal_validator_matrix || !$static_c8_decimal_source_lock ||
@@ -10972,8 +11721,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
+    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_absolute=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
     puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_force_ready_ambiguous_no_player_observation_pending_stalled_progress=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
@@ -11213,6 +11963,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         "$static_v3_complete_payload\n[lindex $static_v3_rows 0]" \
         $static_nonce $media_probe_extension_id 1]
 
+    static_capture_diag_global_nonce_fixture_assert v3-terminal phase collect \
+        YTCAPTUREV3STATICC7
     set static_v3_terminal [capture_completeness_diag_v3_terminalize collect \
         [list 0 "" static-v3-complete YTCAPTUREV3STATICC7] \
         [lindex $static_v3_start_receipt 2] [lindex $static_v3_ready_receipt 2] \
@@ -11259,6 +12011,11 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_v3_raw_drift [capture_completeness_diag_v3_raw_payload \
         "$static_v3_terminal_raw-payload-drift" $media_probe_nonce \
         YTCAPTUREV3STATICC7]
+    set static_capture_diag_global_nonce_fixture_count \
+        [llength $static_capture_diag_global_nonce_fixture_reports]
+    if {$static_capture_diag_global_nonce_fixture_count != 18} {
+        fail_preflight "static-check-capture-completeness-global-nonce-fixtures count=$static_capture_diag_global_nonce_fixture_count reports=$static_capture_diag_global_nonce_fixture_reports"
+    }
 
     set static_v3_165_reject [capture_completeness_diag_v3_admission \
         140000 170000 165000 30000 35000 5000]
@@ -11366,9 +12123,21 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         fail_preflight "static-check-capture-completeness-v3 source=$static_v3_source_order early=$static_v3_early_as_ready_reject ready_before_selector=$static_v3_ready_before_selector_reject missing_hd720=$static_v3_missing_hd720_reject receipts=$static_v3_receipt_statuses start=$static_v3_start_receipt ready=$static_v3_ready_receipt collect=$static_v3_collect_raw0_receipt phase_start=$static_v3_phase_substitution_start phase_ready=$static_v3_phase_substitution_ready ready_digest=$static_v3_ready_digest_substitution raw0_pre=$static_v3_raw0_pre raw0_post=$static_v3_raw0_post complete=$static_v3_complete pre_ready=$static_v3_pre_ready pre_empty=$static_v3_ready_empty freeze_continued=$static_v3_freeze_continued freeze_stopped=$static_v3_freeze_stopped reordered=$static_v3_reordered duplicate=$static_v3_duplicate terminal=$static_v3_terminal reparse=$static_v3_terminal_reparse raw=$static_v3_terminal_raw_reparse 165=$static_v3_165_reject edges=$static_v3_210_edges inner_tail_valid=$static_v3_inner_tail_valid inner_tail_expired=$static_v3_inner_tail_expired inner_tail_one_reserve=$static_v3_inner_tail_one_reserve inner_tail_zero_slack=$static_v3_inner_tail_zero_slack inner_tail_invalid=$static_v3_inner_tail_invalid_pass diag0=$static_v3_diag0_dispatch contract=$static_v3_diag0_contract js=$static_v3_js_guest_runtime"
     }
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
+    puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
+}
+
+if {![file isfile $kernel] || ![file readable $kernel]} {
+    fail_preflight "kernel-missing path=$kernel"
+}
+if {![file isfile $fsimg] || ![file readable $fsimg]} {
+    fail_preflight "fsimg-missing path=$fsimg"
+}
+foreach tool {convert compare nc} {
+    if {[auto_execok $tool] eq ""} {
+        fail_preflight "host-tool-missing tool=$tool"
+    }
 }
 
 af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag"
