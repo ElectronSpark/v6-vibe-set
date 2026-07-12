@@ -26,12 +26,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At forensic checkpoint `23b08a40ca8b11fd2b1a0099a14f196c0aa6d6f3`, the
-consumed C1 observer static suite's later render-role baseline rejection is
-localized to a static-observer final-LF mismatch, not C1 or generated-helper
-behavior. The pending narrow observer-only LF-contract correction is ready
-for independent no-boot review; no retry, VM, performance, audio, fullscreen,
-default, or credit authority exists.
+At review checkpoint `33176d5ce89fb3a9b4b68c79b02d04d731f3b3fa`, the
+static role-LF correction's independent review fails closed: its parser
+logically rejects embedded LF, but the aggregate-gated fixture matrix omits
+that required explicit input. Add that one static-only adversary and review
+again; no retry, VM, performance, audio, fullscreen, default, or credit
+authority exists.
 
 ## Binding host and VM discipline
 
@@ -3589,3 +3589,34 @@ conflicting `0/0/0`; the driver remains unstaged. This readiness requires an
 independent no-boot review before any new static suite and grants no V2/A1,
 HD720, audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance
 credit.
+
+**Static render-role final-LF observer independent re-review — FAIL / NO-RUN
+(2026-07-12):** at source checkpoint
+`33176d5ce89fb3a9b4b68c79b02d04d731f3b3fa`, exact `/proc/*/exe` inventory
+was total/informational-RISC-V/conflicting `0/0/0`. The new static-only parser
+is otherwise correctly fail-closed: it first rejects any CR, accepts exactly
+one terminal LF or the explicit legacy no-LF direct-`exec` form without a
+trim/normalization path, and its body regex is anchored through state,
+decimal total/bytes, truncation bit, and 64-lower-hex digest. The canonical
+and legacy fixtures bind total and bytes to the baseline evidence length and
+the digest to that evidence only; CRLF, bare CR, and double LF reject. That
+contract is included in the render-helper matrix, which is in turn required
+by the terminal static gate.
+
+However, guarded source audit finds no explicit embedded-LF fixture or matrix
+predicate. The parser's `last-byte`/pre-final-LF branches would reject an
+embedded line by construction, but a code-path inference does not satisfy the
+named adversary contract, and the documented READY claim was stronger than
+the actual fixture set. The smallest correction is static-observer-only: add
+an output containing a nonempty embedded line before the final LF (so it
+exercises the pre-final-LF rejection branch), require its parse result false
+in the existing aggregate and failure report, then obtain a fresh independent
+no-boot review. Do not trim or weaken the grammar.
+
+The generated role helper/classifier remains unchanged and still emits its
+single final LF only in the `YT_STATIC_CHECK=1` test route. The prior C1 V2
+generated helper/parser, 376-chunk and timeout algebra, and no-credit/
+production paths are unchanged by this observer-only hunk. No test, build,
+rootfs, VM, boot, serial, KDE/default, or QEMU action occurred. This FAIL
+authorizes no canonical MP=1/media=1 host-only suite and grants no V2/A1,
+HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
