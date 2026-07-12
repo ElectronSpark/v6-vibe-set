@@ -2385,3 +2385,45 @@ launcher, default, fullscreen, audio-path, kernel, or KDE change occurred;
 unrelated KDE-smoke dirt remains untouched. The next authority must localize
 this fresh idle C1 transport noncontiguity no-boot before forming another A1
 gate.
+
+**C1 idle transport wire forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** the named regular raw artifact is 114441 bytes (SHA-256
+`972875a3afcba6da3509b3ad8080e124cbdd26cd034945cbfecddaadd428a42e`).
+Splitting only on LF gives C1 candidate records BEGIN/META/HEX at raw records
+7/8/9 and END at 14; its one RC:0 and one FENCE follow at 16/17. All four
+transport labels and the nonce occur once, there is no NUL, and candidate
+terminators are the accepted CRCRLF form. The terminal bracketed-paste prefix,
+command echo, and DRM log precede BEGIN; the capture ends after FENCE, so none
+is the failure. The outer command frame necessarily passed (otherwise the
+detail would be `transport-command-frame-*`), but the candidate indexes prove
+the host's `transport-frame-noncontiguous` rejection is correct.
+
+Records 10--12 are not harmless lines between intact records: each begins or
+continues the lower-hex stream while carrying a byte-weaved
+`virtio_gpu: page-flip present` printk; record 13 resumes hex before END.
+The helper's inner `status=OK`, `56422/56422`, cap 131072, digest, and 112844
+hex count are therefore untrusted forensic metadata, never a verified fbstat
+payload. This is genuine guest-console wire corruption, not host artifact
+truncation/wrapping, a second frame/nonce, binary data, CRCRLF normalization,
+or a parser/test defect. The producer emits the whole HEX payload in one
+`printf`; x86 `consolewrite` advances user output in 64-byte batches while
+asynchronous kernel console output drains in 32-byte steps, with UART locking
+only per character. The normal first-eight-flips `printf` in
+`virtio_gpu_scanout.c` supplies the observed collision. Do not relax C1 raw
+adjacency, ignore noncandidate bytes, or splice hex fragments: that would turn
+an unauthenticated corrupt wire into performance evidence.
+
+The small direct mitigation is to make that normal page-flip log opt-in, but
+it is insufficient because any later kernel console row can still split a
+large C1 write. A robust C1 repair needs a bounded console record-atomic
+primitive shared with kernel console emission, plus a sequence/count/digest
+bound chunk protocol; only then may the host tolerate noncandidate records
+*between* complete sealed chunks. A separate QEMU channel is out of scope.
+Before source work, add a retained parser diagnostic with candidate raw indexes
+and bounded gap fingerprints, and source-static adversaries for this exact
+mid-HEX byte weave, clean LF/CRLF/CRCRLF, pre-BEGIN echo/preamble, duplicate/
+reordered/missing chunks, and any corrupt chunk; every corrupt form remains
+INVALID/no-credit. No source, test, VM, build, rootfs, launcher/default/kernel/
+KDE change occurred here. This trial remains pre-Chromium INVALID/N=0; its
+owned QEMU was synchronously reaped and this forensic's exact inventories were
+total/informational-RISC-V/conflicting `0/0/0`.
