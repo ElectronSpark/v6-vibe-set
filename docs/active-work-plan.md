@@ -26,13 +26,13 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At source checkpoint `f91be1874f180958f75abc098ede2dc76eafad73`, the one
-canonical C1 observer static suite is consumed: empty passed, but binary
-stopped pre-recorder at raw `CHILDSTATUS ... 68`. The next item is this
-no-boot source/artifact forensic only; no static retry, VM, performance,
-audio, fullscreen, default, or credit authority exists. Preserve the named
-artifacts and report the production-helper and observer fixes separately
-before any new review or suite authorization.
+At forensic checkpoint `98a4a56549bde12ac4624ca647eadbc7f2bb3ed1`, the one
+canonical C1 observer static suite remains consumed: empty passed, but binary
+stopped pre-recorder at raw `CHILDSTATUS ... 68`. The pending, unstaged C1
+only correction is now ready for independent no-boot review; it has no static
+retry, VM, performance, audio, fullscreen, default, or credit authority.
+Preserve the named artifacts and review the production-helper, observer, and
+host binary-decoder corrections separately before any suite authorization.
 
 ## Binding host and VM discipline
 
@@ -3373,3 +3373,35 @@ using another canonical suite. No source edit, test, build, rootfs, VM, serial,
 KDE, or QEMU action occurred; exact inventories were total/informational-
 RISC-V/conflicting `1/1/0`, and the RISC-V process was untouched. This grants
 no retry or performance credit.
+
+**C1 V2 wc/observer/binary-decoder correction — READY / NO-RUN
+(2026-07-12):** at forensic checkpoint
+`98a4a56549bde12ac4624ca647eadbc7f2bb3ed1`, the pending unstaged change is
+limited to `scripts/gpu/chromium-youtube-presentfps.expect`; no test, build,
+rootfs, VM, boot, serial, kernel/user/default/KDE, or QEMU action occurred.
+Exact pre-edit `/proc/*/exe` inventory was total/informational-RISC-V/
+conflicting `0/0/0`.
+
+The generated C1 V2 helper now obtains its sole decimal predicate from a
+Tcl-braced shared Bash literal, `[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]`; there is no
+production test hook. Both no-option `/bin/wc < file` triples validate all
+three canonical decimal fields before their byte-count semantics, repairing
+the binary fixture's one-digit `4` rejection without widening C7 or C8.
+The C1 static observer now recognizes Tcl `CHILDSTATUS <pid> <status>` while
+retaining `CHILDKILLED`/other reporting, and gets input size from the written
+input artifact snapshot. Its binary fixture is source-locked as exact
+`00ff0a7f`, file size 4, and SHA-256
+`26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d`.
+
+The C1 V2 host decoder's post-`binary decode hex` check had a second latent
+Unicode-sensitive `string bytelength` use. It now re-encodes to lower hex and
+requires exact hex text/length equality; its existing `wb`, binary-translation,
+binary-encoding temporary-file SHA-256 route is explicitly source-locked.
+C1-only static source locks and future fixture assertions cover the shared
+decimal literal/matrix, all-three-field wc guards, exact binary artifact, and
+binary host decode. Protocol rows, timeout/chunk algebra, C5/C7/C8 behavior,
+and all runtime/credit paths are untouched. `git diff --check` is clean. This
+is readiness only: the driver remains unstaged and requires independent
+adversarial no-boot review before any fresh static suite; no V2/A1/HD720,
+audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit is
+claimed.
