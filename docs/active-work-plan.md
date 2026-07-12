@@ -1122,6 +1122,48 @@ audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit exists.
 An independent no-boot adversarial review remains mandatory before any fresh VM
 gate.
 
+**A1 fbstat provenance-frame transport — INDEPENDENT REVIEW PASS / NO-BOOT
+(2026-07-12):** immutable `6b0ba0c72dec20f0e40e28361046bcbe3cc2bbb9` equals
+the explicit origin branch. Its production diff is confined to the generated
+fbstat transport, its existing canonical static coverage, and the plan; it
+does not modify QEMU, launcher, rootfs, kernel producer, role, threshold,
+diagnostic, or no-credit policy. Direct audit of the exact braced
+`fbstat_transport_guest_helper_script` body finds ordinary Bash quotes and
+newlines—no literal escaped-quote construction. It uses only the current
+guest shell plus `fbstat`, `/bin/wc`, `/bin/dd`, `/bin/xxd -p`,
+`/bin/openssl dgst -sha256 -r`, and `rm`; it removes and then requires fresh
+readable regular non-symlink `/dev/shm` capture/payload files. A nonzero inner
+`fbstat` status is serialized as non-OK and rejected by the host; a clean C5
+must bind the exact tag, run nonce, four contiguous rows, 131072-byte cap,
+truthful count/truncation, lower-hex length/round-trip, and digest before the
+unchanged parser receives decoded bytes. Missing, duplicate, interleaved,
+wrong-tag/nonce, malformed/status/count/cap/length/digest/hex, nonregular, or
+truncated frames remain invalid. The canonical static route source-locks that
+exact generator but does not emit a host `/fbs.sh`, so no replacement extractor
+or noncanonical `bash -n` harness was used.
+
+The 131072-byte decoded limit yields at most 262144 lower-hex characters plus
+the short four-row/C5 envelope, safely below `match_max 2000000`; it does not
+relax the transport if ambient serial traffic makes a complete frame
+unavailable. The old parser and its clean 58,986-byte current-schema case are
+unchanged; `fb_sample` now calls it only after transport verification. One
+fresh existing canonical replay,
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=1 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0
+YT_OUTDIR=/tmp/xv6-fbstat-transport-independent-static.2308987
+/usr/bin/expect scripts/gpu/chromium-youtube-presentfps.expect`, exited 0
+(log `/tmp/xv6-fbstat-transport-independent-static.2308987.log`). Its
+source-locked matrix covers the 58,986-byte clean frame and rejects console
+interleave, duplicate, tag/nonce/status/count/cap/length/digest/hex/nonregular
+and truthful-truncation adversaries; the same replay retains role evidence,
+digest/tail drift rejection, 103/4 and 104/4 rejects versus 104/5 retention,
+diag0/V3 isolation, and `js_guest_runtime=UNEXECUTED`. Exact `/proc/*/exe`
+inventories before and after were total/conflicting/informational-RISC-V
+`0/0/0`; no process was touched. This PASS permits only formation of a fresh
+serialized A1 gate, never a VM authorization or any HD720, fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1232,9 +1274,9 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    fail-closed repair and independent no-boot review now pass; they permit
    forming, never reusing, a fresh serialized A1 gate. Its sole trial is
    consumed INVALID because the complete probe1 fbstat frame had a
-   console-interleaved KMS provenance token; repair and independently review
-   that fail-closed transport before another gate. Clear >=52 before pursuing
-   about 55-60.
+   console-interleaved KMS provenance token. The fail-closed transport repair
+   and independent review now pass; they permit forming, never reusing, a
+   fresh serialized A1 gate. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
