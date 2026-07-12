@@ -26,11 +26,14 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At static checkpoint `908b05b2809d2e8ba18eb58c908655ac368f7a45`, the one
-fresh canonical C1 observer host-only suite has passed. The pending complete
-driver/plan checkpoint is ready to commit; next is independent no-boot review
-before any new gate. This PASS grants no VM, performance, audio, fullscreen,
-default, or credit authority.
+Committed C1 V2 static checkpoint `433f217a7cca4eccb9a1f3df19c726b7e8ec86fe`
+has now passed independent no-boot review. It authorizes exactly one
+deterministic rootfs refresh/build **staging proof** using the pinned kernel
+and user gitlinks, including a fresh executable `/bin/_consolerecord`; it does
+not authorize a QEMU launch, boot, serial command, YouTube/performance trial,
+audio/fullscreen/default work, or credit. The staging worker must synchronously
+finish and leave the exact QEMU inventory clear before a separately reviewed
+next gate.
 
 ## Binding host and VM discipline
 
@@ -3794,3 +3797,46 @@ FPS, drop, VPQ, retire, or default claim exists. Exact pre/post inventories
 were total/informational-RISC-V/conflicting `0/0/0`. The full intended
 presentfps driver and this plan checkpoint may now be committed, followed by
 independent no-boot review before any fresh gate.
+
+**C1 V2 committed driver adversarial review — PASS FOR ROOTFS/BUILD STAGING
+ONLY / NO-BOOT (2026-07-12):** committed driver/plan checkpoint
+`433f217a7cca4eccb9a1f3df19c726b7e8ec86fe` was independently reviewed
+against parent `908b05b2809d2e8ba18eb58c908655ac368f7a45`. The sole production
+driver change is the C1 V2 transport: its generated helper defaults to the
+absolute recorder `/bin/_consolerecord`, validates every field of both
+no-option `wc` triples with the anchored decimal grammar, and emits only
+BEGIN/META/CHUNK/END records. The parser preserves raw-record order, rejects
+foreign/spoofed candidates and inner byte-weave/gaps, verifies exact
+binary-safe lower-hex re-encoding and binary digest, and requires the unique
+outer `RC:0` then `FENCE`. The bounded contract is cap/hex/chunk/record
+`131072/262144/376/698/701`; its inner recorder bound is `357781` bytes and
+its marker-dependent 72-second fail-closed timeout algebra is retained.
+
+Canonical host-only evidence is
+`/tmp/yt-c1-v2-observer-static-20260712T234322Z-2924043` with external log
+`/tmp/yt-c1-v2-observer-static-20260712T234322Z-2924043.log`: it exited zero
+with the C1 V2, render-receipt, capture-diagnostic, and terminal static PASS
+markers. The retained actual helper cases cover empty, binary, multiline,
+exact-cap, over-cap, and recorder failure; the latter produces no success
+claim. The static adversary matrix covers LF/CRLF/CRCRLF, permitted exterior
+noise, rejected interior gaps and the historical mid-HEX weave, candidate
+spoof/order/binding corruption, outer-frame failure, and binary bytes. C7/C8,
+capture diagnostics, C6 credit classification, performance/default behavior,
+and runtime paths are unchanged apart from static observers and static
+preflight ordering; `js_guest_runtime=UNEXECUTED` confirms no guest credit.
+
+Nested gitlinks remain kernel
+`b42d1c37f90b2ac48aa416a9eb215a935920f649` (`origin/v6-kernel`) and user
+`a95f8c8a6d0dcb9189b6ec6d51a0f376fc721cc1` (`origin/v6-port`), with their
+reviewed console-record ABI and automatic user-program discovery intact.
+Their and the superproject origins are the approved ElectronSpark remotes; no
+nested worktree dirt was found. The only superproject dirt is the preserved
+unrelated KDE-smoke file. Exact review QEMU inventory was zero and no process
+was touched.
+
+**Next authority:** one deterministic rootfs refresh/build staging proof only.
+It must use those exact gitlinks, prove the fresh staging contains executable
+`/bin/_consolerecord` and the updated kernel input, retain its build receipt,
+and synchronously finish with an exact no-QEMU inventory. It may not boot,
+launch QEMU, issue serial commands, measure YouTube, or alter defaults. A new
+independent review is mandatory before any VM or performance gate.
