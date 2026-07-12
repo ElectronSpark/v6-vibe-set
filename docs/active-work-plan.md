@@ -2240,3 +2240,49 @@ grants no C8/C7/C5/A1, HD720, audio, fullscreen, FPS, or performance credit;
 the next authority must first forensically isolate the binary roundtrip and
 C7 emitted-hash expectations before any narrow repair and one new canonical
 static suite.
+
+**C8 binary roundtrip/C7 emitted-guard forensic — ROOT CAUSE LOCALIZED /
+NO-BOOT (2026-07-12):** named binary artifacts prove a valid production-helper
+transport, not malformed fixture data: `actual-binary.source` is exactly 14
+bytes `6d756c74696c696e650a00ff410a` (`multiline LF NUL FF A LF`), its
+SHA-256 `30553a5bfa023e59853ee00f3caf7af2070486170a371e3f7d5b5c1aae514d31`
+equals helper META digest, and the persisted frame declares cursor/payload
+`14/14`, cap 16384, truncation 0, hex length 28, and the identical lower-hex
+payload. Thus decode cannot fail and encode round-trips that bytearray; the
+sole failing C8 parser conjunct is `string bytelength $payload`: Tcl exposes
+decoded `FF` through its Unicode/UTF-8 string representation, so that metric
+is 15 rather than the protocol's 14 raw bytes. This is a host C8 parser
+byte-accounting bug exposed by a valid binary fixture, not a Bash helper,
+serial-wire, or derive failure.
+
+The narrow repair leaves the helper and frame grammar unchanged. After hex
+decode, obtain `decoded_hex = [binary encode hex $payload]` and require its
+ASCII length to equal META `hex_bytes` and its text to equal `payload_hex`;
+the earlier exact `hex_bytes == 2 * payload_bytes` check then proves raw byte
+length without Unicode `string bytelength`. Also replace C8's use of the
+text-mode `render_start_receipt_digest` on decoded payload with a C8-local
+binary writer/digest (open `wb`, binary translation and encoding, write no
+newline, SHA-256, remove). Otherwise the next run would UTF-8-expand `FF` in
+the host digest and stop at a false digest drift. Keep broader C5/C7 parser
+changes out of this C8 repair; their current ASCII evidence gives no authority
+to widen scope. Represent the binary fixture itself as one bytearray decoded
+from exact hex, and assert parsed `binary encode hex` equals that same hex,
+not textual `eq` over a double-quoted mixed byte/string fixture. Retain the
+14-byte source, 28-hex, META digest/host binary-digest equality, parser pass,
+and cleanup assertions.
+
+The C7 guard failure is also a reporter expectation error. C7's braced Tcl
+template contains Bash backslash-newline continuations; Tcl replaces each
+backslash/newline/following indentation sequence with one space before the
+procedure returns. The emitted C8 artifact visibly demonstrates this rule as
+`||  ! valid_marker`. Therefore raw-source slicing produced the prior
+`cce4...` candidate, but the actual returned C7 helper at current, `6d2daca`,
+and `a262911` is SHA-256
+`1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5`.
+Set the guard to that value and report the digest computed directly from
+`[role_census_diag_guest_helper_script]`; never construct a guard from raw
+source extraction. C7 implementation remains byte/semantic unchanged. No
+source edit, test/replay, VM, build, rootfs, serial, launcher, KDE, or process
+action occurred; exact start inventory was total/informational-RISC-V/
+conflicting `0/0/0`. This grants no C8/C7/A1, HD720, audio, fullscreen, FPS,
+or performance credit.
