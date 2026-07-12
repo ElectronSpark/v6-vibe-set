@@ -26,11 +26,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `bfaad162176865ee7244ec737a73016955d187c7`, the one
-fresh canonical C1 observer static suite is consumed: it reached the later
-render-role static helper, then failed its baseline output validation. The
-next item is no-boot forensic of that exact static-render failure; no retry,
-VM, performance, audio, fullscreen, default, or credit authority exists.
+At forensic checkpoint `a3cd0a2bfd93180ccbd55e4a988f653c6b5c165b`, the
+consumed C1 observer static suite's later render-role baseline rejection is
+localized to a static-observer final-LF mismatch, not C1 or generated-helper
+behavior. The next item is a narrow observer-only LF-contract correction and
+independent no-boot review; no retry, VM, performance, audio, fullscreen,
+default, or credit authority exists.
 
 ## Binding host and VM discipline
 
@@ -3510,3 +3511,58 @@ untouched. This is no V2/A1, performance, HD720, audio, fullscreen,
 `yt-presentfps`, or `PERF-VIDEO` credit. Next authority is limited to no-boot
 forensic of the static render-role baseline-output contract before any source
 change or fresh static suite.
+
+**Static render-role baseline-output forensic — ROOT CAUSE LOCALIZED / NO-RUN
+(2026-07-12):** at plan HEAD
+`a3cd0a2bfd93180ccbd55e4a988f653c6b5c165b`, exact inventories before this
+read-only forensic were total/informational-RISC-V/conflicting `0/0/0`.
+The named outdir and external log from the consumed suite are
+`/tmp/yt-c1-v2-observer-static-20260712T231632Z-2888896` and
+`/tmp/yt-c1-v2-observer-static-20260712T231632Z-2888896.log`. C1 is not the
+failure: its actual-helper controls completed before role capture with regular
+zero-byte child outputs, input sizes 0/4/19/131072/131073, row/count pairs
+empty `3/3`, binary `4/4`, multiline `4/4`, exact-cap `701/701`, over-cap
+`701/701`, and the intended recorder-failure `2/2`; the binary input still
+has exact SHA-256
+`26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d`.
+Those per-case guards and cleanup checks passed before the later baseline
+observer abort. `static_c1_v2_case_matrix` was constructed, but its terminal
+aggregate assertion lies after role capture and was not evaluated; this is no
+synthetic C1 PASS claim, while the named artifacts expose no C1 defect.
+
+The sole retained role output,
+`static-render-role-output-baseline-2888898`, is a regular mode-0644,
+151-byte file (SHA-256
+`b358a3cac85e39338c6ac5e98247831ea0d2ca89465b218ca55c39b392843712`). Its
+byte stream is exactly one ASCII line followed by one `0a`, with no CR:
+`YT_RENDER_START_ROLE_TEST_STATE none_or_exited total=103 bytes=103
+truncated=0 digest=c61f1cd48e321dc58bbaf3ca26349ce84007c099bf567a1f3e6de5c6d377faf2`.
+The source baseline evidence is exactly 103 bytes and independently hashes to
+that digest. Thus state, decimal fields, digest, byte/total relation, regular
+mode, and line ending are valid; no stale output or generated-helper/role
+classification failure is present.
+
+The causal observer change is precise. At committed `a3cd0a2`, direct Tcl
+`exec` captured the generated helper output after Tcl's trailing-newline
+normalization. The new static observer redirects output to a bounded regular
+file and reads it in binary mode to retain its artifact, thereby preserving
+the generated helper's contractual `printf ...\\n` final LF. Its unchanged
+anchored matcher instead requires the final digest immediately before `$`, so
+the valid preserved LF makes the baseline reject. The C1 status patch only
+improves static child status/reporting; it does not alter the generated helper
+or its command. The output redirection is also confined to the
+`YT_STATIC_CHECK=1` branch, so it supplies no production or performance path.
+
+Baseline aborted before later role artifacts were created. Source audit shows
+every successful role tag (baseline, semantic, broad, spoof, malformed,
+command-failed, and over-cap) uses this same capture procedure and generated
+newline-terminated test-only output, so each would encounter the same stale
+observer matcher; missing/stdout-only/stale/nonregular/unreadable fixtures
+fail before it. The smallest repair is observer-only: require exactly one
+final LF in the regex/output contract (and thus continue rejecting CR,
+embedded extra lines, and malformed fields) rather than trimming newlines.
+Add static source/fixture assertions for the accepted LF form and rejected
+no-LF/CR/double-LF forms, then take a fresh independent no-boot review before
+any new canonical suite. No test, build, rootfs, VM, boot, serial, KDE/default,
+or QEMU action occurred; no retry, V2/A1, HD720/fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, or performance credit exists.
