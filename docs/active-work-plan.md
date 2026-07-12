@@ -1942,3 +1942,52 @@ same-arm liveness source or explicitly keep injection/navigation unresolved,
 then exercise the generated C8 helper and its actual serial grammar with the
 listed negatives. No source edit, test, VM, build, rootfs, serial, launcher,
 or process action occurred in this review.
+
+**C8 normal-arm reachability and executable-helper design — VERDICT /
+NO-BOOT (2026-07-12):** source-only inspection of
+`scripts/gpu/chromium-youtube-presentfps.expect`, the packaged
+`rootfs-overlay/share/chromium-youtube-media-probe/probe.js`, and its manifest
+confirms that normal A1 (`media=1`, forced-HD720=1, `capturediag=0`) constructs
+only `#xv6ytprobe=<nonce>&xv6ythd720=1`. V2 `producer_start` is gated by the
+separate `xv6ytcapturediag=1` flag, and the existing capturediag branch is a
+minimal diagnostic launcher that finishes before normal media/frame work.
+Thus its V2 producer state is not a truthful normal-A1 reachability claim.
+
+The smallest unperturbed normal-A1 reader is instead the already emitted,
+nonce-bound V1 `force_ready` from the forced-HD selector: a captured authentic
+marker positively proves extension execution, and its existing player/video/
+ready fields distinguish extension-executed/no-player from a ready player;
+subsequent V1 observation gives no-progress versus progress. It needs no URL,
+extension, or rootfs change and remains a C8 sidecar outside C6 and the FPS
+windows. Its absence is **INCOMPLETE, not no-injection**: the selector waits
+up to 120x500 ms after the extension's `document_idle` run, for which the host
+has no authenticated start deadline, and C8 currently transports only the
+first 16 KiB of the canonical log. A complete negative injection-versus-
+navigation proof therefore requires a separate explicitly no-credit,
+marker-only diagnostic URL flag (not unconditional `producer_start`); that
+option changes `probe.js`/URL parsing and requires overlay/rootfs refresh.
+Existing `capturediag=1` can prove its own diagnostic path without an asset
+change, but is too perturbing and differently launched to answer normal A1.
+Any source-row filtering proposed to avoid the 16-KiB loss must preserve the
+canonical cursor/status and separately name/filter-digest the payload; it may
+never relabel a truncation as complete.
+
+Before any C8 replay, add a host-only generated-helper harness modeled on the
+existing media-helper harness: narrowly validated test overrides for only the
+source fixture and temp prefix; execute the actual generated Bash with its
+eight production arguments; and assert the real `wc`, `dd`, digest, and `xxd`
+output for empty, multiline/binary, and truthful-over-cap inputs, including no
+temporary residue. Feed those four emitted rows through a C8 serial-wire
+harness with outer `RC:0` and `FENCE`; require LF, CRLF, and CRCRLF transport
+with the scoped literal `ESC[?2004l CR` prefix before C8 `BEGIN`, then reject
+foreign/mutated/duplicate/non-BEGIN prefixes, nonzero/missing/duplicate outer
+RC/FENCE, duplicate or noncontiguous protocol rows, and malformed binding,
+cursor, cap, digest, or hex. The over-cap case must parse as transport yet end
+`INCOMPLETE source-prethreshold-over-cap` with no derive/credit. Retain the
+C6 isolation assertion (neither C7 nor C8 is classifier input) and threshold
+boundaries 103/4 reject, 104/4 reject, 104/5 retain. This is a design verdict
+only: no source edit, static execution, VM, build, rootfs refresh, serial,
+launcher, extension, default, fullscreen, audio, or performance action
+occurred. The later primary performance validation remains explicitly both
+windowed and fullscreen YouTube at real KVM+virgl GL; no C8 diagnostic result
+is performance credit.
