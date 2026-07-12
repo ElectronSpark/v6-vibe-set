@@ -26,11 +26,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At forensic checkpoint `e02c917642347fdca7208392221e1c968cf83566`, the
-consumed static suite's compact-report Tcl error is localized to one
-static-observer interpolation. The pending narrow compact-format correction is
-ready for independent no-boot review; no retry, VM, performance, audio,
-fullscreen, default, or credit authority exists.
+At review checkpoint `d5dd287cf4858092b0eb5532a47da947898497d1`, the static
+compact-format correction has passed independent no-boot review. Exactly one
+fresh canonical MP=1/media=1 host-only static suite is authorized; it is not a
+retry and grants no VM, performance, audio, fullscreen, default, or credit
+authority unless that one suite passes.
 
 ## Binding host and VM discipline
 
@@ -3739,3 +3739,32 @@ Exact pre-edit inventory was total/informational-RISC-V/conflicting `0/0/0`;
 the driver remains unstaged. Independent no-boot review is required before any
 suite, with no V2/A1, HD720, audio, fullscreen, `yt-presentfps`,
 `PERF-VIDEO`, or performance credit.
+
+**Static render-role compact `format` independent re-review — PASS / NO-RUN
+(2026-07-12):** at source checkpoint
+`d5dd287cf4858092b0eb5532a47da947898497d1`, exact `/proc/*/exe` inventory
+was total/informational-RISC-V/conflicting `0/0/0`. The replacement is wholly
+inside the `YT_STATIC_CHECK=1` observer: one braced `format` template has eight
+ordered `%s` fields—name, success, exit, signal, errorcode, bounded message,
+bounded I/O snapshot, and artifact tail—and receives exactly those eight Tcl
+arguments. Tcl passes each variable as one argument without word-splitting or
+re-evaluating its content; message/I/O originate in the existing bounded
+observer reports, while tag/path inputs are the static fixed fixtures.
+
+The pure synthetic success record is meaningful and exact: it exercises the
+same compact procedure and requires the full
+`compact-fixture(success=1,exit=0,signal=none,errorcode=none,msg=none,io=present 1 regular 1 bytes 42 first_hex aa last_hex bb truncated 0,artifact=compact-fixture-artifact)`
+literal. Its scoped source lock inspects only this compact procedure, requires
+the braced formatter shape, and rejects the unsafe `$name(` form without
+confusing intentional `env`/`expect_out` arrays elsewhere. The resulting
+contract is a required member of `static_render_helper_file_matrix`, itself a
+terminal static-gate predicate.
+
+No production helper/parser/classifier, C1 V2 generated helper/parser,
+timeout/chunk algebra, credit path, kernel/user/rootfs/default/KDE path, test,
+build, VM, boot, serial, or QEMU action occurred. This PASS authorizes exactly
+one fresh canonical clean-PATH host-only static suite with `YT_STATIC_CHECK=1`,
+MP=1, audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, pinned
+window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`; retain its
+first result and artifacts without retry. It is no VM, HD720/fullscreen,
+audio-on, `yt-presentfps`, `PERF-VIDEO`, or performance authority.
