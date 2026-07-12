@@ -679,6 +679,22 @@ zero preflight. This clears only fresh serialized A1 gate formation; it adds
 no guest, HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
 performance credit.
 
+**Sole A1 windowed gate — NO-BOOT / INCOMPLETE (2026-07-12):** the fresh
+authorization independently passed branch `77a7d997ac2b0c227a8b5cf5b79e86fc0009f3cc`
+equal to explicit `origin/codex/host-linux-abi-shell-port-ff`, empty staging,
+the preserved KDE-smoke dirt only, read/write KVM, DXG/D3D12/GL, X11/Wayland,
+launcher, and all three overlay/base extension-asset byte/hash receipts in
+`/tmp/xv6-a1-windowed-sole-gate.iizzOY/preflight.log`. Its one foreground
+passive screen recorded only its zero-QEMU start at 00:16:35Z in
+`/tmp/xv6-a1-windowed-sole-gate.iizzOY/passive-qemu-screen.txt`; the
+synchronous command handle completed without the required 60-second end row
+or `passive_status=PASS`. A final exact all-architecture inventory was zero.
+No QEMU was launched or touched, no serial/build/rootfs/source/launcher action
+occurred, and no trial was consumed. This incomplete screen is not evidence of
+quiescence; do not retry it under this authorization. A fresh authority is
+required before any VM launch, and windowed/fullscreen/FPS/audio credit remains
+unchanged.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
