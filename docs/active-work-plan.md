@@ -2317,3 +2317,35 @@ inventories immediately before and after were total/informational-RISC-V/
 conflicting `0/0/0`; no process was touched. This is source/static-only and
 grants no C8/C7/A1, HD720, audio, fullscreen, FPS, or performance credit. The
 next work remains an independent no-boot review before any gate.
+
+**C8 binary correction final independent adversarial review — PASS / NO-BOOT
+(2026-07-12):** committed `1717441f13ada1e7ba16f67a09d0482a2bb9465c` equals
+the explicit `origin/codex/host-linux-abi-shell-port-ff`. The canonical
+static record `/tmp/xv6-c8-binary-static.H0iy5h` and its external log both
+reach the two static PASS markers. Its retained generated-Bash binary fixture
+is exactly 14 bytes `6d756c74696c696e650a00ff410a`; helper META, decoded hex,
+and host binary-file digest agree on 14/14/16384/0/28 and SHA-256
+`30553a5bfa023e59853ee00f3caf7af2070486170a371e3f7d5b5c1aae514d31`.
+The review rechecked direct Bash decimal execution, empty/no-player/progress/
+over-cap records, cleanup, LF/CRLF/CRCRLF, exact C8 BEGIN-only literal
+`ESC[?2004l CR`, outer RC/FENCE, duplicate/noncontiguous/preamble negatives,
+and cap/count/hex/digest binding. In normal `capturediag=0`, missing
+`force_ready` remains the honest INCOMPLETE ambiguity; no V2 reachability or
+injection claim is introduced. C8 is set only after C6 classification, and
+the classifier has neither C7 nor C8 input, so neither sidecar can credit the
+retained C6 threshold.
+
+C5's marker-drift `0` parse result is the intended rejection, and its helper
+guard remains `a0c6d5a831789dd49221b3cf20f6b72ffe53b18c8e8a7becd831b3a6a15e9ef8`.
+C7's direct emitted-helper guard is
+`1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5`; its
+literal preamble, CRCRLF, RC/FENCE, duplicate, order, cap, and no-credit
+controls remain bound, while its implementation and old decimal glob are
+unchanged. The reviewed range changes only this driver and plan: no
+extension/rootfs/launcher/default/kernel/C5/C7 implementation change, and
+the sole unrelated KDE-smoke dirt is preserved. Final exact QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no VM was formed. This PASS
+permits only formation of a fresh serialized **windowed** A1 gate; it is not a
+VM authorization and supplies no HD720, fullscreen, audio, `yt-presentfps`,
+`PERF-VIDEO`, or performance credit. Actual fullscreen remains a separate
+later N>=2 requirement.
