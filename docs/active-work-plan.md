@@ -2599,3 +2599,57 @@ the test. Per the revised contract, no x86 kernel/helper build, VM run, or
 speculative repair followed; the uncommitted kernel/user implementation is
 preserved for review. This is a harness-path failure, not evidence for or
 against record atomicity, and provides no lane credit.
+
+**C1 slice-1 independent source forensic — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** at top-level `b67c1a6`, exact QEMU inventories before this
+review were total/informational-RISC-V/conflicting `0/0/0`. No runner, compile,
+test, VM, rootfs, launcher, default, kernel, or KDE action occurred here. The
+only reviewed unstaged implementation is kernel-submodule
+`kernel/console.c`, untracked `kernel/inc/dev/console.h` and
+`kernel/tests/{console_record_host_test.c,run_console_record_host_test.sh}`,
+and untracked user-submodule `programs/consolerecord/consolerecord.c`; the
+KDE-smoke dirt remains unrelated and untouched.
+
+The retained runner failure is exact: from `kernel/tests`, its `../..`
+calculation makes `repo_root=/home/es/xv6-os`, so its source operand becomes
+the nonexistent `/home/es/xv6-os/tests/console_record_host_test.c` and its
+audit wrapper `/home/es/scripts/audit/safe-rg.sh`. The smallest robust repair
+is `kernel_root=$(.../..)` (not `../..`), derive `top_root` from that, use
+`$kernel_root/tests/console_record_host_test.c` and
+`$kernel_root/kernel/inc`, and `cd "$top_root"` before the guarded relative
+`kernel/kernel/console.c` searches. Do not run it until the source defects
+below are corrected.
+
+The fixed-width UAPI is otherwise correctly shaped: its v1 request is 24
+bytes at 0/4/8/16/20, `_IOW` carries that type, unknown ioctls still reach
+TTY, the x86 common handler copies request then bounded payload before the
+50-ms mutex, checks root, version/flags/reserved/pointer/length, and restricts
+the payload to printable ASCII plus one final LF. `511` input then expands to
+at most `512` CRLF physical bytes. Normal x86 `consolewrite` (64-byte
+postprocessed batches), `consputs`/consoled (32-byte steps), and tty drain
+(64-byte steps) do share the sleepable wire path; bypasses are x86-gated and
+advance an emergency generation. The RISC-V `#else` output/ioctl paths appear
+semantically unchanged, but no compile has proved it. The host-glibc recorder
+is one-argv, appends its private LF, opens write-only, and has no source-level
+stdout/stderr fallback; automatic `user/programs/*` discovery will stage its
+directory name. That name is currently `consolerecord`, not the reviewed
+`_consolerecord` contract, and must be made exact (or separately re-reviewed)
+before the generated helper is allowed to call it.
+
+There is one immediate correctness blocker: the current post-lock
+`!uart_initialized || panic_state()` branch calls
+`mutex_unlock(&console_wire_lock)` **twice**. The second unlock would violate
+mutex ownership/assert instead of returning the specified pre-emission
+`-EAGAIN`; remove exactly the duplicate. Also repair the fake-sink coverage in
+the same pre-build patch: it models a contract rather than compiling the
+actual console path, so source locks must bind the actual handler/common
+dispatch/init/copy-before-lock/emitter paths and recorder silence; add ABI
+offset/command checks, 510-printable-plus-LF -> 512-byte CRLF, CR/NUL/multiple
+LF, version/flags/reserved/null-pointer, `-EINTR`, post-lock panic/unavailable,
+and emergency-during-row cases. Keep the asserted emergency result explicitly
+no-credit-after-emission, not a zero-byte claim. Slice 1 has no V2
+parser/helper/chunk/time-budget implementation or proof yet and must not be
+misrepresented as the end-to-end transport repair. Correct these items, then
+run the host fake-sink test once, perform the x86-only build, and obtain a new
+independent review before any kernel boot. This verdict remains A1 N=0 with no
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
