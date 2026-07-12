@@ -3142,3 +3142,37 @@ rootfs, VM, boot, serial command, or QEMU ran. This is repair readiness only,
 not an observer verdict or any C1/V2/A1/HD720/fullscreen/audio/performance
 credit; a renewed adversarial review remains required before one canonical
 host-only suite.
+
+**C1 V2 observer-remediation adversarial review — PASS / NO-RUN
+(2026-07-12):** at explicit `-ff` HEAD
+`8954b05e22f2620373e9ee41e26c1a7454194a74`, exact QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no test/replay, build, rootfs,
+VM, boot, serial, source, KDE/default, or process action occurred. The
+unstaged observer change remains inside `YT_STATIC_CHECK`: it does not alter
+the production V2 helper/parser/protocol, timeout algebra, runtime aggregate
+or credit path, C8/render observers, kernel/user/rootfs/defaults, or QEMU.
+The current generated V2 source still has the reviewed `raw_bytes <= 999999`
+guard, 131072-byte transport cap, and 357812-byte exact-cap physical recorder
+envelope.
+
+The C1 wrapper's `ulimit -f 2048` is 2048 512-byte blocks = 1048576 bytes,
+strictly above the 999999-byte raw capture, 131072-byte valid input,
+131073-byte over-cap fixture, and 357812-byte recorder envelope while still
+bounding each child-created capture, rows, and combined-output file. Each
+named case now snapshots `$dir/count` before the next case's cleanup, copies it
+to unique `actual-<case>.count.txt`, and reports bounded source and copied
+artifact metadata with explicit absent/regular/byte/first/last state; expected
+pre-recorder failure remains an honest absent-count record. The existing
+options-dictionary logic still distinguishes `CHILDKSTATUS`, `CHILDKILLED`,
+and other errorcodes without a pipeline masking status; diagnostics contain
+only bounded hex/hash/path-sanitized metadata. C8's 256-KiB and render-role's
+64-KiB static bounds remain within their respective reviewed contracts and
+are unchanged.
+
+This PASS authorizes exactly one fresh canonical **host-only** static suite:
+clean conventional PATH, `YT_STATIC_CHECK=1`, MP=1, audio-disable=1, media=1,
+forced-HD720=0, EGL=0, capturediag=0, pinned window/crop/delta/video inputs,
+and a nonexistent `YT_OUTDIR`. It is not a VM/build/rootfs/KDE/default action
+and grants no V2/A1/performance/HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`
+credit unless that one suite actually passes. Preserve its per-case artifacts
+and report the first honest failure; do not retry.
