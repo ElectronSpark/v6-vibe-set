@@ -2590,3 +2590,12 @@ edges; (4) x86 kernel and helper builds only, followed by a fresh independent
 adversarial review. No kernel boot or performance attempt is authorized until
 those slices pass. This remains A1 N=0 and supplies no video, fullscreen,
 audio, or responsiveness credit.
+
+2026-07-12 C1 slice-1 local verdict — FAIL (no boot, no QEMU): the newly
+added host fake-sink runner was invoked after clean exact-QEMU preflight, but
+resolved its source as `/home/es/xv6-os/tests/console_record_host_test.c`
+instead of the kernel-submodule path and exited before compiling or exercising
+the test. Per the revised contract, no x86 kernel/helper build, VM run, or
+speculative repair followed; the uncommitted kernel/user implementation is
+preserved for review. This is a harness-path failure, not evidence for or
+against record atomicity, and provides no lane credit.
