@@ -2064,3 +2064,25 @@ synchronous. No source edit, test/replay, VM, build, rootfs, serial, launcher,
 or process action occurred in this forensic; start inventory was
 total/informational-RISC-V/conflicting `0/0/0`. This is diagnostic-only and
 grants no gate, HD720, FPS, audio, fullscreen, or performance credit.
+
+**C8 decimal-fix canonical attempt — FAIL / NO-BOOT (2026-07-12):** the one
+fresh canonical host-only command with MP=1, audio-disable=1, media=1,
+forced-HD720=1, EGL=0, capturediag=0, and outdir
+`/tmp/xv6-c8-decimal-static.oHuRmE` exited 1 before `YT_STATIC_CHECK` entered
+its reducer (external log `/tmp/xv6-c8-decimal-static.oHuRmE.log`). Tcl failed
+while loading `source_prethreshold_guest_helper_script` at line 4466 with
+`extra characters after close-brace`; therefore the newly added inline
+generated-Bash decimal test route, helper execution, no-player exact payload,
+over-cap exact-prefix, and C8 wire assertions did not execute. This is a
+driver-template parse failure, not evidence about the decimal grammar,
+extension, player, C6 threshold, HD720, audio, fullscreen, FPS, or VM.
+
+Per the one-canonical-run stop rule, no source correction, rerun, build,
+rootfs action, serial, launcher/default/kernel/KDE action, or VM followed.
+The C8 driver patch remains unstaged and the unrelated KDE-smoke dirt is
+untouched. Exact all-architecture `/proc/*/exe` inventories immediately
+before source work and after this failed command were both
+total/informational-RISC-V/conflicting `0/0/0`. The next authority must first
+repair the C8 generator's Tcl bracing while retaining the C5/C7 validators
+byte-for-byte, then perform one new canonical static suite; no C8 credit or
+A1 interpretation is changed.
