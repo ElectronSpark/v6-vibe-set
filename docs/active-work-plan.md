@@ -26,14 +26,13 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At plan checkpoint `d7483a6c7f541cc27707fc3b546f47a6977d373c`, the pending
-C1 V2 observer arithmetic correction has passed a no-run adversarial review.
-Exactly one fresh canonical host-only static suite is now authorized: clean
-conventional PATH, static=1, MP=1, audio-disable=1, media=1, forced-HD720=0,
-EGL=0, capturediag=0, pinned window/crop/delta/video inputs, and a nonexistent
-`YT_OUTDIR`. Retain the 1-MiB wrapper and per-case count artifacts; report the
-first honest result and do not retry. No VM, performance, audio, fullscreen,
-default, or credit action is opened by this authority.
+At source checkpoint `f91be1874f180958f75abc098ede2dc76eafad73`, the one
+canonical C1 observer static suite is consumed: empty passed, but binary
+stopped pre-recorder at raw `CHILDSTATUS ... 68`. The next item is this
+no-boot source/artifact forensic only; no static retry, VM, performance,
+audio, fullscreen, default, or credit authority exists. Preserve the named
+artifacts and report the production-helper and observer fixes separately
+before any new review or suite authorization.
 
 ## Binding host and VM discipline
 
@@ -3319,3 +3318,58 @@ performance, HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO`
 credit. The next authority is no-boot forensic of the binary helper's raw
 exit 68 and the observer's binary byte accounting before any source change or
 fresh static suite.
+
+**C1 V2 binary exit-68/observer discrepancy forensic — ROOT CAUSE LOCALIZED /
+NO-RUN (2026-07-12):** at `f91be1874f180958f75abc098ede2dc76eafad73`, named
+artifacts prove the binary fixture is exactly four regular-file bytes
+`00 ff 0a 7f`, SHA-256
+`26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d`; both
+`actual-binary.input.bin` and the helper payload file agree. The generated
+helper, stub `fbstat`, and recorder are executable, the binary input/payload
+files are readable, binary child output is empty, and cleanup leaves zero
+matching `/dev/shm` paths. Empty already proved the same PATH/stub setup and
+the recorder route (three rows/count 3). Thus no NUL argv, filename,
+permission, file-limit, recorder, SHA-256, or `xxd` failure explains the
+binary stop. The latter tools occur only after the first count branch and were
+not executed for this case.
+
+The exact branch is helper exit 68: no-option `wc < "$capture"` has three
+fields. Both the host static invocation and the guest `wc.c` contract give the
+binary stream `1 2 4` (lines/words/bytes; guest adds only an ignored empty name
+field). With globbing disabled, `set -- $count_output` therefore makes `$3=4`.
+The C1 helper's `valid_decimal` case `0|[1-9][0-9]*` is not an anchored decimal
+grammar: its second class requires a second character, while `*` then matches
+arbitrary suffixes. It rejects one-digit `4`, causing exit 68 before `dd`,
+digest, hex, or any BEGIN record. Empty is `0 0 0`, so its `$3=0` special case
+passes. Multiline `3 3 19` passes the first byte check but would fail exit 71
+on the retained line count `3`; exact-cap `0 1 131072` and over-cap's retained
+`0 1 131072` would likewise fail exit 71 on word count `1`. The helper's exit
+map is: 64 parameter, 65 stale scratch, 66 `fbstat`, 67 capture type/read,
+68 initial count/cap, 69 `dd`, 70 retained type/read, 71 retained count/size,
+72 digest grammar/path, 73 `xxd`, 74 hex-line grammar, 75 hex length, 76 row
+size, 77 recorder, 78 chunk shape, and 79 final chunk count.
+
+The observer's `exit=unavailable` is a separate static-only typo: Tcl reports
+`CHILDSTATUS <pid> 68`, but `static_fb_v2_child_status` tests
+`CHILDKSTATUS`, so its three-element list never assigns index 2 to
+`exit_code`. Its `input=6` is also observer-only: the fixture is a Tcl
+`binary format H*` object and `string bytelength $payload` UTF-8-expands `FF`,
+whereas `static_fb_v2_write_binary` correctly writes the four raw bytes whose
+file SHA is reported. The compact record must take input size from the input
+artifact's `file size` (and static-lock its exact binary hex/SHA), not the Tcl
+string representation. `sha256_file` uses that artifact through host
+`sha256sum`; it is not the source of the discrepancy.
+
+The smallest production repair is confined to the C1 V2 generated helper:
+replace only its decimal predicate with the already reviewed Bash-anchored
+`[[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]` form and require all three initial no-option
+`wc` fields before accepting `$3`. The observer-only companion repair is
+`CHILDSTATUS` exit decoding plus artifact-size reporting and binary
+hex/SHA/size assertions. Do not silently widen C7/C8. The V2 host decoder also
+uses `string bytelength` after `binary decode hex`; it was not reached in this
+suite, so this forensic does not claim a second failure, but a future binary
+review must prove raw-byte equality by re-encoded lower hex (as C8 does) before
+using another canonical suite. No source edit, test, build, rootfs, VM, serial,
+KDE, or QEMU action occurred; exact inventories were total/informational-
+RISC-V/conflicting `1/1/0`, and the RISC-V process was untouched. This grants
+no retry or performance credit.
