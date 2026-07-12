@@ -30,17 +30,19 @@ fallback, llvmpipe, N=1 timing wins, and diagnostic-only output do not.
   is not completion: use short marker commands, allow the known first
   bracketed-paste character drop, wait for the owned command, then reacquire a
   prompt. Never use `pgrep`.
-- The conductor authorizes at most one VM worker. Before a VM authorization,
-  require no active VM worker and an exact `/proc/*/exe` count of zero for
-  `qemu-system-*`/`qemu-kvm`; repeat after owned process-group cleanup and
-  synchronous reap. For a performance-VM gate, add one conductor-only,
-  synchronous passive zero-QEMU interval of at most 60 s (exact all-arch
-  checks only at its beginning and end, no monitor loop), followed by one
-  immediate all-arch prelaunch check. This is a short stability screen, not a
-  lock: an external QEMU can still launch after the last check, so the
-  conductor must abort overlap and reap only its own group. Never edit
-  QEMU/launcher scripts to enforce this. Guest RAM is not capped; concurrent
-  VMs are.
+- The conductor authorizes at most one x86 KVM+virgl performance VM worker.
+  Exact all-architecture `/proc/*/exe` inventories remain required, without
+  `pgrep`, but prospectively an independent, non-owned
+  `qemu-system-riscv64` is informational only and is never touched. Before an
+  x86 trial, require no active VM worker and no conflicting non-RISC-V QEMU;
+  a performance gate's passive interval (at most 60 s, synchronous, no
+  monitor loop) and immediate prelaunch check retain those inventories. During
+  the trial there must be exactly one owned x86 performance QEMU and zero
+  foreign x86 or other conflicting QEMU. Synchronously reap only the owned
+  process group and retain a final inventory proving no owned or conflicting
+  QEMU; an independent RISC-V process neither aborts nor satisfies a gate.
+  Never edit QEMU/launcher scripts to enforce this. Guest RAM is not capped;
+  concurrent x86 performance VMs are.
 - Every authorization is named-branch specific: compare HEAD with
   `origin/<current-branch>`, never `@{upstream}`. A consumed gate needs a new
   gate. Preserve unrelated dirt and never touch an external QEMU.
@@ -708,6 +710,17 @@ PERF-VIDEO, drop, VPQ, retire, audio, fullscreen, or performance facts. A
 final exact all-architecture inventory was 2, also untouched. A fresh
 zero-QEMU authorization is required; do not retry under this authority.
 
+**Prospective QEMU coexistence policy (2026-07-12):** this branch now records
+the full exact `/proc/*/exe` inventory while treating an independent,
+non-owned `qemu-system-riscv64` as informational only: it is never inspected
+beyond that inventory, signalled, waited on, or otherwise touched. A future
+x86 KVM+virgl gate still requires no conflicting non-RISC-V QEMU before
+launch, exactly one owned x86 performance QEMU during the trial, zero foreign
+x86 or other conflicting QEMU, and owned synchronous cleanup. The prior
+all-architecture-zero gate and abort verdicts above remain historical results
+under the prior rule; this change neither reclassifies them nor supplies a
+trial, VM, fullscreen, audio, or performance credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -806,8 +819,9 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    receipt-helper guest-tool incompatibility stopped it before HD720/FPS/media
    proof. The helper repair and independent review now pass host-only, which
    permits forming (never reusing) a fresh serialized gate. Every future
-   conductor must pass the passive all-arch zero-QEMU interval and immediate
-   prelaunch check. Clear >=52 before pursuing about 55-60.
+   conductor follows the prospective coexistence rule in Binding host and VM
+   discipline, including its retained all-architecture inventories. Clear
+   >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
