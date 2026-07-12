@@ -3205,3 +3205,46 @@ total/informational-RISC-V/conflicting `0/0/0`; no QEMU was launched or
 touched. The driver remains unstaged and the unrelated KDE-smoke dirt remains
 untouched. Next authority is limited to correcting and adversarially reviewing
 the static observer arithmetic before any further suite.
+
+**C1 V2 observer file-bound arithmetic forensic — REVISE / NO-RUN
+(2026-07-12):** exact forensic inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no test/replay, build, rootfs,
+VM, boot, serial, source, KDE/default, or process action occurred. The failed
+outdir and external log are exactly
+`/tmp/yt-c1-v2-observer-static-20260712T223030Z-2850189` and
+`/tmp/yt-c1-v2-observer-static-20260712T223030Z-2850189.log`. They retain the
+generated helper/stubs but no `actual-*` C1 artifact or matching `/dev/shm`
+residue, confirming the plan's failure was pre-helper.
+
+First-principles maximum-row arithmetic is: cap `131072`, lower hex `262144`,
+chunk width `376`, 697 full chunks plus one 72-hex final chunk, hence 698
+chunks and 701 total records. With max tag/nonce/digest lengths `16/32/64`,
+the exact logical bytes are BEGIN `205`, META `296`, full CHUNK `510`, final
+CHUNK `205`, and END `203`. Console CRLF physical bytes are therefore
+`697*512 + 207 + 207 + 298 + 205 = 357781`. The static recorder stub writes
+LF, not CRLF, so its rows file is `357781 - 701 = 357080` bytes. Both are
+below the 1-MiB (2048 512-byte-block) rlimit and below the valid 999999-byte
+raw-capture guard; the 131073-byte over-cap fixture is likewise safe.
+
+The rejected `357812` is exactly `357781 + 31`: 31 is the outer RC/FENCE CRLF
+cost for a stale eight-byte marker (`15 + 16`), not an inner recorder row
+cost. The actual static marker `YTFBSTATSTATICC5` is 16 bytes, so its outer
+cost is 47; the timeout contract correctly keeps that marker-dependent 47 and
+the separate 128-byte normal-writer allowance outside `physical_bytes`, for a
+static timed-wire total of `357956`, `wire_ms=31073`, `lock_ms=35050`, reserve
+`5000`, and timeout `72` seconds. Do not fold any outer/normal term into the
+child-file bound and do not weaken this timeout algebra.
+
+The only source mismatch is the observer comment/assertion requiring
+`physical_bytes == 357812`; prior plan prose repeats that stale number. The
+timeout formula itself, chunk/count constants, lock count, and runtime caller
+are internally consistent, but its static check should additionally pin
+`physical_bytes=357781`, static `outer_physical_bytes=47`, `wire_ms=31073`,
+and `seconds=72`. The smallest correction is observer-only: name the current
+`physical_bytes` value a conservative recorder-wire bound and compare it to
+`357781` and the 1-MiB limit; optionally derive/assert the distinct static
+rows-file bound `physical_bytes-record_count=357080`. Retain `999999` as the
+valid raw-capture guard, and leave production helper/parser/protocol/timeout
+behavior unchanged. A new adversarial review is required before any new
+canonical host-only suite; no V2/A1/performance/HD720/fullscreen/audio credit
+exists.
