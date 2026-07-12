@@ -2834,3 +2834,16 @@ timeout algebra. Correct those source/harness defects first, then obtain an
 independent no-boot review before one fresh canonical static run. No edit,
 build, rootfs refresh, VM/boot, performance/fullscreen/audio measurement, or
 credit occurred in this forensic; A1 remains N=0.
+
+**C1 slice-2 pinned V2 static invocation — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** exact preflight QEMU total/informational-RISC-V/conflicting
+inventory was `0/0/0`. The single fully explicit inert host-only invocation
+used the reviewed MP=0/audio=1/optional-arms=0 arguments, a fresh output path,
+and `env -i PATH=/usr/bin:/bin`; it exited `2` before any V2 parser/helper
+case, fs copy, or QEMU path with `host-tool-missing tool=debugfs`. The static
+driver itself requires `debugfs` later in its pre-existing offline reducer,
+but this clean PATH does not expose the installed executable. Per the
+first-failure rule, there was no PATH amendment, rerun, build, rootfs refresh,
+or source repair. The uncommitted V2-only driver edit remains preserved; A1 is
+still N=0 with no HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
+performance credit.
