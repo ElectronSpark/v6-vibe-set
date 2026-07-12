@@ -2786,3 +2786,51 @@ a static-suite pass. Per the first-failure rule there was no amended
 invocation, rerun, build, or speculative source repair. The uncommitted V2
 driver-only edit is preserved for forensic review; A1 remains N=0 with no
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or credit.
+
+**C1 slice-2 V2 static forensic — REVISE / NO-RUN (2026-07-12):** exact
+preflight QEMU total/informational-RISC-V/conflicting inventory was again
+`0/0/0`. The only failed command is the one above; it has no named log or
+outdir because validation fails before `YT_OUTDIR`/the default directory is
+created. `YT_MULTIPROCESS` is *not* omittable: current validation requires it
+and `YT_DISABLE_AUDIO_OUTPUT`; the safe inert host-only configuration is
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=0 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=0 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0 YT_WINDOW_SECONDS=60
+YT_PLAYER_CROP=960x540+160+130 YT_PLAYER_DELTA_MIN=1000
+YT_VIDEO_ID=aqz-KE-bpKQ`, plus a fresh nonexistent `YT_OUTDIR` and
+`PATH=/usr/bin:/bin`. Proposed post-fix command only (not run here):
+`d=/tmp/yt-c1-v2-static-<fresh>; test ! -e "$d" && env -i PATH=/usr/bin:/bin
+YT_STATIC_CHECK=1 YT_MULTIPROCESS=0 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=0 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0 YT_WINDOW_SECONDS=60
+YT_PLAYER_CROP=960x540+160+130 YT_PLAYER_DELTA_MIN=1000
+YT_VIDEO_ID=aqz-KE-bpKQ YT_OUTDIR="$d" /usr/bin/expect
+scripts/gpu/chromium-youtube-presentfps.expect`. The static branch exits before
+the fs copy/QEMU path; this command has no VM or KDE/GPU action.
+
+The uncommitted V2 edit has no evident Tcl-brace/`format` quoting failure and
+its generated script explicitly uses Bash, but it has four source blockers.
+First, it accepts an `ordinary-gap` inserted between V2 BEGIN and META; strict
+atomic rows require consecutive raw-record numbers for BEGIN/META/all CHUNKs/
+END, with bounded gap fingerprints retained only before BEGIN or after END.
+The static corpus currently asserts the opposite and must add both allowed
+outside-gap and rejected interior-gap vectors. Second, `/bin/wc -c` cannot run
+on the current guest `wc` (its source accepts filenames only); restore the
+three-field no-option `/bin/wc < "$retained"` validation and check its byte
+field. Third, the helper's unqualified `_consolerecord` is discovered only by
+the host harness's injected PATH; bind the production generator to
+`/bin/_consolerecord` (the reviewed staging target) and make the test stub an
+explicit generated-helper test parameter, rather than silently proving PATH
+luck. Add EXIT cleanup and assert it after both recorder success and injected
+failure. Fourth, the timeout charges only 698 50-ms acquisitions although the
+helper emits 698 chunks plus BEGIN, META, and END; charge 701, derive/lock the
+outer marker bound instead of magic `64`, and make the static assertion check
+those exact terms, the 128-byte ONLCR normal segments, and the final ceiling.
+
+The V2 aggregate currently reports neither a distinct C1-V2 PASS line nor its
+case matrix, and its weak substring locks do not bind the no-option `wc`,
+absolute recorder route, candidate-contiguity rule, cleanup, or complete
+timeout algebra. Correct those source/harness defects first, then obtain an
+independent no-boot review before one fresh canonical static run. No edit,
+build, rootfs refresh, VM/boot, performance/fullscreen/audio measurement, or
+credit occurred in this forensic; A1 remains N=0.
