@@ -1842,3 +1842,25 @@ YouTube credit.
 Record PASS, FAIL, INVALID, NULL, and negative results honestly. Adversarial
 NO-BOOT review precedes every kernel/image boot. Commit verified checkpoints
 deepest-first and push the explicit branch lineage; preserve unrelated dirt.
+
+**C7 literal-preamble/C8 source-reader static — INCOMPLETE / NO-BOOT
+(2026-07-12):** one canonical host-only attempt ran from checkpoint
+`ab70040534f2055ca73a205466b6355d4e1df2a8` with
+`YT_STATIC_CHECK=1`, MP=1, audio-disable=1, media=1, forced-HD720=1,
+capturediag=0, and outdir
+`/tmp/xv6-c8-static-20260712T000000Z-2615091`. The exact prelaunch and final
+all-architecture `/proc/*/exe` inventories were both zero total,
+zero informational RISC-V, and zero conflicting QEMU. No VM, serial guest,
+build, rootfs asset, launcher, extension, or default action occurred.
+
+The attempt did not reach `YT-PRESENTFPS-STATIC-CHECK-PASS`: while evaluating
+the new empty/no-marker C8 source case,
+`source_prethreshold_derive` threw `expected integer but got "state INCOMPLETE
+detail source-no-injection-or-liveness rows 0 ..."` at `dict incr result rows`.
+Therefore the C7 BEGIN-only literal `ESC[?2004l CR` parser change and C8
+bounded canonical-source staging are both **unverified**; neither supplies
+C7 transport, extension-liveness, player/navigation/progress, C6 threshold,
+HD720, FPS, audio, fullscreen, or VM authority. The failed driver patch and
+the unrelated KDE-smoke dirt remain unstaged. Do not retry this static or form
+a VM gate from it; first repair the host-only C8 derivation failure, then take
+one newly authorized canonical static replay and independent review.
