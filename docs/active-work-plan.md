@@ -721,6 +721,27 @@ all-architecture-zero gate and abort verdicts above remain historical results
 under the prior rule; this change neither reclassifies them nor supplies a
 trial, VM, fullscreen, audio, or performance credit.
 
+**A1 RISC-V-exempt sole windowed trial — INVALID / N=0 (2026-07-12):** under
+the user-approved informational RISC-V exemption, the immediate worker check
+at `24fcb6e8eb50cb7b32ef9569e6042991853739f8` equaled explicit origin and had
+zero conflicting QEMU. The only real x86 trial,
+`/tmp/xv6-a1-windowed-riscv-exempt-live-20260712T002809Z-2224502` (driver log
+`/tmp/xv6-a1-windowed-riscv-exempt-live-20260712T002809Z-2224502.driver.log`),
+used MP=1/audio-disable=1/media=1/forced-HD720=1/EGL=0/capturediag=0 and
+proved KVM launch, 4 GiB guest memory, GTK `full-screen=off` and
+`zoom-to-fit=off`, virgl `backend_opengl_submit=1`, and matching media assets.
+
+It terminated `code=5`, `FAIL eof phase=render-start-receipt-probe1`, before
+any repaired role receipt, active-HD720 semantic proof, media result,
+`yt-presentfps`, or `PERF-VIDEO` window. Therefore FPS, drops, VPQ, retire,
+audio, and fullscreen are all absent/N=0. The direct-spawn x86 PID/PGID/SID
+2225003 was verified against this run's scratch-image command and was the only
+owned group; after the driver control ended without its normal visible cleanup
+receipt, that owned group alone was terminated. The retained `STATUS.txt` then
+records `exact_qemu_after=none`, and the final exact inventory had zero
+conflicting (and zero informational RISC-V) QEMU. No second VM was launched;
+this trial is consumed INVALID and a new authority is required.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
