@@ -3291,3 +3291,31 @@ with clean conventional PATH, `YT_STATIC_CHECK=1`, `YT_MULTIPROCESS=1`,
 `YT_FORCE_HD720=0`, `YT_CAPTURE_COMPLETENESS_DIAG=0`, pinned
 window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`; it is no VM or
 performance authority, and any first result must be retained without retry.
+
+**C1 V2 observer arithmetic canonical static suite — FAIL / NO-BUILD /
+NO-BOOT (2026-07-12):** the one review-authorized host-only command used the
+exact conventional clean PATH, static=1, MP=1, audio-disable=1, media=1,
+forced-HD720=0, EGL=0, capturediag=0, pinned window/crop/delta/video inputs,
+and fresh outdir `/tmp/yt-c1-v2-observer-static-20260712T224813Z-2865831`
+(external log `/tmp/yt-c1-v2-observer-static-20260712T224813Z-2865831.log`).
+It exited 2 after the capture-completeness predicates, without either static
+PASS marker. The C1 actual-helper `empty` case passed (three recorder rows,
+count artifact `3`); `binary` then failed before any rows or count file with
+empty bounded child output and Tcl errorcode `CHILDSTATUS 2866224 68`.
+Its compact observer record has `exit=unavailable`, so the retained raw
+errorcode—not a claimed decoded exit field—is the exact termination evidence.
+The named binary input artifact is 4 bytes with SHA-256
+`26f9f592b06d4c3c0dd2116492991fff5e4f013a884de18a0c7261ea85de931d`, while
+the terminal observer reports `input=6` for that same digest; that accounting
+discrepancy is recorded, not explained. `multiline`, `exact_cap`, and
+`overcap` were not run; matching `/dev/shm` residue count is zero.
+
+No retry, driver correction, build, rootfs, boot, kernel/user/default/KDE, or
+VM action followed; the observer driver remains unstaged and the unrelated
+KDE-smoke dirt remains untouched. Exact pre/post `/proc/*/exe` inventories
+were total/informational-RISC-V/conflicting `1/1/0`: the unrelated RISC-V QEMU
+PID 2861796 was only observed and never touched. This is no V2/A1,
+performance, HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO`
+credit. The next authority is no-boot forensic of the binary helper's raw
+exit 68 and the observer's binary byte accounting before any source change or
+fresh static suite.
