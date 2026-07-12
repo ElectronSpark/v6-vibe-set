@@ -1024,6 +1024,49 @@ granted by this localization. The named owner cleanup was already synchronous
 (`waited:2276159 exp4 0 0`); this forensic's exact start/end inventories were
 total/conflicting/informational-RISC-V `0/0/0`, with no process touched.
 
+**A1 fbstat provenance-frame transport implementation — INCOMPLETE / NO-BOOT
+(2026-07-12):** source work at plan checkpoint `af0740a` began the prescribed
+fresh-file, lower-hex, digest-bound `/fbs.sh` transport with a 131072-byte
+decoded cap (at most 262144 hex bytes, below the existing 2 MiB serial match
+limit) and host C5/tag/nonce/status/count/cap/truncation/hex/digest checks
+before the unchanged parser. The first canonical static invocation was a
+harness preflight only: its redirected log was mistakenly inside the required
+empty `YT_OUTDIR`, so it returned code 2 before static source execution; exact
+QEMU inventories before/after were `0/0/0`. A fresh invocation with an empty
+outdir and adjacent log then entered the source static route but stopped before
+the new matrix on the introduced counter-name typo
+`$fbstat_transport_digest` instead of initialized
+`$fbstat_transport_digest_counter` (code 1, log
+`/tmp/xv6-fbstat-transport-static-final.fIs0rv.log`); exact QEMU inventories
+were again `0/0/0`.
+
+The one authorized typo-only follow-up corrected that name and ran exactly one
+fresh canonical replay (`/tmp/xv6-fbstat-transport-static-final2.Q4zFkO.log`),
+which reached the verifier but failed before any matrix verdict with Tcl
+`invalid command name "A-Z_"`: the new double-quoted metadata regexp let its
+`[A-Z_]` class undergo Tcl command substitution. Exact QEMU inventories before
+and after remained total/conflicting/informational-RISC-V `0/0/0`; no process
+was touched, and no VM, build, rootfs, serial, or launcher action occurred.
+Per the bounded follow-up rule, no further source edit or static replay was
+made. The transport source is unverified, contributes no gate, role, HD720,
+audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit, and
+requires a fresh no-boot authorization/review before any repair or VM gate.
+
+**A1 fbstat provenance-frame transport final correction — INCOMPLETE /
+NO-BOOT (2026-07-12):** the preceding stop was superseded by one explicit,
+exactly scoped correction: the metadata regexp alone was changed to a braced
+`format` literal so `[A-Z_]` could not command-substitute, with no semantic
+change intended. Its one fresh empty-outdir canonical replay
+`/tmp/xv6-fbstat-transport-static-final3.e4Z6CB.log` still failed code 1
+before the transport matrix, now at `invalid command name "0-9a-f"`: the next
+new double-quoted hex regexp retained the same Tcl character-class quoting
+defect. Exact QEMU inventories immediately before and after were again
+total/conflicting/informational-RISC-V `0/0/0`; no process was touched and no
+VM, build, rootfs, serial, or launcher action occurred. No further source edit
+or static replay is authorized from this checkpoint. The working transport
+source remains unverified and uncommitted; it supplies no gate or performance
+credit and must receive a fresh no-boot review/authorization before repair.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
