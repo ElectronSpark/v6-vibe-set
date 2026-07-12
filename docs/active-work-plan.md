@@ -2900,3 +2900,20 @@ that guard to bind both the default absolute assignment and the variable call,
 matching the already stronger V2 source lock. Re-review this narrow ordering/
 lock correction, then perform exactly one fresh canonical static suite; no
 performance/fullscreen/audio/HD720 credit exists and A1 remains N=0.
+
+**C1 slice-2 V2 post-PATH static attempt — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** after the prescribed narrow preflight ordering correction
+(kernel/fsimg and `convert`/`compare`/`nc` deferred past the static exit, with
+exact-QEMU and `debugfs` retained) and the C5 source lock update for
+`recorder=/bin/_consolerecord` plus `"$recorder" "$1"`, one fresh canonical
+host-only invocation used `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin`, MP=0,
+audio-disable=1, every optional arm inert, the pinned 60-second/crop/delta/
+video inputs, and a nonexistent `YT_OUTDIR`. It exited 1 at the existing
+capture-completeness static route with `invalid capture-completeness host
+envelope arguments` from `capture_completeness_diag_host_envelope`; no
+`YT-C1-V2-STATIC-PASS` or overall static PASS was emitted. This is not a VM
+launch: exact QEMU inventories immediately before and after were
+total/informational-RISC-V/conflicting `0/0/0`. Per the one-suite rule there
+was no retry, build, rootfs, boot, kernel/user/default/KDE action, or further
+driver edit; the V2 driver patch remains unstaged and A1 stays N=0 with no
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
