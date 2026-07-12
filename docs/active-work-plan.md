@@ -896,6 +896,31 @@ evidence; cap/tail/digest binding; and parser rejection of spoofed/malformed
 rows, then obtain an independent no-boot adversarial review. No source change
 or VM authorization is granted by this localization.
 
+**A1 fast-census evidence-file repair — STATIC PASS / NO-BOOT (2026-07-12):**
+at source checkpoint `195952b8b1ddad210fea0f700e3f81fe710d8a0b`, the generated
+receipt helper removes `/kde-chromium-process-evidence.log` before fast census
+and, on census status 0, requires a newly created readable regular,
+non-symlink evidence file. Census stdout/stderr is separate; only the evidence
+file feeds the existing role total/4 KiB bytes/digest/tail fields. Nonzero
+census remains `command_failed` and noncredit. Missing, stale, nonregular,
+unreadable, stdout-only, or malformed semantic evidence cannot claim `live`;
+nonce/probe/launch/argv/source bindings, strict role grammar, caps/tails,
+thresholds, diag0/V3 isolation, and no-credit behavior are unchanged.
+
+Fresh canonical host-only replay `/tmp/xv6-role-evidence-static.niS3dc` exited
+0 and emitted
+`role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS`
+plus `YT-PRESENTFPS-STATIC-CHECK-PASS`. The actual-Bash matrix accepts fresh
+semantic evidence as live; keeps fresh empty/broad/spoof/malformed evidence
+non-live; rejects stdout-only/no evidence; proves a stale file is purged rather
+than admitted; fail-closes missing/nonregular/unreadable successful census;
+retains `command_failed`; and proves truthful 4096-byte over-cap tail/digest.
+Existing parser digest/tail-drift rejection and normal receipt cases remain
+green. Exact QEMU inventories before/after were total/conflicting/
+informational-RISC-V `0/0/0`; no VM, build, rootfs, serial, or launcher action
+occurred. This is source/static-only; independent no-boot adversarial review
+remains mandatory before any VM gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

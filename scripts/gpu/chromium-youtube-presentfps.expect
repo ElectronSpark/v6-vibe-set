@@ -272,28 +272,93 @@ classify_role_state() {
     done < "$role_frame"
   fi
 }
-if [ "${YT_RENDER_START_ROLE_TEST_ONLY:-0}" = 1 ]; then
-  role_status=${YT_RENDER_START_ROLE_TEST_STATUS-}
-  role_frame=${YT_RENDER_START_ROLE_TEST_FRAME-}
-  case "$role_status" in ''|*[!0-9]*) exit 64 ;; esac
-  [ -n "$role_frame" ] && [ -r "$role_frame" ] && [ -f "$role_frame" ] || exit 64
-  classify_role_state
-  printf 'YT_RENDER_START_ROLE_TEST_STATE %s\n' "$role_state"
-  exit 0
-fi
-cleanup() { rm -f "$source_frame" "$role_all" "$role_frame"; }
+cleanup() { rm -f "$source_frame" "$role_stdout" "$role_frame"; }
 fail() { exit 70; }
 source_log=/host-gui-wayland-chromium.log
 source_cap=2048
 role_cap=4096
 tmp=/tmp/yt-render-start-receipt-$$
 source_frame="$tmp.source"
-role_all="$tmp.role.all"
+role_evidence=/kde-chromium-process-evidence.log
+role_stdout="$tmp.role.stdout"
 role_frame="$tmp.role"
-rm -f "$source_frame" "$role_all" "$role_frame"
+rm -f "$source_frame" "$role_stdout" "$role_frame"
 trap cleanup EXIT
 : > "$source_frame"
 : > "$role_frame"
+
+capture_role_evidence() {
+  rm -f "$role_evidence" || return 1
+  if [ -e "$role_evidence" ] || [ -L "$role_evidence" ]; then return 1; fi
+  if [ "${YT_RENDER_START_ROLE_TEST_ONLY:-0}" = 1 ]; then
+    role_test_mode=${YT_RENDER_START_ROLE_TEST_MODE-}
+    role_test_stdout=${YT_RENDER_START_ROLE_TEST_STDOUT-}
+    role_test_evidence=${YT_RENDER_START_ROLE_TEST_EVIDENCE-}
+    printf '%s' "$role_test_stdout" > "$role_stdout" || return 1
+    case "$role_test_mode" in
+      fresh|over-cap)
+        printf '%s' "$role_test_evidence" > "$role_evidence" || return 1
+        role_status=0
+        ;;
+      missing|stdout-only|stale)
+        role_status=0
+        ;;
+      nonregular)
+        mkdir "$role_evidence" || return 1
+        role_status=0
+        ;;
+      unreadable)
+        printf '%s' "$role_test_evidence" > "$role_evidence" || return 1
+        chmod 000 "$role_evidence" || return 1
+        role_status=0
+        ;;
+      command-failed)
+        role_status=17
+        ;;
+      *) return 1 ;;
+    esac
+  else
+    KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe \
+      --chromium-fast-census-only --fast-census-ms 500 --fast-census-interval-ms 100 \
+      > "$role_stdout" 2>&1
+    role_status=$?
+  fi
+  if [ "$role_status" -ne 0 ]; then
+    : > "$role_frame" || return 1
+    return 0
+  fi
+  [ -e "$role_evidence" ] && [ -r "$role_evidence" ] && \
+    [ -f "$role_evidence" ] && [ ! -L "$role_evidence" ] || return 1
+  /bin/dd if="$role_evidence" of="$role_frame" bs=1024 count=4 2>/dev/null || return 1
+  strict_count "$role_evidence" || return 1
+  role_total=$STRICT_COUNT
+  strict_count "$role_frame" || return 1
+  role_bytes=$STRICT_COUNT
+  strict_digest "$role_frame" || return 1
+  role_digest=$STRICT_DIGEST
+  role_tail_truncated=0
+  if [ "$role_total" -gt "$role_bytes" ]; then role_tail_truncated=1; fi
+  return 0
+}
+
+if [ "${YT_RENDER_START_ROLE_TEST_ONLY:-0}" = 1 ]; then
+  role_evidence=${YT_RENDER_START_ROLE_TEST_EVIDENCE_PATH-}
+  [ -n "$role_evidence" ] || exit 64
+  capture_role_evidence || exit 70
+  if [ "$role_status" -ne 0 ]; then
+    role_total=0
+    role_bytes=0
+    role_digest=$(printf '' | /bin/openssl dgst -sha256 -r 2>/dev/null) || exit 70
+    set -- $role_digest
+    [ "$#" -eq 2 ] && [ "${#1}" -eq 64 ] || exit 70
+    role_digest=$1
+    role_tail_truncated=0
+  fi
+  classify_role_state
+  printf 'YT_RENDER_START_ROLE_TEST_STATE %s total=%s bytes=%s truncated=%s digest=%s\n' \
+    "$role_state" "$role_total" "$role_bytes" "$role_tail_truncated" "$role_digest"
+  exit 0
+fi
 
 source_status=missing
 source_cursor=0
@@ -322,19 +387,14 @@ if [ -e "$source_log" ] || [ -L "$source_log" ]; then
   fi
 fi
 
-KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe \
-  --chromium-fast-census-only --fast-census-ms 500 --fast-census-interval-ms 100 \
-  > "$role_all" 2>&1
-role_status=$?
-/bin/dd if="$role_all" of="$role_frame" bs=1024 count=4 2>/dev/null || fail
-strict_count "$role_all" || fail
-role_total=$STRICT_COUNT
-strict_count "$role_frame" || fail
-role_bytes=$STRICT_COUNT
-strict_digest "$role_frame" || fail
-role_digest=$STRICT_DIGEST
-role_tail_truncated=0
-if [ "$role_total" -gt "$role_bytes" ]; then role_tail_truncated=1; fi
+capture_role_evidence || fail
+if [ "$role_status" -ne 0 ]; then
+  role_total=0
+  role_bytes=0
+  strict_digest "$role_frame" || fail
+  role_digest=$STRICT_DIGEST
+  role_tail_truncated=0
+fi
 classify_role_state
 strict_hex "$source_frame" "$source_bytes" || fail
 source_hex=$STRICT_HEX
@@ -8110,30 +8170,38 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         }
         return "YT_RENDER_START_RECEIPT_BEGIN nonce=$nonce probe=$probe\nYT_RENDER_START_RECEIPT_META nonce=$nonce probe=$probe launch_marker=$launch_marker launch_digest=$launch_digest argv_marker=$argv_marker argv_digest=$argv_digest source_status=$source_status source_cursor=$source_cursor source_bytes=$source_bytes source_digest=$source_digest source_tail_truncated=$source_tail_truncated role_command=fast-census-v1 role_status=$role_status role_total=$role_total role_bytes=$role_bytes role_digest=$role_digest role_tail_truncated=$role_tail_truncated role_state=$role_state\nYT_RENDER_START_RECEIPT_SOURCE_HEX [binary encode hex $source_frame]\nYT_RENDER_START_RECEIPT_ROLE_HEX [binary encode hex $role_frame]\nYT_RENDER_START_RECEIPT_END nonce=$nonce probe=$probe\n${command_marker}:RC:0\n${command_marker}:FENCE\n"
     }
-    # Execute the generated Bash helper's own role decision, rather than a
-    # Tcl mirror.  The test-only route ends before the normal guest paths and
-    # accepts only a regular newline-framed role fixture plus a decimal status.
-    proc static_render_generated_helper_role_state {helper nonce role_status role_frame tag} {
+    # Execute the generated Bash helper's own fresh-evidence route.  The
+    # test-only producer never starts a guest command, but uses the identical
+    # purge, regular-file, cap, digest, and semantic-role decisions.
+    proc static_render_generated_helper_role_capture {
+        helper nonce mode evidence stdout tag {stale ""}
+    } {
         global outdir
-        set role_path "$outdir/static-render-role-state-$tag-[pid].txt"
-        wf $role_path $role_frame
+        set evidence_path "$outdir/static-render-role-evidence-$tag-[pid]"
+        if {$stale ne ""} { wf $evidence_path $stale }
         set launch_digest [string repeat a 64]
         set argv_digest [string repeat b 64]
         set output {}
         set command [list /usr/bin/env YT_RENDER_START_ROLE_TEST_ONLY=1 \
-            "YT_RENDER_START_ROLE_TEST_STATUS=$role_status" \
-            "YT_RENDER_START_ROLE_TEST_FRAME=$role_path" /bin/bash $helper \
+            "YT_RENDER_START_ROLE_TEST_MODE=$mode" \
+            "YT_RENDER_START_ROLE_TEST_EVIDENCE=$evidence" \
+            "YT_RENDER_START_ROLE_TEST_STDOUT=$stdout" \
+            "YT_RENDER_START_ROLE_TEST_EVIDENCE_PATH=$evidence_path" \
+            /bin/bash $helper \
             $nonce 1 YTSTATICLAUNCHC1 $launch_digest YTSTATICARGVC2 $argv_digest]
-        if {[catch {exec {*}$command} output]} {
-            catch {file delete -force $role_path}
-            error "static generated helper role-state execution failed tag=$tag error=$output"
+        set succeeded [expr {![catch {exec {*}$command} output]}]
+        set residual [file exists $evidence_path]
+        if {!$residual && ![catch {file type $evidence_path}]} { set residual 1 }
+        catch {file attributes $evidence_path -permissions 0644}
+        catch {file delete -force $evidence_path}
+        if {!$succeeded} {
+            return [list 0 $output $residual]
         }
-        catch {file delete -force $role_path}
-        if {![regexp {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed)$} \
-                $output -> state]} {
-            error "static generated helper role-state output invalid tag=$tag output=$output"
+        if {![regexp {^YT_RENDER_START_ROLE_TEST_STATE (none_or_exited|live|command_failed) total=([0-9]+) bytes=([0-9]+) truncated=([01]) digest=([0-9a-f]{64})$} \
+                $output -> state total bytes truncated digest]} {
+            error "static generated helper role-capture output invalid tag=$tag output=$output"
         }
-        return $state
+        return [list 1 $state $total $bytes $truncated $digest $residual]
     }
     proc static_render_receipt_outcome {parsed} {
         if {![lindex $parsed 0]} { return INVALID }
@@ -8194,23 +8262,80 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     wf $static_render_helper_path $static_render_helper
     set static_render_helper_role_source_contract [expr {
         [string first {classify_role_state()} $static_render_helper] >= 0 &&
+        [string first {role_evidence=/kde-chromium-process-evidence.log} $static_render_helper] >= 0 &&
+        [string first {rm -f "$role_evidence" || return 1} $static_render_helper] >= 0 &&
+        [string first {> "$role_stdout" 2>&1} $static_render_helper] >= 0 &&
+        [string first {/bin/dd if="$role_evidence"} $static_render_helper] >= 0 &&
+        [string first {role_all} $static_render_helper] < 0 &&
         [string first {YT_RENDER_START_ROLE_TEST_ONLY} $static_render_helper] >= 0 &&
         [string first {while IFS= read -r role_line; do} $static_render_helper] >= 0 &&
         [string first {if [[ "$role_line" =~ ^kde_chromium_process_evidence[[:space:]]+fast[[:space:]].*comm=\"chrome\"[[:space:]]+role=\"[A-Za-z0-9_-]+\"[[:space:]].*cmd=\" ]]; then} $static_render_helper] >= 0
     }]
+    set static_render_stdout_only {kde_app_launch_probe chromium_fast_census_only=1 samples=6 duration_ms=500 interval_ms=100 status=PASS
+}
+    set static_render_over_role "$static_render_live_role[string repeat x 5000]"
+    set static_render_helper_baseline [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce fresh \
+        $static_render_baseline_role $static_render_stdout_only baseline]
+    set static_render_helper_live [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce fresh \
+        $static_render_live_role $static_render_stdout_only semantic]
+    set static_render_helper_broad [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce fresh \
+        $static_render_broad_role $static_render_stdout_only broad]
+    set static_render_helper_spoof [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce fresh \
+        $static_render_spoof_role $static_render_stdout_only spoof]
+    set static_render_helper_malformed [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce fresh \
+        $static_render_malformed_role $static_render_stdout_only malformed]
+    set static_render_helper_command_failed [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce command-failed \
+        "" $static_render_stdout_only command-failed]
+    set static_render_helper_stdout_only [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce stdout-only \
+        "" $static_render_stdout_only stdout-only]
+    set static_render_helper_stale [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce stale \
+        "" $static_render_stdout_only stale stale-semantic-row]
+    set static_render_helper_missing [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce missing \
+        "" $static_render_stdout_only missing]
+    set static_render_helper_nonregular [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce nonregular \
+        "" $static_render_stdout_only nonregular]
+    set static_render_helper_unreadable [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce unreadable \
+        $static_render_live_role $static_render_stdout_only unreadable]
+    set static_render_helper_over_cap [static_render_generated_helper_role_capture \
+        $static_render_helper_path $static_render_nonce over-cap \
+        $static_render_over_role $static_render_stdout_only over-cap]
     set static_render_helper_role_states [list \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 0 $static_render_baseline_role baseline] \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 0 $static_render_live_role semantic] \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 0 $static_render_broad_role broad] \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 0 $static_render_spoof_role spoof] \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 0 $static_render_malformed_role malformed] \
-        [static_render_generated_helper_role_state $static_render_helper_path \
-            $static_render_nonce 17 $static_render_live_role command-failed]]
+        [lindex $static_render_helper_baseline 1] \
+        [lindex $static_render_helper_live 1] \
+        [lindex $static_render_helper_broad 1] \
+        [lindex $static_render_helper_spoof 1] \
+        [lindex $static_render_helper_malformed 1] \
+        [lindex $static_render_helper_command_failed 1]]
+    set static_render_helper_file_matrix [expr {
+        [lindex $static_render_helper_baseline 0] &&
+        [lindex $static_render_helper_live 0] &&
+        [lindex $static_render_helper_broad 0] &&
+        [lindex $static_render_helper_spoof 0] &&
+        [lindex $static_render_helper_malformed 0] &&
+        [lindex $static_render_helper_command_failed 0] &&
+        ![lindex $static_render_helper_stdout_only 0] &&
+        ![lindex $static_render_helper_stale 0] && ![lindex $static_render_helper_stale 2] &&
+        ![lindex $static_render_helper_missing 0] && ![lindex $static_render_helper_missing 2] &&
+        ![lindex $static_render_helper_nonregular 0] && [lindex $static_render_helper_nonregular 2] &&
+        ![lindex $static_render_helper_unreadable 0] && [lindex $static_render_helper_unreadable 2] &&
+        [lindex $static_render_helper_over_cap 0] &&
+        [lindex $static_render_helper_over_cap 2] == [string length $static_render_over_role] &&
+        [lindex $static_render_helper_over_cap 3] == 4096 &&
+        [lindex $static_render_helper_over_cap 4] == 1 &&
+        [lindex $static_render_helper_over_cap 5] eq
+            [render_start_receipt_digest [string range $static_render_over_role 0 4095]]
+    }]
     set static_render_spoof_frame [static_render_start_receipt_fixture \
         $static_render_nonce 1 $static_render_launch_marker \
         $static_render_launch_digest $static_render_argv_marker \
@@ -8471,6 +8596,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_valid_class ne {INCOMPLETE live-roles-insufficient-flips} ||
         !$static_render_helper_role_source_contract ||
         $static_render_helper_role_states ne {none_or_exited live none_or_exited none_or_exited none_or_exited command_failed} ||
+        !$static_render_helper_file_matrix ||
         [lindex $static_render_spoof_reject 0] ||
         [lindex $static_render_malformed_reject 0] ||
         [lindex $static_render_nonce_drift 0] ||
@@ -8497,9 +8623,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_newline_baseline_valid_broad_spoof_malformed=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
     # debugfs write emits both its banner and "Allocated inode" on stderr;
