@@ -742,6 +742,42 @@ records `exact_qemu_after=none`, and the final exact inventory had zero
 conflicting (and zero informational RISC-V) QEMU. No second VM was launched;
 this trial is consumed INVALID and a new authority is required.
 
+**A1 render-start receipt EOF forensic — INCOMPLETE / CONTROL-PROVENANCE GAP /
+NO-BOOT (2026-07-12):** bounded reads of the named trial and its driver log
+at source checkpoint `deb9669` fix the terminal chronology. Probe-1 fbstat
+completed with command marker C5 `RC:0` plus `FENCE`, followed by a live
+`root:/#` prompt. The driver then sent the nonce-bound receipt command with
+launch marker C3, argv marker C4, and command marker C6; only a partial echo
+was retained. There is no C6 `RC`/`FENCE`, receipt BEGIN/META/END, helper
+stdout/stderr, or helper exit artifact. The same final buffer says
+`qemu: terminating on signal 15 from pid 2225878 (/bin/bash)`, but retains no
+PID/PGID provenance for that sender or monotonic ordering against cleanup.
+
+`driver_rc=5` is therefore an EOF, not a helper verdict. The final debugcon
+and run-log tails end at the probe fbstat/partial command and retain no panic
+or reboot marker; this is not proof that a guest fault was impossible. The
+staged helper's ordinary failures would return a framed nonzero status, but it
+was not observed running. Cleanup proves no QEMU remained after the driver's
+terminal path: at 00:30:02Z owned x86 leader 2225003 was already `Zs`,
+`live=none`; its exact child was synchronously reaped at 00:30:03Z
+(`waited:2225003 exp4 0 0`) and `exact_qemu_after=none`. It is consequently
+incorrect to attribute the SIGTERM or a post-control lingering QEMU from this
+record. A fresh exact inventory for this forensic found zero conflicting and
+zero informational RISC-V QEMU; no process was touched.
+
+The directly relevant source confirms the evidence defect: `guest_cmd` sends
+C6 then its `eof` arm calls `finish 5` immediately; `finish` calls
+`stop_qemu`, and `render_start_receipt_probe` never receives a result to write
+its serial artifact. The smallest fail-closed repair is to retain a capped,
+marker-bound EOF raw-buffer and pre-cleanup owned-group snapshot before that
+terminal `finish`, while retaining code 5/no-credit and the existing owned
+cleanup. Required no-boot static evidence is an actual EOF-after-partial-C6
+fixture proving bounded artifact+marker retention, no receipt parse/FPS or
+semantic admission, normal framed helper-nonzero behavior unchanged, and the
+existing synchronous-reap/zero-conflicting-QEMU postcondition. Do not repair
+or request another VM gate until that narrow change and independent review
+pass.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -841,8 +877,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    proof. The helper repair and independent review now pass host-only, which
    permits forming (never reusing) a fresh serialized gate. Every future
    conductor follows the prospective coexistence rule in Binding host and VM
-   discipline, including its retained all-architecture inventories. Clear
-   >=52 before pursuing about 55-60.
+   discipline, including its retained all-architecture inventories. The
+   RISC-V-exempt trial is also CONSUMED/INVALID at receipt EOF; its cause is
+   open behind the no-boot evidence repair/review above. Clear >=52 before
+   pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
