@@ -608,6 +608,30 @@ inventories were 1 at start and 0 at end. No VM, source edit, build, rootfs,
 serial, or launcher action occurred. Independent review remains incomplete and
 VM authority stays closed.
 
+**A1 role-state bounded independent review — INCOMPLETE / NO-BOOT
+(2026-07-12):** direct audit at `bbd7102` confirms the production helper's
+strict bounded fast-census condition and the parser's nonce/probe, launch/argv
+marker+digest, role digest/cap/total-tail, command-frame, threshold, and
+diag0/V3 guards. The source-locked static reducer also names baseline,
+semantic, spoof/malformed, nonce/probe, role-digest/cap, tail, threshold, and
+diag0/V3 cases. However, the required actual-source valid case is absent: the
+defined `role_synthetic` is not newline-terminated, and the reducer evaluates
+a Tcl mirror rather than the generated helper's Bash `while read` block. Thus
+the canonical static pass cannot prove the requested actual-helper newline
+case or support independent PASS.
+
+The one permitted canonical command was
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=1 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0 YT_OUTDIR=/tmp/xv6-role-state-canonical-static.RUcIZI
+/usr/bin/expect scripts/gpu/chromium-youtube-presentfps.expect`; its fresh log
+`/tmp/xv6-role-state-canonical-static.83UtXW.log` exited 0 and retained all
+existing static PASS/REJECT rows. Exact all-arch QEMU was zero at 00:00:50Z
+and 00:01:09Z. This is no source/VM/build/rootfs/serial/launcher credit and
+does not reopen or clear VM authority. A future review needs an authorized
+source checkpoint that supplies the missing built-in actual-helper coverage;
+do not create another external harness.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
