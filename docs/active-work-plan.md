@@ -1492,6 +1492,34 @@ edit or replay followed; exact all-architecture QEMU inventories immediately
 before and after were both zero. This remains diagnostic-only/no-authority and
 grants no role/subtype, HD720, media, FPS, audio, fullscreen, or VM credit.
 
+**A1 C7 clean-control tokenizer forensic — ROOT CAUSE LOCALIZED / NO-BOOT
+(2026-07-12):** immutable `301f0839f6dce2de2dcdc9fe6d4df893c3bc2973`
+equals the explicit origin; both named 105-line/13658-byte static logs retain
+the identical `c7=0,0,1,1,1` terminal tuple. Direct parser/helper/fixture
+audit pins the first failure before any binding, count, digest, hex, raw-row
+adjacency, or vector check: every generated C7 META row correctly includes
+the required field `c7_marker=...`, while its tokenizer accepts field names
+only under `^([a-z_]+)=([^ ]+)$`. The digit `7` violates that grammar, so the
+clean 70 KiB control returns `census-meta-parse-drift`; the LF, CRLF, and
+CRCRLF copies call that same tokenizer after their otherwise accepted command
+frame/candidate-CR handling and fail identically. The authorized expected-value
+mapping correction did not, and could not, affect this earlier failure.
+
+Thus the two false controls share exactly that one schema/tokenizer defect.
+`rejects=1` is not positive transport evidence: each adversary also fails at
+the same early META parse, while source-contract and no-credit are source
+predicates (`1,1`). C3/C4/C5/C7 value formats, tag/nonce/probe, cap/count/tail,
+digest/hex, row adjacency, and semantic rows are untested by a clean parse;
+none is implicated or cleared. The sole smallest correction is to admit the
+already required lowercase digit-bearing key, e.g. replace only the META key
+grammar with `^([a-z][a-z0-9_]*)=([^ ]+)$`; do not change frame fields or the
+4096-byte C6 contract. A new authorized static run must then prove the clean
+complete and all three wire controls reach host digest/vector success, and
+that every negative rejects for its intended invariant rather than a generic
+META-token failure, followed by independent review. No test was rerun and no
+source, VM, QEMU, build, rootfs, serial, or launcher action occurred; exact
+QEMU inventories before/after were `0/0/0`.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1612,9 +1640,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    role/player diagnostic's first static attempt has an untrusted full-census
    digest/vector claim. A distinct C7-only, cap-preserving full-census
    diagnostic design is now reviewed; it leaves the 4096-byte admitting C6
-   receipt unchanged and still requires fresh implementation, static pass, and
-   independent review before another gate. Do not lower the threshold. Clear
-   >=52 before pursuing about 55-60.
+   receipt unchanged. Its current C7 static control is blocked at the
+   `c7_marker` META-key tokenizer, so the one narrow grammar correction,
+   fresh static pass, and independent review remain required before another
+   gate. Do not lower the threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
