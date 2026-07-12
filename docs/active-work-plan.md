@@ -1090,6 +1090,38 @@ QEMU inventories before and after were total/conflicting/informational-RISC-V
 action occurred. Per this gate, no further source edit or replay is authorized;
 the transport source remains unverified/uncommitted and grants no credit.
 
+**A1 fbstat provenance-frame transport — STATIC PASS / NO-BOOT
+(2026-07-12):** the bounded source-lock follow-up corrected only the static
+helper expectation to its actual regular-file test
+`[ ! -f "$capture" ]`; every required generated-helper fragment was then
+checked against the helper procedure with the same `string first` semantics:
+cap, `fbstat` redirect, regular/non-symlink checks, `wc`, `dd`, `xxd -p`,
+`openssl dgst -sha256 -r`, and the transport metadata row all matched. The
+guest helper remains a fresh regular `/dev/shm` capture followed by a bounded
+retained copy; it emits one tag/nonce frame with command status, raw and
+payload counts, cap, truthful truncation, lower-hex length/data, and digest.
+The host binds the outer C5 command frame and tag/nonce, requires exactly one
+contiguous four-row transport frame, verifies every count/cap/truncation/hex/
+digest invariant, then gives only decoded verified bytes to the unchanged
+fbstat parser. No serial fragment reconstruction is admitted.
+
+Fresh canonical host-only replay
+`/tmp/xv6-fbstat-transport-static-lock.WngyZV.log` exited 0 with
+`YT-PRESENTFPS-STATIC-CHECK-PASS`; exact QEMU inventories before and after
+were total/conflicting/informational-RISC-V `0/0/0`. Its transport matrix
+accepts a clean 58,986-byte current-schema frame into the unchanged parser and
+rejects page-flip console interleaving, duplicate/wrong-tag/wrong-nonce frames,
+non-OK status, count/cap/length/digest/hex drift, nonregular-file status, and
+a truthful over-cap truncation before parser credit. The 131072-byte decoded
+cap yields at most 262144 lower-hex characters, safely below `match_max`
+2,000,000. The same replay retained the actual-Bash role evidence matrix,
+nonce/probe/digest/cap and tail-drift rejects, 103/4 and 104/4 threshold
+rejects versus 104/5 retention, and `capturediag0_no_v3=PASS` with
+`js_guest_runtime=UNEXECUTED`. This is source/static-only: no guest, HD720,
+audio, fullscreen, `yt-presentfps`, `PERF-VIDEO`, or performance credit exists.
+An independent no-boot adversarial review remains mandatory before any fresh VM
+gate.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the

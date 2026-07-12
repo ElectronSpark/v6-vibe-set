@@ -640,6 +640,7 @@ set runlog "$outdir/run.log"
 set statusf "$outdir/STATUS.txt"
 set metricsf "$outdir/metrics.txt"
 set fbcsv "$outdir/fbstat-samples.txt"
+set fbstat_transport_payload_cap 131072
 set launcher_log "$outdir/host-gui-wayland-chromium.log"
 set chrome_log "$outdir/chrome_debug.log"
 set launch_stdio_log "$outdir/yt-launch-stdio.log"
@@ -4076,8 +4077,243 @@ proc select_prelaunch_fbstat_attempt {attempts} {
     return [list 0 $attempt_number {} "retry-exhausted [join $failures ,]"]
 }
 
+proc fbstat_transport_digest {payload} {
+    global outdir fbstat_transport_digest_counter
+    if {![info exists fbstat_transport_digest_counter]} {
+        set fbstat_transport_digest_counter 0
+    }
+    incr fbstat_transport_digest_counter
+    set path "$outdir/.fbstat-transport-digest-[pid]-$fbstat_transport_digest_counter"
+    set fh [open $path wb]
+    fconfigure $fh -translation binary -encoding binary
+    puts -nonewline $fh $payload
+    close $fh
+    set digest [sha256_file $path]
+    catch {file delete -force $path}
+    if {![regexp {^[0-9a-f]{64}$} $digest]} {
+        error "fbstat transport digest unavailable"
+    }
+    return $digest
+}
+
+# The guest keeps fbstat's potentially long, asynchronously interleaved output
+# off the UART.  The UART carries only one contiguous, C5-bound lower-hex
+# frame.  Do not tolerate a partial or reconstructed transport: the existing
+# fbstat parser below sees only verified decoded bytes.
+proc fbstat_transport_decode {serial expected_tag expected_nonce expected_marker} {
+    global fbstat_transport_payload_cap
+    foreach {name value} [list tag $expected_tag nonce $expected_nonce marker $expected_marker] {
+        if {![regexp {^[A-Za-z0-9_-]+$} $value]} {
+            return [list 0 "transport-$name-invalid" ""]
+        }
+    }
+    set command_frame [guest_command_frame_parse $serial $expected_marker]
+    if {![lindex $command_frame 0]} {
+        return [list 0 "transport-command-frame-[lindex $command_frame 1]" ""]
+    }
+    if {[lindex $command_frame 2] ne "0"} {
+        return [list 0 "transport-command-status-[lindex $command_frame 2]" ""]
+    }
+
+    set normalized [string map [list "\r\n" "\n" "\r" "\n"] $serial]
+    set transport_lines {}
+    set line_number 0
+    foreach line [split $normalized "\n"] {
+        incr line_number
+        if {[regexp {^YT_FBSTAT_TRANSPORT_(BEGIN|META|HEX|END)([ \t]|$)} $line]} {
+            lappend transport_lines [list $line_number $line]
+        }
+    }
+    if {[llength $transport_lines] != 4} {
+        return [list 0 "transport-frame-count-[llength $transport_lines]" ""]
+    }
+    lassign [lindex $transport_lines 0] begin_line begin
+    lassign [lindex $transport_lines 1] meta_line meta
+    lassign [lindex $transport_lines 2] hex_line hex
+    lassign [lindex $transport_lines 3] end_line end
+    if {$meta_line != $begin_line + 1 || $hex_line != $meta_line + 1 ||
+        $end_line != $hex_line + 1} {
+        return [list 0 "transport-frame-noncontiguous" ""]
+    }
+    set quoted_tag [regex_quote $expected_tag]
+    set quoted_nonce [regex_quote $expected_nonce]
+    set begin_pattern [format {^YT_FBSTAT_TRANSPORT_BEGIN tag=%s nonce=%s$} \
+        $quoted_tag $quoted_nonce]
+    set end_pattern [format {^YT_FBSTAT_TRANSPORT_END tag=%s nonce=%s$} \
+        $quoted_tag $quoted_nonce]
+    if {![regexp $begin_pattern $begin] || ![regexp $end_pattern $end]} {
+        return [list 0 "transport-tag-or-nonce-drift" ""]
+    }
+    set meta_pattern [format {^YT_FBSTAT_TRANSPORT_META tag=%s nonce=%s status=([A-Z_]+) raw_bytes=([0-9]+) payload_bytes=([0-9]+) cap=([0-9]+) truncated=([01]) digest=([0-9a-f]{64}|unavailable) hex_bytes=([0-9]+)$} $quoted_tag $quoted_nonce]
+    if {![regexp $meta_pattern $meta -> status raw_bytes payload_bytes cap truncated digest hex_bytes]} {
+        return [list 0 "transport-meta-shape" ""]
+    }
+    set hex_pattern [format {^YT_FBSTAT_TRANSPORT_HEX tag=%s nonce=%s data=([0-9a-f]*)$} \
+        $quoted_tag $quoted_nonce]
+    if {![regexp $hex_pattern $hex -> payload_hex]} {
+        return [list 0 "transport-hex-shape" ""]
+    }
+    if {$status ne "OK"} {
+        return [list 0 "transport-status-$status" ""]
+    }
+    if {$cap != $fbstat_transport_payload_cap} {
+        return [list 0 "transport-cap-$cap" ""]
+    }
+    if {$payload_bytes > $cap || $raw_bytes < $payload_bytes} {
+        return [list 0 "transport-count-order" ""]
+    }
+    set expected_truncated [expr {$raw_bytes > $cap ? 1 : 0}]
+    set expected_payload_bytes [expr {$expected_truncated ? $cap : $raw_bytes}]
+    if {$truncated != $expected_truncated || $payload_bytes != $expected_payload_bytes} {
+        return [list 0 "transport-truncation-drift" ""]
+    }
+    if {$hex_bytes != $payload_bytes * 2 || [string length $payload_hex] != $hex_bytes} {
+        return [list 0 "transport-hex-length" ""]
+    }
+    if {[catch {binary decode hex $payload_hex} payload]} {
+        return [list 0 "transport-hex-decode" ""]
+    }
+    if {[string bytelength $payload] != $payload_bytes ||
+        [binary encode hex $payload] ne $payload_hex} {
+        return [list 0 "transport-hex-roundtrip" ""]
+    }
+    if {[fbstat_transport_digest $payload] ne $digest} {
+        return [list 0 "transport-digest-drift" ""]
+    }
+    if {$truncated} {
+        return [list 0 "transport-truncated" ""]
+    }
+    return [list 1 pass $payload]
+}
+
+proc fbstat_transport_guest_helper_script {} {
+    return {#!/bin/bash
+set -f
+tag=$1
+nonce=$2
+cap=131072
+status=OK
+raw_bytes=0
+payload_bytes=0
+truncated=0
+digest=unavailable
+hex_bytes=0
+payload_hex=
+
+valid_token() {
+    case "$1" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+    return 0
+}
+valid_decimal() {
+    case "$1" in 0|[1-9][0-9]*) return 0 ;; esac
+    return 1
+}
+if ! valid_token "$tag" || ! valid_token "$nonce"; then
+    status=TAG_INVALID
+    tag=invalid
+    nonce=invalid
+fi
+base=/dev/shm/yt-fbstat-${tag}-${nonce}-$$
+capture=${base}.capture
+retained=${base}.payload
+rm -f "$capture" "$retained"
+if [ "$status" = OK ] && { [ -e "$capture" ] || [ -L "$capture" ] || [ -e "$retained" ] || [ -L "$retained" ]; }; then
+    status=FILE_INVALID
+fi
+if [ "$status" = OK ]; then
+    fbstat >"$capture" 2>&1
+    command_rc=$?
+    if [ "$command_rc" -ne 0 ]; then status=COMMAND_FAILED; fi
+fi
+if [ "$status" = OK ] && { [ ! -f "$capture" ] || [ -L "$capture" ] || [ ! -r "$capture" ]; }; then
+    status=FILE_INVALID
+fi
+if [ "$status" = OK ]; then
+    count_output=$(/bin/wc < "$capture" 2>/dev/null)
+    set -- $count_output
+    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then
+        status=COUNT_INVALID
+    else
+        raw_bytes=$3
+        if [ "$raw_bytes" -gt "$cap" ]; then
+            payload_bytes=$cap
+            truncated=1
+        else
+            payload_bytes=$raw_bytes
+        fi
+    fi
+fi
+if [ "$status" = OK ]; then
+    /bin/dd if="$capture" of="$retained" bs=1 count="$payload_bytes" 2>/dev/null
+    if [ "$?" -ne 0 ] || [ ! -f "$retained" ] || [ -L "$retained" ] || [ ! -r "$retained" ]; then
+        status=COPY_FAILED
+    fi
+fi
+if [ "$status" = OK ]; then
+    retained_count=$(/bin/wc < "$retained" 2>/dev/null)
+    set -- $retained_count
+    if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then
+        status=COUNT_INVALID
+    fi
+fi
+if [ "$status" = OK ]; then
+    digest_output=$(/bin/openssl dgst -sha256 -r "$retained" 2>/dev/null)
+    set -- $digest_output
+    if [ "$#" -ne 2 ] || [ "$2" != "*$retained" ] || ! valid_decimal 0; then
+        status=DIGEST_INVALID
+    else
+        digest=$1
+        case "$digest" in ''|*[!0-9a-f]*) status=DIGEST_INVALID ;; esac
+        if [ "${#digest}" -ne 64 ]; then status=DIGEST_INVALID; fi
+    fi
+fi
+if [ "$status" = OK ]; then
+    hex_output=$(/bin/xxd -p "$retained" 2>/dev/null)
+    hex_rc=$?
+    if [ "$hex_rc" -ne 0 ]; then
+        status=HEX_INVALID
+    elif [ -n "$hex_output" ]; then
+        while IFS= read -r hex_line || [ -n "$hex_line" ]; do
+            case "$hex_line" in ''|*[!0-9a-f]*) status=HEX_INVALID; break ;; esac
+            payload_hex=${payload_hex}${hex_line}
+        done <<EOF
+$hex_output
+EOF
+    fi
+fi
+if [ "$status" = OK ]; then
+    hex_bytes=${#payload_hex}
+    expected_hex_bytes=$((payload_bytes * 2))
+    if [ "$hex_bytes" -ne "$expected_hex_bytes" ]; then status=HEX_INVALID; fi
+fi
+printf 'YT_FBSTAT_TRANSPORT_BEGIN tag=%s nonce=%s\n' "$tag" "$nonce"
+printf 'YT_FBSTAT_TRANSPORT_META tag=%s nonce=%s status=%s raw_bytes=%s payload_bytes=%s cap=%s truncated=%s digest=%s hex_bytes=%s\n' "$tag" "$nonce" "$status" "$raw_bytes" "$payload_bytes" "$cap" "$truncated" "$digest" "$hex_bytes"
+printf 'YT_FBSTAT_TRANSPORT_HEX tag=%s nonce=%s data=%s\n' "$tag" "$nonce" "$payload_hex"
+printf 'YT_FBSTAT_TRANSPORT_END tag=%s nonce=%s\n' "$tag" "$nonce"
+rm -f "$capture" "$retained"
+exit 0
+}
+}
+
+proc fbstat_transport_static_frame {tag nonce payload {overrides {}}} {
+    global fbstat_transport_payload_cap
+    set payload_bytes [string bytelength $payload]
+    set values [dict create \
+        status OK raw_bytes $payload_bytes payload_bytes $payload_bytes \
+        cap $fbstat_transport_payload_cap truncated 0 \
+        digest [fbstat_transport_digest $payload] hex_bytes [expr {$payload_bytes * 2}] \
+        payload_hex [binary encode hex $payload]]
+    dict for {key value} $overrides {
+        if {![dict exists $values $key]} {
+            error "unknown fbstat transport static override $key"
+        }
+        dict set values $key $value
+    }
+    return "YT_FBSTAT_TRANSPORT_BEGIN tag=$tag nonce=$nonce\nYT_FBSTAT_TRANSPORT_META tag=$tag nonce=$nonce status=[dict get $values status] raw_bytes=[dict get $values raw_bytes] payload_bytes=[dict get $values payload_bytes] cap=[dict get $values cap] truncated=[dict get $values truncated] digest=[dict get $values digest] hex_bytes=[dict get $values hex_bytes]\nYT_FBSTAT_TRANSPORT_HEX tag=$tag nonce=$nonce data=[dict get $values payload_hex]\nYT_FBSTAT_TRANSPORT_END tag=$tag nonce=$nonce\n"
+}
+
 proc fb_sample {tag} {
-    global fbcsv outdir
+    global fbcsv outdir serial_nonce
     # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
     # remain single-shot so retries cannot move a measurement boundary or bias
     # a timed window.  Every raw attempt is retained and guest_cmd supplies a
@@ -4085,20 +4321,27 @@ proc fb_sample {tag} {
     set max_attempts [expr {$tag eq "idle" ? 3 : 1}]
     set failures {}
     for {set attempt 1} {$attempt <= $max_attempts} {incr attempt} {
-        set result [guest_cmd "/bin/bash /fbs.sh $tag" "fbstat-$tag-attempt$attempt" 35]
+        set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" "fbstat-$tag-attempt$attempt" 35]
         set buf [lindex $result 1]
         set attempt_path "$outdir/fbstat-$tag-attempt$attempt.txt"
         wf $attempt_path $buf
         if {[lindex $result 0] ne "0"} {
             finish 8 "FAIL guest-command phase=fbstat-$tag-attempt$attempt rc=[lindex $result 0] artifact=$attempt_path"
         }
-        if {[fatal_runtime_marker $buf] || [gpu_init_failure_marker $buf]} {
+        set decoded [fbstat_transport_decode $buf $tag $serial_nonce [lindex $result 3]]
+        if {![lindex $decoded 0]} {
+            finish 8 "FAIL invalid-fbstat-transport tag=$tag attempt=$attempt detail=[lindex $decoded 1] artifact=$attempt_path"
+        }
+        set payload [lindex $decoded 2]
+        set payload_path "$outdir/fbstat-$tag-payload-attempt$attempt.txt"
+        wf $payload_path $payload
+        if {[fatal_runtime_marker $payload] || [gpu_init_failure_marker $payload]} {
             finish 4 "FAIL crash-or-gpu-marker phase=fbstat-$tag-attempt$attempt artifact=$attempt_path"
         }
-        if {[software_marker $buf]} {
+        if {[software_marker $payload]} {
             finish 8 "FAIL software-renderer-fbstat tag=$tag attempt=$attempt artifact=$attempt_path"
         }
-        set classified [classify_fbstat_sample $buf [expr {$tag eq "idle"}]]
+        set classified [classify_fbstat_sample $payload [expr {$tag eq "idle"}]]
         set disposition [lindex $classified 0]
         set parsed [lindex $classified 1]
         set detail [lindex $classified 2]
@@ -4107,8 +4350,8 @@ proc fb_sample {tag} {
             set flips [lindex $parsed 1]
             set presents [lindex $parsed 2]
             set hms [clock milliseconds]
-            wf "$outdir/fbstat-$tag.txt" $buf
-            af $fbcsv "$tag accepted_attempt=$attempt flips=$flips presents=$presents host_ms=$hms iso=[iso_now] parser=[lindex $parsed 3] proof=$detail"
+            wf "$outdir/fbstat-$tag.txt" $payload
+            af $fbcsv "$tag accepted_attempt=$attempt flips=$flips presents=$presents host_ms=$hms iso=[iso_now] parser=[lindex $parsed 3] proof=$detail transport=verified payload_artifact=$payload_path"
             return [list $flips $presents $hms]
         }
         lappend failures "attempt$attempt:$disposition:$detail"
@@ -6582,9 +6825,7 @@ virgl_bo_presents 1
     }
     set static_media_arm_helpers [dict create \
         /ytlaunch.sh "#!/bin/bash\n$process_filter_command\n" \
-        /fbs.sh {#!/bin/bash
-fbstat 2>&1
-} \
+        /fbs.sh [fbstat_transport_guest_helper_script] \
         /ytrole.sh {#!/bin/bash
 cat /kde-chromium-process-evidence.log
 } \
@@ -8007,6 +8248,79 @@ virgl_bo_presents 6198
         fail_preflight "static-check-c1-flip-conflict parsed=$c1_flip_conflict"
     }
 
+    # The transport uses a 128 KiB decoded cap (262144 lower-hex bytes) so the
+    # observed 58,986-byte fbstat payload fits with substantial headroom while
+    # the UART frame remains far below guest_cmd's 2 MiB match_max.  The
+    # current parser still receives its original complete text only after the
+    # C5/tag/nonce/count/cap/hex/digest frame has verified.
+    set static_fb_tag probe1
+    set static_fb_nonce fbfstatstaticnonce
+    set static_fb_marker YTFBSTATSTATICC5
+    set static_fb_payload "$c1_t2_fbstat_excerpt\n"
+    set static_fb_target_bytes 58986
+    if {[string bytelength $static_fb_payload] > $static_fb_target_bytes} {
+        fail_preflight "static-check-fbstat-transport-fixture-too-large"
+    }
+    append static_fb_payload [string repeat x [expr {$static_fb_target_bytes - [string bytelength $static_fb_payload]}]]
+    set static_fb_frame [fbstat_transport_static_frame $static_fb_tag \
+        $static_fb_nonce $static_fb_payload]
+    set static_fb_serial "$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_decoded [fbstat_transport_decode $static_fb_serial \
+        $static_fb_tag $static_fb_nonce $static_fb_marker]
+    set static_fb_classified [expr {[lindex $static_fb_decoded 0] ? \
+        [classify_fbstat_sample [lindex $static_fb_decoded 2] 1] : {INVALID {}}}]
+    if {![lindex $static_fb_decoded 0] ||
+        [string bytelength [lindex $static_fb_decoded 2]] != $static_fb_target_bytes ||
+        [lindex $static_fb_classified 0] ne "PASS"} {
+        fail_preflight "static-check-fbstat-transport-clean decoded=$static_fb_decoded classified=$static_fb_classified"
+    }
+    set static_fb_frame_lines [split [string trimright $static_fb_frame "\n"] "\n"]
+    set static_fb_interleaved [join [list \
+        [lindex $static_fb_frame_lines 0] [lindex $static_fb_frame_lines 1] \
+        {virtio_gpu: page-flip present resource=4 size=1280x800} \
+        [lindex $static_fb_frame_lines 2] [lindex $static_fb_frame_lines 3]] "\n"]
+    append static_fb_interleaved "\n$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_duplicate "$static_fb_frame$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_wrong_tag "[fbstat_transport_static_frame wrongtag $static_fb_nonce $static_fb_payload]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_wrong_nonce "[fbstat_transport_static_frame $static_fb_tag wrongnonce $static_fb_payload]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_status "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create status COMMAND_FAILED]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_count "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create payload_bytes [expr {$static_fb_target_bytes + 1}]] ]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_cap "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create cap [expr {$fbstat_transport_payload_cap - 1}]] ]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_length "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create hex_bytes 1]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_digest "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create digest [string repeat 0 64]] ]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_bad_hex "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create payload_hex g]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_nonregular "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload [dict create status FILE_INVALID]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    set static_fb_capped_payload [string repeat x $fbstat_transport_payload_cap]
+    set static_fb_truthful_truncated "[fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_capped_payload [dict create raw_bytes [expr {$fbstat_transport_payload_cap + 1}] truncated 1]]$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    foreach static_fb_case [list \
+        [list interleaved $static_fb_interleaved transport-frame-noncontiguous] \
+        [list duplicate $static_fb_duplicate transport-frame-count-8] \
+        [list tag $static_fb_wrong_tag transport-tag-or-nonce-drift] \
+        [list nonce $static_fb_wrong_nonce transport-tag-or-nonce-drift] \
+        [list status $static_fb_bad_status transport-status-COMMAND_FAILED] \
+        [list count $static_fb_bad_count transport-count-order] \
+        [list cap $static_fb_bad_cap transport-cap-] \
+        [list length $static_fb_bad_length transport-hex-length] \
+        [list digest $static_fb_bad_digest transport-digest-drift] \
+        [list hex $static_fb_bad_hex transport-hex-shape] \
+        [list nonregular $static_fb_nonregular transport-status-FILE_INVALID] \
+        [list truncation $static_fb_truthful_truncated transport-truncated]] {
+        lassign $static_fb_case name serial expected
+        set decoded [fbstat_transport_decode $serial $static_fb_tag $static_fb_nonce $static_fb_marker]
+        if {[lindex $decoded 0] || ![string match "${expected}*" [lindex $decoded 1]]} {
+            fail_preflight "static-check-fbstat-transport-$name decoded=$decoded"
+        }
+    }
+    set static_fb_helper [fbstat_transport_guest_helper_script]
+    foreach required_fragment [list \
+        {cap=131072} {fbstat >"$capture" 2>&1} {[ ! -f "$capture" ]} \
+        {[ -L "$capture" ]} {/bin/wc} {/bin/dd} {/bin/xxd -p} \
+        {/bin/openssl dgst -sha256 -r} {YT_FBSTAT_TRANSPORT_META}] {
+        if {[string first $required_fragment $static_fb_helper] < 0} {
+            fail_preflight "static-check-fbstat-transport-helper-missing fragment=$required_fragment"
+        }
+    }
+
     # Exact relevant shape from T1 idle attempt 1: scalar/backend rows were
     # clean, but an asynchronous virtio log split the separation matrix.  The
     # continuation must never be spliced back onto the candidate row.
@@ -9128,10 +9442,7 @@ if {$egl_forensics eq "1"} {
 
 set fbs_host "$outdir/fbs.sh"
 set fh [open $fbs_host w]
-puts $fh "#!/bin/bash"
-puts $fh "echo YT_FBSTAT_BEGIN tag=\$1"
-puts $fh "fbstat 2>&1"
-puts $fh "echo YT_FBSTAT_END tag=\$1"
+puts -nonewline $fh [fbstat_transport_guest_helper_script]
 close $fh
 
 set role_host "$outdir/ytrole.sh"
