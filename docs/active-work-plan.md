@@ -27,13 +27,12 @@ lever—evidence plumbing must not substitute for performance progress.
 ## Immediate queue
 
 Committed C1 V2 static checkpoint `433f217a7cca4eccb9a1f3df19c726b7e8ec86fe`
-has now passed independent no-boot review. It authorizes exactly one
-deterministic rootfs refresh/build **staging proof** using the pinned kernel
-and user gitlinks, including a fresh executable `/bin/_consolerecord`; it does
-not authorize a QEMU launch, boot, serial command, YouTube/performance trial,
-audio/fullscreen/default work, or credit. The staging worker must synchronously
-finish and leave the exact QEMU inventory clear before a separately reviewed
-next gate.
+has passed independent no-boot review, but its sole authorized deterministic
+rootfs staging proof is now consumed INCOMPLETE: the kernel build completed,
+then the wrapper ended during the `user` target before any rootfs refresh.
+No fresh `/bin/_consolerecord` image proof exists. The next item is no-boot
+forensic of that exact user-build termination; no QEMU launch, boot, serial,
+YouTube/performance, audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -3840,3 +3839,32 @@ It must use those exact gitlinks, prove the fresh staging contains executable
 and synchronously finish with an exact no-QEMU inventory. It may not boot,
 launch QEMU, issue serial commands, measure YouTube, or alter defaults. A new
 independent review is mandatory before any VM or performance gate.
+
+**C1 V2 deterministic rootfs staging proof — INCOMPLETE / NO-BOOT
+(2026-07-12):** exact preflight inventory was total/informational-RISC-V/
+conflicting `0/0/0`; super HEAD/origin was
+`85bade5c6fe3862cabefb49679fff299199d4f3c`, kernel HEAD/origin was
+`b42d1c37f90b2ac48aa416a9eb215a935920f649`, and user HEAD/origin was
+`a95f8c8a6d0dcb9189b6ec6d51a0f376fc721cc1`. Only unrelated KDE-smoke dirt
+was present; kernel and user worktrees were clean. The one canonical staging
+sequence, recorded under `/tmp/xv6-c1-rootfs-staging-20260712T235443Z-2939233`,
+ran `cmake --build build-x86_64 --target kernel -j2`, then `user`, then
+`rootfs-refresh`, each intended to stop at first failure.
+
+The kernel command completed and regenerated the x86 boot artifact (after
+mtime `1783900494`, SHA-256 unchanged at
+`99b23539aa9ab7c540fe0a81ee00ecd436e9d917ec1e4193fe5a9f186194e067`), but
+the 41-byte `user-build.log` contains only `[0/2] Re-checking globbed
+directories...`; the wrapper emitted no `stage_result`, no rootfs-refresh log,
+and no fresh-user result. This is the first failed/incomplete point, not a
+claim that the user target passed or failed for a particular source reason.
+The filesystem image is demonstrably stale for this proof: before and after it
+has inode `73499`, mtime `1783790041`, size `8724152320`, and SHA-256
+`4cb082f56a9b7ccdb4d9ec8e7efd40266c4ac5a023cd02d3c1095a1491ecc56b`.
+Therefore no fresh image `/bin/_consolerecord`, browser-asset, or image/hash
+claim is made. Exact final inventory was `0/0/0`; no QEMU, boot, serial,
+rootfs manual write, or source edit occurred. Per the one-attempt rule no
+substitute build or refresh followed. This grants no staging, V2/A1,
+performance, HD720/audio/fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit;
+next authority is limited to forensic localization before another staging
+attempt.
