@@ -1380,6 +1380,43 @@ conflicting `0/0/0/0`; no process was touched. A fresh no-boot authorization
 must redesign and review the full-summary integrity boundary before any VM
 gate.
 
+**A1 plateau full-census trust-boundary design — VERDICT / NO-BOOT
+(2026-07-12):** immutable `cf637579ca57e8e9da7630f3fec4b55b502084d6`
+equals explicit origin; the failed driver and unrelated KDE-smoke changes
+remain unstaged and untouched. Direct audit confirms the failure: the helper
+calculates `role_full_digest` and subtype counts from the full evidence file,
+but transmits only `role_bytes` (at most 4096) and the host recomputes only
+the prefix `role_digest`; it then checks a full-digest string's syntax and
+vector arithmetic, not their source bytes. The named static full-digest-zero
+mutant consequently parsed `pass`. This is an integrity defect, not a reason
+to relax the role/flip gate or infer any plateau cause.
+
+The 4096-byte cap is **not** sufficient for a full census: named evidence logs
+are 69617, 81929, and 81929 bytes, and the five current receipts declare
+role-total 65663--69749 with role-bytes 4096 and truthful truncation. Keep
+that cap; no larger UART/receipt limit is authorized by these facts. A full
+digest or subtype vector may exist only when `role_total == role_bytes <= 4096`
+and `role_tail_truncated=0`: host decodes the exact ROLE_HEX, recomputes its
+digest, and derives browser/GPU/renderer/utility/zygote/other counts plus
+network/audio-as-utility subtypes itself. Prefer no guest `role_full_digest`
+or vector fields; if retained, exact host-derived equality is mandatory. On
+any overflow, the new diagnostic must say
+`INCOMPLETE role-summary-over-cap`/no-credit with full digest and every
+present/absent subtype claim unavailable—not zero. The existing bounded
+liveness receipt is not promoted by that diagnostic and the threshold remains
+unchanged.
+
+Required next static matrix: (1) a complete <=4096 valid control whose digest
+and host-derived vector match exact bytes; (2) forged full digest and forged
+vector/extra-vector metadata rejection; (3) bytes>total, false/true tail, and
+total/bytes drift rejection; (4) a truthful over-cap prefix that is explicitly
+diagnostic-INCOMPLETE and rejects any full digest/vector claim; and (5) exact
+complete-vector semantic mismatches (primary-role sum versus semantic rows,
+network/audio exceeding utility, or subtype absent/present mismatch) rejected.
+No replay, source edit, VM, build, rootfs, serial, or launcher action occurred.
+Exact QEMU inventories before/after were total/conflicting/informational-RISC-V
+`0/0/0`.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -1497,8 +1534,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    map. The scoped candidate-local repair, its actual-wire matrix, and its
    independent no-boot review now pass; their sole gate was then consumed
    INVALID at a real `live-roles-insufficient-flips` plateau. The bounded
-   role/player diagnostic above is required before forming another gate; do
-   not lower the threshold. Clear >=52 before pursuing about 55-60.
+   role/player diagnostic's first static attempt has an untrusted full-census
+   digest/vector claim; its cap-preserving trust-boundary design above requires
+   a fresh implementation, static pass, and independent review before another
+   gate. Do not lower the threshold. Clear >=52 before pursuing about 55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
