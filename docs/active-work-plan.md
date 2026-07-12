@@ -26,15 +26,14 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At source checkpoint `e079eacc1297e450c4e68e21ca3d0ba2376f7ac5`, the one
-review-authorized C1 V2 observer suite is consumed but failed before its
-actual-helper cases on a static max-row arithmetic assertion. The reviewed
-inner-row correction is ready in the pending static harness and awaits
-adversarial review; there is no further static or VM authority. Retain the
-1-MiB wrapper and per-case count artifacts. Only a new authority after review
-may decide whether one fresh canonical host-only suite is warranted. No VM,
-performance, audio, fullscreen, default, or credit action is opened by the
-failed suite.
+At plan checkpoint `d7483a6c7f541cc27707fc3b546f47a6977d373c`, the pending
+C1 V2 observer arithmetic correction has passed a no-run adversarial review.
+Exactly one fresh canonical host-only static suite is now authorized: clean
+conventional PATH, static=1, MP=1, audio-disable=1, media=1, forced-HD720=0,
+EGL=0, capturediag=0, pinned window/crop/delta/video inputs, and a nonexistent
+`YT_OUTDIR`. Retain the 1-MiB wrapper and per-case count artifacts; report the
+first honest result and do not retry. No VM, performance, audio, fullscreen,
+default, or credit action is opened by this authority.
 
 ## Binding host and VM discipline
 
@@ -3265,3 +3264,30 @@ runtime timeout, C8/render, kernel/user/rootfs/default/KDE, build, test,
 serial, VM, boot, or QEMU action occurred. This is correction readiness only:
 the driver remains unstaged and a new adversarial review is required before
 any further canonical static suite or credit.
+
+**C1 V2 observer arithmetic correction adversarial review — PASS / NO-RUN
+(2026-07-12):** at plan HEAD `d7483a6c7f541cc27707fc3b546f47a6977d373c`,
+direct static-only source inspection and an independent literal calculation
+confirm cap/hex/chunk/record values `131072/262144/376/698/701`: 697 full
+512-byte CRLF rows, one 207-byte final row, and 207/298/205-byte
+BEGIN/META/END rows total exactly `357781` inner recorder bytes. The static
+stub writes LF, so its rows file is exactly `357080` bytes. Both are below the
+2048-block `ulimit -f` bound of `1048576` bytes; the `999999` raw-capture guard,
+131072-byte valid input, and 131073-byte over-cap fixture are separately below
+that child-file limit. The 16-byte `YTFBSTATSTATICC5` marker contributes its
+separate outer `47` bytes, not file bytes; with normal-writer `128`, timed
+wire is `357956`, `wire_ms=31073`, `lock_ms=35050`, reserve `5000`, and the
+unchanged timeout is `72` seconds. The failed suite's historical `357812`
+assertion remains recorded as the stale eight-byte-marker outer-frame mixup.
+
+The correction is confined to `YT_STATIC_CHECK` observer assertions/comments
+and leaves the production timeout contract, generated helper, parser, and V2
+protocol unchanged. Exact current `/proc/*/exe` inventory was
+total/informational-RISC-V/conflicting `1/1/0`; the independent RISC-V QEMU was
+not touched. No suite, build, rootfs, VM, serial, KDE, or source-runtime action
+ran. This PASS authorizes exactly one fresh canonical host-only static suite
+with clean conventional PATH, `YT_STATIC_CHECK=1`, `YT_MULTIPROCESS=1`,
+`YT_DISABLE_AUDIO_OUTPUT=1`, `YT_EGL_FORENSICS=0`, `YT_MEDIA_PROBE=1`,
+`YT_FORCE_HD720=0`, `YT_CAPTURE_COMPLETENESS_DIAG=0`, pinned
+window/crop/delta/video inputs, and a nonexistent `YT_OUTDIR`; it is no VM or
+performance authority, and any first result must be retained without retry.
