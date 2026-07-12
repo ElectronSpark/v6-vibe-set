@@ -2917,3 +2917,49 @@ total/informational-RISC-V/conflicting `0/0/0`. Per the one-suite rule there
 was no retry, build, rootfs, boot, kernel/user/default/KDE action, or further
 driver edit; the V2 driver patch remains unstaged and A1 stays N=0 with no
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
+**C1 capture-completeness host-envelope argument forensic — REVISE / NO-RUN
+(2026-07-12):** exact forensic QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no process was touched and no
+test/replay, build, rootfs, VM, boot, or source/KDE/default action occurred.
+The failed outdir is exactly `/tmp/yt-c1-v2-static-path-2774835`; it retains
+only the precreated zero-byte `capture-completeness-fbstat.txt` and no named
+external log or terminal artifact, because the Tcl error occurs before a
+terminal writer. The plan's recorded `invalid capture-completeness host
+envelope arguments` is therefore the complete retained failure detail.
+
+The loaded committed parser (`fa0547a`, unchanged in the worktree) defines
+`capture_completeness_diag_host_envelope {attempt nonce marker}` and accepts
+only three fields: `attempt` in `{initial final}`, a 32-character lowercase
+hex nonce, and an alphanumeric marker. The first failing static owned-terminal
+route is `static_capture_diag_actual_terminal bootstrap-owner`, which calls
+`capture_completeness_diag_owned_terminal`, then
+`capture_completeness_diag_terminalize initial ...`. Its exact envelope
+arguments are therefore count `3`: `attempt=initial` (valid),
+`nonce=off` (invalid: three bytes, not `[0-9a-f]{32}`), and the minted static
+diagnostic marker (valid alphanumeric). This is neither an attempt/marker type
+error nor a call-count/signature drift.
+
+The cause predates V2: top-level configuration sets `media_probe_nonce=off`
+unless `YT_MEDIA_PROBE=1`, while the established canonical static profile uses
+MP=1/media=1 and receives a random valid nonce before the static block. The
+unstaged V2 diff contains no envelope, terminalize, parser, or nonce call-site
+change. Direct capture-completeness static wire/helper fixtures already pass
+the fixed 32-hex `static_nonce` and remain well-formed; the same MP0/global-off
+fault also awaits the owned-terminal/runtime-fixture paths and the later V3
+static terminal/reparse group, which read global `media_probe_nonce`. Live
+capturediag cannot take this bad path because its arm contract requires
+MP=1/media=1/forced-HD720=1.
+
+The smallest next action is an invocation correction, not an envelope/parser
+edit: use one fresh canonical host-only static suite with
+`YT_STATIC_CHECK=1 YT_MULTIPROCESS=1 YT_DISABLE_AUDIO_OUTPUT=1
+YT_EGL_FORENSICS=0 YT_MEDIA_PROBE=1 YT_FORCE_HD720=0
+YT_CAPTURE_COMPLETENESS_DIAG=0`, the already pinned PATH/window/crop/delta/
+video values, and a nonexistent `YT_OUTDIR`. It only generates the host nonce
+and runs static fixtures; it does not boot or create QEMU. Before that one run,
+add a narrow static source assertion that reports the three envelope arguments
+and requires a 32-hex `media_probe_nonce` wherever static owned-terminal or V3
+fixtures consume the global, while preserving direct fixtures' `static_nonce`.
+Do not change the three-argument parser API or relax the nonce check. This is
+no performance/fullscreen/audio/HD720 credit; A1 remains N=0.
