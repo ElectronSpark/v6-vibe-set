@@ -2774,3 +2774,15 @@ VM, or boot. Slice-2 must retain the strict V2 binding/gap vectors and a
 calculated timeout before another independent review. A1 remains N=0 with no
 HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance
 credit.
+
+**C1 slice-2 V2 driver static invocation — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** exact preflight QEMU total/informational-RISC-V/conflicting
+inventory was `0/0/0`; no VM, boot, rootfs refresh, kernel/user/default/KDE
+change, or performance sample occurred. The one authorized command,
+`YT_STATIC_CHECK=1 /usr/bin/expect scripts/gpu/chromium-youtube-presentfps.expect`,
+exited `2` immediately with `missing-required-env=YT_MULTIPROCESS`. It did not
+reach the new V2 host harness, so this is neither a parser/helper failure nor
+a static-suite pass. Per the first-failure rule there was no amended
+invocation, rerun, build, or speculative source repair. The uncommitted V2
+driver-only edit is preserved for forensic review; A1 remains N=0 with no
+HD720, fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or credit.
