@@ -803,6 +803,32 @@ enter credit. No VM, QEMU, build, rootfs, serial, launcher, media, audio,
 fullscreen, semantic, or FPS action occurred. An independent no-boot
 adversarial review remains mandatory before any VM gate.
 
+**A1 render-start EOF control-evidence independent review — PASS / NO-BOOT
+(2026-07-12):** immutable source
+`53bebd90d52c4b9ad93f96e988d217ef0545568b` was equal to the reviewed helper.
+Direct audit confirms the actual `guest_cmd` EOF arm retains the raw buffer
+before `finish 5`; the writer binds sanitized phase and locally minted marker,
+hex-encodes only the final 8192-byte cap with truthful
+`raw_bytes`/`retained_bytes`/`truncated`, and takes the owned PID/PPID/PGID/SID
+snapshot before `finish` can call `stop_qemu`. Code 5 selects evidence-only;
+the normal complete RC/FENCE arm remains earlier and returns its normal command
+result, so EOF evidence cannot become a receipt, semantic, FPS, or other
+credit.
+
+The single fresh canonical replay
+`/tmp/xv6-eof-control-independent-static.CWjbq9.log` (outdir
+`/tmp/xv6-eof-control-independent-static.Qlxpht`) exited 0. Its actual-writer
+assertions retain partial C6 data and its snapshot, reject helper `RC:0`
+without `FENCE`, retain the exact over-cap tail with `truncated=1`, and keep a
+complete RC/FENCE frame valid; source-order assertions require retain/snapshot
+before `finish`/`stop_qemu` and retain code-5/no-credit behavior. The same
+replay retained the actual-Bash role matrix, the 103/4 and 104/4 rejects versus
+104/5 threshold, `capturediag0_no_v3=PASS`, and V3 diag0-off parity. Exact
+all-architecture QEMU inventories were zero before and after; no process was
+touched. This clears only fresh serialized A1 gate formation, never a VM
+authorization or guest/HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`
+credit.
+
 ### V3 source protocol: host-only review PASS
 
 V3 demotes `producer_start` to liveness. Its sole admitting fact is the
@@ -903,9 +929,10 @@ no broader `/tmp` absence claim. No VM gate or diagnostic ran.
    permits forming (never reusing) a fresh serialized gate. Every future
    conductor follows the prospective coexistence rule in Binding host and VM
    discipline, including its retained all-architecture inventories. The
-   RISC-V-exempt trial is also CONSUMED/INVALID at receipt EOF; its cause is
-   open behind the no-boot evidence repair/review above. Clear >=52 before
-   pursuing about 55-60.
+   RISC-V-exempt trial is also CONSUMED/INVALID at receipt EOF; its
+   control-evidence repair and independent review now permit forming (never
+   reusing) a fresh serialized A1 gate. Clear >=52 before pursuing about
+   55-60.
 7. **Actual fullscreen:** first prove real fullscreen and settled active HD720;
    then run distinct N>=2 trials. Never pool with windowed; fullscreen parity
    remains a required objective rather than a follow-up nicety.
