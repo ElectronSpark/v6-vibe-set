@@ -26,12 +26,10 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At review checkpoint `33176d5ce89fb3a9b4b68c79b02d04d731f3b3fa`, the
-static role-LF correction's independent review fails closed: its parser
-logically rejects embedded LF, but the aggregate-gated fixture matrix omits
-that required explicit input. Add that one static-only adversary and review
-again; no retry, VM, performance, audio, fullscreen, default, or credit
-authority exists.
+At review checkpoint `c45eb50936ea407cb04096e1364db7f1dc8fe0b8`, the pending
+static role-LF correction now includes its required explicit embedded-LF
+adversary and is ready for independent no-boot review. There is no retry, VM,
+performance, audio, fullscreen, default, or credit authority.
 
 ## Binding host and VM discipline
 
@@ -3620,3 +3618,17 @@ production paths are unchanged by this observer-only hunk. No test, build,
 rootfs, VM, boot, serial, KDE/default, or QEMU action occurred. This FAIL
 authorizes no canonical MP=1/media=1 host-only suite and grants no V2/A1,
 HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
+
+**Static render-role embedded-LF fixture — READY / NO-RUN (2026-07-12):** the
+pending unstaged observer-only hunk adds one pure, otherwise plausible output:
+the exact anchored role-state line, then a nonempty
+`embedded-observer-line`, then its final LF. Its parser result is now an
+explicit required rejection in the same aggregate-gated role-output contract
+as canonical one-LF pass, legacy no-LF pass, and CRLF/bare-CR/double-LF
+rejections; the failure record includes its parsed result. No parser,
+generated helper/classification, C1 V2, protocol, timeout, credit, or
+production-path behavior changed. No test, build, rootfs, VM, boot, serial,
+KDE/default, or QEMU action occurred; exact pre-edit inventory was
+total/informational-RISC-V/conflicting `0/0/0`. The driver remains unstaged and
+requires independent no-boot review before any suite, with no performance,
+HD720, audio, fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit.
