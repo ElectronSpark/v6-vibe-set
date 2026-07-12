@@ -26,10 +26,10 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-At forensic checkpoint `659fc64cf0dcf2e1a37bbde1e3765ddfb1e8f89f`, the
+At forensic checkpoint `e02c917642347fdca7208392221e1c968cf83566`, the
 consumed static suite's compact-report Tcl error is localized to one
-static-observer interpolation. The next item is a narrow compact-format
-correction plus independent no-boot review; no retry, VM, performance, audio,
+static-observer interpolation. The pending narrow compact-format correction is
+ready for independent no-boot review; no retry, VM, performance, audio,
 fullscreen, default, or credit authority exists.
 
 ## Binding host and VM discipline
@@ -3722,3 +3722,20 @@ render-helper/terminal static aggregate before a fresh independent no-boot
 review. No test, build, rootfs, VM, boot, serial, KDE/default, or QEMU action
 occurred; no V2/A1, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
 performance credit exists.
+
+**Static render-role compact `format` correction — READY / NO-RUN
+(2026-07-12):** the pending unstaged static-observer-only hunk replaces the
+sole unsafe interpolated compact return with one braced Tcl `format` template
+and explicit bounded arguments for name, success, exit, signal, errorcode,
+message, I/O metadata, and artifact tail. A pure success-record fixture now
+requires the exact literal
+`compact-fixture(success=1,exit=0,signal=none,errorcode=none,msg=none,io=present 1 regular 1 bytes 42 first_hex aa last_hex bb truncated 0,artifact=compact-fixture-artifact)`.
+The scoped source lock requires that braced formatter and rejects `$name(`
+only inside `static_render_generated_helper_role_compact`; the fixture contract
+is required by the existing render-helper/terminal aggregate. No production
+helper/parser/classification, C1 V2, timeout, credit, kernel/user/rootfs/
+default/KDE path, test, build, VM, boot, serial, or QEMU action occurred.
+Exact pre-edit inventory was total/informational-RISC-V/conflicting `0/0/0`;
+the driver remains unstaged. Independent no-boot review is required before any
+suite, with no V2/A1, HD720, audio, fullscreen, `yt-presentfps`,
+`PERF-VIDEO`, or performance credit.
