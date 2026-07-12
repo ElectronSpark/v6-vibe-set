@@ -1912,3 +1912,33 @@ immediately before and after were total/informational-RISC-V/conflicting
 extension, default, HD720, FPS, audio, fullscreen, or performance action
 occurred. This is source/static-only credit; independent no-boot review is
 still required before any gate.
+
+**C7/C8 adversarial final review — FAIL / NO-BOOT (2026-07-12):** committed
+`6d2daca5689099229f567ab7f3147d52a397173e` equals explicit origin and the
+named static log genuinely reaches both static PASS markers. C7 itself passes
+this review: its literal `ESC[?2004l CR` handling is only at raw-record start
+before C7 `BEGIN`, once-only, and its actual static controls reject foreign,
+mutated, duplicate, and non-BEGIN placements. C7 remains after the C6 parse
+and outside the C6 classifier; it is sidecar/no-credit.
+
+C8 does **not** clear adversarial review. Its helper and probe are staged only
+on `capturediag=0`, while existing extension `producer_start` is enabled only
+by the `xv6ytcapturediag=1` URL arm (`capturediag=1`). The synthetic C8
+producer-only state is therefore unreachable in the normal C8 runtime and
+cannot distinguish injection from navigation there. The passing static builds
+synthetic C8 frames and string-locks the generated Bash; it does not execute
+the C8 helper's count/copy/digest/hex path. It also has no C8 actual-wire
+bracketed-paste-prefix/CRCRLF, outer RC/FENCE, duplicate/noncontiguous, or
+truthful-over-cap helper case, despite the known C7 transport preamble. The
+parser/derive row assertions are useful host-only coverage, not proof of that
+runtime path.
+
+C8 and C7 cannot grant current credit: the receipt classifier runs before both
+sidecars and has neither as input; their failure can only remain diagnostic or
+abort fail-closed. The commit changes only this driver and plan—no
+extension/rootfs/launcher/default/kernel file—and preserved the sole unstaged
+KDE-smoke file. Before a new gate, either provide a reviewed reachable
+same-arm liveness source or explicitly keep injection/navigation unresolved,
+then exercise the generated C8 helper and its actual serial grammar with the
+listed negatives. No source edit, test, VM, build, rootfs, serial, launcher,
+or process action occurred in this review.
