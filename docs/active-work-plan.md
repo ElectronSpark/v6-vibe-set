@@ -2669,3 +2669,44 @@ there was no correction, rerun, recorder/kernel build, or performance credit;
 all unstaged kernel/user/script implementation remains preserved for the next
 forensic correction. This is only a host-harness include-path failure and
 remains A1 N=0 with no HD720, fullscreen, audio, or responsiveness credit.
+
+**C1 slice-1 host-include forensic — FAIL / NO-BUILD / NO-BOOT
+(2026-07-12):** at `f60fc7f`, exact preflight QEMU
+total/informational-RISC-V/conflicting inventory was `0/0/0`; no rerun,
+compile, test, VM, rootfs, launcher, default, or KDE action occurred in this
+review. The failed command is statically sufficient to localize the collision:
+its `-I /home/es/xv6-os/kernel/kernel/inc` is searched before system include
+directories for `<errno.h>`/`<string.h>`. The latter selects the freestanding
+kernel `string.h`, which includes kernel `types.h` and its GNU `typeof` form
+under strict host `-std=c11`. This happens before the host branch of the shared
+console header can protect the test. The current quoted spelling
+`"kernel/inc/dev/console.h"` *does* have a matching root through the command's
+`-I /home/es/xv6-os`; the recorded alleged missing-root is not a second defect
+of the current source/command.
+
+Do not add a duplicate test-only UAPI or compile `console.c` with host libc
+headers. The smallest functional correction is to remove the kernel-inc
+`-I`, retaining only the top-root include. The selected robust boundary is
+stronger and equally narrow: the host test defines `HOST_LIBC_PROGRAM`,
+includes the same shared header as `"dev/console.h"`, and the runner compiles
+only that test with `-iquote "$kernel_root/kernel/inc"` (no `-I` kernel-inc or
+top-root). `-iquote` serves that quoted shared UAPI header while all `<...>`
+headers remain host libc; the header's existing HOST branch supplies
+`stdint.h`, `stddef.h`, and `sys/ioctl.h`. Guarded top-root source locks still
+run only after the host binary, so this neither weakens the production-path
+locks nor turns a host unit into a production-kernel build. A standalone UAPI
+move is unnecessary scope unless this dual-mode header later gains a host
+dependency.
+
+Latest source inspection finds the earlier double-unlock repaired: the
+post-lock unavailable/panic branch sets `-EAGAIN` and the timed acquisition
+has one release. The expanded fake model correctly covers ABI offsets/ioctl
+encoding, 511-input/512-CRLF output, copy/privilege/field faults, CR/NUL/
+multiple-LF, timeout/EINTR, post-lock unavailable, and emergency no-credit
+after emission; the revised host-probe staging correctly maps source
+`consolerecord` to `/bin/_consolerecord`. Before the one corrected host run,
+also add a missing-final-LF negative and source locks for actual root check,
+x86 gating, and the single timed-lock release path. The fake remains a model,
+not a console.c execution test; retain that distinction and the later x86-only
+kernel build/independent-review gates. This remains A1 N=0 with no HD720,
+fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or performance credit.
