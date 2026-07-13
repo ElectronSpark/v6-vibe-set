@@ -111,6 +111,14 @@ proc qemu_cpus_resolve {provided value} {
     return "6"
 }
 
+proc qemu_cpus_from_env {} {
+    global env
+    if {[info exists env(QEMU_CPUS)]} {
+        return [list 1 $env(QEMU_CPUS)]
+    }
+    return [list 0 ""]
+}
+
 proc qemu_cpu_profile_contract {
     qemu_cpus egl_forensics capture_diagnostic terminal_reducer
 } {
@@ -648,8 +656,7 @@ set c1_terminal_reducer_contract [c1_terminal_reducer_arm_contract \
 if {![lindex $c1_terminal_reducer_contract 0]} {
     fail_preflight [lindex $c1_terminal_reducer_contract 1]
 }
-set qemu_cpus_provided [info exists env(QEMU_CPUS)]
-set qemu_cpus_raw [expr {$qemu_cpus_provided ? $env(QEMU_CPUS) : ""}]
+lassign [qemu_cpus_from_env] qemu_cpus_provided qemu_cpus_raw
 set qemu_cpus [qemu_cpus_resolve $qemu_cpus_provided $qemu_cpus_raw]
 set qemu_cpu_profile_contract [qemu_cpu_profile_contract $qemu_cpus \
     $egl_forensics $capture_completeness_diag $c1_terminal_reducer]
@@ -6651,7 +6658,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     set static_qemu_forensics_one [qemu_cpu_profile_contract 1 1 0 0]
     set static_qemu_invalid_rejects 1
     set static_qemu_invalid_details {}
-    foreach invalid_qemu_cpus [list "" 0 01 +6 6G 65 -1 \
+    foreach invalid_qemu_cpus [list "" 0 01 06 +6 0x6 6G 65 -1 \
             " 6" "6 "] {
         set invalid_contract [qemu_cpu_profile_contract \
             $invalid_qemu_cpus 0 0 0]
@@ -6660,6 +6667,37 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             lappend static_qemu_invalid_details \
                 "$invalid_qemu_cpus:$invalid_contract"
         }
+    }
+    set static_qemu_env_invalid_rejects 1
+    set static_qemu_env_invalid_details {}
+    set static_qemu_env_saved [info exists env(QEMU_CPUS)]
+    if {$static_qemu_env_saved} {
+        set static_qemu_env_saved_value $env(QEMU_CPUS)
+    }
+    foreach invalid_qemu_cpus [list 06 +6 0x6 " 6" "6 "] {
+        set env(QEMU_CPUS) $invalid_qemu_cpus
+        lassign [qemu_cpus_from_env] env_provided env_raw
+        set env_resolved [qemu_cpus_resolve $env_provided $env_raw]
+        set env_contract [qemu_cpu_profile_contract $env_resolved 0 0 0]
+        if {$env_provided != 1 || $env_raw ne $invalid_qemu_cpus ||
+                [lindex $env_contract 0]} {
+            set static_qemu_env_invalid_rejects 0
+            lappend static_qemu_env_invalid_details \
+                "[binary encode hex $invalid_qemu_cpus]:provided=$env_provided:raw=[binary encode hex $env_raw]:contract=$env_contract"
+        }
+    }
+    unset -nocomplain env(QEMU_CPUS)
+    lassign [qemu_cpus_from_env] env_default_provided env_default_raw
+    set env_default_resolved [qemu_cpus_resolve \
+        $env_default_provided $env_default_raw]
+    if {$env_default_provided != 0 || $env_default_raw ne "" ||
+            $env_default_resolved ne "6"} {
+        set static_qemu_env_invalid_rejects 0
+        lappend static_qemu_env_invalid_details \
+            "default:provided=$env_default_provided:raw=[binary encode hex $env_default_raw]:resolved=$env_default_resolved"
+    }
+    if {$static_qemu_env_saved} {
+        set env(QEMU_CPUS) $static_qemu_env_saved_value
     }
     set static_qemu_contract_lines [qemu_resource_contract_lines \
         6 8G performance-6vcpu]
@@ -6681,6 +6719,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         [lindex $static_qemu_forensics_one 0] == 1 &&
         [lindex $static_qemu_forensics_one 1] eq "diagnostic-1vcpu" &&
         $static_qemu_invalid_rejects &&
+        $static_qemu_env_invalid_rejects &&
         $static_qemu_contract_lines eq \
             "QEMU_CPUS=6\nQEMU_MEMORY=8G\nqemu_cpu_profile=performance-6vcpu\n" &&
         $static_qemu_binding_fields eq \
@@ -6689,7 +6728,16 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         $static_qemu_shell_prefix eq {QEMU_CPUS=6 QEMU_MEMORY=8G}
     }]
     set static_qemu_profile_source [read_text [info script]]
+    set static_qemu_block_marker [string first \
+        [format {if %c[info exists env(YT_STATIC_CHECK)]} 123] \
+        $static_qemu_profile_source]
+    set static_qemu_production_source [string range \
+        $static_qemu_profile_source 0 [expr {$static_qemu_block_marker - 1}]]
     set static_qemu_profile_routing [expr {
+        $static_qemu_block_marker > 0 &&
+        [string first \
+            {lassign [qemu_cpus_from_env] qemu_cpus_provided qemu_cpus_raw} \
+            $static_qemu_production_source] >= 0 &&
         [string first {qemu_resource_contract_lines $qemu_cpus $qemu_memory $qemu_cpu_profile} \
             $static_qemu_profile_source] >= 0 &&
         [string first {$qemu_resource_binding_fields} \
@@ -6700,7 +6748,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
             $static_qemu_profile_source] >= 0
     }]
     if {!$static_qemu_profile_contract || !$static_qemu_profile_routing} {
-        fail_preflight "static-check-qemu-performance-profile default=$static_qemu_default default_contract=$static_qemu_default_contract explicit=$static_qemu_explicit_normal normal1=$static_qemu_normal_one reducer1=$static_qemu_reducer_one diag1=$static_qemu_diag_one forensics1=$static_qemu_forensics_one invalid=$static_qemu_invalid_rejects invalid_details=$static_qemu_invalid_details lines=[binary encode hex $static_qemu_contract_lines] routing=$static_qemu_profile_routing"
+        fail_preflight "static-check-qemu-performance-profile default=$static_qemu_default default_contract=$static_qemu_default_contract explicit=$static_qemu_explicit_normal normal1=$static_qemu_normal_one reducer1=$static_qemu_reducer_one diag1=$static_qemu_diag_one forensics1=$static_qemu_forensics_one invalid=$static_qemu_invalid_rejects invalid_details=$static_qemu_invalid_details env_invalid=$static_qemu_env_invalid_rejects env_invalid_details=$static_qemu_env_invalid_details lines=[binary encode hex $static_qemu_contract_lines] routing=$static_qemu_profile_routing"
     }
     foreach contract_case {
         {1 1 0 1}
@@ -14198,7 +14246,7 @@ exit 0
     }
     catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-QEMU-PERFORMANCE-PROFILE-STATIC-PASS default6=PASS explicit_normal6=PASS normal1=REJECT reducer1=PASS diag1=PASS forensics1=PASS malformed_range=REJECT receipt_source_spawn_routing=PASS"
+    puts "YT-QEMU-PERFORMANCE-PROFILE-STATIC-PASS default6=PASS explicit_normal6=PASS normal1=REJECT reducer1=PASS diag1=PASS forensics1=PASS malformed_range=REJECT env_raw_noncanonical=REJECT receipt_source_spawn_routing=PASS"
     puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT bracketed_paste_disable_prefix=PASS bracketed_paste_foreign_duplicate_nonrow_nonfirst=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-MEDIA-CAPTURE-PATH-STATIC-PASS fast=1 host_wait_final=2"
