@@ -6290,3 +6290,80 @@ YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS, or
 default credit.  The next mandatory step remains an independent adversarial
 pre-boot review of the refreshed proof, followed—only if that review passes—
 by a fresh foreground 60-second conductor gate before any VM authority.
+
+**C1 terminal-commit sole gated A1 trial — INVALID / NULL / RAW 8 / NO
+RETRY (2026-07-13):** the only authorized run is
+`/tmp/xv6-a1-windowed-terminal-a1-windowed-20260713T111603Z-pid3658661`,
+with sibling `.driver.log`.  Real x86 KVM, virgl/OpenGL-submit, and KDE were
+reached, but the driver stopped at `fbstat-idle-attempt1`; Chromium/browser,
+FPS, C6/C7/C8, screenshots, and `PERF-VIDEO` were never reached.  The result
+is raw `8`, INVALID/NULL, diagnostic-only, `N=0`, with no semantic, HD720,
+audio, fullscreen, or performance credit.  Owned leader `3659155` was
+zombie-only and synchronously reaped as `waited:3659155 exp4 0 0`; cleanup
+ended `remaining=none` and the run's final exact QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`.
+
+C1 flag-zero transport itself is intact: one BEGIN/META, chunks `0..300` in
+exact sequence/offset order, and one END bind `raw_bytes=payload_bytes=56490`,
+`total_hex=112980`, `total_chunks=301`, and SHA-256
+`b19bb42ccf098cebfc61ab36d667d313673b6ca336b014e2c7f2f6b719e42394`;
+the fresh prompt follows END.  The exact C1 marker
+`YTP36588631783941363240851C1` has zero `:RC:` and zero `:FENCE` bytes in
+the driver log, `run.log`, and independent `qemu-debugcon.log`.  Therefore a
+valid terminal commit was not lost by the host, and a post-RC kernel failure
+is strongly refuted.  The transmitted shell contains the terminal recorder
+option, but retained evidence cannot distinguish a pre-`exec` guard failure,
+user terminal-source/lifecycle rejection, or kernel flag-1 pre-emission
+rejection; ranked pre-emission causes remain unresolved and no root cause is
+promoted beyond that class.
+
+Invalid-run artifact SHA-256 values are: `STATUS.txt`
+`beaffd4ef64675f77c9a84a8480bed1397383246b8f5bd133f4a2a9ef228f9d8`,
+sibling driver log
+`16e7282de36528cb1b9ad7d32b7178d4153ad75b2a6d4f3b5b3bf57048f02652`,
+`run.log` `c666e309bdbd2106c8084da9677c19d62c241ebe2662ea9f2c01834e0763ed5b`,
+`metrics.txt` `e904c302cfd13423d445657514bbda8f10af4db528c2d3ac40ada2080b127b0c`,
+`cleanup.txt` `45c1e19fbf646709b5515fd315aac652b799d404dab67c1e7be10ca29d0347d1`,
+`artifact-manifest.txt`
+`18f18db7de0f70872ed7c01e4501906e14f59c383fd41fefe2874b35d7515917`,
+`qemu-debugcon.log`
+`54578a454f8d16dcac8ba7e8e0d626c2e5a670dbee86fefc43f1b04495e181d8`,
+and `debugfs-operations.log`
+`351de74dd93561878741561caad046ea21b7c3e5ef5df3d482270b8255fc809e`.
+The consumed v2 rootfs proof receipt remains
+`cbc269dc0ff30543a1d48019a252c1c00faf89de012f7445aa9f0f447c75f559`.
+
+**C1 terminal reducer independent decision — REJECT LITERAL / SELECT HOST
+BRANCH / PLAN ONLY / NO-BOOT (2026-07-13):** the proposed literal 817-byte
+serial reducer is **FORBIDDEN and noncredit**.  It executes unconditional
+`wc` against a pre-existing pathname that could be a symlink or FIFO, has
+unbound/fallback ambiguity, violates the short-serial-command discipline, and
+uses a collector that can stop at FENCE before retaining the later diagnostic
+status.  It must not be issued or used as an A1 retry.
+
+The selected next implementation is a mutually exclusive, default-off host
+driver branch `YT_C1_TERMINAL_REDUCER=1` before Chromium.  It stages one
+private `/ytc1r.sh` helper and sends only
+`true;/bin/bash /ytc1r.sh <marker>`.  The helper checks absence/non-symlink
+before noclobber creation, validates fresh regular/readable/private type before
+any `wc`, validates exact line/word/byte counts, then invokes the existing
+terminal recorder and emits one marker-bound generic diagnostic row carrying
+`m,c,f,n,l,w,b,e,r,a`; any plain-output fallback has a distinct authenticated
+shape and cannot count as the generic row.  The host collector waits for that
+authenticated row **and** a fresh prompt, independently classifies terminal
+wire state as absent, RC-only, or committed, and rejects duplicate, wrong-
+marker, malformed, inconsistent, contaminated, missing-prompt, and
+fallback-only observations.  Every result is `diagnostic_only=1`,
+`no_fps_claim=1`, and `no_semantic_claim=1`.
+
+Required host-static coverage is: mode/default mutual exclusion and
+pre-Chromium ordering; exact short command/helper source contract; existing
+regular/symlink/FIFO path, creation, type, count, and recorder failure cases;
+recorder returns `2/3/4/0` with path-present/path-absent consistency; absent,
+RC-only, and committed terminal wires; authenticated generic row plus fresh
+prompt; duplicate/wrong-marker/malformed/inconsistent/contaminated/missing-
+prompt/fallback-only rejection; and byte-identical normal A1 plus diagnostic-
+only/no-FPS/no-semantic isolation.  This needs no guest binary change and no
+rootfs refresh.  Next steps are implementation, canonical host-static review,
+then independent pre-boot review and a fresh gate decision.  No A1 rerun or
+VM authority exists.
