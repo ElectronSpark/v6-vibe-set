@@ -6367,3 +6367,65 @@ only/no-FPS/no-semantic isolation.  This needs no guest binary change and no
 rootfs refresh.  Next steps are implementation, canonical host-static review,
 then independent pre-boot review and a fresh gate decision.  No A1 rerun or
 VM authority exists.
+
+**C1 terminal reducer provenance closure — V4 AUTHORITATIVE PASS / PLAN ONLY
+/ NO-BOOT (2026-07-13):** commit
+`895d6ef0e43d42bd9239fd0dd4a507d0d04cbc7c` introduced the host-only reducer,
+but its initial privacy review failed: the reducer helper followed the
+ordinary helper's `0755` debugfs staging path instead of a private `0600`
+contract.  Commit `f4bea33e4be8277baad07956099f8d4675d99c54`
+made the reducer-only stage private, proved the staged inode is regular,
+root-owned `0600`, and byte-exact, retained ordinary helper `0755`, and added
+negative mode/owner-drift coverage.  That private-stage repair is a technical
+PASS, but its first provenance attempt was not creditable.
+
+The consumed, noncredit provenance attempts are chronological and were never
+retried or substituted:
+
+- v1 `/tmp/xv6-c1-reducer-provenance-run-fyKfKvCI` stopped before the battery
+  at `pre-configured-upstream-informational`, raw `65`, because the historical
+  configured upstream was incorrectly enforced as a publish hard gate rather
+  than retained as non-gating information.
+- v2 `/tmp/xv6-c1-reducer-provenance-run-1hQ4zhjT` stopped before the battery
+  at `pre-top-status`, raw `65` / `TOP_STATUS_MISMATCH`: its exact validator
+  admitted only the KDE dirt record and rejected the additional permitted
+  `.claude/settings.local.json` record.
+- v3 `/tmp/xv6-c1-reducer-provenance-run-sJ8wcFAK` passed preflight, then
+  stopped at battery step `01-tcl-info-complete`, raw `2`.  Its `expect -c`
+  program read `[lindex $argv 0]` although `argv` did not exist in that
+  invocation; the trailing driver operand then ran without the required
+  reducer environment and emitted the retained missing-`YT_MULTIPROCESS`
+  preflight rejection.  This is a harness-invocation failure, not reducer
+  evidence.
+
+Only v4, `/tmp/xv6-c1-reducer-provenance-run-YPiPsGYz`, receives credit.  Its
+independent review verdict is PASS: all 33 pinned pre/post invariant pairs
+matched; the seven battery expected/raw exits were exactly
+`0,0,0,0,0,2,2`; terminal state was `PASS`, raw `0`, with
+`first_nonexpected_step=NONE`, `retry=NO`, and no sole-cause assertion.
+Pre/final exact QEMU inventories were both
+total/informational-RISC-V/conflicting `0/0/0`.  The authoritative driver
+SHA-256 is
+`aac738ff77dfadcab5c292b442ca81572ca537b2b77f1695cd3a35a8e4a6ebe4`;
+the exact parent-to-HEAD binary diff SHA-256 is
+`3171b1390cfce3577386142244c41bc37b934d6a5fcc96acf05b5ca8dc7672a9`.
+The exact content of `artifact-manifest.preterminal.sha256.digest` is
+`6b7c8ea0f4f1071e4b806e9048141a3f7f394cd02d40f899df32c79cace32c13`,
+and the exact content of `artifact-manifest.final.sha256.digest` is
+`da20b1d8f595e4da986ff72ddc7a2af10a90a324e518fd4d101bf31058c1d2bc`.
+
+Permitted unrelated local state remains preserved and is not reducer credit:
+the KDE expect-file binary diff SHA-256 is
+`a54b44b2e7a7cfda6655c643c2e9cd4ff4e3255b6376ff4b51c0e067fdbefc3d`;
+the ignored `.claude/settings.local.json` is a regular `0644`, uid/gid
+`1000/1000`, link-one, 105-byte file with SHA-256
+`453136f71c3d94636bdc25940e0318b34a8a8c2692971bd85161053a5dd86e9c`.
+Kernel/user/ports remain pinned at
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208`,
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5`.  This plan recorder performs no
+build, test, harness, image, debugfs, serial, VM, or QEMU action.  V4 does not
+grant boot authority.  The mandatory next sequence is an independent preboot
+review, a fresh passive exact zero-QEMU gate, and only then one diagnostic
+reducer VM if separately authorized; it is not an A1 retry and carries no
+FPS, semantic, HD720, audio, fullscreen, or performance credit.
