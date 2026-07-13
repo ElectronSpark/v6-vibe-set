@@ -16,6 +16,9 @@
 #                                       forced-hd720 media arm.  It collects
 #                                       bounded timer/rVFC/fbstat context and
 #                                       exits before FPS windows.)
+#   YT_C1_TERMINAL_REDUCER=0|1          (default 0; 1 is a host-driver-only,
+#                                       diagnostic reducer that exits before
+#                                       Chromium, capture, and FPS paths.)
 #   YT_OUTDIR=<new/empty run directory>  (default is a unique timestamped dir)
 #   YT_WINDOW_SECONDS=<seconds>           (default 60)
 #   YT_PLAYER_CROP=<WxH+X+Y>              (default 960x540+160+130)
@@ -84,6 +87,16 @@ proc capture_completeness_diag_arm_contract {
         return [list 0 "YT_CAPTURE_COMPLETENESS_DIAG-requires-multiprocess-1-audio-1-forensics-0-media-probe-1-force-hd720-1 multiprocess=$multiprocess audio=$disable_audio forensics=$forensics media_probe=$media_probe force_hd720=$force_hd720"]
     }
     return [list 1 "capture_completeness_diag=$diagnostic force_hd720=$force_hd720 media_probe=$media_probe multiprocess=$multiprocess audio=$disable_audio forensics=$forensics"]
+}
+
+proc c1_terminal_reducer_arm_contract {capture_diagnostic reducer} {
+    if {$reducer ne "0" && $reducer ne "1"} {
+        return [list 0 "YT_C1_TERMINAL_REDUCER-must-be-0-or-1 value=$reducer"]
+    }
+    if {$reducer eq "1" && $capture_diagnostic eq "1"} {
+        return [list 0 "YT_C1_TERMINAL_REDUCER-mutually-exclusive-with-capture-diagnostic"]
+    }
+    return [list 1 "c1_terminal_reducer=$reducer capture_diagnostic=$capture_diagnostic"]
 }
 
 # Diagnostic capture has its own terminal evidence.  It retains the shared
@@ -577,6 +590,13 @@ set capture_completeness_diag_contract [capture_completeness_diag_arm_contract \
 if {![lindex $capture_completeness_diag_contract 0]} {
     fail_preflight [lindex $capture_completeness_diag_contract 1]
 }
+set c1_terminal_reducer [expr {[info exists env(YT_C1_TERMINAL_REDUCER)] ?
+    $env(YT_C1_TERMINAL_REDUCER) : "0"}]
+set c1_terminal_reducer_contract [c1_terminal_reducer_arm_contract \
+    $capture_completeness_diag $c1_terminal_reducer]
+if {![lindex $c1_terminal_reducer_contract 0]} {
+    fail_preflight [lindex $c1_terminal_reducer_contract 1]
+}
 set media_probe_extension_id "edfilgocpdgbkehcgdillfgnnhclphol"
 set media_probe_nonce "off"
 if {$media_probe eq "1"} {
@@ -586,11 +606,12 @@ if {$media_probe eq "1"} {
     }
     set media_probe_nonce [lindex $nonce_result 1]
 }
-set arm [expr {$capture_completeness_diag eq "1" ? "media-probe-hd720-capturediag" :
+set arm [expr {$c1_terminal_reducer eq "1" ? "c1-terminal-reducer" :
+               ($capture_completeness_diag eq "1" ? "media-probe-hd720-capturediag" :
                ($force_hd720 eq "1" ? "media-probe-hd720" :
                ($media_probe eq "1" ? "media-probe" :
                ($egl_forensics eq "1" ? "egl-forensics" :
-               ($multiprocess eq "1" ? "multiprocess" : "single-process"))))}]
+               ($multiprocess eq "1" ? "multiprocess" : "single-process")))))}]
 
 set window_seconds [expr {[info exists env(YT_WINDOW_SECONDS)] ? $env(YT_WINDOW_SECONDS) : "60"}]
 if {![string is integer -strict $window_seconds] || $window_seconds < 10 ||
@@ -625,7 +646,8 @@ set forensic_suffix [expr {$egl_forensics eq "1" ? "-egl1" : ""}]
 set media_suffix [expr {$media_probe eq "1" ? "-media1" : ""}]
 set force_suffix [expr {$force_hd720 eq "1" ? "-hd7201" : ""}]
 set capture_diag_suffix [expr {$capture_completeness_diag eq "1" ? "-capturediag1" : ""}]
-set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}${force_suffix}${capture_diag_suffix}"
+set terminal_reducer_suffix [expr {$c1_terminal_reducer eq "1" ? "-terminalreducer1" : ""}]
+set run_id "${stamp}-pid[pid]-mp${multiprocess}-audio1${forensic_suffix}${media_suffix}${force_suffix}${capture_diag_suffix}${terminal_reducer_suffix}"
 if {[info exists env(YT_OUTDIR)]} {
     set outdir [file normalize $env(YT_OUTDIR)]
 } else {
@@ -666,6 +688,8 @@ set capture_completeness_diag_log "$outdir/capture-completeness-diagnostic.txt"
 set capture_completeness_diag_serial "$outdir/capture-completeness-diagnostic.serial.txt"
 set capture_completeness_diag_fbstat "$outdir/capture-completeness-fbstat.txt"
 set capture_completeness_diag_raw "$outdir/capture-completeness-diagnostic.raw.txt"
+set c1_terminal_reducer_raw "$outdir/c1-terminal-reducer.raw.txt"
+set c1_terminal_reducer_summary "$outdir/c1-terminal-reducer.txt"
 set media_probe_capture_timeout_ms 30000
 set media_probe_host_wait_ms 60000
 set media_probe_outer_ceiling_ms 140000
@@ -694,7 +718,7 @@ set eof_control_raw_cap 8192
 set serial_nonce "YTP[pid][clock clicks]"
 regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
 set required_guest_frames {pre steady0 windowA windowB}
-if {$capture_completeness_diag eq "1"} {
+if {$capture_completeness_diag eq "1" || $c1_terminal_reducer eq "1"} {
     set required_guest_frames {}
 } else {
     if {$egl_forensics eq "1"} {
@@ -709,6 +733,7 @@ set send_slow {1 .010}
 set log_extract_status [dict create]
 set debugcon_prepared 0
 set debugcon_epoch 0
+set kde_session_ready 0
 
 proc af {path text} {
     set fh [open $path a]
@@ -889,6 +914,261 @@ proc c1_terminal_commit_frame_parse {text marker} {
     }
     return [list 0 [expr {$pending_rc ? "terminal-fence-missing" :
         "terminal-rc-missing"}] ""]
+}
+
+# Classify the two flag-1 terminal records independently from the flag-0
+# reducer receipt.  In particular, an RC-only prefix is a real observable
+# state: the kernel may emit the provisional RC and then reject FENCE when an
+# emergency writer changes the console generation.  FENCE is evidence, never
+# a collection delimiter.
+proc c1_terminal_reducer_terminal_classify {text marker} {
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
+        return [list 0 "reducer-marker-invalid" absent -1 -1]
+    }
+    set lines [split $text "\n"]
+    set last [expr {[llength $lines] - 1}]
+    set rc_indices {}
+    set fence_indices {}
+    set errors {}
+    set quoted [regex_quote $marker]
+    set index -1
+    foreach raw $lines {
+        incr index
+        set complete [expr {$index != $last}]
+        set line [string trimright $raw "\r"]
+        set cr_count [expr {[string length $raw] - [string length $line]}]
+        set bad_cr [expr {$cr_count > 2 || [string first "\r" $line] >= 0}]
+        if {$complete && !$bad_cr && $line eq "$marker:RC:0"} {
+            lappend rc_indices $index
+            continue
+        }
+        if {$complete && !$bad_cr && $line eq "$marker:FENCE"} {
+            lappend fence_indices $index
+            continue
+        }
+        if {[string first "$marker:RC:" $line] >= 0 ||
+            [string first "$marker:FENCE" $line] >= 0} {
+            lappend errors "expected-terminal-contamination-$index"
+            continue
+        }
+        if {[regexp [format {%s:(RC:[^\r]*|FENCE)} $quoted] $line]} {
+            lappend errors "expected-terminal-contamination-$index"
+            continue
+        }
+        if {[regexp {[A-Za-z0-9]{1,64}:(RC:[^\r]*|FENCE)} $line]} {
+            lappend errors "foreign-terminal-row-$index"
+        }
+    }
+
+    set rc_index [expr {[llength $rc_indices] == 1 ?
+        [lindex $rc_indices 0] : -1}]
+    set fence_index [expr {[llength $fence_indices] == 1 ?
+        [lindex $fence_indices 0] : -1}]
+    set state absent
+    if {$rc_index >= 0} {
+        set state rc_only
+        if {$fence_index == $rc_index + 1} { set state committed }
+    }
+    if {[llength $rc_indices] > 1} {
+        lappend errors "terminal-rc-count-[llength $rc_indices]"
+    }
+    if {[llength $fence_indices] > 1} {
+        lappend errors "terminal-fence-count-[llength $fence_indices]"
+    }
+    if {$fence_index >= 0 && $rc_index < 0} {
+        lappend errors "terminal-fence-without-rc"
+    } elseif {$fence_index >= 0 && $fence_index != $rc_index + 1} {
+        lappend errors "terminal-fence-not-raw-adjacent"
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,] $state $rc_index $fence_index]
+    }
+    return [list 1 pass $state $rc_index $fence_index]
+}
+
+proc c1_terminal_reducer_parse {text marker} {
+    set terminal [c1_terminal_reducer_terminal_classify $text $marker]
+    set terminal_state [lindex $terminal 2]
+    if {![lindex $terminal 0]} {
+        return [list 0 [lindex $terminal 1] $terminal_state {}]
+    }
+    set lines [split $text "\n"]
+    set last [expr {[llength $lines] - 1}]
+    set reducer_rows {}
+    set fallback_rows {}
+    set index -1
+    foreach raw $lines {
+        incr index
+        set complete [expr {$index != $last}]
+        set line [string trimright $raw "\r"]
+        set cr_count [expr {[string length $raw] - [string length $line]}]
+        set bad_cr [expr {$cr_count > 2 || [string first "\r" $line] >= 0}]
+        if {[string first "YT_TERM_REDUCER_FALLBACK" $line] >= 0} {
+            lappend fallback_rows $index
+        }
+        if {[string first "YT_TERM_REDUCER_V1" $line] >= 0} {
+            if {!$complete || $bad_cr ||
+                ![string match "YT_TERM_REDUCER_V1 *" $line]} {
+                return [list 0 "reducer-row-contaminated-$index" \
+                    $terminal_state {}]
+            }
+            lappend reducer_rows [list $index $line]
+        }
+    }
+    if {[llength $fallback_rows] > 0} {
+        return [list 0 "reducer-fallback-present" $terminal_state {}]
+    }
+    if {[llength $reducer_rows] != 1} {
+        return [list 0 "reducer-row-count-[llength $reducer_rows]" \
+            $terminal_state {}]
+    }
+    lassign [lindex $reducer_rows 0] reducer_index reducer_row
+    set quoted [regex_quote $marker]
+    set shape [format {^YT_TERM_REDUCER_V1 m=(%s) c=(0|[1-9][0-9]*) f=(0|[1-9][0-9]*) n=(0|[1-9][0-9]*) l=(0|[1-9][0-9]*) w=(0|[1-9][0-9]*) b=(0|[1-9][0-9]*) e=(0|[1-9][0-9]*) r=(0|2|3|4) a=(P|A)$} $quoted]
+    if {![regexp $shape $reducer_row -> row_marker created regular \
+            nonsymlink lines_count words_count bytes_count expected_bytes \
+            recorder_rc after_presence]} {
+        # Distinguish a replay/wrong-marker row from every other malformed or
+        # noncanonical numeric shape without accepting either.
+        if {[regexp {^YT_TERM_REDUCER_V1 m=([A-Za-z0-9]{1,64}) } \
+                $reducer_row -> wrong_marker] && $wrong_marker ne $marker} {
+            return [list 0 "reducer-marker-mismatch" $terminal_state {}]
+        }
+        return [list 0 "reducer-row-shape" $terminal_state {}]
+    }
+    set expected [expr {2 * [string bytelength $marker] + 13}]
+    if {$created != 1 || $regular != 1 || $nonsymlink != 1 ||
+        $lines_count != 2 || $words_count != 2 ||
+        $bytes_count != $expected || $expected_bytes != $expected} {
+        return [list 0 "reducer-create-type-count-impossible" \
+            $terminal_state {}]
+    }
+
+    set state_pair_ok 0
+    switch -- $terminal_state {
+        committed {
+            set state_pair_ok [expr {$recorder_rc eq "0" &&
+                $after_presence eq "A"}]
+            set terminal_last [lindex $terminal 4]
+        }
+        rc_only {
+            set state_pair_ok [expr {$recorder_rc eq "4" &&
+                $after_presence eq "A"}]
+            set terminal_last [lindex $terminal 3]
+        }
+        absent {
+            set state_pair_ok [expr {
+                ($recorder_rc eq "2" && $after_presence in {P A}) ||
+                ($recorder_rc eq "3" && $after_presence eq "P") ||
+                ($recorder_rc eq "4" && $after_presence eq "A")}]
+            set terminal_last -1
+        }
+        default {
+            return [list 0 "reducer-terminal-state-invalid" \
+                $terminal_state {}]
+        }
+    }
+    if {!$state_pair_ok} {
+        return [list 0 "reducer-recorder-state-presence-impossible" \
+            $terminal_state {}]
+    }
+    if {$terminal_last >= 0 && $reducer_index != $terminal_last + 1} {
+        return [list 0 "reducer-row-not-terminal-adjacent" \
+            $terminal_state {}]
+    }
+
+    set prompt "root:/# "
+    set prompt_count 0
+    set prompt_at -1
+    set cursor 0
+    while {1} {
+        set found [string first $prompt $text $cursor]
+        if {$found < 0} { break }
+        incr prompt_count
+        set prompt_at $found
+        set cursor [expr {$found + [string length $prompt]}]
+    }
+    if {$prompt_count != 1 ||
+        ![string match "*$prompt" $text]} {
+        return [list 0 "reducer-fresh-prompt-count-or-tail-$prompt_count" \
+            $terminal_state {}]
+    }
+    set reducer_at [string first $reducer_row $text]
+    if {$prompt_at <= $reducer_at} {
+        return [list 0 "reducer-prompt-before-row" $terminal_state {}]
+    }
+    set fields [dict create marker $row_marker created $created regular $regular \
+        nonsymlink $nonsymlink lines $lines_count words $words_count \
+        bytes $bytes_count expected $expected_bytes recorder_rc $recorder_rc \
+        after_presence $after_presence terminal_state $terminal_state]
+    return [list 1 pass $terminal_state $fields]
+}
+
+# Generate the only guest helper staged by reducer mode.  Test-only caller
+# parameters permit host execution with a private recorder stub; the runtime
+# call uses the literal /bin/consolerecord and /dev/shm path below.
+proc c1_terminal_reducer_guest_helper_script {
+    {recorder_path /bin/consolerecord}
+    {terminal_prefix /dev/shm/yt-c1-terminal-reducer}
+    {after_create_command :}
+} {
+    foreach {name value cap} [list recorder $recorder_path 160 \
+            terminal-prefix $terminal_prefix 160] {
+        if {[string bytelength $value] > $cap ||
+            ![regexp {^/[A-Za-z0-9._/+:-]+$} $value]} {
+            error "invalid reducer $name"
+        }
+    }
+    if {[string first "\n" $after_create_command] >= 0 ||
+        [string first "\r" $after_create_command] >= 0} {
+        error "invalid reducer after-create command"
+    }
+    return [string map [list @RECORDER@ $recorder_path \
+        @TERMINAL_PREFIX@ $terminal_prefix \
+        @AFTER_CREATE@ $after_create_command] {#!/bin/bash
+set -f
+marker=$1
+case "$marker" in ''|*[!A-Za-z0-9]*) exit 64 ;; esac
+[ "${#marker}" -le 64 ] || exit 64
+terminal=@TERMINAL_PREFIX@-${marker}
+owned=0
+cleanup() {
+    if [ "$owned" = 1 ]; then /bin/rm -f "$terminal" 2>/dev/null; fi
+}
+fallback() {
+    reason=$1
+    cleanup
+    printf 'YT_TERM_REDUCER_FALLBACK_V1 m=%s reason=%s\n' "$marker" "$reason"
+    exit 80
+}
+trap cleanup EXIT
+if [ -e "$terminal" ] || [ -L "$terminal" ]; then fallback preexisting; fi
+umask 077
+(set -C; printf '%s:RC:0\n%s:FENCE\n' "$marker" "$marker" >"$terminal") 2>/dev/null || fallback create
+owned=1
+@AFTER_CREATE@
+if [ ! -f "$terminal" ] || [ -L "$terminal" ] || [ ! -r "$terminal" ]; then fallback type; fi
+count_output=$(/bin/wc <"$terminal" 2>/dev/null); set -- $count_output
+valid_decimal() { [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]; }
+if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then fallback count_shape; fi
+lines=$1; words=$2; bytes=$3; expected=$((2 * ${#marker} + 13))
+if [ "$lines" != 2 ] || [ "$words" != 2 ] || [ "$bytes" != "$expected" ]; then fallback count_value; fi
+@RECORDER@ --terminal-batch-file "$terminal" "$marker"
+r=$?
+if [ -e "$terminal" ] || [ -L "$terminal" ]; then a=P; else a=A; fi
+case "$r" in 0|2|3|4) ;; *) fallback recorder_status ;; esac
+cleanup
+if [ -e "$terminal" ] || [ -L "$terminal" ]; then fallback cleanup; fi
+owned=0
+printf -v row 'YT_TERM_REDUCER_V1 m=%s c=1 f=1 n=1 l=%s w=%s b=%s e=%s r=%s a=%s' "$marker" "$lines" "$words" "$bytes" "$expected" "$r" "$a"
+@RECORDER@ "$row"
+generic_rc=$?
+if [ "$generic_rc" -ne 0 ]; then
+    printf 'YT_TERM_REDUCER_FALLBACK_V1 m=%s reason=generic_r%s\n' "$marker" "$generic_rc"
+    exit 81
+fi
+exit 0
+}]
 }
 
 # debugfs writes its normal version banner and successful `write` allocation
@@ -3193,7 +3473,11 @@ proc extract_and_validate_media_probe_null {} {
 # source credit merely because the diagnostic arm also enables the media
 # extension.  Keep the terminal selector pure so the static reducer can prove
 # that a malicious diagnostic verdict never reaches normal success extraction.
-proc finish_extraction_path {code diagnostic forensics media verdict} {
+proc finish_extraction_path {code diagnostic forensics media verdict \
+        {terminal_reducer 0}} {
+    if {$terminal_reducer eq "1"} {
+        return "c1-terminal-reducer"
+    }
     if {$diagnostic eq "1"} {
         return "capture-completeness-diagnostic"
     }
@@ -3639,6 +3923,7 @@ proc finish {code label} {
     global finishing statusf outdir scratch monitor qemu_pid qemu_started
     global metricsf runlog owned_group_remaining egl_forensics
     global media_probe media_probe_verdict capture_completeness_diag
+    global c1_terminal_reducer
     # A second signal while the first finish path is draining must not bypass
     # the process-group kill and exact-name postcondition.
     if {$finishing} { return }
@@ -3651,8 +3936,13 @@ proc finish {code label} {
 
     set extraction_path [finish_extraction_path $code \
         $capture_completeness_diag $egl_forensics $media_probe \
-        $media_probe_verdict]
+        $media_probe_verdict $c1_terminal_reducer]
     switch -- $extraction_path {
+        c1-terminal-reducer {
+            # The reducer owns only its retained host raw/summary files.  It
+            # must not inspect normal guest artifacts or derive FPS/semantic
+            # evidence during finish.
+        }
         capture-completeness-diagnostic {
             # Never call extract_available_guest_evidence here: it extracts
             # normal pre/steady/window/media artifacts and would turn an
@@ -3697,6 +3987,15 @@ proc finish {code label} {
             append label " no_semantic_success=1"
         }
     }
+    if {$c1_terminal_reducer eq "1"} {
+        foreach assertion {
+            diagnostic_only=1 no_fps_claim=1 no_semantic_success=1
+        } {
+            if {[string first $assertion $label] < 0} {
+                append label " $assertion"
+            }
+        }
+    }
 
     set lingering [exact_qemu_lines]
     if {$capture_completeness_diag eq "1"} {
@@ -3713,7 +4012,7 @@ proc finish {code label} {
         }
     }
     af $statusf "[iso_now] result_code=$code result=$label exact_qemu_after=[expr {$lingering eq "" ? "none" : $lingering}]"
-    if {$code == 0} {
+    if {$code == 0 || $c1_terminal_reducer eq "1"} {
         catch {file delete -force $scratch}
     } else {
         af $statusf "[iso_now] retained_scratch=$scratch"
@@ -3843,6 +4142,128 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
             finish 5 "FAIL eof phase=$label"
         }
     }
+}
+
+proc c1_terminal_reducer_serial_command {marker} {
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
+        error "invalid reducer serial marker"
+    }
+    # `true;` is both the required short prefix and the sacrificial byte for
+    # the known first-character drop after a bracketed-paste prompt.
+    return "true;/bin/bash /ytc1r.sh $marker"
+}
+
+proc c1_terminal_reducer_fresh_marker {} {
+    global serial_nonce
+    set marker "${serial_nonce}R[pid][clock clicks]"
+    regsub -all {[^A-Za-z0-9]} $marker {} marker
+    set marker [string range $marker 0 63]
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
+        error "failed to mint reducer marker"
+    }
+    return $marker
+}
+
+proc c1_terminal_reducer_write_raw {path raw} {
+    set fh [open $path wb]
+    fconfigure $fh -translation binary -encoding binary
+    puts -nonewline $fh $raw
+    close $fh
+}
+
+# This is intentionally separate from guest_cmd().  Its sole positive expect
+# terminator is a fresh shell prompt, so an absent terminal, provisional RC,
+# or committed FENCE all remain in the same retained raw buffer until the
+# helper's authenticated flag-0 receipt and prompt have had a chance to arrive.
+proc c1_terminal_reducer_collect {} {
+    global timeout send_slow c1_terminal_reducer_raw
+    set marker [c1_terminal_reducer_fresh_marker]
+    set command [c1_terminal_reducer_serial_command $marker]
+    set old_timeout $timeout
+    set timeout 35
+    send "\025"
+    send -s "$command\r"
+    set outcome prompt
+    set raw ""
+    expect {
+        -re {root:/# } {
+            set raw $expect_out(buffer)
+        }
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|KERNEL PAGE FAULT|coredump: generating|Out of memory|segmentation fault} {
+            set raw $expect_out(buffer)
+            set outcome crash-before-fresh-prompt
+        }
+        timeout {
+            set raw [expr {[info exists expect_out(buffer)] ?
+                $expect_out(buffer) : ""}]
+            set outcome timeout-before-fresh-prompt
+        }
+        eof {
+            set raw [expr {[info exists expect_out(buffer)] ?
+                $expect_out(buffer) : ""}]
+            set outcome eof-before-fresh-prompt
+        }
+    }
+    set timeout $old_timeout
+    if {[catch {c1_terminal_reducer_write_raw \
+            $c1_terminal_reducer_raw $raw} raw_error]} {
+        set terminal [c1_terminal_reducer_terminal_classify $raw $marker]
+        return [list 0 "raw-write-failed-$raw_error" \
+            [lindex $terminal 2] {} $marker $command]
+    }
+    if {$outcome ne "prompt"} {
+        set terminal [c1_terminal_reducer_terminal_classify $raw $marker]
+        return [list 0 $outcome [lindex $terminal 2] {} $marker $command]
+    }
+    set parsed [c1_terminal_reducer_parse $raw $marker]
+    return [list [lindex $parsed 0] [lindex $parsed 1] \
+        [lindex $parsed 2] [lindex $parsed 3] $marker $command]
+}
+
+proc c1_terminal_reducer_readiness_contract {run_text kde_ready} {
+    set errors {}
+    if {$kde_ready ne "1"} { lappend errors "kde-not-ready" }
+    if {![regexp {run-qemu: using KVM acceleration} $run_text]} {
+        lappend errors "kvm-proof-missing"
+    }
+    if {![regexp {run-qemu: WSL D3D12 host GL selected for virgl} $run_text]} {
+        lappend errors "virgl-host-proof-missing"
+    }
+    if {[software_marker $run_text]} {
+        lappend errors "software-renderer-marker"
+    }
+    if {[llength $errors] > 0} {
+        return [list 0 [join $errors ,]]
+    }
+    return [list 1 "kvm=1 virgl_host=1 kde_ready=1 software=0"]
+}
+
+proc c1_terminal_reducer_dispatch {} {
+    global runlog metricsf c1_terminal_reducer_summary kde_session_ready
+    set readiness [c1_terminal_reducer_readiness_contract \
+        [read_text $runlog] $kde_session_ready]
+    if {![lindex $readiness 0]} {
+        wf $c1_terminal_reducer_summary \
+            "status=REJECTED phase=readiness detail=[lindex $readiness 1] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n"
+        af $metricsf "c1_terminal_reducer=REJECTED phase=readiness detail=[lindex $readiness 1] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+        finish 8 "DIAGNOSTIC C1-terminal-reducer-readiness-rejected detail=[lindex $readiness 1]"
+    }
+    set result [c1_terminal_reducer_collect]
+    set state [lindex $result 2]
+    set marker [lindex $result 4]
+    set command [lindex $result 5]
+    if {![lindex $result 0]} {
+        set detail [lindex $result 1]
+        wf $c1_terminal_reducer_summary \
+            "status=REJECTED marker=$marker terminal_state=$state detail=$detail command=$command diagnostic_only=1 no_fps_claim=1 no_semantic_success=1\n"
+        af $metricsf "c1_terminal_reducer=REJECTED marker=$marker terminal_state=$state detail=$detail diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+        finish 8 "DIAGNOSTIC C1-terminal-reducer-rejected marker=$marker terminal_state=$state detail=$detail"
+    }
+    set fields [lindex $result 3]
+    set summary "status=OBSERVED marker=$marker terminal_state=$state recorder_rc=[dict get $fields recorder_rc] after_presence=[dict get $fields after_presence] created=[dict get $fields created] regular=[dict get $fields regular] nonsymlink=[dict get $fields nonsymlink] lines=[dict get $fields lines] words=[dict get $fields words] bytes=[dict get $fields bytes] expected=[dict get $fields expected] command=$command diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    wf $c1_terminal_reducer_summary "$summary\n"
+    af $metricsf "c1_terminal_reducer=OBSERVED terminal_state=$state recorder_rc=[dict get $fields recorder_rc] after_presence=[dict get $fields after_presence] diagnostic_only=1 no_fps_claim=1 no_semantic_success=1"
+    finish 8 "DIAGNOSTIC C1-terminal-reducer-observed marker=$marker terminal_state=$state recorder_rc=[dict get $fields recorder_rc] after_presence=[dict get $fields after_presence]"
 }
 
 proc require_guest_ok {result label} {
@@ -6114,8 +6535,9 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
     set static_nonce 0123456789abcdef0123456789abcdef
     set static_base_url "https://www.youtube.com/watch?v=$vid&vq=hd720&autoplay=1&mute=1"
     if {$force_hd720 eq "1"} {
-        set expected_force_arm [expr {$capture_completeness_diag eq "1" ?
-            "media-probe-hd720-capturediag" : "media-probe-hd720"}]
+        set expected_force_arm [expr {$c1_terminal_reducer eq "1" ?
+            "c1-terminal-reducer" : ($capture_completeness_diag eq "1" ?
+            "media-probe-hd720-capturediag" : "media-probe-hd720")}]
         set expected_force_url "$static_base_url#xv6ytprobe=$media_probe_nonce&xv6ythd720=1"
         if {$capture_completeness_diag eq "1"} {
             append expected_force_url "&xv6ytcapturediag=1"
@@ -12839,9 +13261,450 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_v3_js_guest_runtime ne "UNEXECUTED"} {
         fail_preflight "static-check-capture-completeness-v3 source=$static_v3_source_order early=$static_v3_early_as_ready_reject ready_before_selector=$static_v3_ready_before_selector_reject missing_hd720=$static_v3_missing_hd720_reject receipts=$static_v3_receipt_statuses start=$static_v3_start_receipt ready=$static_v3_ready_receipt collect=$static_v3_collect_raw0_receipt phase_start=$static_v3_phase_substitution_start phase_ready=$static_v3_phase_substitution_ready ready_digest=$static_v3_ready_digest_substitution raw0_pre=$static_v3_raw0_pre raw0_post=$static_v3_raw0_post complete=$static_v3_complete pre_ready=$static_v3_pre_ready pre_empty=$static_v3_ready_empty freeze_continued=$static_v3_freeze_continued freeze_stopped=$static_v3_freeze_stopped reordered=$static_v3_reordered duplicate=$static_v3_duplicate terminal=$static_v3_terminal reparse=$static_v3_terminal_reparse raw=$static_v3_terminal_raw_reparse 165=$static_v3_165_reject edges=$static_v3_210_edges inner_tail_valid=$static_v3_inner_tail_valid inner_tail_expired=$static_v3_inner_tail_expired inner_tail_one_reserve=$static_v3_inner_tail_one_reserve inner_tail_zero_slack=$static_v3_inner_tail_zero_slack inner_tail_invalid=$static_v3_inner_tail_invalid_pass diag0=$static_v3_diag0_dispatch contract=$static_v3_diag0_contract js=$static_v3_js_guest_runtime"
     }
+
+    # C1 terminal reducer: exercise the production-generated helper under
+    # host Bash with a private recorder stub, then feed its literal output to
+    # the production parser.  No VM, guest binary, rootfs, or authoritative
+    # image participates in these cases.
+    proc static_c1_reducer_helper_exec {
+        helper marker mode recorder_rc presence generic_fail
+    } {
+        global static_c1_reducer_stub static_c1_reducer_stub_log
+        wf $static_c1_reducer_stub_log ""
+        set caught [catch {exec env \
+            YT_REDUCER_STUB_MODE=$mode \
+            YT_REDUCER_STUB_RC=$recorder_rc \
+            YT_REDUCER_STUB_PRESENCE=$presence \
+            YT_REDUCER_STUB_GENERIC_FAIL=$generic_fail \
+            YT_REDUCER_STUB_LOG=$static_c1_reducer_stub_log \
+            /usr/bin/timeout 5 /bin/bash $helper $marker 2>@1} output options]
+        set rc 0
+        if {$caught && [dict exists $options -errorcode] &&
+            [lindex [dict get $options -errorcode] 0] eq "CHILDSTATUS"} {
+            set rc [lindex [dict get $options -errorcode] 2]
+        } elseif {$caught} {
+            set rc -1
+        }
+        return [dict create caught $caught rc $rc output $output \
+            log [read_text $static_c1_reducer_stub_log]]
+    }
+    proc static_c1_reducer_row {marker recorder_rc presence {overrides {}}} {
+        set expected [expr {2 * [string bytelength $marker] + 13}]
+        set values [dict create c 1 f 1 n 1 l 2 w 2 b $expected e $expected \
+            r $recorder_rc a $presence]
+        dict for {key value} $overrides { dict set values $key $value }
+        return "YT_TERM_REDUCER_V1 m=$marker c=[dict get $values c] f=[dict get $values f] n=[dict get $values n] l=[dict get $values l] w=[dict get $values w] b=[dict get $values b] e=[dict get $values e] r=[dict get $values r] a=[dict get $values a]"
+    }
+    proc static_c1_reducer_wire {marker state recorder_rc presence \
+            {overrides {}}} {
+        set wire ""
+        if {$state in {rc_only committed}} { append wire "$marker:RC:0\n" }
+        if {$state eq "committed"} { append wire "$marker:FENCE\n" }
+        append wire [static_c1_reducer_row $marker $recorder_rc $presence \
+            $overrides] "\nroot:/# "
+        return $wire
+    }
+
+    set static_c1_reducer_dir "$outdir/c1-terminal-reducer-static"
+    if {[file exists $static_c1_reducer_dir]} {
+        fail_preflight "static-check-c1-reducer-dir-preexists path=$static_c1_reducer_dir"
+    }
+    file mkdir $static_c1_reducer_dir
+    set static_c1_reducer_stub "$static_c1_reducer_dir/recorder-stub.sh"
+    set static_c1_reducer_stub_log "$static_c1_reducer_dir/recorder-calls.txt"
+    set static_c1_reducer_helper "$static_c1_reducer_dir/ytc1r.sh"
+    set static_c1_reducer_prefix "$static_c1_reducer_dir/terminal"
+    wf $static_c1_reducer_stub {#!/bin/bash
+printf '%s\n' "$*" >>"$YT_REDUCER_STUB_LOG"
+if [ "$1" = "--terminal-batch-file" ]; then
+    path=$2
+    case "$YT_REDUCER_STUB_MODE" in
+        committed) /bin/cat "$path"; /bin/rm -f "$path" ;;
+        rc_only) /usr/bin/sed -n '1p' "$path"; /bin/rm -f "$path" ;;
+        absent) if [ "$YT_REDUCER_STUB_PRESENCE" = A ]; then /bin/rm -f "$path"; fi ;;
+        cleanup_fail) /bin/rm -f "$path"; /bin/mkdir "$path" ;;
+        *) exit 97 ;;
+    esac
+    exit "$YT_REDUCER_STUB_RC"
+fi
+if [ "$YT_REDUCER_STUB_GENERIC_FAIL" = 1 ]; then exit 4; fi
+printf '%s\n' "$1"
+exit 0
+}
+    file attributes $static_c1_reducer_stub -permissions 0700
+    wf $static_c1_reducer_helper [c1_terminal_reducer_guest_helper_script \
+        $static_c1_reducer_stub $static_c1_reducer_prefix]
+    set static_c1_reducer_marker YTTERMREDUCERSTATICC1
+    set static_c1_reducer_helper_matrix 1
+    set static_c1_reducer_helper_details {}
+    foreach spec {
+        {committed 0 A committed}
+        {absent 2 P absent}
+        {absent 2 A absent}
+        {absent 3 P absent}
+        {rc_only 4 A rc_only}
+        {absent 4 A absent}
+    } {
+        lassign $spec mode recorder_rc presence expected_state
+        set executed [static_c1_reducer_helper_exec \
+            $static_c1_reducer_helper $static_c1_reducer_marker \
+            $mode $recorder_rc $presence 0]
+        set parsed [c1_terminal_reducer_parse \
+            "[dict get $executed output]\nroot:/# " \
+            $static_c1_reducer_marker]
+        set terminal_path \
+            "$static_c1_reducer_prefix-$static_c1_reducer_marker"
+        if {[dict get $executed caught] || ![lindex $parsed 0] ||
+            [lindex $parsed 2] ne $expected_state ||
+            [file exists $terminal_path] || [file type $static_c1_reducer_stub] ne "file"} {
+            set static_c1_reducer_helper_matrix 0
+            lappend static_c1_reducer_helper_details "$spec:$executed:$parsed"
+        }
+    }
+
+    # Preexisting regular, symlink, and FIFO paths are never opened, counted,
+    # removed, or passed to the recorder stub.
+    set static_c1_reducer_preexisting_matrix 1
+    set static_c1_reducer_preexisting_details {}
+    set static_c1_reducer_terminal \
+        "$static_c1_reducer_prefix-$static_c1_reducer_marker"
+    foreach type {regular symlink fifo} {
+        catch {file delete -force $static_c1_reducer_terminal}
+        switch -- $type {
+            regular { wf $static_c1_reducer_terminal PREEXISTING }
+            symlink { file link -symbolic $static_c1_reducer_terminal /dev/null }
+            fifo { exec /usr/bin/mkfifo $static_c1_reducer_terminal }
+        }
+        set before_type [file type $static_c1_reducer_terminal]
+        set executed [static_c1_reducer_helper_exec \
+            $static_c1_reducer_helper $static_c1_reducer_marker absent 2 P 0]
+        set output [dict get $executed output]
+        if {[string first {YT_TERM_REDUCER_FALLBACK_V1} $output] < 0 ||
+            [string first {YT_TERM_REDUCER_V1 } $output] >= 0 ||
+            [dict get $executed log] ne "" ||
+            ![file exists $static_c1_reducer_terminal] ||
+            [file type $static_c1_reducer_terminal] ne $before_type} {
+            set static_c1_reducer_preexisting_matrix 0
+            lappend static_c1_reducer_preexisting_details \
+                "$type:$executed:before=$before_type"
+        }
+    }
+    catch {file delete -force $static_c1_reducer_terminal}
+
+    set static_c1_reducer_failure_matrix 1
+    set static_c1_reducer_failure_details {}
+    foreach failure [list \
+            [list create "$static_c1_reducer_dir/missing/terminal" :] \
+            [list symlink $static_c1_reducer_prefix \
+                {/bin/rm -f "$terminal"; /bin/ln -s /dev/null "$terminal"}] \
+            [list fifo $static_c1_reducer_prefix \
+                {/bin/rm -f "$terminal"; /usr/bin/mkfifo "$terminal"}] \
+            [list count $static_c1_reducer_prefix \
+                {printf 'bad\n' >"$terminal"}]] {
+        lassign $failure label prefix after_create
+        set helper "$static_c1_reducer_dir/ytc1r-$label.sh"
+        wf $helper [c1_terminal_reducer_guest_helper_script \
+            $static_c1_reducer_stub $prefix $after_create]
+        set executed [static_c1_reducer_helper_exec $helper \
+            $static_c1_reducer_marker absent 2 P 0]
+        set output [dict get $executed output]
+        set path "$prefix-$static_c1_reducer_marker"
+        if {[string first {YT_TERM_REDUCER_FALLBACK_V1} $output] < 0 ||
+            [string first {YT_TERM_REDUCER_V1 } $output] >= 0 ||
+            [dict get $executed log] ne "" || [file exists $path]} {
+            set static_c1_reducer_failure_matrix 0
+            lappend static_c1_reducer_failure_details "$label:$executed"
+        }
+    }
+    set static_c1_reducer_generic_failure [static_c1_reducer_helper_exec \
+        $static_c1_reducer_helper $static_c1_reducer_marker absent 2 P 1]
+    set static_c1_reducer_generic_failure_output \
+        [dict get $static_c1_reducer_generic_failure output]
+    set static_c1_reducer_fallback_only [expr {
+        [string first {YT_TERM_REDUCER_FALLBACK_V1} \
+            $static_c1_reducer_generic_failure_output] >= 0 &&
+        [string first {YT_TERM_REDUCER_V1 } \
+            $static_c1_reducer_generic_failure_output] < 0 &&
+        [lindex [c1_terminal_reducer_parse \
+            "$static_c1_reducer_generic_failure_output\nroot:/# " \
+            $static_c1_reducer_marker] 0] == 0
+    }]
+    set static_c1_reducer_cleanup_failure [static_c1_reducer_helper_exec \
+        $static_c1_reducer_helper $static_c1_reducer_marker cleanup_fail 2 P 0]
+    set static_c1_reducer_cleanup_failure_output \
+        [dict get $static_c1_reducer_cleanup_failure output]
+    set static_c1_reducer_cleanup_failure_path \
+        "$static_c1_reducer_prefix-$static_c1_reducer_marker"
+    set static_c1_reducer_cleanup_failure_rejected [expr {
+        [string first {YT_TERM_REDUCER_FALLBACK_V1} \
+            $static_c1_reducer_cleanup_failure_output] >= 0 &&
+        [string first {YT_TERM_REDUCER_V1 } \
+            $static_c1_reducer_cleanup_failure_output] < 0 &&
+        [file isdirectory $static_c1_reducer_cleanup_failure_path]
+    }]
+    catch {file delete -force $static_c1_reducer_cleanup_failure_path}
+
+    set static_c1_reducer_helper_source \
+        [c1_terminal_reducer_guest_helper_script]
+    set static_c1_reducer_create_at [string first \
+        {(set -C; printf '%s:RC:0\n%s:FENCE\n'} \
+        $static_c1_reducer_helper_source]
+    set static_c1_reducer_type_at [string first \
+        {if [ ! -f "$terminal" ] || [ -L "$terminal" ] || [ ! -r "$terminal" ]} \
+        $static_c1_reducer_helper_source]
+    set static_c1_reducer_wc_at [string first \
+        {count_output=$(/bin/wc <"$terminal" 2>/dev/null)} \
+        $static_c1_reducer_helper_source]
+    set static_c1_reducer_terminal_call_at [string first \
+        {/bin/consolerecord --terminal-batch-file "$terminal" "$marker"} \
+        $static_c1_reducer_helper_source]
+    set static_c1_reducer_generic_call_at [string first \
+        {/bin/consolerecord "$row"} $static_c1_reducer_helper_source]
+    set static_c1_reducer_helper_source_contract [expr {
+        [string first {if [ -e "$terminal" ] || [ -L "$terminal" ]} \
+            $static_c1_reducer_helper_source] >= 0 &&
+        $static_c1_reducer_create_at >= 0 &&
+        $static_c1_reducer_type_at > $static_c1_reducer_create_at &&
+        $static_c1_reducer_wc_at > $static_c1_reducer_type_at &&
+        $static_c1_reducer_terminal_call_at > $static_c1_reducer_wc_at &&
+        $static_c1_reducer_generic_call_at > $static_c1_reducer_terminal_call_at &&
+        [string first {YT_TERM_REDUCER_FALLBACK_V1} \
+            $static_c1_reducer_helper_source] >= 0 &&
+        [string first {then fallback cleanup} \
+            $static_c1_reducer_helper_source] >= 0 &&
+        ![regexp {(^|\n)[ \t]*(cat|read)[ \t]} \
+            $static_c1_reducer_helper_source]
+    }]
+
+    set static_c1_reducer_parser_accepts 1
+    set static_c1_reducer_parser_accept_details {}
+    foreach spec {
+        {absent 2 P}
+        {absent 2 A}
+        {absent 3 P}
+        {absent 4 A}
+        {rc_only 4 A}
+        {committed 0 A}
+    } {
+        lassign $spec state recorder_rc presence
+        set parsed [c1_terminal_reducer_parse \
+            [static_c1_reducer_wire $static_c1_reducer_marker $state \
+                $recorder_rc $presence] $static_c1_reducer_marker]
+        if {![lindex $parsed 0] || [lindex $parsed 2] ne $state} {
+            set static_c1_reducer_parser_accepts 0
+            lappend static_c1_reducer_parser_accept_details "$spec:$parsed"
+        }
+    }
+    set static_c1_reducer_row [static_c1_reducer_row \
+        $static_c1_reducer_marker 0 A]
+    set static_c1_reducer_committed [static_c1_reducer_wire \
+        $static_c1_reducer_marker committed 0 A]
+    set static_c1_reducer_adversaries [list \
+        [list wrong-marker [string map [list \
+            "m=$static_c1_reducer_marker" {m=YTTERMREDUCERREPLAY}] \
+            $static_c1_reducer_committed]] \
+        [list replay "$static_c1_reducer_row\n$static_c1_reducer_committed"] \
+        [list duplicate [string map [list "$static_c1_reducer_row\n" \
+            "$static_c1_reducer_row\n$static_c1_reducer_row\n"] \
+            $static_c1_reducer_committed]] \
+        [list contamination [string map [list $static_c1_reducer_row \
+            "noise$static_c1_reducer_row"] $static_c1_reducer_committed]] \
+        [list malformed [string map [list { c=1} {}] \
+            $static_c1_reducer_committed]] \
+        [list noncanonical [string map [list { l=2} { l=02}] \
+            $static_c1_reducer_committed]] \
+        [list created-zero [static_c1_reducer_wire $static_c1_reducer_marker \
+            committed 0 A [dict create c 0]]] \
+        [list regular-zero [static_c1_reducer_wire $static_c1_reducer_marker \
+            committed 0 A [dict create f 0]]] \
+        [list symlink-flag [static_c1_reducer_wire $static_c1_reducer_marker \
+            committed 0 A [dict create n 0]]] \
+        [list count-drift [static_c1_reducer_wire $static_c1_reducer_marker \
+            committed 0 A [dict create l 3]]] \
+        [list committed-r4 [static_c1_reducer_wire $static_c1_reducer_marker \
+            committed 4 A]] \
+        [list rc-only-r0 [static_c1_reducer_wire $static_c1_reducer_marker \
+            rc_only 0 A]] \
+        [list absent-r0 [static_c1_reducer_wire $static_c1_reducer_marker \
+            absent 0 A]] \
+        [list r3-absent [static_c1_reducer_wire $static_c1_reducer_marker \
+            absent 3 A]] \
+        [list r4-present [static_c1_reducer_wire $static_c1_reducer_marker \
+            absent 4 P]] \
+        [list row-before-terminal \
+            "$static_c1_reducer_row\n$static_c1_reducer_marker:RC:0\n$static_c1_reducer_marker:FENCE\nroot:/# "] \
+        [list terminal-gap \
+            "$static_c1_reducer_marker:RC:0\nnoise\n$static_c1_reducer_marker:FENCE\n$static_c1_reducer_row\nroot:/# "] \
+        [list row-gap \
+            "$static_c1_reducer_marker:RC:0\n$static_c1_reducer_marker:FENCE\nnoise\n$static_c1_reducer_row\nroot:/# "] \
+        [list foreign-terminal \
+            "YTFOREIGN:RC:0\n$static_c1_reducer_committed"] \
+        [list duplicate-terminal \
+            "$static_c1_reducer_marker:RC:0\n$static_c1_reducer_committed"] \
+        [list fallback-only \
+            "YT_TERM_REDUCER_FALLBACK_V1 m=$static_c1_reducer_marker reason=test\nroot:/# "] \
+        [list fallback-plus-row \
+            "YT_TERM_REDUCER_FALLBACK_V1 m=$static_c1_reducer_marker reason=test\n$static_c1_reducer_committed"] \
+        [list status-missing "root:/# "] \
+        [list prompt-missing [string map [list {root:/# } {}] \
+            $static_c1_reducer_committed]] \
+        [list prompt-replay "${static_c1_reducer_committed}root:/# "]]
+    set static_c1_reducer_parser_rejects 1
+    set static_c1_reducer_parser_reject_details {}
+    foreach adversary $static_c1_reducer_adversaries {
+        lassign $adversary label wire
+        set parsed [c1_terminal_reducer_parse $wire \
+            $static_c1_reducer_marker]
+        if {[lindex $parsed 0]} {
+            set static_c1_reducer_parser_rejects 0
+            lappend static_c1_reducer_parser_reject_details "$label:$parsed"
+        }
+    }
+
+    set static_c1_reducer_command [c1_terminal_reducer_serial_command \
+        $static_c1_reducer_marker]
+    set static_c1_reducer_bad_markers 1
+    foreach bad [list "" {bad-marker} [string repeat A 65]] {
+        if {![catch {c1_terminal_reducer_serial_command $bad}]} {
+            set static_c1_reducer_bad_markers 0
+        }
+    }
+    set static_c1_reducer_arm_matrix [expr {
+        [c1_terminal_reducer_arm_contract 0 0] eq \
+            {1 {c1_terminal_reducer=0 capture_diagnostic=0}} &&
+        [lindex [c1_terminal_reducer_arm_contract 0 1] 0] == 1 &&
+        [lindex [c1_terminal_reducer_arm_contract 1 1] 0] == 0 &&
+        [lindex [c1_terminal_reducer_arm_contract 0 2] 0] == 0
+    }]
+    set static_c1_reducer_runtime_marker \
+        "# C1-TERMINAL-REDUCER-RUNTIME-ONLY-"
+    append static_c1_reducer_runtime_marker BEGIN
+    set static_c1_reducer_normal_marker "# NORMAL-RUNTIME-ONLY-"
+    append static_c1_reducer_normal_marker BEGIN
+    set static_c1_reducer_runtime_at [string first \
+        $static_c1_reducer_runtime_marker $static_present_source]
+    set static_c1_reducer_normal_at [string first \
+        $static_c1_reducer_normal_marker $static_present_source \
+        $static_c1_reducer_runtime_at]
+    set static_c1_reducer_idle_at [string first {set idle [fb_sample idle]} \
+        $static_present_source $static_c1_reducer_runtime_at]
+    set static_c1_reducer_chromium_at [string first \
+        {guest_cmd "/bin/bash /ytlaunch.sh"} $static_present_source \
+        $static_c1_reducer_runtime_at]
+    set static_c1_reducer_kde_ready_at [string last \
+        {set kde_session_ready 1} $static_present_source \
+        $static_c1_reducer_runtime_at]
+    set static_c1_reducer_route_contract [expr {
+        [string first {info exists env(YT_C1_TERMINAL_REDUCER)} \
+            $static_present_source] >= 0 &&
+        [string first {$env(YT_C1_TERMINAL_REDUCER) : "0"} \
+            $static_present_source] >= 0 &&
+        $static_c1_reducer_runtime_at >= 0 &&
+        $static_c1_reducer_normal_at > $static_c1_reducer_runtime_at &&
+        $static_c1_reducer_kde_ready_at >= 0 &&
+        $static_c1_reducer_kde_ready_at < $static_c1_reducer_runtime_at &&
+        $static_c1_reducer_idle_at > $static_c1_reducer_runtime_at &&
+        $static_c1_reducer_chromium_at > $static_c1_reducer_runtime_at &&
+        [string first {set helper_pairs [list $c1_terminal_reducer_host /ytc1r.sh]} \
+            $static_present_source] >= 0 &&
+        [string first {file attributes $c1_terminal_reducer_host} \
+            $static_present_source] >= 0 &&
+        [string first {reducer-helper-private-mode} \
+            $static_present_source] >= 0 &&
+        [string first {c1_terminal_reducer_dispatch} \
+            [info body c1_terminal_reducer_collect]] < 0 &&
+        [string first {guest_cmd} [info body c1_terminal_reducer_collect]] < 0 &&
+        [string first {FENCE} [info body c1_terminal_reducer_collect]] < 0
+    }]
+    set static_c1_reducer_readiness_good \
+        [c1_terminal_reducer_readiness_contract \
+        "run-qemu: using KVM acceleration\nrun-qemu: WSL D3D12 host GL selected for virgl\n" 1]
+    set static_c1_reducer_readiness_rejects [list \
+        [c1_terminal_reducer_readiness_contract \
+            {run-qemu: WSL D3D12 host GL selected for virgl} 1] \
+        [c1_terminal_reducer_readiness_contract \
+            {run-qemu: using KVM acceleration} 1] \
+        [c1_terminal_reducer_readiness_contract \
+            "run-qemu: using KVM acceleration\nrun-qemu: WSL D3D12 host GL selected for virgl\nOpenGL renderer string: llvmpipe\n" 1] \
+        [c1_terminal_reducer_readiness_contract \
+            "run-qemu: using KVM acceleration\nrun-qemu: WSL D3D12 host GL selected for virgl\n" 0]]
+    set static_c1_reducer_readiness_matrix \
+        [lindex $static_c1_reducer_readiness_good 0]
+    foreach rejected $static_c1_reducer_readiness_rejects {
+        if {[lindex $rejected 0]} { set static_c1_reducer_readiness_matrix 0 }
+    }
+    set static_c1_reducer_no_credit [expr {
+        [finish_extraction_path 0 0 0 0 NOT_RUN 1] eq \
+            "c1-terminal-reducer" &&
+        [string first {presented_fps} [info body c1_terminal_reducer_dispatch]] < 0 &&
+        [string first {bo_present_fps} [info body c1_terminal_reducer_dispatch]] < 0 &&
+        [string first {capture_guest_fb} [info body c1_terminal_reducer_dispatch]] < 0 &&
+        [string first {monitor_screendump} [info body c1_terminal_reducer_dispatch]] < 0 &&
+        [string first {diagnostic_only=1 no_fps_claim=1 no_semantic_success=1} \
+            [info body c1_terminal_reducer_dispatch]] >= 0
+    }]
+    set static_c1_reducer_normal_hashes [list \
+        [render_start_receipt_digest [fbstat_transport_guest_helper_script]] \
+        [render_start_receipt_digest [info body c1_atomic_outer_terminal_shell_command]] \
+        [render_start_receipt_digest [info body c1_terminal_commit_frame_parse]] \
+        [render_start_receipt_digest [render_start_receipt_guest_helper_script]] \
+        [render_start_receipt_digest [info body render_start_receipt_parse]] \
+        [render_start_receipt_digest [role_census_diag_guest_helper_script]] \
+        [render_start_receipt_digest [info body role_census_diag_parse]] \
+        [render_start_receipt_digest [source_prethreshold_guest_helper_script]] \
+        [render_start_receipt_digest [info body source_prethreshold_parse]]]
+    set static_c1_reducer_expected_normal_hashes [list \
+            95675b023167b6f1b01ca787706adf2240114092ac80a9c12168cff7e00cdc1c \
+            5190ecc4a2587f05c94b139beca4154e385af9c226038f68cc39660b7813436e \
+            ccd2b0d29665f5f1682609ef9088398cb9b2ab7a370052bb5617d20f3c763a26 \
+            f5de9439bcf984b88801f2e3a903f85c51c55ee12d0357b8c0151a643ba66f89 \
+            67d6e78a6b9d8ca792fb28a468454da96bab766a5b0d65022c1bb66fd7d90995 \
+            1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5 \
+            08e01a899504eef06c675fe5896b13d13d26e2fc70f8b11d4eb9d7681d513085 \
+            09c3084a02da3a8d42acfc1a23ecdb2d89530b1d805d325d1f38184279aff77c \
+            7a78a6090d30a0102222a207ae58fc6a50dfdd78c1d2b21132c0a82593414950]
+    set static_c1_reducer_normal_invariance [expr {
+        $static_c1_reducer_normal_hashes eq
+            $static_c1_reducer_expected_normal_hashes &&
+        [string first {YT_TERM_REDUCER} [fbstat_transport_guest_helper_script]] < 0 &&
+        [string first {YT_TERM_REDUCER} [render_start_receipt_guest_helper_script]] < 0 &&
+        [string first {YT_TERM_REDUCER} [role_census_diag_guest_helper_script]] < 0 &&
+        [string first {YT_TERM_REDUCER} [source_prethreshold_guest_helper_script]] < 0
+    }]
+    set static_c1_reducer_authoritative_stage_forbidden {$fsimg }
+    append static_c1_reducer_authoritative_stage_forbidden \
+        {$c1_terminal_reducer_host}
+    set static_c1_reducer_cleanup_contract [expr {
+        [string first {catch {file delete -force $scratch}} [info body finish]] >= 0 &&
+        [string first {set lingering [exact_qemu_lines]} [info body finish]] >= 0 &&
+        [string first {debugfs_stage_file $scratch $host $guest} \
+            $static_present_source] >= 0 &&
+        [string first $static_c1_reducer_authoritative_stage_forbidden \
+            $static_present_source] < 0
+    }]
+    set static_c1_reducer_all [expr {
+        $static_c1_reducer_helper_matrix &&
+        $static_c1_reducer_preexisting_matrix &&
+        $static_c1_reducer_failure_matrix && $static_c1_reducer_fallback_only &&
+        $static_c1_reducer_cleanup_failure_rejected &&
+        $static_c1_reducer_helper_source_contract &&
+        $static_c1_reducer_parser_accepts && $static_c1_reducer_parser_rejects &&
+        $static_c1_reducer_command eq
+            "true;/bin/bash /ytc1r.sh $static_c1_reducer_marker" &&
+        $static_c1_reducer_bad_markers && $static_c1_reducer_arm_matrix &&
+        $static_c1_reducer_route_contract &&
+        $static_c1_reducer_readiness_matrix && $static_c1_reducer_no_credit &&
+        $static_c1_reducer_normal_invariance &&
+        $static_c1_reducer_cleanup_contract
+    }]
+    if {!$static_c1_reducer_all} {
+        fail_preflight "static-check-c1-terminal-reducer helper=$static_c1_reducer_helper_matrix helper_details=$static_c1_reducer_helper_details preexisting=$static_c1_reducer_preexisting_matrix preexisting_details=$static_c1_reducer_preexisting_details failures=$static_c1_reducer_failure_matrix failure_details=$static_c1_reducer_failure_details fallback=$static_c1_reducer_fallback_only cleanup_failure=$static_c1_reducer_cleanup_failure_rejected helper_source=$static_c1_reducer_helper_source_contract accepts=$static_c1_reducer_parser_accepts accept_details=$static_c1_reducer_parser_accept_details rejects=$static_c1_reducer_parser_rejects reject_details=$static_c1_reducer_parser_reject_details command=$static_c1_reducer_command markers=$static_c1_reducer_bad_markers arm=$static_c1_reducer_arm_matrix route=$static_c1_reducer_route_contract readiness=$static_c1_reducer_readiness_good,$static_c1_reducer_readiness_rejects no_credit=$static_c1_reducer_no_credit hashes=$static_c1_reducer_normal_hashes invariance=$static_c1_reducer_normal_invariance cleanup=$static_c1_reducer_cleanup_contract"
+    }
+    catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
@@ -13011,8 +13874,21 @@ if {$capture_completeness_diag eq "1"} {
     wf $capture_completeness_diag_host \
         [capture_completeness_diag_guest_helper_script $media_probe_nonce]
 }
+set c1_terminal_reducer_host "$outdir/ytc1r.sh"
+if {$c1_terminal_reducer eq "1"} {
+    wf $c1_terminal_reducer_host [c1_terminal_reducer_guest_helper_script]
+    if {[catch {file attributes $c1_terminal_reducer_host \
+            -permissions 0600} private_error]} {
+        finish 8 "FAIL reducer-helper-private-mode error=$private_error"
+    }
+}
 
-if {$capture_completeness_diag eq "1"} {
+if {$c1_terminal_reducer eq "1"} {
+    # Reducer mode stages exactly one private helper into this run's scratch
+    # image.  No normal launcher, capture, role, media, or FPS helper enters
+    # the image, and the authoritative fs.img is never a staging target.
+    set helper_pairs [list $c1_terminal_reducer_host /ytc1r.sh]
+} elseif {$capture_completeness_diag eq "1"} {
     # DIAG1 stages only the two diagnostic commands.  Keeping the ordinary
     # helper files out of this image makes accidental runtime fall-through
     # into frame/FPS/media extraction observable and fail-closed.
@@ -13147,9 +14023,21 @@ expect {
     }
 }
 set timeout $old_timeout
+set kde_session_ready 1
 # DIAG1-BOOTSTRAP-SERIAL-END
 
 # POST-KDE-READY-DISPATCH-BEGIN
+# C1-TERMINAL-REDUCER-RUNTIME-ONLY-BEGIN
+# This mutually exclusive diagnostic branch is after owned QEMU, KVM, virgl
+# host-GL, and KDE readiness, but before the first idle sample, capture,
+# Chromium helper, screenshot, media, or FPS path.  The dispatcher always
+# finishes and therefore cannot fall through to normal runtime.
+if {$c1_terminal_reducer eq "1"} {
+    c1_terminal_reducer_dispatch
+    finish 8 "FAIL C1-terminal-reducer-branch-returned"
+}
+# C1-TERMINAL-REDUCER-RUNTIME-ONLY-END
+
 # DIAG1-RUNTIME-ONLY-BEGIN
 # This terminal branch must remain ahead of every normal idle/render/media
 # phase.  capture_completeness_diag_run() always calls finish(), so execution
