@@ -5141,3 +5141,73 @@ player, and advancing-progress rows are actually produced and the existing
 `idle+100` flip boundary can be satisfied; do not relax that fail-closed
 threshold and do not spend another trial token before a fresh reviewed build,
 image proof, and gate.
+
+**Atomic-batch A1 source-handshake forensic — PRODUCER ENTRY UNOBSERVED /
+LOAD-VS-INJECTION AMBIGUOUS / NO-BOOT (2026-07-13):** bounded read-only review
+at exact plan/source checkpoint `1265e332376960f33b22055931bf85e67aeddd9f`
+covered only the named invalid run and external log above, all five C6/C7/C8
+receipts and decoded payloads, canonical launcher log, argv/URL/nonce/assets,
+artifact manifest, current launcher/driver/probe sources, and the retained
+successful controls `/tmp/xv6-a1-windowed-final-t1.I68u9s` and
+`/tmp/xv6-a1-eof-repair-windowed.ks2qKJ`. No proof/static suite, build,
+rootfs/image write, QEMU, VM, boot, serial command, source/KDE edit, or RISC-V
+action occurred.
+
+C8 is not a routing, cursor, cap, truncation, or filter failure. Probe 5
+reassembled the canonical regular source from offset zero through exact
+cursor/payload `6962/6962`, below cap 16384, and rehashed it to
+`4d5f5ca7d0ab4060505778e94467129357937a53609c0ae0d00e3b0e036cb894`;
+all five C8 frames were `OK` and nevertheless derived zero authenticated
+nonce-bound rows. C7 independently reassembled a live process census through
+probe 5 (`73055/73055`, SHA
+`5f77fb3aaa9fcea42c8a060757df140e326bbc1521004c75e6b66ed24c08921a`)
+with browser, GPU, network/utility, and zygote roles still present. Thus an
+early main-browser exit is closed. C6 remained the sole credit boundary:
+idle flips/presents `3/4`, maximum probe `23/24`, only `+20`, so every live
+role observation stayed pre-threshold and supplies no HD720, FPS, playback,
+or post-launch-window inference.
+
+The canonical log proves the intended main argv contained the exact unpacked
+extension path, syntactically valid run nonce, forced-HD720 watch URL, and
+audio/autoplay flags. Its YouTube web-manifest console row proves a real
+`www.youtube.com` document executed, but not that the requested watch page
+reached `document_idle` or player readiness. The log contains no extension
+marker, extension load rejection, main-browser exit, or explicit renderer
+crash. The vanished-PID crashpad stat diagnostic, C7 `renderer=0`, and absent
+post-launch screenshots are insufficient early-renderer-exit evidence:
+both successful named controls also have `renderer=0`, and this run retained
+only the pre-framebuffer image while the monitor pre-screendump reported no
+surface; `steady0`, both windows, and mediaProbe are absent.
+
+The two controls used Chrome `150.0.7871.24`, the same extension ID/path,
+manifest, exact three asset sizes/hashes, argv form, YouTube video, and
+32-hex-nonce URL shape. Each produced 30 authenticated rows including
+`force_ready`, selected HD720, and advancing force observation. This closes a
+generic manifest-version/match/world/run-at/host-permission defect, generic
+Chrome argv/policy rejection, bad packaged assets, URL construction, and
+nonce grammar as explanations for this one run. A nonce mismatch after probe
+entry would also have produced a failure row; none exists. The retained
+evidence therefore localizes the failure to **producer entry not observed**:
+the unpacked extension may not have loaded, its MAIN-world content scripts may
+not have injected/executed in the target document, or execution may have
+returned at the current pre-nonce started guard. The existing log protocol
+cannot distinguish those substages, and it cannot honestly promote the
+suggestive PID/surface facts into a renderer-death cause.
+
+**Smallest implementation decision:** before changing launch flags, manifest
+permissions, URL form, or the `idle+100` threshold, add one synchronous,
+no-credit, extension-authenticated `producer_boot` console row as the first
+statement of `probe.js`, before the started guard and nonce parse, followed by
+a distinct nonce-bound `producer_ready` row immediately after library/nonce
+validation; extend C8's fail-closed diagnostic parser/fixtures to distinguish
+no boot, boot-with-bad-nonce/library, and ready-without-force-ready. This is an
+observability repair, not render-start or FPS credit. Before any new gate,
+require JS/JSON syntax plus exact manifest/key/match/world/run-at source locks,
+host parser positive/negative/coalesced/truncation/foreign-extension/foreign-
+nonce fixtures, and the canonical inert host static driver PASS. Then require
+regular non-symlink source/staged/image asset size+SHA parity after one
+reviewed rootfs refresh, read-only named debugfs extraction and stable image
+identity, followed by an independent no-boot review of the minimal diff,
+static logs, asset/rootfs receipt, branch/gitlinks/cleanliness, preserved KDE
+dirt, and exact zero-conflict QEMU inventories. Only that review may form a
+fresh gate; it grants no VM launch or performance credit by itself.
