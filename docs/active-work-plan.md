@@ -6070,3 +6070,53 @@ x86-build/full-user receipts with raw exits and exact QEMU inventories, then a
 new independent no-boot review; only that later PASS may authorize one
 deterministic kernel→user→rootfs refresh and named staged/image proof, never a
 boot by itself.
+
+**C1 terminal-commit retained execution battery — PASS / NO-ROOTFS / NO-BOOT
+(2026-07-13):** one fresh private foreground wrapper ran at exact super/kernel/
+user heads `aab775bd02a2149532df0dda1867f6df2f0be4c8` /
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208` /
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87`.  Complete evidence is
+`/tmp/xv6-terminal-commit-receipts-aab775bd-20260713THyWCiV`; wrapper SHA-256
+is `a9642b3480e06d363b484952d5516f85fb18266c04e1527b205082298ee476be`,
+its argv receipt is SHA-256
+`2894b2508d24f17ab02440fb72e22009da584cd7856bb36b2e900195c05d52fc`,
+and `receipt.tsv` is 5352 bytes / SHA-256
+`952ffb9d0a5ffa1ddd305c0966f3f8681a70d929c2623a30a4478a66e5082eae`.
+The retained `receipt.sha256` file is SHA-256
+`a2948f570e717291fac0c41627c4b7fa87a4e5c00518323cbd033b29c78ff2b2`.
+Every stage has a separate argv file, start/end time, unmodified raw exit,
+combined stdout/stderr log, byte count, and SHA-256 in that receipt.
+
+The wrapper stopped on first failure by construction; none occurred.  Super,
+kernel, and user `git diff --check` each returned raw zero with an empty-log
+SHA-256 `e3b0c442...b855`.  The kernel console-record host suite returned raw
+zero with the same empty-log hash; the user recorder host suite returned raw
+zero and `consolerecord-host-test: PASS` (30 bytes, SHA-256
+`a80d40c4c645b77e1344c665abc5da50db69514ad5800425da954d9bb5038adf`).
+The exact clean-`env -i` canonical MP1/audio-disable1/media1/forced-HD7200/
+EGL0/diag0 static suite returned raw zero (18536 bytes, SHA-256
+`fd29c02a84a9869ee7c8b251c6dbdba197e1afd505c9c4f202ae9bccd5b827f2`)
+and retained `YT-C1-V2-STATIC-PASS` with terminal-commit/two-lock/37-vs-36
+coverage plus `YT-PRESENTFPS-STATIC-CHECK-PASS` and
+`js_guest_runtime=UNEXECUTED`.  The synchronous x86 kernel build returned raw
+zero (1609 bytes, SHA-256
+`f6c7157abecc6a440f04ff233c66797da35f0c71bb9bf8bb78c455f92edb8194`),
+and the full user build returned raw zero with its normal staged-probes
+terminal (220275 bytes, SHA-256
+`4d5481ab32770aac7f46115b05f9f3019b5bf04e1eb66089cb70971ee692bdda`).
+
+The exact `/proc/[0-9]*/exe` pre-inventory was `0/0/0` total/informational-
+RISC-V/conflicting (98 bytes, SHA-256
+`ab3d9bdd3fef39bfa8705e594eb800be16803fefeffcadb216f521bb8a4dde67`).
+The post-inventory was `1/1/0` (178 bytes, SHA-256
+`fb8b909ddd7a8baee3b6708cd8dd8e32b4bad1f3c5a48184f2712f744ff7da33`):
+only non-owned PID 3521272 `/usr/bin/qemu-system-riscv64`, classified
+informational and never touched; no x86 or other conflicting QEMU existed.
+The wrapper terminal is `PASS/all-battery-stages-passed/0`.  No repository
+rootfs/image refresh, production-image read/stat/hash/proof/write, QEMU
+launch, VM, boot, serial command, source edit, or KDE edit occurred; the
+unrelated KDE-smoke dirt remains preserved.  This closes only the previously
+missing durable host/static/build evidence.  It authorizes a new independent
+no-boot review, not staging, image proof, a 60-second gate, or a VM, and adds
+no YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
+performance, or default credit.
