@@ -28,12 +28,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. Independent whole-wrapper audit found further fail-closed
-receipt, lineage, final-inventory, and image-proof gaps. No kernel/user/
-rootfs-refresh or image operation occurred, but no retry is authorized. Next
-is a narrow corrected-wrapper source/static review only; no QEMU, boot,
-serial, YouTube/performance, audio/fullscreen/default work, or credit is
-authorized.
+preflight variable. A corrected wrapper now passes its no-execution static
+contract, but no staging retry is authorized yet: it still needs independent
+review and a fresh explicit one-attempt staging authorization. No kernel/user/
+rootfs-refresh or image operation occurred; no QEMU, boot, serial,
+YouTube/performance, audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4059,3 +4058,39 @@ total/informational-RISC-V/conflicting `0/0/0`; at final plan checkpoint only
 an untouched informational `qemu-system-riscv64` was present (`1/1/0`). This
 FAIL grants no wrapper retry, build, rootfs refresh, VM, image, or performance
 credit.
+
+**C1 corrected full-staging wrapper static contract — PASS / NO-RUN /
+NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** the fresh persisted artifact is
+`/tmp/xv6-c1-full-staging-wrapper-static-20260713T003014Z-2991635/run-full-staging.sh`
+(16513 bytes, SHA-256
+`359388a9a124757bdde19668e60919c2386c442f25a0e4c34da2f6cb6044839c`), with its
+no-execution checker in the same private directory (4573 bytes, SHA-256
+`5ee9ba511b4cc8cfd701aa873c8ad90afac6d182fa948d85c6b477b7625ca2dc`). Both
+scripts passed `bash -n`. ShellCheck is unavailable on this host
+(`SHELLCHECK_NOT_INSTALLED`); this is recorded rather than treated as a pass.
+
+The checker exited 0 with `WRAPPER_STATIC_CONTRACT_PASS`: all helper positional
+arguments are arity-checked and assigned under `set -u`; top/kernel/user
+branches, explicit remotes, pinned nested heads/gitlinks, and only the known
+KDE top dirt are preflight-gated. It requires canonical `/proc/*/exe`
+classification with only exact `qemu-system-riscv64` informational, direct
+stage redirection with immediate raw exit receipt, receipt/file/directory
+sync, a single EXIT-trap terminal result, a fresh private non-symlink runtime
+directory, and canonical kernel/user/rootfs-refresh commands only after
+preflight. The static checks also require non-symlink regular image/artifact
+paths, separate pre/post inode/mtime/size/SHA fingerprints, stale-identity
+rejection, debugfs stat/dump proof that image `/bin/_consolerecord` is regular
+and executable with SHA equal to staged `_consolerecord`, and the three pinned
+media assets (`manifest.json`, `probe-lib.js`, `probe.js`) through debugfs hash
+receipts. Final conflicting-QEMU enforcement precedes the sole PASS state;
+the checker rejects `pgrep` and `|| true`.
+
+The wrapper was deliberately never invoked. Its directory contains exactly the
+wrapper and checker, with no receipt, stage log, rootfs image extraction, or
+other runtime artifact. Exact final read-only QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no QEMU, build, rootfs refresh,
+image write, debugfs command, source/KDE edit, VM, boot, or serial action
+occurred. This is source/static wrapper readiness only, not staging/image/
+browser asset, `_consolerecord`, YouTube, HD720/fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, performance, or default credit. A separate
+independent review and fresh explicit staging authorization remain required.
