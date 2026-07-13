@@ -19,6 +19,11 @@
 #   YT_C1_TERMINAL_REDUCER=0|1          (default 0; 1 is a host-driver-only,
 #                                       diagnostic reducer that exits before
 #                                       Chromium, capture, and FPS paths.)
+#   QEMU_CPUS=<1..64>                    (default 6; every FPS-capable arm
+#                                       requires exactly 6.  Diagnostic-only
+#                                       arms may explicitly use 1.)
+#   QEMU_MEMORY=<QEMU -m value>          (default 4G; resolved value is bound
+#                                       to the run receipts and spawn env.)
 #   YT_OUTDIR=<new/empty run directory>  (default is a unique timestamped dir)
 #   YT_WINDOW_SECONDS=<seconds>           (default 60)
 #   YT_PLAYER_CROP=<WxH+X+Y>              (default 960x540+160+130)
@@ -97,6 +102,52 @@ proc c1_terminal_reducer_arm_contract {capture_diagnostic reducer} {
         return [list 0 "YT_C1_TERMINAL_REDUCER-mutually-exclusive-with-capture-diagnostic"]
     }
     return [list 1 "c1_terminal_reducer=$reducer capture_diagnostic=$capture_diagnostic"]
+}
+
+proc qemu_cpus_resolve {provided value} {
+    if {$provided} {
+        return $value
+    }
+    return "6"
+}
+
+proc qemu_cpu_profile_contract {
+    qemu_cpus egl_forensics capture_diagnostic terminal_reducer
+} {
+    if {![regexp {^[1-9][0-9]*$} $qemu_cpus]} {
+        return [list 0 "" \
+            "QEMU_CPUS-must-be-canonical-decimal value=$qemu_cpus range=1..64"]
+    }
+    if {$qemu_cpus < 1 || $qemu_cpus > 64} {
+        return [list 0 "" \
+            "QEMU_CPUS-out-of-range value=$qemu_cpus range=1..64"]
+    }
+    set diagnostic_only [expr {$egl_forensics eq "1" ||
+        $capture_diagnostic eq "1" || $terminal_reducer eq "1"}]
+    if {!$diagnostic_only && $qemu_cpus != 6} {
+        return [list 0 "" \
+            "QEMU_CPUS-normal-performance-requires-6 value=$qemu_cpus"]
+    }
+    set profile [expr {$diagnostic_only ?
+        "diagnostic-${qemu_cpus}vcpu" : "performance-6vcpu"}]
+    return [list 1 $profile \
+        "qemu_cpus=$qemu_cpus qemu_cpu_profile=$profile diagnostic_only=$diagnostic_only"]
+}
+
+proc qemu_resource_contract_lines {qemu_cpus qemu_memory qemu_cpu_profile} {
+    return "QEMU_CPUS=$qemu_cpus\nQEMU_MEMORY=$qemu_memory\nqemu_cpu_profile=$qemu_cpu_profile\n"
+}
+
+proc qemu_resource_binding_fields {qemu_cpus qemu_memory qemu_cpu_profile} {
+    return "qemu_cpus=$qemu_cpus qemu_memory=$qemu_memory qemu_cpu_profile=$qemu_cpu_profile"
+}
+
+proc qemu_resource_env_args {qemu_cpus qemu_memory} {
+    return [list "QEMU_CPUS=$qemu_cpus" "QEMU_MEMORY=$qemu_memory"]
+}
+
+proc qemu_resource_shell_prefix {qemu_cpus qemu_memory} {
+    return "QEMU_CPUS=$qemu_cpus QEMU_MEMORY=$qemu_memory"
 }
 
 # Diagnostic capture has its own terminal evidence.  It retains the shared
@@ -597,6 +648,23 @@ set c1_terminal_reducer_contract [c1_terminal_reducer_arm_contract \
 if {![lindex $c1_terminal_reducer_contract 0]} {
     fail_preflight [lindex $c1_terminal_reducer_contract 1]
 }
+set qemu_cpus_provided [info exists env(QEMU_CPUS)]
+set qemu_cpus_raw [expr {$qemu_cpus_provided ? $env(QEMU_CPUS) : ""}]
+set qemu_cpus [qemu_cpus_resolve $qemu_cpus_provided $qemu_cpus_raw]
+set qemu_cpu_profile_contract [qemu_cpu_profile_contract $qemu_cpus \
+    $egl_forensics $capture_completeness_diag $c1_terminal_reducer]
+if {![lindex $qemu_cpu_profile_contract 0]} {
+    fail_preflight [lindex $qemu_cpu_profile_contract 2]
+}
+set qemu_cpu_profile [lindex $qemu_cpu_profile_contract 1]
+set qemu_memory [expr {[info exists env(QEMU_MEMORY)] ?
+    $env(QEMU_MEMORY) : "4G"}]
+set qemu_resource_binding_fields [qemu_resource_binding_fields \
+    $qemu_cpus $qemu_memory $qemu_cpu_profile]
+set qemu_resource_env_args [qemu_resource_env_args \
+    $qemu_cpus $qemu_memory]
+set qemu_resource_shell_prefix [qemu_resource_shell_prefix \
+    $qemu_cpus $qemu_memory]
 set media_probe_extension_id "edfilgocpdgbkehcgdillfgnnhclphol"
 set media_probe_nonce "off"
 if {$media_probe eq "1"} {
@@ -6573,6 +6641,67 @@ trap {finish 143 "FAIL signal SIGTERM"} SIGTERM
 trap {finish 129 "FAIL signal SIGHUP"} SIGHUP
 
 if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
+    set static_qemu_default [qemu_cpus_resolve 0 ""]
+    set static_qemu_default_contract [qemu_cpu_profile_contract \
+        $static_qemu_default 0 0 0]
+    set static_qemu_explicit_normal [qemu_cpu_profile_contract 6 0 0 0]
+    set static_qemu_normal_one [qemu_cpu_profile_contract 1 0 0 0]
+    set static_qemu_reducer_one [qemu_cpu_profile_contract 1 0 0 1]
+    set static_qemu_diag_one [qemu_cpu_profile_contract 1 0 1 0]
+    set static_qemu_forensics_one [qemu_cpu_profile_contract 1 1 0 0]
+    set static_qemu_invalid_rejects 1
+    set static_qemu_invalid_details {}
+    foreach invalid_qemu_cpus [list "" 0 01 +6 6G 65 -1 \
+            " 6" "6 "] {
+        set invalid_contract [qemu_cpu_profile_contract \
+            $invalid_qemu_cpus 0 0 0]
+        if {[lindex $invalid_contract 0]} {
+            set static_qemu_invalid_rejects 0
+            lappend static_qemu_invalid_details \
+                "$invalid_qemu_cpus:$invalid_contract"
+        }
+    }
+    set static_qemu_contract_lines [qemu_resource_contract_lines \
+        6 8G performance-6vcpu]
+    set static_qemu_binding_fields [qemu_resource_binding_fields \
+        6 8G performance-6vcpu]
+    set static_qemu_env_args [qemu_resource_env_args 6 8G]
+    set static_qemu_shell_prefix [qemu_resource_shell_prefix 6 8G]
+    set static_qemu_profile_contract [expr {
+        $static_qemu_default eq "6" &&
+        [lindex $static_qemu_default_contract 0] == 1 &&
+        [lindex $static_qemu_default_contract 1] eq "performance-6vcpu" &&
+        [lindex $static_qemu_explicit_normal 0] == 1 &&
+        [lindex $static_qemu_explicit_normal 1] eq "performance-6vcpu" &&
+        [lindex $static_qemu_normal_one 0] == 0 &&
+        [lindex $static_qemu_reducer_one 0] == 1 &&
+        [lindex $static_qemu_reducer_one 1] eq "diagnostic-1vcpu" &&
+        [lindex $static_qemu_diag_one 0] == 1 &&
+        [lindex $static_qemu_diag_one 1] eq "diagnostic-1vcpu" &&
+        [lindex $static_qemu_forensics_one 0] == 1 &&
+        [lindex $static_qemu_forensics_one 1] eq "diagnostic-1vcpu" &&
+        $static_qemu_invalid_rejects &&
+        $static_qemu_contract_lines eq \
+            "QEMU_CPUS=6\nQEMU_MEMORY=8G\nqemu_cpu_profile=performance-6vcpu\n" &&
+        $static_qemu_binding_fields eq \
+            "qemu_cpus=6 qemu_memory=8G qemu_cpu_profile=performance-6vcpu" &&
+        $static_qemu_env_args eq {QEMU_CPUS=6 QEMU_MEMORY=8G} &&
+        $static_qemu_shell_prefix eq {QEMU_CPUS=6 QEMU_MEMORY=8G}
+    }]
+    set static_qemu_profile_source [read_text [info script]]
+    set static_qemu_profile_routing [expr {
+        [string first {qemu_resource_contract_lines $qemu_cpus $qemu_memory $qemu_cpu_profile} \
+            $static_qemu_profile_source] >= 0 &&
+        [string first {$qemu_resource_binding_fields} \
+            $static_qemu_profile_source] >= 0 &&
+        [string first {$qemu_resource_shell_prefix} \
+            $static_qemu_profile_source] >= 0 &&
+        [string first {{*}$qemu_resource_env_args} \
+            $static_qemu_profile_source] >= 0
+    }]
+    if {!$static_qemu_profile_contract || !$static_qemu_profile_routing} {
+        fail_preflight "static-check-qemu-performance-profile default=$static_qemu_default default_contract=$static_qemu_default_contract explicit=$static_qemu_explicit_normal normal1=$static_qemu_normal_one reducer1=$static_qemu_reducer_one diag1=$static_qemu_diag_one forensics1=$static_qemu_forensics_one invalid=$static_qemu_invalid_rejects invalid_details=$static_qemu_invalid_details lines=[binary encode hex $static_qemu_contract_lines] routing=$static_qemu_profile_routing"
+    }
     foreach contract_case {
         {1 1 0 1}
         {1 1 1 1}
@@ -14069,11 +14198,12 @@ exit 0
     }
     catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    puts "YT-QEMU-PERFORMANCE-PROFILE-STATIC-PASS default6=PASS explicit_normal6=PASS normal1=REJECT reducer1=PASS diag1=PASS forensics1=PASS malformed_range=REJECT receipt_source_spawn_routing=PASS"
     puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT bracketed_paste_disable_prefix=PASS bracketed_paste_foreign_duplicate_nonrow_nonfirst=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-MEDIA-CAPTURE-PATH-STATIC-PASS fast=1 host_wait_final=2"
     puts "YT-MEDIA-PROBE-VPQ-SKEW-STATIC-PASS exact_fixture=PASS cross_stage_local_caps=DIAGNOSTIC rvfc_invariants=REJECT_MUTATIONS vpq_internal=REJECT_MUTATIONS"
-    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
+    puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer qemu_cpus=$qemu_cpus qemu_memory=$qemu_memory qemu_cpu_profile=$qemu_cpu_profile qemu_profile_contract=PASS c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }
 
@@ -14089,10 +14219,14 @@ foreach tool {convert compare nc} {
     }
 }
 
-af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag"
-af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=[expr {$egl_forensics || $capture_completeness_diag}] fps_claim_gated_by_media_source=$media_probe"
+af $statusf "[iso_now] START run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag $qemu_resource_binding_fields"
+af $metricsf "run_id=$run_id arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag $qemu_resource_binding_fields media_probe_nonce=$media_probe_nonce media_probe_extension_id=$media_probe_extension_id video_id=$vid window_seconds=$window_seconds no_fps_claim=[expr {$egl_forensics || $capture_completeness_diag}] fps_claim_gated_by_media_source=$media_probe"
 wf "$outdir/chromium-url.txt" "$url\n"
-wf "$outdir/arm-contract.txt" "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_FORCE_HD720=$force_hd720\nYT_CAPTURE_COMPLETENESS_DIAG=$capture_completeness_diag\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\narm=$arm\n"
+set arm_contract_text "YT_MULTIPROCESS=$multiprocess\nYT_DISABLE_AUDIO_OUTPUT=$disable_audio\nYT_EGL_FORENSICS=$egl_forensics\nYT_MEDIA_PROBE=$media_probe\nYT_FORCE_HD720=$force_hd720\nYT_CAPTURE_COMPLETENESS_DIAG=$capture_completeness_diag\nYT_MEDIA_PROBE_NONCE=$media_probe_nonce\nYT_MEDIA_PROBE_EXTENSION_ID=$media_probe_extension_id\n"
+append arm_contract_text \
+    [qemu_resource_contract_lines $qemu_cpus $qemu_memory $qemu_cpu_profile]
+append arm_contract_text "arm=$arm\n"
+wf "$outdir/arm-contract.txt" $arm_contract_text
 
 exec cp --reflink=auto --sparse=always -- $fsimg $scratch
 if {$media_probe eq "1"} {
@@ -14299,7 +14433,7 @@ foreach {host guest} $helper_pairs {
 
 set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0"
 set qextra "-monitor unix:$monitor,server,nowait"
-wf "$outdir/qemu-launch-command.txt" "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
+wf "$outdir/qemu-launch-command.txt" "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 $qemu_resource_shell_prefix QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
 
 set debugcon_prepare [prepare_debugcon_path $debugcon_source]
 if {![lindex $debugcon_prepare 0]} {
@@ -14310,7 +14444,7 @@ set debugcon_epoch [lindex $debugcon_prepare 1]
 af $statusf "[iso_now] debugcon_prepared=1 epoch=$debugcon_epoch detail=[lindex $debugcon_prepare 2]"
 
 log_file -a $runlog
-spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND=$append QEMU_EXTRA=$qextra bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
+spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 {*}$qemu_resource_env_args QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND=$append QEMU_EXTRA=$qextra bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
 set qemu_pid [exp_pid]
 set qemu_started 1
 match_max 2000000
