@@ -1,6 +1,12 @@
 (function runXv6YouTubeMediaProbe(global) {
   "use strict";
 
+  // Diagnostic-only entry evidence.  This intentionally precedes both the
+  // per-document guard and URL/nonce parsing, so it must never claim a nonce
+  // or carry page/URL data.  The host treats duplicates as invalid and never
+  // uses this marker for render or FPS credit.
+  console.info("YT_MEDIA_PROBE_STAGE_V1 kind=producer_boot schema=1");
+
   if (global.__xv6YouTubeMediaProbeStarted)
     return;
   global.__xv6YouTubeMediaProbeStarted = true;
@@ -22,6 +28,16 @@
   const FORCE_OBSERVE_INTERVAL_MS = 250;
   const FORCE_STABLE_OBSERVATIONS = 4;
   let emittedRows = 0;
+  let producerReadyEmitted = false;
+
+  function emitProducerReady() {
+    if (producerReadyEmitted)
+      return false;
+    producerReadyEmitted = true;
+    console.info(
+      `YT_MEDIA_PROBE_STAGE_V1 kind=producer_ready schema=1 nonce=${nonce} url_arm=canonical force_hd720=${forceHd720 ? 1 : 0} capture_diag=${captureCompletenessDiagnostic ? 1 : 0}`);
+    return true;
+  }
 
   function emit(kind, fields) {
     if (emittedRows >= MAX_ROWS)
@@ -514,6 +530,10 @@
       emit("failure", { reason: "nonce-missing" });
       return;
     }
+
+    // Library availability and the canonical nonce/arm URL parse are now
+    // proven.  This remains diagnostic-only and precedes player discovery.
+    emitProducerReady();
 
     // This is deliberately before video discovery but is liveness only.
     diagnosticV2ProducerStart();

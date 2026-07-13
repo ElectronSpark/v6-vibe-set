@@ -5211,3 +5211,48 @@ identity, followed by an independent no-boot review of the minimal diff,
 static logs, asset/rootfs receipt, branch/gitlinks/cleanliness, preserved KDE
 dirt, and exact zero-conflict QEMU inventories. Only that review may form a
 fresh gate; it grants no VM launch or performance credit by itself.
+
+**Producer-stage observability implementation — PASS / HOST-STATIC ONLY /
+NO-BOOT (2026-07-13):** from exact approved `-ff` checkpoint
+`3db9f978416d827ab3856f9ef60b6b40e683f76f`, `probe.js` now emits the separate
+diagnostic-only `YT_MEDIA_PROBE_STAGE_V1 producer_boot` row before the started
+guard and nonce parse, with no nonce or page/URL data, and emits exactly one
+nonce/arm-bound `producer_ready` only after library and canonical URL/nonce
+validation and before player selection. C8 authenticates both rows through
+the existing extension-source envelope plus cursor/byte/digest transport,
+rejects absent/duplicate/reordered/early/forged/malformed/wrong-nonce/foreign-
+extension/truncated forms, and distinguishes no boot, boot-only, ready with
+selector pending, no player, observation pending, stalled, and progressing.
+Both stage rows remain outside `render_start_receipt_classify` and the retained
+`idle+100` threshold; they create no render, FPS, HD720, playback, or success
+credit. The manifest, probe library, launch flags, and threshold are unchanged.
+
+Chromium-backed JS parsing and Ruby JSON parsing passed. The first canonical
+attempt `/tmp/xv6-producer-stage-static-20260713T052020Z-3317039(.log)` stopped
+at Tcl parse with an unescaped fixture brace and executed no battery; that
+fixture was corrected. A subsequent PASS was retained at
+`/tmp/xv6-producer-stage-static-20260713T052049Z-3317746(.log)`. Tightening the
+foreign-extension expectation then produced one honest fail-closed fixture
+mismatch at `/tmp/xv6-producer-stage-static-20260713T052552Z-3323253(.log)`;
+the parser's actual `source-prethreshold-untrusted-marker-envelope` verdict was
+made the exact expected rejection. Final canonical evidence is
+`/tmp/xv6-producer-stage-static-20260713T052644Z-3324973` with external log
+`/tmp/xv6-producer-stage-static-20260713T052644Z-3324973.log`, raw exit `0`,
+the dedicated `YT-PRODUCER-STAGE-STATIC-PASS`, and every retained canonical
+PASS terminal through `YT-PRESENTFPS-STATIC-CHECK-PASS`. It also locks exact
+manifest SHA/key/match/world/run-at semantics and covers positive, negative,
+coalesced, truncated, foreign-extension, and foreign-nonce stage fixtures.
+
+Final source `probe.js` is `27488` bytes, SHA-256
+`6abd45c1ddd24c4d09a14426e34b78b54ec9462d0d261321339b3a5b6f824436`;
+unchanged `probe-lib.js` and `manifest.json` remain respectively
+`2fde2692...137c` and `46dced0c...ac22`. An informational RISC-V QEMU appeared
+during the first parse-only attempt and exited independently; it was never
+touched. The final successful-suite pre-inventory and final all-architecture
+inventory were `0/0/0`, with no x86 QEMU throughout. No build, repository
+rootfs refresh, production filesystem-image read/write, VM, boot, serial
+command, kernel/user/ports edit, or KDE edit occurred; the pre-existing KDE
+dirt is preserved. **Scope:** this checkpoint
+authorizes only the already-required reviewed rootfs refresh, named asset
+parity proof, and independent no-boot review. It does not form a gate or
+authorize a VM launch.
