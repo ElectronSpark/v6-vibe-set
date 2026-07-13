@@ -5559,3 +5559,47 @@ Expect. Do not change kernel, guest probe, C8 authentication, or C6 admission
 from this invalid preflight-only result. That decision is recorded only; it
 is not implemented here, and a new independently authorized token is required
 before any further VM trial.
+
+**Fresh-output producer A1 replacement gate — PASS / ONE WINDOWED TRIAL ONLY /
+NO-BOOT (2026-07-13):** at explicit `-ff` checkpoint
+`1b1245f21ec7181b729830da99127f5fcf9c0112`, exactly equal to approved
+`origin/codex/host-linux-abi-shell-port-ff`, the producer pre-boot PASS
+`f6c91315c2ed35c727fc2773959e16980dce905f` remains an ancestor and every
+later committed path is only `docs/active-work-plan.md`. Kernel/user/ports
+heads, remotes, gitlinks, recursive nested cleanliness, and preserved KDE-only
+dirt passed. KVM/DXG read/write, D3D12/GL, X11/Wayland, kernel
+`3bde70e3...acd7`, atomic recorder `0755/29616/6f610bf2...cfa6`, current image
+`7b0aed0d...5ddd`, image-console equality, new probe
+`0644/27488/6abd45c1...24436`, and media receipts/extracts all revalidated;
+no source or image identity changed after the prior PASS. The consumed-trial
+worker and rootfs worker were complete and no other VM worker was active.
+
+Exact all-architecture start inventory was total/informational-RISC-V/
+conflicting `0/0/0`. One foreground `sleep 60` ran from `06:19:35Z` to
+`06:20:35Z`, synchronously reaped through its exact handle with no polling;
+the immediate end inventory and full prelaunch audit passed at `0/0/0`.
+Evidence is `/tmp/xv6-a1-passive-gate-outdir-20260713T061820Z`.
+
+All prior A1 tokens are consumed and must never be reused. New token
+`A1-WINDOWED-FRESHOUT-1b1245f2-20260713T062121Z-Q0` authorizes exactly one
+later canonical **windowed** real-x86 KVM+virgl trial on this named branch,
+including this docs-only gate-record descendant: MP1, audio-disable `1`, media
+`1`, forced-HD720 `1`, capturediag `0`, EGL `0`, not fullscreen, standard
+60-second measurement, and `QEMU_AUDIO=none`.
+
+The token additionally requires the worker to choose a unique `YT_OUTDIR`
+that does not exist and an external `YT_DRIVER_LOG=${YT_OUTDIR}.driver.log`
+that is its sibling outside the output directory. Immediately before the one
+Expect invocation, with no intervening filesystem writer, it must assert both
+`[ ! -e "$YT_OUTDIR" ]` and `[ ! -e "$YT_DRIVER_LOG" ]`, assert the sibling
+relationship, and retain those checks. It must not create `YT_OUTDIR`, open a
+file within it, or place any artifact there before Expect; external capture
+may open only the sibling log as the invocation starts. A failed assertion
+consumes the token without Expect, QEMU, or retry.
+
+The worker must also immediately recheck branch/prerequisites and exact
+all-arch QEMU conflicts, own and synchronously reap any launched QEMU group,
+and retain a final exact zero-conflict inventory. Informational RISC-V remains
+report-only and untouched; any drift, missing endpoint, conflict, or handle
+loss fails without launch authority. This gate launched no VM and grants no
+performance, audio-on, fullscreen, or default credit.
