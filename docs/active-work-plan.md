@@ -5825,3 +5825,99 @@ driver/plan checkpoint, including the installed recorder/file/cleanup
 contract and unchanged C6/C7/C8/no-credit paths. Only a separately recorded
 fresh one-x86-VM gate may then authorize exactly one canonical windowed A1
 trial; never infer a retry from this static pass.
+
+**C1 atomic outer-terminal independent adversarial review — FAIL / NO-GATE /
+NO-STATIC-RERUN / NO-BUILD / NO-IMAGE-OR-ROOTFS / NO-BOOT (2026-07-13):**
+reviewed exact commit `21e39091cdbf89970af09710ee231cd44ca28a9f` and
+the retained static evidence without executing the static suite or accessing
+an image. The final retained log
+`/tmp/xv6-c1-atomic-terminal-static-20260713T070725Z-3429465.log` is a genuine
+host-only static PASS (18,536 bytes, SHA-256
+`2a5961d0ffffe8670f34fad3dbe2b5ee8069eaf19881d63e8393a46f0612314d`) and
+ends in both advertised PASS terminals. The first failed log
+`/tmp/xv6-c1-atomic-terminal-static-20260713T070153Z-3422670.log` is honestly
+a harness-reporting failure (11,954 bytes, SHA-256
+`37053b43587bdf9e37f14dc33ec64a135f1a8b0fe7b6c089925f5d872778f520`):
+the injected production path returned 86 with no decodable terminal, while
+Tcl's synthetic abnormal-child message was incorrectly treated as child
+stdout. Those retained results do not overcome two runtime correctness
+blockers found by this review.
+
+First, the new helper admits markers of at most 28 bytes, but the retained
+live nonce `YTP34007711783924030847478` is already 26 bytes. Runtime marker
+suffixes C1 through C9 are therefore 28 bytes, while C10 through C13 are 29.
+The normal sequencing can reach C10/C11 and then call `fb_sample probe3` with
+C12 whenever the first two probes do not satisfy the threshold; `fb_sample`
+opts every idle/probe/sample invocation into the helper. The helper rejects
+that legitimate marker before sending the guest command. Static coverage
+explicitly proves that a 29-byte marker is rejected and uses a 28-byte live
+maximum, so it misses this actual multi-digit-counter path. This is a direct
+canonical-run blocker, not a timeout issue.
+
+Second, neither the outer cleanup check nor the recorder return code can
+retroactively invalidate a terminal already emitted to the host. The shell
+calls `consolerecord --batch-file` before post-recorder cleanup and before it
+tests `recorder_rc`; Expect is allowed to accept the exact FENCE immediately.
+The retained cleanup injection fails the initial `.absent` preflight removal,
+so it never exercises a post-emission cleanup failure, and the recorder-fail
+stub emits no bytes. The real kernel batch ioctl deliberately can return
+`-EAGAIN` after some or all records have been emitted if the emergency
+generation changes; the retained kernel host-test contract explicitly says
+that this failure honestly follows emission. Consequently a real nonzero
+recorder result, or a post-recorder cleanup failure, can coexist with an
+already valid ordered `RC:0`/`FENCE` pair and receive C1 credit. That violates
+the required rule that recorder/file/cleanup failure produce no valid
+terminal or credit. A repair needs an emission-safe acknowledgement/design
+(for example, establishing and verifying removal before irreversible output),
+not only another shell check after the batch call.
+
+The remaining audited properties are sound but do not authorize a gate. The
+atomic option is explicit default-off and is used only by `fb_sample`; generic
+non-C1 serial-command construction is byte-exact unchanged. The real command
+status is saved before outer work. On its success path the helper uses a
+marker-unique absolute path, `umask 077`, noclobber creation, regular/readable/
+non-symlink checks, exact two-line/two-word/calculated-byte validation, one
+`/bin/consolerecord --batch-file` invocation, and no ordinary-console write
+of the C1 RC/FENCE. The unchanged parser requires exact standalone marker
+records, exactly one decimal RC before exactly one FENCE, and rejects missing,
+duplicate, reordered, prefixed, or wrong-marker records. It rejects the
+retained actual contaminated vectors `virtio_gpu: page-flip present re<RC>`
+and `source=5 size=1280x800 already_b<FENCE>`; unrelated complete-line gaps
+remain intentionally acceptable.
+
+The timeout recomputation is also internally correct for the only admitted
+status, RC 0: maximum V2 physical bytes 357,781 plus outer physical bytes
+`2*m+15`, a 128-byte ordinary-writer allowance, 115,200 baud at ten bits per
+byte, two and only two 50-ms mutex acquisitions, zero per-record drain, and a
+5,000-ms fixed reserve. The retained 16-byte static marker gives
+`31073+100+5000=36173` ms; a 28-byte marker gives
+`31075+100+5000=36175` ms, so exactly 37 seconds passes and 36 fails. The
+retained 304-record/148,610-physical-byte observed shape and
+701-record/357,781-physical-byte maximum shape are coherent. C6, C7, C8,
+diagnostic mode 0, all no-credit routes, and the strict
+`presents>idle && flips>idle+100` classifier are unchanged; later command
+timeouts remain separate and no V3 reserve is double-counted.
+
+Current source/staging metadata remains consistent with the retained producer
+receipt: kernel SHA-256
+`3bde70e38384553a1068e002528c767302dcb15366d267652fc631e41e62acd7`, staged
+`/bin/consolerecord` SHA-256
+`6f610bf241c1dd085390858e7cd360955ee187f9bdf350e504df814cab89cfa6`, and
+probe/manifest hashes match their retained image extracts; the retained image
+proof records the same batch-capable recorder and an exact
+`/bin/_consolerecord` lookup miss. No fresh image assertion is inferred.
+Superproject HEAD and the advertised full explicit `-ff` ref were both the
+reviewed commit; kernel/user/ports remained at
+`6d0151648df87b9d30ffd2dbd0aa780f0c111ec1`,
+`a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5` on their recorded remotes. The
+only pre-existing worktree dirt remains
+`scripts/gpu/kde-plasma-desktop-smoke.expect`, whose patch SHA-256 is
+`a54b44b2e7a7cfda6655c643c2e9cd4ff4e3255b6376ff4b51c0e067fdbefc3d` and
+must be preserved. The review-start exact `/proc/*/exe` inventory was
+`qemu_total=0`, `qemu_informational_riscv=0`, `qemu_conflicting=0`.
+
+Therefore this review authorizes no 60-second gate and no VM. Repair both the
+runtime marker contract and the post-emission failure/credit contract, add
+tests that reach multi-digit counters and inject failures after potential
+emission, then require a fresh static pass and another independent review.
