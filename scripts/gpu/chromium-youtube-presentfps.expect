@@ -890,13 +890,14 @@ proc guest_fence_regex {marker} {
     return [format {(^|\n)%s:FENCE\r{0,2}\n} [regex_quote $marker]]
 }
 
-# Probe 1's C5 frame is not complete until the exact root prompt immediately
-# following its fence has also arrived.  Matching both in one Expect operation
-# closes the fence/prompt hand-off race, including when the prompt is delivered
-# in a later host read.
+# Probe 1's C5 frame is not complete until one canonical RC row, its adjacent
+# same-marker fence, and the exact root prompt have arrived as one terminal
+# block.  A later same-marker fence cannot bridge an earlier parser frame to a
+# prompt it does not own.
 proc guest_fence_prompt_regex {marker} {
-    return [format {(^|\n)%s:FENCE\r{0,2}\n\x1b\[\?2004hroot:/# } \
-        [regex_quote $marker]]
+    set quoted [regex_quote $marker]
+    return [format {\n%s:RC:(0|[1-9][0-9]*)\r{0,2}\n%s:FENCE\r{0,2}\n\x1b\[\?2004hroot:/# } \
+        $quoted $quoted]
 }
 
 proc guest_command_frame_parse {text marker} {
@@ -948,6 +949,35 @@ proc guest_command_frame_parse {text marker} {
         return [list 0 "frame-rc-not-before-fence" ""]
     }
     return [list 1 "pass" [lindex [lindex $rc_values 0] 1]]
+}
+
+# Authenticate the same endpoint consumed by guest_fence_prompt_regex.  The
+# ordinary parser supplies global uniqueness (one RC and one FENCE); the
+# anchored tail supplies raw adjacency, canonical RC spelling, and prompt
+# ownership.  Both parsers must agree on the exact RC before a receipt exists.
+proc guest_prompt_terminal_frame_parse {text marker} {
+    set prompt [render_start_receipt_prompt_wire]
+    if {[string length $text] < [string length $prompt] ||
+        [string range $text end-[expr {[string length $prompt] - 1}] end] ne
+            $prompt} {
+        return [list 0 prompt-terminal-wire-mismatch ""]
+    }
+    set frame [string range $text 0 \
+        end-[string length $prompt]]
+    set quoted [regex_quote $marker]
+    set terminal [format {\n%s:RC:(0|[1-9][0-9]*)\r{0,2}\n%s:FENCE\r{0,2}\n$} \
+        $quoted $quoted]
+    if {![regexp $terminal $frame -> terminal_rc]} {
+        return [list 0 prompt-terminal-block-not-contiguous ""]
+    }
+    set parsed [guest_command_frame_parse $frame $marker]
+    if {![lindex $parsed 0]} {
+        return [list 0 "prompt-terminal-[lindex $parsed 1]" ""]
+    }
+    if {[lindex $parsed 2] ne $terminal_rc} {
+        return [list 0 prompt-terminal-parser-endpoint-divergence ""]
+    }
+    return [list 1 pass $terminal_rc]
 }
 
 # C1 terminal commits are a narrower grammar than ordinary guest-command
@@ -4420,7 +4450,9 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
         -re $fence_regex {
             set buf $expect_out(buffer)
             set timeout $old_timeout
-            if {$atomic_outer_terminal} {
+            if {$require_prompt_receipt} {
+                set frame [guest_prompt_terminal_frame_parse $buf $marker]
+            } elseif {$atomic_outer_terminal} {
                 set frame [c1_terminal_commit_frame_parse $buf $marker]
             } else {
                 set frame [guest_command_frame_parse $buf $marker]
@@ -12892,7 +12924,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         ![lindex [lindex $static_c6_prompt_auth_matrix 7] 0] &&
         ![lindex [lindex $static_c6_prompt_auth_matrix 8] 0]
     }]
-    proc static_c5_prompt_spawn_replay {before after pattern} {
+    proc static_c5_prompt_spawn_replay {before after pattern marker} {
         global timeout
         set old_timeout $timeout
         set old_global_spawn_id $::spawn_id
@@ -12903,13 +12935,20 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         set ::spawn_id $spawn_id
         set timeout 1
         set matched 0
+        set parsed [list 0 atomic-match-missing]
         expect {
-            -re $pattern { set matched 1 }
+            -re $pattern {
+                set matched 1
+                set parsed [guest_prompt_terminal_frame_parse \
+                    $expect_out(buffer) $marker]
+            }
             timeout {}
             eof {}
         }
-        if {$matched} {
+        if {$matched && [lindex $parsed 0]} {
             set boundary [render_start_prompt_boundary_quiet]
+        } elseif {$matched} {
+            set boundary [list 0 "parser-[lindex $parsed 1]"]
         } else {
             set boundary [list 0 atomic-match-missing]
         }
@@ -12917,48 +12956,81 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         catch {wait}
         set ::spawn_id $old_global_spawn_id
         set timeout $old_timeout
-        return [list $matched $boundary]
+        return [list $matched $parsed $boundary]
     }
     set static_c5_prompt_marker YTSTATICC5
     set static_c5_prompt_frame \
-        "$static_c5_prompt_marker:RC:0\n$static_c5_prompt_marker:FENCE\n"
+        "\n$static_c5_prompt_marker:RC:0\n$static_c5_prompt_marker:FENCE\n"
     set static_c5_prompt_regex \
         [guest_fence_prompt_regex $static_c5_prompt_marker]
     set static_c5_prompt_replays [list \
         [static_c5_prompt_spawn_replay \
             "$static_c5_prompt_frame$static_c6_prompt" "" \
-            $static_c5_prompt_regex] \
+            $static_c5_prompt_regex $static_c5_prompt_marker] \
         [static_c5_prompt_spawn_replay $static_c5_prompt_frame \
-            $static_c6_prompt $static_c5_prompt_regex] \
+            $static_c6_prompt $static_c5_prompt_regex $static_c5_prompt_marker] \
         [static_c5_prompt_spawn_replay \
             "$static_c5_prompt_frame$static_c6_prompt\007" "" \
-            $static_c5_prompt_regex] \
+            $static_c5_prompt_regex $static_c5_prompt_marker] \
         [static_c5_prompt_spawn_replay \
             "$static_c5_prompt_frame[string range $static_c6_prompt 1 end]" \
-            "" $static_c5_prompt_regex] \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
         [static_c5_prompt_spawn_replay \
             "$static_c5_prompt_frame$static_c6_prompt$static_c6_prompt" "" \
-            $static_c5_prompt_regex] \
+            $static_c5_prompt_regex $static_c5_prompt_marker] \
         [static_c5_prompt_spawn_replay \
             "${static_c5_prompt_frame}foreign$static_c6_prompt" "" \
-            $static_c5_prompt_regex]]
+            $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "${static_c5_prompt_frame}FOREIGN\n$static_c5_prompt_marker:FENCE\n$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "\n$static_c5_prompt_marker:RC:9\n$static_c5_prompt_frame$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "\n$static_c5_prompt_marker:FENCE\n$static_c5_prompt_frame$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "$static_c5_prompt_frame$static_c5_prompt_frame$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "\n$static_c5_prompt_marker:RC:0\nFOREIGN\n$static_c5_prompt_marker:FENCE\n$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker] \
+        [static_c5_prompt_spawn_replay \
+            "\n$static_c5_prompt_marker:RC:00\n$static_c5_prompt_marker:FENCE\n$static_c6_prompt" \
+            "" $static_c5_prompt_regex $static_c5_prompt_marker]]
     set static_c5_prompt_replay_ok [expr {
         [lindex [lindex $static_c5_prompt_replays 0] 0] &&
         [lindex [lindex [lindex $static_c5_prompt_replays 0] 1] 0] &&
+        [lindex [lindex [lindex $static_c5_prompt_replays 0] 2] 0] &&
         [lindex [lindex $static_c5_prompt_replays 1] 0] &&
         [lindex [lindex [lindex $static_c5_prompt_replays 1] 1] 0] &&
+        [lindex [lindex [lindex $static_c5_prompt_replays 1] 2] 0] &&
         [lindex [lindex $static_c5_prompt_replays 2] 0] &&
-        ![lindex [lindex [lindex $static_c5_prompt_replays 2] 1] 0] &&
+        [lindex [lindex [lindex $static_c5_prompt_replays 2] 1] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 2] 2] 0] &&
         ![lindex [lindex $static_c5_prompt_replays 3] 0] &&
         [lindex [lindex $static_c5_prompt_replays 4] 0] &&
-        ![lindex [lindex [lindex $static_c5_prompt_replays 4] 1] 0] &&
-        ![lindex [lindex $static_c5_prompt_replays 5] 0]
+        [lindex [lindex [lindex $static_c5_prompt_replays 4] 1] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 4] 2] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 5] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 6] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 7] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 7] 1] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 8] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 8] 1] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 9] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 9] 1] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 10] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 11] 0]
     }]
     set static_c5_prompt_replay_details {}
     foreach replay $static_c5_prompt_replays {
         lappend static_c5_prompt_replay_details \
             [list [lindex $replay 0] [lindex [lindex $replay 1] 0] \
-                [lindex [lindex $replay 1] 1]]
+                [lindex [lindex $replay 1] 1] \
+                [lindex [lindex $replay 2] 0] \
+                [lindex [lindex $replay 2] 1]]
     }
     rename static_c5_prompt_spawn_replay {}
 
@@ -13033,8 +13105,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set render_start_prompt_receipt_counter $static_c5_saved_prompt_counter
     proc static_c6_control_source_contract {
         wrapper wait_prompt prompt_wire prompt_auth probe guest fb_sample \
-        present receipt_create receipt_consume boundary evidence validation \
-        disposition
+        present fence_prompt terminal_parser receipt_create receipt_consume \
+        boundary evidence validation disposition
     } {
         set evidence_failure_index [string first \
             {if {[lindex $result 0] eq "EVIDENCE_FAILED"}} $wrapper]
@@ -13083,6 +13155,16 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             [string first {render_start_receipt_prompt_wire} $receipt_consume] >= 0 &&
             [string first {-re {(.|\n)}} $boundary] >= 0 &&
             [string first {guest_fence_prompt_regex $marker} $guest] >= 0 &&
+            [string first {guest_prompt_terminal_frame_parse $buf $marker} \
+                $guest] >= 0 &&
+            [string first {RC:(0|[1-9][0-9]*)} $fence_prompt] >= 0 &&
+            [string first {$quoted $quoted} $fence_prompt] >= 0 &&
+            [string first {RC:(0|[1-9][0-9]*)} $terminal_parser] >= 0 &&
+            [string first {\n$} $terminal_parser] >= 0 &&
+            [string first {guest_command_frame_parse $frame $marker} \
+                $terminal_parser] >= 0 &&
+            [string first {prompt-terminal-parser-endpoint-divergence} \
+                $terminal_parser] >= 0 &&
             [string first {render_start_prompt_boundary_quiet} $guest] >= 0 &&
             [string first {render_start_prompt_receipt_create $marker} \
                 $guest] >= 0 &&
@@ -13113,6 +13195,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c6_guest_body [info body guest_cmd]
     set static_c6_fb_sample_body [info body fb_sample]
     set static_c6_present_body $static_present_source
+    set static_c6_fence_prompt_body [info body guest_fence_prompt_regex]
+    set static_c6_terminal_parser_body \
+        [info body guest_prompt_terminal_frame_parse]
     set static_c6_receipt_create_body \
         [info body render_start_prompt_receipt_create]
     set static_c6_receipt_consume_body \
@@ -13127,7 +13212,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_c6_wrapper_body $static_c6_wait_body $static_c6_prompt_body \
         $static_c6_prompt_auth_body $static_render_receipt_body \
         $static_c6_guest_body $static_c6_fb_sample_body \
-        $static_c6_present_body $static_c6_receipt_create_body \
+        $static_c6_present_body $static_c6_fence_prompt_body \
+        $static_c6_terminal_parser_body $static_c6_receipt_create_body \
         $static_c6_receipt_consume_body $static_c6_boundary_body \
         $static_c6_evidence_body \
         $static_c6_validation_body $static_c6_disposition_body]
@@ -13136,6 +13222,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         prompt $static_c6_prompt_body auth $static_c6_prompt_auth_body \
         probe $static_render_receipt_body guest $static_c6_guest_body \
         fb_sample $static_c6_fb_sample_body present $static_c6_present_body \
+        fence_prompt $static_c6_fence_prompt_body \
+        terminal_parser $static_c6_terminal_parser_body \
         receipt_create $static_c6_receipt_create_body \
         receipt_consume $static_c6_receipt_consume_body \
         boundary $static_c6_boundary_body \
@@ -13157,6 +13245,22 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 {set prompt_at [string last $prompt $raw]} \
             c5-no-atomic guest {guest_fence_prompt_regex $marker} \
                 {guest_fence_regex $marker} \
+            c5-parser-generic guest \
+                {guest_prompt_terminal_frame_parse $buf $marker} \
+                {guest_command_frame_parse $buf $marker} \
+            c5-fence-noncanonical fence_prompt {RC:(0|[1-9][0-9]*)} \
+                {RC:([0-9]+)} \
+            c5-fence-marker-diverge fence_prompt {$quoted $quoted} \
+                {$quoted FOREIGNMARKER} \
+            c5-terminal-noncanonical terminal_parser \
+                {RC:(0|[1-9][0-9]*)} {RC:([0-9]+)} \
+            c5-terminal-unanchored terminal_parser {\n$} {\n} \
+            c5-terminal-no-global-parser terminal_parser \
+                {guest_command_frame_parse $frame $marker} \
+                {guest_command_frame_assume $frame $marker} \
+            c5-terminal-no-endpoint-agreement terminal_parser \
+                {prompt-terminal-parser-endpoint-divergence} \
+                {prompt-terminal-parser-endpoint-assumed} \
             c5-no-boundary guest {render_start_prompt_boundary_quiet} \
                 {render_start_prompt_boundary_assume} \
             c5-no-receipt guest {render_start_prompt_receipt_create $marker} \
@@ -13189,6 +13293,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 [dict get $candidate prompt] [dict get $candidate auth] \
                 [dict get $candidate probe] [dict get $candidate guest] \
                 [dict get $candidate fb_sample] [dict get $candidate present] \
+                [dict get $candidate fence_prompt] \
+                [dict get $candidate terminal_parser] \
                 [dict get $candidate receipt_create] \
                 [dict get $candidate receipt_consume] \
                 [dict get $candidate boundary] \
