@@ -5015,3 +5015,43 @@ or source/KDE edit occurred. These refreshed staging/image facts are complete
 and sufficient for the required independent adversarial pre-boot review, but
 do not themselves grant a VM, YouTube, HD720/fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, performance, or default credit.
+
+**C1 atomic-batch independent adversarial pre-boot review — PASS / FRESH
+60-SECOND GATE FORMATION ONLY / NO-BOOT (2026-07-13):** at exact reviewed plan
+commit `6bc693d7cd2c7a1ee14943a3cca821ee8487591b`, independently rechecked live
+published top/kernel/user/ports refs match the pinned approved lineages
+`6bc693d7...591b`, `6d015164...1ec1`, `a9f732fc...c6b3`, and
+`1a15db74...8e5`; all gitlinks match, nested trees are clean, and the only top
+dirt remains the untouched KDE expect file. Source review confirms the fixed
+32-byte batch UAPI, exact `701/357080/357781` record/logical/physical bounds,
+full copy and validation before one timed wire-lock acquisition, one held
+critical section across all rows, emergency-generation fail-closed/no-credit
+checks, shared x86 normal-writer exclusion, and unchanged RISC-V branches. The
+host recorder admits only a regular bounded non-symlink batch file, validates
+every row, issues exactly one batch ioctl, and has no diagnostic or fallback
+writer.
+
+The generated C1 route builds at most 701 rows and makes one recorder call
+under the derived 37-second timeout. Its V2 decoder requires one exact outer
+command success, contiguous unique begin/meta/chunk/end rows, exact cap and
+binding fields, monotone sequence/offset/length, strict lowercase-hex binary
+round trip and SHA, and rejects contamination, truncation, splicing, foreign
+versions, and recovery. C6 alone supplies classifier credit; the subsequent
+C7 role census and C8 source probe are explicitly diagnostic/no-FPS and cannot
+forge or raise that result, while the `diag=0` path remains the normal lane.
+The retained host/static/build evidence has its exact PASS terminals, raw
+stage exits are zero under scoped build umask `0022` with private parent/log
+modes preserved, and all named QEMU inventories are `0/0/0`.
+
+The private staging receipt and independent named-file rechecks agree on
+kernel `3bde70e3...acd7`, staged and extracted `/bin/consolerecord`
+`0755/29616/6f610bf2...cfa6`, all three pinned regular/link-one `0644` media
+files, exact `/bin/_consolerecord` lookup absence, and stable post-proof image
+identity `0644/73499/8724152320/1783915669/e35c9fd9...9e27`. No raw image was
+searched and no wrapper, proof/static driver, build, rootfs/image-write, QEMU,
+boot, or serial command ran during this review. **Scope:** this PASS authorizes
+only formation of a fresh foreground 60-second conductor gate, conditioned on
+a fresh exact conflict-free QEMU inventory; it does not authorize VM launch.
+Informational RISC-V QEMU must remain untouched and any conflicting QEMU is an
+immediate fail. No YouTube, HD720/fullscreen, audio, `yt-presentfps`,
+`PERF-VIDEO`, performance, or default credit is created.
