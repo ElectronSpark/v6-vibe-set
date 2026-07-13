@@ -28,11 +28,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The V2 wrapper now has semantic static and mutation
-evidence, but no staging retry is authorized: it requires independent review
-and a fresh explicit one-attempt staging authorization. No kernel/user/
-rootfs-refresh or image operation, QEMU, boot, serial, YouTube/performance,
-audio/fullscreen/default work, or credit is authorized.
+preflight variable. The V2 wrapper source passes core static checks, but two
+claimed negative controls do not actually weaken their named runtime
+contracts. No staging retry is authorized. Next is a narrow negative-control
+repair and no-exec review; no kernel/user/rootfs-refresh or image operation,
+QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
+credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4187,3 +4188,44 @@ KDE-smoke file is dirty. This is static wrapper evidence only—not kernel/user/
 image/browser asset, `_consolerecord`, YouTube, HD720/fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, performance, or default credit. Independent
 review and a new explicit staging authority are still mandatory.
+
+**C1 V2 wrapper/negative-control independent review — FAIL / NO-EXEC /
+NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** the wrapper, checker, parser
+log, checker log, and all five mutation files/logs in
+`/tmp/xv6-c1-full-staging-wrapper-v2-static-20260713T004146Z-3002245` were
+read without invocation. Recorded wrapper/checker/ShellCheck/parser/checker
+hashes match their plan values; `bash-n.log` is the empty successful parser
+output and `shellcheck.log` honestly says unavailable. The wrapper is never
+executed: no receipt, stage logs, image fingerprints, debugfs outputs, or
+other runtime artifact exist. Its core source contract is sound on review:
+base `885dfe2` must be an explicit-origin, docs-only ancestor; nested heads
+and gitlinks are exact; the reviewed kernel artifact SHA is required before
+and after its kernel stage; staged console executability/hash, fresh image,
+debugfs mode/hash/media checks, raw stage exits, single trap terminal, and
+final exact QEMU enforcement are all present. Current nested pins and kernel
+artifact SHA match their reviewed values, and the image remains unchanged.
+
+The negative proof is nevertheless insufficient for authorization. Final-QEMU,
+symlink, and skipped pre-kernel-hash mutations each remove the intended active
+guard and are rejected by their corresponding checker predicate. The alleged
+source-pin mutation changes `SOURCE_BASE` to `dynamic`; the wrapper has no
+dynamic mode, so runtime `git cat-file -e "dynamic^{commit}"` would fail
+closed. Its checker rejection is only the missing literal constant—not proof
+that an unsafe source-base bypass is caught. The alleged reorder mutation
+changes the *label* from `kernel` to `rootfs-refresh` but leaves the command's
+actual `--target kernel` in place; it corrupts receipt/log labels and later
+collides with the genuine rootfs label, but does not reorder the kernel/rootfs
+commands. Its checker failures therefore do not prove rejection of an actual
+stage-order bypass. This violates the required mutation-specific adversarial
+contract, not merely a reporting detail.
+
+Before another review, replace those two controls with syntactically valid
+mutants that respectively bypass the real source-base ancestor/docs-only gate
+and move the actual `--target rootfs-refresh` invocation before the kernel
+stage, while preserving all unrelated gates. Their logs must fail the
+source-lineage and stage-order predicates specifically. Retain the three
+sound mutations, recorded `bash -n`, optional ShellCheck absence, and all
+no-exec restrictions. Exact review-start/final QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; no process was touched. This
+FAIL authorizes no wrapper invocation, staging build, rootfs refresh, VM, or
+performance work.
