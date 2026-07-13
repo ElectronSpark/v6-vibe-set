@@ -26,13 +26,14 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-Committed C1 V2 static checkpoint `433f217a7cca4eccb9a1f3df19c726b7e8ec86fe`
-has passed independent no-boot review, but its sole authorized deterministic
-rootfs staging proof is now consumed INCOMPLETE: the kernel build completed,
-then the wrapper ended during the `user` target before any rootfs refresh.
-No fresh `/bin/_consolerecord` image proof exists. The next item is no-boot
-forensic of that exact user-build termination; no QEMU launch, boot, serial,
-YouTube/performance, audio/fullscreen/default work, or credit is authorized.
+The C1 V2 deterministic staging proof remains consumed and **blocked before
+image refresh** by a real user-target source compatibility failure, not VM
+state. The kernel build completed; the user command staged a partial sysroot
+but then failed compiling `kprofile`, so no fresh image
+`/bin/_consolerecord` proof exists. Do not retry staging: first obtain narrow,
+reviewed authority for the `kprofile`/kernel-UAPI repair and a terminal-status
+wrapper correction. No QEMU launch, boot, serial, YouTube/performance,
+audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -3833,12 +3834,11 @@ nested worktree dirt was found. The only superproject dirt is the preserved
 unrelated KDE-smoke file. Exact review QEMU inventory was zero and no process
 was touched.
 
-**Next authority:** one deterministic rootfs refresh/build staging proof only.
-It must use those exact gitlinks, prove the fresh staging contains executable
-`/bin/_consolerecord` and the updated kernel input, retain its build receipt,
-and synchronously finish with an exact no-QEMU inventory. It may not boot,
-launch QEMU, issue serial commands, measure YouTube, or alter defaults. A new
-independent review is mandatory before any VM or performance gate.
+**Authority consumed:** the following deterministic rootfs/build staging proof
+was the sole permission granted by this review. It was not permission to boot,
+launch QEMU, issue serial commands, measure YouTube, or alter defaults; its
+later user-target failure closes it and requires the new authority stated in
+the final forensic below.
 
 **C1 V2 deterministic rootfs staging proof — INCOMPLETE / NO-BOOT
 (2026-07-12):** exact preflight inventory was total/informational-RISC-V/
@@ -3868,3 +3868,45 @@ substitute build or refresh followed. This grants no staging, V2/A1,
 performance, HD720/audio/fullscreen, `yt-presentfps`, or `PERF-VIDEO` credit;
 next authority is limited to forensic localization before another staging
 attempt.
+
+**C1 user-stage wrapper/build forensic — ROOT CAUSE LOCALIZED / NO-BUILD /
+NO-BOOT (2026-07-12):** the prior 41-byte `[0/2] Re-checking globbed
+directories...` observation was not terminal. The named regular
+`user-build.log` subsequently completed at 202491 bytes at 19:56:04, and the
+same-time regular `receipt.txt` contains `stage_result=user_failed`; the plan
+commit was later at 19:57:47. Thus there is no missing logging flush and no
+evidence that Ninja considered `user` up-to-date. The generated Ninja rule is
+the direct no-pipeline command `cmake -E env HOST_CC=/usr/bin/cc
+scripts/build/build-linux-host-probes.sh build-x86_64/sysroot`; its script uses
+`set -euo pipefail` and exits on the observed compiler failure. No persisted
+outer wrapper source or tool-session status exists in the named outdir, so an
+earlier disconnected wait cannot be attributed; the final artifacts do rule
+out timeout, signal, or OOM as the causal termination.
+
+The actual failure is
+`user/programs/kprofile/kprofile.c:877`: it reads
+`struct konsole_prepty_wake_record.file_poll`, but the reviewed kernel UAPI at
+`kernel/kernel/inc/kstats.h:484` supplies `file_poll_capable` (introduced by
+kernel `ed808576`). `build-linux-host-probes.sh` sorts program directories,
+so `consolerecord` ran first and left a fresh executable sysroot
+`/bin/_consolerecord` at 19:55:50; that is partial sysroot state, not a passed
+`user` target or image proof. `kprofile` then made Ninja report `subcommand
+failed`. No build process remains, exact QEMU inventory is `0/0/0`, and the
+rootfs-refresh log is absent. `fs.img` still has the pre-attempt inode/mtime/
+size `73499/1783790041/8724152320`; no fresh image or browser asset claim is
+made.
+
+**Next authority required:** before any retry, independently review a narrow
+user source repair that aligns the stale `kprofile` field use with the current
+kernel UAPI; do not skip the program or weaken the full `user` target. The
+subsequent one-attempt wrapper must persist its own source/argv, use direct
+redirection (no status-masking pipeline), and call each command synchronously
+inside `if stage ...; then ...; else ...; fi` so `set -e` cannot preempt the
+receipt. For kernel, user, and rootfs-refresh it must record start/end,
+unmodified raw exit status, regular-log bytes/SHA-256, and stage result before
+proceeding; after a successful user stage it must mark the sysroot receipt
+separately from image proof. Only after successful `kernel`, `user`, and
+`rootfs-refresh` may it use named-file image inspection to prove executable
+`/bin/_consolerecord` and record fresh image identity. That future sequence is
+not authorized by this forensic; no build, rootfs refresh, VM, or source edit
+occurred here.
