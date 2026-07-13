@@ -3910,3 +3910,32 @@ separately from image proof. Only after successful `kernel`, `user`, and
 `/bin/_consolerecord` and record fresh image identity. That future sequence is
 not authorized by this forensic; no build, rootfs refresh, VM, or source edit
 occurred here.
+
+**C1 kprofile UAPI repair and targeted user build — PASS / NO-ROOTFS /
+NO-BOOT (2026-07-13):** kernel commit
+`ed80857670146717f1f4f2335b9ecea7b95e254b` deliberately replaced the stale
+`file_poll` function-pointer value with the boolean
+`file_poll_capable = (file->ops != NULL && file->ops->poll != NULL)` in the
+shared `konsole_prepty_wake_record` ABI. User commit
+`3e5b90bd30130ad1a3566ddc20c9589f6159d867` (published and verified at
+`origin/v6-port`) makes only the matching kprofile repair: it reads the new
+field, prints it as a decimal capability, and has a `_Static_assert` that the
+member exists with `uint64` width. A guarded exact-word source check found no
+remaining stale `file_poll` use in kprofile; `git diff --check` passed.
+
+The single synchronous non-boot command was
+`cmake --build build-x86_64 --target user -j2`, through the retained direct
+wrapper `/tmp/xv6-kprofile-uapi-build-20260713T000815Z-2961146/run-kprofile-user-build.sh`;
+its regular log is 220275 bytes, SHA-256
+`cf22330c71e20a66762556173fe7043859c93fefad5517b3545fefe8050e49a8`, and its
+receipt records raw exit `0` and `stage_result=pass`. The fresh staged
+`sysroot/bin/kprofile` is 210680 bytes with SHA-256
+`e9ce92d6b05f0aa3d0be384207181e9b1b755b8b02ebc0fba94b9292d4217c88`.
+Exact `/proc/*/exe` QEMU inventories were total/informational-RISC-V/
+conflicting `0/0/0` before and after; no process was touched. `fs.img` remains
+unchanged (inode/mtime/size `73499/1783790041/8724152320`, SHA-256
+`4cb082f56a9b7ccdb4d9ec8e7efd40266c4ac5a023cd02d3c1095a1491ecc56b`), so this
+is a user-stage repair only—not a rootfs/image, `_consolerecord`, VM, serial,
+YouTube, HD720/fullscreen, audio-on, `yt-presentfps`, `PERF-VIDEO`, or
+performance/default result. A fresh full kernel/user/rootfs staging sequence
+still requires its own independent authorization and receipt discipline.
