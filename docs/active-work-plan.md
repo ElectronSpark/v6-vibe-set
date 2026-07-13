@@ -4696,3 +4696,72 @@ writes (without weakening chunk/digest/RC/FENCE rejection), obtain fresh
 static and independent no-boot review, then use the first valid C8 sample to
 choose the ranked frame-supply change. This trial grants no performance,
 audio-on, fullscreen, or default credit and leaves VM authority closed.
+
+**A1 idle-C1 V2 contamination forensic — SOURCE CONTRACT DEFECT / NO-BUILD /
+NO-IMAGE-WRITE / NO-BOOT (2026-07-13):** bounded review of exact plan commit
+`6a4b172771e5ba197d25fea9043b9a3764e27923`, retained run
+`/tmp/xv6-a1-windowed-live-20260713T025202Z-3143430`, its external log,
+STATUS/metrics/helper, and the 149985-byte raw C1 artifact localizes the
+failure without a guest conclusion.  Kernel/user gitlinks are the reviewed
+`b42d1c37f90b2ac48aa416a9eb215a935920f649` and
+`3e5b90bd30130ad1a3566ddc20c9589f6159d867`; the launched kernel path still
+hashes `99b23539...e067`, staged recorder hashes `a50bc99c...b0d34`, and the
+consumed image proof binds it to `/bin/consolerecord`.  This is not stale
+kernel/user/image provenance.
+
+The diagnostic originates in `virtio_gpu_page_flip_resource()` on the DRM/KMS
+ioctl caller's process context, where `printf()` enqueues the complete line to
+the async console ring.  Its UART bytes are emitted later by the normal
+`consoled` kthread, not by the caller, IRQ, panic, or another emergency path.
+`consoled` removes up to 512 bytes but calls `consputs()` in 32-byte steps;
+each step independently acquires and releases `console_wire`.  Raw records
+36--38 prove a complete page-flip line, then a 96-byte (three-step) diagnostic
+prefix immediately followed by the complete sealed seq-28 recorder row, then
+the 39-byte diagnostic suffix.  Records 41--44 repeat the shape with a
+complete line, a 64-byte (two-step) prefix plus complete sealed seq-32 row,
+then a 70-byte suffix.  Thus recorder bytes were not woven internally: each
+ioctl row remained contiguous, but it was inserted between kthread steps and
+merged with an already-open raw line.  A separate complete page-flip row also
+exists between chunks, so merely making each printk line step-atomic would
+still violate the unchanged envelope-contiguity contract.
+
+`console_record_write_ioctl()` samples `console_wire_emergency_generation`
+only after its timed wire-lock acquisition and compares it after that one row.
+Only no-sleep emitters (pre-UART/panic/no-current/IRQ/spin-held) bypass the
+wire lock and increment the generation; the value itself is never surfaced.
+A change returns `-EAGAIN` after possible row dirt, the silent recorder maps
+any return other than exact `data_len` to exit 4, and `fbs.sh` maps any
+per-record nonzero to immediate exit 77 with no fallback write.  Here the
+normal kthread path acquired the mutex, so the generation did not change:
+BEGIN, META, all 301 CHUNKs, and END completed, and outer C1 retained
+`RC:0`/`FENCE`.  That proves all 304 recorder calls saw exact-length ioctl
+success.  The host correctly rejected the first prefix-merged candidate as
+`transport-candidate-contaminated record=37`; this is a producer/serialization
+source defect, not a parser defect, and no chunk may be recovered or spliced.
+
+**Smallest safe implementation decision:** replace C1's 304 independent
+record ioctls with one bounded batch-record ioctl.  The recorder will submit
+the already bounded complete V2 BEGIN/META/CHUNK/END buffer once; the kernel
+copies and validates the entire buffer before locking, then holds
+`console_wire` across every physical row.  Normal process/kthread/TTY writers
+cannot enter between rows.  Sample one emergency generation for the batch and
+check it after every row and at completion; an emergency bypass may leave a
+partial/corrupt envelope but must abort with non-success so the silent helper,
+outer RC/FENCE, and unchanged strict host parser remain fail-closed.  Do not
+make page-flip logging alone optional as the fix, relax raw adjacency, accept
+interior gaps, or splice prefix-contaminated rows.
+
+Before any new boot require: a fake-UART kernel unit for clean/max batch
+contiguity under competing consoled/consolewrite/TTY writers, exact
+701-record/357080-logical/357781-physical bounds, and zero pre-emission bytes
+for ABI/shape/copy/root/panic/unavailable/timed-lock failures plus explicit
+post-emission emergency-generation failure; recorder units for silent exact
+success, malformed/over-cap input, and ioctl nonzero; canonical host static
+wire cases for clean LF/CRLF/CRCRLF and the exact seq-28/seq-32 contamination,
+complete-line interior gaps, corrupt/order/count/offset/digest/RC/FENCE
+adversaries, all retaining INVALID/no-credit; x86 kernel and user builds; and
+an independent no-boot adversarial review.  Because this decision changes
+both kernel UAPI/console behavior and `/bin/consolerecord`, a kernel rebuild,
+user rebuild, rootfs/image refresh, and renewed staged-to-image executable/hash
+proof are mandatory before a fresh boot.  This run remains N=0; infer no
+frame-supply performance from it.
