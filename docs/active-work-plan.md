@@ -30,12 +30,10 @@ The deterministic staging proof at `61de08d` and the canonical V2 invocation
 are **consumed**. The latter completed kernel, user, and rootfs-refresh, then
 failed its console proof because the wrapper asked the image for
 `/bin/_consolerecord` while the intentional rootfs rule installs it as
-`/bin/consolerecord`. Do not retry. Next is a narrow no-exec wrapper/static
-repair: use the installed path and record a lookup-specific `debugfs` failure
-before its regular-file/mode checks, with adversarial fixtures. Then require a
-fresh independent review before any new staging authority. No QEMU, boot,
-serial, YouTube/performance, audio/fullscreen/default work, or credit is
-authorized.
+`/bin/consolerecord`. The new read-only existing-image proof script passes
+pure parser fixtures only; do not run it yet. It needs independent review
+before any fresh read-only proof authority. No QEMU, boot, serial,
+YouTube/performance, audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4393,3 +4391,41 @@ informational only. The preserved KDE-smoke dirt remains. This locates a
 wrapper contract defect but grants no completed image proof or any YouTube,
 HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
 default credit.
+
+**C1 existing-image proof script/static fixtures — PASS / NO-RUN / NO-IMAGE
+READ (2026-07-13):** the fresh static-only artifact set is
+`/tmp/xv6-existing-image-proof-static-20260713T011508Z-3060579`.
+`prove-existing-image.sh` is SHA-256
+`b38bd4cd65a218e6bbe2424047a75b1755df29947fbdfc07ecf52d704e42b33b`; its
+pure checker `check-proof-static.sh` is SHA-256
+`3763886ffde7d32c9511af104f9b6f51d388f720c562e619f47bebc2961a2cce`.
+The named empty `bash-n.log` records syntax success and `checker.log`
+(SHA-256 `d867d7f608dba3eb15f7cdbe994cdebe5e601d19657c7eaac9267ecf8c1c0ab6`)
+ends `EXISTING_IMAGE_PROOF_STATIC_PASS`.
+
+The unexecuted script pins the existing fresh image—not a substitute—to
+inode/size/mtime/SHA `73499/8724152320/1783904866/
+0003dbdee6edd9f1083b7092b83fa9ab36d934eead9c8a72d39f19a7243df287`, and
+requires the reviewed super lineage as a docs-only descendant of `08be6fd`
+with exact kernel/user remotes and gitlinks. It retains staged-source proof at
+non-symlink executable `sysroot/bin/_consolerecord`, but correctly targets the
+image path `/bin/consolerecord`. Runtime code is read-only (`debugfs -R`, never
+`-w`), requires pre/final no-conflicting-QEMU inventories, dumps only to a
+fresh private `/tmp` destination, and compares dumped console bytes to the
+staged SHA. It also pins and would verify all three media path sizes, modes,
+and hashes.
+
+Seven retained pure stat fixtures cover valid executable regular console,
+raw-zero `File not found by ext2_lookup`, nonregular, missing `Type`, malformed
+`Type`, non-executable console mode, and valid `0644` media. The parser rejects
+the lookup diagnostic first (fixture return 31), then requires regular type,
+link count one, exact size, and expected mode; all fixture expectations pass.
+Two checker-only mutation controls remove the lookup diagnostic guard or alter
+the installed image target. Their retained children each exit 1 with
+`lookup_guard` and `image_console`, respectively. No proof script invocation,
+debugfs image command, dump, hash of the image, build, rootfs refresh, VM,
+boot, serial, source/KDE edit, or QEMU action occurred. Exact final inventory
+was total/informational-RISC-V/conflicting `0/0/0`; only preserved KDE-smoke
+dirt remains. This is no-run parser/script credit only, not image payload,
+media hash, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
+performance, or default credit.
