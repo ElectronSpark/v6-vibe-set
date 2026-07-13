@@ -789,6 +789,8 @@ set owned_group_remaining ""
 set serial_counter 0
 set c1_terminal_max_serial_counter 38
 set render_start_receipt_counter 0
+set render_start_prompt_receipt_counter 0
+set render_start_prompt_receipts {}
 set eof_control_raw_cap 8192
 set serial_nonce "YTP[pid][clock clicks]"
 regsub -all {[^A-Za-z0-9]} $serial_nonce {} serial_nonce
@@ -886,6 +888,15 @@ proc qemu_spawn_ownership_contract {leader child pgid sid done wait_pid wait_rc}
 # begin; semantic RC acceptance is handled separately over the complete frame.
 proc guest_fence_regex {marker} {
     return [format {(^|\n)%s:FENCE\r{0,2}\n} [regex_quote $marker]]
+}
+
+# Probe 1's C5 frame is not complete until the exact root prompt immediately
+# following its fence has also arrived.  Matching both in one Expect operation
+# closes the fence/prompt hand-off race, including when the prompt is delivered
+# in a later host read.
+proc guest_fence_prompt_regex {marker} {
+    return [format {(^|\n)%s:FENCE\r{0,2}\n\x1b\[\?2004hroot:/# } \
+        [regex_quote $marker]]
 }
 
 proc guest_command_frame_parse {text marker} {
@@ -4357,11 +4368,14 @@ proc guest_cmd_serial_command {command marker {atomic_outer_terminal 0}} {
     return "true;$command;rc=\$?;m=$marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\""
 }
 
-proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000} {expected_marker ""} {atomic_outer_terminal 0} {return_timeout 0}} {
+proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000} {expected_marker ""} {atomic_outer_terminal 0} {return_timeout 0} {require_prompt_receipt 0}} {
     global timeout serial_counter serial_nonce send_slow
     global c1_terminal_max_serial_counter
     if {$return_timeout ni {0 1}} {
         error "invalid guest command timeout-return arm"
+    }
+    if {$require_prompt_receipt ni {0 1}} {
+        error "invalid guest command prompt-receipt arm"
     }
     if {$atomic_outer_terminal &&
         $serial_counter >= $c1_terminal_max_serial_counter} {
@@ -4372,7 +4386,8 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
     if {$expected_marker ne "" && $expected_marker ne $marker} {
         error "guest command marker ownership drift"
     }
-    set fence_regex [guest_fence_regex $marker]
+    set fence_regex [expr {$require_prompt_receipt ?
+        [guest_fence_prompt_regex $marker] : [guest_fence_regex $marker]}]
     set old_timeout $timeout
     if {$deadline_ms != 0} {
         set before_send_ms [clock clicks -milliseconds]
@@ -4416,6 +4431,14 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
                 # failure inside its own nonce-bound INVALID artifact instead
                 # of handing it to require_guest()/normal extraction.
                 return [list FRAME_INVALID $buf [lindex $frame 1] $marker]
+            }
+            if {$require_prompt_receipt} {
+                set boundary [render_start_prompt_boundary_quiet]
+                if {![lindex $boundary 0]} {
+                    return [list FRAME_INVALID $buf [lindex $boundary 1] $marker]
+                }
+                set receipt [render_start_prompt_receipt_create $marker]
+                return [list [lindex $frame 2] $buf pass $marker $receipt]
             }
             return [list [lindex $frame 2] $buf pass $marker]
         }
@@ -5544,9 +5567,13 @@ exit 0
 }]
 }
 
-proc fb_sample {tag} {
+proc fb_sample {tag {require_prompt_receipt 0}} {
     global fbcsv outdir serial_nonce serial_counter
     global c1_terminal_max_serial_counter
+    if {$require_prompt_receipt ni {0 1} ||
+        ($require_prompt_receipt && $tag ne "probe1")} {
+        error "fbstat prompt receipt is restricted to probe1"
+    }
     # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
     # remain single-shot so retries cannot move a measurement boundary or bias
     # a timed window.  Every raw attempt is retained and guest_cmd supplies a
@@ -5561,7 +5588,7 @@ proc fb_sample {tag} {
         set transport_timeout [dict get [fbstat_transport_v2_timeout_contract $expected_marker] seconds]
         set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" \
             "fbstat-$tag-attempt$attempt" $transport_timeout 0 0 1000 \
-            $expected_marker 1]
+            $expected_marker 1 0 $require_prompt_receipt]
         set buf [lindex $result 1]
         set attempt_path "$outdir/fbstat-$tag-attempt$attempt.txt"
         wf $attempt_path $buf
@@ -5570,6 +5597,9 @@ proc fb_sample {tag} {
         }
         if {[lindex $result 3] ne $expected_marker} {
             finish 8 "FAIL fbstat-marker-prediction-drift expected=$expected_marker actual=[lindex $result 3]"
+        }
+        if {$require_prompt_receipt && [llength $result] != 5} {
+            finish 8 "FAIL fbstat-prompt-receipt-missing tag=$tag marker=$expected_marker"
         }
         set decoded [fbstat_transport_decode $buf $tag $serial_nonce [lindex $result 3]]
         if {![lindex $decoded 0]} {
@@ -5595,7 +5625,9 @@ proc fb_sample {tag} {
             set hms [clock milliseconds]
             wf "$outdir/fbstat-$tag.txt" $payload
             af $fbcsv "$tag accepted_attempt=$attempt flips=$flips presents=$presents host_ms=$hms iso=[iso_now] parser=[lindex $parsed 3] proof=$detail transport=verified payload_artifact=$payload_path"
-            return [list $flips $presents $hms [lindex $result 3]]
+            set sample [list $flips $presents $hms [lindex $result 3]]
+            if {$require_prompt_receipt} { lappend sample [lindex $result 4] }
+            return $sample
         }
         lappend failures "attempt$attempt:$disposition:$detail"
         if {$disposition eq "HARD" || $tag ne "idle"} {
@@ -6715,10 +6747,87 @@ proc guest_cmd_next_marker {} {
 }
 
 # The real C5 artifact ends in this exact bracketed-paste-enabled root prompt.
-# C6 consumes it before sending any byte so command ownership cannot begin on a
-# stale or merely substring-matched shell prompt.
+# C5 consumes it atomically with its fence and gives C6 a one-time receipt, so
+# command ownership cannot begin on a stale or substring-matched shell prompt.
 proc render_start_receipt_prompt_wire {} {
-    return [binary format H* 1b5b3f3230303468726f6f743a2f232007]
+    return [binary format H* 1b5b3f3230303468726f6f743a2f2320]
+}
+
+# The atomic fence/prompt matcher transfers exactly through the prompt.  Any
+# already-buffered byte beyond it is contamination: old 17-byte (+BEL) prompt,
+# a duplicate prompt, or foreign serial traffic.  A zero-time Expect check is
+# deliberately local to the matched spawn and consumes no future input.
+proc render_start_prompt_boundary_quiet {} {
+    global timeout
+    set old_timeout $timeout
+    set timeout 0
+    expect {
+        -re {(.|\n)} {
+            set raw $expect_out(buffer)
+            set timeout $old_timeout
+            return [list 0 "prompt-boundary-contaminated-[binary encode hex $raw]"]
+        }
+        timeout {
+            set timeout $old_timeout
+            return [list 1 prompt-boundary-exact]
+        }
+        eof {
+            set timeout $old_timeout
+            return [list 0 prompt-boundary-eof]
+        }
+    }
+}
+
+proc render_start_prompt_receipt_create {marker} {
+    global serial_nonce render_start_prompt_receipt_counter
+    global render_start_prompt_receipts
+    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+        error "invalid C5 prompt receipt marker"
+    }
+    incr render_start_prompt_receipt_counter
+    set id "${serial_nonce}P${render_start_prompt_receipt_counter}"
+    set receipt [dict create version c5-prompt-v1 id $id nonce $serial_nonce \
+        marker $marker prompt_hex \
+        [binary encode hex [render_start_receipt_prompt_wire]]]
+    dict set render_start_prompt_receipts $id \
+        [dict create state fresh receipt $receipt]
+    return $receipt
+}
+
+proc render_start_prompt_receipt_consume {receipt expected_marker} {
+    global serial_nonce render_start_prompt_receipts
+    if {[catch {dict size $receipt}] ||
+        [lsort [dict keys $receipt]] ne
+            {id marker nonce prompt_hex version}} {
+        return [list 0 receipt-shape-invalid]
+    }
+    if {[dict get $receipt version] ne "c5-prompt-v1"} {
+        return [list 0 receipt-version-invalid]
+    }
+    if {[dict get $receipt nonce] ne $serial_nonce} {
+        return [list 0 receipt-nonce-invalid]
+    }
+    if {[dict get $receipt marker] ne $expected_marker} {
+        return [list 0 receipt-marker-invalid]
+    }
+    if {[dict get $receipt prompt_hex] ne
+        [binary encode hex [render_start_receipt_prompt_wire]]} {
+        return [list 0 receipt-prompt-invalid]
+    }
+    set id [dict get $receipt id]
+    if {![dict exists $render_start_prompt_receipts $id]} {
+        return [list 0 receipt-foreign-or-stale]
+    }
+    set entry [dict get $render_start_prompt_receipts $id]
+    if {[dict get $entry state] ne "fresh"} {
+        return [list 0 receipt-already-consumed]
+    }
+    if {[dict get $entry receipt] ne $receipt} {
+        return [list 0 receipt-registry-mismatch]
+    }
+    dict set entry state consumed
+    dict set render_start_prompt_receipts $id $entry
+    return [list 1 receipt-consumed]
 }
 
 proc render_start_receipt_prompt_authenticate {raw allow_interrupt_prefix} {
@@ -6783,23 +6892,35 @@ proc render_start_receipt_wait_fresh_prompt {
 # prompt, uses the established 45-second guest diagnostic timeout, and owns a
 # freshly predicted outer C marker.  A timed-out first attempt is retained
 # before Ctrl-C is sent; only one retry is permitted after the reset prompt.
-proc render_start_receipt_guest_cmd {command label} {
+proc render_start_receipt_guest_cmd {
+    command label {c5_prompt_receipt {}} {c5_marker ""}
+} {
     set first_timeout {}
     for {set attempt 1} {$attempt <= 2} {incr attempt} {
         set phase [expr {$attempt == 1 ? $label : "${label}-retry2"}]
         set expected_marker [guest_cmd_next_marker]
         if {$attempt == 2} { send "\003" }
-        set prompt [render_start_receipt_wait_fresh_prompt \
-            "$phase-fresh-prompt" 10 [expr {$attempt == 2}]]
-        if {![lindex $prompt 0]} {
-            set source "prompt-[lindex $prompt 2]"
-            if {[catch {retain_guest_timeout_control_evidence $phase \
-                    $expected_marker [lindex $prompt 1] $source 1} \
-                    prompt_evidence_error]} {
-                catch {af $::statusf "[iso_now] guest-timeout-control-evidence-write-failed phase=$phase marker=$expected_marker source=$source error=$prompt_evidence_error"}
+        if {$attempt == 1 && $c5_prompt_receipt ne ""} {
+            set prompt [render_start_prompt_receipt_consume \
+                $c5_prompt_receipt $c5_marker]
+            if {![lindex $prompt 0]} {
+                return [list GUEST_CONTROL_STALL "" \
+                    "guest-control-stall-c5-prompt-[lindex $prompt 1]" \
+                    $expected_marker]
             }
-            return [list GUEST_CONTROL_STALL [lindex $prompt 1] \
-                "guest-control-stall-[lindex $prompt 2]" $expected_marker]
+        } else {
+            set prompt [render_start_receipt_wait_fresh_prompt \
+                "$phase-fresh-prompt" 10 [expr {$attempt == 2}]]
+            if {![lindex $prompt 0]} {
+                set source "prompt-[lindex $prompt 2]"
+                if {[catch {retain_guest_timeout_control_evidence $phase \
+                        $expected_marker [lindex $prompt 1] $source 1} \
+                        prompt_evidence_error]} {
+                    catch {af $::statusf "[iso_now] guest-timeout-control-evidence-write-failed phase=$phase marker=$expected_marker source=$source error=$prompt_evidence_error"}
+                }
+                return [list GUEST_CONTROL_STALL [lindex $prompt 1] \
+                    "guest-control-stall-[lindex $prompt 2]" $expected_marker]
+            }
         }
         set result [guest_cmd $command $phase 45 0 0 1000 \
             $expected_marker 0 1]
@@ -6817,12 +6938,13 @@ proc render_start_receipt_guest_cmd {command label} {
 }
 
 proc render_start_receipt_probe {
-    probe idle sample launch_marker launch_digest argv_marker argv_digest fbstat_marker
+    probe idle sample launch_marker launch_digest argv_marker argv_digest \
+    fbstat_marker {c5_prompt_receipt {}}
 } {
     global media_probe_nonce outdir metricsf
     set result [render_start_receipt_guest_cmd \
         "/bin/bash /ytrenderstartreceipt.sh $media_probe_nonce $probe $launch_marker $launch_digest $argv_marker $argv_digest $fbstat_marker" \
-        "render-start-receipt-probe$probe"]
+        "render-start-receipt-probe$probe" $c5_prompt_receipt $fbstat_marker]
     if {[lindex $result 0] eq "GUEST_CONTROL_STALL"} {
         set detail [lindex $result 2]
         af $metricsf "render_start_receipt probe=$probe class=INVALID detail=$detail marker=[lindex $result 3] diagnostic_only=1 no_fps_claim=1"
@@ -11342,7 +11464,8 @@ exit 4
     set static_c1_atomic_source_contract [expr {
         $static_c1_generic_actual eq $static_c1_generic_expected &&
         [string first {consolerecord} $static_c1_generic_actual] < 0 &&
-        [string first {$expected_marker 1]} [info body fb_sample]] >= 0 &&
+        [string first {$expected_marker 1 0 $require_prompt_receipt} \
+            [info body fb_sample]] >= 0 &&
         $static_c1_guest_has_default &&
         $static_c1_guest_default_value eq "0" &&
         [string first {guest_cmd_serial_command $command $marker} \
@@ -12769,9 +12892,149 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         ![lindex [lindex $static_c6_prompt_auth_matrix 7] 0] &&
         ![lindex [lindex $static_c6_prompt_auth_matrix 8] 0]
     }]
+    proc static_c5_prompt_spawn_replay {before after pattern} {
+        global timeout
+        set old_timeout $timeout
+        set old_global_spawn_id $::spawn_id
+        set replay_channel [open [list |bash -c \
+            {printf %s "$1"; sleep 0.05; printf %s "$2"; sleep 0.2} \
+            bash $before $after] r]
+        spawn -noecho -open $replay_channel
+        set ::spawn_id $spawn_id
+        set timeout 1
+        set matched 0
+        expect {
+            -re $pattern { set matched 1 }
+            timeout {}
+            eof {}
+        }
+        if {$matched} {
+            set boundary [render_start_prompt_boundary_quiet]
+        } else {
+            set boundary [list 0 atomic-match-missing]
+        }
+        catch {close}
+        catch {wait}
+        set ::spawn_id $old_global_spawn_id
+        set timeout $old_timeout
+        return [list $matched $boundary]
+    }
+    set static_c5_prompt_marker YTSTATICC5
+    set static_c5_prompt_frame \
+        "$static_c5_prompt_marker:RC:0\n$static_c5_prompt_marker:FENCE\n"
+    set static_c5_prompt_regex \
+        [guest_fence_prompt_regex $static_c5_prompt_marker]
+    set static_c5_prompt_replays [list \
+        [static_c5_prompt_spawn_replay \
+            "$static_c5_prompt_frame$static_c6_prompt" "" \
+            $static_c5_prompt_regex] \
+        [static_c5_prompt_spawn_replay $static_c5_prompt_frame \
+            $static_c6_prompt $static_c5_prompt_regex] \
+        [static_c5_prompt_spawn_replay \
+            "$static_c5_prompt_frame$static_c6_prompt\007" "" \
+            $static_c5_prompt_regex] \
+        [static_c5_prompt_spawn_replay \
+            "$static_c5_prompt_frame[string range $static_c6_prompt 1 end]" \
+            "" $static_c5_prompt_regex] \
+        [static_c5_prompt_spawn_replay \
+            "$static_c5_prompt_frame$static_c6_prompt$static_c6_prompt" "" \
+            $static_c5_prompt_regex] \
+        [static_c5_prompt_spawn_replay \
+            "${static_c5_prompt_frame}foreign$static_c6_prompt" "" \
+            $static_c5_prompt_regex]]
+    set static_c5_prompt_replay_ok [expr {
+        [lindex [lindex $static_c5_prompt_replays 0] 0] &&
+        [lindex [lindex [lindex $static_c5_prompt_replays 0] 1] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 1] 0] &&
+        [lindex [lindex [lindex $static_c5_prompt_replays 1] 1] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 2] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 2] 1] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 3] 0] &&
+        [lindex [lindex $static_c5_prompt_replays 4] 0] &&
+        ![lindex [lindex [lindex $static_c5_prompt_replays 4] 1] 0] &&
+        ![lindex [lindex $static_c5_prompt_replays 5] 0]
+    }]
+    set static_c5_prompt_replay_details {}
+    foreach replay $static_c5_prompt_replays {
+        lappend static_c5_prompt_replay_details \
+            [list [lindex $replay 0] [lindex [lindex $replay 1] 0] \
+                [lindex [lindex $replay 1] 1]]
+    }
+    rename static_c5_prompt_spawn_replay {}
+
+    # Reproduce the forensic raw=0 case: a wrong 17-byte waiter times out with
+    # no match-local buffer, while the correct 16-byte prompt remains queued.
+    set static_c5_raw0_old_timeout $timeout
+    spawn -noecho bash -c {printf %s "$1"; sleep 1.2} bash $static_c6_prompt
+    set timeout 1
+    unset -nocomplain expect_out(buffer)
+    set static_c5_raw0_absent 0
+    expect {
+        -exact "$static_c6_prompt\007" {}
+        timeout {
+            set static_c5_raw0_absent \
+                [expr {![info exists expect_out(buffer)]}]
+        }
+        eof {}
+    }
+    set timeout 1
+    set static_c5_raw0_correct 0
+    expect {
+        -exact $static_c6_prompt { set static_c5_raw0_correct 1 }
+        timeout {}
+        eof {}
+    }
+    expect { eof {} timeout {} }
+    catch {wait}
+    set timeout $static_c5_raw0_old_timeout
+    set static_c5_raw0_replay_ok \
+        [expr {$static_c5_raw0_absent && $static_c5_raw0_correct}]
+
+    set static_c5_saved_prompt_receipts $render_start_prompt_receipts
+    set static_c5_saved_prompt_counter $render_start_prompt_receipt_counter
+    set static_c5_receipt_marker YTSTATICC5RECEIPT
+    set static_c5_receipt_once \
+        [render_start_prompt_receipt_create $static_c5_receipt_marker]
+    set static_c5_receipt_first [render_start_prompt_receipt_consume \
+        $static_c5_receipt_once $static_c5_receipt_marker]
+    set static_c5_receipt_second [render_start_prompt_receipt_consume \
+        $static_c5_receipt_once $static_c5_receipt_marker]
+    set static_c5_receipt_wrong_marker [render_start_prompt_receipt_create \
+        $static_c5_receipt_marker]
+    set static_c5_receipt_wrong_nonce [render_start_prompt_receipt_create \
+        $static_c5_receipt_marker]
+    dict set static_c5_receipt_wrong_nonce nonce FOREIGNNONCE
+    set static_c5_receipt_wrong_prompt [render_start_prompt_receipt_create \
+        $static_c5_receipt_marker]
+    dict set static_c5_receipt_wrong_prompt prompt_hex \
+        1b5b3f3230303468726f6f743a2f232007
+    set static_c5_receipt_foreign [render_start_prompt_receipt_create \
+        $static_c5_receipt_marker]
+    dict set static_c5_receipt_foreign id FOREIGNID
+    set static_c5_receipt_rejects [list \
+        [render_start_prompt_receipt_consume \
+            $static_c5_receipt_wrong_marker WRONGC5] \
+        [render_start_prompt_receipt_consume \
+            $static_c5_receipt_wrong_nonce $static_c5_receipt_marker] \
+        [render_start_prompt_receipt_consume \
+            $static_c5_receipt_wrong_prompt $static_c5_receipt_marker] \
+        [render_start_prompt_receipt_consume \
+            $static_c5_receipt_foreign $static_c5_receipt_marker]]
+    set static_c5_receipt_matrix_ok [expr {
+        [lindex $static_c5_receipt_first 0] &&
+        ![lindex $static_c5_receipt_second 0] &&
+        [lindex $static_c5_receipt_second 1] eq "receipt-already-consumed" &&
+        ![lindex [lindex $static_c5_receipt_rejects 0] 0] &&
+        ![lindex [lindex $static_c5_receipt_rejects 1] 0] &&
+        ![lindex [lindex $static_c5_receipt_rejects 2] 0] &&
+        ![lindex [lindex $static_c5_receipt_rejects 3] 0]
+    }]
+    set render_start_prompt_receipts $static_c5_saved_prompt_receipts
+    set render_start_prompt_receipt_counter $static_c5_saved_prompt_counter
     proc static_c6_control_source_contract {
-        wrapper wait_prompt prompt_wire prompt_auth probe guest evidence \
-        validation disposition
+        wrapper wait_prompt prompt_wire prompt_auth probe guest fb_sample \
+        present receipt_create receipt_consume boundary evidence validation \
+        disposition
     } {
         set evidence_failure_index [string first \
             {if {[lindex $result 0] eq "EVIDENCE_FAILED"}} $wrapper]
@@ -12782,6 +13045,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 $wrapper] >= 0 &&
             [string first {if {$attempt == 2} { send "\003" }} $wrapper] >= 0 &&
             [string first {render_start_receipt_wait_fresh_prompt} $wrapper] >= 0 &&
+            [string first {render_start_prompt_receipt_consume} $wrapper] >= 0 &&
+            [string first {$attempt == 1 && $c5_prompt_receipt ne ""} \
+                $wrapper] >= 0 &&
             [string first {45 0 0 1000} $wrapper] >= 0 &&
             [string first {$expected_marker 0 1} $wrapper] >= 0 &&
             [regexp -all {guest_cmd} $wrapper] == 2 &&
@@ -12793,14 +13059,33 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 $wrapper] >= 0 &&
             [string first {-exact $prompt} $wait_prompt] >= 0 &&
             [string first {render_start_receipt_prompt_authenticate} $wait_prompt] >= 0 &&
-            [string first {1b5b3f3230303468726f6f743a2f232007} $prompt_wire] >= 0 &&
+            [string first {1b5b3f3230303468726f6f743a2f2320} $prompt_wire] >= 0 &&
+            [string first {232007} $prompt_wire] < 0 &&
             [string first {set prompt_at [string first $prompt $raw]} \
                 $prompt_auth] >= 0 &&
             [string first {$prefix eq "" ||} $prompt_auth] < 0 &&
             [string first {"*^C\r\n" $prefix} $prompt_auth] >= 0 &&
             [string first {"*^C\r\r\n" $prefix} $prompt_auth] >= 0 &&
             [string first {render_start_receipt_guest_cmd} $probe] >= 0 &&
+            [string first {$c5_prompt_receipt $fbstat_marker} $probe] >= 0 &&
             [string first {finish 8 "FAIL guest-control-stall} $probe] >= 0 &&
+            [string first {($require_prompt_receipt && $tag ne "probe1")} \
+                $fb_sample] >= 0 &&
+            [string first {$expected_marker 1 0 $require_prompt_receipt} \
+                $fb_sample] >= 0 &&
+            [string first {fb_sample "probe$probe" [expr {$probe == 1 && $media_probe eq "1" && $capture_completeness_diag eq "0"}]} \
+                $present] >= 0 &&
+            [string first {[lindex $sample 4]} $present] >= 0 &&
+            [string first {prompt_hex} $receipt_create] >= 0 &&
+            [string first {state fresh} $receipt_create] >= 0 &&
+            [string first {receipt-already-consumed} $receipt_consume] >= 0 &&
+            [string first {dict set entry state consumed} $receipt_consume] >= 0 &&
+            [string first {render_start_receipt_prompt_wire} $receipt_consume] >= 0 &&
+            [string first {-re {(.|\n)}} $boundary] >= 0 &&
+            [string first {guest_fence_prompt_regex $marker} $guest] >= 0 &&
+            [string first {render_start_prompt_boundary_quiet} $guest] >= 0 &&
+            [string first {render_start_prompt_receipt_create $marker} \
+                $guest] >= 0 &&
             [string first {retain_guest_timeout_control_evidence} $guest] >= 0 &&
             [string first {guest_timeout_control_return $label $marker} \
                 $guest] >= 0 &&
@@ -12826,6 +13111,13 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c6_prompt_auth_body \
         [info body render_start_receipt_prompt_authenticate]
     set static_c6_guest_body [info body guest_cmd]
+    set static_c6_fb_sample_body [info body fb_sample]
+    set static_c6_present_body $static_present_source
+    set static_c6_receipt_create_body \
+        [info body render_start_prompt_receipt_create]
+    set static_c6_receipt_consume_body \
+        [info body render_start_prompt_receipt_consume]
+    set static_c6_boundary_body [info body render_start_prompt_boundary_quiet]
     set static_c6_evidence_body \
         [info body guest_timeout_control_evidence_text]
     set static_c6_validation_body \
@@ -12834,15 +13126,23 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c6_source_contract [static_c6_control_source_contract \
         $static_c6_wrapper_body $static_c6_wait_body $static_c6_prompt_body \
         $static_c6_prompt_auth_body $static_render_receipt_body \
-        $static_c6_guest_body $static_c6_evidence_body \
+        $static_c6_guest_body $static_c6_fb_sample_body \
+        $static_c6_present_body $static_c6_receipt_create_body \
+        $static_c6_receipt_consume_body $static_c6_boundary_body \
+        $static_c6_evidence_body \
         $static_c6_validation_body $static_c6_disposition_body]
     set static_c6_sources [dict create \
         wrapper $static_c6_wrapper_body wait $static_c6_wait_body \
         prompt $static_c6_prompt_body auth $static_c6_prompt_auth_body \
         probe $static_render_receipt_body guest $static_c6_guest_body \
+        fb_sample $static_c6_fb_sample_body present $static_c6_present_body \
+        receipt_create $static_c6_receipt_create_body \
+        receipt_consume $static_c6_receipt_consume_body \
+        boundary $static_c6_boundary_body \
         evidence $static_c6_evidence_body validation $static_c6_validation_body \
         disposition $static_c6_disposition_body]
     set static_c6_mutation_rejects 1
+    set static_c6_mutation_survivors {}
     foreach {mutation field from to} [list \
             retry-count wrapper {$attempt <= 2} {$attempt <= 3} \
             timeout-budget wrapper {45 0 0 1000} {20 0 0 1000} \
@@ -12855,6 +13155,25 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 {$prefix eq "" || [string match "*^C\r\n" $prefix] ||} \
             stale-pre-ctrlc auth {set prompt_at [string first $prompt $raw]} \
                 {set prompt_at [string last $prompt $raw]} \
+            c5-no-atomic guest {guest_fence_prompt_regex $marker} \
+                {guest_fence_regex $marker} \
+            c5-no-boundary guest {render_start_prompt_boundary_quiet} \
+                {render_start_prompt_boundary_assume} \
+            c5-no-receipt guest {render_start_prompt_receipt_create $marker} \
+                {render_start_prompt_receipt_assume $marker} \
+            c5-fbstat-route fb_sample \
+                {$expected_marker 1 0 $require_prompt_receipt} \
+                {$expected_marker 1 0 0} \
+            c5-probe1-arm present \
+                {fb_sample "probe$probe" [expr {$probe == 1 && $media_probe eq "1" && $capture_completeness_diag eq "0"}]} \
+                {fb_sample "probe$probe" 0} \
+            c5-receipt-thread present {[lindex $sample 4]} {{}} \
+            c6-receipt-consume wrapper {render_start_prompt_receipt_consume} \
+                {render_start_prompt_receipt_assume} \
+            c6-one-time receipt_consume {dict set entry state consumed} \
+                {set receipt_still_fresh 1} \
+            c5-prompt-17 prompt {1b5b3f3230303468726f6f743a2f2320} \
+                {1b5b3f3230303468726f6f743a2f232007} \
             guest-no-validation guest {guest_timeout_control_return $label $marker} \
                 {guest_timeout_control_unverified $label $marker} \
             path-type validation {$path_type ne "file"} {$path_type eq "directory"} \
@@ -12869,9 +13188,14 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
                 [dict get $candidate wrapper] [dict get $candidate wait] \
                 [dict get $candidate prompt] [dict get $candidate auth] \
                 [dict get $candidate probe] [dict get $candidate guest] \
+                [dict get $candidate fb_sample] [dict get $candidate present] \
+                [dict get $candidate receipt_create] \
+                [dict get $candidate receipt_consume] \
+                [dict get $candidate boundary] \
                 [dict get $candidate evidence] [dict get $candidate validation] \
                 [dict get $candidate disposition]]} {
             set static_c6_mutation_rejects 0
+            lappend static_c6_mutation_survivors $mutation
         }
     }
 
@@ -12897,8 +13221,14 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         set ::static_c6_runtime_prompt_calls 0
         set ::static_c6_runtime_send_calls 0
         set ::static_c6_runtime_guest_result $guest_result
+        set static_c6_runtime_c5_marker "YTSTATICC5${case_name}"
+        regsub -all {[^A-Za-z0-9]} $static_c6_runtime_c5_marker {} \
+            static_c6_runtime_c5_marker
+        set static_c6_runtime_receipt [render_start_prompt_receipt_create \
+            $static_c6_runtime_c5_marker]
         set case_rc [catch {render_start_receipt_guest_cmd \
-            true "static-c6-$case_name"} case_result]
+            true "static-c6-$case_name" $static_c6_runtime_receipt \
+            $static_c6_runtime_c5_marker} case_result]
         lappend static_c6_runtime_records [list $case_rc $case_result \
             $::static_c6_runtime_guest_calls $::static_c6_runtime_prompt_calls \
             $::static_c6_runtime_send_calls]
@@ -12918,7 +13248,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             [lindex [lindex $runtime_record 1] 2] ne
                 "guest-control-stall-evidence-persistence-failed" ||
             [lindex $runtime_record 2] != 1 ||
-            [lindex $runtime_record 3] != 1 ||
+            [lindex $runtime_record 3] != 0 ||
             [lindex $runtime_record 4] != 0} {
             set static_c6_runtime_fail_closed 0
         }
@@ -12999,7 +13329,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [dict get [lindex $static_render_source_diag_results 5] state] eq "INCOMPLETE"
     }]
     set static_render_fbstat_binding_source [expr {
-        [string first {return [list $flips $presents $hms [lindex $result 3]]} \
+        [string first {set sample [list $flips $presents $hms [lindex $result 3]]} \
+            [info body fb_sample]] >= 0 &&
+        [string first {if {$require_prompt_receipt} { lappend sample [lindex $result 4] }} \
             [info body fb_sample]] >= 0 &&
         [string first {fbstat_marker} [info body render_start_receipt_probe]] >= 0 &&
         [string first {[lindex $sample 3]} $static_present_source] >= 0
@@ -13792,11 +14124,13 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         !$static_render_portability_failclosed ||
         !$static_render_sequence_good || $static_render_sequence_bad ||
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
-        !$static_c6_prompt_auth_ok || !$static_c6_source_contract ||
+        !$static_c6_prompt_auth_ok || !$static_c5_prompt_replay_ok ||
+        !$static_c5_raw0_replay_ok || !$static_c5_receipt_matrix_ok ||
+        !$static_c6_source_contract ||
         !$static_c6_mutation_rejects || !$static_c6_runtime_fail_closed ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged c6_control=$static_c6_prompt_auth_ok,$static_c6_source_contract,$static_c6_mutation_rejects,$static_c6_runtime_fail_closed source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged c5_prompt=$static_c5_prompt_replay_ok,$static_c5_raw0_replay_ok,$static_c5_receipt_matrix_ok replay_details=$static_c5_prompt_replay_details c6_control=$static_c6_prompt_auth_ok,$static_c6_source_contract,$static_c6_mutation_rejects,$static_c6_runtime_fail_closed mutation_survivors=$static_c6_mutation_survivors source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
     puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup atomic_outer_terminal=$static_c1_atomic_source_contract owned_echo_format_placeholder=PASS standalone_onechar_foreign=REJECT contaminated_onechar_foreign=REJECT contaminated_multichar_foreign=REJECT two_acquisitions=1 per_record_drain_ms=0 timeout_37_pass_36_fail=$static_fb_live_37_pass,$static_fb_live_36_fail timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
     puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c6_exact_fresh_prompt_timeout_full_raw_owned_snapshot_serial_retry_once_fresh_marker_45s=PASS c6_stale_bare_prompt_stale_pre_ctrlc_prompt=REJECT c6_evidence_write_missing_type_failure_no_retry=PASS c6_prompt_timeout_auth_evidence_mutations=REJECT c6_guest_control_stall_explicit=PASS c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_producer_boot_none_boot_only_ready_selector_pending_no_player_observation_pending_stalled_progress=PASS c8_producer_stage_forged_missing_duplicate_reordered_early_wrong_nonce_malformed_arm=REJECT c8_producer_stage_source_order_once_no_url_data=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS producer_stage_no_classifier_or_threshold_admission=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
@@ -15210,10 +15544,13 @@ set render_start_receipt_objects {}
 set render_start_receipt_invalid 0
 for {set probe 1} {$probe <= 5 && !$started} {incr probe} {
     after 30000
-    set sample [fb_sample "probe$probe"]
+    set sample [fb_sample "probe$probe" [expr {$probe == 1 && $media_probe eq "1" && $capture_completeness_diag eq "0"}]]
     if {$media_probe eq "1" && $capture_completeness_diag eq "0"} {
+        set c5_prompt_receipt {}
+        if {$probe == 1} { set c5_prompt_receipt [lindex $sample 4] }
         set receipt [render_start_receipt_probe $probe $idle $sample \
-            $launch_marker $launch_digest $argv_marker $argv_digest [lindex $sample 3]]
+            $launch_marker $launch_digest $argv_marker $argv_digest \
+            [lindex $sample 3] $c5_prompt_receipt]
         lappend render_start_receipt_details "probe$probe:[lindex $receipt 0]:[lindex $receipt 1]"
         if {[lindex $receipt 0] eq "INVALID"} {
             set render_start_receipt_invalid 1
