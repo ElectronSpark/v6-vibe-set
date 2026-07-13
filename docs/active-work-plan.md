@@ -28,12 +28,28 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The deterministic staging proof at `61de08d` and the canonical V2 invocation
 are **consumed**. The latter completed kernel, user, and rootfs-refresh, then
-failed its console proof because the wrapper asked the image for
-`/bin/_consolerecord` while the intentional rootfs rule installs it as
-`/bin/consolerecord`. The new read-only existing-image proof script passes
-pure parser fixtures only; do not run it yet. It needs independent review
-before any fresh read-only proof authority. No QEMU, boot, serial,
-YouTube/performance, audio/fullscreen/default work, or credit is authorized.
+failed only because it queried `/bin/_consolerecord` while the intentional
+rootfs rule installs the staged `_consolerecord` as `/bin/consolerecord`.
+At `65f37db`, the retained existing-image proof's static artifacts have an
+independent manual PASS but the proof script has not run. The next conductor
+may invoke that exact read-only script **once**, against only its pinned fresh
+`fs.img`, to prove the staged-to-image console mapping, mode/hash, and media
+hashes; no rebuild, refresh, image write, QEMU, boot, or serial action.
+
+If it passes, require an independent adversarial pre-boot review of the
+committed kernel/user/driver/rootfs proof, then a fresh conductor-owned
+60-second one-x86-VM gate. That gate may authorize exactly one windowed
+real-KVM+virgl A1 treatment (MP1, audio-disable1, media1, forced-HD7201).
+Use its C8 result to make a concrete frame-supply implementation decision;
+only after fixes may valid windowed samples be repeated to N>=2. Next repair
+and validate A2/A4 with paplay localization and N>=2 audio-on, then address
+the measured host-retire/present residual to about 55–60, then take separate
+actual-fullscreen N>=2 evidence, and only then run gated responsiveness/video
+default batteries. Evidence plumbing is an enabler, never a stopping point:
+if it fails, localize, fix or honestly close it, and return to performance.
+Completion is only when every windowed and actual-fullscreen acceptance
+criterion is met. No current VM, audio/fullscreen/default, or performance
+credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -75,6 +91,19 @@ was a real KVM+virgl boot but N=0 INVALID/NULL: virgl/OpenGL-submit and media
 assets were valid, yet its terminal was INCOMPLETE `diagnostic-no-marker-rows`
 and the outer validator returned code 8 on diagnostic-artifact disagreement.
 It grants no timer/rVFC, semantic, or FPS credit. Its QEMU group was reaped.
+
+**Fresh-conductor handoff:** branch and publishing lineage are
+`codex/host-linux-abi-shell-port-ff` and explicit
+`HEAD:refs/heads/codex/host-linux-abi-shell-port-ff`; the truncated tracking
+upstream is never a substitute. Preserve the sole unrelated
+`scripts/gpu/kde-plasma-desktop-smoke.expect` dirt. Every future gate uses the
+guarded source-only `rg` policy that avoids the WSL raw-image-scan crash,
+never `pgrep` or monitor loops, and synchronously reaps every build/serial/VM
+command. A serial verdict needs a fresh prompt after its short marker command.
+At most one owned x86 KVM+virgl VM may exist, and it must leave no QEMU after
+owned cleanup; an independently observed `qemu-system-riscv64` is
+informational only and never touched, while every other QEMU conflict aborts
+the gate. These constraints do not cap justified guest RAM.
 
 The contemporaneous bounded artifact forensic located the observed absence
 before serial parsing: the capture file was zero bytes and serial had only
@@ -4428,4 +4457,38 @@ boot, serial, source/KDE edit, or QEMU action occurred. Exact final inventory
 was total/informational-RISC-V/conflicting `0/0/0`; only preserved KDE-smoke
 dirt remains. This is no-run parser/script credit only, not image payload,
 media hash, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
+performance, or default credit.
+
+**Existing-image proof independent artifact review — PASS / NO-RUN /
+NO-IMAGE-READ (2026-07-13):** at explicit `-ff` HEAD
+`65f37db64659ab571b64930f6540948e10db2d12`, manual read-only review of the
+retained proof, checker, fixtures, checker log, and both mutation diffs/logs
+recomputed the recorded script/checker SHA-256 values
+`b38bd4cd65a218e6bbe2424047a75b1755df29947fbdfc07ecf52d704e42b33b` and
+`3763886ffde7d32c9511af104f9b6f51d388f720c562e619f47bebc2961a2cce`.
+The retained empty parser log and checker terminal are consistent with static
+syntax/fixture success; this review did not invoke either script. The source
+pins the exact fresh image identity, maps staged executable
+`sysroot/bin/_consolerecord` to image `/bin/consolerecord`, rejects raw-zero
+`ext2_lookup` before type parsing, requires regular/link-one/size/mode and
+console executability, and rehashes read-only `debugfs -R` dumps against the
+staged console and pinned media hashes. It has pre/final exact-QEMU checks,
+allows only informational RISC-V, creates a fresh private dump directory, and
+contains no `debugfs -w` or `pgrep` path. The seven fixtures exercise the
+actual `debugfs` grammar and the two syntactically valid mutations specifically
+lose `lookup_guard` and `image_console`; their retained checker children exit
+one. This independent PASS authorizes exactly one later invocation of that
+unchanged proof script, read-only against the pinned image, with no build,
+refresh, image write, QEMU, boot, or serial action. Its result must be
+recorded honestly without retry; an evidence failure must be fixed or closed
+and the ranked performance path resumed, not used as a stopping point.
+
+At review time, exact QEMU inventory was total/informational-RISC-V/conflicting
+`0/0/0`; kernel and user worktrees were clean and only the preserved KDE-smoke
+dirt existed. No proof/checker invocation, debugfs/image operation, source,
+test, build, rootfs, VM, KDE, or QEMU action occurred. A successful proof is
+still only an image-staging fact: it next requires an independent adversarial
+pre-boot review of the committed kernel/user/driver/rootfs proof, then a fresh
+conductor-owned 60-second gate before one x86 windowed A1 trial. It supplies
+no YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS,
 performance, or default credit.
