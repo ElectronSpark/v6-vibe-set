@@ -4664,3 +4664,35 @@ final exact inventory with zero conflicts; independent RISC-V remains
 informational and untouched. Any drift, missing endpoint, conflict, or handle
 loss fails without launch authority. This gate launched no VM and grants no
 performance, audio-on, fullscreen, or default credit.
+
+**A1 windowed one-shot trial — CONSUMED / INVALID / N=0 (2026-07-13):**
+immediate prelaunch at exact explicit `-ff` HEAD/origin
+`48d173caccad5d368612c0aef247e56935a3fd77` passed approved remotes and nested
+pins, KDE-smoke-only dirt, KVM/DXG/D3D12/GL/X11/Wayland, pinned kernel/image
+hashes, the consumed image-proof receipt, and exact QEMU inventory `0/0/0`.
+The sole canonical windowed treatment used MP1/audio-disable1/media1/
+forced-HD7201/capturediag0/EGL0, a 60-second configured window, GTK fullscreen
+and zoom-to-fit off, `QEMU_AUDIO=none`, and 8 GiB RAM. Retain run
+`/tmp/xv6-a1-windowed-live-20260713T025202Z-3143430`, external log
+`/tmp/xv6-a1-windowed-live-20260713T025202Z-3143430.driver.log`, and scratch
+image `/tmp/xv6-yt-20260713T025202Z-pid3143434-mp1-audio1-media1-hd7201.fs.img`.
+
+The first fail-closed boundary was idle C1 V2 transport attempt 1:
+`invalid-fbstat-transport ... transport-candidate-contaminated record=37`.
+The named raw artifact shows asynchronous `virtio_gpu: page-flip present`
+console text split across and merged into chunk records 28 and 32. This is a
+transport-atomicity failure before Chromium launch/media proof, not a frame-
+supply result. Real KVM, 8 GiB, virgl/OpenGL-submit initialization and matching
+media-image assets are retained, but active 1280x720, window-state screenshot,
+`yt-presentfps`, `PERF-VIDEO`, FPS/drop/VPQ/retire, frame-supply C6/C7/C8,
+audio, and fullscreen facts are absent. All screenshot and Chromium/media
+artifacts are explicitly missing in the manifest. The owned PGID ended as
+`qemu-system-x86`, was synchronously reaped (`waited:3143596 exp4 0 0`), and
+the final exact inventory was `0/0/0`; no retry or second VM ran.
+
+**Next decision:** implement no frame-supply lever from this N=0 run. First
+make the C1 envelope emission atomic against asynchronous kernel-console
+writes (without weakening chunk/digest/RC/FENCE rejection), obtain fresh
+static and independent no-boot review, then use the first valid C8 sample to
+choose the ranked frame-supply change. This trial grants no performance,
+audio-on, fullscreen, or default credit and leaves VM authority closed.
