@@ -26,12 +26,13 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-The kprofile/kernel-UAPI repair and its targeted full `user` build have passed
-independent no-build review. This authorizes exactly one deterministic
-kernel/user/rootfs-refresh **staging proof**, with its complete synchronous
-receipt and named `/bin/_consolerecord` image check; it does not authorize
-QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
-credit. Any failure consumes that one proof and requires a fresh review.
+The one deterministic staging proof authorized at `61de08d` is **consumed**:
+its persisted wrapper aborted before the first build due to an unbound local
+preflight variable. It made no kernel/user/rootfs-refresh or image operation,
+but it is still a failed authorization and must not be retried. A fresh
+independent wrapper-preflight review is required before another staging proof;
+no QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
+credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -3975,3 +3976,36 @@ three pass may its named-file image check prove executable
 `/bin/_consolerecord`; no VM, serial, FPS, audio, fullscreen, or default claim
 is authorized. Any failure consumes this proof; a fresh independent review is
 required before another attempt.
+
+**C1 deterministic full staging proof — FAILED PRE-STAGE / NO-BUILD /
+NO-ROOTFS / NO-BOOT (2026-07-13):** the sole authorized wrapper invocation
+was retained at
+`/tmp/xv6-c1-full-staging-20260713T001943Z-2981879/run-full-staging.sh`
+(SHA-256 `686f74d254c452997b8e93b6f45a278dec330473e0e3f7a7f66061de0d2d1fc1`).
+Its immediate preflight had exact published lineages: super
+`61de08db3d2d58f2796e1956529573b2a63efc2b` equals explicit `-ff` origin,
+kernel `b42d1c37f90b2ac48aa416a9eb215a935920f649` equals `origin/v6-kernel`,
+and user `3e5b90bd30130ad1a3566ddc20c9589f6159d867` equals `origin/v6-port`.
+The external exact inventory immediately before invocation was
+total/informational-RISC-V/conflicting `0/0/0`; only the unrelated KDE-smoke
+file was dirty.
+
+The wrapper exited raw `1` before it could complete its own first inventory:
+`line 35: label: unbound variable`. `inventory()` declared local `label` but
+did not assign its argument before writing its receipt field under `set -u`.
+The 323-byte receipt contains only stage path, wrapper path, start time, and
+the three commit IDs; the named directory contains only that receipt and the
+wrapper—there are no kernel, user, or rootfs-refresh logs. Therefore no build
+target, rootfs refresh, debugfs image check, VM, boot, serial command, source
+edit, or manual image write occurred. `fs.img` remains at the prior recorded
+inode/mtime/size `73499/1783790041/8724152320`; no new image hash or
+`/bin/_consolerecord`/browser-asset claim is made. The final exact inventory
+was `1/1/0` (an informational RISC-V QEMU only), which was not touched.
+
+This failure consumes the one staging proof even though it was pre-stage. Do
+not repair or rerun this wrapper under the consumed authority. Next authority
+must first independently review a corrected persisted wrapper's argument and
+receipt paths, then explicitly authorize a fresh one-attempt full staging
+sequence. This result grants no image, user/kernel build, VM, YouTube,
+HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
+default credit.
