@@ -28,12 +28,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The V2 wrapper source passes core static checks, but two
-claimed negative controls do not actually weaken their named runtime
-contracts. No staging retry is authorized. Next is a narrow negative-control
-repair and no-exec review; no kernel/user/rootfs-refresh or image operation,
-QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
-credit is authorized.
+preflight variable. The two V2 negative controls are now genuine and rejected,
+but no staging retry is authorized: an independent no-exec review and a fresh
+explicit one-attempt staging authorization are still required. No kernel/user/
+rootfs-refresh or image operation, QEMU, boot, serial, YouTube/performance,
+audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4229,3 +4228,43 @@ no-exec restrictions. Exact review-start/final QEMU inventory was
 total/informational-RISC-V/conflicting `0/0/0`; no process was touched. This
 FAIL authorizes no wrapper invocation, staging build, rootfs refresh, VM, or
 performance work.
+
+**C1 V2 negative-control repair — PASS / NO-EXEC / NO-BUILD / NO-ROOTFS /
+NO-BOOT (2026-07-13):** only the semantic checker changed; canonical wrapper
+`run-full-staging.sh` remains byte-identical at SHA-256
+`3c43ab3092fa772fae47971f7c55e1372dfbc145ad7bf978a0efc4d63ee4d255`.
+The updated checker is SHA-256
+`1bfb957c3d5306e0ad42c6025025142c8579f882e6999d9e05dd9853a9f9cdad`.
+Named `bash-n-negative-repair.log` is the empty parser PASS output; the
+canonical-plus-five-mutant checker log is SHA-256
+`ff9bf761ad203ccaddef5011d60800ce6a1da8043748e34c4d07cb6f6057fabc` and ends
+`WRAPPER_V2_STATIC_CONTRACT_PASS`.
+
+The repaired source-pin mutation is syntactically valid and preserves every
+unrelated guard, but inserts
+`SOURCE_BASE=$(git -C "$ROOT" rev-parse HEAD)` after explicit branch/remote
+verification. At runtime that makes the ancestor and docs-only checks
+self-referential and therefore bypasses the reviewed source pin. Its retained
+diff is SHA-256
+`69c60054542a3f95e39d5f9f0c7e5ef399812b7e9f22344c47f8ec04f06c749d`; its
+child checker exits 1 and specifically emits `STATIC_FAIL
+source_base_assignment` because V2 now requires the sole immutable
+`SOURCE_BASE=` assignment. The repaired reorder mutation physically moves the
+intact canonical `run_stage rootfs-refresh ... --target rootfs-refresh` block,
+with its matching failure branch, before the unchanged kernel command/block.
+Its retained diff is SHA-256
+`06375e580ef5caf0431abe459bf23a1b2b5e9002a8f1f803b8ede598859cbbe9`; its child
+exits 1 specifically with `STATIC_FAIL user_then_rootfs` and
+`kernel_before_rootfs`. Thus neither rejection relies on invalid syntax,
+renamed labels, duplicate stage labels, or an unrelated predicate.
+
+The unchanged final-QEMU, symlink, and pre-kernel-hash controls also each exit
+1 for `media_before_final_qemu`/`final_qemu_before_pass`, `nonsymlink_guard`,
+and `kernel_preflight_gate`, respectively. Every per-mutant `.diff`, `.log`,
+and `.exit` is retained in the V2 directory; each `.exit` records
+`checker_exit=1`. No wrapper invocation, stage, build, rootfs refresh,
+debugfs/image operation, VM, boot, serial command, source/KDE edit, or QEMU
+action occurred. Exact final inventory was total/informational-RISC-V/
+conflicting `0/0/0`; only the preserved KDE-smoke dirt remains. This is no-exec
+checker evidence only, with no image/`_consolerecord`/browser asset/YouTube/
+HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`/performance/default credit.
