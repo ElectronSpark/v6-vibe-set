@@ -28,11 +28,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. It made no kernel/user/rootfs-refresh or image operation,
-but it is still a failed authorization and must not be retried. A fresh
-independent wrapper-preflight review is required before another staging proof;
-no QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
-credit is authorized.
+preflight variable. Independent whole-wrapper audit found further fail-closed
+receipt, lineage, final-inventory, and image-proof gaps. No kernel/user/
+rootfs-refresh or image operation occurred, but no retry is authorized. Next
+is a narrow corrected-wrapper source/static review only; no QEMU, boot,
+serial, YouTube/performance, audio/fullscreen/default work, or credit is
+authorized.
 
 ## Binding host and VM discipline
 
@@ -4009,3 +4010,52 @@ receipt paths, then explicitly authorize a fresh one-attempt full staging
 sequence. This result grants no image, user/kernel build, VM, YouTube,
 HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
 default credit.
+
+**C1 full-staging wrapper independent forensic — FAIL / NO-RUN / NO-BUILD /
+NO-ROOTFS / NO-BOOT (2026-07-13):** the exact persisted wrapper
+`/tmp/xv6-c1-full-staging-20260713T001943Z-2981879/run-full-staging.sh`
+(SHA-256 `686f74d254c452997b8e93b6f45a278dec330473e0e3f7a7f66061de0d2d1fc1`)
+and its 323-byte receipt were read in full. The immediate defect is line 21:
+`inventory()` declares `local label` under `set -u` but never assigns `$1`,
+then line 35 expands it. The safest narrow repair is arity validation followed
+by `local label=$1` before any receipt write; every other helper must likewise
+validate and bind its required positional arguments before expansion. The
+receipt and absent kernel/user/rootfs logs prove no stage command ran.
+
+Whole-wrapper review finds additional blockers. It records local git heads but
+does not verify exact explicit remote refs, expected gitlinks, or permitted
+worktree dirt before a build; its QEMU scan must canonicalize `/proc/*/exe`,
+exempt only `qemu-system-riscv64`, and reject a conflicting process at both
+preflight and final inventory. `run_stage` correctly avoids a status-masking
+pipeline, but all log/hash/stat failures must be explicit fail-closed receipt
+outcomes; no required post-stage artifact may use `|| true`. The receipt needs
+one terminal state only—`finalize` currently writes a result before later
+overwriting it—and an EXIT/signal-safe failure route. Persist wrapper SHA-256
+and argv before any stage, sync that preflight receipt, then sync each terminal
+stage/receipt write (including directory durability) so an abrupt shell exit
+cannot leave a misleading partial result. The next stage directory must be
+fresh, private, and non-symlinked (fail if it already exists); the current
+wrapper truncates a caller-selected receipt path without that guard.
+
+Image proof is incomplete: `-f` admits symlinks, failed post-identity can use
+stale global identity fields, and the wrapper has no `debugfs` preflight or
+named-file extraction. Require regular non-symlink paths, independently
+successful pre/post identity capture, and one final pass only after identity
+change plus `debugfs` stat/dump/hash/mode proof that image
+`/bin/_consolerecord` is executable and matches its staged source. Retain the
+named Chromium media-probe assets through the same bounded debugfs
+extraction/hash receipt; fail before any build if required host tools or
+receipt paths are unavailable. The existing order has no `cmake` command
+before line 132, but the corrected wrapper must retain that all-preflight
+barrier and stop after the first failing stage.
+
+Before a new staging authority, perform **only** non-executing static
+validation of the corrected persisted script: `bash -n` and ShellCheck when
+available, plus a source contract audit for assigned function arguments,
+quoted paths, direct stage status capture, one durable terminal result,
+pre/final inventory, and all required debugfs/image assertions. Do not execute
+any stage during that review. Exact review-start inventory was
+total/informational-RISC-V/conflicting `0/0/0`; at final plan checkpoint only
+an untouched informational `qemu-system-riscv64` was present (`1/1/0`). This
+FAIL grants no wrapper retry, build, rootfs refresh, VM, image, or performance
+credit.
