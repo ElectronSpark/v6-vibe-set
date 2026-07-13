@@ -4265,9 +4265,10 @@ if ! valid_token "$tag" || ! valid_token "$nonce" || [ "${#tag}" -gt 16 ] || [ "
 base=/dev/shm/yt-fbstat-${tag}-${nonce}-$$
 capture=${base}.capture
 retained=${base}.payload
-trap 'rm -f "$capture" "$retained"' EXIT
-rm -f "$capture" "$retained"
-if { [ -e "$capture" ] || [ -L "$capture" ] || [ -e "$retained" ] || [ -L "$retained" ]; }; then exit 65; fi
+envelope=${base}.envelope
+trap 'rm -f "$capture" "$retained" "$envelope"' EXIT
+rm -f "$capture" "$retained" "$envelope"
+if { [ -e "$capture" ] || [ -L "$capture" ] || [ -e "$retained" ] || [ -L "$retained" ] || [ -e "$envelope" ] || [ -L "$envelope" ]; }; then exit 65; fi
 fbstat >"$capture" 2>&1 || exit 66
 if [ ! -f "$capture" ] || [ -L "$capture" ] || [ ! -r "$capture" ]; then exit 67; fi
 count_output=$(/bin/wc < "$capture" 2>/dev/null); set -- $count_output
@@ -4290,19 +4291,33 @@ EOF
 fi
 total_hex=${#payload_hex}; [ "$total_hex" -eq $((payload_bytes * 2)) ] || exit 75
 total_chunks=0; [ "$total_hex" -eq 0 ] || total_chunks=$(((total_hex + chunk_hex_max - 1) / chunk_hex_max))
-emit_record() { [ "${#1}" -le 510 ] || exit 76; "$recorder" "$1" || exit 77; }
-printf -v record 'YT_FBSTAT_TRANSPORT_V2_BEGIN tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; emit_record "$record"
-printf -v record 'YT_FBSTAT_TRANSPORT_V2_META tag=%s nonce=%s status=OK raw_bytes=%s payload_bytes=%s cursor=%s truncated=%s cap=%s total_hex=%s total_chunks=%s chunk_hex_max=%s digest=%s' "$tag" "$nonce" "$raw_bytes" "$payload_bytes" "$payload_bytes" "$truncated" "$cap" "$total_hex" "$total_chunks" "$chunk_hex_max" "$digest"; emit_record "$record"
+umask 077
+: > "$envelope" || exit 76
+if [ ! -f "$envelope" ] || [ -L "$envelope" ] || [ ! -r "$envelope" ]; then exit 76; fi
+record_count=0; logical_bytes=0
+append_record() {
+    [ "$#" -eq 1 ] && [ "${#1}" -le 510 ] || exit 76
+    next_count=$((record_count + 1)); next_bytes=$((logical_bytes + ${#1} + 1))
+    [ "$next_count" -le 701 ] && [ "$next_bytes" -le 357080 ] || exit 76
+    printf '%s\n' "$1" >> "$envelope" || exit 76
+    record_count=$next_count; logical_bytes=$next_bytes
+}
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_BEGIN tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; append_record "$record"
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_META tag=%s nonce=%s status=OK raw_bytes=%s payload_bytes=%s cursor=%s truncated=%s cap=%s total_hex=%s total_chunks=%s chunk_hex_max=%s digest=%s' "$tag" "$nonce" "$raw_bytes" "$payload_bytes" "$payload_bytes" "$truncated" "$cap" "$total_hex" "$total_chunks" "$chunk_hex_max" "$digest"; append_record "$record"
 offset=0; seq=0
 while [ "$offset" -lt "$total_hex" ]; do
     hex_bytes=$chunk_hex_max; remaining=$((total_hex - offset)); [ "$remaining" -lt "$hex_bytes" ] && hex_bytes=$remaining
     data=${payload_hex:offset:hex_bytes}
     [ "$hex_bytes" -gt 0 ] && [ $((hex_bytes % 2)) -eq 0 ] && [ "${#data}" -eq "$hex_bytes" ] || exit 78
-    printf -v record 'YT_FBSTAT_TRANSPORT_V2_CHUNK tag=%s nonce=%s seq=%s hex_offset=%s hex_bytes=%s data=%s' "$tag" "$nonce" "$seq" "$offset" "$hex_bytes" "$data"; emit_record "$record"
+    printf -v record 'YT_FBSTAT_TRANSPORT_V2_CHUNK tag=%s nonce=%s seq=%s hex_offset=%s hex_bytes=%s data=%s' "$tag" "$nonce" "$seq" "$offset" "$hex_bytes" "$data"; append_record "$record"
     offset=$((offset + hex_bytes)); seq=$((seq + 1))
 done
 [ "$seq" -eq "$total_chunks" ] || exit 79
-printf -v record 'YT_FBSTAT_TRANSPORT_V2_END tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; emit_record "$record"
+printf -v record 'YT_FBSTAT_TRANSPORT_V2_END tag=%s nonce=%s cap=%s total_hex=%s total_chunks=%s digest=%s' "$tag" "$nonce" "$cap" "$total_hex" "$total_chunks" "$digest"; append_record "$record"
+[ "$record_count" -eq $((total_chunks + 3)) ] || exit 79
+envelope_count=$(/bin/wc < "$envelope" 2>/dev/null); set -- $envelope_count
+if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$1" != "$record_count" ] || [ "$3" != "$logical_bytes" ]; then exit 79; fi
+"$recorder" --batch-file "$envelope" || exit 77
 exit 0
 }]
 }
@@ -4337,8 +4352,8 @@ proc fbstat_transport_static_frame {tag nonce payload {overrides {}}} {
 
 # The transport timeout is an algebraic upper bound, not a retry.  It charges
 # every max-size V2 record, both outer marker records, one normal 64-byte
-# consolewrite batch at its ONLCR-expanded 128 physical bytes, every
-# possible 50-ms timed acquisition, and a fixed capture/hash reserve.
+# consolewrite batch at its ONLCR-expanded 128 physical bytes, exactly one
+# 50-ms batch-lock acquisition, and a fixed capture/hash reserve.
 proc fbstat_transport_v2_timeout_contract {marker} {
     if {![regexp {^[A-Za-z0-9]+$} $marker]} {
         error "invalid V2 outer marker"
@@ -4369,14 +4384,16 @@ proc fbstat_transport_v2_timeout_contract {marker} {
     set outer_physical [expr {($marker_bytes + 5 + 2) + ($marker_bytes + 6 + 2)}]
     set normal_writer_physical 128
     set wire_ms [expr {int(ceil(double($physical + $outer_physical + $normal_writer_physical) * 10000.0 / 115200.0))}]
-    set lock_ms [expr {$record_count * 50}]
+    set batch_lock_acquisitions 1
+    set lock_ms [expr {$batch_lock_acquisitions * 50}]
     set helper_reserve_ms 5000
     set timeout_seconds [expr {int(ceil(double($wire_ms + $lock_ms + $helper_reserve_ms) / 1000.0))}]
     return [dict create cap $cap chunk_hex_max $chunk_hex_max total_chunks $total_chunks \
         record_count $record_count marker_bytes $marker_bytes \
         physical_bytes $physical outer_physical_bytes $outer_physical \
         normal_writer_physical_bytes $normal_writer_physical wire_ms $wire_ms \
-        lock_ms $lock_ms helper_reserve_ms $helper_reserve_ms seconds $timeout_seconds]
+        batch_lock_acquisitions $batch_lock_acquisitions lock_ms $lock_ms \
+        helper_reserve_ms $helper_reserve_ms seconds $timeout_seconds]
 }
 
 # C7 is deliberately a second command, not an enlargement of the admitting
@@ -9653,9 +9670,10 @@ bb}] [lindex $static_fb_chunks 0]]
         [dict get $static_fb_timeout normal_writer_physical_bytes] != 128 ||
         $static_fb_v2_timed_wire_bytes != 357956 ||
         [dict get $static_fb_timeout wire_ms] != 31073 ||
-        [dict get $static_fb_timeout lock_ms] != 35050 ||
+        [dict get $static_fb_timeout batch_lock_acquisitions] != 1 ||
+        [dict get $static_fb_timeout lock_ms] != 50 ||
         [dict get $static_fb_timeout helper_reserve_ms] != 5000 ||
-        [dict get $static_fb_timeout seconds] != 72} {
+        [dict get $static_fb_timeout seconds] != 37} {
         fail_preflight "static-check-fbstat-v2-timeout-algebra value=$static_fb_timeout"
     }
     set static_fb_helper [fbstat_transport_guest_helper_script]
@@ -9663,6 +9681,8 @@ bb}] [lindex $static_fb_chunks 0]]
     set static_fb_v2_decimal_checker_bash [fbstat_transport_v2_valid_decimal_checker_bash]
     set static_fb_v2_initial_wc_guard {if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3"; then exit 68; fi}
     set static_fb_v2_retained_wc_guard {if [ "$#" -ne 3 ] || ! valid_decimal "$1" || ! valid_decimal "$2" || ! valid_decimal "$3" || [ "$3" != "$payload_bytes" ]; then exit 71; fi}
+    set static_fb_v2_batch_call {"$recorder" --batch-file "$envelope" || exit 77}
+    set static_fb_v2_batch_call_first [string first $static_fb_v2_batch_call $static_fb_helper]
     set static_fb_v2_decoder_source_lock [expr {
         [string first {set decoded_hex [binary encode hex $payload]} [info body fbstat_transport_decode]] >= 0 &&
         [string first {[string length $decoded_hex] != $begin_hex || $decoded_hex ne $payload_hex} [info body fbstat_transport_decode]] >= 0 &&
@@ -9679,9 +9699,17 @@ bb}] [lindex $static_fb_chunks 0]]
         [string first {if [ "$#" -ne 3 ] || ! valid_decimal "$3"; then exit 68; fi} $static_fb_helper] >= 0 ||
         !$static_fb_v2_decoder_source_lock ||
         [string first {retained_count=$(/bin/wc < "$retained"} $static_fb_helper] < 0 ||
+        [string first {: > "$envelope" || exit 76} $static_fb_helper] < 0 ||
+        [string first {printf '%s\n' "$1" >> "$envelope" || exit 76} $static_fb_helper] < 0 ||
+        $static_fb_v2_batch_call_first < 0 ||
+        [string first $static_fb_v2_batch_call $static_fb_helper \
+            [expr {$static_fb_v2_batch_call_first + 1}]] >= 0 ||
+        [string first {"$recorder" "$1"} $static_fb_helper] >= 0 ||
+        [string first {trap 'rm -f "$capture" "$retained" "$envelope"' EXIT} $static_fb_helper] < 0 ||
         [string first {transport-candidate-noncontiguous} [info body fbstat_transport_decode]] < 0 ||
         [string first {YT_FBSTAT_TRANSPORT_V2_CHUNK} $static_fb_helper] < 0 ||
-        [regexp {printf[[:space:]]+['\"]YT_FBSTAT_TRANSPORT} $static_fb_helper]} {
+        [regexp {printf[[:space:]]+['\"]YT_FBSTAT_TRANSPORT} $static_fb_helper] ||
+        [regexp {echo[[:space:]]+.*YT_FBSTAT_TRANSPORT} $static_fb_helper]} {
         fail_preflight "static-check-fbstat-v2-helper-source-contract"
     }
     set static_fb_helper_dir "$outdir/fbstat-v2-helper-static"
@@ -9709,11 +9737,12 @@ cat "$YT_FBSTAT_STATIC_PAYLOAD"
 }
     wf $static_fb_recorder {#!/bin/bash
 set -f
-case "$1" in *$'\n'*) exit 91;; esac
-printf '%s\n' "$1" >> "$YT_FBSTAT_STATIC_RECORDS"
+[ "$#" -eq 2 ] && [ "$1" = --batch-file ] || exit 90
 n=0; [ -f "$YT_FBSTAT_STATIC_COUNT" ] && n=$(cat "$YT_FBSTAT_STATIC_COUNT")
 n=$((n + 1)); printf '%s\n' "$n" > "$YT_FBSTAT_STATIC_COUNT"
 [ "${YT_FBSTAT_STATIC_FAIL_AT:-0}" = "$n" ] && exit 77
+[ -f "$2" ] && [ ! -L "$2" ] || exit 91
+cat "$2" > "$YT_FBSTAT_STATIC_RECORDS" || exit 92
 exit 0
 }
     file attributes $static_fb_bin -permissions 0755
@@ -9982,6 +10011,12 @@ exit 0
         if {[dict get $run status] ne "ok"} {
             fail_preflight "static-check-fbstat-v2-helper-case-failed cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records]"
         }
+        set call_count [dict get $run count_file]
+        if {![dict get $call_count present] || ![dict get $call_count regular] ||
+            [dict get $call_count bytes] != 2 ||
+            [dict get $call_count first_hex] ne "310a"} {
+            fail_preflight "static-check-fbstat-v2-helper-batch-call-count cases=[static_fb_v2_case_records_compact $static_fb_v2_case_records]"
+        }
         if {$name eq "binary"} {
             set input_file [dict get $run input_file]
             if {[dict get $run input_size] != 4 ||
@@ -10011,9 +10046,14 @@ exit 0
         }
     }
     set recorder_failure [static_fb_v2_helper_run recorder_failure $static_fb_helper_dir $static_fb_helper_path \
-        $static_fb_payload_path $static_fb_records_path "failure" 2]
+        $static_fb_payload_path $static_fb_records_path "failure" 1]
     if {[dict get $recorder_failure status] eq "ok"} {
         fail_preflight "static-check-fbstat-v2-recorder-failure-claimed record=[static_fb_v2_case_compact $recorder_failure]"
+    }
+    set recorder_failure_count [dict get $recorder_failure count_file]
+    if {![dict get $recorder_failure_count present] ||
+        [dict get $recorder_failure_count first_hex] ne "310a"} {
+        fail_preflight "static-check-fbstat-v2-recorder-failure-call-count record=[static_fb_v2_case_compact $recorder_failure]"
     }
     if {![dict get $recorder_failure cleanup]} {
         fail_preflight "static-check-fbstat-v2-recorder-failure-cleanup record=[static_fb_v2_case_compact $recorder_failure]"
@@ -10028,11 +10068,16 @@ exit 0
     set static_c1_v2_recorder_route [expr {
         [string first {recorder=/bin/consolerecord} $static_fb_helper] >= 0 &&
         [string first {recorder=/bin/_consolerecord} $static_fb_helper] < 0 &&
-        [string first "recorder=$static_fb_recorder" $static_fb_stub_helper] >= 0
+        [string first "recorder=$static_fb_recorder" $static_fb_stub_helper] >= 0 &&
+        [string first {"$recorder" --batch-file "$envelope" || exit 77} $static_fb_helper] >= 0 &&
+        [string first {"$recorder" "$1"} $static_fb_helper] < 0 &&
+        $static_fb_v2_batch_call_first >= 0 &&
+        [string first $static_fb_v2_batch_call $static_fb_helper \
+            [expr {$static_fb_v2_batch_call_first + 1}]] < 0
     }]
     set static_c1_v2_cleanup [static_fb_v2_helper_clean probe1 fbfstatstaticnonce]
-    set static_c1_v2_timeout_expected [expr {int(ceil(double([dict get $static_fb_timeout wire_ms] + 35050 + 5000) / 1000.0))}]
-    set static_c1_v2_timeout [expr {[dict get $static_fb_timeout record_count] == 701 && [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 && [dict get $static_fb_timeout lock_ms] == 35050 && [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected}]
+    set static_c1_v2_timeout_expected [expr {int(ceil(double([dict get $static_fb_timeout wire_ms] + 50 + 5000) / 1000.0))}]
+    set static_c1_v2_timeout [expr {[dict get $static_fb_timeout record_count] == 701 && [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 && [dict get $static_fb_timeout batch_lock_acquisitions] == 1 && [dict get $static_fb_timeout lock_ms] == 50 && [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected}]
     set static_c1_v2_case_matrix [expr {
         $static_c1_v2_contiguity && $static_c1_v2_wc_route &&
         $static_c1_v2_recorder_route && $static_c1_v2_cleanup &&
@@ -11266,7 +11311,8 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [string first {YT_FBSTAT_TRANSPORT_V2_END} $static_c5_helper] >= 0 &&
         [string first {chunk_hex_max=376} $static_c5_helper] >= 0 &&
         [string first {recorder=/bin/consolerecord} $static_c5_helper] >= 0 &&
-        [string first {"$recorder" "$1"} $static_c5_helper] >= 0 &&
+        [string first {"$recorder" --batch-file "$envelope"} $static_c5_helper] >= 0 &&
+        [string first {"$recorder" "$1"} $static_c5_helper] < 0 &&
         [string first {YT_FBSTAT_TRANSPORT_HEX} $static_c5_helper] < 0
     }]
     set static_c5_validator_unchanged [expr {

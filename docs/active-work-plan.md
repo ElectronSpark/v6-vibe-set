@@ -4765,3 +4765,68 @@ both kernel UAPI/console behavior and `/bin/consolerecord`, a kernel rebuild,
 user rebuild, rootfs/image refresh, and renewed staged-to-image executable/hash
 proof are mandatory before a fresh boot.  This run remains N=0; infer no
 frame-supply performance from it.
+
+**C1 complete-envelope batch transport — IMPLEMENTED / STATIC+BUILD PASS /
+NO-ROOTFS-REFRESH / NO-BOOT (2026-07-13):** at explicit `-ff` source
+`8ceaf5f8e5f0ea43668ba341ec91ff56cc5c98ba`, the x86 console now exposes a
+32-byte fixed-width v1 batch request and accepts one root-only, fully copied
+and prevalidated sequence of at most 701 existing LF records / 357080 logical
+bytes / 357781 CRLF physical bytes. It allocates off-stack, acquires the
+sleepable wire mutex once for the complete envelope, emits every row in order,
+checks the emergency generation before/after each row and at completion, and
+returns exact logical bytes only on uncontaminated success. All prelock
+metadata/copy/grammar/allocation/unavailable/timeout failures emit zero bytes;
+an emergency after emission returns honest no-credit. Both console ioctl
+entrypoints share the handler; the existing single-record and separately
+gated RISC-V paths remain source-locked.
+
+The silent host-glibc recorder retains its one-record mode and adds exactly
+`--batch-file PATH`: it opens a bounded regular non-symlink, verifies the same
+record/count/byte grammar, and issues one batch ioctl without output or write
+fallback. Automatic staging remains `_consolerecord`, while the image runtime
+contract remains `/bin/consolerecord`. Generated C1 now creates one private
+regular complete BEGIN/META/CHUNK/END envelope, verifies its 701/357080
+limits, invokes `/bin/consolerecord --batch-file` exactly once, and removes
+capture/payload/envelope files through its EXIT path. The strict host parser,
+outer RC/FENCE, contamination/order/count/offset/digest rejection, C6/C7/C8,
+diag0, and all no-credit policy are unchanged. Exact maximum inner wire time
+remains 31073 ms; one 50-ms mutex acquisition plus the unchanged 5000-ms
+helper reserve yields a source-locked 37-second C1 timeout.
+
+Fresh retained evidence is `/tmp/xv6-c1-batch-20260712-FABgTO`. The kernel
+fake-UART runner exited zero (`kernel-host-test.log`, empty SHA-256
+`e3b0c442...b855`) and covers max arithmetic, one acquisition, queued normal
+writers, ABI/copy/root/allocation/timeout/unavailable zero-prebyte failures,
+and emergency post-emission no-credit. The recorder host suite exited zero
+(`user-host-test.log`, SHA-256 `a80d40c4...8adf`) across legacy, exact max,
+empty/binary/CR/NUL/over-cap/nonregular, ioctl-failure, silence, and one-ioctl
+cases. Canonical clean-PATH host-only static output is `static-out`, with
+`static-suite.log` SHA-256 `a0de7ad3...822d`; it emitted
+`YT-C1-V2-STATIC-PASS` and `YT-PRESENTFPS-STATIC-CHECK-PASS` with
+`js_guest_runtime=UNEXECUTED`. Pre/post static and final exact QEMU
+inventories were all total/informational-RISC-V/conflicting `0/0/0`.
+`git diff --check` across all three repositories passed (empty
+`git-diff-check.log`). Synchronous x86 `kernel` and full `user` targets both
+exited zero; logs are `kernel-build.log` SHA-256 `f3dcba1f...50d4` and
+`user-build.log` SHA-256 `0cbd9a5e...d0f7`. The latter staged executable
+`build-x86_64/sysroot/bin/_consolerecord` mode/size/SHA-256
+`0755/29616/6f610bf2...cfa6`. No rootfs/image refresh, image write, QEMU
+launch, VM, boot, serial, KDE/default, YouTube, HD720, audio, fullscreen,
+`yt-presentfps`, `PERF-VIDEO`, or performance credit occurred. The unrelated
+KDE-smoke worktree change remains preserved.
+
+Independent integrated no-boot adversarial review then passed without a
+rerun or edit: it confirmed the 32-byte offsets/ioctl encoding, exact bounds,
+copy/validation/free ordering, one-lock normal-writer exclusion, per-row/end
+emergency no-credit, both entrypoints, silent one-ioctl recorder, one-call
+helper cleanup, 37-second algebra, and unchanged single-record/RISC-V/parser/
+C6-C8/diag0 behavior. Its only operational note was to include the new
+`user/tests/` files in the user commit. This clears deepest-first publication
+only; rootfs/image refresh and every boot remain closed.
+
+Deepest-first publication completed on the approved explicit remotes: kernel
+`6d0151648df87b9d30ffd2dbd0aa780f0c111ec1` is on `origin/v6-kernel` and
+user `a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3` is on `origin/v6-port`. The
+parent records those gitlinks with the driver/plan change and publishes only
+to the full `codex/host-linux-abi-shell-port-ff` ref, never the historical
+truncated ref.
