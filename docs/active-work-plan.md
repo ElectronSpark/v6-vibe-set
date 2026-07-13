@@ -1,6 +1,6 @@
 # Active xv6 Work Plan
 
-Last updated: 2026-07-12. This is the sole live plan. Superseded V2/V3
+Last updated: 2026-07-13. This is the sole live plan. Superseded V2/V3
 self-failure chronology and disposable artifacts remain in git history.
 
 ## Objective and acceptance
@@ -26,13 +26,16 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-The one deterministic staging proof authorized at `61de08d` is **consumed**:
-its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The one canonical V2 staging invocation is **consumed**:
-kernel, user, and rootfs-refresh returned zero, but the wrapper failed before
-the required `/bin/_consolerecord` image proof. Do not retry. A new independent
-forensic/review is required; no QEMU, boot, serial, YouTube/performance,
-audio/fullscreen/default work, or credit is authorized.
+The deterministic staging proof at `61de08d` and the canonical V2 invocation
+are **consumed**. The latter completed kernel, user, and rootfs-refresh, then
+failed its console proof because the wrapper asked the image for
+`/bin/_consolerecord` while the intentional rootfs rule installs it as
+`/bin/consolerecord`. Do not retry. Next is a narrow no-exec wrapper/static
+repair: use the installed path and record a lookup-specific `debugfs` failure
+before its regular-file/mode checks, with adversarial fixtures. Then require a
+fresh independent review before any new staging authority. No QEMU, boot,
+serial, YouTube/performance, audio/fullscreen/default work, or credit is
+authorized.
 
 ## Binding host and VM discipline
 
@@ -4353,3 +4356,40 @@ preserved KDE-smoke file. This consumed failure provides no valid image
 payload, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
 performance, or default credit; next authority is limited to independent
 forensic localization of the wrapper's post-stat image-proof failure.
+
+**C1 console-image-proof forensic — LOCALIZED / NO-BUILD / NO-ROOTFS /
+NO-BOOT (2026-07-13):** retained
+`debugfs-consolerecord.stat.log` is exactly two LF-terminated lines (no CR):
+the `debugfs 1.47.0` banner and `/bin/_consolerecord: File not found by
+ext2_lookup`. `debugfs -R stat` nevertheless returned raw zero, so the
+wrapper's `stat_raw_exit=0` was not a lookup-success fact; its subsequent
+absence of `Type: regular` correctly produced the generic proof failure. This
+is not a parser grammar drift. Read-only `debugfs stat` and `ls -l` against
+the still-fresh receipt identity (`inode 73499`, `8724152320` bytes,
+`mtime 1783904866`) find no `/bin/_consolerecord`, but find
+`/bin/consolerecord` as a regular `0755`, link-count-one, 20808-byte file.
+The corresponding sysroot file is only `bin/_consolerecord`; the rootfs
+source's explicit xv6-style copy rule uses `${base#_}`, deliberately installing
+it at `bin/consolerecord`.
+
+The same shared `debugfs_regular_dump` parser is used for media. Read-only
+stats find all three intended media paths as regular, link-count-one files
+with the expected sizes/modes: `manifest.json` `813/0644`, `probe-lib.js`
+`4336/0644`, and `probe.js` `26585/0644`. Thus their existing non-executable
+`Type: regular` grammar is compatible with this `debugfs`; this did not
+establish their hashes because the forensic deliberately performed no dump.
+The minimal repair is to retain the staged source assertion at
+`sysroot/bin/_consolerecord` but call the image proof on `/bin/consolerecord`.
+Before another review, enhance the shared proof receipt to classify an
+`ext2_lookup` diagnostic as lookup failure rather than relying on raw exit,
+then retain static fixtures for actual regular/executable output, a raw-zero
+lookup miss, non-regular and malformed/no-`Type` output, non-executable
+console mode, and each normal media path. No image write, dump, hash,
+wrapper execution, build, refresh, VM, boot, serial, source/KDE edit, or
+performance action occurred in this forensic. Exact final inventory was
+total/informational-RISC-V/conflicting `1/1/0` (PID 3057622
+`/usr/bin/qemu-system-riscv64`), which was not touched; it remains
+informational only. The preserved KDE-smoke dirt remains. This locates a
+wrapper contract defect but grants no completed image proof or any YouTube,
+HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
+default credit.
