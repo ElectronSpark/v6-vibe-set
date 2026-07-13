@@ -908,7 +908,14 @@ proc c1_terminal_commit_frame_parse {text marker} {
             [string first "$marker:FENCE" $line] >= 0} {
             return [list 0 "terminal-expected-row-contaminated-$line_index" ""]
         }
-        if {[regexp {[A-Za-z0-9]+:(RC:[^\r]*|FENCE)} $line]} {
+        # The owned shell echo contains printf's literal `%s:RC:0\n%s...`
+        # format template.  A one-character `s` embedded after `%` is not a
+        # terminal record.  Still reject every standalone foreign row,
+        # including a one-character marker, and retain contaminated-foreign
+        # rejection for all protocol-sized (two-or-more character) markers.
+        if {[regexp {^[A-Za-z0-9]{1,64}:(RC:[^\r]*|FENCE)$} $line] ||
+            [regexp {[A-Za-z0-9]{2,64}:(RC:[^\r]*|FENCE)} $line] ||
+            [regexp {(^|[^%])([A-Za-z0-9]):(RC:[^\r]*|FENCE)} $line]} {
             return [list 0 "terminal-foreign-row-$line_index" ""]
         }
     }
@@ -10553,6 +10560,34 @@ exit 4
         "async-before\n$static_c1_atomic_marker:RC:0\n$static_c1_atomic_marker:FENCE\nasync-after\n"
     set static_c1_atomic_clean_async_parse [c1_terminal_commit_frame_parse \
         $static_c1_atomic_clean_async $static_c1_atomic_marker]
+    # Replay the relevant owned-shell echo shape from the retained performance
+    # transcript.  PTY wrapping inserted CR between printf's second `%s` and
+    # `:FENCE`, while the first literal `%s:RC:0\n` remained intact.  It is
+    # command text, not a raw terminal record; the later owned pair is still
+    # the only admissible commit.
+    set static_c1_atomic_echo_command [c1_atomic_outer_terminal_shell_command \
+        {/bin/bash /fbs.sh idle STATICNONCE} $static_c1_atomic_marker]
+    set static_c1_atomic_echo_wrapped [string map [list \
+        {%s:FENCE\n} "%s \r:FENCE\\n"] $static_c1_atomic_echo_command]
+    set static_c1_atomic_echo_wrapped_ok [expr {
+        $static_c1_atomic_echo_wrapped ne $static_c1_atomic_echo_command &&
+        [string first "printf '%s:RC:0\\n%s \r:FENCE\\n'" \
+            $static_c1_atomic_echo_wrapped] >= 0}]
+    set static_c1_atomic_echo_wire \
+        "\a${static_c1_atomic_echo_wrapped}\r\r\n$static_c1_atomic_marker:RC:0\r\r\n$static_c1_atomic_marker:FENCE\r\r\n"
+    set static_c1_atomic_echo_parse [c1_terminal_commit_frame_parse \
+        $static_c1_atomic_echo_wire $static_c1_atomic_marker]
+    set static_c1_atomic_echo_one_foreign [c1_terminal_commit_frame_parse \
+        "\a${static_c1_atomic_echo_wrapped}\r\r\nX:RC:0\r\r\nX:FENCE\r\r\n$static_c1_atomic_marker:RC:0\r\r\n$static_c1_atomic_marker:FENCE\r\r\n" \
+        $static_c1_atomic_marker]
+    set static_c1_atomic_echo_contaminated_one_foreign \
+        [c1_terminal_commit_frame_parse \
+        "\a${static_c1_atomic_echo_wrapped}\r\r\nnoiseX:RC:0\r\r\n$static_c1_atomic_marker:RC:0\r\r\n$static_c1_atomic_marker:FENCE\r\r\n" \
+        $static_c1_atomic_marker]
+    set static_c1_atomic_echo_contaminated_foreign \
+        [c1_terminal_commit_frame_parse \
+        "\a${static_c1_atomic_echo_wrapped}\r\r\nnoiseYTFOREIGNC1:RC:0\r\r\n$static_c1_atomic_marker:RC:0\r\r\n$static_c1_atomic_marker:FENCE\r\r\n" \
+        $static_c1_atomic_marker]
     set static_c1_atomic_gap_parse [c1_terminal_commit_frame_parse \
         "$static_c1_atomic_marker:RC:0\nasync-between\n$static_c1_atomic_marker:FENCE\n" \
         $static_c1_atomic_marker]
@@ -10579,11 +10614,23 @@ exit 4
     }
     if {![lindex $static_c1_atomic_clean_async_parse 0] ||
         [lindex $static_c1_atomic_clean_async_parse 2] ne "0" ||
+        !$static_c1_atomic_echo_wrapped_ok ||
+        ![lindex $static_c1_atomic_echo_parse 0] ||
+        [lindex $static_c1_atomic_echo_parse 2] ne "0" ||
+        [lindex $static_c1_atomic_echo_one_foreign 0] ||
+        ![string match {terminal-foreign-row-*} \
+            [lindex $static_c1_atomic_echo_one_foreign 1]] ||
+        [lindex $static_c1_atomic_echo_contaminated_one_foreign 0] ||
+        ![string match {terminal-foreign-row-*} \
+            [lindex $static_c1_atomic_echo_contaminated_one_foreign 1]] ||
+        [lindex $static_c1_atomic_echo_contaminated_foreign 0] ||
+        ![string match {terminal-foreign-row-*} \
+            [lindex $static_c1_atomic_echo_contaminated_foreign 1]] ||
         [lindex $static_c1_atomic_gap_parse 0] ||
         [lindex $static_c1_atomic_contaminated_parse 0] ||
         $static_c1_atomic_contaminated_match ||
         [lsearch -exact $static_c1_atomic_terminal_rejects 0] >= 0} {
-        fail_preflight "static-check-c1-atomic-terminal-parser clean=$static_c1_atomic_clean_async_parse gap=$static_c1_atomic_gap_parse contaminated=$static_c1_atomic_contaminated_parse match=$static_c1_atomic_contaminated_match rejects=$static_c1_atomic_terminal_rejects"
+        fail_preflight "static-check-c1-atomic-terminal-parser clean=$static_c1_atomic_clean_async_parse echo_wrapped=$static_c1_atomic_echo_wrapped_ok echo=$static_c1_atomic_echo_parse echo_foreign=$static_c1_atomic_echo_one_foreign echo_contaminated_one_foreign=$static_c1_atomic_echo_contaminated_one_foreign echo_contaminated_foreign=$static_c1_atomic_echo_contaminated_foreign gap=$static_c1_atomic_gap_parse contaminated=$static_c1_atomic_contaminated_parse match=$static_c1_atomic_contaminated_match rejects=$static_c1_atomic_terminal_rejects"
     }
 
     # Recorder failure must produce no terminal rows and must remove the
@@ -12951,7 +12998,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
         fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup atomic_outer_terminal=$static_c1_atomic_source_contract two_acquisitions=1 per_record_drain_ms=0 timeout_37_pass_36_fail=$static_fb_live_37_pass,$static_fb_live_36_fail timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
+    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup atomic_outer_terminal=$static_c1_atomic_source_contract owned_echo_format_placeholder=PASS standalone_onechar_foreign=REJECT contaminated_onechar_foreign=REJECT contaminated_multichar_foreign=REJECT two_acquisitions=1 per_record_drain_ms=0 timeout_37_pass_36_fail=$static_fb_live_37_pass,$static_fb_live_36_fail timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
     puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_producer_boot_none_boot_only_ready_selector_pending_no_player_observation_pending_stalled_progress=PASS c8_producer_stage_forged_missing_duplicate_reordered_early_wrong_nonce_malformed_arm=REJECT c8_producer_stage_source_order_once_no_url_data=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS producer_stage_no_classifier_or_threshold_admission=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
     puts "YT-PRODUCER-STAGE-STATIC-PASS boot_before_guard_nonce=PASS ready_after_library_nonce_before_selector=PASS once_no_url_data=PASS none_boot_only_ready_pending_no_player_stalled_progress=PASS coalesced=PASS forged_missing_duplicate_reordered_early_wrong_nonce_foreign_extension_malformed=REJECT transport_truncated=REJECT no_classifier_threshold_credit=PASS manifest_sha_key_match_world_run_at=$static_manifest_sha"
 
@@ -13873,7 +13920,7 @@ exit 0
     set static_c1_reducer_expected_normal_hashes [list \
             95675b023167b6f1b01ca787706adf2240114092ac80a9c12168cff7e00cdc1c \
             5190ecc4a2587f05c94b139beca4154e385af9c226038f68cc39660b7813436e \
-            ccd2b0d29665f5f1682609ef9088398cb9b2ab7a370052bb5617d20f3c763a26 \
+            43a21421946b47a130f2afa85249ccf198c9b981af8870bbd26c5e12196a24a2 \
             f5de9439bcf984b88801f2e3a903f85c51c55ee12d0357b8c0151a643ba66f89 \
             67d6e78a6b9d8ca792fb28a468454da96bab766a5b0d65022c1bb66fd7d90995 \
             1343803c7941188e0175b765cdda449a97d0aa0ccd52df83efbd7a9ecf138ac5 \
