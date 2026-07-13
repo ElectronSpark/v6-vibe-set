@@ -4969,3 +4969,49 @@ first failure, do not retry, and run no VM, boot, or serial command. Only a
 complete PASS may establish refreshed staging/image facts; it grants no
 YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance,
 or default credit.
+
+**C1 corrected deterministic staging/image proof — PASS / CONSUMED /
+NO-BOOT (2026-07-13):** at exact explicit-`-ff` authority checkpoint
+`465d5d7138cc9474a4ddd7c3334333c7717861c5`, the unchanged reviewed wrapper
+SHA-256
+`864b585c163bb5579aae9c2f7245484a3bd366dc0148b24f2e392da745062e90`
+was invoked exactly once, foreground and synchronously, and exited raw zero.
+Complete evidence is the private runtime directory
+`/tmp/xv6-c1-batch-rootfs-wrapper-v2-static-20260713TynANsT/runtime`; its
+241-line receipt terminates `PASS/all_stages_and_named_image_proofs_pass/0`.
+Preflight proved exact approved top/kernel/user/ports branches, remotes,
+gitlinks, docs-only source descent from `de620a3`, KDE-only dirt, pre-kernel
+`0644/41359892/3bde70e3...acd7`, preimage
+`73499/0600/8724152320/1783914216/66e2ac12...0fb1d`, and QEMU `0/0/0`.
+
+The exact kernel, user, and rootfs-refresh commands completed in order with
+raw exit zero. Their private `0600` logs hash to
+`ecad419f9c0a2ef432a6a54eb6baabc71760d258cef6372b810698b372907375`,
+`481ce07cc0835c8d4aac649604c794ff4330b2a98e8ca187f2382ae41e844641`,
+and `f2265ff360de66c8af8a8ec7da7b5c691825420acf65728f7403a72add2e2f7c`.
+Every stage records build umask `0022`, parent umask after `0077`, and log mode
+`0600`. Post-kernel identity remained exact. Staged regular non-symlink
+executable `_consolerecord` is exact mode/size/SHA
+`0755/29616/6f610bf241c1dd085390858e7cd360955ee187f9bdf350e504df814cab89cfa6`,
+and the bounded named-artifact `--batch-file` search exited zero.
+
+The refreshed host image changed to mode/inode/size/mtime/SHA
+`0644/73499/8724152320/1783915669/e35c9fd9d18b772933960f29c29bbb242c903c98ce611fdc77fb607467019e27`.
+Read-only named `debugfs` stat/dump proof established image
+`/bin/consolerecord` regular, link-one, `0755`, 29616 bytes, with extracted
+SHA exactly equal to staged. The three image media assets are regular,
+link-one, `0644`, at exact size/SHA: `manifest.json`
+`813/46dced0c...3ac22`, `probe-lib.js` `4336/2fde2692...ce137c`, and
+`probe.js` `26585/de6fa5dc...f48fe8`. One named read-only stat returned raw
+zero plus the exact `File not found by ext2_lookup` diagnostic for
+`/bin/_consolerecord`, correctly proving absence without a false raw-exit
+claim. Independent post-wrapper rehashing reproduced the kernel, staged
+recorder, image, console extraction, and all media hashes. Image identity was
+unchanged across the read-only proof.
+
+Final in-wrapper and independent exact QEMU inventories were both `0/0/0`.
+No retry, QEMU launch, VM, boot, serial command, old proof, manual image write,
+or source/KDE edit occurred. These refreshed staging/image facts are complete
+and sufficient for the required independent adversarial pre-boot review, but
+do not themselves grant a VM, YouTube, HD720/fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, performance, or default credit.
