@@ -5603,3 +5603,78 @@ and retain a final exact zero-conflict inventory. Informational RISC-V remains
 report-only and untouched; any drift, missing endpoint, conflict, or handle
 loss fails without launch authority. This gate launched no VM and grants no
 performance, audio-on, fullscreen, or default credit.
+
+**Fresh-output producer A1 token consumption — INVALID / C1 IDLE TRANSPORT
+TIMEOUT / NO-RETRY (2026-07-13):** token
+`A1-WINDOWED-FRESHOUT-1b1245f2-20260713T062121Z-Q0` was consumed exactly once
+at published docs-only descendant
+`df9053c2dc2e4ed1120914eb436cb8be4aefa809`. Immediately before invocation,
+live HEAD, the local explicit origin ref, and advertised approved full ref
+were exact there; token base `1b1245f2` and producer gate `f6c91315` were
+ancestors and every later path was only this plan. Kernel/user/ports heads,
+advertised approved refs, gitlinks, and nested cleanliness were exact; the
+sole top-level dirt remained the preserved KDE-smoke expect file. KVM/DXG
+read/write, D3D12/GL/EGL, X11/Wayland, current kernel, stable full-hashed
+image, atomic recorder, new probe/library/manifest, and retained static-log
+identity passed. The immediate exact all-QEMU inventory was zero. No build,
+rootfs/image write, source/KDE edit, or RISC-V action occurred.
+
+The unique output paths were
+`YT_OUTDIR=/tmp/xv6-a1-windowed-freshout-20260713T062710Z-pid3400557` and
+`YT_DRIVER_LOG=${YT_OUTDIR}.driver.log`. The worker did not create either
+path. Immediately before the sole Expect invocation, with no intervening
+filesystem writer, it asserted the exact sibling basename/directory relation
+and that both paths did not exist. The shell then opened only the sibling log
+as the Expect redirection started; it never used `tee`, made no prelaunch
+directory, and opened nothing inside `YT_OUTDIR`. The canonical windowed
+MP1/audio-disable-1/media-1/forced-HD720-1/capturediag-0/EGL-0/60-second/
+8-GiB/`QEMU_AUDIO=none` arm started one owned x86 QEMU leader `3401068`.
+
+The harness exited raw `8` with `FAIL timeout phase=fbstat-idle-attempt1` and
+`crash_grep=clean`; no retry or second invocation occurred. Cleanup observed
+only its owned zombie leader, synchronously waited exact PID `3401068`, and
+finished with `remaining=none`; immediate and final exact all-QEMU counts
+were zero. The scratch image remains retained at
+`/tmp/xv6-yt-20260713T062710Z-pid3400771-mp1-audio1-media1-hd7201.fs.img`.
+
+C1 emitted exactly one nonce-bound idle V2 BEGIN, 301 contiguous chunks, one
+matching END, and one each outer `RC:0`/`FENCE`. The envelope declared
+`total_hex=112848` and digest
+`17356ddb398d012410b327603a6cd5a7415984ae5d3f19368fabf31b75418619`;
+independent concatenation/hex decode rehashed to that exact digest. Its
+context was virgl/OpenGL-submit with `kms_page_flip_events=3` and authoritative
+`virgl_bo_presents=4`. However, the outer terminal arrived only at the timeout
+boundary and was split into asynchronous page-flip text, so `guest_cmd` timed
+out before an accepted idle artifact/baseline existed. C1 is therefore
+`INCOMPLETE`/non-admitting, not PASS; the decoded counters are context only
+and grant no C6 threshold or render credit.
+
+Execution never reached Chromium launch, source-prethreshold, C7, C8, or any
+measurement window. Runtime counts are source BEGIN `0`, C7 RC/FENCE `0/0`,
+C8 RC/FENCE `0/0`, authenticated `producer_boot`/`producer_ready` `0/0`,
+`force_ready` `0`, player/progress `0/0`, and role census `0`. Producer order
+and nonce classifications, live roles, live flips/presents, the required
+strict `flips>idle+100` and `presents>idle` C6 threshold, HD720, media timer/
+rVFC windows, semantic result, FPS, and `PERF-VIDEO` are all `N`/
+`UNEXECUTED`; semantic/FPS result is `NULL`. The arm contract and three
+host/image media asset hashes passed, but they are prelaunch facts only. The
+overall trial is `INVALID`, with no diagnostic/static/runtime credit.
+
+Retained evidence is the output directory above plus sibling driver log.
+Key SHA-256 values are driver
+`9534488dd98e1a8776963558beccb721577120355dc48de3fc7f831da2ef0e53`,
+`STATUS.txt` `c80335b8...cbf487`, `metrics.txt` `44b0cd19...ffdf7b9`,
+`cleanup.txt` `44ae3e83...4e950a`, `run.log` `2dc9d908...e9fb78`, and
+`qemu-debugcon.log` `42a886c4...6e3b04`. The artifact manifest honestly marks
+all requested guest frames, launcher/Chrome logs, role files, and media-probe
+runtime log missing; the guest-frame and monitor directories are empty.
+
+**Concrete next implementation decision:** change only the C1 V2 transport
+timeout model to add a bounded 250-ms per-record PTY scheduling/drain allowance
+to the existing baud/lock/reserve bound, with this retained 301-chunk runtime
+as a regression fixture. Preserve one-shot acquisition, exact nonce/digest/
+outer-frame authentication, idle-only resampling policy, and all C6/C8
+admission rules. Do not change kernel, image, producer probe, thresholds, or
+semantic classifiers from this pre-Chromium failure. This decision is recorded
+only, not implemented; another independently authorized token is required for
+any later VM trial.
