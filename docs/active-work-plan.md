@@ -6212,3 +6212,81 @@ authorizes no QEMU launch, VM, boot, serial command, 60-second gate, YouTube,
 HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
 default credit.  The refreshed proof must receive another independent
 adversarial pre-boot review before any VM authority can be considered.
+
+**C1 terminal-commit deterministic staging and v2 named-rootfs proof — PASS /
+CONSUMED / READ-ONLY / NO-BOOT (2026-07-13):** at exact published super,
+kernel, user, and ports heads `14fed3866ce21c71957d9d59dc11a0a0271ba277`,
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208`,
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5`, the retained foreground sequence
+in `/tmp/xv6-terminal-commit-rootfs-proof-20260713TysqPVGeu` completed the
+canonical kernel, user, and rootfs-refresh stages in order with raw exits
+`0/0/0`.  The refreshed regular link-one image pin is
+`dev=2080/inode=73499/mode=0644/size=8724152320/mtime=1783933812`, SHA-256
+`1f6744f9a80e4fb0e2ed3a967595ed346828402cf60deba2909ccf4593c57bee`.
+That first wrapper then stopped raw `93`: its debugfs stat parser selected the
+fragment `Size: 0` instead of logical `File size: 36336`.  The stage sequence
+and image identity are retained facts, but that failed named-rootfs proof is
+noncredit.
+
+The first read-only successor,
+`/tmp/xv6-terminal-readonly-proof-run-20260713T093715Z-3596202`, stopped raw
+`94` only because its underscore-path miss parser rejected debugfs's trailing
+ASCII space before LF.  It had already proved image `/bin/consolerecord`
+regular link-one `0755/36336` and byte-equal to staged
+`build-x86_64/sysroot/bin/_consolerecord`, SHA-256
+`2a57b2a5aa3a295d68e6b3f298444fc70c81471497a9d39245b7a86a12b93722`.
+That is partial recorder evidence only: the stopped harness is noncredit and
+claimed none of the media assets.
+
+The reviewed v2 static repair is retained under
+`/tmp/xv6-terminal-readonly-proof-static-repair-20260713T094738Z-3601448`.
+Its harness SHA-256 is
+`4670dc21b98775f3efb3b41de95dbfdfa21c942977711f3ba8361774c10f9175`;
+the stat and miss parsers are
+`1fbd9bf022ccfdd6c395bbbc28fd92fb9fd4cbd3f5a7453ab552093b5a83465f` and
+`2e185831720f7500a26fb0818a11e77d5d525912bbd7c275abd2185a8fe71713`;
+the checker and tester are
+`c4e4f0628d90d72a18b777f9c4ec9bea26e48d7b328b6ced403d57bff83f80a1` and
+`4820f9ccaf84b961859e56d457ce65abd034eb70475c622e21c859982680aadc`.
+Its v2 static receipt SHA-256 is
+`f313ab2cd4a9108231665c4134ba02a5a0ae66e1c2dc35a3b3bf315fe70f81da`;
+the fixture lookup-miss log is
+`af3317836e6ab0d2e0c416121c963dd1f6cf12c26540a5a80bb4b6e62fad4239`.
+
+Exactly one reviewer-authorized v2 proof invocation ran foreground and
+synchronously, with no retry or substitute:
+`/tmp/xv6-terminal-readonly-proof-static-repair-20260713T094738Z-3601448/run-readonly-rootfs-proof.sh`
+against
+`/tmp/xv6-terminal-readonly-proof-run-20260713T110000Z-3619000-v2proof`.
+It exited raw zero with empty stdout/stderr.  Its regular mode-`0600`,
+link-one, 24320-byte `receipt.tsv` hashes to
+`cbc269dc0ff30543a1d48019a252c1c00faf89de012f7445aa9f0f447c75f559`
+and terminates `PASS/all-named-read-only-image-proofs-passed/0`.  The image
+identity and full SHA above were stable before/after.  Image
+`/bin/consolerecord` is regular link-one `0755/36336`, extracted SHA-256
+`2a57b2a5aa3a295d68e6b3f298444fc70c81471497a9d39245b7a86a12b93722`,
+and byte-equal to staged.  The explicit raw-zero `/bin/_consolerecord` lookup
+is a strict miss: one banner, one lookup diagnostic, inode/logical-size/link
+counts all zero, two lines, and exactly one trailing ASCII blank byte; its raw
+log SHA-256 is
+`1b20ab8b6547cfe06cf0874295fe03817882dc2b19fc96ffd77fc2ca0fe0c474`.
+Read-only named extracts prove media `manifest.json` `0644/813` /
+`46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22`,
+`probe-lib.js` `0644/4336` /
+`2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`,
+and `probe.js` `0644/27488` /
+`6abd45c1ddd24c4d09a14426e34b78b54ec9462d0d261321339b3a5b6f824436`
+byte-equal to their sources.
+
+Super/kernel/user/ports refs and statuses were identical before/after; nested
+trees stayed clean and the sole top dirt remained the preserved KDE expect
+file.  Proof pre/post and independent final exact QEMU inventories were all
+total/informational-RISC-V/conflicting `0/0/0`.  The v2 invocation performed
+no rebuild, refresh, image write, QEMU launch, VM, boot, serial command,
+source edit, or plan/git mutation.  Independent review verdict is PASS only
+for these named read-only rootfs facts.  It grants no VM, performance,
+YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS, or
+default credit.  The next mandatory step remains an independent adversarial
+pre-boot review of the refreshed proof, followed—only if that review passes—
+by a fresh foreground 60-second conductor gate before any VM authority.
