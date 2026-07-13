@@ -26,14 +26,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-The C1 V2 deterministic staging proof remains consumed and **blocked before
-image refresh** by a real user-target source compatibility failure, not VM
-state. The kernel build completed; the user command staged a partial sysroot
-but then failed compiling `kprofile`, so no fresh image
-`/bin/_consolerecord` proof exists. Do not retry staging: first obtain narrow,
-reviewed authority for the `kprofile`/kernel-UAPI repair and a terminal-status
-wrapper correction. No QEMU launch, boot, serial, YouTube/performance,
-audio/fullscreen/default work, or credit is authorized.
+The kprofile/kernel-UAPI repair and its targeted full `user` build have passed
+independent no-build review. This authorizes exactly one deterministic
+kernel/user/rootfs-refresh **staging proof**, with its complete synchronous
+receipt and named `/bin/_consolerecord` image check; it does not authorize
+QEMU, boot, serial, YouTube/performance, audio/fullscreen/default work, or
+credit. Any failure consumes that one proof and requires a fresh review.
 
 ## Binding host and VM discipline
 
@@ -3939,3 +3937,41 @@ is a user-stage repair only—not a rootfs/image, `_consolerecord`, VM, serial,
 YouTube, HD720/fullscreen, audio-on, `yt-presentfps`, `PERF-VIDEO`, or
 performance/default result. A fresh full kernel/user/rootfs staging sequence
 still requires its own independent authorization and receipt discipline.
+
+**C1 kprofile repair/build independent review — PASS FOR ONE FULL STAGING
+PROOF ONLY / NO-BOOT (2026-07-13):** superproject
+`885dfe2e9bfec6c1be87d590e7d321ce6c80f242` equals the explicit
+`origin/codex/host-linux-abi-shell-port-ff`; its scope is only the user
+gitlink and plan. The nested lineages are exact and published: kernel
+`b42d1c37f90b2ac48aa416a9eb215a935920f649` at `origin/v6-kernel`, and user
+`3e5b90bd30130ad1a3566ddc20c9589f6159d867` at `origin/v6-port`. The user
+commit changes only `programs/kprofile/kprofile.c`; all worktrees are clean
+apart from the preserved unrelated KDE-smoke file.
+
+The semantic ABI change is correct: kernel `ed808576` renamed the `uint64`
+member from a poll-function pointer to boolean `file_poll_capable`, assigned
+from `file->ops != NULL && file->ops->poll != NULL`. Kprofile now makes a
+compile-time `uint64` width assertion, labels the value
+`file_poll_capable=%lu`, and prints the new member through an unsigned-long
+cast. A guarded exact-token audit found no stale `file_poll` token in
+kprofile. The retained direct wrapper has no backgrounding or status-masking
+pipeline; it records the raw foreground `cmake --build build-x86_64 --target
+user -j2` exit after completion. Its 220275-byte log ends in the normal
+`build-linux-host-probes: wrote probes` terminal, its receipt records exit 0
+and `stage_result=pass`, and the staged kprofile SHA-256 matches the receipt.
+The kernel and user target evidence is no rootfs evidence: the named fs image
+still has its prior inode/mtime/size/SHA-256, so no fresh image claim is made.
+
+Exact review-start QEMU inventory was total/informational-RISC-V/conflicting
+`0/0/0`; no build process remains and no process was touched. At final plan
+checkpoint an independent `qemu-system-riscv64` was present
+(`1/1/0` total/informational/conflicting) and was only inventoried, never
+touched. **Authorization: exactly one** deterministic no-boot staging sequence, using the pinned
+kernel/user gitlinks and a persisted wrapper that runs `kernel`, then `user`,
+then `rootfs-refresh` synchronously with direct log redirection. It must
+retain its source and argv, each stage's raw exit/start/end/log hash, pre- and
+final exact QEMU inventories, and stop at the first failure. Only after all
+three pass may its named-file image check prove executable
+`/bin/_consolerecord`; no VM, serial, FPS, audio, fullscreen, or default claim
+is authorized. Any failure consumes this proof; a fresh independent review is
+required before another attempt.
