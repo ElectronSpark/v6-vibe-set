@@ -3021,6 +3021,75 @@ proc retain_guest_timeout_control_evidence {
     return [list $evidence_path $snapshot_path $serial_path]
 }
 
+proc guest_timeout_control_paths_validate {paths phase marker raw source} {
+    if {[llength $paths] != 3 ||
+        [llength [lsort -unique $paths]] != 3} {
+        return [list 0 evidence-path-set-invalid]
+    }
+    foreach {kind path} [list evidence [lindex $paths 0] \
+            snapshot [lindex $paths 1] serial [lindex $paths 2]] {
+        if {[catch {file type $path} path_type] || $path_type ne "file"} {
+            return [list 0 "evidence-$kind-type-invalid"]
+        }
+        if {![file readable $path]} {
+            return [list 0 "evidence-$kind-unreadable"]
+        }
+    }
+    if {[file size [lindex $paths 0]] <= 0 ||
+        [file size [lindex $paths 1]] <= 0} {
+        return [list 0 evidence-metadata-empty]
+    }
+    set evidence [read_text [lindex $paths 0]]
+    set snapshot [read_text [lindex $paths 1]]
+    set serial_fh [open [lindex $paths 2] rb]
+    fconfigure $serial_fh -translation binary -encoding binary
+    set serial [read $serial_fh]
+    close $serial_fh
+    set safe_phase $phase
+    regsub -all {[^A-Za-z0-9_.-]} $safe_phase _ safe_phase
+    set raw_hex [binary encode hex $raw]
+    set raw_bytes [expr {[string length $raw_hex] / 2}]
+    set qphase [regex_quote $safe_phase]
+    set qmarker [regex_quote $marker]
+    set qsource [regex_quote $source]
+    if {![regexp -line \
+            "^GUEST_TIMEOUT_CONTROL_EVIDENCE version=1 timestamp=\\S+ phase=$qphase marker=$qmarker source=$qsource raw_bytes=$raw_bytes retained_bytes=$raw_bytes truncated=0$" \
+            $evidence] ||
+        ![regexp -line "^GUEST_TIMEOUT_CONTROL_RAW_HEX $raw_hex$" \
+            $evidence] ||
+        [string first \
+            "EOF_CONTROL_PRE_CLEANUP_SNAPSHOT_BEGIN\n${snapshot}EOF_CONTROL_PRE_CLEANUP_SNAPSHOT_END\n" \
+            $evidence] < 0} {
+        return [list 0 evidence-content-invalid]
+    }
+    if {$serial ne $raw} {
+        return [list 0 evidence-serial-drift]
+    }
+    return [list 1 pass]
+}
+
+proc guest_timeout_control_return {
+    phase marker raw paths retention_error {source guest_cmd_timeout}
+} {
+    if {$retention_error ne ""} {
+        return [list EVIDENCE_FAILED $raw \
+            guest-control-evidence-persistence-failed $marker $paths \
+            "evidence-write-failed-$retention_error"]
+    }
+    if {[catch {set validated [guest_timeout_control_paths_validate \
+            $paths $phase $marker $raw $source]} validation_error]} {
+        return [list EVIDENCE_FAILED $raw \
+            guest-control-evidence-persistence-failed $marker $paths \
+            "evidence-validation-failed-$validation_error"]
+    }
+    if {![lindex $validated 0]} {
+        return [list EVIDENCE_FAILED $raw \
+            guest-control-evidence-persistence-failed $marker $paths \
+            [lindex $validated 1]]
+    }
+    return [list TIMEOUT $raw guest-control-timeout $marker $paths]
+}
+
 set existing [exact_qemu_lines]
 if {$existing ne ""} {
     af $statusf "[iso_now] ABORT exact-qemu-preflight=$existing"
@@ -4358,14 +4427,19 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
             set timeout $old_timeout
             set timeout_raw [expr {[info exists expect_out(buffer)] ? $expect_out(buffer) : ""}]
             set timeout_paths {}
-            if {[catch {set timeout_paths [retain_guest_timeout_control_evidence \
+            set timeout_evidence_error ""
+            set timeout_evidence_status [catch {
+                set timeout_paths [retain_guest_timeout_control_evidence \
                     $label $marker $timeout_raw guest_cmd_timeout 1]} \
-                    timeout_evidence_error]} {
+                    timeout_evidence_message]
+            if {$timeout_evidence_status} {
+                set timeout_evidence_error $timeout_evidence_message
                 catch {af $::statusf "[iso_now] guest-timeout-control-evidence-write-failed phase=$label marker=$marker error=$timeout_evidence_error"}
             }
+            set timeout_result [guest_timeout_control_return $label $marker \
+                $timeout_raw $timeout_paths $timeout_evidence_error]
             if {$return_timeout} {
-                return [list TIMEOUT $timeout_raw guest-control-timeout $marker \
-                    $timeout_paths]
+                return $timeout_result
             }
             fail_timeout $label
         }
@@ -6665,8 +6739,7 @@ proc render_start_receipt_prompt_authenticate {raw allow_interrupt_prefix} {
         if {$prefix ne ""} { return [list 0 prompt-wire-contaminated] }
         return [list 1 exact-fresh-prompt]
     }
-    if {$prefix eq "" ||
-        [string match "*^C\r\n" $prefix] ||
+    if {[string match "*^C\r\n" $prefix] ||
         [string match "*^C\r\r\n" $prefix]} {
         return [list 1 exact-fresh-prompt-after-interrupt]
     }
@@ -6730,6 +6803,11 @@ proc render_start_receipt_guest_cmd {command label} {
         }
         set result [guest_cmd $command $phase 45 0 0 1000 \
             $expected_marker 0 1]
+        if {[lindex $result 0] eq "EVIDENCE_FAILED"} {
+            return [list GUEST_CONTROL_STALL [lindex $result 1] \
+                guest-control-stall-evidence-persistence-failed \
+                [lindex $result 3] $result]
+        }
         if {[lindex $result 0] ne "TIMEOUT"} { return $result }
         if {$attempt == 1} { set first_timeout $result }
     }
@@ -10431,7 +10509,9 @@ cat /host-gui-wayland-chromium.log
         $fatal_timeout_retain_index >= 0 &&
         $fatal_timeout_return_index > $fatal_timeout_retain_index &&
         $fatal_timeout_finish_index > $fatal_timeout_return_index &&
-        [string first {return [list TIMEOUT $timeout_raw guest-control-timeout $marker} \
+        [string first {guest_timeout_control_return $label $marker} \
+            $guest_cmd_body] >= 0 &&
+        [string first {return $timeout_result} \
             $guest_cmd_body] >= 0 &&
         [string first {finish $code "FAIL timeout phase=$phase crash_grep=clean"} \
             $fail_timeout_body] >= 0}]
@@ -10583,11 +10663,38 @@ cat /host-gui-wayland-chromium.log
         [string first {render_start_receipt_parse} \
             $static_timeout_retain_body] < 0
     }]
+    set static_timeout_validated [guest_timeout_control_paths_validate \
+        $static_timeout_paths $static_timeout_phase $static_timeout_marker \
+        $static_timeout_raw guest_cmd_timeout]
+    set static_timeout_missing_paths [lreplace $static_timeout_paths 1 1 \
+        "$outdir/guest-timeout-static-missing"]
+    set static_timeout_missing [guest_timeout_control_return \
+        $static_timeout_phase $static_timeout_marker $static_timeout_raw \
+        $static_timeout_missing_paths ""]
+    set static_timeout_type_dir "$outdir/guest-timeout-static-type-dir"
+    file mkdir $static_timeout_type_dir
+    set static_timeout_type_paths [lreplace $static_timeout_paths 2 2 \
+        $static_timeout_type_dir]
+    set static_timeout_type [guest_timeout_control_return \
+        $static_timeout_phase $static_timeout_marker $static_timeout_raw \
+        $static_timeout_type_paths ""]
+    set static_timeout_write_failed [guest_timeout_control_return \
+        $static_timeout_phase $static_timeout_marker $static_timeout_raw {} \
+        synthetic-write-failure]
+    set static_timeout_fail_closed [expr {
+        [lindex $static_timeout_validated 0] &&
+        [lindex $static_timeout_missing 0] eq "EVIDENCE_FAILED" &&
+        [lindex $static_timeout_missing 2] eq
+            "guest-control-evidence-persistence-failed" &&
+        [lindex $static_timeout_type 0] eq "EVIDENCE_FAILED" &&
+        [lindex $static_timeout_write_failed 0] eq "EVIDENCE_FAILED"
+    }]
     set eof_control_raw_cap $static_eof_cap_saved
     foreach static_eof_paths [list $static_eof_partial_paths $static_eof_helper_paths \
             $static_eof_over_paths $static_timeout_paths] {
         foreach static_eof_path $static_eof_paths { catch {file delete -force $static_eof_path} }
     }
+    catch {file delete -force $static_timeout_type_dir}
     if {![lindex $valid_frame_parse 0] ||
         [lindex $valid_frame_parse 2] ne "73" ||
         ![lindex $expect_frame_parse 0] ||
@@ -10625,8 +10732,8 @@ cat /host-gui-wayland-chromium.log
         $static_timeout_retained_bytes != [string length $static_timeout_raw] ||
         !$static_timeout_hex_ok || $static_timeout_snapshot ne $static_eof_snapshot ||
         $static_timeout_serial ne $static_timeout_raw || !$static_timeout_order_ok ||
-        !$static_timeout_no_credit} {
-        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse newline=$newline_frames three_cr=$three_cr_parse missing_newline=$missing_newline_parse wrong_nonce=$wrong_nonce_parse spoof=$spoof_parse unknown_spoof=$unknown_spoof_parse retained=$retained_fence_results fatal_timeout=$fatal_timeout_contract conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame eof_partial=$static_eof_partial_meta,$static_eof_partial_raw_bytes,$static_eof_partial_retained_bytes,$static_eof_partial_truncated,$static_eof_partial_hex_ok eof_helper=$static_eof_helper_decode_ok eof_over=$static_eof_over_meta,$static_eof_over_raw_bytes,$static_eof_over_retained_bytes,$static_eof_over_truncated,$static_eof_over_decode_ok eof_order=$static_eof_order_ok eof_no_credit=$static_eof_no_credit timeout=$static_timeout_meta,$static_timeout_raw_bytes,$static_timeout_retained_bytes,$static_timeout_hex_ok,$static_timeout_order_ok,$static_timeout_no_credit"
+        !$static_timeout_no_credit || !$static_timeout_fail_closed} {
+        fail_preflight "static-check-guest-command-frame valid=$valid_frame_parse expect=$expect_frame_parse newline=$newline_frames three_cr=$three_cr_parse missing_newline=$missing_newline_parse wrong_nonce=$wrong_nonce_parse spoof=$spoof_parse unknown_spoof=$unknown_spoof_parse retained=$retained_fence_results fatal_timeout=$fatal_timeout_contract conflict=$conflict_frame conflict_expect=$conflict_expect_frame duplicate=$duplicate_frame missing_fence=$missing_fence_frame missing_rc=$missing_rc_frame reversed=$reversed_frame duplicate_fence=$duplicate_fence_frame unknown=$unknown_frame eof_partial=$static_eof_partial_meta,$static_eof_partial_raw_bytes,$static_eof_partial_retained_bytes,$static_eof_partial_truncated,$static_eof_partial_hex_ok eof_helper=$static_eof_helper_decode_ok eof_over=$static_eof_over_meta,$static_eof_over_raw_bytes,$static_eof_over_retained_bytes,$static_eof_over_truncated,$static_eof_over_decode_ok eof_order=$static_eof_order_ok eof_no_credit=$static_eof_no_credit timeout=$static_timeout_meta,$static_timeout_raw_bytes,$static_timeout_retained_bytes,$static_timeout_hex_ok,$static_timeout_order_ok,$static_timeout_no_credit,$static_timeout_fail_closed"
     }
 
     # Exact relevant t2 rows from completed C1.  FB_GPU_GET_STATS is one locked
@@ -12647,7 +12754,10 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [render_start_receipt_prompt_authenticate \
             "partial-command^C\r\r\n$static_c6_prompt" 1] \
         [render_start_receipt_prompt_authenticate \
-            "partial-command$static_c6_prompt" 1]]
+            "partial-command$static_c6_prompt" 1] \
+        [render_start_receipt_prompt_authenticate $static_c6_prompt 1] \
+        [render_start_receipt_prompt_authenticate \
+            "$static_c6_prompt^C\r\n$static_c6_prompt" 1]]
     set static_c6_prompt_auth_ok [expr {
         [lindex [lindex $static_c6_prompt_auth_matrix 0] 0] &&
         ![lindex [lindex $static_c6_prompt_auth_matrix 1] 0] &&
@@ -12655,11 +12765,18 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         ![lindex [lindex $static_c6_prompt_auth_matrix 3] 0] &&
         [lindex [lindex $static_c6_prompt_auth_matrix 4] 0] &&
         [lindex [lindex $static_c6_prompt_auth_matrix 5] 0] &&
-        ![lindex [lindex $static_c6_prompt_auth_matrix 6] 0]
+        ![lindex [lindex $static_c6_prompt_auth_matrix 6] 0] &&
+        ![lindex [lindex $static_c6_prompt_auth_matrix 7] 0] &&
+        ![lindex [lindex $static_c6_prompt_auth_matrix 8] 0]
     }]
     proc static_c6_control_source_contract {
-        wrapper wait_prompt prompt_wire probe guest evidence
+        wrapper wait_prompt prompt_wire prompt_auth probe guest evidence \
+        validation disposition
     } {
+        set evidence_failure_index [string first \
+            {if {[lindex $result 0] eq "EVIDENCE_FAILED"}} $wrapper]
+        set timeout_index [string first \
+            {if {[lindex $result 0] ne "TIMEOUT"}} $wrapper]
         return [expr {
             [string first {for {set attempt 1} {$attempt <= 2} {incr attempt}} \
                 $wrapper] >= 0 &&
@@ -12670,15 +12787,33 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
             [regexp -all {guest_cmd} $wrapper] == 2 &&
             [string first {first_timeout} $wrapper] >= 0 &&
             [string first {guest-control-stall-timeout-after-retry} $wrapper] >= 0 &&
+            $evidence_failure_index >= 0 &&
+            $timeout_index > $evidence_failure_index &&
+            [string first {guest-control-stall-evidence-persistence-failed} \
+                $wrapper] >= 0 &&
             [string first {-exact $prompt} $wait_prompt] >= 0 &&
             [string first {render_start_receipt_prompt_authenticate} $wait_prompt] >= 0 &&
             [string first {1b5b3f3230303468726f6f743a2f232007} $prompt_wire] >= 0 &&
+            [string first {set prompt_at [string first $prompt $raw]} \
+                $prompt_auth] >= 0 &&
+            [string first {$prefix eq "" ||} $prompt_auth] < 0 &&
+            [string first {"*^C\r\n" $prefix} $prompt_auth] >= 0 &&
+            [string first {"*^C\r\r\n" $prefix} $prompt_auth] >= 0 &&
             [string first {render_start_receipt_guest_cmd} $probe] >= 0 &&
             [string first {finish 8 "FAIL guest-control-stall} $probe] >= 0 &&
             [string first {retain_guest_timeout_control_evidence} $guest] >= 0 &&
-            [string first {return [list TIMEOUT} $guest] >= 0 &&
+            [string first {guest_timeout_control_return $label $marker} \
+                $guest] >= 0 &&
             [string first {binary encode hex $raw} $evidence] >= 0 &&
             [string first {truncated=0} $evidence] >= 0 &&
+            [string first {file type $path} $validation] >= 0 &&
+            [string first {$path_type ne "file"} $validation] >= 0 &&
+            [string first {$serial ne $raw} $validation] >= 0 &&
+            [string first {evidence-content-invalid} $validation] >= 0 &&
+            [string first {guest_timeout_control_paths_validate} \
+                $disposition] >= 0 &&
+            [string first {return [list EVIDENCE_FAILED} $disposition] >= 0 &&
+            [string first {return [list TIMEOUT} $disposition] >= 0 &&
             [string first {runlog} $wrapper] < 0 &&
             [string first {read_text} $wrapper] < 0 &&
             [string first {render_start_receipt_parse} $wrapper] < 0 &&
@@ -12688,45 +12823,104 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     set static_c6_wrapper_body [info body render_start_receipt_guest_cmd]
     set static_c6_wait_body [info body render_start_receipt_wait_fresh_prompt]
     set static_c6_prompt_body [info body render_start_receipt_prompt_wire]
+    set static_c6_prompt_auth_body \
+        [info body render_start_receipt_prompt_authenticate]
     set static_c6_guest_body [info body guest_cmd]
     set static_c6_evidence_body \
         [info body guest_timeout_control_evidence_text]
+    set static_c6_validation_body \
+        [info body guest_timeout_control_paths_validate]
+    set static_c6_disposition_body [info body guest_timeout_control_return]
     set static_c6_source_contract [static_c6_control_source_contract \
         $static_c6_wrapper_body $static_c6_wait_body $static_c6_prompt_body \
-        $static_render_receipt_body $static_c6_guest_body \
-        $static_c6_evidence_body]
-    set static_c6_mutations [list \
-        [string map [list {$attempt <= 2} {$attempt <= 3}] \
-            $static_c6_wrapper_body] \
-        [string map [list {45 0 0 1000} {20 0 0 1000}] \
-            $static_c6_wrapper_body] \
-        [string map [list {$expected_marker 0 1} {$expected_marker 0 0}] \
-            $static_c6_wrapper_body] \
-        [string map [list {if {$attempt == 2} { send "\003" }} \
-            {if {$attempt == 2} { set reset_skipped 1 }}] \
-            $static_c6_wrapper_body] \
-        [string map [list {-exact $prompt} {-re $prompt}] \
-            $static_c6_wait_body] \
-        [string map [list {render_start_receipt_guest_cmd} {guest_cmd}] \
-            $static_render_receipt_body]]
+        $static_c6_prompt_auth_body $static_render_receipt_body \
+        $static_c6_guest_body $static_c6_evidence_body \
+        $static_c6_validation_body $static_c6_disposition_body]
+    set static_c6_sources [dict create \
+        wrapper $static_c6_wrapper_body wait $static_c6_wait_body \
+        prompt $static_c6_prompt_body auth $static_c6_prompt_auth_body \
+        probe $static_render_receipt_body guest $static_c6_guest_body \
+        evidence $static_c6_evidence_body validation $static_c6_validation_body \
+        disposition $static_c6_disposition_body]
     set static_c6_mutation_rejects 1
-    foreach {mutation wrapper wait_prompt probe} [list \
-            retry-count [lindex $static_c6_mutations 0] \
-                $static_c6_wait_body $static_render_receipt_body \
-            timeout-budget [lindex $static_c6_mutations 1] \
-                $static_c6_wait_body $static_render_receipt_body \
-            timeout-return [lindex $static_c6_mutations 2] \
-                $static_c6_wait_body $static_render_receipt_body \
-            retry-reset [lindex $static_c6_mutations 3] \
-                $static_c6_wait_body $static_render_receipt_body \
-            prompt-regex $static_c6_wrapper_body \
-                [lindex $static_c6_mutations 4] $static_render_receipt_body \
-            direct-guest-route $static_c6_wrapper_body \
-                $static_c6_wait_body [lindex $static_c6_mutations 5]] {
-        if {[static_c6_control_source_contract $wrapper $wait_prompt \
-                $static_c6_prompt_body $probe $static_c6_guest_body \
-                $static_c6_evidence_body]} {
+    foreach {mutation field from to} [list \
+            retry-count wrapper {$attempt <= 2} {$attempt <= 3} \
+            timeout-budget wrapper {45 0 0 1000} {20 0 0 1000} \
+            timeout-return wrapper {$expected_marker 0 1} {$expected_marker 0 0} \
+            retry-reset wrapper {if {$attempt == 2} { send "\003" }} \
+                {if {$attempt == 2} { set reset_skipped 1 }} \
+            evidence-failure wrapper {eq "EVIDENCE_FAILED"} {eq "EVIDENCE_IGNORED"} \
+            prompt-regex wait {-exact $prompt} {-re $prompt} \
+            stale-bare-prompt auth {[string match "*^C\r\n" $prefix] ||} \
+                {$prefix eq "" || [string match "*^C\r\n" $prefix] ||} \
+            stale-pre-ctrlc auth {set prompt_at [string first $prompt $raw]} \
+                {set prompt_at [string last $prompt $raw]} \
+            guest-no-validation guest {guest_timeout_control_return $label $marker} \
+                {guest_timeout_control_unverified $label $marker} \
+            path-type validation {$path_type ne "file"} {$path_type eq "directory"} \
+            disposition-no-validation disposition \
+                {guest_timeout_control_paths_validate} \
+                {guest_timeout_control_paths_assume} \
+            direct-guest-route probe {render_start_receipt_guest_cmd} {guest_cmd}] {
+        set candidate $static_c6_sources
+        dict set candidate $field [string map [list $from $to] \
+            [dict get $candidate $field]]
+        if {[static_c6_control_source_contract \
+                [dict get $candidate wrapper] [dict get $candidate wait] \
+                [dict get $candidate prompt] [dict get $candidate auth] \
+                [dict get $candidate probe] [dict get $candidate guest] \
+                [dict get $candidate evidence] [dict get $candidate validation] \
+                [dict get $candidate disposition]]} {
             set static_c6_mutation_rejects 0
+        }
+    }
+
+    # Exercise the wrapper itself with both retention-write failure and a
+    # missing-path validation failure.  Neither may reach Ctrl-C or attempt 2.
+    set static_c6_runtime_records {}
+    rename guest_cmd static_c6_saved_guest_cmd
+    rename render_start_receipt_wait_fresh_prompt static_c6_saved_wait_prompt
+    rename send static_c6_saved_send
+    proc guest_cmd args {
+        incr ::static_c6_runtime_guest_calls
+        return $::static_c6_runtime_guest_result
+    }
+    proc render_start_receipt_wait_fresh_prompt args {
+        incr ::static_c6_runtime_prompt_calls
+        return [list 1 [render_start_receipt_prompt_wire] exact-fresh-prompt]
+    }
+    proc send args { incr ::static_c6_runtime_send_calls }
+    foreach {case_name guest_result} [list \
+            write-failure $static_timeout_write_failed \
+            missing-path $static_timeout_missing] {
+        set ::static_c6_runtime_guest_calls 0
+        set ::static_c6_runtime_prompt_calls 0
+        set ::static_c6_runtime_send_calls 0
+        set ::static_c6_runtime_guest_result $guest_result
+        set case_rc [catch {render_start_receipt_guest_cmd \
+            true "static-c6-$case_name"} case_result]
+        lappend static_c6_runtime_records [list $case_rc $case_result \
+            $::static_c6_runtime_guest_calls $::static_c6_runtime_prompt_calls \
+            $::static_c6_runtime_send_calls]
+    }
+    rename guest_cmd {}
+    rename static_c6_saved_guest_cmd guest_cmd
+    rename render_start_receipt_wait_fresh_prompt {}
+    rename static_c6_saved_wait_prompt render_start_receipt_wait_fresh_prompt
+    rename send {}
+    rename static_c6_saved_send send
+    unset ::static_c6_runtime_guest_result ::static_c6_runtime_guest_calls \
+        ::static_c6_runtime_prompt_calls ::static_c6_runtime_send_calls
+    set static_c6_runtime_fail_closed 1
+    foreach runtime_record $static_c6_runtime_records {
+        if {[lindex $runtime_record 0] != 0 ||
+            [lindex [lindex $runtime_record 1] 0] ne "GUEST_CONTROL_STALL" ||
+            [lindex [lindex $runtime_record 1] 2] ne
+                "guest-control-stall-evidence-persistence-failed" ||
+            [lindex $runtime_record 2] != 1 ||
+            [lindex $runtime_record 3] != 1 ||
+            [lindex $runtime_record 4] != 0} {
+            set static_c6_runtime_fail_closed 0
         }
     }
     rename static_c6_control_source_contract {}
@@ -13599,13 +13793,13 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         !$static_render_sequence_good || $static_render_sequence_bad ||
         $static_render_threshold_edges ne {0 0 1} || !$static_render_threshold_source ||
         !$static_c6_prompt_auth_ok || !$static_c6_source_contract ||
-        !$static_c6_mutation_rejects ||
+        !$static_c6_mutation_rejects || !$static_c6_runtime_fail_closed ||
         !$static_render_v3_isolation || $static_render_diag0_dispatch != 0 ||
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
-        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged c6_control=$static_c6_prompt_auth_ok,$static_c6_source_contract,$static_c6_mutation_rejects source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
+        fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged c6_control=$static_c6_prompt_auth_ok,$static_c6_source_contract,$static_c6_mutation_rejects,$static_c6_runtime_fail_closed source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
     puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup atomic_outer_terminal=$static_c1_atomic_source_contract owned_echo_format_placeholder=PASS standalone_onechar_foreign=REJECT contaminated_onechar_foreign=REJECT contaminated_multichar_foreign=REJECT two_acquisitions=1 per_record_drain_ms=0 timeout_37_pass_36_fail=$static_fb_live_37_pass,$static_fb_live_36_fail timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
-    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c6_exact_fresh_prompt_timeout_full_raw_owned_snapshot_serial_retry_once_fresh_marker_45s=PASS c6_prompt_timeout_auth_mutations=REJECT c6_guest_control_stall_explicit=PASS c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_producer_boot_none_boot_only_ready_selector_pending_no_player_observation_pending_stalled_progress=PASS c8_producer_stage_forged_missing_duplicate_reordered_early_wrong_nonce_malformed_arm=REJECT c8_producer_stage_source_order_once_no_url_data=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS producer_stage_no_classifier_or_threshold_admission=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
+    puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c6_exact_fresh_prompt_timeout_full_raw_owned_snapshot_serial_retry_once_fresh_marker_45s=PASS c6_stale_bare_prompt_stale_pre_ctrlc_prompt=REJECT c6_evidence_write_missing_type_failure_no_retry=PASS c6_prompt_timeout_auth_evidence_mutations=REJECT c6_guest_control_stall_explicit=PASS c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_producer_boot_none_boot_only_ready_selector_pending_no_player_observation_pending_stalled_progress=PASS c8_producer_stage_forged_missing_duplicate_reordered_early_wrong_nonce_malformed_arm=REJECT c8_producer_stage_source_order_once_no_url_data=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS producer_stage_no_classifier_or_threshold_admission=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
     puts "YT-PRODUCER-STAGE-STATIC-PASS boot_before_guard_nonce=PASS ready_after_library_nonce_before_selector=PASS once_no_url_data=PASS none_boot_only_ready_pending_no_player_stalled_progress=PASS coalesced=PASS forged_missing_duplicate_reordered_early_wrong_nonce_foreign_extension_malformed=REJECT transport_truncated=REJECT no_classifier_threshold_credit=PASS manifest_sha_key_match_world_run_at=$static_manifest_sha"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
