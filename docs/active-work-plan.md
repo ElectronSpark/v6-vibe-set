@@ -5055,3 +5055,36 @@ a fresh exact conflict-free QEMU inventory; it does not authorize VM launch.
 Informational RISC-V QEMU must remain untouched and any conflicting QEMU is an
 immediate fail. No YouTube, HD720/fullscreen, audio, `yt-presentfps`,
 `PERF-VIDEO`, performance, or default credit is created.
+
+**Fresh atomic-batch A1 conductor gate — PASS / ONE WINDOWED TRIAL ONLY /
+NO-BOOT (2026-07-13):** at explicit `-ff` checkpoint
+`4e177872700c3373344ff0c54bd046b5b333fa0f`, exactly equal to approved
+`origin/codex/host-linux-abi-shell-port-ff`, source and reviewed-plan ancestry
+remain docs-only after the atomic-batch code. Kernel/user/ports heads, remotes,
+gitlinks, recursive nested cleanliness, and preserved KDE-only dirt passed.
+KVM read/write, WSL DXG/D3D12/GL, X11/Wayland sockets, kernel
+`3bde70e3...acd7`, staged recorder `0755/29616/6f610bf2...cfa6`, refreshed
+image `0644/73499/8724152320/1783915669/e35c9fd9...9e27`, image-console hash
+equality, underscore-path absence, and all three media extracts revalidated
+against the PASS receipt. No other VM worker was active; the still-live staging
+lane explicitly confirmed no executing command, VM authority, or owned QEMU.
+
+Exact all-architecture start inventory was total/informational-RISC-V/
+conflicting `0/0/0`. One foreground `sleep 60` ran from `04:23:38Z` to
+`04:24:38Z`, synchronously reaped through its exact handle with no polling;
+the immediate end inventory and full prelaunch audit passed at `0/0/0`.
+Evidence is `/tmp/xv6-a1-passive-gate-atomic-20260713T042156Z`.
+
+Prior token `A1-WINDOWED-f64ce414-20260713T024615Z-Q0` remains consumed and
+must never be reused. New token
+`A1-WINDOWED-ATOMIC-4e177872-20260713T042524Z-Q0` authorizes exactly one later
+**windowed** real-x86 KVM+virgl A1 trial on this named branch, including this
+docs-only gate-record descendant: MP1, audio-disable `1`, media `1`,
+forced-HD720 `1`, capturediag `0`, EGL `0`, not fullscreen, standard 60-second
+measurement, and `QEMU_AUDIO=none`. The VM worker must immediately recheck
+branch/prerequisites and exact all-arch QEMU conflicts, own and synchronously
+reap its QEMU group, and retain a final exact zero-conflict inventory;
+informational RISC-V remains report-only and untouched. Any drift, missing
+endpoint, conflict, or handle loss fails without launch authority. This gate
+launched no VM and grants no performance, audio-on, fullscreen, or default
+credit.
