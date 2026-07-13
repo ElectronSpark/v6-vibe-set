@@ -6460,3 +6460,44 @@ C1 opt-in static check both exited `0`; both emitted
 The preserved KDE smoke-file modification remains the only tracked local
 dirt; `.claude/settings.local.json` remains untouched.  No guest binary,
 rootfs, image, or VM retry is authorized by this closure.
+
+**Windowed GUI performance measurement — SOURCE STALL / DIAGNOSTIC ONLY
+(2026-07-13):** the measurement path required four narrowly scoped repairs
+before it could reach a complete normal media capture.  Kernel commit
+`9164060243b03ffe6af1e724b1b82ceed3a07daf` (top gitlink commit
+`4f10fc0198c061aefd87e7552848af0fdf6db58a`) preserves the VFS/umask-selected
+tmpfs regular-file mode instead of overwriting private `0600` files with
+`0644`.  Driver commits `c7138799cfa4d094c2a9cf6a04ee1ecadcc2044f`,
+`0acee9c67beb189f7f3f27060e1749b82a994792`, and
+`ff0d94a8970f63a3e10fd448b837e1a6b710a122` respectively exclude only the
+owned `%s:RC` command-echo lookalike, remove unsound cross-stage VPQ-versus-
+rVFC rejection while retaining each stream's internal fail-closed checks,
+and execute both post-capture count branches through valid Tcl.  Kernel build
+and Sparse receipts and all canonical/forced-HD720 static suites passed;
+each runtime authorization followed a fresh independent review and passive
+60-second exact-zero-QEMU gate.
+
+The final one-shot normal windowed run is
+`/tmp/xv6-gui-perf-final-20260713T4S8s74h4`.  It used real KVM, NVIDIA WSL
+D3D12-backed virgl/OpenGL submit, MP1, audio-disable1, forced HD720, one vCPU,
+8 GiB, and windowed GTK.  It stabilized at selected `hd720` and 1280x720,
+completed one fast 30-row capture, synchronously reaped its owned QEMU leader,
+and left the final all-architecture QEMU inventory at zero.  The terminal is
+nevertheless `DIAGNOSTIC-ONLY source=UNPROVEN no_fps_claim=1
+reason=playback-not-active`; there are no formal `yt-presentfps` window A/B
+rows, `PERF-VIDEO`, or timed performance screenshots, so N remains zero and
+no FPS/performance credit is granted.
+
+The strongest honest diagnostic is rVFC presented `111 -> 669` (+558) over
+media time `4.116 -> 18.933` (+14.817 s), approximately 37.66 presented-frame
+increments per media second.  VPQ advanced `336 -> 1221` (+885) with
+`184 -> 636` drops (+452, 51.07%); 433 non-dropped frames are approximately
+29.22 per media second.  Median rVFC interval was 17 ms and 181/296 intervals
+(61.15%) were near 60 Hz.  This does not describe a sustained 60-second
+window: over the final approximately 7.108 wall seconds, `currentTime`
+advanced only `20.223 -> 20.239`, rVFC callbacks/presented/media were flat,
+and 78 of 84 additional VPQ frames were dropped.  Independent audit therefore
+classifies the outcome as a real playback/source-liveness stall, not another
+validator defect.  Diagnostic `pre` and `mediaProbe` images exist, but formal
+`steady0`/`windowA`/`windowB` artifacts do not.  The preserved KDE and
+`.claude` state remains unchanged.
