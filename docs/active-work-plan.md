@@ -5511,3 +5511,51 @@ inventory; informational RISC-V remains report-only and untouched. Any drift,
 missing endpoint, conflict, or handle loss fails without launch authority.
 This gate launched no VM and grants no performance, audio-on, fullscreen, or
 default credit.
+
+**Producer-stage A1 windowed token consumption — INVALID / PREFLIGHT-ONLY /
+NO-BOOT / NO-RETRY (2026-07-13):** token
+`A1-WINDOWED-PRODUCER-f6c91315-20260713T060441Z-Q0` was consumed exactly once
+at docs-only descendant `e05699571b1721d3b8111eaa461b8e7206db2b3c`.
+Immediately before invocation, live HEAD, the local explicit origin ref, and
+the advertised approved full ref were exact at that commit; `f6c91315` was
+its ancestor and the only gate-to-HEAD path was this plan. Kernel/user/ports
+gitlinks, local heads, approved advertised refs, and nested cleanliness were
+exact, while the sole top-level dirt remained the preserved KDE-smoke expect
+file. KVM/DXG read/write access, D3D12/GL/EGL endpoints, X11/Wayland sockets,
+the pinned x86 kernel, staged atomic recorder, stable current image, new
+probe/library/manifest, read-only named image extracts, and static producer/
+render/route terminals passed. The immediate exact `/proc/*/exe` QEMU count
+was zero. No build, rootfs refresh, image write, source/KDE edit, or RISC-V
+action occurred.
+
+The sole foreground invocation requested the canonical MP1,
+audio-disable-1, media-1, forced-HD720-1, capturediag-0, EGL-0, windowed
+60-second, 8-GiB, `QEMU_AUDIO=none` arm. Its host shell opened
+`$YT_OUTDIR/driver.log` through `tee` before Expect entered the harness,
+violating the harness's required-empty output-directory contract. Expect
+therefore terminated raw exit `2` with
+`YT-PRESENTFPS-PREFLIGHT-FAIL run-directory-not-empty`; no QEMU was spawned,
+no boot or serial command occurred, and no second invocation or retry was
+made. The immediate exact final QEMU count was zero.
+
+Evidence is retained at
+`/tmp/xv6-a1-windowed-producer-live-20260713T061514Z-3388722`. Its sole file
+is private regular link-one `driver.log`, mode/size/SHA-256
+`0600/118/2ba78bd2ffc2d21d9de4a8239b9b4cad7db974fed2c910bd5ac2df1f1f09e6fa`.
+No C1/C6/C7/C8, source, console, role, flip, `yt-presentfps`, `PERF-VIDEO`,
+force-ready/player/progress, HD720, or media-window artifact was emitted.
+Observed authenticated `producer_boot`/`producer_ready` counts are `0/0`
+only because execution never reached the guest; order, nonce classes, player,
+progress, live roles, flips, C6 threshold, HD720, media-window, FPS, and
+performance dispositions are all `N`/`UNEXECUTED`, not successful absence.
+The trial disposition is `INVALID`, semantic/FPS result is `NULL`, sample
+count is `N`, and diagnostic/static stages grant no runtime credit.
+
+**Concrete next implementation decision:** harden the conductor launch
+template so external stdout capture is opened only at a sibling path such as
+`${YT_OUTDIR}.driver.log` (or after the harness has created its own artifacts),
+with an explicit empty-directory assertion immediately before invoking
+Expect. Do not change kernel, guest probe, C8 authentication, or C6 admission
+from this invalid preflight-only result. That decision is recorded only; it
+is not implemented here, and a new independently authorized token is required
+before any further VM trial.
