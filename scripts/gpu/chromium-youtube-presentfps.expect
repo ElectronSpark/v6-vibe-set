@@ -996,12 +996,52 @@ proc c1_terminal_reducer_parse {text marker} {
     set last [expr {[llength $lines] - 1}]
     set reducer_rows {}
     set fallback_rows {}
+    # The serial console may coalesce its literal bracketed-paste-disable
+    # transition with the first reducer row.  Accept that exact transition
+    # once, and only when it is the prefix of the candidate row itself.  Keep
+    # the raw record index for row-count/adjacency checks; unrelated terminal
+    # control bytes remain untouched and therefore fail closed below.
+    set bracketed_paste_disable [binary format H* 1b5b3f323030346c0d]
+    set bracketed_paste_tag [binary format H* 1b5b3f323030346c]
+    set bracketed_paste_seen 0
     set index -1
     foreach raw $lines {
         incr index
         set complete [expr {$index != $last}]
-        set line [string trimright $raw "\r"]
-        set cr_count [expr {[string length $raw] - [string length $line]}]
+        set candidate_record $raw
+        set reducer_candidate [expr {
+            [string first "YT_TERM_REDUCER_V1" $raw] >= 0 ||
+            [string first "YT_TERM_REDUCER_FALLBACK" $raw] >= 0}]
+        set bracketed_paste_at [string first $bracketed_paste_tag $raw]
+        if {$bracketed_paste_at >= 0} {
+            if {[string first $bracketed_paste_disable $raw] == 0} {
+                if {!$reducer_candidate} {
+                    return [list 0 "reducer-preamble-placement-$index" \
+                        $terminal_state {}]
+                }
+            } elseif {$reducer_candidate} {
+                return [list 0 "reducer-row-contaminated-$index" \
+                    $terminal_state {}]
+            }
+            if {[string first $bracketed_paste_disable $raw] == 0} {
+                set candidate_record [string range $raw \
+                    [string length $bracketed_paste_disable] end]
+                if {[string first "YT_TERM_REDUCER_V1" $candidate_record] < 0 ||
+                    [string first "YT_TERM_REDUCER_FALLBACK" $candidate_record] >= 0 ||
+                    ![string match "YT_TERM_REDUCER_V1 *" \
+                        [string trimright $candidate_record "\r"]]} {
+                    return [list 0 "reducer-row-contaminated-$index" \
+                        $terminal_state {}]
+                }
+                if {$bracketed_paste_seen} {
+                    return [list 0 "reducer-row-contaminated-$index" \
+                        $terminal_state {}]
+                }
+                set bracketed_paste_seen 1
+            }
+        }
+        set line [string trimright $candidate_record "\r"]
+        set cr_count [expr {[string length $candidate_record] - [string length $line]}]
         set bad_cr [expr {$cr_count > 2 || [string first "\r" $line] >= 0}]
         if {[string first "YT_TERM_REDUCER_FALLBACK" $line] >= 0} {
             lappend fallback_rows $index
@@ -13617,6 +13657,35 @@ exit 0
         $static_c1_reducer_marker 0 A]
     set static_c1_reducer_committed [static_c1_reducer_wire \
         $static_c1_reducer_marker committed 0 A]
+    set static_c1_reducer_bracketed_paste_disable \
+        [binary format H* 1b5b3f323030346c0d]
+    set static_c1_reducer_bracketed_paste_enable \
+        [binary format H* 1b5b3f32303034680d]
+    set static_c1_reducer_prefixed [string map [list \
+        $static_c1_reducer_row \
+        "${static_c1_reducer_bracketed_paste_disable}$static_c1_reducer_row"] \
+        $static_c1_reducer_committed]
+    set static_c1_reducer_prefixed_parsed [c1_terminal_reducer_parse \
+        $static_c1_reducer_prefixed $static_c1_reducer_marker]
+    if {![lindex $static_c1_reducer_prefixed_parsed 0] ||
+        [lindex $static_c1_reducer_prefixed_parsed 2] ne {committed}} {
+        set static_c1_reducer_parser_accepts 0
+        lappend static_c1_reducer_parser_accept_details \
+            "bracketed-paste-prefix:$static_c1_reducer_prefixed_parsed"
+    }
+    set static_c1_reducer_prefixed_absent [string map [list \
+        $static_c1_reducer_row \
+        "${static_c1_reducer_bracketed_paste_disable}$static_c1_reducer_row" \
+        {root:/# } "${static_c1_reducer_bracketed_paste_enable}root:/# "] \
+        [static_c1_reducer_wire $static_c1_reducer_marker absent 2 P]]
+    set static_c1_reducer_prefixed_absent_parsed [c1_terminal_reducer_parse \
+        $static_c1_reducer_prefixed_absent $static_c1_reducer_marker]
+    if {![lindex $static_c1_reducer_prefixed_absent_parsed 0] ||
+        [lindex $static_c1_reducer_prefixed_absent_parsed 2] ne {absent}} {
+        set static_c1_reducer_parser_accepts 0
+        lappend static_c1_reducer_parser_accept_details \
+            "bracketed-paste-prefix-absent:$static_c1_reducer_prefixed_absent_parsed"
+    }
     set static_c1_reducer_adversaries [list \
         [list wrong-marker [string map [list \
             "m=$static_c1_reducer_marker" {m=YTTERMREDUCERREPLAY}] \
@@ -13627,6 +13696,22 @@ exit 0
             $static_c1_reducer_committed]] \
         [list contamination [string map [list $static_c1_reducer_row \
             "noise$static_c1_reducer_row"] $static_c1_reducer_committed]] \
+        [list bracketed-paste-foreign [string map [list \
+            $static_c1_reducer_row \
+            "${static_c1_reducer_bracketed_paste_enable}$static_c1_reducer_row"] \
+            $static_c1_reducer_committed]] \
+        [list bracketed-paste-duplicate [string map [list \
+            $static_c1_reducer_row \
+            "${static_c1_reducer_bracketed_paste_disable}${static_c1_reducer_bracketed_paste_disable}$static_c1_reducer_row"] \
+            $static_c1_reducer_committed]] \
+        [list bracketed-paste-nonrow [string map [list \
+            "$static_c1_reducer_marker:RC:0\n" \
+            "${static_c1_reducer_bracketed_paste_disable}noise\n"] \
+            $static_c1_reducer_committed]] \
+        [list bracketed-paste-row-not-first [string map [list \
+            $static_c1_reducer_row \
+            "noise${static_c1_reducer_bracketed_paste_disable}$static_c1_reducer_row"] \
+            $static_c1_reducer_committed]] \
         [list malformed [string map [list { c=1} {}] \
             $static_c1_reducer_committed]] \
         [list noncanonical [string map [list { l=2} { l=02}] \
@@ -13838,7 +13923,7 @@ exit 0
     }
     catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
+    puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT bracketed_paste_disable_prefix=PASS bracketed_paste_foreign_duplicate_nonrow_nonfirst=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
