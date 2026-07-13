@@ -5336,3 +5336,59 @@ This PASS does not authorize a VM, gate, boot, serial command, performance
 trial, audio/fullscreen/default work, or any YouTube/HD720/`yt-presentfps`/
 `PERF-VIDEO` credit. A fresh independent pre-boot review of the refreshed
 receipt remains mandatory before any later 60-second gate can be formed.
+
+**Producer-stage rootfs refresh and named image proof — PASS / CONSUMED /
+NO-BOOT (2026-07-13):** the one narrow authority from exact plan checkpoint
+`a1813ebec85552546312af0b758cd66a4773be73` was consumed once. Preflight
+proved live HEAD, the local explicit full `-ff` origin ref, and the advertised
+full `-ff` ref all equal that commit on the approved superproject remote.
+Kernel/user/ports heads, approved remotes, and gitlinks remained exact at
+`6d0151648df87b9d30ffd2dbd0aa780f0c111ec1`,
+`a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5`; their worktrees were clean and
+the only top-level dirt was the preserved KDE-smoke file. Exact prebuild QEMU
+inventory was total/informational-RISC-V/conflicting `0/0/0`.
+
+The fresh private retained evidence directory is
+`/tmp/xv6-producer-rootfs-refresh-20260713TpoqPEo`. Its wrapper
+`run-rootfs-refresh.sh` is regular mode `0700`, 7043 bytes, SHA-256
+`57db331b39be3e7f7b82731663a516390d47bd22eed4f316c31f604c547cbc6e`.
+The wrapper retained parent/evidence umask `0077`, private `0600` log and
+receipt files, and invoked exactly once, foreground and synchronously, only
+`cmake --build build-x86_64 --target rootfs-refresh -j2` inside a scoped build
+subshell with recorded umask `0022`. It used direct log redirection, returned
+raw exit zero, and made no retry. `rootfs-refresh.log` is 16678 bytes, SHA-256
+`3dd3b6eafec00fcc723d964af5d356e488d5bb0a0bdf602995cc612554b342de`,
+and terminates with `make-rootfs: wrote ... fs.img`; no kernel, user, or ports
+target, VM, boot, or serial command was run.
+
+Before refresh, the overlay files were regular non-symlinks with exact
+size/SHA: manifest `813/46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22`,
+probe library `4336/2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`,
+and new probe `27488/6abd45c1ddd24c4d09a14426e34b78b54ec9462d0d261321339b3a5b6f824436`.
+Staged atomic `sysroot/bin/_consolerecord` was regular/link-one `0755`, 29616
+bytes, SHA-256
+`6f610bf241c1dd085390858e7cd360955ee187f9bdf350e504df814cab89cfa6`.
+The preimage identity was regular/link-one mode `0644`, inode/size/mtime/SHA
+`73499/8724152320/1783915669/e35c9fd9d18b772933960f29c29bbb242c903c98ce611fdc77fb607467019e27`.
+The successful refresh changed it to stable identity
+`0644/73499/8724152320/1783921588/7b0aed0d710434817ff18a98f2b07ccdc8d47dc65b990ce5b329f50d17d75ddd`;
+two immediate full hashes and the independent post-proof rehash matched with
+unchanged stat identity.
+
+Read-only `debugfs -R` was used only for named stat/dump operations on image
+`/bin/consolerecord` and the three media assets, plus one named stat lookup for
+`/bin/_consolerecord`; no image enumeration or content scan occurred. Image
+`/bin/consolerecord` is regular/link-one `0755`, 29616 bytes, and its retained
+extract hashes exactly to staged SHA `6f610bf2...cfa6`. Manifest, probe-lib,
+and the new probe are regular/link-one `0644`, at exact sizes 813/4336/27488
+and full hashes `46dced0c...3ac22`, `2fde2692...ce137c`, and
+`6abd45c1...24436`. The `/bin/_consolerecord` stat returned raw zero plus the
+exact `File not found by ext2_lookup` diagnostic, proving the intentional
+installed-path absence without treating raw status as lookup success. All
+named stat/dump logs, raw exits, receipt, and extracts remain in the private
+evidence directory. Postbuild and final exact QEMU inventories were both
+`0/0/0`; no process was touched. This PASS establishes only refreshed
+staging/image parity. It grants no pre-boot, gate, VM, YouTube, HD720,
+fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or default
+credit; a fresh independent adversarial pre-boot review remains mandatory.
