@@ -5088,3 +5088,56 @@ informational RISC-V remains report-only and untouched. Any drift, missing
 endpoint, conflict, or handle loss fails without launch authority. This gate
 launched no VM and grants no performance, audio-on, fullscreen, or default
 credit.
+
+**Atomic-batch A1 windowed real-x86 trial — INVALID / TOKEN CONSUMED / NO
+RETRY (2026-07-13):** token
+`A1-WINDOWED-ATOMIC-4e177872-20260713T042524Z-Q0` was consumed exactly once
+from exact docs-only descendant `1e509dad1775aba3e77a15c51be5927aa7a90f60`,
+then equal to approved `origin/codex/host-linux-abi-shell-port-ff`. The final
+prelaunch audit at `04:36:46Z` revalidated the reviewed atomic-batch source and
+ref lineages, approved remotes/gitlinks, recursive nested cleanliness,
+preserved KDE-only dirt, KVM/DXG/D3D12/GL/X11/Wayland prerequisites, and the
+complete refreshed kernel/image/recorder/media proof. Exact all-architecture
+QEMU inventory was `0/0/0`. No source, image, rootfs, or build changed.
+
+Exactly one foreground canonical run started at `04:37:11Z`: real x86 KVM,
+virgl GTK, one CPU, 8 GiB, MP1, audio-disable `1`, media-probe `1`, forced-HD720
+`1`, capturediag `0`, EGL-forensics `0`, `QEMU_AUDIO=none`, and fullscreen and
+zoom-to-fit both off. Run evidence is
+`/tmp/xv6-a1-windowed-atomic-live-20260713T043711Z-3288568`, external driver
+log
+`/tmp/xv6-a1-windowed-atomic-live-20260713T043711Z-3288568.driver.log`, and
+retained scratch image
+`/tmp/xv6-yt-20260713T043711Z-pid3288572-mp1-audio1-media1-hd7201.fs.img`.
+The image media assets passed exact hash matching, Chromium launched on Wayland
+with the media extension and audio-output disable flag, and the URL carried
+both `vq=hd720` and the run nonce. These are configuration facts only, not an
+observed HD720 playback claim.
+
+The run exited raw/result code `8` at `04:46:22Z` with first boundary
+`chromium-render-start-missing`. All five atomic render-start receipts were
+`INCOMPLETE:live-roles-insufficient-flips`. Verified virgl/OpenGL idle
+flips/presents were `3/4`; the five probes were respectively `10/11`, `19/20`,
+`20/21`, `22/23`, and `23/24`, so the maximum flip delta was only `+20`, never
+the required `>+100`. Four complete role censuses retained live browser/GPU/
+utility/network/zygote roles (probe 2's diagnostic census alone was incomplete
+at `census-preamble-placement`), but all five source diagnostics had zero
+nonce-bound rows with force-ready, player, progress, and media time unavailable.
+Thus the standard 60-second A/B/media measurement was never entered:
+`steady0`, `windowA`, `windowB`, `mediaProbe`, media log, actual resolution,
+decoded/dropped frames, window FPS samples, and any visual post-launch window
+proof are absent. Verdict is **INVALID**, FPS aggregate/median/min/max are
+`null`, `N=0`, and `no_fps_claim=1`; no YouTube, HD720, performance, audio,
+fullscreen, or default credit is created.
+
+Cleanup synchronously waited owned leader/process group `3288774`; its only
+remaining member was reaped as a zombie and `cleanup.txt` ends with
+`remaining=none wait=waited:3288774 exp4 0 0`. Immediate independent exact
+post-run inventory was x86/RISC-V/other/conflicting `0/0/0`. There was no
+retry, second launch, unowned termination, or informational-RISC-V action.
+**Next implementation decision:** repair the media-probe extension/content
+injection and nonce-bound source-readiness handshake until force-ready,
+player, and advancing-progress rows are actually produced and the existing
+`idle+100` flip boundary can be satisfied; do not relax that fail-closed
+threshold and do not spend another trial token before a fresh reviewed build,
+image proof, and gate.
