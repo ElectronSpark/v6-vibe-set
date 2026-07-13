@@ -5256,3 +5256,83 @@ dirt is preserved. **Scope:** this checkpoint
 authorizes only the already-required reviewed rootfs refresh, named asset
 parity proof, and independent no-boot review. It does not form a gate or
 authorize a VM launch.
+
+**Producer-stage instrumentation independent adversarial review — PASS /
+ROOTFS-REFRESH-AND-IMAGE-PROOF ONLY / NO-EXEC / NO-BUILD / NO-BOOT
+(2026-07-13):** exact reviewed commit
+`6d12f9509be6289de90dafcede77d765313e3984` equals live HEAD, the local
+explicit `origin/codex/host-linux-abi-shell-port-ff`, and the advertised full
+`-ff` ref on the approved ElectronSpark remote. Kernel/user/ports gitlinks
+remain exact at `6d0151648df87b9d30ffd2dbd0aa780f0c111ec1`,
+`a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5`; their worktrees are clean and
+the sole top-level dirt is the preserved KDE-smoke file. No static rerun,
+helper/parser execution, JS/JSON parser rerun, build, rootfs/image operation,
+VM, boot, serial command, QEMU launch, or RISC-V action occurred.
+
+Direct exact-source audit confirms `producer_boot` is the first executable
+probe statement after strict-mode setup, before both the per-document started
+guard and nonce/arm parse. Its sole literal occurrence is fixed-size schema-1
+data with no nonce, URL, page, or other unbounded field; a repeated injection
+would create a duplicate that C8 rejects rather than credit. `producer_ready`
+has one literal and one call guarded by its once flag; the call is after both
+library and exact canonical nonce/arm rejection paths and before unchanged
+`diagnosticV2ProducerStart()` and player selection. It binds the canonical
+32-lower-hex nonce plus force/capture arm bits and carries no URL. The probe
+diff otherwise only adds these rows/call: existing producer-start, selector,
+force-ready, force-observation, and player timing/semantics are unchanged.
+
+C8 still requires its unique successful outer C8 RC/FENCE, exact nonce/probe
+and C3/C4/C5/C8 bindings, four adjacent BEGIN/META/HEX/END records, canonical
+cursor/payload/cap/truncation equations, lower-hex round trip, and binary
+SHA-256 before derivation. The stage grammar has exact field counts; it
+rejects missing, duplicate, reordered, early, forged, malformed, wrong-nonce,
+wrong-arm, and foreign-extension rows. The fixed-order derive honestly maps
+empty source to no-boot ambiguity, boot alone to boot-only, boot+ready to
+selector pending, then force-ready to no-player/player-ready, and observation
+to pending/stalled/progressing. Truthful over-cap transport remains
+diagnostic-INCOMPLETE before derive. Coalesced authenticated source payloads
+retain separate newline rows and order checks. No stage fact is an input to
+`render_start_receipt_classify`; the unchanged C6 predicate remains presents
+greater than idle and flips strictly greater than `idle+100`. Neither stage
+can grant HD720, semantic, FPS, or performance admission.
+
+The final retained canonical artifact
+`/tmp/xv6-producer-stage-static-20260713T052644Z-3324973` and external log
+`/tmp/xv6-producer-stage-static-20260713T052644Z-3324973.log` genuinely reach
+the dedicated producer-stage, render-receipt, capture-diagnostic/route, and
+overall static PASS terminals with `js_guest_runtime=UNEXECUTED`. Its actual
+generated-C8-helper cases cover progress, no-player, empty, binary, and
+truthful over-cap inputs; actual-wire controls cover LF/CRLF/CRCRLF,
+literal-preamble placement, duplicate/noncontiguous frames, and outer-frame
+failure. The same terminal gates retain C7/C8/diag0/no-credit isolation and
+the exact threshold edges. The first 187-byte attempt
+`/tmp/xv6-producer-stage-static-20260713T052020Z-3317039.log` is only the
+honest `missing close-brace` fixture-construction failure and earns no credit.
+The later foreign-extension expectation mismatch is likewise a retained
+fixture-expectation correction, not a parser PASS; the final expectation matches
+the stricter actual `source-prethreshold-untrusted-marker-envelope` rejection.
+
+Exact committed overlay identities independently match the plan:
+`probe.js` is `27488` bytes / SHA-256
+`6abd45c1ddd24c4d09a14426e34b78b54ec9462d0d261321339b3a5b6f824436`,
+unchanged `probe-lib.js` is `4336` /
+`2fde2692bb276d62b5a3e07a32e9bdf0e6ac70be0b3217bfbc8d8dd912ce137c`,
+and unchanged valid manifest JSON is `813` /
+`46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22`.
+The canonical static gate hard-locks that manifest hash plus the exact key,
+YouTube match, ordered library/probe scripts, MAIN world, and document-idle
+contract. The plan's recorded Chromium-JS/Ruby-JSON parse successes have no
+separate named output file, so this review relies on the exact committed-byte
+syntax/source audit rather than granting an additional execution claim; no
+syntax or reachability defect was found. The new probe hash is not yet a
+staged/image fact, so no current image/asset parity is claimed.
+
+Exact review-start and final all-architecture QEMU inventories were both
+total/informational-RISC-V/conflicting `0/0/0`; no process was touched.
+**Authorization:** one narrow reviewed rootfs refresh followed by regular
+non-symlink staged/image asset size+SHA parity and stable-image proof only.
+This PASS does not authorize a VM, gate, boot, serial command, performance
+trial, audio/fullscreen/default work, or any YouTube/HD720/`yt-presentfps`/
+`PERF-VIDEO` credit. A fresh independent pre-boot review of the refreshed
+receipt remains mandatory before any later 60-second gate can be formed.
