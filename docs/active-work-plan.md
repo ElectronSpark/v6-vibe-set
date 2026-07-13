@@ -4583,3 +4583,58 @@ action occurred. This PASS permits commit/publish and a fresh independent
 no-boot pre-boot review only; it does not form a 60-second gate or authorize a
 VM, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
 performance credit.
+
+**C1 repaired-path independent adversarial pre-boot review — PASS /
+NO-BUILD / NO-ROOTFS-WRITE / NO-BOOT (2026-07-13):** reviewed immutable
+`a697d88a101009a7a138a19890a78eb6df3085fc`, exactly equal to advertised
+`origin/codex/host-linux-abi-shell-port-ff` at the approved ElectronSpark
+superproject remote. Kernel/user gitlinks and clean nested heads remain exact
+and published at `b42d1c37f90b2ac48aa416a9eb215a935920f649` / `origin/v6-kernel`
+and `3e5b90bd30130ad1a3566ddc20c9589f6159d867` / `origin/v6-port`, on the
+approved ElectronSpark remotes; there are no conflicts, and the only top-level
+dirt is the preserved KDE-smoke file. The current regular x86 kernel artifact
+still has mode/size/hash `0644/41339412/99b23539aa9ab7c540fe0a81ee00ecd436e9d917ec1e4193fe5a9f186194e067`,
+matching the reviewed post-kernel receipt for that kernel gitlink.
+
+The consumed read-only proof receipt at
+`/tmp/xv6-existing-image-proof-run-20260713T021107Z-3099092/receipt.txt` and
+independently rehashed retained extracts prove staged executable
+`build-x86_64/sysroot/bin/_consolerecord` maps to image
+`/bin/consolerecord`: both are regular `0755`, 20808 bytes, and byte/hash equal
+at `a50bc99c50e00ca53a85499c03b58d17bd9148b5d29930d70896b701294b0d34`.
+The same receipt/extract comparison proves the three regular `0644` media
+assets at 813/4336/26585 bytes and hashes `46dced0c...3ac22`,
+`2fde2692...ce137c`, and `de6fa5dc...f48fe8`. The current image remains the
+proved regular artifact `73499/8724152320/1783904866/0003dbdee6edd9f1083b7092b83fa9ab36d934eead9c8a72d39f19a7243df287`
+(inode/size/mtime/SHA-256).
+
+The committed production diff changes only the C1 V2 generator's default to
+exactly `/bin/consolerecord`; all later hunks are static source locks/reporting.
+Guarded source audit finds `/bin/_consolerecord` only in explicit static
+negative/override checks, while `_consolerecord` remains the intentional
+sysroot/stub staging name. Rootfs `${base#_}` mapping, the explicit test
+override, silent recorder, fixed 24-byte shared UAPI, x86-only root/copy-before-
+lock/timed record path, shared normal-producer wire mutex, and emergency
+generation no-credit failure remain coherent; RISC-V output/ioctl branches are
+untouched. V2 row/chunk/count/digest/RC/FENCE protocol, the calculated 72-second
+C1 timeout, C6 classifier thresholds, C7/C8 sidecar isolation, diag0/V3 route,
+and all no-credit rules are byte-unchanged by this repair. Canonical host-only
+evidence `/tmp/xv6-c1-recorder-path-static-20260713T022858Z-3117399` and log
+SHA-256 `09ac096572069b7e8d6913260c229bb1ce35417f69b31d2b705499baaec8466f`
+genuinely exit zero with all static PASS markers and
+`js_guest_runtime=UNEXECUTED`; the source-locked route requires the new default,
+rejects the old default, proves the explicit stub override, recorder failure,
+binary/exact-cap/over-cap, contaminated/interior-gap/reordered/duplicate,
+binding/digest/outer-frame, C6/C7/C8, diag0, and no-credit negatives.
+
+Exact audit inventories: start `2026-07-13T02:33:08Z` was total/informational-
+RISC-V/conflicting `1/1/0`, PID 3125559; final `2026-07-13T02:37:57Z` was
+`1/1/0`, PID 3128320. Both were exact `/proc/*/exe` observations of
+`/usr/bin/qemu-system-riscv64`; neither process was touched, and no x86 or other
+conflicting QEMU existed. No proof/checker/static replay, build, image write,
+rootfs refresh, serial command, QEMU launch, or boot occurred; image access was
+limited to current identity hashing and retained proof artifacts. **Scope:**
+this PASS authorizes only formation of one fresh foreground 60-second
+conductor gate for the later single windowed A1 treatment. It is not VM launch
+authority by itself and grants no YouTube, HD720/fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, FPS, performance, or default credit.
