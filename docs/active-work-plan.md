@@ -5392,3 +5392,89 @@ evidence directory. Postbuild and final exact QEMU inventories were both
 staging/image parity. It grants no pre-boot, gate, VM, YouTube, HD720,
 fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or default
 credit; a fresh independent adversarial pre-boot review remains mandatory.
+
+**Producer-stage refreshed-image independent adversarial pre-boot review —
+PASS / FRESH FOREGROUND 60-SECOND GATE FORMATION ONLY / NO-BUILD / NO-ROOTFS-
+WRITE / NO-BOOT (2026-07-13):** independently reviewed exact explicit-`-ff`
+plan checkpoint `9ecf506a0f74e0c482a815fef2084e48d8301751`, which equals live HEAD,
+the local explicit origin ref, and the advertised full ref on the approved
+ElectronSpark superproject remote. Kernel/user/ports gitlinks, local heads,
+and advertised approved refs remain exact at
+`6d0151648df87b9d30ffd2dbd0aa780f0c111ec1`,
+`a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3`, and
+`1a15db74ce00bc6a20f199576075b2e210e688e5`; those three nested trees are
+clean, and the sole top-level dirt is the preserved KDE-smoke expect file
+whose patch SHA-256 remained
+`a54b44b2e7a7cfda6655c643c2e9cd4ff4e3255b6376ff4b51c0e067fdbefc3d`.
+
+The published atomic C1 chain remains coherent: top `de620a3` pins kernel
+`6d01516` and user `a9f732f`; the fixed 32-byte v1 batch UAPI, exact
+`701/357080/357781` bounds, copy-and-validate-before-lock order, one held
+normal-wire critical section, per-row/final emergency-generation no-credit
+checks, shared x86 ioctl entrypoints, regular bounded non-symlink recorder
+input, one batch ioctl, silent failure, generated one-call envelope, strict
+V2 decoder, outer RC/FENCE, and 37-second timeout remain aligned. RISC-V
+branches are unchanged. Retained prior proof
+`/tmp/xv6-c1-batch-20260712-FABgTO` has the genuine kernel/recorder/static
+PASS terminals and build/static log hashes recorded in this plan; retained
+staging receipt
+`/tmp/xv6-c1-batch-rootfs-wrapper-v2-static-20260713TynANsT/runtime/receipt.txt`
+has raw-zero kernel, user, and rootfs-refresh stages under scoped build umask
+`0022`, private parent/log umask/modes, the prior staged/image console parity,
+media proof, stable image identity, and terminal
+`PASS/all_stages_and_named_image_proofs_pass/0`. The current regular x86
+kernel artifact independently rehashes before/after to
+`0644/41359892/3bde70e38384553a1068e002528c767302dcb15366d267652fc631e41e62acd7`,
+consistent with that kernel gitlink and prior proof.
+
+Producer-stage source review finds `producer_boot` is still the first probe
+statement after strict mode, before the per-document guard and nonce parse,
+with no nonce/URL/page data. The once-guarded `producer_ready` remains after
+library and exact nonce/arm validation and before producer start/player
+selection. C8 authenticates the expected extension source plus exact stage
+grammars/order, nonce and arm bits, cursor/bytes/cap/digest transport, and
+rejects missing/duplicate/reordered/early/forged/malformed/wrong-nonce/
+foreign-extension/truncated forms. Neither stage is referenced by
+`render_start_receipt_classify`; admission remains only live roles, presents
+above idle, and flips strictly above `idle+100`, so the stage path cannot leak
+render, HD720, semantic, FPS, or performance credit. The final retained
+host-only static log
+`/tmp/xv6-producer-stage-static-20260713T052644Z-3324973.log` rehashes to
+`79f18673ae756886c72945beaa38334b17439e839740fdb9fd978a604aa4f8e5`
+and reaches the dedicated producer-stage, render-receipt, diagnostic-route,
+and overall PASS terminals with `js_guest_runtime=UNEXECUTED`; no parser/
+producer, marker, manifest, launch-arm, threshold, or no-credit mismatch was
+found.
+
+The consumed refresh evidence
+`/tmp/xv6-producer-rootfs-refresh-20260713TpoqPEo` is internally consistent:
+wrapper `57db331b...c6e`, one foreground invocation of only `rootfs-refresh`,
+raw exit zero, log `3dd3b6ea...2de`, parent/evidence umask `0077`, scoped
+build umask `0022`, and private `0600` receipts/logs. The image changed from
+`e35c9fd9...e27` to stable current identity
+`0644/73499/8724152320/1783921588/7b0aed0d710434817ff18a98f2b07ccdc8d47dc65b990ce5b329f50d17d75ddd`;
+an independent current before/after stat and full hash match. Read-only named
+extracts are byte-equal to current staged/overlay files: executable image
+`/bin/consolerecord` and staged `_consolerecord` are
+`0755/29616/6f610bf2...cfa6`; manifest, probe library, and probe are regular
+link-one `0644` at `813/46dced0c...3ac22`, `4336/2fde2692...ce137c`, and
+`27488/6abd45c1ddd24c4d09a14426e34b78b54ec9462d0d261321339b3a5b6f824436`.
+The sole named `/bin/_consolerecord` stat has raw zero plus the exact
+`File not found by ext2_lookup` diagnostic and is correctly treated as the
+intentional installed-path absence, not raw-exit success. No stale image,
+asset/marker mismatch, C8 producer/parser mismatch, no-credit leakage, or
+pre-boot blocker was found.
+
+Exact audit-start and pre-verdict all-architecture `/proc/*/exe` inventories
+were total/informational-RISC-V/conflicting `0/0/0`. After the verdict was
+drafted, final inventory was `1/1/0`: untouched non-owned PID 3372377,
+`/usr/bin/qemu-system-riscv64`, parent 3372375, with RISC-V `virt`, 1024 MiB,
+two CPUs, and `-nographic`; no conflicting x86 or other QEMU existed. No
+process was touched. No proof/static suite, build, rootfs/image write,
+debugfs operation, VM, boot, serial command, source/KDE edit, or RISC-V action
+occurred during this review. **Scope:** this PASS authorizes only formation
+of one fresh conductor-owned foreground 60-second gate with a fresh exact
+QEMU inventory; the independently owned RISC-V process remains informational
+and must remain untouched. It is not VM launch authority and grants no
+YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS,
+performance, or default credit.
