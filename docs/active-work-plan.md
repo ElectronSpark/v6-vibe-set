@@ -4927,3 +4927,45 @@ command ran, and KDE dirt remains untouched. This clears only a fresh
 independent no-exec wrapper review and explicit new one-shot staging
 authorization; the prior invocation remains consumed and no image/pre-boot or
 performance credit is created here.
+
+**C1 corrected staging wrapper independent no-exec review — PASS / ONE
+INVOCATION ONLY / NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** at exact
+explicit-`-ff` plan checkpoint `6ee48c0c1f08c6472477df3339f670e4d64684b8`,
+the uninvoked artifact set
+`/tmp/xv6-c1-batch-rootfs-wrapper-v2-static-20260713TynANsT` passed direct
+manual review. Recomputed wrapper/checker/static-driver SHA-256 values are
+`864b585c163bb5579aae9c2f7245484a3bd366dc0148b24f2e392da745062e90`,
+`6a37be97bf674a918048c057c755ba2a2b71b8414547143414d785b283629a2c`, and
+`234f270733ea19aaf0db797fe7e13d81f66c649fc402ca00a429ca9ceb6ab07d`.
+The Bash parser logs are empty, the canonical checker and static summary have
+their exact PASS terminals, and ShellCheck remains honestly unavailable—not a
+PASS. The runtime directory is absent and no wrapper/checker/static driver was
+invoked by this review.
+
+The wrapper exactly pins the published top/kernel/user/ports lineages,
+approved remotes and gitlinks, docs-only descendant rule, KDE-only dirt,
+kernel/preimage identities, and conflict-free exact-QEMU classification. It
+keeps the runtime and all evidence private under parent `umask 077`, precreates
+stage logs as `0600`, and runs each foreground canonical stage alone as
+`( umask 022; command )`, capturing its raw exit before stopping on the first
+failure. Kernel, user, and rootfs-refresh order is fixed. Post-stage gates
+require the unchanged kernel identity; staged regular non-symlink
+`_consolerecord` at exact `0755/29616/6f610bf2...cfa6` with `--batch-file`;
+a changed regular host image; image `/bin/consolerecord` regular/link-one/
+`0755` and hash-equal; all three pinned regular/link-one `0644` media files at
+exact sizes/hashes; raw-zero `/bin/_consolerecord` lookup-miss semantics; stable
+post-proof image identity; and a final zero-conflict QEMU gate before its sole
+PASS terminal. It contains no `pgrep`, debugfs write, old proof-script, boot,
+VM, or serial route.
+
+All five retained mutations are syntactically valid and genuinely bypass only
+their intended active gate while preserving unrelated guards; their diffs,
+logs, and `checker_exit=1` receipts recompute consistently. **Authorization:**
+invoke this exact unchanged wrapper exactly once, foreground and synchronously,
+to run kernel then user then rootfs-refresh and the named read-only image
+proofs. Retain the complete runtime directory, receipt, every stage/QEMU/
+remote/status/debugfs log and extract, and the wrapper's raw exit. Stop at the
+first failure, do not retry, and run no VM, boot, or serial command. Only a
+complete PASS may establish refreshed staging/image facts; it grants no
+YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance,
+or default credit.
