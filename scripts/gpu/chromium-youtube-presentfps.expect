@@ -2656,36 +2656,41 @@ proc media_probe_final_timeout_seconds {
         "remaining-[media_probe_deadline_remaining_ms $deadline_ms $now_ms]-post-$post_ms"]
 }
 
-# Stage one helper and prove that the guest inode is a readable/executable
-# regular file with the exact host bytes.  This is the fail-closed layer for
-# debugfs command errors that incorrectly return status zero.
-proc debugfs_stage_file {image host guest label} {
+# Prove one staged helper is a root-owned regular inode with the requested
+# exact mode and host bytes.  Reducer helpers are invoked explicitly through
+# /bin/bash, so they stay private 0600; ordinary helpers retain executable
+# 0755 staging.  Keep this verification separate so the static reducer can
+# mutate a staged inode and prove that group/other bits or non-root ownership
+# are rejected by the same live post-stage check.
+proc debugfs_verify_staged_file {image host guest label expected_mode} {
     global outdir
+    if {$expected_mode ni {0600 0755}} {
+        return [list 0 "expected-mode-invalid-$expected_mode"]
+    }
     set errors {}
-    set qhost [debugfs_arg $host]
     set qguest [debugfs_arg $guest]
     set safe_label $label
     regsub -all {[^A-Za-z0-9_.-]} $safe_label {_} safe_label
     set verify "$outdir/debugfs-verify-$safe_label.bin"
+    set proof "$outdir/debugfs-proof-$safe_label.txt"
     catch {file delete -force $verify}
-
-    # Absence before write is expected; retain rm diagnostics but do not use it
-    # as the staging verdict.
-    debugfs_run $image 1 "rm $qguest" "$label-rm"
-    set write_result [debugfs_run $image 1 "write $qhost $qguest" "$label-write"]
-    if {![lindex $write_result 0]} {
-        lappend errors "write-process-rc=[lindex $write_result 1]"
-    }
-    set mode_result [debugfs_run $image 1 "set_inode_field $qguest mode 0100755" "$label-mode"]
-    if {![lindex $mode_result 0]} {
-        lappend errors "mode-process-rc=[lindex $mode_result 1]"
-    }
     set stat_result [debugfs_run $image 0 "stat $qguest" "$label-stat"]
     if {![lindex $stat_result 0]} {
         lappend errors "stat-process-rc=[lindex $stat_result 1]"
     }
-    if {![regexp {Type:[ \t]+regular[ \t]+Mode:[ \t]+0755([ \t]|$)} [lindex $stat_result 2]]} {
-        lappend errors "guest-regular-mode-0755-unverified"
+    set stat_text [lindex $stat_result 2]
+    set inode_pattern [format \
+        {^Inode:[^\r\n]*Type:[ \t]+regular[ \t]+Mode:[ \t]+%s([ \t]|$)} \
+        $expected_mode]
+    set inode_rows [regexp -all -line -- $inode_pattern $stat_text]
+    set owner_rows [regexp -all -line -- \
+        {^User:[ \t]+0[ \t]+Group:[ \t]+0([ \t]|$)} $stat_text]
+    if {$inode_rows != 1} {
+        lappend errors \
+            "guest-regular-mode-$expected_mode-unverified-rows-$inode_rows"
+    }
+    if {$owner_rows != 1} {
+        lappend errors "guest-root-owner-unverified-rows-$owner_rows"
     }
     set dump_result [debugfs_run $image 0 "dump $qguest [debugfs_arg $verify]" "$label-verify-dump"]
     if {![lindex $dump_result 0]} {
@@ -2694,11 +2699,56 @@ proc debugfs_stage_file {image host guest label} {
     if {![files_identical $host $verify]} {
         lappend errors "guest-content-mismatch-or-missing"
     }
+    wf $proof \
+        "expected_type=regular expected_mode=$expected_mode expected_uid=0 expected_gid=0 inode_rows=$inode_rows owner_rows=$owner_rows\nstat_begin\n$stat_text\nstat_end\n"
     if {[llength $errors] == 0} {
         catch {file delete -force $verify}
-        return [list 1 "pass"]
+        return [list 1 \
+            "pass type=regular mode=$expected_mode uid=0 gid=0 bytes=exact proof=$proof"]
+    }
+    return [list 0 "[join $errors ,],proof=$proof"]
+}
+
+# Stage one helper and verify it with the exact requested inode contract.  The
+# optional mode preserves the historical 0755 behavior for every ordinary
+# helper; callers must opt in explicitly to the reducer-only private 0600 path.
+proc debugfs_stage_file {image host guest label {expected_mode 0755}} {
+    if {$expected_mode ni {0600 0755}} {
+        return [list 0 "expected-mode-invalid-$expected_mode"]
+    }
+    set errors {}
+    set qhost [debugfs_arg $host]
+    set qguest [debugfs_arg $guest]
+
+    # Absence before write is expected; retain rm diagnostics but do not use it
+    # as the staging verdict.
+    debugfs_run $image 1 "rm $qguest" "$label-rm"
+    set write_result [debugfs_run $image 1 "write $qhost $qguest" "$label-write"]
+    if {![lindex $write_result 0]} {
+        lappend errors "write-process-rc=[lindex $write_result 1]"
+    }
+    set mode_result [debugfs_run $image 1 \
+        "set_inode_field $qguest mode 010$expected_mode" "$label-mode"]
+    if {![lindex $mode_result 0]} {
+        lappend errors "mode-process-rc=[lindex $mode_result 1]"
+    }
+    set verified [debugfs_verify_staged_file \
+        $image $host $guest $label $expected_mode]
+    if {![lindex $verified 0]} {
+        lappend errors [lindex $verified 1]
+    }
+    if {[llength $errors] == 0} {
+        return $verified
     }
     return [list 0 [join $errors ,]]
+}
+
+proc debugfs_helper_stage_mode {c1_terminal_reducer} {
+    switch -- $c1_terminal_reducer {
+        0 { return 0755 }
+        1 { return 0600 }
+        default { error "invalid C1 reducer stage-mode arm" }
+    }
 }
 
 # Do not use pgrep -f here: its own command line can match the search.  Inspect
@@ -12891,6 +12941,65 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     if {![lindex $reducer_stage 0]} {
         fail_preflight "static-check-debugfs-rc0-stderr-stage error=[lindex $reducer_stage 1]"
     }
+    set static_debugfs_ordinary_stage_matrix [expr {
+        [lindex $reducer_stage 0] &&
+        [string first {mode=0755} [lindex $reducer_stage 1]] >= 0 &&
+        [string first {uid=0 gid=0} [lindex $reducer_stage 1]] >= 0
+    }]
+    set reducer_private_guest /reducer-private.sh
+    set reducer_private_stage [debugfs_stage_file $reducer_image \
+        $reducer_host $reducer_private_guest static-private-valid 0600]
+    set static_debugfs_private_stage_matrix [expr {
+        [lindex $reducer_private_stage 0] &&
+        [string first {type=regular mode=0600 uid=0 gid=0 bytes=exact} \
+            [lindex $reducer_private_stage 1]] >= 0
+    }]
+
+    # Exercise the live post-stage verifier against every relevant privacy
+    # regression.  These are inode mutations in a disposable static ext2
+    # image, never the authoritative rootfs.  A 0755 mode or any group/other
+    # permission bit must fail when the caller requests private 0600.
+    foreach bad_mode {0755 0640 0601} {
+        set mutated [debugfs_run $reducer_image 1 \
+            "set_inode_field [debugfs_arg $reducer_private_guest] mode 010$bad_mode" \
+            "static-private-mutate-mode-$bad_mode"]
+        set rejected [debugfs_verify_staged_file $reducer_image \
+            $reducer_host $reducer_private_guest \
+            "static-private-reject-mode-$bad_mode" 0600]
+        if {![lindex $mutated 0] || [lindex $rejected 0]} {
+            set static_debugfs_private_stage_matrix 0
+        }
+    }
+    set restore_mode [debugfs_run $reducer_image 1 \
+        "set_inode_field [debugfs_arg $reducer_private_guest] mode 0100600" \
+        static-private-restore-mode]
+    set mutate_uid [debugfs_run $reducer_image 1 \
+        "set_inode_field [debugfs_arg $reducer_private_guest] uid 1" \
+        static-private-mutate-uid]
+    set reject_uid [debugfs_verify_staged_file $reducer_image \
+        $reducer_host $reducer_private_guest static-private-reject-uid 0600]
+    set restore_uid [debugfs_run $reducer_image 1 \
+        "set_inode_field [debugfs_arg $reducer_private_guest] uid 0" \
+        static-private-restore-uid]
+    set mutate_gid [debugfs_run $reducer_image 1 \
+        "set_inode_field [debugfs_arg $reducer_private_guest] gid 1" \
+        static-private-mutate-gid]
+    set reject_gid [debugfs_verify_staged_file $reducer_image \
+        $reducer_host $reducer_private_guest static-private-reject-gid 0600]
+    set restore_gid [debugfs_run $reducer_image 1 \
+        "set_inode_field [debugfs_arg $reducer_private_guest] gid 0" \
+        static-private-restore-gid]
+    set private_final [debugfs_verify_staged_file $reducer_image \
+        $reducer_host $reducer_private_guest static-private-final 0600]
+    set invalid_mode_stage [debugfs_stage_file $reducer_image $reducer_host \
+        /reducer-invalid-mode.sh static-private-invalid-request 0640]
+    if {![lindex $restore_mode 0] || ![lindex $mutate_uid 0] ||
+        [lindex $reject_uid 0] || ![lindex $restore_uid 0] ||
+        ![lindex $mutate_gid 0] || [lindex $reject_gid 0] ||
+        ![lindex $restore_gid 0] || ![lindex $private_final 0] ||
+        [lindex $invalid_mode_stage 0]} {
+        set static_debugfs_private_stage_matrix 0
+    }
     set reducer_log [read_text $debugfs_log]
     if {![regexp {debugfs [0-9][^\r\n]*} $reducer_log] ||
         ![regexp {Allocated inode:[ \t]*[1-9][0-9]*} $reducer_log]} {
@@ -13334,6 +13443,15 @@ exit 0
     file attributes $static_c1_reducer_stub -permissions 0700
     wf $static_c1_reducer_helper [c1_terminal_reducer_guest_helper_script \
         $static_c1_reducer_stub $static_c1_reducer_prefix]
+    set static_c1_reducer_bash_syntax_caught [catch {
+        exec /bin/bash -n -- $static_c1_reducer_helper 2>@1
+    } static_c1_reducer_bash_syntax_error]
+    set static_c1_reducer_bash_syntax \
+        [expr {!$static_c1_reducer_bash_syntax_caught}]
+    if {!$static_c1_reducer_bash_syntax} {
+        fail_preflight \
+            "static-check-c1-reducer-bash-syntax error=$static_c1_reducer_bash_syntax_error"
+    }
     set static_c1_reducer_marker YTTERMREDUCERSTATICC1
     set static_c1_reducer_helper_matrix 1
     set static_c1_reducer_helper_details {}
@@ -13576,6 +13694,13 @@ exit 0
         [lindex [c1_terminal_reducer_arm_contract 1 1] 0] == 0 &&
         [lindex [c1_terminal_reducer_arm_contract 0 2] 0] == 0
     }]
+    set static_debugfs_stage_mode_invalid \
+        [catch {debugfs_helper_stage_mode 2}]
+    set static_debugfs_stage_mode_selection [expr {
+        [debugfs_helper_stage_mode 0] eq {0755} &&
+        [debugfs_helper_stage_mode 1] eq {0600} &&
+        $static_debugfs_stage_mode_invalid
+    }]
     set static_c1_reducer_runtime_marker \
         "# C1-TERMINAL-REDUCER-RUNTIME-ONLY-"
     append static_c1_reducer_runtime_marker BEGIN
@@ -13606,6 +13731,13 @@ exit 0
         $static_c1_reducer_idle_at > $static_c1_reducer_runtime_at &&
         $static_c1_reducer_chromium_at > $static_c1_reducer_runtime_at &&
         [string first {set helper_pairs [list $c1_terminal_reducer_host /ytc1r.sh]} \
+            $static_present_source] >= 0 &&
+        [string first \
+            {set helper_stage_mode [debugfs_helper_stage_mode $c1_terminal_reducer]} \
+            $static_present_source] >= 0 &&
+        [string first {set staged [debugfs_stage_file} \
+            $static_present_source] >= 0 &&
+        [string first {$scratch $host $guest "stage-$guest" $helper_stage_mode} \
             $static_present_source] >= 0 &&
         [string first {file attributes $c1_terminal_reducer_host} \
             $static_present_source] >= 0 &&
@@ -13687,6 +13819,7 @@ exit 0
         $static_c1_reducer_preexisting_matrix &&
         $static_c1_reducer_failure_matrix && $static_c1_reducer_fallback_only &&
         $static_c1_reducer_cleanup_failure_rejected &&
+        $static_c1_reducer_bash_syntax &&
         $static_c1_reducer_helper_source_contract &&
         $static_c1_reducer_parser_accepts && $static_c1_reducer_parser_rejects &&
         $static_c1_reducer_command eq
@@ -13695,14 +13828,17 @@ exit 0
         $static_c1_reducer_route_contract &&
         $static_c1_reducer_readiness_matrix && $static_c1_reducer_no_credit &&
         $static_c1_reducer_normal_invariance &&
-        $static_c1_reducer_cleanup_contract
+        $static_c1_reducer_cleanup_contract &&
+        $static_debugfs_stage_mode_selection &&
+        $static_debugfs_ordinary_stage_matrix &&
+        $static_debugfs_private_stage_matrix
     }]
     if {!$static_c1_reducer_all} {
-        fail_preflight "static-check-c1-terminal-reducer helper=$static_c1_reducer_helper_matrix helper_details=$static_c1_reducer_helper_details preexisting=$static_c1_reducer_preexisting_matrix preexisting_details=$static_c1_reducer_preexisting_details failures=$static_c1_reducer_failure_matrix failure_details=$static_c1_reducer_failure_details fallback=$static_c1_reducer_fallback_only cleanup_failure=$static_c1_reducer_cleanup_failure_rejected helper_source=$static_c1_reducer_helper_source_contract accepts=$static_c1_reducer_parser_accepts accept_details=$static_c1_reducer_parser_accept_details rejects=$static_c1_reducer_parser_rejects reject_details=$static_c1_reducer_parser_reject_details command=$static_c1_reducer_command markers=$static_c1_reducer_bad_markers arm=$static_c1_reducer_arm_matrix route=$static_c1_reducer_route_contract readiness=$static_c1_reducer_readiness_good,$static_c1_reducer_readiness_rejects no_credit=$static_c1_reducer_no_credit hashes=$static_c1_reducer_normal_hashes invariance=$static_c1_reducer_normal_invariance cleanup=$static_c1_reducer_cleanup_contract"
+        fail_preflight "static-check-c1-terminal-reducer helper=$static_c1_reducer_helper_matrix helper_details=$static_c1_reducer_helper_details preexisting=$static_c1_reducer_preexisting_matrix preexisting_details=$static_c1_reducer_preexisting_details failures=$static_c1_reducer_failure_matrix failure_details=$static_c1_reducer_failure_details fallback=$static_c1_reducer_fallback_only cleanup_failure=$static_c1_reducer_cleanup_failure_rejected bash_syntax=$static_c1_reducer_bash_syntax helper_source=$static_c1_reducer_helper_source_contract accepts=$static_c1_reducer_parser_accepts accept_details=$static_c1_reducer_parser_accept_details rejects=$static_c1_reducer_parser_rejects reject_details=$static_c1_reducer_parser_reject_details command=$static_c1_reducer_command markers=$static_c1_reducer_bad_markers arm=$static_c1_reducer_arm_matrix route=$static_c1_reducer_route_contract readiness=$static_c1_reducer_readiness_good,$static_c1_reducer_readiness_rejects no_credit=$static_c1_reducer_no_credit hashes=$static_c1_reducer_normal_hashes invariance=$static_c1_reducer_normal_invariance cleanup=$static_c1_reducer_cleanup_contract mode_selection=$static_debugfs_stage_mode_selection ordinary_stage=$static_debugfs_ordinary_stage_matrix private_stage=$static_debugfs_private_stage_matrix"
     }
     catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
-    puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
+    puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
@@ -13919,8 +14055,10 @@ if {$media_probe eq "1"} {
     wf "$outdir/media-arm-helper-guest-grep-contract.txt" \
         "[join $guest_grep_contract_rows \n]\n"
 }
+set helper_stage_mode [debugfs_helper_stage_mode $c1_terminal_reducer]
 foreach {host guest} $helper_pairs {
-    set staged [debugfs_stage_file $scratch $host $guest "stage-$guest"]
+    set staged [debugfs_stage_file \
+        $scratch $host $guest "stage-$guest" $helper_stage_mode]
     if {![lindex $staged 0]} {
         finish 8 "FAIL helper-stage guest=$guest error=[lindex $staged 1] diagnostics=$debugfs_log"
     }
