@@ -4524,3 +4524,62 @@ This proves staging/image payload only and grants no YouTube, HD720,
 fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS, performance, or default
 credit. Next is the required independent adversarial pre-boot review before
 any fresh conductor gate.
+
+**C1 independent adversarial pre-boot review — FAIL / NO-BUILD / NO-ROOTFS /
+NO-BOOT (2026-07-13):** current superproject
+`106bff03368a75ad99cfb0f3582ff38d8cda121b` exactly equals the advertised
+explicit `origin/codex/host-linux-abi-shell-port-ff`; its only change after
+proof checkpoint `6739538` is this plan's consumed-proof record. Kernel
+`b42d1c37f90b2ac48aa416a9eb215a935920f649` and user
+`3e5b90bd30130ad1a3566ddc20c9589f6159d867` exactly match their gitlinks and
+advertised approved remotes, both nested worktrees are clean, and only the
+preserved KDE-smoke dirt exists. The current reviewed kernel artifact still
+hashes `99b23539...e067`; the current image still has the proved
+inode/size/mtime/SHA `73499/8724152320/1783904866/0003dbde...287`. The
+consumed proof receipt and recomputed retained extracts establish executable
+staged `_consolerecord` and image `/bin/consolerecord` hash equality plus all
+three pinned media assets.
+
+The runtime C1 chain nevertheless has one exact blocking mismatch. The
+byte-identical reviewed driver still generates live `/fbs.sh` through
+`fbstat_transport_guest_helper_script` with default recorder
+`/bin/_consolerecord`, while `make-rootfs.sh` deliberately maps staged
+`bin/_consolerecord` to image `/bin/consolerecord`; the retained raw-zero
+debugfs lookup says `/bin/_consolerecord: File not found by ext2_lookup`.
+Thus the otherwise fail-closed V2 chunk/RC/FENCE/no-credit transport would
+stop at its missing recorder before an admissible C1 sample. This is not an
+unsafe false-credit path, but it leaves the exact kernel/image unready for the
+requested A1 trial. Exact audit-start and audit-final QEMU inventories were
+both total/informational-RISC-V/conflicting `0/0/0`; no process was touched.
+This FAIL authorizes no 60-second gate and no VM. Repair only the live/default
+recorder path to `/bin/consolerecord`, update its static source locks/cases,
+and obtain fresh static plus independent no-boot review before repeating this
+pre-boot review. No commit or push is made for this failed checkpoint.
+
+**C1 recorder image-path repair — STATIC PASS / NO-BUILD / NO-ROOTFS-WRITE /
+NO-BOOT (2026-07-13):** the live generated V2 helper now defaults only to the
+proved image path `/bin/consolerecord`; its test override remains explicit,
+and the staged-source proof name `build-x86_64/sysroot/bin/_consolerecord` is
+unchanged. All related C1 source locks now require the image path and reject
+the old `/bin/_consolerecord` default. No protocol row, chunk/count/digest,
+timeout, RC/FENCE, classifier, diagnostic, or no-credit behavior changed;
+C7/C8 implementations remain untouched.
+
+The single clean-PATH canonical host-only suite used static=1, MP=1,
+audio-disable=1, media=1, forced-HD720=0, EGL=0, capturediag=0, and fresh
+outdir `/tmp/xv6-c1-recorder-path-static-20260713T022858Z-3117399`; external
+log `/tmp/xv6-c1-recorder-path-static-20260713T022858Z-3117399.log` is 17755
+bytes, SHA-256
+`09ac096572069b7e8d6913260c229bb1ce35417f69b31d2b705499baaec8466f`,
+and raw exit was zero. It emitted `YT-C1-V2-STATIC-PASS` with
+`recorder_image_path=/bin/consolerecord recorder_route=1`, plus the render,
+capture-diagnostic, route, and overall static PASS markers with
+`js_guest_runtime=UNEXECUTED`; C1 contiguity/adversary/binary/timeout and
+diag0/no-credit coverage remained green. Preflight QEMU inventory was
+total/informational-RISC-V/conflicting `0/0/0`; final was `1/1/0`, consisting
+only of untouched PID 3121298 `/usr/bin/qemu-system-riscv64`. No checker/image
+proof, build, refresh, image write, x86 QEMU, VM, boot, serial, rootfs, or KDE
+action occurred. This PASS permits commit/publish and a fresh independent
+no-boot pre-boot review only; it does not form a 60-second gate or authorize a
+VM, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, or
+performance credit.

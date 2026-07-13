@@ -4243,7 +4243,7 @@ proc fbstat_transport_v2_valid_decimal_checker_bash {} {
         {valid_decimal "$1"}] "\n"]
 }
 
-proc fbstat_transport_guest_helper_script {{recorder_path /bin/_consolerecord}} {
+proc fbstat_transport_guest_helper_script {{recorder_path /bin/consolerecord}} {
     if {![regexp {^/[A-Za-z0-9._/+:-]+$} $recorder_path]} {
         error "invalid fbstat recorder path"
     }
@@ -9671,7 +9671,8 @@ bb}] [lindex $static_fb_chunks 0]]
         [string first {-translation binary -encoding binary} [info body fbstat_transport_digest]] >= 0
     }]
     if {[string first {printf -v record} $static_fb_helper] < 0 ||
-        [string first {recorder=/bin/_consolerecord} $static_fb_helper] < 0 ||
+        [string first {recorder=/bin/consolerecord} $static_fb_helper] < 0 ||
+        [string first {recorder=/bin/_consolerecord} $static_fb_helper] >= 0 ||
         [string first $static_fb_v2_decimal_literal $static_fb_helper] < 0 ||
         [string first $static_fb_v2_initial_wc_guard $static_fb_helper] < 0 ||
         [string first $static_fb_v2_retained_wc_guard $static_fb_helper] < 0 ||
@@ -9696,7 +9697,7 @@ bb}] [lindex $static_fb_chunks 0]]
     set static_fb_recorder "$static_fb_helper_dir/_consolerecord"
     set static_fb_stub_helper [fbstat_transport_guest_helper_script $static_fb_recorder]
     if {[string first "recorder=$static_fb_recorder" $static_fb_stub_helper] < 0 ||
-        [string first {recorder=/bin/_consolerecord} $static_fb_stub_helper] >= 0} {
+        [string first {recorder=/bin/consolerecord} $static_fb_stub_helper] >= 0} {
         fail_preflight "static-check-fbstat-v2-stub-route"
     }
     wf $static_fb_helper_path $static_fb_stub_helper
@@ -10024,7 +10025,11 @@ exit 0
         $static_fb_v2_decimal_source_lock && $static_fb_v2_decimal_validator_matrix &&
         $static_fb_v2_decoder_source_lock
     }]
-    set static_c1_v2_recorder_route [expr {[string first {recorder=/bin/_consolerecord} $static_fb_helper] >= 0 && [string first "recorder=$static_fb_recorder" $static_fb_stub_helper] >= 0}]
+    set static_c1_v2_recorder_route [expr {
+        [string first {recorder=/bin/consolerecord} $static_fb_helper] >= 0 &&
+        [string first {recorder=/bin/_consolerecord} $static_fb_helper] < 0 &&
+        [string first "recorder=$static_fb_recorder" $static_fb_stub_helper] >= 0
+    }]
     set static_c1_v2_cleanup [static_fb_v2_helper_clean probe1 fbfstatstaticnonce]
     set static_c1_v2_timeout_expected [expr {int(ceil(double([dict get $static_fb_timeout wire_ms] + 35050 + 5000) / 1000.0))}]
     set static_c1_v2_timeout [expr {[dict get $static_fb_timeout record_count] == 701 && [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 && [dict get $static_fb_timeout lock_ms] == 35050 && [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected}]
@@ -11260,7 +11265,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         [string first {YT_FBSTAT_TRANSPORT_V2_CHUNK} $static_c5_helper] >= 0 &&
         [string first {YT_FBSTAT_TRANSPORT_V2_END} $static_c5_helper] >= 0 &&
         [string first {chunk_hex_max=376} $static_c5_helper] >= 0 &&
-        [string first {recorder=/bin/_consolerecord} $static_c5_helper] >= 0 &&
+        [string first {recorder=/bin/consolerecord} $static_c5_helper] >= 0 &&
         [string first {"$recorder" "$1"} $static_c5_helper] >= 0 &&
         [string first {YT_FBSTAT_TRANSPORT_HEX} $static_c5_helper] < 0
     }]
@@ -11723,7 +11728,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
         fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_absolute=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
+    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
     puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_force_ready_ambiguous_no_player_observation_pending_stalled_progress=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
 
     # Offline reducer for the Tcl exec/debugfs stderr trap.  A successful
