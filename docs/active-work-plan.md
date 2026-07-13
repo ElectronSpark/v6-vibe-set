@@ -5678,3 +5678,94 @@ admission rules. Do not change kernel, image, producer probe, thresholds, or
 semantic classifiers from this pre-Chromium failure. This decision is recorded
 only, not implemented; another independently authorized token is required for
 any later VM trial.
+
+**C1 V2 timeout forensic correction — prior 250-ms/record decision
+SUPERSEDED / NO-BOOT (2026-07-13):** a bounded read-only review at plan/source
+commit `57a840b0dcb10fc941d4abab03f31a252cc6a0ab` used only the retained directory
+`/tmp/xv6-a1-windowed-freshout-20260713T062710Z-pid3400557` and its sibling
+driver log. It performed no build, image/rootfs access, VM, boot, serial
+command, source/KDE edit, parser relaxation, or runtime-credit change.
+Exact audit-start and pre-commit `/proc/*/exe` QEMU inventories were both
+zero; no process was touched.
+
+The retained clock facts are START `06:27:10Z`, QEMU/debugcon preparation and
+spawn `06:27:50Z`, cleanup start `06:28:52Z`, and terminal result/cleanup
+`06:28:53Z`. The host did not retain an exact command-send timestamp. The
+closest raw guest coordinate immediately after the command echo is TSC
+`66912384118`; with the retained `2688658780 Hz` calibration it is guest
+elapsed `24.8869 s`. Mapping it through the retained NTP row
+`TSC=33725138148, epoch=1783924083.727591` infers, but does not authenticate as
+a host timestamp, about `06:28:16.071012Z`. The first post-END asynchronous
+row is TSC `105436433790` (`+14.328352 s`, about `06:28:30.399364Z`), and the
+terminal-contamination row is TSC `107753128722` (`+15.190007 s`, about
+`06:28:31.261018Z`). Thus the existing 37-second deadline was approximately
+`06:28:53.071012Z`: terminal bytes appeared about 21.81 seconds before it,
+not at its boundary. No EOF occurred and no `eof-control-*` artifact exists;
+the timeout arm retains no equivalent raw-control artifact.
+
+Driver logical records 233 through 536 are exactly 304 contiguous C1 V2
+records: BEGIN, META, chunks `0..300`, and END. They declare payload/raw
+`56424`, `total_hex=112848`, 301 chunks, final chunk offset/hex bytes
+`112800/48`, and digest
+`17356ddb398d012410b327603a6cd5a7415984ae5d3f19368fabf31b75418619`.
+The batch is exactly 148306 logical bytes and 148610 UART-physical bytes.
+No page-flip text splits a V2 row. After END, ordinary asynchronous rows do
+split only the shell terminal writes: the one ordered RC string is prefixed
+by `virtio_gpu: page-flip present re`, and the one FENCE string is prefixed
+by `source=5 size=1280x800 already_b`, with the remaining page-flip text after
+it. Therefore RC and FENCE were semantically emitted but were not complete
+protocol records. The line-anchored Expect fence regex correctly did not
+match, and the exact-record parser would also reject them. Waiting longer
+cannot turn those contaminated records into a valid terminal frame.
+
+The cost categories are separate. `/fbs.sh` performs bounded fbstat capture,
+wc/dd, SHA-256, lower-hex encoding, and envelope construction before one
+`/bin/consolerecord --batch-file` ioctl. The kernel validates the whole batch,
+takes exactly one timed console mutex acquisition (50 ms maximum), and emits
+304 observed or 701 maximum records while holding it; it does not perform
+304/701 lock acquisitions or ioctls. UART wire time then dominates. PTY/Expect
+scheduling and the ordinary outer writes are covered by one fixed reserve,
+not a charge per record. The observed live-shape wire allowance, including
+the 28-byte marker's 71 outer physical bytes and the existing 128-byte normal
+writer allowance, is 12918 ms; adding 50 ms plus the current fixed 5000 ms
+helper/scheduling reserve gives 17968 ms, or 18 seconds. The first available
+guest coordinate to contaminated terminal is only 15.190007 seconds. A
+250-ms record term would add 76000 ms to this 304-record shape and 175250 ms
+to the 701-record maximum, producing 94- and 212-second ceilings without
+evidence and without repairing the actual failure.
+
+**Exact smallest retained timeout decision:** use zero per-record PTY drain
+and keep the current marker-dependent maximum formula only:
+`T(m)=ceil((ceil((357781+(2*bytes(m)+15)+128)*10000/115200)+50+5000)/1000)`
+seconds. Constants are maximum V2 physical bytes `357781`, outer RC/FENCE
+physical bytes `2*bytes(m)+15`, one normal-writer allowance `128`, 115200 baud
+at 10 bits/byte, one 50-ms mutex acquisition, and one fixed 5000-ms combined
+helper/scheduling reserve. For the live 28-byte marker this is
+`ceil((31075+50+5000)/1000)=37` seconds: exact budget 36125 ms, so 37 seconds
+passes and 36 seconds fails. For the retained 16-byte static marker it remains
+31073+50+5000=36123 ms and 37 seconds. The observed-shape 18-second result is
+a forensic check only; the runtime must retain the 131072-byte maximum because
+payload size is not known before capture.
+
+Required static/adversarial coverage before any implementation is: reproduce
+the exact observed 56424-byte/301-chunk/304-record, 148306-logical/
+148610-physical shape and digest across LF, CRLF, and CRCRLF; reproduce the
+exact-cap 131072-byte/698-chunk/701-record, 357080-logical/357781-physical
+single-batch maximum; assert the live-marker 36125-ms boundary accepts 37 and
+rejects 36; accept ordinary gaps only outside BEGIN..END and reject every
+foreign, missing, duplicate, reordered, partial, or binding/digest/count
+drift inside it; accept exactly standalone ordered RC:0/FENCE records but make
+the retained page-flip-prefixed RC/FENCE shape fail both the Expect matcher and
+parser. Timeout, EOF, malformed framing, and diagnostic artifacts must remain
+non-admitting, with no parser, C1/C6, C7, C8, semantic, or FPS credit
+relaxation.
+
+Normal C1 has no shared absolute deadline with later commands. Diagnostic V3
+uses its separate 165-second outer deadline and subtracts its 5000-ms reserve
+exactly once; it does not consume this C1 V2 timeout. C6 receipt (20 s), C7
+(45 s), and no-credit C8 (30 s) remain separate commands after a valid C1.
+Retaining 37 seconds neither double-counts V3's reserve nor changes those
+credits; the rejected 250-ms/record term would instead inflate every later
+`fb_sample`. The next implementation must address atomic/record-local outer
+terminal emission while preserving the strict matcher, not enlarge the C1
+timeout. That implementation is not performed or authorized by this review.
