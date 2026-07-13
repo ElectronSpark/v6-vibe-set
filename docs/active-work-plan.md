@@ -4830,3 +4830,45 @@ user `a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3` is on `origin/v6-port`. The
 parent records those gitlinks with the driver/plan change and publishes only
 to the full `codex/host-linux-abi-shell-port-ff` ref, never the historical
 truncated ref.
+
+**C1 batch-transport deterministic rootfs staging — FAIL AFTER REFRESH /
+NO-BOOT (2026-07-13):** at exact published top/kernel/user checkpoints
+`de620a307688148bbbf90b431ff582a0f1293b30` /
+`6d0151648df87b9d30ffd2dbd0aa780f0c111ec1` /
+`a9f732fc2e0af7a2eda0c3076e990e8249bfc6b3`, one fresh private persisted
+wrapper was syntax/source audited and invoked exactly once. Evidence is
+`/tmp/xv6-c1-batch-rootfs-staging-20260713TnOdTTY`; wrapper SHA-256 is
+`3df220491b6841592b81847f45b84f77389cc03c4657aecc1823674ea7bed869`.
+It verified the full explicit top/kernel/user/ports remotes, branches and
+gitlinks, KDE-smoke-only dirt, required tools, exact pre-kernel artifact
+`0644/41359892/3bde70e38384553a1068e002528c767302dcb15366d267652fc631e41e62acd7`,
+exact pre-image identity
+`73499/8724152320/1783904866/0003dbdee6edd9f1083b7092b83fa9ab36d934eead9c8a72d39f19a7243df287`,
+and preflight QEMU `0/0/0`.
+
+The exact foreground kernel, user, and rootfs-refresh stages all returned raw
+zero in order; their retained log SHA-256 values are respectively
+`a33eae2b8ba62937c7d8881560ce76327812796758dc88ff130ca04235af1330`,
+`aeabddd185f51c1dff34412c0c03eb06fb2b5c868ea33a4f368a5dfd747ae620`,
+and `06e86c9f427e3c5bf279d6ddbea0d7ba41045b39b91fba91aea1dc46dd43f996`.
+Post-kernel mode/size/SHA remained `0644/41359892/3bde70e...acd7`. The staged
+`_consolerecord` is regular, non-symlink, executable, 29616 bytes, SHA-256
+`6f610bf241c1dd085390858e7cd360955ee187f9bdf350e504df814cab89cfa6`,
+and the bounded named-artifact search found `--batch-file`; however its mode
+became `0700`. The refreshed image changed identity to
+inode/size/mtime/SHA-256
+`73499/8724152320/1783914216/66e2ac12a01f4381bb92217b07a7df03712b883704ad7604b6e3e8119840fb1d`.
+
+The first proof failure is exact: read-only named `debugfs stat` returned raw
+zero for image `/bin/consolerecord` and proved regular/link-one/29616 bytes,
+but mode was `0700`, not required `0755`. The wrapper's private `umask 077`
+was inherited by the user/rootfs stages, explaining both staged and image
+mode drift. It stopped before console dump/hash equality, all three media
+stat/dump/hash proofs, and the single-stat `/bin/_consolerecord` absence
+check; none of those unexecuted facts is claimed. Terminal verdict is FAIL,
+final exact QEMU inventory is `0/0/0`, and no retry, QEMU, boot, serial, or
+image write beyond the authorized rootfs-refresh occurred. The refreshed
+image facts are **insufficient for independent pre-boot review**. Any future
+authority needs a newly reviewed wrapper that keeps its evidence private
+without propagating the restrictive umask into canonical build outputs, then
+one fresh full staging/image proof; this consumed invocation cannot be reused.
