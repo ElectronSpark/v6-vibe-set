@@ -8164,8 +8164,9 @@ virgl_bo_presents 1
     # 1.565-second main-world long task coalesced rVFC delivery: callback 1
     # reported presentedFrames=88, while sample 1 saw only 7 callbacks but
     # presentedFrames=188 at mediaTime=3.400000.  This is valid raw API shape;
-    # host credit must reconcile it to elapsed media time and VPQ, never to a
-    # fixed multiple of delivered callback slots.
+    # host credit must reconcile rVFC progress to its own elapsed media time,
+    # never to a fixed multiple of delivered callback slots or to a different
+    # pipeline-stage counter family.
     set retained_coalesced_path \
         "$root/scripts/gpu/chromium-youtube-media-probe-coalesced-v1.fixture"
     set retained_coalesced_nonce a98efdddfe320fb01e5d85a345eeb30d
@@ -8196,6 +8197,51 @@ virgl_bo_presents 1
         [dict get [lindex $retained_coalesced_parsed 4] presented_delta] ne "1238" ||
         [dict get [lindex $retained_coalesced_parsed 4] media_delta] ne "21.416667"} {
         fail_preflight "static-check-media-probe-coalesced-positive parsed=$retained_coalesced_parsed"
+    }
+    # Byte-for-byte corpus from the retained 20260713T193427Z M7ap run.  VPQ
+    # decode/drop snapshots advanced while main-world rVFC delivery was
+    # delayed or flat (including sample 9 -> 10: VPQ +26/drop +23 versus rVFC
+    # media +0.150 and presented +4).  The counter families are each
+    # internally coherent, but their local windows are not causally aligned.
+    set retained_vpq_skew_path \
+        "$root/scripts/gpu/chromium-youtube-media-probe-vpq-skew-v1.fixture"
+    set retained_vpq_skew_nonce 75ea4e0851b38fb093367281a5135a99
+    set retained_vpq_skew [read_text $retained_vpq_skew_path]
+    if {[sha256_file $retained_vpq_skew_path] ne \
+            {8008cd9e6661049308707fe77cb68ed20d0dcbbc6c8e3ee25c312d1df798f7e6} ||
+        [llength [split [string trimright $retained_vpq_skew "\n"] "\n"]] != 30 ||
+        [string first {index=9 video_width=1280 video_height=720} \
+            $retained_vpq_skew] < 0 ||
+        [string first {vpq_total=723 vpq_dropped=471} \
+            $retained_vpq_skew] < 0 ||
+        [string first {index=10 video_width=1280 video_height=720} \
+            $retained_vpq_skew] < 0 ||
+        [string first {vpq_total=749 vpq_dropped=494} \
+            $retained_vpq_skew] < 0 ||
+        [string first {rvfc_callbacks=72 rvfc_presented=310 rvfc_media_time=12.167000} \
+            $retained_vpq_skew] < 0 ||
+        [string first {vpq_total_delta=1162 vpq_dropped_first=181 vpq_dropped_last=884 vpq_dropped_delta=703} \
+            $retained_vpq_skew] < 0 ||
+        [string first {callbacks=184 schedule_failures=0 warmup_callbacks=0 interval_slots=183 presented_first=70 presented_last=490 presented_delta=420} \
+            $retained_vpq_skew] < 0 ||
+        [string first {media_delta=22.433000 media_invalid=0 interval_count=183 interval_valid=183 interval_invalid=0 interval_positive=183} \
+            $retained_vpq_skew] < 0 ||
+        [string first {median_ms=17.000 near60_count=112} \
+            $retained_vpq_skew] < 0} {
+        fail_preflight "static-check-media-probe-vpq-skew-corpus-drift"
+    }
+    set retained_vpq_skew_parsed [parse_media_probe_evidence \
+        $retained_vpq_skew $retained_vpq_skew_nonce \
+        $media_probe_extension_id 1]
+    if {![lindex $retained_vpq_skew_parsed 0] ||
+        ![lindex $retained_vpq_skew_parsed 1] ||
+        ![string match {reason=pass*} [lindex $retained_vpq_skew_parsed 2]] ||
+        [dict get [lindex $retained_vpq_skew_parsed 3] vpq_total_delta] ne "1162" ||
+        [dict get [lindex $retained_vpq_skew_parsed 3] vpq_dropped_delta] ne "703" ||
+        [dict get [lindex $retained_vpq_skew_parsed 4] callbacks] ne "184" ||
+        [dict get [lindex $retained_vpq_skew_parsed 4] presented_delta] ne "420" ||
+        [dict get [lindex $retained_vpq_skew_parsed 4] media_delta] ne "22.433000"} {
+        fail_preflight "static-check-media-probe-vpq-skew-positive parsed=$retained_vpq_skew_parsed"
     }
     # Exact open-boundary serialization controls: 14.9996 -> 15.000 and
     # 18.5004 -> 18.500 at the probe's three-decimal median precision. Their
@@ -9447,17 +9493,64 @@ cat /host-gui-wayland-chromium.log
         }
     }
 
+    # Adversarial mutations of the exact VPQ-skew corpus.  Cross-stage skew is
+    # accepted, but rVFC anti-inflation/reconciliation and each counter
+    # family's internal monotonic/summary accounting remain fail-closed.
+    set vpq_skew_rvfc_cap [media_probe_mutate_once \
+        $retained_vpq_skew \
+        {vpq_total=749 vpq_dropped=494 webkit_available=1 webkit_decoded=749 webkit_dropped=494 rvfc_available=1 rvfc_callbacks=72 rvfc_presented=310 rvfc_media_time=12.167000} \
+        {vpq_total=749 vpq_dropped=494 webkit_available=1 webkit_decoded=749 webkit_dropped=494 rvfc_available=1 rvfc_callbacks=72 rvfc_presented=700 rvfc_media_time=12.167000}]
+    set vpq_skew_rvfc_reconcile [media_probe_mutate_once \
+        $retained_vpq_skew \
+        {available=1 callbacks=184 schedule_failures=0} \
+        {available=1 callbacks=185 schedule_failures=0}]
+    set vpq_skew_histogram [media_probe_mutate_once \
+        $retained_vpq_skew \
+        {median_ms=17.000 near60_count=112 hist=regress:0} \
+        {median_ms=17.000 near60_count=111 hist=regress:0}]
+    set vpq_skew_rvfc_summary [media_probe_mutate_once \
+        $retained_vpq_skew \
+        {presented_first=70 presented_last=490 presented_delta=420} \
+        {presented_first=70 presented_last=490 presented_delta=419}]
+    set vpq_skew_vpq_regression [media_probe_mutate_once \
+        $retained_vpq_skew \
+        {vpq_available=1 vpq_total=749 vpq_dropped=494 webkit_available=1} \
+        {vpq_available=1 vpq_total=700 vpq_dropped=494 webkit_available=1}]
+    set vpq_skew_vpq_summary [media_probe_mutate_once \
+        $retained_vpq_skew {vpq_total_delta=1162} {vpq_total_delta=1161}]
+    foreach vpq_skew_mutation [list \
+        [list rvfc-cap sample-10-presented-media-jump \
+            $vpq_skew_rvfc_cap] \
+        [list rvfc-reconcile rvfc-start-sample-final-mismatch \
+            $vpq_skew_rvfc_reconcile] \
+        [list histogram rvfc-histogram-reconciliation \
+            $vpq_skew_histogram] \
+        [list rvfc-summary rvfc-presented-delta-mismatch \
+            $vpq_skew_rvfc_summary] \
+        [list vpq-regression sample-10-counter-regression-vpq_total \
+            $vpq_skew_vpq_regression] \
+        [list vpq-summary summary-vpq_total-delta-mismatch \
+            $vpq_skew_vpq_summary]] {
+        lassign $vpq_skew_mutation label expected_reason evidence
+        set rejected [parse_media_probe_evidence $evidence \
+            $retained_vpq_skew_nonce $media_probe_extension_id 1]
+        if {[lindex $rejected 0] ||
+            [lindex $rejected 2] ne $expected_reason} {
+            fail_preflight "static-check-media-probe-vpq-skew-$label reason=$expected_reason parsed=$rejected"
+        }
+    }
+
     # Adversarial mutations of the exact coalesced-callback corpus.  Each one
-    # preserves the trusted extension envelope while falsifying one causal or
-    # reconciliation relationship that the host parser must own.
+    # preserves the trusted extension envelope while falsifying an internally
+    # owned counter or reconciliation relationship.
     set coalesced_impossible_time [media_probe_mutate_once \
         $retained_coalesced \
         {presented_first=88 presented_last=1326 presented_delta=1238} \
         {presented_first=0 presented_last=1326 presented_delta=1326}]
-    set coalesced_vpq_contradiction [media_probe_mutate_once \
+    set coalesced_vpq_regression [media_probe_mutate_once \
         $retained_coalesced \
         {vpq_available=1 vpq_total=301 vpq_dropped=107} \
-        {vpq_available=1 vpq_total=240 vpq_dropped=107}]
+        {vpq_available=1 vpq_total=220 vpq_dropped=107}]
     set coalesced_presented_reset [media_probe_mutate_once \
         $retained_coalesced \
         {rvfc_callbacks=16 rvfc_presented=254 rvfc_media_time=4.866666} \
@@ -9477,7 +9570,7 @@ cat /host-gui-wayland-chromium.log
     set coalesced_bad_sample_order [join $coalesced_order_lines "\n"]
     foreach coalesced_mutation [list \
         [list impossible-media-window $coalesced_impossible_time] \
-        [list vpq-contradiction $coalesced_vpq_contradiction] \
+        [list vpq-regression $coalesced_vpq_regression] \
         [list presented-reset $coalesced_presented_reset] \
         [list forged-summary $coalesced_forged_summary] \
         [list bad-dimensions $coalesced_bad_dimensions] \
@@ -13972,6 +14065,7 @@ exit 0
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
     puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT bracketed_paste_disable_prefix=PASS bracketed_paste_foreign_duplicate_nonrow_nonfirst=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"
+    puts "YT-MEDIA-PROBE-VPQ-SKEW-STATIC-PASS exact_fixture=PASS cross_stage_local_caps=DIAGNOSTIC rvfc_invariants=REJECT_MUTATIONS vpq_internal=REJECT_MUTATIONS"
     puts "YT-PRESENTFPS-STATIC-CHECK-PASS arm=$arm multiprocess=$multiprocess disable_audio_output=$disable_audio egl_forensics=$egl_forensics media_probe=$media_probe force_hd720=$force_hd720 capture_completeness_diag=$capture_completeness_diag c1_terminal_reducer=$c1_terminal_reducer c1_terminal_reducer_contract=PASS forensic_arm_contract=PASS media_arm_contract=PASS force_arm_contract=PASS capture_diag_arm_contract=PASS capture_diag_separate_channel=PASS capture_diag_timer_freeze_arm4=PASS capture_diag_rvfc_continued_stopped=PASS capture_diag_wrong_nonce_replay_reorder_duplicate_truncation=REJECT capture_diag_payload_cap=REJECT capture_diag_semantic_noninterference=PASS capture_diag_fbstat_non_substitution=PASS capture_diag_helper_isolation=PASS force_main_world=PASS force_url_isolation=PASS force_parser=PASS force_api_sequence=PASS force_delayed_boundaries=PASS force_mutations=REJECT force_helper_complete30=PASS media_parser=PASS media_capture_byte_grammar=PASS media_capture_host_envelope=PASS media_capture_uniform_crlf_crcrlf=PASS media_capture_mixed_eol=REJECT media_capture_pty_replays=PASS media_capture_retained_artifact=PASS media_60fps=PASS media_30fps=REJECT media_dimensions=REJECT media_missing_api=PASS media_injection_failure=REJECT media_intermediate_rvfc=PASS media_retained_invalid=PASS media_coalesced_rvfc=PASS media_causal_mutations=REJECT media_median_histogram=PASS media_median_open_boundaries=PASS media_callback_boundaries=PASS media_guest_grep_primitive=PASS media_process_filter=PASS media_process_filter_self_match=PASS media_helper_complete24=PASS media_helper_failure=REJECT media_helper_old_timeout=REJECT media_helper_wrong_nonce=REJECT media_helper_still_partial=REJECT media_helper_short_reorder=REJECT media_helper_short_duplicate=REJECT media_helper_short_malformed=REJECT media_helper_short_semantics_shared=PASS media_helper_reviewer_ready_state=REJECT media_helper_reviewer_result_invoked=REJECT media_helper_reviewer_observation_quality=REJECT media_helper_reviewer_sample_dimensions=REJECT media_helper_prefix_playback_boundary=PASS media_helper_prefix_playback_below=REJECT media_helper_prefix_counter_negative=REJECT media_helper_prefix_time_regression=REJECT media_helper_prefix_matrix_force_0_30=PASS media_helper_prefix_matrix_normal_0_24=PASS media_helper_terminal_summary=PASS media_helper_terminal_rvfc=PASS media_helper_corrupt_summary=REJECT media_helper_corrupt_rvfc=REJECT media_helper_stale_rows=REJECT media_helper_reorder=REJECT media_helper_byte_order=PASS media_helper_option_free=PASS media_helper_one_shot=PASS media_helper_output_cap=PASS media_helper_all_live_scripts=PASS media_helper_option_mutations=REJECT media_helper_bounded_cleanup=PASS media_helper_host_authority=PASS media_helper_host_wait_60s=PASS media_helper_host_elapsed_bound=PASS media_helper_absolute_deadline_130s=PASS media_helper_epoch_wide_deadline=PASS media_helper_deadline_threshold_115s=PASS media_helper_phase_anchor=PASS media_helper_wide_overflow=REJECT media_helper_outer_margin_10s=PASS media_helper_overhead_boundaries=PASS media_helper_slow_send_deadline=PASS media_helper_remaining_budget_final=PASS media_helper_fast_path=PASS media_helper_partial_then_complete=PASS serial_frame_fence=PASS serial_frame_conflict_0_9_9=REJECT serial_frame_duplicates=REJECT serial_frame_missing=REJECT trace_caps=PASS provider=PASS maps_stream=PASS build_id=PASS attr_format=PASS artifact_enumeration=PASS spawn_ownership=PASS debugcon_freshness=PASS guest_command_frame=PASS fbstat_parser=PASS virgl_present_authority=PASS idle_fbstat_resample=PASS hard_evidence_precedence=PASS diagnostic_log_contract=PASS debugfs_rc0_stderr=PASS bogus_path=REJECT bogus_image=REJECT"
     exit 0
 }

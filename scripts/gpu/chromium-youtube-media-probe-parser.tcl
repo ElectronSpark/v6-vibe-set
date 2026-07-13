@@ -485,11 +485,13 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
                         $observed_interval_invalid_min, $prior_callbacks)}]
                 }
 
-                # Reconcile each independently sampled window only when both
-                # endpoints are valid.  Callback coalescing is allowed, but a
-                # presentedFrames or VPQ jump that cannot fit in elapsed media
-                # time is not.  When VPQ exists, presented progress must lie
-                # between total-minus-dropped and total, modulo edge skew.
+                # Reconcile the rVFC fields only when both endpoints are
+                # valid.  Callback coalescing is allowed, but a
+                # presentedFrames jump that cannot fit in the rVFC media-time
+                # window is not.  VPQ decode/drop counters come from a
+                # different pipeline stage and may advance while main-world
+                # rVFC delivery is stalled; their own monotonic and summary
+                # accounting is validated separately.
                 if {$causal_clean &&
                     $prior_presented >= 0 && $presented >= 0 &&
                     $prior_media >= 0.0 && $media >= $prior_media} {
@@ -498,23 +500,6 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
                     set frame_cap [media_probe_frame_window_cap $media_step]
                     if {$presented_step >= 0 && $presented_step > $frame_cap} {
                         return [list 0 "sample-$sample_index-presented-media-jump"]
-                    }
-                    if {[dict get $sample vpq_available]} {
-                        set total_step [expr {[dict get $sample vpq_total] -
-                            [dict get $prior vpq_total]}]
-                        set dropped_step [expr {[dict get $sample vpq_dropped] -
-                            [dict get $prior vpq_dropped]}]
-                        if {$total_step < 0 || $dropped_step < 0} {
-                            return [list 0 "sample-$sample_index-vpq-regression"]
-                        }
-                        if {$total_step > $frame_cap ||
-                            $dropped_step > $total_step + 8} {
-                            return [list 0 "sample-$sample_index-vpq-media-contradiction"]
-                        }
-                        if {$presented_step > $total_step + 8 ||
-                            $presented_step + $dropped_step + 8 < $total_step} {
-                            return [list 0 "sample-$sample_index-presented-vpq-contradiction"]
-                        }
                     }
                 }
             }
@@ -611,10 +596,10 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
     }
 
 
-    # The full rVFC window includes callbacks before sample 1, so it can only
-    # be reconciled directly to its own media-time window.  The sample-1 to
-    # sample-20 subwindow has matching VPQ endpoints and therefore receives a
-    # stronger total/dropped-counter cross-check.
+    # Reconcile both the full rVFC window and the sample-1 to sample-20 rVFC
+    # subwindow directly to their own media-time endpoints.  Do not compare
+    # either window to VPQ: VPQ decode/drop snapshots are not presentation
+    # callbacks and can lead or lag rVFC delivery under main-world stalls.
     if {$causal_clean &&
         [dict get $rvfc presented_first] >= 0 &&
         [dict get $rvfc presented_delta] >= 0 &&
@@ -641,20 +626,6 @@ proc media_probe_sample_rvfc_consistency {samples rvfc} {
             $sample_presented_delta >
                 [media_probe_frame_window_cap $sample_media_delta 16]} {
             return [list 0 "sample-window-presented-media-contradiction"]
-        }
-        if {[dict get $first_sample vpq_available]} {
-            set total_delta [expr {[dict get $last_sample vpq_total] -
-                [dict get $first_sample vpq_total]}]
-            set dropped_delta [expr {[dict get $last_sample vpq_dropped] -
-                [dict get $first_sample vpq_dropped]}]
-            if {$total_delta < 0 || $dropped_delta < 0 ||
-                $total_delta >
-                    [media_probe_frame_window_cap $sample_media_delta 16] ||
-                $dropped_delta > $total_delta + 16 ||
-                $sample_presented_delta > $total_delta + 16 ||
-                $sample_presented_delta + $dropped_delta + 16 < $total_delta} {
-                return [list 0 "sample-window-presented-vpq-contradiction"]
-            }
         }
     }
     return [list 1 "pass"]
