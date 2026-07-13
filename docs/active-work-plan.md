@@ -28,11 +28,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The two V2 negative controls are now genuine and rejected,
-but no staging retry is authorized: an independent no-exec review and a fresh
-explicit one-attempt staging authorization are still required. No kernel/user/
-rootfs-refresh or image operation, QEMU, boot, serial, YouTube/performance,
-audio/fullscreen/default work, or credit is authorized.
+preflight variable. The canonical V2 wrapper and all five meaningful negative
+controls have now passed independent no-exec review. This authorizes exactly
+one canonical kernel → user → rootfs-refresh staging proof, no boot; any
+failure consumes it. It does not authorize QEMU, serial,
+YouTube/performance, audio/fullscreen/default work, or credit.
 
 ## Binding host and VM discipline
 
@@ -4268,3 +4268,46 @@ action occurred. Exact final inventory was total/informational-RISC-V/
 conflicting `0/0/0`; only the preserved KDE-smoke dirt remains. This is no-exec
 checker evidence only, with no image/`_consolerecord`/browser asset/YouTube/
 HD720/fullscreen/audio/`yt-presentfps`/`PERF-VIDEO`/performance/default credit.
+
+**C1 V2 mutation-control independent re-review — PASS FOR ONE CANONICAL
+STAGING PROOF ONLY / NO-BOOT (2026-07-13):** canonical
+`run-full-staging.sh` remains exactly SHA-256
+`3c43ab3092fa772fae47971f7c55e1372dfbc145ad7bf978a0efc4d63ee4d255`;
+the corrected checker is SHA-256
+`1bfb957c3d5306e0ad42c6025025142c8579f882e6999d9e05dd9853a9f9cdad`.
+The empty `bash-n-negative-repair.log`, canonical checker PASS log, all five
+diffs/logs/exits, and their recorded SHA-256 values are retained. The wrapper
+has not run: no receipt, stage log, rootfs extraction, or other runtime output
+exists. ShellCheck remains honestly unavailable and is not a blocker because
+the checker plus this manual source review cover its required contract.
+
+The repaired source mutation inserts a syntactically valid post-remote
+`SOURCE_BASE=$(git -C "$ROOT" rev-parse HEAD)`: it would make the ancestor and
+docs-only tests self-referential at runtime, so it is a genuine unsafe source
+pin bypass. It is rejected specifically by `source_base_assignment`; its diff
+SHA-256 is
+`69c60054542a3f95e39d5f9f0c7e5ef399812b7e9f22344c47f8ec04f06c749d` and
+its child exit is one. The repaired reorder mutation physically moves the
+intact real `--target rootfs-refresh` block before the real kernel block, not
+merely its label. It is rejected specifically by `user_then_rootfs` and
+`kernel_before_rootfs`; its diff SHA-256 is
+`06375e580ef5caf0431abe459bf23a1b2b5e9002a8f1f803b8ede598859cbbe9` and
+its child exit is one. Final-QEMU, symlink, and pre-kernel-hash controls remain
+genuine and each retain exit one for their corresponding predicate.
+
+The previously reviewed runtime contract remains intact: source base `885dfe2`
+is explicit-origin/docs-only, nested kernel/user heads and gitlinks are
+published/pinned, and the reviewed kernel artifact remains exactly SHA-256
+`99b23539aa9ab7c540fe0a81ee00ecd436e9d917ec1e4193fe5a9f186194e067` before
+the authorized run. It uses raw foreground stage exits, one trap terminal,
+fresh image identity, regular/executable console and debugfs/media hash proof,
+and final exact QEMU enforcement before PASS. Exact review-start/final QEMU
+inventory was total/informational-RISC-V/conflicting `0/0/0`; no process was
+touched.
+
+**Authorization:** exactly one invocation of this canonical wrapper to run
+kernel, then user, then rootfs-refresh, with no boot or QEMU launch. Preserve
+its complete receipt and logs, stop at first failure, and do not retry. Only a
+fully successful run with its named image checks may establish staging/image
+facts; it creates no YouTube, FPS, audio, fullscreen, or default credit. A
+fresh independent review is required after the attempt before any later gate.
