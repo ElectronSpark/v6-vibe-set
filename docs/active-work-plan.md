@@ -6429,3 +6429,34 @@ grant boot authority.  The mandatory next sequence is an independent preboot
 review, a fresh passive exact zero-QEMU gate, and only then one diagnostic
 reducer VM if separately authorized; it is not an A1 retry and carries no
 FPS, semantic, HD720, audio, fullscreen, or performance credit.
+
+**C1 reducer terminal-transition closure — SCOPED FIX / DIAGNOSTIC RUN COMPLETE
+(2026-07-13):** the separately authorized diagnostic run consumed the v3
+passive-gate token exactly once and completed with clean owned-process
+reaping.  The contract exited raw `0`, the driver exited raw `8`, and the
+final exact all-architecture QEMU inventory was `0/0/0`.  The retained run is
+`/tmp/xv6-c1-terminal-reducer-vm-20260713T6QjwJf70`, with live serial output
+in `/tmp/xv6-c1-terminal-reducer-live-20260713T181905Z-Czq7mI4S`.
+
+The reducer evidence was correctly rejected before the fix: it had exactly
+one correct-marker row, no fallback, one fresh tail prompt, and no RC/FENCE,
+but the row was prefixed by the literal bracketed-paste transition bytes
+`1b5b3f323030346c0d` (`ESC[?2004l` followed by CR).  KVM, virgl, Xwayland,
+KWin, and plasmashell readiness all passed.  The token was atomically renamed
+once to `.consumed` (SHA-256 unchanged
+`ca26f555c3555f24ac6622f5a7dfde7862cb0742b84c3b0e8917558e7a8269c`); it was
+never restored or reissued.  No performance, semantic, HD720, audio,
+fullscreen, or A1 credit is granted.
+
+Commit `2708e260f1e9dd35e552bd4b00f9da914768206d` closes this transport gap by
+mirroring the existing C7/C8 precedent: the parser accepts exactly one
+`ESC[?2004l`+CR only at the start of the expected reducer row, strips only
+that record-local prefix for grammar validation, preserves raw indices and
+adjacency, and continues to reject foreign, mutated, duplicate, non-row, and
+non-first placement.  The clean canonical static check and the forced-HD720
+C1 opt-in static check both exited `0`; both emitted
+`bracketed_paste_disable_prefix=PASS` and the full
+`YT-PRESENTFPS-STATIC-CHECK-PASS` marker, with `git diff --check` clean.
+The preserved KDE smoke-file modification remains the only tracked local
+dirt; `.claude/settings.local.json` remains untouched.  No guest binary,
+rootfs, image, or VM retry is authorized by this closure.
