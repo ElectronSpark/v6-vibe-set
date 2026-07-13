@@ -28,11 +28,12 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. A corrected wrapper now passes its no-execution static
-contract, but no staging retry is authorized yet: it still needs independent
-review and a fresh explicit one-attempt staging authorization. No kernel/user/
-rootfs-refresh or image operation occurred; no QEMU, boot, serial,
-YouTube/performance, audio/fullscreen/default work, or credit is authorized.
+preflight variable. The corrected wrapper's independent no-exec review has
+found remaining super-lineage, kernel-artifact, and checker-evidence gaps, so
+no staging retry is authorized. Next is a narrowly corrected wrapper plus
+non-executing semantic static validation; no kernel/user/rootfs-refresh or
+image operation, QEMU, boot, serial, YouTube/performance,
+audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4094,3 +4095,49 @@ occurred. This is source/static wrapper readiness only, not staging/image/
 browser asset, `_consolerecord`, YouTube, HD720/fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, performance, or default credit. A separate
 independent review and fresh explicit staging authorization remain required.
+
+**C1 corrected full-staging wrapper independent no-exec review — FAIL /
+NO-RUN / NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** the retained wrapper
+SHA-256 is the recorded
+`359388a9a124757bdde19668e60919c2386c442f25a0e4c34da2f6cb6044839c`; the
+private directory contains only that regular wrapper and the actual regular
+checker `check-wrapper-contract.sh` (SHA-256
+`5ee9ba511b4cc8cfd701aa873c8ad90afac6d182fa948d85c6b477b7625ca2dc`). The
+requested name `check-wrapper-static.sh` is absent. No receipt, stage log,
+fingerprint, extraction, or other runtime artifact exists, so neither script
+was invoked by this review and the wrapper itself was never invoked. The prior
+checker exit claim is a historical static report, not a retained checker-output
+artifact.
+
+Manual line audit confirms that the corrected helper argument binding,
+non-symlink guards, raw stage exit capture without `set -e`, canonical stage
+order, exact `qemu-system-riscv64` exemption, final conflicting-QEMU check,
+fresh pre/post image fingerprints, and debugfs regular/executable dump logic
+are present. ShellCheck being unavailable is not itself a blocker: a manual
+review can substitute for it. The wrapper is nevertheless not authorization
+ready. Its top-level lineage passes literal `dynamic`, meaning any newer
+origin tip can replace the reviewed superproject source; require a pinned
+authorization-specific super head (or equivalently pinned reviewed source
+tree) and verify it against explicit origin before a stage. `KERNEL_ARTIFACT`
+is declared but never read, so it supplies no pre/post kernel artifact
+identity, regularity, or hash evidence. Require fail-closed kernel artifact
+receipts before kernel build and after successful kernel stage, and require
+the staged `_consolerecord` itself to be executable as well as regular before
+its image-hash comparison.
+
+The actual checker is non-circular in that it reads a separate wrapper file,
+but it is too weak to establish the claimed contract: it only greps literals
+and first-occurrence order, can be satisfied by comments/unreachable text,
+does not invoke or retain `bash -n`, does not detect the unused kernel
+variable/dynamic-super defect, and lacks negative mutation controls. Rename or
+record it consistently, then make future no-exec validation run `bash -n` and
+the checker over controlled wrapper copies that remove each required gate;
+each mutation must reject. Keep ShellCheck optional and record its absence.
+Also preflight every externally invoked utility (including `date` and `mkdir`)
+or emit a durable preflight failure before any build.
+
+No new staging proof is authorized. Exact review-start and final inventories
+were total/informational-RISC-V/conflicting `0/0/0`; no process was touched.
+Only a corrected persisted wrapper plus the strengthened non-executing static
+evidence may receive another independent review; no build, rootfs, VM, image,
+or performance credit follows from this FAIL.
