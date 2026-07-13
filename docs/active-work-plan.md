@@ -26,18 +26,18 @@ lever—evidence plumbing must not substitute for performance progress.
 
 ## Immediate queue
 
-The deterministic staging proof at `61de08d` and the canonical V2 invocation
-are **consumed**. The latter completed kernel, user, and rootfs-refresh, then
-failed only because it queried `/bin/_consolerecord` while the intentional
-rootfs rule installs the staged `_consolerecord` as `/bin/consolerecord`.
-At `65f37db`, the retained existing-image proof's static artifacts have an
-independent manual PASS but the proof script has not run. The next conductor
-may invoke that exact read-only script **once**, against only its pinned fresh
-`fs.img`, to prove the staged-to-image console mapping, mode/hash, and media
-hashes; no rebuild, refresh, image write, QEMU, boot, or serial action.
+The deterministic staging proof at `61de08d`, the canonical V2 invocation,
+and the retained existing-image proof are **consumed**. The V2 invocation
+completed kernel, user, and rootfs-refresh, then failed only because it queried
+`/bin/_consolerecord` while the intentional rootfs rule installs the staged
+`_consolerecord` as `/bin/consolerecord`. The one authorized read-only proof
+subsequently passed against that pinned fresh `fs.img`, establishing the
+staged-to-image console mapping, executable mode/hash, and all pinned media
+asset sizes/modes/hashes without a rebuild, refresh, image write, QEMU, boot,
+or serial action.
 
-If it passes, require an independent adversarial pre-boot review of the
-committed kernel/user/driver/rootfs proof, then a fresh conductor-owned
+Next require an independent adversarial pre-boot review of the committed
+kernel/user/driver/rootfs proof, then a fresh conductor-owned
 60-second one-x86-VM gate. That gate may authorize exactly one windowed
 real-KVM+virgl A1 treatment (MP1, audio-disable1, media1, forced-HD7201).
 Use its C8 result to make a concrete frame-supply implementation decision;
@@ -4492,3 +4492,35 @@ pre-boot review of the committed kernel/user/driver/rootfs proof, then a fresh
 conductor-owned 60-second gate before one x86 windowed A1 trial. It supplies
 no YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS,
 performance, or default credit.
+
+**C1 existing-image proof — PASS / CONSUMED / READ-ONLY / NO-BOOT
+(2026-07-13):** the sole authorized invocation used the unchanged reviewed
+script at SHA-256
+`b38bd4cd65a218e6bbe2424047a75b1755df29947fbdfc07ecf52d704e42b33b`:
+`bash /tmp/xv6-existing-image-proof-static-20260713T011508Z-3060579/prove-existing-image.sh`.
+It exited raw zero exactly once. Invocation metadata, empty combined output,
+and raw exit are retained in
+`/tmp/xv6-existing-image-proof-invocation-20260713T021107Z-3099086`; the proof
+receipt and every stat/dump/extract artifact are in
+`/tmp/xv6-existing-image-proof-run-20260713T021107Z-3099092`.
+
+The receipt pins super/kernel/user lineage to `6739538` / `b42d1c3` /
+`3e5b90b` and proves image identity inode/size/mtime/SHA
+`73499/8724152320/1783904866/0003dbdee6edd9f1083b7092b83fa9ab36d934eead9c8a72d39f19a7243df287`.
+Staged `build-x86_64/sysroot/bin/_consolerecord` is executable mode `755`,
+20808 bytes, SHA-256
+`a50bc99c50e00ca53a85499c03b58d17bd9148b5d29930d70896b701294b0d34`;
+read-only `debugfs` proved image `/bin/consolerecord` is regular, link-count
+one, mode `0755`, 20808 bytes, and its dumped hash matches exactly. Image
+media assets are regular, link-count one, mode `0644`, with pinned size/hash:
+`manifest.json` 813 / `46dced0c...3ac22`, `probe-lib.js` 4336 /
+`2fde2692...ce137c`, and `probe.js` 26585 / `de6fa5dc...f48fe8`; all stat and
+dump raw exits are zero and all full hashes match the receipt's expected
+values. Preflight/final exact QEMU inventories were both total/informational-
+RISC-V/conflicting `0/0/0`, and the image inode/size/mtime remained unchanged
+afterward. No checker, rebuild, refresh, image write, VM, boot, serial command,
+source, or KDE action occurred; only the preserved KDE-smoke dirt remains.
+This proves staging/image payload only and grants no YouTube, HD720,
+fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, FPS, performance, or default
+credit. Next is the required independent adversarial pre-boot review before
+any fresh conductor gate.
