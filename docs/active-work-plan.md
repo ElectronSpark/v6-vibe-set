@@ -28,11 +28,10 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The corrected wrapper's independent no-exec review has
-found remaining super-lineage, kernel-artifact, and checker-evidence gaps, so
-no staging retry is authorized. Next is a narrowly corrected wrapper plus
-non-executing semantic static validation; no kernel/user/rootfs-refresh or
-image operation, QEMU, boot, serial, YouTube/performance,
+preflight variable. The V2 wrapper now has semantic static and mutation
+evidence, but no staging retry is authorized: it requires independent review
+and a fresh explicit one-attempt staging authorization. No kernel/user/
+rootfs-refresh or image operation, QEMU, boot, serial, YouTube/performance,
 audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
@@ -4141,3 +4140,50 @@ were total/informational-RISC-V/conflicting `0/0/0`; no process was touched.
 Only a corrected persisted wrapper plus the strengthened non-executing static
 evidence may receive another independent review; no build, rootfs, VM, image,
 or performance credit follows from this FAIL.
+
+**C1 full-staging wrapper V2 semantic static contract — PASS / NO-RUN /
+NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** the fresh artifact set is
+`/tmp/xv6-c1-full-staging-wrapper-v2-static-20260713T004146Z-3002245`.
+The wrapper is 15656 bytes, SHA-256
+`3c43ab3092fa772fae47971f7c55e1372dfbc145ad7bf978a0efc4d63ee4d255`; the
+consistently named semantic checker `check-wrapper-static.sh` is 6405 bytes,
+SHA-256 `9b54c458894030d093a0f252bf90e345d35814e973ae797ef30234fce985a9a2`.
+Named `bash-n.log` is the empty successful parser output (SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`),
+while `shellcheck.log` explicitly records `SHELLCHECK_NOT_INSTALLED` rather
+than a false pass. Named `checker.log` (SHA-256
+`a6416c4be0c1dfb2e6c8cb50efbf0bcd95845833fe05ae061e5da845e7306019`) ends
+`WRAPPER_V2_STATIC_CONTRACT_PASS`.
+
+The V2 wrapper pins source behavior to super commit
+`885dfe2e9bfec6c1be87d590e7d321ce6c80f242`: runtime HEAD must equal the
+explicit branch remote, descend from that source checkpoint, and have only
+`docs/active-work-plan.md` committed changes since it. It retains exact kernel
+`b42d1c37f90b2ac48aa416a9eb215a935920f649` and user
+`3e5b90bd30130ad1a3566ddc20c9589f6159d867` branch/remote/gitlink checks,
+permits only the known KDE worktree dirt, and pins the reviewed x86 kernel
+artifact SHA-256
+`99b23539aa9ab7c540fe0a81ee00ecd436e9d917ec1e4193fe5a9f186194e067` before
+and after the kernel stage. It requires both artifact paths to be regular,
+non-symlinked, records size/mode/SHA, and requires staged `_consolerecord` to
+be executable before the image hash comparison.
+
+The checker first parses the wrapper, strips comment-only lines, extracts
+function bodies, and asserts the source-lineage, nested lineage/dirt, direct
+stage/raw-exit, single trap terminal, exact RISC-V-only QEMU classifier,
+pre/post kernel artifact, image identity, debugfs regular/executable dump,
+media hashes, and ordered kernel → post-artifact → user → rootfs → image →
+final-QEMU → PASS structure. Five controlled non-executing mutation copies
+and logs remove the final QEMU gate, permit a symlink, skip the pre-kernel hash,
+loosen the source pin, or reorder the kernel stage; each checker child exits
+nonzero and the parent records its rejection. These are checker-only temporary
+files, never wrapper executions.
+
+No runtime wrapper receipt, stage log, rootfs-image extraction, build, refresh,
+debugfs invocation, VM, boot, serial command, source/KDE edit, or QEMU action
+occurred. Exact final read-only QEMU inventory was total/informational-RISC-V/
+conflicting `0/0/0`; kernel and user worktrees are clean and only the preserved
+KDE-smoke file is dirty. This is static wrapper evidence only—not kernel/user/
+image/browser asset, `_consolerecord`, YouTube, HD720/fullscreen, audio,
+`yt-presentfps`, `PERF-VIDEO`, performance, or default credit. Independent
+review and a new explicit staging authority are still mandatory.
