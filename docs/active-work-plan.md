@@ -6120,3 +6120,95 @@ missing durable host/static/build evidence.  It authorizes a new independent
 no-boot review, not staging, image proof, a 60-second gate, or a VM, and adds
 no YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
 performance, or default credit.
+
+**C1 terminal-commit second independent adversarial review — PASS / ONE
+DETERMINISTIC STAGING+NAMED-IMAGE PROOF ONLY / NO-BOOT (2026-07-13):**
+independently reviewed exact published heads super
+`7ea96cf6254009ea5716409ff1d2be40162613f8`, kernel
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208`, and user
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87`.  They equal the explicit local
+approved refs `origin/codex/host-linux-abi-shell-port-ff`,
+`origin/v6-kernel`, and `origin/v6-port`; the kernel/user/ports gitlinks equal
+their clean nested heads, and ports also equals approved
+`origin/codex/a1-egl-context-closure-20260710` at
+`1a15db74ce00bc6a20f199576075b2e210e688e5`.  The only top-level dirt is the
+preserved KDE-smoke patch, unchanged at SHA-256
+`a54b44b2e7a7cfda6655c643c2e9cd4ff4e3255b6376ff4b51c0e067fdbefc3d`.
+Every descendant commit after battery checkpoint
+`aab775bd02a2149532df0dda1867f6df2f0be4c8` through this review changes only
+this plan; committed runtime source remains exact.
+
+The private retained directory
+`/tmp/xv6-terminal-commit-receipts-aab775bd-20260713THyWCiV` contains no
+symlinks.  Every receipt-named regular file's byte count and SHA-256 was
+recomputed and matches `receipt.tsv`; the wrapper, invocation argv, receipt,
+and receipt checksum hashes also reproduce exactly as recorded.  All eight
+argv files name the claimed commands.  Every stage has ordered start/end
+timestamps and raw exit zero: three whitespace checks, kernel host unit, user
+host unit, exact clean-`env -i` canonical MP1/audio-disable1/media1/
+forced-HD7200/EGL0/diag0 static suite, x86 kernel build, and full user build.
+The empty logs are genuinely empty; the user unit log is exactly
+`consolerecord-host-test: PASS`; the 108-line static log has no failure token
+and retains the C1, render-receipt, producer-stage, capture-diagnostic-route,
+and overall `YT-PRESENTFPS-STATIC-CHECK-PASS` terminals.  Its C1 terminal
+records `two_acquisitions=1`, `per_record_drain_ms=0`, the 37-pass/36-fail
+boundary, and the 701-row matrix.  The 2,139-line full-user log was scanned
+in full: it contains only the established warnings and explicitly ignored
+ncurses install errors, no unignored failure-like line, and terminates
+`build-linux-host-probes: wrote probes to .../sysroot/bin`.  The x86 kernel
+log terminates its completed kernel install.  Retained pre-QEMU inventory is
+`0/0/0`; retained post is `1/1/0`, solely untouched informational
+`/usr/bin/qemu-system-riscv64`.  No receipt fact depends on that process, and
+the independent final exact `/proc/*/exe` scan was `0/0/0`.
+
+The committed source audit passes.  Batch ABI version 1 remains 32 bytes at
+offsets `0/4/8/16/20/24/28` and ioctl number `0x02`; flag 1 is the sole new
+accepted value and narrows input to two same-marker alphanumeric records,
+`RC:0` then `FENCE`, bounded to a 64-byte marker and 141 logical bytes.  Root,
+request bounds, allocation, payload copy, grammar, UART availability, and the
+timed mutex all precede emission.  RC remains provisional: emergency
+generation or availability failure before FENCE returns no credit and emits
+no FENCE.  FENCE emission is irreversible, and unlock/free contain no late
+failure.  Flag-zero retains its prior validator and per-record loop.  The
+implementation hunk is inside the x86-only batch handler; both console ioctl
+entrypoints still share it, and the unchanged RISC-V output/ioctl branches
+remain source-identical.  Only x86 is configured, so no RISC-V build PASS is
+claimed.
+
+Recorder terminal transfer accepts only `--terminal-batch-file PATH MARKER`.
+It requires a same-owner private regular non-symlink, link one, stable path/fd
+identity, exact size and grammar; opens `/dev/console` before consuming the
+source; revalidates; unlinks and proves path absence plus open-inode nlink
+zero; and successfully closes the input before its one flagged ioctl.  Exact
+ioctl success is final despite console-close status.  Its generic single and
+flag-zero batch routes remain unchanged and silent.  The C1 driver creates a
+candidate only after inner success, writes only RC0/FENCE, and final-`exec`s
+the terminal recorder without acknowledgement, grace, cleanup, or another
+status path.  The C1 parser requires standalone raw-record-adjacent rows and
+rejects contamination, foreign rows, gaps, duplicates before commit, order
+errors, nonzero RC, and bad grammar; bytes after a complete FENCE newline are
+outside the commit.  Marker/path limits cover C10-C13 and C38 while the C1
+counter fails closed above 38.  Generic command framing, C6/C7/C8,
+diagnostic-0, threshold, and no-credit paths remain outside the runtime diff.
+The reviewed timeout charges maximum physical bytes
+`357781+143+128=358052`, 31,081 ms wire time, two 50-ms acquisitions, zero
+per-record drain, and 5,000 ms reserve: total 36,181 ms, hence 37 seconds
+passes and 36 fails.
+
+**Authorization:** one later worker may create and invoke exactly one fresh,
+private, foreground, stop-on-first-failure wrapper at the resulting
+plan-only descendant while pinning these exact reviewed kernel/user/runtime
+sources.  It may run the canonical x86 `kernel`, then `user`, then
+`rootfs-refresh` targets, with build umask `0022` and retained raw exits/log
+hashes.  Only after all three raw-zero stages may it use read-only named image
+operations to prove staged regular non-symlink executable
+`build-x86_64/sysroot/bin/_consolerecord` maps byte-for-byte and SHA-for-SHA
+at exact mode `0755` to regular link-one image `/bin/consolerecord`, prove the
+intentional image `/bin/_consolerecord` lookup miss without treating
+`debugfs` raw zero as presence, and prove stable post-inspection image
+identity.  Retain exact pre/final QEMU inventories and all named stat/dump/
+hash receipts; do not retry.  A failure consumes this authority.  This PASS
+authorizes no QEMU launch, VM, boot, serial command, 60-second gate, YouTube,
+HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`, performance, or
+default credit.  The refreshed proof must receive another independent
+adversarial pre-boot review before any VM authority can be considered.
