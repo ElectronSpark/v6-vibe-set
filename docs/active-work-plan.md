@@ -6501,3 +6501,88 @@ classifies the outcome as a real playback/source-liveness stall, not another
 validator defect.  Diagnostic `pre` and `mediaProbe` images exist, but formal
 `steady0`/`windowA`/`windowB` artifacts do not.  The preserved KDE and
 `.claude` state remains unchanged.
+
+**Six-vCPU GUI performance fix closeout — PUBLISHED / DIAGNOSTIC IMPROVEMENT /
+FORMAL FPS WITHHELD / NO-BOOT (2026-07-13):** the audited production change is
+complete and published.  The driver contract commits are
+`a8edd4b668432e75a70f846f589b2c589e24e0ec` (require six vCPUs for
+performance runs) and `dc2a1ef01bfc1bcb08aeecf787eb0f49f13ad40b`
+(preserve and validate the raw QEMU CPU input).  Kernel production commit
+`3c322b4fd8dce68b40a5606d20eaf0fd362efce5` admits one SUBMIT_3D past the
+prior flush; kernel test commit
+`3ce319a2518091cbf21c8a748fe6e5926024e2bc` locks the depth routing, and top
+gitlink commit `2b2b7ebd5bc730bcbd591cc791a1c952dca192f8` records that kernel.  Exact
+published implementation refs are kernel `refs/heads/v6-kernel` at
+`3ce319a2518091cbf21c8a748fe6e5926024e2bc` and top
+`refs/heads/codex/host-linux-abi-shell-port-ff` published through
+`e9d71d3b2901a3428350a3484b7107b3c115af11`.
+
+The post-measurement serial receipt hardening chain is
+`5309f7b4b73e50ba2f160b3530d7739af631d76b` ->
+`616d6b16f8f8955007e71d565ba22048bfb28267` ->
+`4f98597396b15e36176b91f01c47cb661ba1051c` ->
+`e9d71d3b2901a3428350a3484b7107b3c115af11`.  It preserves timeout evidence,
+fails closed on persistence failure, binds probe-one C5 to the exact 16-byte
+prompt with a nonce/marker-bound one-time receipt, and finally requires one
+unique contiguous canonical same-marker RC/FENCE/prompt terminal endpoint
+before the first C6 send.  Same-read and delayed-read prompt delivery pass;
+old 17-byte/+BEL, missing ESC, foreign bridges, duplicate RC/FENCE or replayed
+frames, parser/matcher divergence, wrong nonce/marker, foreign, and duplicate
+receipt use are rejected.  No codec, selected `hd720` quality, 1280x720
+dimension, media threshold, render threshold, duration, or no-credit gate was
+weakened.
+
+The formal FPS claim remains **withheld**.  The six-vCPU depth-one control
+reached a nominal 60-second window only after `91.670` seconds, so its window
+duration was INVALID.  The depth-two attempts then stopped in C6 render-start
+serial control before formal windows, first on receipt-command liveness and
+then on exact-prompt receipt recovery; `windowA/windowB` were NOT_REACHED.
+The latest attempt stopped still earlier at C1 `fbstat-idle-attempt1`, with no
+authenticated RC/FENCE and all source, quality, integrity, receipt, and window
+gates NOT_REACHED.  These are serial control failures, not valid A/B samples;
+formal N remains zero and no `PERF-VIDEO` or formal FPS number is claimed.
+
+The repeated source-proven depth-two media diagnostics nevertheless show a
+large, reproducible scheduling improvement.  Presented/media-second was
+`58.236694` and `58.994975`; VPQ drop share was `5.4310%` and `2.0870%`.
+Against the depth-one early control, SUBMIT_3D stalls fell `2829 -> 146/142`
+(about 95%), aggregate wait fell `25.744007 s -> 0.413445 s` in the first
+treatment, and the repeated treatment used `1,026,206,478` wait ticks versus
+the control's `69,211,488,666`.  Maximum wait fell `409.741 ms ->
+11.078/10.573 ms` (about 97%), while early present rate rose `22.066500 ->
+31.746260/31.920709` (about 44%).  These values are diagnostic evidence of
+the fixed queue/wait behavior; they do not override the failed formal control
+gates.
+
+Exact evidence anchors are the [depth-one control artifact manifest](</tmp/xv6-gui-perf-6vcpu-final-20260713T213525Z-4136890-823.artifact-manifest.sha256>)
+SHA-256 `85f9a8a0de5124f53b9b190806e46d012c2ec9d493e54d9f91362ad23b15241e`
+and [comparison](</tmp/xv6-gui-perf-6vcpu-final-20260713T213525Z-4136890-823.diagnostic-comparison.txt>)
+SHA-256 `9f6cb98dcf62a4000c94f0df00bd9c36035abbebb8c87d340d163133cfd51be3`;
+the first [depth-two artifact manifest](</tmp/xv6-gui-perf-6vcpu-depth2-20260713T220951Z-1729527026.artifact-manifest.sha256>)
+SHA-256 `6960913c8965ac2a5360b422b71aaef81f0b5d9ed3311b9f90f02db7b2c971ab`,
+[analysis manifest](</tmp/xv6-gui-perf-6vcpu-depth2-20260713T220951Z-1729527026.analysis-manifest.sha256>)
+SHA-256 `272aee83270d2e4f7b7e12dd4cc2dc81f2351ea05420e63254c66ec4fea3e92f`,
+[comparison](</tmp/xv6-gui-perf-6vcpu-depth2-20260713T220951Z-1729527026.diagnostic-comparison.txt>)
+SHA-256 `9b9dc77290194c918abe247b9a6e7ac110442f03d9ea4731f1f438496eb0fff3`,
+and [receipt root-cause](</tmp/xv6-gui-perf-6vcpu-depth2-20260713T220951Z-1729527026.receipt-root-cause.txt>)
+SHA-256 `322f61819f0fe2f51eb538027af9e2731ca6ac47cf8321cf30b49870be03d2f4`.
+The repeated [depth-two formal manifest](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T225630Z-950cd3c7.artifact-manifest.sha256>)
+hashes to `b5e4c5f48a1974cf1806f34072c191cb0b82d582d791ea15a004075ea172d369`;
+its [analysis manifest](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T225630Z-950cd3c7.analysis-manifest.sha256>)
+and [comparison](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T225630Z-950cd3c7.diagnostic-comparison.txt>)
+hash to `8576fb8adb4856529c6142c498710f789a3243c028f8f9e9228a5751ac277c2a`
+and `017e663867b4a78e20bd2f532ab64eb414a36aac512bc59b9d7f10c016bd4079`.
+The latest C1-failure [manifest](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T234153Z-606378b0.artifact-manifest.sha256>),
+[analysis manifest](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T234153Z-606378b0.analysis-manifest.sha256>),
+and [comparison](</tmp/xv6-gui-perf-6vcpu-depth2-formal-20260713T234153Z-606378b0.diagnostic-comparison.txt>)
+hash respectively to
+`3f94540b806f632806b3839af398acad56230f247362e23072b832ef79747dc9`,
+`92ce6cec0d52b25c62a93498f0d5a89c04ae8cce4bf59149e402d053d5b36567`,
+and `47a710527830d11c3554df3602beb6e0d8994b2b6c267d641e561f2e09009223`.
+
+Kernel build, static, routing/mutation, and independent adversarial reviews
+passed; canonical and forced-HD720 driver static/mutation suites passed.  All
+owned processes were synchronously reaped and the final exact all-architecture
+QEMU inventory was zero.  The preserved KDE expect-file modification and
+ignored `.claude/settings.local.json` remain user-owned and unchanged.  This
+append-only closeout performed no build, VM, boot, rootfs, or image operation.
