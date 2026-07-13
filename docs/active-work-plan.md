@@ -4872,3 +4872,58 @@ image facts are **insufficient for independent pre-boot review**. Any future
 authority needs a newly reviewed wrapper that keeps its evidence private
 without propagating the restrictive umask into canonical build outputs, then
 one fresh full staging/image proof; this consumed invocation cannot be reused.
+
+**C1 corrected staging wrapper static contract — PASS / READY FOR INDEPENDENT
+NO-EXEC REVIEW ONLY / NO-BUILD / NO-ROOTFS / NO-BOOT (2026-07-13):** fresh
+artifact set
+`/tmp/xv6-c1-batch-rootfs-wrapper-v2-static-20260713TynANsT` contains the
+uninvoked wrapper `run-batch-rootfs-staging-v2.sh` (SHA-256
+`864b585c163bb5579aae9c2f7245484a3bd366dc0148b24f2e392da745062e90`),
+semantic checker (SHA-256
+`6a37be97bf674a918048c057c755ba2a2b71b8414547143414d785b283629a2c`),
+and static driver (SHA-256
+`234f270733ea19aaf0db797fe7e13d81f66c649fc402ca00a429ca9ceb6ab07d`).
+Both named Bash parser logs are empty PASS outputs; ShellCheck is unavailable
+and `shellcheck.log` records `SHELLCHECK_NOT_INSTALLED` rather than claiming a
+pass. `checker-canonical.log` ends `WRAPPER_V2_STATIC_CONTRACT_PASS` and
+`static-evidence-summary.log` ends `STATIC_EVIDENCE_PASS`. The runtime
+directory is absent, proving the wrapper was not invoked.
+
+The wrapper pins batch source base `de620a3` and requires live HEAD to equal
+the explicit full `-ff` origin while being a nonempty docs-plan-only
+descendant. It pins exact kernel/user/ports heads, approved remotes and
+gitlinks, KDE-smoke-only dirt, kernel artifact
+`0644/41359892/3bde70e3...acd7`, and the failed-refresh preimage
+inode/mode/size/mtime/SHA
+`73499/0600/8724152320/1783914216/66e2ac12...0fb1d`. Exact QEMU inventory
+classifies only `qemu-system-riscv64` as informational and fails every other
+QEMU conflict.
+
+The correction keeps the parent/runtime evidence policy at `umask 077`,
+requires a fresh non-symlink `0700` runtime directory, precreates every stage
+log `0600`, and runs only each canonical kernel, user, and rootfs-refresh
+command inside `( umask 022; ... )`. After every foreground direct-redirection
+stage it records the raw exit/log hash and requires the parent umask still be
+`0077` and the log still `0600`; build umask cannot leak back. Post-user proof
+requires staged `_consolerecord` regular, non-symlink, executable, exact
+`0755/29616/6f610bf2...cfa6` with the bounded `--batch-file` artifact match.
+Only after all stages pass does it require a changed `0644` host image,
+read-only named `debugfs` stat/dump proof that image `/bin/consolerecord` is
+regular/link-one/exact `0755` and hash-equal to staged, all three pinned media
+assets at exact `0644` mode/size/hash, raw-zero lookup-miss semantics for one
+named `/bin/_consolerecord` stat, stable post-proof image identity, final
+conflicting-QEMU zero, and one terminal result.
+
+Five syntactically valid controlled mutations are retained with checker exit
+one: removing the scoped `umask 022` rejects `build_umask_scope` and
+`build_umask_unique`; leaking `umask 022` into the parent rejects
+`build_umask_scope`; replacing exact staged mode with executable-only rejects
+`staged_console_mode_gate`; deleting the manifest proof rejects
+`media_manifest_gate`; and bypassing final inventory rejects
+`final_qemu_gate`. Start inspection saw one untouched informational RISC-V
+QEMU and zero conflicts; final exact inventory was `0/0/0`. No wrapper,
+`cmake`, `debugfs`, old proof, build, rootfs write, QEMU, boot, or serial
+command ran, and KDE dirt remains untouched. This clears only a fresh
+independent no-exec wrapper review and explicit new one-shot staging
+authorization; the prior invocation remains consumed and no image/pre-boot or
+performance credit is created here.
