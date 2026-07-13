@@ -4638,3 +4638,29 @@ this PASS authorizes only formation of one fresh foreground 60-second
 conductor gate for the later single windowed A1 treatment. It is not VM launch
 authority by itself and grants no YouTube, HD720/fullscreen, audio,
 `yt-presentfps`, `PERF-VIDEO`, FPS, performance, or default credit.
+
+**Fresh foreground A1 conductor gate — PASS / ONE WINDOWED TRIAL ONLY /
+NO-BOOT (2026-07-13):** at explicit `-ff` checkpoint
+`f64ce41442ae651ce3833080da4dfdf4ff31805a`, exactly equal to approved
+`origin/codex/host-linux-abi-shell-port-ff`, the reviewed source checkpoint is
+an ancestor and only plan commits follow the reviewed code. Kernel/user/ports
+gitlinks and clean nested heads are exact, only the preserved KDE-smoke dirt
+exists, and KVM read/write, WSL DXG/D3D12/GL, X11, Wayland, pinned kernel/image,
+and the consumed existing-image console/media receipt all revalidated. With no
+other VM worker active, exact start inventory was total/informational-RISC-V/
+conflicting `1/1/0` (untouched PID 3135982). One foreground `sleep 60` ran from
+`02:44:28Z` to `02:45:28Z`, synchronously reaped through its exact handle with
+no polling; the immediate end inventory and full prelaunch audit passed at
+`0/0/0`. Evidence is `/tmp/xv6-a1-passive-gate-20260713T024159Z`.
+
+Token `A1-WINDOWED-f64ce414-20260713T024615Z-Q0` authorizes exactly one
+subsequent **windowed** real-x86 KVM+virgl A1 treatment on this named branch
+(including this docs-only gate-record descendant):
+`WAYLAND_CHROMIUM_MULTIPROCESS=1`, audio-disable `1`, media `1`, forced-HD720
+`1`, capturediag `0`, EGL `0`, not fullscreen, standard measurement window.
+The VM worker must immediately recheck branch/prerequisites and exact all-arch
+QEMU conflicts, own and synchronously reap its QEMU process group, and retain a
+final exact inventory with zero conflicts; independent RISC-V remains
+informational and untouched. Any drift, missing endpoint, conflict, or handle
+loss fails without launch authority. This gate launched no VM and grants no
+performance, audio-on, fullscreen, or default credit.
