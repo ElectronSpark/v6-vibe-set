@@ -3679,7 +3679,44 @@ proc fail_timeout {phase {code 8}} {
     finish $code "FAIL timeout phase=$phase crash_grep=clean"
 }
 
-proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000} {expected_marker ""}} {
+proc c1_atomic_outer_terminal_shell_command {
+    command marker {recorder_path /bin/consolerecord}
+    {terminal_prefix /dev/shm/yt-c1-outer-terminal}
+    {remove_path /bin/rm}
+} {
+    if {![regexp {^[A-Za-z0-9]{1,28}$} $marker]} {
+        error "invalid C1 atomic outer marker"
+    }
+    foreach {name value cap} [list recorder $recorder_path 160 \
+            terminal-prefix $terminal_prefix 180 remover $remove_path 160] {
+        if {[string bytelength $value] > $cap ||
+            ![regexp {^/[A-Za-z0-9._/+:-]+$} $value]} {
+            error "invalid C1 atomic outer $name"
+        }
+    }
+    if {[string first "\n" $command] >= 0 || [string first "\r" $command] >= 0} {
+        error "invalid C1 atomic outer command"
+    }
+    set terminal_path "${terminal_prefix}-${marker}"
+    if {[string bytelength $terminal_path] > 224} {
+        error "C1 atomic outer terminal path too long"
+    }
+    return [string map [list @COMMAND@ $command @MARKER@ $marker \
+        @RECORDER@ $recorder_path @TERMINAL@ $terminal_path \
+        @REMOVER@ $remove_path] {true;(@COMMAND@;rc=$?;m=@MARKER@;recorder=@RECORDER@;terminal=@TERMINAL@;remover=@REMOVER@;umask 077;cleanup_terminal() { "$remover" -f "$terminal" >/dev/null 2>&1 && [ ! -e "$terminal" ] && [ ! -L "$terminal" ]; };"$remover" -f "${terminal}.absent" >/dev/null 2>&1 || exit 80;[ ! -e "${terminal}.absent" ] && [ ! -L "${terminal}.absent" ] || exit 80;[ ! -e "$terminal" ] && [ ! -L "$terminal" ] || exit 81;trap 'cleanup_terminal >/dev/null 2>&1' EXIT;(set -C;printf '%s:RC:%s\n%s:FENCE\n' "$m" "$rc" "$m" >"$terminal") 2>/dev/null || exit 82;[ -f "$terminal" ] && [ ! -L "$terminal" ] && [ -r "$terminal" ] || exit 83;terminal_count=$(/bin/wc <"$terminal" 2>/dev/null);set -- $terminal_count;expected_bytes=$((2 * ${#m} + ${#rc} + 12));[ "$#" -eq 3 ] && [ "$1" = 2 ] && [ "$2" = 2 ] && [ "$3" = "$expected_bytes" ] || exit 84;"$recorder" --batch-file "$terminal";recorder_rc=$?;cleanup_terminal || exit 85;trap - EXIT;[ "$recorder_rc" -eq 0 ] || exit 86;exit 0)}]
+}
+
+proc guest_cmd_serial_command {command marker {atomic_outer_terminal 0}} {
+    if {$atomic_outer_terminal ni {0 1}} {
+        error "invalid atomic outer terminal opt-in"
+    }
+    if {$atomic_outer_terminal} {
+        return [c1_atomic_outer_terminal_shell_command $command $marker]
+    }
+    return "true;$command;rc=\$?;m=$marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\""
+}
+
+proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000} {expected_marker ""} {atomic_outer_terminal 0}} {
     global timeout serial_counter serial_nonce send_slow
     incr serial_counter
     set marker "${serial_nonce}C${serial_counter}"
@@ -3700,7 +3737,9 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
     # `true;` is sacrificial: if the serial path drops its first character,
     # `rue` may fail but the semicolon keeps the real command intact.
     send "\025"
-    send -s "true;$command;rc=\$?;m=$marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\"\r"
+    set serial_command [guest_cmd_serial_command $command $marker \
+        $atomic_outer_terminal]
+    send -s "$serial_command\r"
     if {$deadline_ms != 0} {
         set after_send_ms [clock clicks -milliseconds]
         set after_send_plan [media_probe_final_timeout_seconds $deadline_ms \
@@ -4352,8 +4391,9 @@ proc fbstat_transport_static_frame {tag nonce payload {overrides {}}} {
 
 # The transport timeout is an algebraic upper bound, not a retry.  It charges
 # every max-size V2 record, both outer marker records, one normal 64-byte
-# consolewrite batch at its ONLCR-expanded 128 physical bytes, exactly one
-# 50-ms batch-lock acquisition, and a fixed capture/hash reserve.
+# consolewrite batch at its ONLCR-expanded 128 physical bytes, exactly two
+# 50-ms recorder acquisitions (the V2 envelope and the atomic outer terminal),
+# zero per-record drain allowance, and one fixed capture/hash/scheduling reserve.
 proc fbstat_transport_v2_timeout_contract {marker} {
     if {![regexp {^[A-Za-z0-9]+$} $marker]} {
         error "invalid V2 outer marker"
@@ -4384,16 +4424,28 @@ proc fbstat_transport_v2_timeout_contract {marker} {
     set outer_physical [expr {($marker_bytes + 5 + 2) + ($marker_bytes + 6 + 2)}]
     set normal_writer_physical 128
     set wire_ms [expr {int(ceil(double($physical + $outer_physical + $normal_writer_physical) * 10000.0 / 115200.0))}]
-    set batch_lock_acquisitions 1
-    set lock_ms [expr {$batch_lock_acquisitions * 50}]
+    set envelope_lock_acquisitions 1
+    set atomic_terminal_lock_acquisitions 1
+    set total_lock_acquisitions [expr {$envelope_lock_acquisitions +
+        $atomic_terminal_lock_acquisitions}]
+    set per_record_drain_ms 0
+    set per_record_drain_total_ms [expr {$record_count * $per_record_drain_ms}]
+    set lock_ms [expr {$total_lock_acquisitions * 50}]
     set helper_reserve_ms 5000
-    set timeout_seconds [expr {int(ceil(double($wire_ms + $lock_ms + $helper_reserve_ms) / 1000.0))}]
+    set total_ms [expr {$wire_ms + $lock_ms + $per_record_drain_total_ms +
+        $helper_reserve_ms}]
+    set timeout_seconds [expr {int(ceil(double($total_ms) / 1000.0))}]
     return [dict create cap $cap chunk_hex_max $chunk_hex_max total_chunks $total_chunks \
         record_count $record_count marker_bytes $marker_bytes \
         physical_bytes $physical outer_physical_bytes $outer_physical \
         normal_writer_physical_bytes $normal_writer_physical wire_ms $wire_ms \
-        batch_lock_acquisitions $batch_lock_acquisitions lock_ms $lock_ms \
-        helper_reserve_ms $helper_reserve_ms seconds $timeout_seconds]
+        envelope_lock_acquisitions $envelope_lock_acquisitions \
+        atomic_terminal_lock_acquisitions $atomic_terminal_lock_acquisitions \
+        total_lock_acquisitions $total_lock_acquisitions \
+        per_record_drain_ms $per_record_drain_ms \
+        per_record_drain_total_ms $per_record_drain_total_ms lock_ms $lock_ms \
+        helper_reserve_ms $helper_reserve_ms total_ms $total_ms \
+        seconds $timeout_seconds]
 }
 
 # C7 is deliberately a second command, not an enlargement of the admitting
@@ -4710,7 +4762,9 @@ proc fb_sample {tag} {
     for {set attempt 1} {$attempt <= $max_attempts} {incr attempt} {
         set expected_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
         set transport_timeout [dict get [fbstat_transport_v2_timeout_contract $expected_marker] seconds]
-        set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" "fbstat-$tag-attempt$attempt" $transport_timeout]
+        set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" \
+            "fbstat-$tag-attempt$attempt" $transport_timeout 0 0 1000 \
+            $expected_marker 1]
         set buf [lindex $result 1]
         set attempt_path "$outdir/fbstat-$tag-attempt$attempt.txt"
         wf $attempt_path $buf
@@ -9675,6 +9729,43 @@ virgl_bo_presents 6198
     append static_fb_payload [string repeat x [expr {$static_fb_target_bytes - [string bytelength $static_fb_payload]}]]
     set static_fb_frame [fbstat_transport_static_frame $static_fb_tag $static_fb_nonce $static_fb_payload]
     set static_fb_logical "$static_fb_frame$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n"
+    # Retain the exact live C1 shape that exposed the ordinary outer-terminal
+    # contamination: 56,424 decoded bytes become 301 chunks plus BEGIN/META/END
+    # (304 recorder rows).  A 26-byte run nonce reproduces its exact bounded
+    # logical and CRLF-physical envelope sizes.
+    set static_fb_observed_payload [string repeat o 56424]
+    set static_fb_observed_nonce [string repeat n 26]
+    set static_fb_observed_marker [string repeat M 28]
+    set static_fb_observed_frame [fbstat_transport_static_frame idle \
+        $static_fb_observed_nonce $static_fb_observed_payload]
+    set static_fb_observed_rows [split [string trimright \
+        $static_fb_observed_frame "\n"] "\n"]
+    set static_fb_observed_logical_bytes [string bytelength \
+        $static_fb_observed_frame]
+    set static_fb_observed_physical_bytes [expr {
+        $static_fb_observed_logical_bytes + [llength $static_fb_observed_rows]}]
+    set static_fb_observed_wire \
+        "$static_fb_observed_frame$static_fb_observed_marker:RC:0\n$static_fb_observed_marker:FENCE\n"
+    if {[llength $static_fb_observed_rows] != 304 ||
+        $static_fb_observed_logical_bytes != 148306 ||
+        $static_fb_observed_physical_bytes != 148610 ||
+        [string first \
+            {digest=a1a9707f4ded4a6e2f36f6079023736741c322a7d11763f757240de513aab038} \
+            $static_fb_observed_frame] < 0 ||
+        ![lindex [fbstat_transport_decode $static_fb_observed_wire idle \
+            $static_fb_observed_nonce $static_fb_observed_marker] 0]} {
+        fail_preflight "static-check-fbstat-v2-observed-304-row-shape rows=[llength $static_fb_observed_rows] logical=$static_fb_observed_logical_bytes physical=$static_fb_observed_physical_bytes"
+    }
+    foreach {wire_name wire_eol} [list lf "\n" crlf "\r\n" crcrlf "\r\r\n"] {
+        set observed_decoded [fbstat_transport_decode \
+            [string map [list "\n" $wire_eol] $static_fb_observed_wire] idle \
+            $static_fb_observed_nonce $static_fb_observed_marker]
+        if {![lindex $observed_decoded 0] ||
+            [binary encode hex [lindex $observed_decoded 2]] ne \
+                [binary encode hex $static_fb_observed_payload]} {
+            fail_preflight "static-check-fbstat-v2-observed-$wire_name decoded=[fbstat_transport_v2_bounded_report $observed_decoded 256]"
+        }
+    }
     foreach {wire_name wire_eol} [list lf "\n" crlf "\r\n" crcrlf "\r\r\n"] {
         set decoded [fbstat_transport_decode [string map [list "\n" $wire_eol] $static_fb_logical] \
             $static_fb_tag $static_fb_nonce $static_fb_marker]
@@ -9748,6 +9839,8 @@ bb}] [lindex $static_fb_chunks 0]]
         }
     }
     set static_fb_timeout [fbstat_transport_v2_timeout_contract $static_fb_marker]
+    set static_fb_live_marker_timeout [fbstat_transport_v2_timeout_contract \
+        $static_fb_observed_marker]
     set static_fb_v2_timed_wire_bytes [expr {
         [dict get $static_fb_timeout physical_bytes] +
         [dict get $static_fb_timeout outer_physical_bytes] +
@@ -9762,11 +9855,251 @@ bb}] [lindex $static_fb_chunks 0]]
         [dict get $static_fb_timeout normal_writer_physical_bytes] != 128 ||
         $static_fb_v2_timed_wire_bytes != 357956 ||
         [dict get $static_fb_timeout wire_ms] != 31073 ||
-        [dict get $static_fb_timeout batch_lock_acquisitions] != 1 ||
-        [dict get $static_fb_timeout lock_ms] != 50 ||
+        [dict get $static_fb_timeout envelope_lock_acquisitions] != 1 ||
+        [dict get $static_fb_timeout atomic_terminal_lock_acquisitions] != 1 ||
+        [dict get $static_fb_timeout total_lock_acquisitions] != 2 ||
+        [dict get $static_fb_timeout per_record_drain_ms] != 0 ||
+        [dict get $static_fb_timeout per_record_drain_total_ms] != 0 ||
+        [dict get $static_fb_timeout lock_ms] != 100 ||
         [dict get $static_fb_timeout helper_reserve_ms] != 5000 ||
+        [dict get $static_fb_timeout total_ms] != 36173 ||
         [dict get $static_fb_timeout seconds] != 37} {
         fail_preflight "static-check-fbstat-v2-timeout-algebra value=$static_fb_timeout"
+    }
+    set static_fb_live_37_pass [expr {
+        37 * 1000 >= [dict get $static_fb_live_marker_timeout total_ms]}]
+    set static_fb_live_36_fail [expr {
+        36 * 1000 < [dict get $static_fb_live_marker_timeout total_ms]}]
+    if {[dict get $static_fb_live_marker_timeout marker_bytes] != 28 ||
+        [dict get $static_fb_live_marker_timeout outer_physical_bytes] != 71 ||
+        [dict get $static_fb_live_marker_timeout wire_ms] != 31075 ||
+        [dict get $static_fb_live_marker_timeout total_lock_acquisitions] != 2 ||
+        [dict get $static_fb_live_marker_timeout per_record_drain_ms] != 0 ||
+        [dict get $static_fb_live_marker_timeout total_ms] != 36175 ||
+        [dict get $static_fb_live_marker_timeout seconds] != 37 ||
+        !$static_fb_live_37_pass || !$static_fb_live_36_fail} {
+        fail_preflight "static-check-fbstat-v2-live-marker-boundary value=$static_fb_live_marker_timeout pass37=$static_fb_live_37_pass fail36=$static_fb_live_36_fail"
+    }
+
+    # Execute the actual generated atomic-terminal shell on the host with a
+    # silent recorder stub.  This is C1-only static coverage: the ordinary
+    # guest_cmd string is asserted byte-for-byte below and no guest/VM runs.
+    set static_c1_atomic_dir "$outdir/c1-atomic-terminal-static"
+    if {[file exists $static_c1_atomic_dir]} {
+        fail_preflight "static-check-c1-atomic-dir-preexists"
+    }
+    file mkdir $static_c1_atomic_dir
+    set static_c1_atomic_marker YTC1ATOMICSTATICC1
+    set static_c1_atomic_prefix "$static_c1_atomic_dir/terminal"
+    set static_c1_atomic_path \
+        "${static_c1_atomic_prefix}-${static_c1_atomic_marker}"
+    set static_c1_atomic_calls "$static_c1_atomic_dir/calls.txt"
+    set static_c1_atomic_rows "$static_c1_atomic_dir/rows.txt"
+    set static_c1_atomic_mode "$static_c1_atomic_dir/mode.txt"
+    set static_c1_atomic_recorder "$static_c1_atomic_dir/consolerecord"
+    set static_c1_atomic_recorder_fail \
+        "$static_c1_atomic_dir/consolerecord-fail"
+    set static_c1_atomic_remove_fail "$static_c1_atomic_dir/rm-fail"
+    wf $static_c1_atomic_recorder [string map [list \
+        @CALLS@ $static_c1_atomic_calls @ROWS@ $static_c1_atomic_rows \
+        @MODE@ $static_c1_atomic_mode] {#!/bin/bash
+[ "$#" -eq 2 ] && [ "$1" = --batch-file ] || exit 92
+printf 'call\n' >> @CALLS@ || exit 93
+/usr/bin/stat -c '%a' "$2" > @MODE@ || exit 94
+/bin/cp "$2" @ROWS@ || exit 95
+exit 0
+}]
+    wf $static_c1_atomic_recorder_fail [string map [list \
+        @CALLS@ $static_c1_atomic_calls] {#!/bin/bash
+[ "$#" -eq 2 ] && [ "$1" = --batch-file ] || exit 92
+printf 'call\n' >> @CALLS@ || exit 93
+exit 4
+}]
+    wf $static_c1_atomic_remove_fail {#!/bin/bash
+exit 1
+}
+    foreach path [list $static_c1_atomic_recorder \
+            $static_c1_atomic_recorder_fail $static_c1_atomic_remove_fail] {
+        file attributes $path -permissions 0755
+    }
+    proc static_c1_atomic_run {shell_command} {
+        global static_c1_atomic_dir static_c1_atomic_run_counter
+        incr static_c1_atomic_run_counter
+        set stdout_path "$static_c1_atomic_dir/run-$static_c1_atomic_run_counter.stdout"
+        set stderr_path "$static_c1_atomic_dir/run-$static_c1_atomic_run_counter.stderr"
+        set caught [catch {exec /bin/bash -c $shell_command \
+            >$stdout_path 2>$stderr_path} exec_message options]
+        set errorcode none
+        if {$caught && [dict exists $options -errorcode]} {
+            set errorcode [dict get $options -errorcode]
+        }
+        set stdout [read_text $stdout_path]
+        set stderr [read_text $stderr_path]
+        file delete -force $stdout_path $stderr_path
+        return [dict create caught $caught stdout $stdout stderr $stderr \
+            exec_message $exec_message errorcode $errorcode]
+    }
+    proc static_c1_atomic_reset {paths} {
+        foreach path $paths { catch {file delete -force $path} }
+    }
+    set static_c1_atomic_artifacts [list $static_c1_atomic_calls \
+        $static_c1_atomic_rows $static_c1_atomic_mode $static_c1_atomic_path \
+        "${static_c1_atomic_path}.absent"]
+    set static_c1_atomic_run_counter 0
+    static_c1_atomic_reset $static_c1_atomic_artifacts
+    set static_c1_atomic_success_shell \
+        [c1_atomic_outer_terminal_shell_command \
+            {/bin/sh -c 'exit 73'} $static_c1_atomic_marker \
+            $static_c1_atomic_recorder $static_c1_atomic_prefix /bin/rm]
+    set static_c1_atomic_success [static_c1_atomic_run \
+        $static_c1_atomic_success_shell]
+    set static_c1_atomic_expected \
+        "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n"
+    set static_c1_atomic_success_parse [guest_command_frame_parse \
+        [read_text $static_c1_atomic_rows] $static_c1_atomic_marker]
+    if {[dict get $static_c1_atomic_success caught] ||
+        [dict get $static_c1_atomic_success stdout] ne "" ||
+        [dict get $static_c1_atomic_success stderr] ne "" ||
+        [read_text $static_c1_atomic_rows] ne $static_c1_atomic_expected ||
+        [read_text $static_c1_atomic_calls] ne "call\n" ||
+        [string trim [read_text $static_c1_atomic_mode]] ne "600" ||
+        ![lindex $static_c1_atomic_success_parse 0] ||
+        [lindex $static_c1_atomic_success_parse 2] ne "73" ||
+        ![catch {file lstat $static_c1_atomic_path \
+            static_c1_atomic_after_success_stat}]} {
+        fail_preflight "static-check-c1-atomic-success result=$static_c1_atomic_success parse=$static_c1_atomic_success_parse"
+    }
+
+    set static_c1_atomic_clean_async \
+        "async-before\n$static_c1_atomic_marker:RC:73\nasync-between\n$static_c1_atomic_marker:FENCE\nasync-after\n"
+    set static_c1_atomic_clean_async_parse [guest_command_frame_parse \
+        $static_c1_atomic_clean_async $static_c1_atomic_marker]
+    set static_c1_atomic_contaminated \
+        "virtio_gpu: page-flip present re$static_c1_atomic_marker:RC:73\nsource=5 size=1280x800 already_b$static_c1_atomic_marker:FENCE\n"
+    set static_c1_atomic_contaminated_parse [guest_command_frame_parse \
+        $static_c1_atomic_contaminated $static_c1_atomic_marker]
+    set static_c1_atomic_contaminated_match [regexp -- \
+        [guest_fence_regex $static_c1_atomic_marker] \
+        $static_c1_atomic_contaminated]
+    set static_c1_atomic_terminal_rejects {}
+    foreach bad_terminal [list \
+            "$static_c1_atomic_marker:RC:73\n" \
+            "$static_c1_atomic_marker:FENCE\n" \
+            "$static_c1_atomic_marker:FENCE\n$static_c1_atomic_marker:RC:73\n" \
+            "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n" \
+            "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n$static_c1_atomic_marker:FENCE\n" \
+            "WRONGMARKER:RC:73\nWRONGMARKER:FENCE\n" \
+            "$static_c1_atomic_marker:RC:notnumeric\n$static_c1_atomic_marker:FENCE\n" \
+            "prefix$static_c1_atomic_marker:RC:73\nprefix$static_c1_atomic_marker:FENCE\n"] {
+        lappend static_c1_atomic_terminal_rejects \
+            [expr {![lindex [guest_command_frame_parse $bad_terminal \
+                $static_c1_atomic_marker] 0]}]
+    }
+    if {![lindex $static_c1_atomic_clean_async_parse 0] ||
+        [lindex $static_c1_atomic_clean_async_parse 2] ne "73" ||
+        [lindex $static_c1_atomic_contaminated_parse 0] ||
+        $static_c1_atomic_contaminated_match ||
+        [lsearch -exact $static_c1_atomic_terminal_rejects 0] >= 0} {
+        fail_preflight "static-check-c1-atomic-terminal-parser clean=$static_c1_atomic_clean_async_parse contaminated=$static_c1_atomic_contaminated_parse match=$static_c1_atomic_contaminated_match rejects=$static_c1_atomic_terminal_rejects"
+    }
+
+    # Recorder failure must produce no terminal rows and must remove the
+    # private candidate.  The host transport cannot admit the already sealed
+    # V2 payload without the missing outer pair.
+    static_c1_atomic_reset $static_c1_atomic_artifacts
+    set static_c1_atomic_recorder_failure [static_c1_atomic_run \
+        [c1_atomic_outer_terminal_shell_command true \
+            $static_c1_atomic_marker $static_c1_atomic_recorder_fail \
+            $static_c1_atomic_prefix /bin/rm]]
+    set static_c1_atomic_no_terminal_decode [fbstat_transport_decode \
+        $static_fb_frame $static_fb_tag $static_fb_nonce \
+        $static_c1_atomic_marker]
+    if {![dict get $static_c1_atomic_recorder_failure caught] ||
+        [dict get $static_c1_atomic_recorder_failure stdout] ne "" ||
+        [dict get $static_c1_atomic_recorder_failure stderr] ne "" ||
+        [file exists $static_c1_atomic_rows] ||
+        [read_text $static_c1_atomic_calls] ne "call\n" ||
+        [file exists $static_c1_atomic_path] ||
+        [lindex $static_c1_atomic_no_terminal_decode 0]} {
+        fail_preflight "static-check-c1-atomic-recorder-failure result=$static_c1_atomic_recorder_failure decode=$static_c1_atomic_no_terminal_decode"
+    }
+
+    # A stale regular path, symlink, or nonregular path is never removed and
+    # reused.  Atomic noclobber creation is the only successful create path.
+    set static_c1_atomic_preexist_results {}
+    foreach kind {regular symlink nonregular} {
+        static_c1_atomic_reset $static_c1_atomic_artifacts
+        if {$kind eq "regular"} {
+            wf $static_c1_atomic_path stale
+        } elseif {$kind eq "symlink"} {
+            set target "$static_c1_atomic_dir/symlink-target"
+            wf $target target
+            file link -symbolic $static_c1_atomic_path $target
+        } else {
+            file mkdir $static_c1_atomic_path
+        }
+        set run [static_c1_atomic_run \
+            [c1_atomic_outer_terminal_shell_command true \
+                $static_c1_atomic_marker $static_c1_atomic_recorder \
+                $static_c1_atomic_prefix /bin/rm]]
+        lappend static_c1_atomic_preexist_results [expr {
+            [dict get $run caught] && [dict get $run stdout] eq "" &&
+            [dict get $run stderr] eq "" &&
+            ![file exists $static_c1_atomic_calls]}]
+        catch {file delete -force $static_c1_atomic_path}
+        catch {file delete -force "$static_c1_atomic_dir/symlink-target"}
+    }
+    static_c1_atomic_reset $static_c1_atomic_artifacts
+    set static_c1_atomic_cleanup_failure [static_c1_atomic_run \
+        [c1_atomic_outer_terminal_shell_command true \
+            $static_c1_atomic_marker $static_c1_atomic_recorder \
+            $static_c1_atomic_prefix $static_c1_atomic_remove_fail]]
+    set static_c1_atomic_create_failure [static_c1_atomic_run \
+        [c1_atomic_outer_terminal_shell_command true \
+            $static_c1_atomic_marker $static_c1_atomic_recorder \
+            "$static_c1_atomic_dir/missing/terminal" /bin/rm]]
+    if {[lsearch -exact $static_c1_atomic_preexist_results 0] >= 0 ||
+        ![dict get $static_c1_atomic_cleanup_failure caught] ||
+        [dict get $static_c1_atomic_cleanup_failure stdout] ne "" ||
+        [dict get $static_c1_atomic_cleanup_failure stderr] ne "" ||
+        [file exists $static_c1_atomic_path] ||
+        [file exists $static_c1_atomic_calls] ||
+        ![dict get $static_c1_atomic_create_failure caught] ||
+        [dict get $static_c1_atomic_create_failure stdout] ne "" ||
+        [dict get $static_c1_atomic_create_failure stderr] ne ""} {
+        fail_preflight "static-check-c1-atomic-file-failclosed preexist=$static_c1_atomic_preexist_results cleanup=$static_c1_atomic_cleanup_failure create=$static_c1_atomic_create_failure"
+    }
+
+    set static_c1_generic_marker YTGENERICSTATICC9
+    set static_c1_generic_expected \
+        "true;true;rc=\$?;m=$static_c1_generic_marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\""
+    set static_c1_generic_actual [guest_cmd_serial_command true \
+        $static_c1_generic_marker]
+    set static_c1_marker_path_rejects [list \
+        [catch {c1_atomic_outer_terminal_shell_command true \
+            [string repeat M 29]}] \
+        [catch {c1_atomic_outer_terminal_shell_command true BAD-MARKER}] \
+        [catch {c1_atomic_outer_terminal_shell_command true VALIDMARKER \
+            /bin/consolerecord {/dev/shm/bad path}}]]
+    set static_c1_guest_default_value unset
+    set static_c1_guest_has_default [info default guest_cmd \
+        atomic_outer_terminal static_c1_guest_default_value]
+    set static_c1_atomic_source_contract [expr {
+        $static_c1_generic_actual eq $static_c1_generic_expected &&
+        [string first {consolerecord} $static_c1_generic_actual] < 0 &&
+        [string first {$expected_marker 1]} [info body fb_sample]] >= 0 &&
+        $static_c1_guest_has_default &&
+        $static_c1_guest_default_value eq "0" &&
+        [string first {guest_cmd_serial_command $command $marker} \
+            [info body guest_cmd]] >= 0 &&
+        [string first {printf '%s:RC:%s\n%s:FENCE\n'} \
+            [info body c1_atomic_outer_terminal_shell_command]] >= 0 &&
+        [string first {>/dev/null 2>&1} \
+            [info body c1_atomic_outer_terminal_shell_command]] >= 0 &&
+        [lsearch -exact $static_c1_marker_path_rejects 0] < 0
+    }]
+    if {!$static_c1_atomic_source_contract} {
+        fail_preflight "static-check-c1-atomic-source-contract generic=[binary encode hex $static_c1_generic_actual] rejects=$static_c1_marker_path_rejects"
     }
     set static_fb_helper [fbstat_transport_guest_helper_script]
     set static_fb_v2_decimal_literal [fbstat_transport_v2_valid_decimal_bash]
@@ -10168,12 +10501,27 @@ exit 0
             [expr {$static_fb_v2_batch_call_first + 1}]] < 0
     }]
     set static_c1_v2_cleanup [static_fb_v2_helper_clean probe1 fbfstatstaticnonce]
-    set static_c1_v2_timeout_expected [expr {int(ceil(double([dict get $static_fb_timeout wire_ms] + 50 + 5000) / 1000.0))}]
-    set static_c1_v2_timeout [expr {[dict get $static_fb_timeout record_count] == 701 && [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 && [dict get $static_fb_timeout batch_lock_acquisitions] == 1 && [dict get $static_fb_timeout lock_ms] == 50 && [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected}]
+    set static_c1_v2_timeout_expected [expr {int(ceil(double(
+        [dict get $static_fb_timeout wire_ms] + 100 + 5000) / 1000.0))}]
+    set static_c1_v2_timeout [expr {
+        [dict get $static_fb_timeout record_count] == 701 &&
+        [dict get $static_fb_timeout normal_writer_physical_bytes] == 128 &&
+        [dict get $static_fb_timeout envelope_lock_acquisitions] == 1 &&
+        [dict get $static_fb_timeout atomic_terminal_lock_acquisitions] == 1 &&
+        [dict get $static_fb_timeout total_lock_acquisitions] == 2 &&
+        [dict get $static_fb_timeout per_record_drain_ms] == 0 &&
+        [dict get $static_fb_timeout per_record_drain_total_ms] == 0 &&
+        [dict get $static_fb_timeout lock_ms] == 100 &&
+        [dict get $static_fb_timeout total_ms] ==
+            [expr {[dict get $static_fb_timeout wire_ms] + 100 + 5000}] &&
+        [dict get $static_fb_timeout seconds] == $static_c1_v2_timeout_expected
+    }]
     set static_c1_v2_case_matrix [expr {
         $static_c1_v2_contiguity && $static_c1_v2_wc_route &&
         $static_c1_v2_recorder_route && $static_c1_v2_cleanup &&
-        $static_c1_v2_timeout && $static_fb_v2_child_status_fixture_matrix
+        $static_c1_v2_timeout && $static_c1_atomic_source_contract &&
+        $static_fb_live_37_pass && $static_fb_live_36_fail &&
+        $static_fb_v2_child_status_fixture_matrix
     }]
 
     # Exact relevant shape from T1 idle attempt 1: scalar/backend rows were
@@ -12001,7 +12349,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         $static_render_js_guest_runtime ne "UNEXECUTED"} {
         fail_preflight "static-check-render-start-receipt valid=$static_render_valid class=$static_render_valid_class source=$static_render_source_classes role_exit=$static_render_role_exit_class role_command_failed=$static_render_role_command_failed_class live_no_present=$static_render_live_no_present_class role_evidence_file=$static_render_helper_file_matrix role_records=$static_render_helper_role_records c1v2=$static_c1_v2_contiguity,$static_c1_v2_wc_route,$static_c1_v2_recorder_route,$static_c1_v2_cleanup,$static_c1_v2_timeout,$static_c1_v2_case_matrix c5_marker_drift_rejected=$static_c5_marker_drift_rejected c5_helper_sha_guard=$static_c5_helper_unchanged c5_validator_guard=$static_c5_validator_unchanged source_diag=$static_render_source_diag_matrix fbstat_binding=$static_render_fbstat_binding_source no_credit=$static_render_diagnostic_no_credit c7=$static_c7_complete,$static_c7_wire_matrix,$static_c7_rejects,$static_c7_semantic_invariant,$static_c7_source_contract,$static_c7_helper_unchanged,$static_c7_no_credit wire_details=$static_c7_wire_details reject_details=$static_c7_reject_details c8=$static_c8_cases,$static_c8_adversaries,$static_c8_source_contract,$static_c8_actual_wire_matrix,$static_c8_actual_helper_matrix,$static_c8_decimal_validator_matrix,$static_c8_decimal_source_lock,$static_c8_actual_wire_adversaries,$static_c8_no_credit producer_stage=$static_c8_producer_source_contract,$static_c8_stage_adversaries,$static_c8_stage_no_admission producer_stage_details=$static_c8_stage_adversary_details c8_actual_case_ok=$static_c8_actual_case_ok c8_actual_case_details=$static_c8_actual_case_details c8_decimal_accepts=$static_c8_decimal_accepts c8_decimal_rejects=$static_c8_decimal_rejects c8_details=$static_c8_adversary_details c8_wire_details=$static_c8_actual_wire_details c8_wire_adversary_details=$static_c8_actual_wire_adversary_details tamper=$static_render_tampered marker=$static_render_marker_drift truncated=$static_render_truncated oversize=$static_render_oversize cursor=$static_render_cursor_drift tails=$static_render_tail_outcomes portability=$static_render_portability_counts,$static_render_portability_hex,$static_render_portability_digest,$static_render_portability_failclosed sequence=$static_render_sequence_good,$static_render_sequence_bad threshold=$static_render_threshold_edges,$static_render_threshold_source v3=$static_render_v3_isolation diag0=$static_render_diag0_dispatch js=$static_render_js_guest_runtime"
     }
-    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
+    puts "YT-C1-V2-STATIC-PASS contiguity=$static_c1_v2_contiguity wc_no_option=$static_c1_v2_wc_route recorder_image_path=/bin/consolerecord recorder_route=$static_c1_v2_recorder_route cleanup=$static_c1_v2_cleanup atomic_outer_terminal=$static_c1_atomic_source_contract two_acquisitions=1 per_record_drain_ms=0 timeout_37_pass_36_fail=$static_fb_live_37_pass,$static_fb_live_36_fail timeout_701=$static_c1_v2_timeout matrix=$static_c1_v2_case_matrix"
     puts "YT-RENDER-START-RECEIPT-STATIC-PASS framing_nonce_probe_order=PASS bounded_cursor_bytes_digest=PASS tail_integrity_false_true=REJECT valid_truncated=OBSERVED helper_portability_empty_binary_multiline=PASS malformed_count_hex_digest_dd=REJECT missing_unreadable_nonregular=PASS role_helper_actual_bash_fresh_evidence_live_stdout_stale_missing_nonregular_unreadable_command_overcap=PASS source_navigation_player_progress_missing_stalled_advancing=PASS c3_c4_c5_nonce_probe_cursor_digest_binding=PASS c5_marker_drift_rejected=1 c7_literal_bracketed_paste_disable_begin_only_duplicate_mutated_foreign_nonbegin=PASS c7_full_census_65to82k_host_digest_vector_outer_frame_tag_bindings_count_hex_cr_duplicate_overcap_key_grammar_semantic_no_credit=PASS c8_producer_boot_none_boot_only_ready_selector_pending_no_player_observation_pending_stalled_progress=PASS c8_producer_stage_forged_missing_duplicate_reordered_early_wrong_nonce_malformed_arm=REJECT c8_producer_stage_source_order_once_no_url_data=PASS c8_actual_bash_decimal_0_1to9_10plus_reject_empty_signed_space_junk_leadingzero=PASS c8_actual_bash_wc_dd_openssl_xxd_empty_binary_multiline_overcap_exact_payload_wire_preamble_crcrlf_outer_rc_fence_duplicate_noncontiguous_no_credit=PASS diagnostic_no_credit_latch=PASS producer_stage_no_classifier_or_threshold_admission=PASS role_claim_nonce_probe_digest_cap=REJECT tamper_truncation_drift=REJECT threshold_3over4_103over4=RETAINED capturediag0_no_v3=PASS js_guest_runtime=UNEXECUTED"
     puts "YT-PRODUCER-STAGE-STATIC-PASS boot_before_guard_nonce=PASS ready_after_library_nonce_before_selector=PASS once_no_url_data=PASS none_boot_only_ready_pending_no_player_stalled_progress=PASS coalesced=PASS forged_missing_duplicate_reordered_early_wrong_nonce_foreign_extension_malformed=REJECT transport_truncated=REJECT no_classifier_threshold_credit=PASS manifest_sha_key_match_world_run_at=$static_manifest_sha"
 

@@ -5769,3 +5769,59 @@ credits; the rejected 250-ms/record term would instead inflate every later
 `fb_sample`. The next implementation must address atomic/record-local outer
 terminal emission while preserving the strict matcher, not enlarge the C1
 timeout. That implementation is not performed or authorized by this review.
+
+**C1 atomic outer terminal implementation — STATIC PASS / NO-BOOT
+(2026-07-13):** the driver-only successor at exact base
+`f1799b483fcd3924b7462f27ae23a52a5da126a0` changes only C1 `fb_sample` to
+opt into an atomic outer-terminal mode. After the existing `/fbs.sh` command
+has emitted its one V2 envelope batch, the shell retains its real return code,
+creates a fresh marker-unique `/dev/shm/yt-c1-outer-terminal-*` file under
+`umask 077` with noclobber creation, proves it is a readable regular
+non-symlink with exactly two words/two lines/the calculated byte count, and
+invokes `/bin/consolerecord --batch-file` exactly once to emit only the
+standalone ordered `RC:<decimal>` and `FENCE` records. Ordinary stdout never
+writes either terminal record. Pre-existing regular, symlink, and nonregular
+paths; creation/type/count failure; recorder failure; and unavailable cleanup
+all return nonzero without an admitted terminal, while the private candidate
+is removed and absence-checked. Generic `guest_cmd` callers retain their
+byte-exact prior serial command; the new mode is an explicit final default-off
+argument used only by `fb_sample`. The strict fence regex and exact parser are
+unchanged.
+
+The maximum timeout remains 37 seconds with zero per-record drain, but now
+honestly charges two and only two 50-ms recorder mutex acquisitions: one for
+the existing V2 envelope and one for the atomic terminal batch. Thus the
+formula is the prior wire bound plus `100+5000` ms. The 16-byte static marker
+is `31073+100+5000=36173` ms and the live maximum 28-byte marker is
+`31075+100+5000=36175` ms; 37 seconds passes and 36 seconds fails. C6/C7/C8,
+diagnostic mode 0, all no-credit paths, and the strict
+`flips>idle+100 && presents>idle` threshold are unchanged.
+
+The first host-only static invocation returned code 2 solely because its new
+failure-injection harness mistook Tcl's synthetic `child process exited
+abnormally` result for child stdout; the production failure path itself had
+returned 86, removed the file, and was rejected by the decoder. Separating
+stdout/stderr capture fixed that harness defect. A later explicit-digest
+coverage assertion initially named the V2 field `sha256=` rather than
+`digest=` and failed preflight before the terminal harness; correcting that
+test-only typo produced the final fresh canonical pass at
+`/tmp/xv6-c1-atomic-terminal-static-20260713T070725Z-3429465`, with log
+`/tmp/xv6-c1-atomic-terminal-static-20260713T070725Z-3429465.log`: exact
+digested LF/CRLF/CRCRLF observed 56,424-byte/301-chunk/304-record and maximum
+131,072-byte/698-chunk/701-record V2 shapes, single-call recorder success and
+failure, mode/cleanup/file adversaries, clean asynchronous full-line gaps,
+contaminated/missing/duplicate/reordered/wrong-marker/nondecimal/prefixed
+terminal rejection, generic-call isolation, two-acquisition/zero-drain
+algebra, and the 37/36 boundary. It ended in
+`YT-C1-V2-STATIC-PASS ... matrix=1` and
+`YT-PRESENTFPS-STATIC-CHECK-PASS`. Exact pre/post all-architecture QEMU
+inventories were zero. No build, rootfs/image access or write, VM, boot,
+serial action, kernel/user/KDE change, threshold relaxation, or runtime credit
+occurred.
+
+There is still no VM authority and no performance, audio, fullscreen, or
+default credit. Next require an independent adversarial review of this exact
+driver/plan checkpoint, including the installed recorder/file/cleanup
+contract and unchanged C6/C7/C8/no-credit paths. Only a separately recorded
+fresh one-x86-VM gate may then authorize exactly one canonical windowed A1
+trial; never infer a retry from this static pass.
