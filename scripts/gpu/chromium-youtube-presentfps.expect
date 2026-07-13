@@ -688,6 +688,7 @@ set forensic_verdict "NOT_RUN"
 set media_probe_verdict "NOT_RUN"
 set owned_group_remaining ""
 set serial_counter 0
+set c1_terminal_max_serial_counter 38
 set render_start_receipt_counter 0
 set eof_control_raw_cap 8192
 set serial_nonce "YTP[pid][clock clicks]"
@@ -836,6 +837,58 @@ proc guest_command_frame_parse {text marker} {
         return [list 0 "frame-rc-not-before-fence" ""]
     }
     return [list 1 "pass" [lindex [lindex $rc_values 0] 1]]
+}
+
+# C1 terminal commits are a narrower grammar than ordinary guest-command
+# frames.  The expected RC:0 and FENCE records must be raw-record adjacent;
+# terminal-looking foreign, duplicated, reordered, or contaminated rows are
+# fail-closed.  Once the complete FENCE newline is present, later bytes are
+# outside the commit and cannot revoke it.
+proc c1_terminal_commit_frame_parse {text marker} {
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
+        return [list 0 "terminal-marker-invalid" ""]
+    }
+    set lines [split $text "\n"]
+    set last_line_index [expr {[llength $lines] - 1}]
+    set line_index -1
+    set pending_rc 0
+    foreach raw_line $lines {
+        incr line_index
+        set complete [expr {$line_index != $last_line_index}]
+        set line [string trimright $raw_line "\r"]
+        set cr_count [expr {[string length $raw_line] - [string length $line]}]
+        set bad_wire_cr [expr {$cr_count > 2 || [string first "\r" $line] >= 0}]
+
+        if {$pending_rc} {
+            if {$complete && !$bad_wire_cr && $line eq "$marker:FENCE"} {
+                return [list 1 "pass" "0"]
+            }
+            return [list 0 "terminal-fence-not-raw-adjacent-$line_index" ""]
+        }
+        if {!$complete} {
+            if {[string first "$marker:RC:" $line] >= 0 ||
+                [string first "$marker:FENCE" $line] >= 0} {
+                return [list 0 "terminal-row-missing-newline-$line_index" ""]
+            }
+            continue
+        }
+        if {!$bad_wire_cr && $line eq "$marker:RC:0"} {
+            set pending_rc 1
+            continue
+        }
+        if {!$bad_wire_cr && $line eq "$marker:FENCE"} {
+            return [list 0 "terminal-fence-before-rc-$line_index" ""]
+        }
+        if {[string first "$marker:RC:" $line] >= 0 ||
+            [string first "$marker:FENCE" $line] >= 0} {
+            return [list 0 "terminal-expected-row-contaminated-$line_index" ""]
+        }
+        if {[regexp {[A-Za-z0-9]+:(RC:[^\r]*|FENCE)} $line]} {
+            return [list 0 "terminal-foreign-row-$line_index" ""]
+        }
+    }
+    return [list 0 [expr {$pending_rc ? "terminal-fence-missing" :
+        "terminal-rc-missing"}] ""]
 }
 
 # debugfs writes its normal version banner and successful `write` allocation
@@ -3682,13 +3735,12 @@ proc fail_timeout {phase {code 8}} {
 proc c1_atomic_outer_terminal_shell_command {
     command marker {recorder_path /bin/consolerecord}
     {terminal_prefix /dev/shm/yt-c1-outer-terminal}
-    {remove_path /bin/rm}
 } {
-    if {![regexp {^[A-Za-z0-9]{1,28}$} $marker]} {
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
         error "invalid C1 atomic outer marker"
     }
     foreach {name value cap} [list recorder $recorder_path 160 \
-            terminal-prefix $terminal_prefix 180 remover $remove_path 160] {
+            terminal-prefix $terminal_prefix 159] {
         if {[string bytelength $value] > $cap ||
             ![regexp {^/[A-Za-z0-9._/+:-]+$} $value]} {
             error "invalid C1 atomic outer $name"
@@ -3702,8 +3754,7 @@ proc c1_atomic_outer_terminal_shell_command {
         error "C1 atomic outer terminal path too long"
     }
     return [string map [list @COMMAND@ $command @MARKER@ $marker \
-        @RECORDER@ $recorder_path @TERMINAL@ $terminal_path \
-        @REMOVER@ $remove_path] {true;(@COMMAND@;rc=$?;m=@MARKER@;recorder=@RECORDER@;terminal=@TERMINAL@;remover=@REMOVER@;umask 077;cleanup_terminal() { "$remover" -f "$terminal" >/dev/null 2>&1 && [ ! -e "$terminal" ] && [ ! -L "$terminal" ]; };"$remover" -f "${terminal}.absent" >/dev/null 2>&1 || exit 80;[ ! -e "${terminal}.absent" ] && [ ! -L "${terminal}.absent" ] || exit 80;[ ! -e "$terminal" ] && [ ! -L "$terminal" ] || exit 81;trap 'cleanup_terminal >/dev/null 2>&1' EXIT;(set -C;printf '%s:RC:%s\n%s:FENCE\n' "$m" "$rc" "$m" >"$terminal") 2>/dev/null || exit 82;[ -f "$terminal" ] && [ ! -L "$terminal" ] && [ -r "$terminal" ] || exit 83;terminal_count=$(/bin/wc <"$terminal" 2>/dev/null);set -- $terminal_count;expected_bytes=$((2 * ${#m} + ${#rc} + 12));[ "$#" -eq 3 ] && [ "$1" = 2 ] && [ "$2" = 2 ] && [ "$3" = "$expected_bytes" ] || exit 84;"$recorder" --batch-file "$terminal";recorder_rc=$?;cleanup_terminal || exit 85;trap - EXIT;[ "$recorder_rc" -eq 0 ] || exit 86;exit 0)}]
+        @RECORDER@ $recorder_path @TERMINAL@ $terminal_path] {true;(@COMMAND@;rc=$?;[ "$rc" -eq 0 ] || exit "$rc";m=@MARKER@;recorder=@RECORDER@;terminal=@TERMINAL@;umask 077;[ ! -e "$terminal" ] && [ ! -L "$terminal" ] || exit 81;(set -C;printf '%s:RC:0\n%s:FENCE\n' "$m" "$m" >"$terminal") 2>/dev/null || exit 82;[ -f "$terminal" ] && [ ! -L "$terminal" ] && [ -r "$terminal" ] || exit 83;terminal_count=$(/bin/wc <"$terminal" 2>/dev/null);set -- $terminal_count;expected_bytes=$((2 * ${#m} + 13));[ "$#" -eq 3 ] && [ "$1" = 2 ] && [ "$2" = 2 ] && [ "$3" = "$expected_bytes" ] || exit 84;exec "$recorder" --terminal-batch-file "$terminal" "$m")}]
 }
 
 proc guest_cmd_serial_command {command marker {atomic_outer_terminal 0}} {
@@ -3718,6 +3769,11 @@ proc guest_cmd_serial_command {command marker {atomic_outer_terminal 0}} {
 
 proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_timeout_ms 1000} {expected_marker ""} {atomic_outer_terminal 0}} {
     global timeout serial_counter serial_nonce send_slow
+    global c1_terminal_max_serial_counter
+    if {$atomic_outer_terminal &&
+        $serial_counter >= $c1_terminal_max_serial_counter} {
+        finish 8 "FAIL C1-terminal-command-counter-exhausted counter=$serial_counter cap=$c1_terminal_max_serial_counter phase=$label"
+    }
     incr serial_counter
     set marker "${serial_nonce}C${serial_counter}"
     if {$expected_marker ne "" && $expected_marker ne $marker} {
@@ -3756,7 +3812,11 @@ proc guest_cmd {command label {seconds 30} {deadline_ms 0} {reserve_ms 0} {min_t
         -re $fence_regex {
             set buf $expect_out(buffer)
             set timeout $old_timeout
-            set frame [guest_command_frame_parse $buf $marker]
+            if {$atomic_outer_terminal} {
+                set frame [c1_terminal_commit_frame_parse $buf $marker]
+            } else {
+                set frame [guest_command_frame_parse $buf $marker]
+            }
             if {![lindex $frame 0]} {
                 # Keep the locally minted marker even on a malformed terminal
                 # frame.  The diagnostic-only arm records that raw framing
@@ -4157,7 +4217,7 @@ proc fbstat_transport_decode {serial expected_tag expected_nonce expected_marker
         ![regexp {^[A-Za-z0-9]+$} $expected_marker]} {
         return [list 0 "transport-parameter-invalid" ""]
     }
-    set command_frame [guest_command_frame_parse $serial $expected_marker]
+    set command_frame [c1_terminal_commit_frame_parse $serial $expected_marker]
     if {![lindex $command_frame 0]} {
         return [list 0 "transport-command-frame-[lindex $command_frame 1]" ""]
     }
@@ -4395,7 +4455,7 @@ proc fbstat_transport_static_frame {tag nonce payload {overrides {}}} {
 # 50-ms recorder acquisitions (the V2 envelope and the atomic outer terminal),
 # zero per-record drain allowance, and one fixed capture/hash/scheduling reserve.
 proc fbstat_transport_v2_timeout_contract {marker} {
-    if {![regexp {^[A-Za-z0-9]+$} $marker]} {
+    if {![regexp {^[A-Za-z0-9]{1,64}$} $marker]} {
         error "invalid V2 outer marker"
     }
     set cap 131072
@@ -4421,7 +4481,9 @@ proc fbstat_transport_v2_timeout_contract {marker} {
         [string bytelength $meta] + 2 + [string bytelength $end] + 2}]
     set record_count [expr {$total_chunks + 3}]
     set marker_bytes [string bytelength $marker]
-    set outer_physical [expr {($marker_bytes + 5 + 2) + ($marker_bytes + 6 + 2)}]
+    # Charge the maximum 64-byte-marker terminal pair irrespective of the
+    # current counter width: 141 logical bytes plus two CR insertions.
+    set outer_physical 143
     set normal_writer_physical 128
     set wire_ms [expr {int(ceil(double($physical + $outer_physical + $normal_writer_physical) * 10000.0 / 115200.0))}]
     set envelope_lock_acquisitions 1
@@ -4753,6 +4815,7 @@ exit 0
 
 proc fb_sample {tag} {
     global fbcsv outdir serial_nonce serial_counter
+    global c1_terminal_max_serial_counter
     # Only the prelaunch idle baseline may resample.  Postlaunch probe/t0/t1/t2
     # remain single-shot so retries cannot move a measurement boundary or bias
     # a timed window.  Every raw attempt is retained and guest_cmd supplies a
@@ -4760,6 +4823,9 @@ proc fb_sample {tag} {
     set max_attempts [expr {$tag eq "idle" ? 3 : 1}]
     set failures {}
     for {set attempt 1} {$attempt <= $max_attempts} {incr attempt} {
+        if {$serial_counter + 1 > $c1_terminal_max_serial_counter} {
+            finish 8 "FAIL C1-terminal-command-counter-exhausted counter=$serial_counter cap=$c1_terminal_max_serial_counter phase=fbstat-$tag-attempt$attempt"
+        }
         set expected_marker "${serial_nonce}C[expr {$serial_counter + 1}]"
         set transport_timeout [dict get [fbstat_transport_v2_timeout_contract $expected_marker] seconds]
         set result [guest_cmd "/bin/bash /fbs.sh $tag $serial_nonce" \
@@ -9833,7 +9899,9 @@ bb}] [lindex $static_fb_chunks 0]]
     foreach bad_outer [list \
             [string map [list "$static_fb_marker:RC:0" "$static_fb_marker:RC:7"] $static_fb_logical] \
             [string map [list "$static_fb_marker:FENCE\n" {}] $static_fb_logical] \
-            "${static_fb_logical}$static_fb_marker:FENCE\n"] {
+            [string map [list "$static_fb_marker:RC:0\n$static_fb_marker:FENCE\n" \
+                "$static_fb_marker:RC:0\nnoise-gap\n$static_fb_marker:FENCE\n"] \
+                $static_fb_logical]] {
         if {[lindex [fbstat_transport_decode $bad_outer $static_fb_tag $static_fb_nonce $static_fb_marker] 0]} {
             fail_preflight "static-check-fbstat-v2-outer-adversary-accepted"
         }
@@ -9851,10 +9919,10 @@ bb}] [lindex $static_fb_chunks 0]]
         [dict get $static_fb_timeout record_count] != 701 ||
         [dict get $static_fb_timeout marker_bytes] != [string bytelength $static_fb_marker] ||
         [dict get $static_fb_timeout physical_bytes] != 357781 ||
-        [dict get $static_fb_timeout outer_physical_bytes] != 47 ||
+        [dict get $static_fb_timeout outer_physical_bytes] != 143 ||
         [dict get $static_fb_timeout normal_writer_physical_bytes] != 128 ||
-        $static_fb_v2_timed_wire_bytes != 357956 ||
-        [dict get $static_fb_timeout wire_ms] != 31073 ||
+        $static_fb_v2_timed_wire_bytes != 358052 ||
+        [dict get $static_fb_timeout wire_ms] != 31081 ||
         [dict get $static_fb_timeout envelope_lock_acquisitions] != 1 ||
         [dict get $static_fb_timeout atomic_terminal_lock_acquisitions] != 1 ||
         [dict get $static_fb_timeout total_lock_acquisitions] != 2 ||
@@ -9862,7 +9930,7 @@ bb}] [lindex $static_fb_chunks 0]]
         [dict get $static_fb_timeout per_record_drain_total_ms] != 0 ||
         [dict get $static_fb_timeout lock_ms] != 100 ||
         [dict get $static_fb_timeout helper_reserve_ms] != 5000 ||
-        [dict get $static_fb_timeout total_ms] != 36173 ||
+        [dict get $static_fb_timeout total_ms] != 36181 ||
         [dict get $static_fb_timeout seconds] != 37} {
         fail_preflight "static-check-fbstat-v2-timeout-algebra value=$static_fb_timeout"
     }
@@ -9871,11 +9939,11 @@ bb}] [lindex $static_fb_chunks 0]]
     set static_fb_live_36_fail [expr {
         36 * 1000 < [dict get $static_fb_live_marker_timeout total_ms]}]
     if {[dict get $static_fb_live_marker_timeout marker_bytes] != 28 ||
-        [dict get $static_fb_live_marker_timeout outer_physical_bytes] != 71 ||
-        [dict get $static_fb_live_marker_timeout wire_ms] != 31075 ||
+        [dict get $static_fb_live_marker_timeout outer_physical_bytes] != 143 ||
+        [dict get $static_fb_live_marker_timeout wire_ms] != 31081 ||
         [dict get $static_fb_live_marker_timeout total_lock_acquisitions] != 2 ||
         [dict get $static_fb_live_marker_timeout per_record_drain_ms] != 0 ||
-        [dict get $static_fb_live_marker_timeout total_ms] != 36175 ||
+        [dict get $static_fb_live_marker_timeout total_ms] != 36181 ||
         [dict get $static_fb_live_marker_timeout seconds] != 37 ||
         !$static_fb_live_37_pass || !$static_fb_live_36_fail} {
         fail_preflight "static-check-fbstat-v2-live-marker-boundary value=$static_fb_live_marker_timeout pass37=$static_fb_live_37_pass fail36=$static_fb_live_36_fail"
@@ -9899,27 +9967,27 @@ bb}] [lindex $static_fb_chunks 0]]
     set static_c1_atomic_recorder "$static_c1_atomic_dir/consolerecord"
     set static_c1_atomic_recorder_fail \
         "$static_c1_atomic_dir/consolerecord-fail"
-    set static_c1_atomic_remove_fail "$static_c1_atomic_dir/rm-fail"
     wf $static_c1_atomic_recorder [string map [list \
         @CALLS@ $static_c1_atomic_calls @ROWS@ $static_c1_atomic_rows \
         @MODE@ $static_c1_atomic_mode] {#!/bin/bash
-[ "$#" -eq 2 ] && [ "$1" = --batch-file ] || exit 92
+[ "$#" -eq 3 ] && [ "$1" = --terminal-batch-file ] || exit 92
 printf 'call\n' >> @CALLS@ || exit 93
 /usr/bin/stat -c '%a' "$2" > @MODE@ || exit 94
 /bin/cp "$2" @ROWS@ || exit 95
+[ "$(/usr/bin/head -n 1 "$2")" = "$3:RC:0" ] || exit 96
+/bin/rm "$2" || exit 97
+[ ! -e "$2" ] && [ ! -L "$2" ] || exit 98
 exit 0
 }]
     wf $static_c1_atomic_recorder_fail [string map [list \
         @CALLS@ $static_c1_atomic_calls] {#!/bin/bash
-[ "$#" -eq 2 ] && [ "$1" = --batch-file ] || exit 92
+[ "$#" -eq 3 ] && [ "$1" = --terminal-batch-file ] || exit 92
 printf 'call\n' >> @CALLS@ || exit 93
+/bin/rm "$2" || exit 94
 exit 4
 }]
-    wf $static_c1_atomic_remove_fail {#!/bin/bash
-exit 1
-}
     foreach path [list $static_c1_atomic_recorder \
-            $static_c1_atomic_recorder_fail $static_c1_atomic_remove_fail] {
+            $static_c1_atomic_recorder_fail] {
         file attributes $path -permissions 0755
     }
     proc static_c1_atomic_run {shell_command} {
@@ -9943,19 +10011,18 @@ exit 1
         foreach path $paths { catch {file delete -force $path} }
     }
     set static_c1_atomic_artifacts [list $static_c1_atomic_calls \
-        $static_c1_atomic_rows $static_c1_atomic_mode $static_c1_atomic_path \
-        "${static_c1_atomic_path}.absent"]
+        $static_c1_atomic_rows $static_c1_atomic_mode $static_c1_atomic_path]
     set static_c1_atomic_run_counter 0
     static_c1_atomic_reset $static_c1_atomic_artifacts
     set static_c1_atomic_success_shell \
         [c1_atomic_outer_terminal_shell_command \
-            {/bin/sh -c 'exit 73'} $static_c1_atomic_marker \
-            $static_c1_atomic_recorder $static_c1_atomic_prefix /bin/rm]
+            true $static_c1_atomic_marker \
+            $static_c1_atomic_recorder $static_c1_atomic_prefix]
     set static_c1_atomic_success [static_c1_atomic_run \
         $static_c1_atomic_success_shell]
     set static_c1_atomic_expected \
-        "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n"
-    set static_c1_atomic_success_parse [guest_command_frame_parse \
+        "$static_c1_atomic_marker:RC:0\n$static_c1_atomic_marker:FENCE\n"
+    set static_c1_atomic_success_parse [c1_terminal_commit_frame_parse \
         [read_text $static_c1_atomic_rows] $static_c1_atomic_marker]
     if {[dict get $static_c1_atomic_success caught] ||
         [dict get $static_c1_atomic_success stdout] ne "" ||
@@ -9964,43 +10031,47 @@ exit 1
         [read_text $static_c1_atomic_calls] ne "call\n" ||
         [string trim [read_text $static_c1_atomic_mode]] ne "600" ||
         ![lindex $static_c1_atomic_success_parse 0] ||
-        [lindex $static_c1_atomic_success_parse 2] ne "73" ||
+        [lindex $static_c1_atomic_success_parse 2] ne "0" ||
         ![catch {file lstat $static_c1_atomic_path \
             static_c1_atomic_after_success_stat}]} {
         fail_preflight "static-check-c1-atomic-success result=$static_c1_atomic_success parse=$static_c1_atomic_success_parse"
     }
 
     set static_c1_atomic_clean_async \
-        "async-before\n$static_c1_atomic_marker:RC:73\nasync-between\n$static_c1_atomic_marker:FENCE\nasync-after\n"
-    set static_c1_atomic_clean_async_parse [guest_command_frame_parse \
+        "async-before\n$static_c1_atomic_marker:RC:0\n$static_c1_atomic_marker:FENCE\nasync-after\n"
+    set static_c1_atomic_clean_async_parse [c1_terminal_commit_frame_parse \
         $static_c1_atomic_clean_async $static_c1_atomic_marker]
+    set static_c1_atomic_gap_parse [c1_terminal_commit_frame_parse \
+        "$static_c1_atomic_marker:RC:0\nasync-between\n$static_c1_atomic_marker:FENCE\n" \
+        $static_c1_atomic_marker]
     set static_c1_atomic_contaminated \
-        "virtio_gpu: page-flip present re$static_c1_atomic_marker:RC:73\nsource=5 size=1280x800 already_b$static_c1_atomic_marker:FENCE\n"
-    set static_c1_atomic_contaminated_parse [guest_command_frame_parse \
+        "virtio_gpu: page-flip present re$static_c1_atomic_marker:RC:0\nsource=5 size=1280x800 already_b$static_c1_atomic_marker:FENCE\n"
+    set static_c1_atomic_contaminated_parse [c1_terminal_commit_frame_parse \
         $static_c1_atomic_contaminated $static_c1_atomic_marker]
     set static_c1_atomic_contaminated_match [regexp -- \
         [guest_fence_regex $static_c1_atomic_marker] \
         $static_c1_atomic_contaminated]
     set static_c1_atomic_terminal_rejects {}
     foreach bad_terminal [list \
-            "$static_c1_atomic_marker:RC:73\n" \
+            "$static_c1_atomic_marker:RC:0\n" \
             "$static_c1_atomic_marker:FENCE\n" \
-            "$static_c1_atomic_marker:FENCE\n$static_c1_atomic_marker:RC:73\n" \
-            "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n" \
-            "$static_c1_atomic_marker:RC:73\n$static_c1_atomic_marker:FENCE\n$static_c1_atomic_marker:FENCE\n" \
-            "WRONGMARKER:RC:73\nWRONGMARKER:FENCE\n" \
+            "$static_c1_atomic_marker:FENCE\n$static_c1_atomic_marker:RC:0\n" \
+            "$static_c1_atomic_marker:RC:0\n$static_c1_atomic_marker:RC:0\n$static_c1_atomic_marker:FENCE\n" \
+            "WRONGMARKER:RC:0\nWRONGMARKER:FENCE\n" \
             "$static_c1_atomic_marker:RC:notnumeric\n$static_c1_atomic_marker:FENCE\n" \
-            "prefix$static_c1_atomic_marker:RC:73\nprefix$static_c1_atomic_marker:FENCE\n"] {
+            "$static_c1_atomic_marker:RC:7\n$static_c1_atomic_marker:FENCE\n" \
+            "prefix$static_c1_atomic_marker:RC:0\nprefix$static_c1_atomic_marker:FENCE\n"] {
         lappend static_c1_atomic_terminal_rejects \
-            [expr {![lindex [guest_command_frame_parse $bad_terminal \
+            [expr {![lindex [c1_terminal_commit_frame_parse $bad_terminal \
                 $static_c1_atomic_marker] 0]}]
     }
     if {![lindex $static_c1_atomic_clean_async_parse 0] ||
-        [lindex $static_c1_atomic_clean_async_parse 2] ne "73" ||
+        [lindex $static_c1_atomic_clean_async_parse 2] ne "0" ||
+        [lindex $static_c1_atomic_gap_parse 0] ||
         [lindex $static_c1_atomic_contaminated_parse 0] ||
         $static_c1_atomic_contaminated_match ||
         [lsearch -exact $static_c1_atomic_terminal_rejects 0] >= 0} {
-        fail_preflight "static-check-c1-atomic-terminal-parser clean=$static_c1_atomic_clean_async_parse contaminated=$static_c1_atomic_contaminated_parse match=$static_c1_atomic_contaminated_match rejects=$static_c1_atomic_terminal_rejects"
+        fail_preflight "static-check-c1-atomic-terminal-parser clean=$static_c1_atomic_clean_async_parse gap=$static_c1_atomic_gap_parse contaminated=$static_c1_atomic_contaminated_parse match=$static_c1_atomic_contaminated_match rejects=$static_c1_atomic_terminal_rejects"
     }
 
     # Recorder failure must produce no terminal rows and must remove the
@@ -10010,7 +10081,7 @@ exit 1
     set static_c1_atomic_recorder_failure [static_c1_atomic_run \
         [c1_atomic_outer_terminal_shell_command true \
             $static_c1_atomic_marker $static_c1_atomic_recorder_fail \
-            $static_c1_atomic_prefix /bin/rm]]
+            $static_c1_atomic_prefix]]
     set static_c1_atomic_no_terminal_decode [fbstat_transport_decode \
         $static_fb_frame $static_fb_tag $static_fb_nonce \
         $static_c1_atomic_marker]
@@ -10041,7 +10112,7 @@ exit 1
         set run [static_c1_atomic_run \
             [c1_atomic_outer_terminal_shell_command true \
                 $static_c1_atomic_marker $static_c1_atomic_recorder \
-                $static_c1_atomic_prefix /bin/rm]]
+                $static_c1_atomic_prefix]]
         lappend static_c1_atomic_preexist_results [expr {
             [dict get $run caught] && [dict get $run stdout] eq "" &&
             [dict get $run stderr] eq "" &&
@@ -10050,24 +10121,25 @@ exit 1
         catch {file delete -force "$static_c1_atomic_dir/symlink-target"}
     }
     static_c1_atomic_reset $static_c1_atomic_artifacts
-    set static_c1_atomic_cleanup_failure [static_c1_atomic_run \
-        [c1_atomic_outer_terminal_shell_command true \
-            $static_c1_atomic_marker $static_c1_atomic_recorder \
-            $static_c1_atomic_prefix $static_c1_atomic_remove_fail]]
     set static_c1_atomic_create_failure [static_c1_atomic_run \
         [c1_atomic_outer_terminal_shell_command true \
             $static_c1_atomic_marker $static_c1_atomic_recorder \
-            "$static_c1_atomic_dir/missing/terminal" /bin/rm]]
+            "$static_c1_atomic_dir/missing/terminal"]]
+    static_c1_atomic_reset $static_c1_atomic_artifacts
+    set static_c1_atomic_command_failure [static_c1_atomic_run \
+        [c1_atomic_outer_terminal_shell_command \
+            {/bin/sh -c 'exit 73'} $static_c1_atomic_marker \
+            $static_c1_atomic_recorder $static_c1_atomic_prefix]]
     if {[lsearch -exact $static_c1_atomic_preexist_results 0] >= 0 ||
-        ![dict get $static_c1_atomic_cleanup_failure caught] ||
-        [dict get $static_c1_atomic_cleanup_failure stdout] ne "" ||
-        [dict get $static_c1_atomic_cleanup_failure stderr] ne "" ||
-        [file exists $static_c1_atomic_path] ||
-        [file exists $static_c1_atomic_calls] ||
         ![dict get $static_c1_atomic_create_failure caught] ||
         [dict get $static_c1_atomic_create_failure stdout] ne "" ||
-        [dict get $static_c1_atomic_create_failure stderr] ne ""} {
-        fail_preflight "static-check-c1-atomic-file-failclosed preexist=$static_c1_atomic_preexist_results cleanup=$static_c1_atomic_cleanup_failure create=$static_c1_atomic_create_failure"
+        [dict get $static_c1_atomic_create_failure stderr] ne "" ||
+        ![dict get $static_c1_atomic_command_failure caught] ||
+        [dict get $static_c1_atomic_command_failure stdout] ne "" ||
+        [dict get $static_c1_atomic_command_failure stderr] ne "" ||
+        [file exists $static_c1_atomic_path] ||
+        [file exists $static_c1_atomic_calls]} {
+        fail_preflight "static-check-c1-atomic-file-failclosed preexist=$static_c1_atomic_preexist_results create=$static_c1_atomic_create_failure command=$static_c1_atomic_command_failure"
     }
 
     set static_c1_generic_marker YTGENERICSTATICC9
@@ -10075,12 +10147,22 @@ exit 1
         "true;true;rc=\$?;m=$static_c1_generic_marker;printf '\\n%s:RC:%s\\n' \"\$m\" \"\$rc\";printf '%s:FENCE\\n' \"\$m\""
     set static_c1_generic_actual [guest_cmd_serial_command true \
         $static_c1_generic_marker]
+    set static_c1_counter_marker_results {}
+    foreach counter {10 11 12 13 38} {
+        set counter_marker "YTC1STATICC$counter"
+        lappend static_c1_counter_marker_results \
+            [lindex [c1_terminal_commit_frame_parse \
+                "$counter_marker:RC:0\n$counter_marker:FENCE\n" \
+                $counter_marker] 0]
+    }
     set static_c1_marker_path_rejects [list \
         [catch {c1_atomic_outer_terminal_shell_command true \
-            [string repeat M 29]}] \
+            [string repeat M 65]}] \
         [catch {c1_atomic_outer_terminal_shell_command true BAD-MARKER}] \
         [catch {c1_atomic_outer_terminal_shell_command true VALIDMARKER \
-            /bin/consolerecord {/dev/shm/bad path}}]]
+            /bin/consolerecord {/dev/shm/bad path}}] \
+        [catch {c1_atomic_outer_terminal_shell_command true VALIDMARKER \
+            /bin/consolerecord "/[string repeat p 159]"}]]
     set static_c1_guest_default_value unset
     set static_c1_guest_has_default [info default guest_cmd \
         atomic_outer_terminal static_c1_guest_default_value]
@@ -10092,14 +10174,22 @@ exit 1
         $static_c1_guest_default_value eq "0" &&
         [string first {guest_cmd_serial_command $command $marker} \
             [info body guest_cmd]] >= 0 &&
-        [string first {printf '%s:RC:%s\n%s:FENCE\n'} \
+        [string first {printf '%s:RC:0\n%s:FENCE\n'} \
             [info body c1_atomic_outer_terminal_shell_command]] >= 0 &&
-        [string first {>/dev/null 2>&1} \
+        [string first {--terminal-batch-file "$terminal" "$m"} \
             [info body c1_atomic_outer_terminal_shell_command]] >= 0 &&
+        [string first {exec "$recorder"} \
+            [info body c1_atomic_outer_terminal_shell_command]] >= 0 &&
+        [string first {cleanup_terminal} \
+            [info body c1_atomic_outer_terminal_shell_command]] < 0 &&
+        [string first {trap } \
+            [info body c1_atomic_outer_terminal_shell_command]] < 0 &&
+        $c1_terminal_max_serial_counter == 38 &&
+        [lsearch -exact $static_c1_counter_marker_results 0] < 0 &&
         [lsearch -exact $static_c1_marker_path_rejects 0] < 0
     }]
     if {!$static_c1_atomic_source_contract} {
-        fail_preflight "static-check-c1-atomic-source-contract generic=[binary encode hex $static_c1_generic_actual] rejects=$static_c1_marker_path_rejects"
+        fail_preflight "static-check-c1-atomic-source-contract generic=[binary encode hex $static_c1_generic_actual] counters=$static_c1_counter_marker_results rejects=$static_c1_marker_path_rejects"
     }
     set static_fb_helper [fbstat_transport_guest_helper_script]
     set static_fb_v2_decimal_literal [fbstat_transport_v2_valid_decimal_bash]

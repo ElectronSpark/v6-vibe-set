@@ -5921,3 +5921,63 @@ Therefore this review authorizes no 60-second gate and no VM. Repair both the
 runtime marker contract and the post-emission failure/credit contract, add
 tests that reach multi-digit counters and inject failures after potential
 emission, then require a fresh static pass and another independent review.
+
+**C1 terminal-commit contract repair — IMPLEMENTED / HOST STATIC+BUILD PASS /
+NO-ROOTFS / NO-BOOT (2026-07-13):** the kernel and recorder portions are
+published deepest-first at kernel
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208` (`origin/v6-kernel`) and user
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87` (`origin/v6-port`). The batch
+ABI remains version 1/request 32 bytes/ioctl 0x02 and adds only exact flag 1.
+Flag zero retains the generic grammar and emission loop; unknown/composed
+flags and wrong versions fail before allocation or output. Flag 1 admits only
+two exact same-marker alphanumeric rows, marker length 1..64 and at most 141
+logical bytes: `MARKER:RC:0` then `MARKER:FENCE`. After all root/allocation/
+copy/grammar/availability work and one timed wire-lock acquisition, RC remains
+provisional. An emergency change after RC or the final generation/availability
+check immediately before FENCE returns no credit without FENCE. FENCE starts
+the irreversible commit: contamination during it remains a host-parser
+failure, but no post-FENCE generation/status check can reverse a clean commit.
+The single-record and RISC-V console branches are unchanged.
+
+The silent host-glibc recorder adds exactly
+`--terminal-batch-file PATH MARKER`, uses a fixed 141-byte buffer, and opens
+the console before consuming the source. It requires a same-owner regular
+non-symlink source with private permissions, one link, stable path/fd identity,
+exact size and exact two-row grammar. Immediately before the single flagged
+ioctl it revalidates identity, successfully unlinks the pathname, proves the
+pathname absent and the open inode at link count zero, and successfully closes
+the input fd. Exact ioctl success returns zero regardless of console-close
+status; no cleanup or later status can revoke the commit. Generic single and
+`--batch-file` behavior remain unchanged. The C1 driver now creates only RC:0
+terminal candidates after the inner command succeeds, uses the exact terminal
+recorder option as its final `exec`, has no acknowledgement/grace/post-recorder
+cleanup, accepts marker lengths through 64, caps terminal-prefix/path bytes at
+159/224, and caps C1 command counters at C38. Its new C1-only parser requires
+raw-record-adjacent standalone RC:0/FENCE rows and rejects contamination,
+foreign rows, gaps, duplicates before commit, order errors, bad grammar, and
+nonzero status; bytes after the complete FENCE newline are outside the commit.
+Generic command parsing and C6/C7/C8/diagnostic-0/threshold behavior remain
+unchanged.
+
+Fresh required no-VM evidence passed: `kernel/tests/run_console_record_host_test.sh`
+models every pre-emission class plus emergency before/during/after RC,
+pre-FENCE availability/generation failure, during-FENCE contamination, and
+post-FENCE no-late-failure; `user/tests/run_consolerecord_host_test.sh` covers
+private/identity/link/path-disappearance/nlink-zero and console-open/unlink/
+input-close/ioctl/console-close statuses, malformed/order/duplicate/nonzero
+grammar, and the 64-marker/141-byte maximum. The canonical clean-PATH
+`YT_STATIC_CHECK=1`, MP=1, audio-disable=1, media=1, forced-HD720=0, EGL=0,
+diagnostic=0 suite emitted `YT-C1-V2-STATIC-PASS` and
+`YT-PRESENTFPS-STATIC-CHECK-PASS`; its corpus retains the actual 304-row shape,
+the 701-row maximum, contaminated transport vectors, C10-C13/C38 markers,
+generic parity/no-credit, and the exact 37-second-pass/36-second-fail timeout.
+The timeout now charges fixed maximum wire bytes
+`357781+143+128=358052`, 31,081 ms wire time, two 50-ms locks, zero per-record
+drain, and 5,000 ms reserve for total 36,181 ms. `git diff --check` passed in
+all three repositories, `cmake --build build-x86_64 --target kernel -j2`
+passed, and the full `cmake --build build-x86_64 --target user -j2` passed.
+Only `build-x86_64` is configured, so there is no honest RISC-V build result.
+No rootfs refresh, image mutation/claim, VM, QEMU, boot, or serial action was
+performed. The unrelated KDE-smoke worktree edit remains preserved and
+unstaged. This remains A1 N=0 and supplies no YouTube/FPS/performance credit;
+an independent no-boot review remains required before any gate.
