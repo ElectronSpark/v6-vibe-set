@@ -28,11 +28,11 @@ lever—evidence plumbing must not substitute for performance progress.
 
 The one deterministic staging proof authorized at `61de08d` is **consumed**:
 its persisted wrapper aborted before the first build due to an unbound local
-preflight variable. The canonical V2 wrapper and all five meaningful negative
-controls have now passed independent no-exec review. This authorizes exactly
-one canonical kernel → user → rootfs-refresh staging proof, no boot; any
-failure consumes it. It does not authorize QEMU, serial,
-YouTube/performance, audio/fullscreen/default work, or credit.
+preflight variable. The one canonical V2 staging invocation is **consumed**:
+kernel, user, and rootfs-refresh returned zero, but the wrapper failed before
+the required `/bin/_consolerecord` image proof. Do not retry. A new independent
+forensic/review is required; no QEMU, boot, serial, YouTube/performance,
+audio/fullscreen/default work, or credit is authorized.
 
 ## Binding host and VM discipline
 
@@ -4311,3 +4311,45 @@ its complete receipt and logs, stop at first failure, and do not retry. Only a
 fully successful run with its named image checks may establish staging/image
 facts; it creates no YouTube, FPS, audio, fullscreen, or default credit. A
 fresh independent review is required after the attempt before any later gate.
+
+**C1 canonical full staging invocation — FAILED AFTER ROOTFS / NO-BOOT
+(2026-07-13):** the sole allowed exact wrapper
+`/tmp/xv6-c1-full-staging-wrapper-v2-static-20260713T004146Z-3002245/run-full-staging.sh`
+was verified at SHA-256
+`3c43ab3092fa772fae47971f7c55e1372dfbc145ad7bf978a0efc4d63ee4d255` and run
+once, synchronously. Its retained runtime directory is
+`/tmp/xv6-c1-full-staging-run-20260713T010154Z-3023153`. Before the stages it
+records exact `bd054ca` explicit-origin/docs-only super lineage, exact pinned
+kernel/user remotes and gitlinks, only allowed KDE dirt, and exact QEMU
+preflight total/informational-RISC-V/conflicting `0/0/0`.
+
+All three canonical foreground commands completed raw zero in order: kernel
+(`stage-kernel.log`, 1609 bytes, SHA-256
+`5016264adf6a3eeed98238e919ef8e7ec053a068021262fbdf5779a54f4c94c4`), user
+(`stage-user.log`, 220275 bytes, SHA-256
+`670d63507d39dc6f431c6a94a0f59a33623c80fa8ea269980a2ec4f6d845e79c`), then
+rootfs-refresh (`stage-rootfs-refresh.log`, 16678 bytes, SHA-256
+`69400ab391cf245f306bf11e8d79a3e748ec50e0e937abb3acb0f73161bed3f5`). The
+kernel post-artifact retained the reviewed SHA-256 unchanged. Rootfs-refresh
+reported `make-rootfs: wrote ... fs.img`; the wrapper's post image identity is
+inode/size/mtime/SHA `73499/8724152320/1783904866/
+0003dbdee6edd9f1083b7092b83fa9ab36d934eead9c8a72d39f19a7243df287`, distinct
+from the preimage identity.
+
+The staged `_consolerecord` is regular executable mode `755`, 20808 bytes,
+SHA-256 `a50bc99c50e00ca53a85499c03b58d17bd9148b5d29930d70896b701294b0d34`.
+The next retained row is only `debugfs.consolerecord.stat_raw_exit=0`, followed
+by terminal `consolerecord_image_proof_failed` exit/requested-exit `1`. There
+is no debugfs dump/hash row for that file, no media asset extraction proof, and
+no final in-wrapper QEMU inventory. Therefore the refreshed image identity is
+real but the required image `/bin/_consolerecord` semantic/mode/hash proof and
+browser/media asset proof are **not** established. No retry, manual image
+write, debugfs follow-up, VM, boot, serial, or performance action occurred.
+
+After synchronous wrapper exit, the external exact inventory was
+`0/0/0`; an informational RISC-V QEMU observed during rootfs-refresh was
+untouched and absent at final check. The only remaining worktree dirt is the
+preserved KDE-smoke file. This consumed failure provides no valid image
+payload, YouTube, HD720/fullscreen, audio, `yt-presentfps`, `PERF-VIDEO`,
+performance, or default credit; next authority is limited to independent
+forensic localization of the wrapper's post-stat image-proof failure.
