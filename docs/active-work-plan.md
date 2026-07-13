@@ -5981,3 +5981,92 @@ No rootfs refresh, image mutation/claim, VM, QEMU, boot, or serial action was
 performed. The unrelated KDE-smoke worktree edit remains preserved and
 unstaged. This remains A1 N=0 and supplies no YouTube/FPS/performance credit;
 an independent no-boot review remains required before any gate.
+
+**C1 terminal-commit independent integrated review — SOURCE PASS / EVIDENCE
+INCOMPLETE / NO-STAGING / NO-BOOT (2026-07-13):** reviewed the exact published
+heads super `8a772106def7b3bb4843525de905a009e7be9207`, kernel
+`6bbdaeb749e44f733a3a683a62c8d35d67ce3208`, and user
+`2d10a181c651ba097b33ac35c8b9a083dd7c5c87`.  Each equals its advertised
+approved ref (`codex/host-linux-abi-shell-port-ff`, `v6-kernel`, and
+`v6-port`) on the recorded ElectronSpark remote; the exact kernel/user/ports
+gitlinks match clean nested heads, and ports also equals its advertised
+`codex/a1-egl-context-closure-20260710` ref.  The only worktree dirt is the
+preserved `scripts/gpu/kde-plasma-desktop-smoke.expect` patch, unchanged at
+SHA-256 `a54b44b2e7a7cfda6655c643c2e9cd4ff4e3255b6376ff4b51c0e067fdbefc3d`.
+All three committed whitespace checks pass.
+
+The source audit itself passes.  The shared batch request remains version 1,
+32 bytes at offsets `0/4/8/16/20/24/28`, ioctl number `0x02`; flag 1 is the
+only new accepted value and has the exact two-row, same alphanumeric marker,
+`RC:0` then `FENCE`, 64-byte/141-logical-byte grammar.  Root, request bounds,
+allocation, payload copy, grammar, UART availability, and timed-lock work all
+precede emission.  RC remains provisional: generation/availability failure
+before FENCE returns no credit and emits no FENCE; FENCE emission is the
+irreversible point and unlock/free have no late status path.  Flag-zero uses
+the prior validator/emission loop unchanged.  Both x86 ioctl entrypoints still
+share the handler.  The commit's only `console.c` hunk is inside the existing
+x86 batch handler; manual review of the unchanged `consputc`, `consputs`,
+`consolewrite`, TTY drain, and ioctl fallback `#else` sources confirms the
+RISC-V output/ioctl behavior is source-identical.  Only `build-x86_64` is
+configured, so this is explicitly not a RISC-V build PASS; that absence alone
+would not block a narrow rootfs-staging proof.
+
+The recorder source passes the terminal-transfer audit: it accepts only
+`--terminal-batch-file PATH MARKER`, a same-owner private regular non-symlink
+with one link and stable path/fd identity; it opens the console before
+consumption, validates exact bytes/marker, revalidates identity, unlinks the
+path, proves pathname absence plus open-inode link count zero, and closes the
+input before the one flagged ioctl.  Exact ioctl success returns zero even if
+console close reports failure, so no cleanup result can revoke FENCE.  It
+remains silent and has no `write`/stdio fallback; generic single-record and
+flag-zero batch modes are unchanged.  The driver uses this only for C1
+`fb_sample`: failed `/fbs.sh` emits no terminal, successful C1 emits only
+standalone raw-adjacent RC0/FENCE, marker grammar is 1..64, command counters
+are capped at C38, terminal/path caps are 159/224, and contaminated, foreign,
+gapped, duplicate, reordered, nonzero, and missing rows reject.  Generic
+command text is byte-identical; C6 classification, C7/C8 sidecars, diag0, and
+all no-credit routes are outside the runtime diff.  The retained algebra is
+maximum `357781+143+128=358052` wire bytes, 31,081 ms, two 50-ms locks, zero
+per-record drain, and 5,000 ms reserve: total 36,181 ms, so 37 seconds passes
+and 36 fails.  The committed static corpus names both 304- and 701-record
+shapes and the retained contaminated outer-terminal vector.
+
+The required execution evidence is not independently confirmable.  The
+implementation lane retained no kernel-host-unit, user-host-unit, x86-kernel-
+build, full-user-build, whitespace-check, or exact-QEMU receipt/log; those
+commands' output and raw-zero status existed only in transient tool results.
+The canonical static outdir `/tmp/yt-terminal-static.G7v1Qg` survives, but
+its `STATUS.txt` (SHA-256
+`d8dee3fc51e8b91c5b24ec1618bb02b00e0696f1d0054c9d0d9467a3c15eca1c`) and
+`metrics.txt` (SHA-256
+`29c506385f0d07921b41bc48748a5f8aedbc5c6f36fdafb6d91980a5bc4eb897`)
+do not retain the overall static PASS terminal or process exit.  The honest
+noncanonical media-off attempt retains only zero-byte
+`/tmp/xv6-yt-static.YoEsJa/capture-completeness-fbstat.txt`; its Tcl failure
+and raw status were also tool-only.  Therefore this review does **not** call
+the reported kernel unit, user unit, canonical static, x86 kernel build, or
+full user build PASS, despite finding no source defect.
+
+Current named artifacts reinforce that a new proof is required: the x86
+kernel artifact is `0644/41363988` with SHA-256
+`ec38343606eb2d0e35a8849f1fafe35cb596d3af15a6968f6b810277afd668b0`, and
+staged executable `_consolerecord` is `0755/36336`, link one, SHA-256
+`2a57b2a5aa3a295d68e6b3f298444fc70c81471497a9d39245b7a86a12b93722`
+with the terminal option present.  `fs.img` still has inode/size/mtime
+`73499/8724152320/1783921588`, the prior producer-stage refresh identity whose
+proved recorder was 29,616 bytes.  No current staged-to-image terminal-recorder
+mode/size/hash equality exists; the image is stale/unproved and must not boot.
+
+Exact review-start and pre-verdict `/proc/*/exe` inventories were both
+total/informational-RISC-V/conflicting `0/0/0`.  Before commit, final inventory
+was `1/1/0`, consisting only of untouched non-owned PID 3502335
+`/usr/bin/qemu-system-riscv64`; no conflicting x86 or other QEMU existed and
+no process was touched.  This review ran no test, static replay, build,
+rootfs/image read or write, VM, boot, or serial command.  **Verdict:**
+evidence-incomplete FAIL.  It authorizes no
+kernel→user→rootfs staging invocation, no image proof, no 60-second gate, and
+no VM.  A future authorization requires freshly retained kernel/user/static/
+x86-build/full-user receipts with raw exits and exact QEMU inventories, then a
+new independent no-boot review; only that later PASS may authorize one
+deterministic kernel→user→rootfs refresh and named staged/image proof, never a
+boot by itself.
