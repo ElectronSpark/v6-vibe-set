@@ -4,17 +4,7 @@
   "version": "1.1.0",
   "description": "Default-off bounded media-state and optional hd720 selector evidence for the xv6 YouTube performance harness.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt2C9UE8E4bNgXv5b1lp+u3deHJ3ibg2PdIQeXWRF548hBrLDIykTot07lgXQRP/CXwqU86jKGEfT401SglMUEAI/uleHparyoPT9vNCs0wiGlHNKPlI10rdawbXHdPxctDMZY50GsT9BhVaWXk2n07sxVMgkLc23xyqBmSGEqy095hhyySuFksoV0cfsD3ifj8b/skVm3B89ltXJSC4/OVl58uoxw05InE7cPswfCew8DjibcqpgEJZGDrWBjqIJ5QwP8/DZtny9mm/zvIC6dqB+CrqZpv9Pq9DMueMZqadAzO0JDVLk3ETqy7adMX85LeQdE0kdhKx6povn82bjUwIDAQAB",
-  "permissions": ["tabs", "webNavigation"],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
-    {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["document-start.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
     {
       "matches": ["https://www.youtube.com/*"],
       "js": ["probe-lib.js", "probe.js"],

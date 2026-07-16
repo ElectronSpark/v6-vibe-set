@@ -33,7 +33,9 @@ assert.strictEqual(extensionId, "edfilgocpdgbkehcgdillfgnnhclphol");
 const probeSource = fs.readFileSync(probePath, "utf8");
 assert(!probeSource.includes("setInterval("), "probe must not install an endless timer");
 assert(probeSource.includes("const FORCE_READY_ATTEMPTS = 120;"));
-assert(probeSource.includes("const FORCE_OBSERVE_ATTEMPTS = 40;"));
+assert(probeSource.includes("const FORCE_OBSERVE_ATTEMPTS = 120;"));
+assert(probeSource.includes("const POST_MODE_STABLE_OBSERVATIONS = 16;"));
+assert(probeSource.includes("const POST_MODE_TIMEOUT_MS = 30000;"));
 assert(probeSource.includes("player.setPlaybackQualityRange(\"hd720\", \"hd720\")"));
 assert(probeSource.includes("player.setPlaybackQuality(\"hd720\")"));
 
@@ -114,6 +116,8 @@ async function runProbeScenario(options = {}) {
   const rows = [];
   const diagnosticRows = [];
   const diagnosticV2Rows = [];
+  const rebindRows = [];
+  const auxiliaryRows = [];
   const calls = [];
   let selected = options.initialQuality || "medium";
   let qualityReads = 0;
@@ -125,37 +129,47 @@ async function runProbeScenario(options = {}) {
   let totalVideoFrames = 1000;
   let coalescedAdvanceDone = false;
   let sampleTimerArms = 0;
+  let replacementDone = false;
   const available = options.available || ["hd1080", "hd720", "large"];
-  const video = {
-    isConnected: options.videoMissing ? false : true,
-    videoWidth: options.initialWidth || 640,
-    videoHeight: options.initialHeight || 360,
-    readyState: 4,
-    networkState: 2,
-    currentTime: 1,
-    playbackRate: 1,
-    paused: false,
-    ended: false,
-    buffered: {
-      length: 1,
-      start() { return 0; },
-      end() { return video.currentTime + 30; }
-    },
-    getVideoPlaybackQuality() {
-      return { totalVideoFrames, droppedVideoFrames: 0 };
-    },
-    get webkitDecodedFrameCount() { return totalVideoFrames; },
-    get webkitDroppedFrameCount() { return 0; },
-    requestVideoFrameCallback(next) {
-      callback = next;
-      callbackId++;
-      return callbackId;
-    },
-    cancelVideoFrameCallback(id) {
-      if (id === callbackId)
-        callback = null;
-    }
-  };
+  function makeVideo(currentTime = 1, width = options.initialWidth || 640,
+      height = options.initialHeight || 360) {
+    const instance = {
+      isConnected: !options.videoMissing,
+      videoWidth: width,
+      videoHeight: height,
+      readyState: 4,
+      networkState: 2,
+      currentTime,
+      currentSrc: "blob:https://www.youtube.com/reducer-fixture",
+      playbackRate: 1,
+      paused: false,
+      ended: false,
+      muted: false,
+      volume: 0.5,
+      buffered: {
+        length: 1,
+        start() { return 0; },
+        end() { return instance.currentTime + 30; }
+      },
+      getVideoPlaybackQuality() {
+        return { totalVideoFrames, droppedVideoFrames: 0 };
+      },
+      get webkitDecodedFrameCount() { return totalVideoFrames; },
+      get webkitDroppedFrameCount() { return 0; },
+      async play() { instance.paused = false; },
+      requestVideoFrameCallback(next) {
+        callback = next;
+        callbackId++;
+        return callbackId;
+      },
+      cancelVideoFrameCallback(id) {
+        if (id === callbackId)
+          callback = null;
+      }
+    };
+    return instance;
+  }
+  let video = makeVideo();
   function maybeApplySelection() {
     qualityReads++;
     const delay = options.selectionDelayReads || 0;
@@ -245,6 +259,19 @@ async function runProbeScenario(options = {}) {
     console: {
       info(row) {
         const text = String(row);
+        if (text.startsWith("YT_MEDIA_VIDEO_REBIND_V1 ")) {
+          rebindRows.push(text);
+          return;
+        }
+        if (text.startsWith("YT_CODEC_STATE_V1 ") ||
+            text.startsWith("YT_MEDIA_WALL_V1 ") ||
+            text.startsWith("YT_DISPLAY_STATE_V1 ") ||
+            text.startsWith("YT_MEDIA_VIDEO_SETTLE_V1 ") ||
+            text.startsWith("YT_MEDIA_VIDEO_SETTLE_REBIND_V1 ") ||
+            text.startsWith("YT_MEDIA_VIDEO_REBIND_REJECT_V1 ")) {
+          auxiliaryRows.push(text);
+          return;
+        }
         if (text.startsWith("YT_CAPTURE_COMPLETENESS_V1 ")) {
           if (options.consoleThrowDiagnostic)
             throw new Error("synthetic diagnostic console throw");
@@ -288,6 +315,22 @@ async function runProbeScenario(options = {}) {
       }
       Promise.resolve().then(() => {
         advance(milliseconds);
+        if (!replacementDone && options.replaceAtSample === sampleTimerArms &&
+            milliseconds === 1000) {
+          const oldVideo = video;
+          oldVideo.isConnected = false;
+          callback = null;
+          replacementDone = true;
+          totalVideoFrames = options.replacementFrameBase === undefined
+            ? 10 : options.replacementFrameBase;
+          presentedFrames = options.replacementPresentedBase === undefined
+            ? 5 : options.replacementPresentedBase;
+          mediaTime = options.replacementMediaBase === undefined
+            ? 0.25 : options.replacementMediaBase;
+          const replacementTimeOffset = options.replacementTimeOffset || 0;
+          video = makeVideo(oldVideo.currentTime + replacementTimeOffset,
+            1280, 720);
+        }
         resolve();
       });
       return 1;
@@ -307,7 +350,7 @@ async function runProbeScenario(options = {}) {
     row.includes(" kind=failure "));
   if (!options.allowIncomplete)
     assert(terminal, "probe did not terminate within the reducer bound");
-  return { rows, diagnosticRows, diagnosticV2Rows, calls,
+  return { rows, diagnosticRows, diagnosticV2Rows, rebindRows, auxiliaryRows, calls,
     fields: rows.map(rowFields), terminal };
 }
 
@@ -335,6 +378,41 @@ function forcePrelude(result) {
   assert.strictEqual(pass.fields[0].player_state, "1");
   assert.strictEqual(pass.fields[5].video_width, "1280");
   assert(Number(pass.fields[5].stable_count) >= 4);
+
+  const rebound = await runProbeScenario({ replaceAtSample: 3 });
+  assert.strictEqual(rebound.rows.length, 30,
+    "a valid replacement changed the semantic row count");
+  assert.strictEqual(rebound.rebindRows.length, 1);
+  assert(rebound.rebindRows[0].includes(" sample=3 "));
+  assert(rebound.rows.some(row => row.includes(" kind=done ")),
+    "a valid replacement did not complete");
+  const reboundRvfc = rebound.fields.find(fields =>
+    fields.kind === "rvfc_summary");
+  assert(reboundRvfc, "a valid replacement omitted its rVFC summary");
+  assert.strictEqual(reboundRvfc.interval_duplicates, "0");
+  assert.strictEqual(reboundRvfc.presented_duplicates, "0");
+  const reboundSamples = rebound.fields.filter(fields => fields.kind === "sample");
+  assert.strictEqual(reboundSamples.length, 20);
+  for (let index = 1; index < reboundSamples.length; index++) {
+    assert(Number(reboundSamples[index].current_time) >=
+      Number(reboundSamples[index - 1].current_time));
+    assert(Number(reboundSamples[index].vpq_total) >=
+      Number(reboundSamples[index - 1].vpq_total));
+    assert(Number(reboundSamples[index].rvfc_presented) >=
+      Number(reboundSamples[index - 1].rvfc_presented));
+  }
+
+  const rewindRejected = await runProbeScenario({
+    replaceAtSample: 3,
+    replacementTimeOffset: -5
+  });
+  assert(rewindRejected.rows.some(row =>
+    row.includes(" kind=failure ") &&
+    row.includes(" reason=video-replacement-invalid-3")));
+  const rewindRejectRow = rewindRejected.auxiliaryRows.find(row =>
+    row.startsWith("YT_MEDIA_VIDEO_REBIND_REJECT_V1 "));
+  assert(rewindRejectRow, "a rejected replacement omitted its invariant marker");
+  assert(rewindRejectRow.includes(" time_nonregress=0 "));
 
   const normal = await runProbeScenario({ normalArm: true });
   assert.strictEqual(normal.rows.length, 24);
@@ -468,7 +546,8 @@ function forcePrelude(result) {
     "extension_id=edfilgocpdgbkehcgdillfgnnhclphol missing_api=PASS " +
     "force_main_world=PASS force_exact_order=PASS force_api_throw=RAW " +
     "force_noop=RAW force_delayed=BOUNDED normal_isolation=PASS " +
-    "coalesced_rvfc=RAW capture_diag_off_parity=PASS " +
+    "coalesced_rvfc=RAW post_mode_settle=PASS video_rebind=CONSERVATIVE " +
+    "capture_diag_off_parity=PASS " +
     "capture_diag_timer_freeze=RAW capture_diag_rvfc_split=RAW " +
     "capture_diag_console_throw_block=FAIL_CLOSED\n");
 })().catch(error => {

@@ -1,0 +1,659 @@
+#!/usr/bin/env expect
+# One owned xv6 SDL geometry capture. Refuses to boot unless exact QEMU count
+# is zero; never signals an unvalidated process or process group.
+set timeout 300
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+if {[info exists env(REPO_ROOT)] && $env(REPO_ROOT) ne ""} {
+    set root $env(REPO_ROOT)
+}
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set base_img "$build/fs.img"
+set driver [expr {[info exists env(SDL_GEOMETRY_SDL_DRIVER)] ? $env(SDL_GEOMETRY_SDL_DRIVER) : "x11"}]
+set hidpi [expr {[info exists env(SDL_GEOMETRY_HIGHDPI)] ? $env(SDL_GEOMETRY_HIGHDPI) : "off"}]
+set requested_width [expr {[info exists env(SDL_GEOMETRY_WIDTH)] ? $env(SDL_GEOMETRY_WIDTH) : 1280}]
+set requested_height [expr {[info exists env(SDL_GEOMETRY_HEIGHT)] ? $env(SDL_GEOMETRY_HEIGHT) : 800}]
+set trace_enabled [expr {[info exists env(SDL_GEOMETRY_TRACE)] ? $env(SDL_GEOMETRY_TRACE) : "0"}]
+set extra_append [expr {[info exists env(SDL_GEOMETRY_EXTRA_APPEND)] ? $env(SDL_GEOMETRY_EXTRA_APPEND) : ""}]
+set fit_window [expr {[info exists env(SDL_GEOMETRY_FIT_WINDOW)] ? $env(SDL_GEOMETRY_FIT_WINDOW) : "1"}]
+set fit_mode [expr {[info exists env(SDL_GEOMETRY_FIT_MODE)] ? $env(SDL_GEOMETRY_FIT_MODE) : "maximize"}]
+set visual_app [expr {[info exists env(SDL_GEOMETRY_VISUAL_APP)] ? $env(SDL_GEOMETRY_VISUAL_APP) : "konsole"}]
+set input_probe [expr {[info exists env(SDL_GEOMETRY_INPUT_PROBE)] ? $env(SDL_GEOMETRY_INPUT_PROBE) : "1"}]
+if {$driver ni {x11 wayland}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_SDL_DRIVER=$driver"
+    exit 2
+}
+if {$hidpi ni {on off}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_HIGHDPI=$hidpi"
+    exit 2
+}
+if {![string is integer -strict $requested_width] || $requested_width <= 0 ||
+    ![string is integer -strict $requested_height] || $requested_height <= 0} {
+    puts stderr "sdl-geometry-live: invalid geometry ${requested_width}x${requested_height}"
+    exit 2
+}
+if {$trace_enabled ni {0 1}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_TRACE=$trace_enabled"
+    exit 2
+}
+if {$fit_window ni {0 1}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_FIT_WINDOW=$fit_window"
+    exit 2
+}
+if {$fit_mode ni {clamp maximize}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_FIT_MODE=$fit_mode"
+    exit 2
+}
+if {$visual_app ni {none konsole smoke-agent}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_VISUAL_APP=$visual_app"
+    exit 2
+}
+if {$input_probe ni {0 1}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_INPUT_PROBE=$input_probe"
+    exit 2
+}
+if {$visual_app eq "smoke-agent"} {
+    append extra_append " kde_smoke_agent=1"
+}
+
+set nonce [clock format [clock seconds] -gmt 1 -format %Y%m%dT%H%M%SZ]
+append nonce "-[pid]"
+set token "sdl-geometry-$nonce"
+set outdir "$build/sdl-geometry-probe/live-$driver-hidpi-$hidpi-$nonce"
+if {[info exists env(SDL_GEOMETRY_OUTDIR)] && $env(SDL_GEOMETRY_OUTDIR) ne ""} {
+    set outdir $env(SDL_GEOMETRY_OUTDIR)
+}
+set overlay "$outdir/xv6-sdl.qcow2"
+set monitor "/tmp/xv6-sdl-geometry-[pid].sock"
+set monitor_ppm "$outdir/qemu-monitor.ppm"
+set monitor_log "$outdir/qemu-monitor.log"
+set runlog "$outdir/run.log"
+set trace_lib "$outdir/libsdl-geometry-trace.so"
+set trace_log "$outdir/sdl-geometry-trace.log"
+set qemu_pidfile "$outdir/qemu.pid"
+set observe_dir "$outdir/observe"
+set guest_ppm "$outdir/guest-framebuffer.ppm"
+set guest_png "$outdir/guest-framebuffer.png"
+set qemu_pid 0
+set qemu_start 0
+set qemu_reaped 0
+set guest_width 0
+set guest_height 0
+set guest_pitch 0
+set content_width 0
+set content_height 0
+set host_requested_width 0
+set host_requested_height 0
+
+proc exact_inventory {} {
+    global root
+    return [exec "$root/scripts/launch/qemu-exact-inventory.sh"]
+}
+
+proc owned_identity {pid token} {
+    set script {
+        pid="$1"; token="$2"
+        [[ -r "/proc/$pid/exe" && -r "/proc/$pid/stat" && -r "/proc/$pid/cmdline" ]] || exit 2
+        exe=$(readlink -f "/proc/$pid/exe") || exit 2
+        case "${exe##*/}" in qemu-system-*|qemu-kvm) ;; *) exit 3 ;; esac
+        stat_line=$(<"/proc/$pid/stat")
+        rest=${stat_line##*) }
+        read -r -a fields <<<"$rest"
+        [[ "${fields[2]}" == "$pid" ]] || exit 4
+        mapfile -d '' -t args <"/proc/$pid/cmdline"
+        [[ " ${args[*]} " == *" xv6-$token "* ]] || exit 5
+        printf 'start=%s pgid=%s exe=%s\n' "${fields[19]}" "${fields[2]}" "$exe"
+    }
+    return [exec bash -c $script _ $pid $token]
+}
+
+proc monitor_command {command} {
+    global monitor monitor_log outdir
+    set command_file "$outdir/monitor-command-[clock microseconds].txt"
+    set fh [open $command_file w]
+    puts $fh $command
+    close $fh
+    set rc [catch {
+        exec sh -c "nc -U -w 5 -q 1 '$monitor' < '$command_file' >>'$monitor_log' 2>&1"
+    } error]
+    file delete -force $command_file
+    if {$rc != 0} {
+        puts "sdl-geometry-live: monitor-command-fail command=$command error=$error"
+        return 0
+    }
+    return 1
+}
+
+proc reap_owned {} {
+    global root qemu_pid qemu_start token qemu_reaped timeout
+    if {$qemu_reaped} {
+        return
+    }
+    if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"]} {
+        if {$qemu_start <= 0} {
+            puts stderr "sdl-geometry-live: refusing cleanup without captured start ticks pid=$qemu_pid"
+        } else {
+            catch {
+                exec "$root/scripts/launch/cleanup-owned-qemu.sh" \
+                    $qemu_pid $qemu_start $token
+            } cleanup_error
+            if {$cleanup_error ne ""} {
+                puts "sdl-geometry-live: cleanup=$cleanup_error"
+            }
+        }
+    }
+    set old_timeout $timeout
+    set timeout 20
+    catch { expect eof }
+    catch { wait }
+    set timeout $old_timeout
+    set qemu_reaped 1
+}
+
+proc finish {code message} {
+    global root outdir qemu_reaped monitor
+    reap_owned
+    file delete -force $monitor
+    set inventory [exact_inventory]
+    set fh [open "$outdir/final-qemu-inventory.txt" w]
+    puts $fh $inventory
+    close $fh
+    # An independently supervised non-x86 VM may restart after our owned x86
+    # guest has been reaped. Its presence is not a cleanup failure and must
+    # never cause this reducer to signal or misclassify that external VM.
+    if {![regexp {exact_x86_qemu_count=0} $inventory]} {
+        puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=final-owned-x86-qemu-nonzero original=$message evidence=$outdir"
+        exit 12
+    }
+    puts "SDL-GEOMETRY-LIVE [expr {$code == 0 ? {PASS} : {FAIL}}] reason=$message evidence=$outdir"
+    exit $code
+}
+
+file mkdir $outdir
+file delete -force $monitor
+set preflight_rc [catch {
+    exec "$root/scripts/launch/qemu-exact-inventory.sh" --require-zero
+} preflight]
+set fh [open "$outdir/preflight-qemu-inventory.txt" w]
+puts $fh $preflight
+close $fh
+if {$preflight_rc != 0} {
+    puts stderr "SDL-GEOMETRY-LIVE-SKIP reason=preexisting-qemu evidence=$outdir"
+    exit 75
+}
+foreach path [list $kernel $base_img] {
+    if {![file isfile $path]} {
+        puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=missing-artifact path=$path"
+        exit 2
+    }
+}
+exec qemu-img create -q -f qcow2 -F raw -b $base_img $overlay
+if {$trace_enabled eq "1"} {
+    exec "$root/scripts/gpu/build-sdl-geometry-trace.sh" $trace_lib
+}
+
+set env(DISPLAY_MODE) sdl
+set env(USE_KVM) 1
+set env(QEMU_REQUIRE_KVM) 1
+set env(QEMU_GPU) virtio-vga-gl-primary
+set env(QEMU_HOST_GL) auto
+set env(QEMU_ALLOW_WSL_SDL_GL) 1
+set env(QEMU_DISPLAY_FALLBACK) error
+set env(QEMU_WSL_SDL_VIDEODRIVER) $driver
+set env(QEMU_SDL_HIGHDPI) $hidpi
+if {$trace_enabled eq "1"} {
+    set env(QEMU_SDL_GEOMETRY_TRACE_LIB) $trace_lib
+    set env(QEMU_SDL_GEOMETRY_TRACE_LOG) $trace_log
+} else {
+    catch { unset env(QEMU_SDL_GEOMETRY_TRACE_LIB) }
+    catch { unset env(QEMU_SDL_GEOMETRY_TRACE_LOG) }
+}
+set env(QEMU_CPUS) 6
+set env(QEMU_MEMORY) 8G
+set env(QEMU_INPUT) virtio
+set env(QEMU_NET) 0
+set env(QEMU_AUDIO) none
+set env(QEMU_DISK_FORMAT) qcow2
+set env(QEMU_RUN_TOKEN) $token
+set env(QEMU_PIDFILE) $qemu_pidfile
+# The reducer performs and records its own exact-title fit below.  Suppress
+# the launcher's duplicate background helper in this owned diagnostic run.
+set env(QEMU_WSL_SDL_FIT) off
+set env(QEMU_VIRTIO_GPU_XRES) $requested_width
+set env(QEMU_VIRTIO_GPU_YRES) $requested_height
+set env(QEMU_APPEND) "root=/dev/disk0 video=${requested_width}x${requested_height} netsurf=0 webkit=0 $extra_append"
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+log_file -a $runlog
+spawn setsid --wait bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $overlay
+for {set attempt 0} {$attempt < 100 && ![file isfile $qemu_pidfile]} {incr attempt} {
+    after 100
+}
+if {![file isfile $qemu_pidfile]} {
+    finish 6 "qemu-pidfile-timeout"
+}
+set fh [open $qemu_pidfile r]
+set qemu_pid [string trim [read $fh]]
+close $fh
+if {![string is integer -strict $qemu_pid] || $qemu_pid <= 0} {
+    finish 6 "qemu-pidfile-invalid"
+}
+set identity_rc [catch { owned_identity $qemu_pid $token } identity]
+if {$identity_rc != 0 || ![regexp {start=([0-9]+)} $identity -> qemu_start]} {
+    finish 6 "owned-identity-failed"
+}
+set fh [open "$outdir/owned-process.txt" w]
+puts $fh "pid=$qemu_pid token=$token $identity"
+close $fh
+
+set old_timeout $timeout
+set timeout 30
+set expected_trace [expr {$trace_enabled eq "1" ? "on" : "off"}]
+expect {
+    -re "display-contract requested=sdl resolved=sdl\[^\\r\\n\]*sdl_trace=$expected_trace\[^\\r\\n\]*sdl_aspect_fix=patched\[^\\r\\n\]*disk_format=qcow2\[^\\r\\n\]*run_token=sdl-geometry-" {}
+    -re {explicit SDL GL launch is blocked|Could not initialize SDL|failed to initialize display} {
+        finish 3 "sdl-launch-failed"
+    }
+    timeout { finish 4 "display-contract-timeout" }
+    eof { finish 5 "display-contract-eof" }
+}
+
+set timeout 300
+expect {
+    -re {kde-session: KWin and plasmashell are running} {}
+    -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating|KWin startup failed} {
+        finish 7 "guest-crash-before-ready"
+    }
+    timeout { finish 8 "kde-ready-timeout" }
+    eof { finish 9 "kde-ready-eof" }
+}
+
+set window_title "QEMU (xv6-$token-0)"
+if {$fit_window eq "1"} {
+    set fit_rc [catch {
+        exec env "XV6_QEMU_WINDOW_FIT_MODE=$fit_mode" \
+            "$root/scripts/gpu/fit-owned-qemu-window.sh" $window_title
+    } fit_output]
+    set fh [open "$outdir/fit-window.txt" w]
+    puts $fh "rc=$fit_rc output=$fit_output"
+    close $fh
+    if {$fit_rc != 0 || ![regexp {status=PASS} $fit_output]} {
+        puts "sdl-geometry-live: host-window-fit diagnostic failed; continuing to retain visual divergence"
+    }
+    # Keep QEMU's unique run-tokenized title as the stable selector.  WSLg can
+    # append or change host-owned decoration text (for example " (Ubuntu)")
+    # after the fit step; all host helpers require the complete tokenized
+    # title but deliberately tolerate such a suffix.
+}
+
+if {$visual_app eq "konsole"} {
+    set app_phase 0
+    foreach command {
+        {x=0;export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root}
+        {x=0;export WAYLAND_DISPLAY=wayland-0}
+        {x=0;export DBUS_SESSION_BUS_ADDRESS=unix:abstract=xv6_session_bus}
+        {x=0;sleep 10}
+        {x=0;KDE_APP_LAUNCH_PROBE_STDERR_TO_STDOUT=1 /bin/kde-app-launch-probe --konsole-only >/tmp/sdl-konsole.log 2>&1}
+        {x=0;sleep 2}
+    } {
+        incr app_phase
+        set app_marker "SDLAPP_${app_phase}_$nonce"
+        send "m=SDLAPP_;m=\${m}${app_phase}_$nonce;$command;echo \$m\r"
+        # kde-app-launch-probe has a documented 45 s shell-ready window and
+        # still performs bounded teardown/accounting before returning.
+        set timeout [expr {$app_phase == 5 ? 90 : 30}]
+        expect {
+            -re $app_marker {}
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 17 "visual-app-crash"
+            }
+            timeout { finish 18 "visual-app-timeout-phase-$app_phase" }
+            eof { finish 9 "visual-app-eof" }
+        }
+        # The marker is printed before bash emits the next bracketed-paste
+        # prompt.  Wait for that prompt so the following short command cannot
+        # be spliced into it on the serial console.
+        expect {
+            -re {root:/# } {}
+            timeout { finish 18 "visual-app-prompt-timeout-phase-$app_phase" }
+            eof { finish 9 "visual-app-prompt-eof" }
+        }
+    }
+}
+if {$visual_app eq "smoke-agent"} {
+    set smoke_marker "SDLSMOKE_$nonce"
+    # Wait for the agent's independent framebuffer receipt, not a guessed
+    # delay: xv6 guest timer pacing can differ from host wall time.
+    send "m=SDLSMOKE_;m=\${m}$nonce;x=0;while \[ ! -f /kde-plasma-after.ppm \];do sleep 1;done;echo \$m\r"
+    set timeout 180
+    expect {
+        -re $smoke_marker {}
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 19 "smoke-agent-crash"
+        }
+        timeout { finish 20 "smoke-agent-settle-timeout" }
+        eof { finish 9 "smoke-agent-eof" }
+    }
+    set smoke_capture_rc [catch {
+        exec env "QEMU_WINDOW_TITLE=$window_title" \
+            "$root/scripts/gpu/capture-host-screen.sh" \
+            "$outdir/smoke-host-window-windows.png"
+    } smoke_capture_output]
+    set fh [open "$outdir/smoke-host-window-windows.log" w]
+    puts $fh "rc=$smoke_capture_rc output=$smoke_capture_output"
+    close $fh
+}
+
+if {$input_probe eq "1"} {
+    # KWin's ready row is asynchronous and can arrive after the shell prompt
+    # that preceded it.  Reacquire a fresh prompt with a short transaction;
+    # otherwise the first probe command can be spliced into bracketed-paste
+    # state and lose characters on the serial console.
+    set input_sync_prefix "SDLINPUT_SYNC_"
+    set input_sync_marker "${input_sync_prefix}${nonce}"
+    send "x=0;m=$input_sync_prefix;m=\${m}$nonce;echo \$m\r"
+    set timeout 30
+    expect {
+        -re $input_sync_marker {}
+        timeout { finish 22 "input-probe-sync-timeout" }
+        eof { finish 9 "input-probe-sync-eof" }
+    }
+    expect {
+        -re {root:/# } {}
+        timeout { finish 22 "input-probe-sync-prompt-timeout" }
+        eof { finish 9 "input-probe-sync-prompt-eof" }
+    }
+
+    set input_arm_prefix "SDLINPUT_ARM_"
+    set input_arm_marker "${input_arm_prefix}${nonce}"
+    send "x=0;m=$input_arm_prefix;m=\${m}$nonce\r"
+    set timeout 30
+    expect {
+        -re {root:/# } {}
+        timeout { finish 22 "input-probe-arm-prepare-timeout" }
+        eof { finish 9 "input-probe-arm-prepare-eof" }
+    }
+    send "x=0;p=/bin/sdl-input-probe\r"
+    expect {
+        -re {root:/# } {}
+        timeout { finish 22 "input-probe-path-prepare-timeout" }
+        eof { finish 9 "input-probe-path-prepare-eof" }
+    }
+    send "x=0;rm -f /tmp/si;/bin/bash \$p>/tmp/si 2>&1&ip=\$!;echo \$m\r"
+    set timeout 30
+    expect {
+        -re $input_arm_marker {}
+        -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+            finish 21 "input-probe-arm-crash"
+        }
+        timeout { finish 22 "input-probe-arm-timeout" }
+        eof { finish 9 "input-probe-arm-eof" }
+    }
+    expect {
+        -re {root:/# } {}
+        timeout { finish 22 "input-probe-arm-prompt-timeout" }
+        eof { finish 9 "input-probe-arm-prompt-eof" }
+    }
+
+    set input_surface_width 0
+    set input_surface_height 0
+    set fh [open $runlog r]
+    set input_runlog [read $fh]
+    close $fh
+    set input_fit_pattern [format \
+        {sdl2: aspect-fit guest=%sx%s window=([0-9]+)x([0-9]+) viewport=} \
+        $requested_width $requested_height]
+    foreach line [split $input_runlog "\n"] {
+        if {[regexp $input_fit_pattern $line -> fit_w fit_h]} {
+            set input_surface_width $fit_w
+            set input_surface_height $fit_h
+        }
+    }
+    if {$input_surface_width <= 0 || $input_surface_height <= 0} {
+        finish 23 "qemu-input-surface-evidence-missing"
+    }
+    set input_host_rc [catch {
+        exec "$root/scripts/gpu/probe-owned-qemu-sdl-input.sh" \
+            $window_title $requested_width $requested_height \
+            $input_surface_width $input_surface_height
+    } input_host_output]
+    set fh [open "$outdir/host-input-probe.txt" w]
+    puts $fh "rc=$input_host_rc"
+    puts $fh $input_host_output
+    close $fh
+    set input_point_count [regexp -all {input_point label=} $input_host_output]
+    if {$input_host_rc != 0 || $input_point_count != 4 ||
+        ![regexp {status=PASS} $input_host_output]} {
+        finish 23 "host-input-probe-failed"
+    }
+
+    set input_done_prefix "SDLINPUT_DONE_"
+    set input_done_marker "${input_done_prefix}${nonce}"
+    send "x=0;m=$input_done_prefix;m=\${m}$nonce\r"
+    set timeout 30
+    expect {
+        -re {root:/# } {}
+        timeout { finish 24 "input-probe-done-prepare-timeout" }
+        eof { finish 9 "input-probe-done-prepare-eof" }
+    }
+    send "x=0;wait \$ip;irc=\$?;cat /tmp/si;echo SDLINPUT_RC=\$irc;echo \$m\r"
+    set input_min_x 1000000.0
+    set input_min_y 1000000.0
+    set input_max_x -1.0
+    set input_max_y -1.0
+    set input_button_seen 0
+    set input_summary_pass 0
+    set input_rc_pass 0
+    set input_done 0
+    set timeout 90
+    while {!$input_done} {
+        expect {
+            -re {r9_mouse_sample[^\r\n]*x=([0-9]+) y=([0-9]+) buttons=([0-9]+)} {
+                set raw_x $expect_out(1,string)
+                set raw_y $expect_out(2,string)
+                set sample_x [expr {double($raw_x) * $requested_width / 65535.0}]
+                set sample_y [expr {double($raw_y) * $requested_height / 65535.0}]
+                if {$sample_x < $input_min_x} { set input_min_x $sample_x }
+                if {$sample_x > $input_max_x} { set input_max_x $sample_x }
+                if {$sample_y < $input_min_y} { set input_min_y $sample_y }
+                if {$sample_y > $input_max_y} { set input_max_y $sample_y }
+                if {$expect_out(3,string) > 0} { set input_button_seen 1 }
+                exp_continue
+            }
+            -re {r9_summary[^\r\n]*result=PASS} {
+                set input_summary_pass 1
+                exp_continue
+            }
+            -re {SDLINPUT_RC=0} {
+                set input_rc_pass 1
+                exp_continue
+            }
+            -re $input_done_marker { set input_done 1 }
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 24 "input-probe-crash"
+            }
+            timeout { finish 25 "input-probe-result-timeout" }
+            eof { finish 9 "input-probe-result-eof" }
+        }
+    }
+    expect {
+        -re {root:/# } {}
+        timeout { finish 25 "input-probe-result-prompt-timeout" }
+        eof { finish 9 "input-probe-result-prompt-eof" }
+    }
+    set input_x_low_limit [expr {$requested_width * 0.05}]
+    set input_x_high_limit [expr {$requested_width * 0.95}]
+    set input_y_low_limit [expr {$requested_height * 0.05}]
+    set input_y_high_limit [expr {$requested_height * 0.95}]
+    set input_coordinate_pass [expr {
+        $input_min_x <= $input_x_low_limit &&
+        $input_max_x >= $input_x_high_limit &&
+        $input_min_y <= $input_y_low_limit &&
+        $input_max_y >= $input_y_high_limit
+    }]
+    set fh [open "$outdir/input-result.txt" w]
+    puts $fh "host_points=$input_point_count host_status=PASS"
+    puts $fh "guest_pointer_min_x=$input_min_x guest_pointer_max_x=$input_max_x guest_pointer_min_y=$input_min_y guest_pointer_max_y=$input_max_y source=/dev/mouse-absolute"
+    puts $fh "coordinate_pass=$input_coordinate_pass button_seen=$input_button_seen summary_pass=$input_summary_pass rc_pass=$input_rc_pass"
+    close $fh
+    if {!$input_coordinate_pass || !$input_button_seen ||
+        !$input_summary_pass || !$input_rc_pass} {
+        finish 26 "input-coordinate-or-click-gate-failed"
+    }
+}
+
+# Capture the active compositor scanout rather than assuming it equals the
+# boot fbdev mode.  Maximizing SDL causes QEMU to report its inner client size
+# to KWin; KWin can then present a larger virgl resource while /dev/fb0 keeps
+# the EDID mode used at boot.
+set mode_marker_prefix "SDLMODE_"
+set mode_marker "${mode_marker_prefix}${nonce}"
+send "x=0;m=$mode_marker_prefix;m=\${m}$nonce;fbstat mode;echo \$m\r"
+set got_mode 0
+set got_content 0
+set got_marker 0
+set timeout 60
+while {!$got_marker} {
+    expect {
+        -re {current ([0-9]+)x([0-9]+) pitch ([0-9]+) bpp ([0-9]+) refresh} {
+            set guest_width $expect_out(1,string)
+            set guest_height $expect_out(2,string)
+            set guest_pitch $expect_out(3,string)
+            set got_mode 1
+            exp_continue
+        }
+        # Require the line terminator so Expect cannot accept a streamed
+        # prefix such as 1908x9 before the remaining "87" arrives.
+        -re {host_scanout_raw ([0-9]+)x([0-9]+)[\r\n]+} {
+            set host_requested_width $expect_out(1,string)
+            set host_requested_height $expect_out(2,string)
+            exp_continue
+        }
+        -re $mode_marker { set got_marker 1 }
+        -re {PANIC|fatal page fault|spin_lock reentry|fbstat:} {
+            finish 10 "guest-mode-failed"
+        }
+        timeout { finish 11 "guest-mode-timeout" }
+        eof { finish 9 "guest-mode-eof" }
+    }
+}
+if {!$got_mode} {
+    finish 11 "guest-mode-missing"
+}
+# host_scanout_raw is QEMU's requested host UI size, not proof that the guest
+# allocated a resource of that size.  The readback ioctl validates the real
+# guest surface and the SDL classifier compares that surface with the host.
+set content_width $guest_width
+set content_height $guest_height
+set got_content 1
+set capture_marker_prefix "SDLCAPTURE_"
+set capture_marker "${capture_marker_prefix}${nonce}"
+send "x=0;m=$capture_marker_prefix;m=\${m}$nonce;fbstat ppm-current /sdl-geometry-guest.ppm 0 0 $content_width $content_height;sync;echo \$m\r"
+set timeout 90
+expect {
+    -re $capture_marker {}
+    -re {PANIC|fatal page fault|spin_lock reentry|fbstat:} {
+        finish 10 "guest-capture-failed"
+    }
+    timeout { finish 11 "guest-capture-timeout" }
+    eof { finish 9 "guest-capture-eof" }
+}
+
+monitor_command "screendump $monitor_ppm"
+set observe_command [list "$root/scripts/gpu/sdl-geometry-probe.sh" observe \
+    --pid $qemu_pid \
+    --window-title $window_title \
+    --guest-mode "${guest_width}x${guest_height}" \
+    --guest-content-mode "${content_width}x${content_height}" \
+    --guest-pitch $guest_pitch \
+    --qemu-log $runlog]
+if {$trace_enabled eq "1"} {
+    lappend observe_command --sdl-trace $trace_log
+}
+lappend observe_command --out $observe_dir
+set observe_rc [catch { exec {*}$observe_command } observe_output]
+set fh [open "$outdir/observe-command.txt" w]
+puts $fh "rc=$observe_rc output=$observe_output"
+close $fh
+
+monitor_command quit
+set timeout 30
+expect {
+    eof {}
+    timeout { reap_owned }
+}
+catch { wait }
+set qemu_reaped 1
+set timeout $old_timeout
+
+set inventory [exact_inventory]
+set fh [open "$outdir/final-qemu-inventory.txt" w]
+puts $fh $inventory
+close $fh
+if {![regexp {exact_qemu_count=0} $inventory]} {
+    puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=final-exact-qemu-nonzero evidence=$outdir"
+    exit 12
+}
+
+file delete -force $monitor
+set merged_raw "$outdir/xv6-sdl-merged.raw"
+set guest_source_path "/sdl-geometry-guest.ppm"
+set extract_rc [catch {
+    exec qemu-img convert -O raw -S 4k $overlay $merged_raw
+    exec debugfs -R "dump $guest_source_path $guest_ppm" $merged_raw
+} extract_error]
+set fh [open "$outdir/guest-extract.txt" w]
+puts $fh "rc=$extract_rc error=$extract_error"
+close $fh
+file delete -force $merged_raw
+# debugfs returns 1 for some successful read-only dump operations.  The
+# nonce-bound output file and its exact PPM payload size are the durable gate.
+set expected_ppm_size [expr {15 + $content_width * $content_height * 3}]
+if {![file isfile $guest_ppm] || [file size $guest_ppm] < $expected_ppm_size} {
+    finish 13 "guest-framebuffer-extract-failed"
+}
+catch { exec convert $guest_ppm $guest_png }
+set visual_stats_rc [catch {
+    exec convert $guest_ppm -format {%[fx:mean] %[fx:standard_deviation] %[fx:maxima] %[colors]} info:
+} visual_stats]
+set fh [open "$outdir/visual-stats.txt" w]
+puts $fh "rc=$visual_stats_rc stats=$visual_stats"
+close $fh
+if {$visual_stats_rc != 0 ||
+    ![regexp {^([0-9.eE+-]+) ([0-9.eE+-]+) ([0-9.eE+-]+) ([0-9]+)$} \
+        [string trim $visual_stats] -> visual_mean visual_stddev visual_max visual_colors] ||
+    $visual_mean <= 0.01 || $visual_stddev <= 0.001 ||
+    $visual_max <= 0.0 || $visual_colors < 8} {
+    finish 16 "guest-frame-is-black-or-low-variance"
+}
+if {[file isfile "$observe_dir/host-window-windows.png"]} {
+    file copy -force "$observe_dir/host-window-windows.png" \
+        "$outdir/host-window-windows.png"
+}
+
+set classifier "missing"
+if {[file isfile "$observe_dir/result.txt"]} {
+    set fh [open "$observe_dir/result.txt" r]
+    set classifier [read $fh]
+    close $fh
+}
+set fh [open "$outdir/result.txt" w]
+puts $fh "guest_mode=${guest_width}x${guest_height}"
+puts $fh "guest_pitch=$guest_pitch"
+puts $fh "active_content=${content_width}x${content_height}"
+puts $fh "host_requested=${host_requested_width}x${host_requested_height}"
+puts $fh "observe_rc=$observe_rc"
+puts $fh $classifier
+close $fh
+
+if {$observe_rc != 0 || ![regexp {status=NUMERIC_PASS} $classifier]} {
+    finish 14 "geometry-classifier-failed"
+}
+# QEMU's SDL GL listener can legitimately answer HMP screendump with
+# "no surface".  Require the independent Win32 capture and guest readback;
+# retain the monitor response as diagnostic evidence only.
+if {![file isfile "$observe_dir/host-window-windows.png"] ||
+    ![file isfile $guest_ppm]} {
+    finish 15 "visual-evidence-missing"
+}
+finish 0 "numeric-and-screenshot-capture"

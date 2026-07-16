@@ -330,6 +330,11 @@ proc audio_extract_artifacts {} {
         [list fallback-owner-record /audio-localizer/fallback.owner] \
         [list paplay-fallback /audio-localizer/paplay-fallback.log] \
         [list reducer-fallback /audio-localizer/reducer-fallback.log] \
+        [list paplay-primary-no-shm /audio-localizer/paplay-primary-no-shm.log] \
+        [list reducer-primary-no-shm /audio-localizer/reducer-primary-no-shm.log] \
+        [list pipewire-tcp-socket /audio-localizer/pipewire-tcp-socket.log] \
+        [list paplay-pipewire-tcp /audio-localizer/paplay-pipewire-tcp.log] \
+        [list reducer-pipewire-tcp /audio-localizer/reducer-pipewire-tcp.log] \
         [list chrome-debug /chrome_debug.log]] {
         lassign $pair name guest
         audio_dump_file $guest "$outdir/$name.log" 1
@@ -518,20 +523,18 @@ set identity_specs [list \
     [list reducer_provider \
         /opt/host-gui/chromium-pulse-stream-reducer/bin/chromium-pulse-stream-reducer \
         "$outdir/image-reducer-provider" 1 \
-        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-stream-reducer" \
-              "$root/rootfs-overlay/opt/host-gui/chromium-pulse-stream-reducer/bin/chromium-pulse-stream-reducer"]] \
+        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-stream-reducer"]] \
     [list reducer_launcher /bin/chromium-pulse-stream-reducer \
         "$outdir/image-reducer-launcher" 1 \
-        [list "$root/rootfs-overlay/bin/chromium-pulse-stream-reducer"]] \
+        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-stream-reducer-launcher"]] \
     [list pulse_trace \
         /opt/host-gui/wayland-chromium/lib/chromium-pulse-trace-preload.so \
         "$outdir/image-pulse-trace.so" 1 \
-        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-trace-preload.so" \
-              "$root/rootfs-overlay/opt/host-gui/wayland-chromium/lib/chromium-pulse-trace-preload.so"]] \
+        [list "$root/build-x86_64/host-gui-runtime/chromium-pulse-trace-preload.so"]] \
     [list pulse_provider \
-        /opt/host-gui/wayland-chromium/chrome-linux64/libpulse.so.0 \
+        /lib/libpulse.so.0 \
         "$outdir/image-libpulse.so.0" 1 \
-        [list "$root/rootfs-overlay/opt/host-gui/wayland-chromium/chrome-linux64/libpulse.so.0"]] \
+        [list "$root/build-x86_64/sysroot/lib/libpulse.so.0"]] \
     [list audio_smoke /share/chromium-audio-smoke.html \
         "$outdir/image-audio-smoke.html" 0 \
         [list "$root/rootfs-overlay/share/chromium-audio-smoke.html"]] \
@@ -564,10 +567,18 @@ foreach spec $identity_specs {
     }
 }
 
-set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0 kde_audio_null_sink=1"
+set unix_only 0
+if {[info exists env(AUDIO_LOCALIZER_UNIX_ONLY)] &&
+    $env(AUDIO_LOCALIZER_UNIX_ONLY) eq "1"} {
+    set unix_only 1
+}
+set append "root=/dev/disk0 video=1280x800 netsurf=0 webkit=0 kde_audio_null_sink=1 kde_audio_pulse_tcp=1"
+if {$unix_only} {
+    append append " audio_unix_ipc_trace=3"
+}
 set qextra "-monitor unix:$monitor,server,nowait"
 audio_write "$outdir/qemu-launch-command.txt" \
-    "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=0 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
+    "DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary QEMU_INPUT=virtio QEMU_NET=1 QEMU_NET_MODEL=e1000 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none QEMU_APPEND='$append' QEMU_EXTRA='$qextra' scripts/launch/run-qemu.sh x86_64 $kernel $scratch\n"
 
 set prepared [audio_prepare_debugcon]
 if {![lindex $prepared 0]} {
@@ -578,7 +589,7 @@ try {
 log_file -a $runlog
 spawn env DISPLAY_MODE=gtk USE_KVM=1 QEMU_REQUIRE_KVM=1 \
     QEMU_REQUIRE_HOST_DRI=1 QEMU_GPU=virtio-vga-gl-primary \
-    QEMU_INPUT=virtio QEMU_NET=0 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none \
+    QEMU_INPUT=virtio QEMU_NET=1 QEMU_NET_MODEL=e1000 QEMU_AUDIO=none QEMU_AUDIO_BACKEND=none \
     QEMU_APPEND=$append QEMU_EXTRA=$qextra \
     bash -c "cd '$root' && exec bash scripts/launch/run-qemu.sh x86_64 '$kernel' '$scratch'"
 set qemu_pid [exp_pid]
@@ -624,15 +635,23 @@ expect {
 set timeout $old_timeout
 after 3000
 
-set pre [audio_guest_ok [audio_guest_cmd "fbstat" fbstat-pre 40] fbstat-pre]
-audio_write $fbstat_pre $pre
-set pre_gpu [audio_gpu_contract $pre]
-if {![lindex $pre_gpu 0]} {
-    audio_finish 8 "INVALID gpu-pre [lindex $pre_gpu 1]"
+if {$unix_only} {
+    audio_write $fbstat_pre "diagnostic_unix_only=1 gpu_contract=not_claimed\n"
+} else {
+    set pre [audio_guest_ok [audio_guest_cmd "fbstat" fbstat-pre 40] fbstat-pre]
+    audio_write $fbstat_pre $pre
+    set pre_gpu [audio_gpu_contract $pre]
+    if {![lindex $pre_gpu 0]} {
+        audio_finish 8 "INVALID gpu-pre [lindex $pre_gpu 1]"
+    }
 }
 
+set helper_command "/bin/bash /audio-localizer-guest.sh"
+if {$unix_only} {
+    set helper_command "AUDIO_LOCALIZER_UNIX_ONLY=1 /bin/bash /audio-localizer-guest.sh"
+}
 set helper_result [audio_guest_ok \
-    [audio_guest_cmd "/bin/bash /audio-localizer-guest.sh" helper-chain \
+    [audio_guest_cmd $helper_command helper-chain \
         $helper_timeout_seconds] \
     helper-chain]
 audio_write $serial_log $helper_result
@@ -641,6 +660,20 @@ set manifest_serial [audio_guest_ok \
     manifest-snapshot]
 if {![regexp {AUDIO_LOCALIZER_HELPER_RESULT schema=1 status=COMPLETE} $manifest_serial]} {
     audio_finish 8 "INVALID helper-result-missing"
+}
+
+if {$unix_only} {
+    audio_guest_ok [audio_guest_cmd sync final-sync 40] final-sync
+    audio_stop_qemu
+    set debugcon [audio_extract_artifacts]
+    if {![lindex $debugcon 0]} {
+        audio_finish 8 "INVALID fresh-debugcon-[lindex $debugcon 1]"
+    }
+    set exact_after [audio_exact_qemu_lines]
+    if {$owned_group_remaining ne "" || $exact_after ne ""} {
+        audio_finish 9 "INVALID cleanup owned=$owned_group_remaining exact=$exact_after"
+    }
+    audio_finish 0 "DIAGNOSTIC-ONLY class=AF_UNIX-TRACE-CAPTURE"
 }
 
 set post [audio_guest_ok [audio_guest_cmd "fbstat" fbstat-post 40] fbstat-post]

@@ -1,0 +1,80 @@
+#!/usr/bin/env expect
+# Prepare the disposable Linux/KDE trial through its owned serial socket.
+set timeout 180
+if {$argc != 2} {
+    puts stderr "usage: [file tail [info script]] <serial-socket> <nonce>"
+    exit 64
+}
+set socket [lindex $argv 0]
+set nonce [lindex $argv 1]
+if {![regexp {^[0-9a-f]{32}$} $nonce] || ![file exists $socket]} {
+    puts stderr "LINUX_SERIAL_PREP status=FAIL reason=argument-contract"
+    exit 2
+}
+log_user 1
+spawn nc -U $socket
+send "\r"
+set logged_in 0
+set login_attempts 0
+while {!$logged_in} {
+    expect {
+        -re {login: *$} {
+            incr login_attempts
+            if {$login_attempts > 3} {
+                puts stderr "LINUX_SERIAL_PREP status=FAIL reason=login-rejected attempts=3"
+                exit 3
+            }
+            send "ubuntu\r"
+            exp_continue
+        }
+        -re {Password: *$} { send "linux-kde-reference\r"; exp_continue }
+        -re {ubuntu@linux-kde-reference:[^\r\n]*[$] } { set logged_in 1 }
+        -re {Welcome to Ubuntu} { exp_continue }
+        timeout {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=login-timeout"
+            exit 3
+        }
+        eof {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=login-eof"
+            exit 3
+        }
+    }
+}
+
+set phase 0
+foreach command {
+    {x=0;sudo systemctl start ssh.service}
+    {x=0;sudo netplan apply||true}
+    {x=0;sudo systemctl restart systemd-networkd.service||true}
+    {x=0;ip -br addr}
+    {x=0;systemctl is-active ssh.service}
+} {
+    incr phase
+    set prefix "LINUXSERIAL_${phase}_"
+    set marker "${prefix}${nonce}"
+    send "m=$prefix;m=\${m}$nonce;$command;echo \$m\r"
+    expect {
+        -re $marker {}
+        timeout {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=phase-${phase}-timeout"
+            exit 4
+        }
+        eof {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=phase-${phase}-eof"
+            exit 4
+        }
+    }
+    expect {
+        -re {ubuntu@linux-kde-reference:[^\r\n]*[$] } {}
+        timeout {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=phase-${phase}-prompt-timeout"
+            exit 4
+        }
+        eof {
+            puts stderr "LINUX_SERIAL_PREP status=FAIL reason=phase-${phase}-prompt-eof"
+            exit 4
+        }
+    }
+}
+puts "LINUX_SERIAL_PREP status=PASS nonce=$nonce"
+exit 0

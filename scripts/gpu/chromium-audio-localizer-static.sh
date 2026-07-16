@@ -19,6 +19,8 @@ trap cleanup EXIT HUP INT TERM
 
 expect "${repo}/scripts/gpu/chromium-audio-localizer-static.tcl"
 bash -n "${repo}/scripts/gpu/chromium-audio-localizer-guest.sh"
+"${repo}/scripts/gpu/build-chromium-pulse-byte-trace.sh" \
+    >"${tmp}/byte-trace-build.log"
 
 cc -std=c11 -O2 -Wall -Wextra -Werror \
     -o "${tmp}/reducer" \
@@ -44,6 +46,27 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared \
 cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
     -o "${tmp}/trace-reducer" \
     "${repo}/scripts/image/chromium-pulse-trace-preload-reducer.c" -ldl
+
+# Chromium obtains pa_stream_write through dlsym on an RTLD_LOCAL libpulse
+# handle.  Exercise that exact lookup shape so the parity byte tracer cannot
+# silently produce an empty evidence file while real audio is playing.
+timeout --signal=TERM --kill-after=2 15 \
+    env LD_LIBRARY_PATH="${tmp}" \
+    LD_PRELOAD="${repo}/build-x86_64/host-gui-runtime/chromium-pulse-byte-trace-preload.so" \
+    XV6_PULSE_TRACE=1 XV6_PULSE_TRACE_LOG="${tmp}/byte-trace.log" \
+    XV6_PULSE_REDUCER_TEST_MODE=1 \
+    "${tmp}/reducer" --duration-seconds=1 >"${tmp}/byte-reducer.log"
+awk '
+    /PULSE_BYTE_TRACE_V1 event=stream_write/ {
+        rows++
+        for (i = 1; i <= NF; i++)
+            if ($i ~ /^bytes=[0-9]+$/) {
+                sub(/^bytes=/, "", $i)
+                bytes += $i
+            }
+    }
+    END { exit !(rows >= 1 && bytes > 0) }
+' "${tmp}/byte-trace.log"
 
 "${tmp}/reducer" --emit-fixtures "${tmp}/tone.wav" "${tmp}/tone.raw" \
     >"${tmp}/fixture.log"

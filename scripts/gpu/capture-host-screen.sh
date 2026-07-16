@@ -80,8 +80,20 @@ public static class Xv6CaptureNative {
                                          int cyHeight, int istepIfAniCur,
                                          IntPtr hbrFlickerFreeDraw,
                                          int diFlags);
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
 }
 "@
+
+# WSLg reports Win32 window coordinates in the caller's DPI coordinate space,
+# while CopyFromScreen samples physical desktop pixels.  Make this thread
+# per-monitor-v2 aware before asking for either geometry, otherwise a 125%
+# desktop turns an actual 1280x800 client into a misleading 1024x640 capture
+# whose origin is displaced by the same scale factor.
+$previousDpiContext = [Xv6CaptureNative]::SetThreadDpiAwarenessContext(
+    [IntPtr](-4))
 
 $title = $env:XV6_QEMU_WINDOW_TITLE
 if ([string]::IsNullOrWhiteSpace($title)) {
@@ -125,6 +137,7 @@ if (-not [Xv6CaptureNative]::ClientToScreen($found, [ref]$origin)) {
 
 $width = $rect.Right - $rect.Left
 $height = $rect.Bottom - $rect.Top
+$windowDpi = [Xv6CaptureNative]::GetDpiForWindow($found)
 if ($width -le 0 -or $height -le 0) {
     Write-Output "status=FAIL reason=empty-client width=$width height=$height"
     exit 2
@@ -200,7 +213,7 @@ $bitmap.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose()
 $bitmap.Dispose()
 
-Write-Output "status=PASS path=$OutputPath client_x=$($origin.X) client_y=$($origin.Y) client_w=$width client_h=$height display_source=$displaySource display_x=$displayX display_y=$displayY display_w=$displayW display_h=$displayH cursor_in_client=$cursorInClient cursor_x=$cursorX cursor_y=$cursorY title=$title"
+Write-Output "status=PASS path=$OutputPath dpi_awareness=per-monitor-v2 previous_dpi_context=$previousDpiContext window_dpi=$windowDpi client_x=$($origin.X) client_y=$($origin.Y) client_w=$width client_h=$height display_source=$displaySource display_x=$displayX display_y=$displayY display_w=$displayW display_h=$displayH cursor_in_client=$cursorInClient cursor_x=$cursorX cursor_y=$cursorY title=$title"
 exit 0
 EOF
 

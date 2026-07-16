@@ -10,15 +10,17 @@ snapshots="$root/snapshots.log"
 helper_log="$root/helper.log"
 primary_socket=/dev/shm/xdg-runtime-root/pulse/native
 primary_server="unix:$primary_socket"
+pipewire_tcp_server="tcp:127.0.0.1:47139"
 fallback_runtime=/dev/shm/xv6-audio-localizer-pulse
 fallback_socket="$fallback_runtime/native"
-fallback_server="unix:$fallback_socket"
+fallback_server="tcp:127.0.0.1:47140"
 fallback_owner_record="$root/fallback.owner"
 chromium_owner_record="$root/chromium.owner"
 fallback_pid=0
 chromium_pid=0
 selected_server="$primary_server"
 selected_sink=xv6_null_output
+unix_only=${AUDIO_LOCALIZER_UNIX_ONLY:-0}
 
 mkdir -p "$root"
 rm -f "$root"/*.log "$root"/*.raw "$root"/*.wav "$root"/*.owner
@@ -152,10 +154,79 @@ PULSE_SERVER="$primary_server" bounded reducer_primary 35 \
 reducer_primary_rc=$?
 snapshot primary_post "$primary_server"
 
+# AF_UNIX without Pulse shared-memory transport.  Local libpulse normally
+# negotiates SHM/memfd and descriptor passing, whereas TCP cannot.  This arm
+# separates the UNIX byte stream from its SCM_RIGHTS/memfd fast path.
+paplay_primary_no_shm_rc=NA
+reducer_primary_no_shm_rc=NA
+PULSE_NO_SHM=1 PULSE_SERVER="$primary_server" bounded paplay_primary_no_shm 12 paplay \
+    "$root/paplay-primary-no-shm.log" /usr/bin/paplay \
+    --device=xv6_null_output --raw --format=s16le --rate=48000 --channels=2 \
+    "$root/tone.s16le.raw"
+paplay_primary_no_shm_rc=$?
+PULSE_NO_SHM=1 PULSE_SERVER="$primary_server" bounded reducer_primary_no_shm 35 \
+    chromium-pulse-stream-reducer "$root/reducer-primary-no-shm.log" \
+    /bin/chromium-pulse-stream-reducer --duration-seconds=20
+reducer_primary_no_shm_rc=$?
+snapshot primary_no_shm_post "$primary_server"
+
+# Short transport-localization mode.  The host harness enables this only for
+# an explicitly requested diagnostic boot, after staging this helper into its
+# scratch image.  Stop before the healthy TCP controls and Chromium so the
+# serial trace contains only the failing AF_UNIX clients and their PipeWire
+# peer; the normal arm and its classifier remain unchanged.
+if [ "$unix_only" = 1 ]; then
+    final_row="AUDIO_LOCALIZER_HELPER_RESULT schema=1 status=COMPLETE diagnostic_unix_only=1 primary_socket_rc=$primary_socket_rc fixture_rc=$fixture_rc pw_play_primary_rc=$pw_play_primary_rc paplay_primary_rc=$paplay_primary_rc reducer_primary_rc=$reducer_primary_rc paplay_primary_no_shm_rc=$paplay_primary_no_shm_rc reducer_primary_no_shm_rc=$reducer_primary_no_shm_rc no_youtube_claim=1"
+    echo "$final_row"
+    echo "$final_row" >> "$manifest"
+    sync
+    exit 0
+fi
+
+# Same-server, same-sink transport arm.  The gated session configuration gives
+# this exact pipewire-pulse instance both its normal AF_UNIX listener and a
+# loopback TCP listener.  A different result here therefore isolates socket
+# family/transport behavior without changing PipeWire, format, or sink.
+pipewire_tcp_ready=0
+pipewire_tcp_probe_rc=1
+pipewire_tcp_attempt=0
+paplay_pipewire_tcp_rc=NA
+reducer_pipewire_tcp_rc=NA
+: > "$root/pipewire-tcp-socket.log"
+while [ "$pipewire_tcp_attempt" -lt 50 ]; do
+    pipewire_tcp_attempt=$((pipewire_tcp_attempt + 1))
+    PULSE_SERVER="$pipewire_tcp_server" /usr/bin/pactl info \
+        >> "$root/pipewire-tcp-socket.log" 2>&1
+    pipewire_tcp_probe_rc=$?
+    if [ "$pipewire_tcp_probe_rc" -eq 0 ]; then
+        break
+    fi
+done
+row "name=pipewire_tcp_probe rc=$pipewire_tcp_probe_rc attempts=$pipewire_tcp_attempt server=$pipewire_tcp_server log=$root/pipewire-tcp-socket.log"
+if [ "$pipewire_tcp_probe_rc" -eq 0 ]; then
+    pipewire_tcp_ready=1
+    snapshot pipewire_tcp_pre "$pipewire_tcp_server"
+    PULSE_SERVER="$pipewire_tcp_server" bounded paplay_pipewire_tcp 12 paplay \
+        "$root/paplay-pipewire-tcp.log" /usr/bin/paplay \
+        --device=xv6_null_output --raw --format=s16le --rate=48000 --channels=2 \
+        "$root/tone.s16le.raw"
+    paplay_pipewire_tcp_rc=$?
+    PULSE_SERVER="$pipewire_tcp_server" bounded reducer_pipewire_tcp 35 \
+        chromium-pulse-stream-reducer "$root/reducer-pipewire-tcp.log" \
+        /bin/chromium-pulse-stream-reducer --duration-seconds=20
+    reducer_pipewire_tcp_rc=$?
+    snapshot pipewire_tcp_post "$pipewire_tcp_server"
+fi
+
 fallback_ready=0
 paplay_fallback_rc=NA
 reducer_fallback_rc=NA
-if [ "$paplay_primary_rc" -ne 0 ]; then
+# A successful short S16LE paplay does not prove the Chromium-shaped Pulse
+# stream.  Enter the independent PulseAudio fallback when either probe fails;
+# otherwise a format/latency-specific pipewire-pulse disconnect is incorrectly
+# classified as a healthy primary server and the decisive comparison is never
+# run.
+if [ "$paplay_primary_rc" -ne 0 ] || [ "$reducer_primary_rc" -ne 0 ]; then
     rm -rf "$fallback_runtime"
     mkdir -p "$fallback_runtime"
     chmod 0700 "$fallback_runtime"
@@ -164,7 +235,7 @@ if [ "$paplay_primary_rc" -ne 0 ]; then
         "$fallback_owner_record" -- \
         /usr/bin/pulseaudio -n --daemonize=no --system=false \
         --use-pid-file=false --exit-idle-time=-1 --log-target=stderr \
-        --load="module-native-protocol-unix socket=$fallback_socket auth-anonymous=1" \
+        --load="module-native-protocol-tcp listen=127.0.0.1 port=47140 auth-anonymous=1" \
         --load="module-null-sink sink_name=xv6_localizer_fallback rate=48000 channels=2" \
         > "$root/fallback-server.log" 2>&1 &
     fallback_pid=$!
@@ -174,9 +245,22 @@ if [ "$paplay_primary_rc" -ne 0 ]; then
         --pgroup-identity "$fallback_owner_record" \
         > "$root/fallback-owner.log" 2>&1
     fallback_identity_rc=$?
-    /bin/chromium-pulse-stream-reducer --probe-socket "$fallback_socket" \
-        > "$root/fallback-socket.log" 2>&1
-    fallback_socket_rc=$?
+    fallback_socket_rc=1
+    fallback_attempt=0
+    : > "$root/fallback-socket.log"
+    # Guest sleep can return early on this kernel.  Bound readiness by a fixed
+    # number of short client attempts instead of assuming the nominal delay
+    # elapsed before PulseAudio entered its main loop.
+    while [ "$fallback_attempt" -lt 50 ]; do
+        fallback_attempt=$((fallback_attempt + 1))
+        PULSE_SERVER="$fallback_server" /usr/bin/pactl info \
+            >> "$root/fallback-socket.log" 2>&1
+        fallback_socket_rc=$?
+        if [ "$fallback_socket_rc" -eq 0 ]; then
+            break
+        fi
+    done
+    row "name=fallback_probe rc=$fallback_socket_rc attempts=$fallback_attempt expected=pactl log=$root/fallback-socket.log"
     row "name=fallback_ready identity_rc=$fallback_identity_rc socket_rc=$fallback_socket_rc pid=$fallback_pid"
     if [ "$fallback_identity_rc" -eq 0 ] && [ "$fallback_socket_rc" -eq 0 ]; then
         fallback_ready=1
@@ -199,7 +283,17 @@ if [ "$paplay_primary_rc" -ne 0 ]; then
     fi
 fi
 
-row "name=server_selection selected_server=$selected_server selected_sink=$selected_sink fallback_ready=$fallback_ready paplay_primary_rc=$paplay_primary_rc reducer_primary_rc=$reducer_primary_rc paplay_fallback_rc=$paplay_fallback_rc reducer_fallback_rc=$reducer_fallback_rc"
+# Prefer the same PipeWire server's TCP listener for the Chromium smoke when
+# its Chromium-shaped stream was healthy.  The standalone server remains an
+# independent control and retains its own evidence rows.
+if [ "$pipewire_tcp_ready" -eq 1 ] && \
+   [ "$paplay_pipewire_tcp_rc" -eq 0 ] && \
+   [ "$reducer_pipewire_tcp_rc" -eq 0 ]; then
+    selected_server="$pipewire_tcp_server"
+    selected_sink=xv6_null_output
+fi
+
+row "name=server_selection selected_server=$selected_server selected_sink=$selected_sink pipewire_tcp_ready=$pipewire_tcp_ready paplay_pipewire_tcp_rc=$paplay_pipewire_tcp_rc reducer_pipewire_tcp_rc=$reducer_pipewire_tcp_rc fallback_ready=$fallback_ready paplay_primary_rc=$paplay_primary_rc reducer_primary_rc=$reducer_primary_rc paplay_primary_no_shm_rc=$paplay_primary_no_shm_rc reducer_primary_no_shm_rc=$reducer_primary_no_shm_rc paplay_fallback_rc=$paplay_fallback_rc reducer_fallback_rc=$reducer_fallback_rc"
 
 export XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root
 export WAYLAND_DISPLAY=wayland-0
@@ -235,7 +329,7 @@ ps >> "$snapshots" 2>&1
 echo "AUDIO_LOCALIZER_FINAL_PROCESS_END schema=1" >> "$snapshots"
 trap - EXIT HUP INT TERM
 
-final_row="AUDIO_LOCALIZER_HELPER_RESULT schema=1 status=COMPLETE primary_socket_rc=$primary_socket_rc fixture_rc=$fixture_rc pw_play_primary_rc=$pw_play_primary_rc paplay_primary_rc=$paplay_primary_rc reducer_primary_rc=$reducer_primary_rc fallback_ready=$fallback_ready paplay_fallback_rc=$paplay_fallback_rc reducer_fallback_rc=$reducer_fallback_rc chromium_identity_rc=$chromium_identity_rc no_youtube_claim=1"
+final_row="AUDIO_LOCALIZER_HELPER_RESULT schema=1 status=COMPLETE primary_socket_rc=$primary_socket_rc fixture_rc=$fixture_rc pw_play_primary_rc=$pw_play_primary_rc paplay_primary_rc=$paplay_primary_rc reducer_primary_rc=$reducer_primary_rc paplay_primary_no_shm_rc=$paplay_primary_no_shm_rc reducer_primary_no_shm_rc=$reducer_primary_no_shm_rc pipewire_tcp_ready=$pipewire_tcp_ready paplay_pipewire_tcp_rc=$paplay_pipewire_tcp_rc reducer_pipewire_tcp_rc=$reducer_pipewire_tcp_rc fallback_ready=$fallback_ready paplay_fallback_rc=$paplay_fallback_rc reducer_fallback_rc=$reducer_fallback_rc chromium_identity_rc=$chromium_identity_rc no_youtube_claim=1"
 echo "$final_row"
 echo "$final_row" >> "$manifest"
 sync

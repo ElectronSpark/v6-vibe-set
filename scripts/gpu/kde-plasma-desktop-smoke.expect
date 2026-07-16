@@ -238,6 +238,7 @@ set chromium_video_wait_census_interval_ms [expr {[info exists env(KDE_SMOKE_CHR
 set chromium_video_result_wait_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_RESULT_WAIT_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_RESULT_WAIT_SECONDS) : "0"}]
 set chromium_video_wait_for_playback_seconds [expr {[info exists env(KDE_SMOKE_CHROMIUM_VIDEO_WAIT_FOR_PLAYBACK_SECONDS)] ? $env(KDE_SMOKE_CHROMIUM_VIDEO_WAIT_FOR_PLAYBACK_SECONDS) : "0"}]
 set chromium_video_multiprocess [env_bool KDE_SMOKE_CHROMIUM_MULTIPROCESS 0]
+set chromium_video_disable_audio_output [env_bool KDE_SMOKE_CHROMIUM_DISABLE_AUDIO_OUTPUT 0]
 set chromium_video_egl_gbm_preprobe [env_bool KDE_SMOKE_CHROMIUM_VIDEO_EGL_GBM_PREPROBE 1]
 set chromium_video_egl_gbm_require_config [env_bool KDE_SMOKE_CHROMIUM_VIDEO_EGL_GBM_REQUIRE_CONFIG 0]
 set chromium_video_egl_gbm_attempts [env_bool KDE_SMOKE_CHROMIUM_VIDEO_EGL_GBM_ATTEMPTS 0]
@@ -1060,14 +1061,36 @@ proc note_visual_warning {message} {
     puts "KDE-PLASMA-DESKTOP-SMOKE-WARN $message"
 }
 
+proc chromium_video_result_label {label} {
+    global kde_smoke_reducer chromium_video_multiprocess
+    global chromium_video_disable_audio_output
+
+    if {$kde_smoke_reducer ne "chromium-video"} {
+        return $label
+    }
+    if {[string first "chromium_multiprocess=" $label] < 0} {
+        append label " chromium_multiprocess=$chromium_video_multiprocess"
+    }
+    if {[string first "chromium_disable_audio_output=" $label] < 0} {
+        append label " chromium_disable_audio_output=$chromium_video_disable_audio_output"
+    }
+    return $label
+}
+
 proc write_final_status {code label stage} {
     global final_status kde_smoke_reducer
+    global chromium_video_multiprocess chromium_video_disable_audio_output
 
+    set label [chromium_video_result_label $label]
     set fh [open $final_status w]
     puts $fh "status_code=$code"
     puts $fh "label=$label"
     puts $fh "stage=$stage"
     puts $fh "reducer=$kde_smoke_reducer"
+    if {$kde_smoke_reducer eq "chromium-video"} {
+        puts $fh "chromium_multiprocess=$chromium_video_multiprocess"
+        puts $fh "chromium_disable_audio_output=$chromium_video_disable_audio_output"
+    }
     puts $fh "timestamp=[clock seconds]"
     close $fh
 }
@@ -12896,7 +12919,8 @@ int main(void)
 
 proc stage_chromium_video_launch_script {} {
     global tmpimg outdir build chromium_video_url chromium_video_proof_mode
-    global chromium_video_multiprocess chromium_video_egl_platform
+    global chromium_video_multiprocess chromium_video_disable_audio_output
+    global chromium_video_egl_platform
     global chromium_video_extra_flags chromium_video_simdutf_force_implementation
     global chromium_mesa_extension_override
     global chromium_egl_trace chromium_egl_trace_proc chromium_egl_trace_callsite
@@ -12917,9 +12941,10 @@ proc stage_chromium_video_launch_script {} {
     puts $fh "echo KDE_CHROMIUM_VIDEO_LAUNCH_BEGIN"
     puts $fh "rm -f $guest_chromium_launch_probe_log"
     set env_prefix ""
-    if {$chromium_video_multiprocess eq "1"} {
-        append env_prefix "WAYLAND_CHROMIUM_MULTIPROCESS=1 "
-    }
+    # Forward both arms explicitly so launch-log/argv evidence cannot confuse
+    # an unset control with a stale environment.  Defaults remain OFF.
+    append env_prefix "WAYLAND_CHROMIUM_MULTIPROCESS=$chromium_video_multiprocess "
+    append env_prefix "WAYLAND_CHROMIUM_DISABLE_AUDIO_OUTPUT=$chromium_video_disable_audio_output "
     if {$chromium_video_egl_platform ne ""} {
         append env_prefix "EGL_PLATFORM=[shell_quote $chromium_video_egl_platform] "
     }
@@ -13484,6 +13509,7 @@ proc finish {code label} {
     global guest_role_probe_log role_probe_log
     global guest_konsole_phase_log konsole_phase_log
 
+    set label [chromium_video_result_label $label]
     write_final_status $code $label "finish-entry"
     host_screenshot "final" $host_final_png
     optional_monitor_screendump
@@ -13702,6 +13728,7 @@ proc finish {code label} {
         done
     } > '$qemu_trace_summary'" }
 
+    set label [chromium_video_result_label $label]
     write_final_status $code $label "final"
     puts "\n$label log=$runlog ppm=$ppm png=$png before_png=$before_png after_png=$after_png taskbar_settled_before_hover_png=$taskbar_settled_before_hover_png profiled_hover_after_png=$profiled_hover_after_png profiled_hover_diff_png=$profiled_hover_diff_png host_taskbar_settled_before_hover_png=$host_taskbar_settled_before_hover_png host_profiled_hover_after_png=$host_profiled_hover_after_png host_profiled_hover_diff_png=$host_profiled_hover_diff_png host_direct_launch_after_png=$host_direct_launch_after_png direct_launch_before_png=$direct_launch_before_png direct_launch_after_png=$direct_launch_after_png direct_launch_diff_png=$direct_launch_diff_png"
     exit $code
@@ -15014,7 +15041,7 @@ proc run_chromium_video_reducer {} {
     global chromium_video_proof_mode chromium_video_limitation
     global chromium_video_final_sync_status
     global chromium_launch_only
-    global chromium_video_multiprocess
+    global chromium_video_multiprocess chromium_video_disable_audio_output
     global pre_chromium_liveness_delay_seconds
     global guest_chromium_video_clear_script
     global guest_chromium_video_launch_script guest_chromium_video_sampler_script
@@ -15158,9 +15185,8 @@ proc run_chromium_video_reducer {} {
     if {$chromium_launch_only eq "1"} {
         append label " chromium_launch_only=1"
     }
-    if {$chromium_video_multiprocess eq "1"} {
-        append label " chromium_multiprocess=1"
-    }
+    append label " chromium_multiprocess=$chromium_video_multiprocess"
+    append label " chromium_disable_audio_output=$chromium_video_disable_audio_output"
     if {$chromium_video_limitation ne ""} {
         append label " limitation=$chromium_video_limitation"
     }

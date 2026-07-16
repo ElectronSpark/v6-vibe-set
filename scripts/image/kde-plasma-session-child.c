@@ -140,6 +140,62 @@ static int audio_null_sink_enabled(void)
     return flag_or_env_enabled("kde_audio_null_sink=1", "KDE_AUDIO_NULL_SINK");
 }
 
+/*
+ * AF_UNIX compatibility escape hatch for pipewire-pulse.  Keep its normal
+ * local listener and add an unrestricted loopback TCP listener.  The audio
+ * localizer proved the same server/sink/format stable for 20 seconds over TCP
+ * while the AF_UNIX path terminated both normal and PULSE_NO_SHM streams.
+ * When enabled, later desktop clients therefore prefer loopback TCP; existing
+ * UNIX clients and compatibility probes remain available.  Default OFF until
+ * the promotion battery completes.
+ */
+static int audio_pulse_tcp_enabled(void)
+{
+    return flag_or_env_enabled("kde_audio_pulse_tcp=1",
+                               "KDE_AUDIO_PULSE_TCP");
+}
+
+static void write_audio_pulse_tcp_dropin(void)
+{
+    const char *dir = "/dev/shm/kde-config/pipewire";
+    const char *ddir =
+        "/dev/shm/kde-config/pipewire/pipewire-pulse.conf.d";
+    const char *path =
+        "/dev/shm/kde-config/pipewire/pipewire-pulse.conf.d/"
+        "50-xv6-loopback-tcp.conf";
+    FILE *fp;
+
+    mkdir_one("/dev/shm/kde-config", 0700);
+    mkdir_one(dir, 0700);
+    mkdir_one(ddir, 0700);
+
+    fp = fopen(path, "w");
+    if (!fp) {
+        fprintf(stderr,
+                "kde-plasma-session-child: pulse-tcp dropin %s: %s\n",
+                path, strerror(errno));
+        audio_status("phase=pulse-tcp status=FAIL reason=open-%s",
+                     strerror(errno));
+        return;
+    }
+
+    fprintf(fp,
+        "# xv6 diagnostic transport arm (kde_audio_pulse_tcp=1).\n"
+        "pulse.properties = {\n"
+        "    server.address = [\n"
+        "        { address = \"unix:native\" client.access = \"unrestricted\" }\n"
+        "        { address = \"tcp:127.0.0.1:47139\" client.access = \"unrestricted\" }\n"
+        "    ]\n"
+        "}\n");
+    fclose(fp);
+
+    audio_status("phase=pulse-tcp status=WROTE path=%s address=tcp:127.0.0.1:47139",
+                 path);
+    fprintf(stderr,
+            "kde-plasma-session-child: PipeWire Pulse TCP dropin written: %s\n",
+            path);
+}
+
 static void write_audio_null_sink_dropin(void)
 {
     const char *dir = "/dev/shm/kde-config/pipewire";
@@ -720,11 +776,14 @@ static void run_audio_services(char *const pipewire[],
     int pulse_ready;
     int pactl_enabled = pactl_readiness_probe_enabled();
 
-    audio_status("phase=start status=START pactl_probe=%s null_sink=%s",
+    audio_status("phase=start status=START pactl_probe=%s null_sink=%s pulse_tcp=%s",
                  pactl_enabled ? "enabled" : "skipped",
-                 audio_null_sink_enabled() ? "enabled" : "skipped");
+                 audio_null_sink_enabled() ? "enabled" : "skipped",
+                 audio_pulse_tcp_enabled() ? "enabled" : "skipped");
     if (audio_null_sink_enabled())
         write_audio_null_sink_dropin();
+    if (audio_pulse_tcp_enabled())
+        write_audio_pulse_tcp_dropin();
     unsetenv("LD_LIBRARY_PATH");
     unsetenv("LD_PRELOAD");
     run_optional(pipewire, 0, 0);
@@ -763,6 +822,14 @@ static void run_audio_services(char *const pipewire[],
         audio_status("phase=pactl status=%s sink=%d monitor=%d",
                      sink_ready && monitor_ready ? "PASS" : "FAIL",
                      sink_ready, monitor_ready);
+    }
+
+    if (audio_pulse_tcp_enabled() && pulse_ready) {
+        setenv("PULSE_SERVER", "tcp:127.0.0.1:47139", 1);
+        audio_status("phase=pulse-tcp-client status=DEFAULT address=tcp:127.0.0.1:47139 unix_listener=retained");
+        fprintf(stderr,
+                "kde-plasma-session-child: desktop Pulse clients prefer "
+                "tcp:127.0.0.1:47139 (UNIX listener retained)\n");
     }
 
     if (saved_ld_library_path) {

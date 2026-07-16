@@ -1,0 +1,175 @@
+diff --git a/include/ui/egl-helpers.h b/include/ui/egl-helpers.h
+index 9d40a50e88..f790a38a63 100644
+--- a/include/ui/egl-helpers.h
++++ b/include/ui/egl-helpers.h
+@@ -31,5 +31,7 @@ void egl_fb_setup_for_tex(egl_fb *fb, int width, int height,
+ void egl_fb_setup_new_tex(egl_fb *fb, int width, int height);
+ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip);
++void egl_fb_blit_rect(egl_fb *dst, egl_fb *src, bool flip,
++                      int x, int y, int width, int height);
+ void egl_fb_read(DisplaySurface *dst, egl_fb *src);
+ void egl_fb_read_rect(DisplaySurface *dst, egl_fb *src, int x, int y, int w, int h);
+ 
+diff --git a/include/ui/sdl2.h b/include/ui/sdl2.h
+index 3e4e9c6b5a..d90331b30e 100644
+--- a/include/ui/sdl2.h
++++ b/include/ui/sdl2.h
+@@ -42,6 +42,7 @@ struct sdl2_console {
+     QemuGLShader *gls;
+     egl_fb guest_fb;
+     egl_fb win_fb;
++    int viewport_x, viewport_y, viewport_w, viewport_h;
+     bool y0_top;
+     bool scanout_mode;
+ #endif
+@@ -72,4 +73,6 @@ void sdl2_gl_refresh(DisplayChangeListener *dcl);
+ void sdl2_gl_redraw(struct sdl2_console *scon);
++void sdl2_gl_map_mouse(struct sdl2_console *scon, int *x, int *y);
++
+ 
+ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
+                                      QEMUGLParams *params);
+diff --git a/ui/egl-helpers.c b/ui/egl-helpers.c
+index 3d19d2bba6..2ed6257a6e 100644
+--- a/ui/egl-helpers.c
++++ b/ui/egl-helpers.c
+@@ -91,6 +91,12 @@ void egl_fb_setup_new_tex(egl_fb *fb, int width, int height)
+ 
+ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
+ {
++    egl_fb_blit_rect(dst, src, flip, 0, 0, dst->width, dst->height);
++}
++
++void egl_fb_blit_rect(egl_fb *dst, egl_fb *src, bool flip,
++                      int dst_x, int dst_y, int dst_w, int dst_h)
++{
+     GLuint x1 = 0;
+     GLuint y1 = 0;
+     GLuint x2, y2;
+@@ -99,7 +105,7 @@ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
+ 
+     glBindFramebuffer(GL_READ_FRAMEBUFFER, src->framebuffer);
+     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst->framebuffer);
+-    glViewport(0, 0, dst->width, dst->height);
++    glViewport(dst_x, dst_y, dst_w, dst_h);
+ 
+     if (src->dmabuf) {
+         x1 = src->dmabuf->x;
+@@ -115,7 +121,7 @@ void egl_fb_blit(egl_fb *dst, egl_fb *src, bool flip)
+     x2 = x1 + w;
+ 
+     glBlitFramebuffer(x1, y1, x2, y2,
+-                      0, 0, dst->width, dst->height,
++                      dst_x, dst_y, dst_x + dst_w, dst_y + dst_h,
+                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+ }
+ 
+diff --git a/ui/sdl2-gl.c b/ui/sdl2-gl.c
+index 8dfe9aac58..d57917d5c4 100644
+--- a/ui/sdl2-gl.c
++++ b/ui/sdl2-gl.c
+@@ -29,6 +29,66 @@
+ #include "ui/input.h"
+ #include "ui/sdl2.h"
+ 
++static void sdl2_gl_fit_viewport(struct sdl2_console *scon,
++                                 int window_w, int window_h,
++                                 int guest_w, int guest_h)
++{
++    int old_x = scon->viewport_x;
++    int old_y = scon->viewport_y;
++    int old_w = scon->viewport_w;
++    int old_h = scon->viewport_h;
++
++    if (window_w <= 0 || window_h <= 0 || guest_w <= 0 || guest_h <= 0) {
++        scon->viewport_x = 0;
++        scon->viewport_y = 0;
++        scon->viewport_w = MAX(window_w, 0);
++        scon->viewport_h = MAX(window_h, 0);
++        return;
++    }
++
++    if ((int64_t)window_w * guest_h <= (int64_t)window_h * guest_w) {
++        scon->viewport_w = window_w;
++        scon->viewport_h = MAX(1, (int)((int64_t)window_w * guest_h /
++                                         guest_w));
++    } else {
++        scon->viewport_h = window_h;
++        scon->viewport_w = MAX(1, (int)((int64_t)window_h * guest_w /
++                                         guest_h));
++    }
++    scon->viewport_x = (window_w - scon->viewport_w) / 2;
++    scon->viewport_y = (window_h - scon->viewport_h) / 2;
++
++    if (old_x != scon->viewport_x || old_y != scon->viewport_y ||
++        old_w != scon->viewport_w || old_h != scon->viewport_h) {
++        fprintf(stderr,
++                "sdl2: aspect-fit guest=%dx%d window=%dx%d viewport=%d,%d %dx%d\n",
++                guest_w, guest_h, window_w, window_h,
++                scon->viewport_x, scon->viewport_y,
++                scon->viewport_w, scon->viewport_h);
++    }
++}
++
++void sdl2_gl_map_mouse(struct sdl2_console *scon, int *x, int *y)
++{
++    int guest_w;
++    int guest_h;
++
++    if (!scon->opengl || scon->viewport_w <= 0 || scon->viewport_h <= 0) {
++        return;
++    }
++    guest_w = scon->scanout_mode && scon->w > 0 ? scon->w :
++              (scon->surface ? surface_width(scon->surface) : 0);
++    guest_h = scon->scanout_mode && scon->h > 0 ? scon->h :
++              (scon->surface ? surface_height(scon->surface) : 0);
++    if (guest_w <= 0 || guest_h <= 0) {
++        return;
++    }
++    *x = (*x - scon->viewport_x) * guest_w / scon->viewport_w;
++    *y = (*y - scon->viewport_y) * guest_h / scon->viewport_h;
++    *x = CLAMP(*x, 0, guest_w - 1);
++    *y = CLAMP(*y, 0, guest_h - 1);
++}
++
+ static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
+ {
+     if (scon->scanout_mode == scanout) {
+@@ -54,5 +114,7 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
+ 
+     SDL_GetWindowSize(scon->real_window, &ww, &wh);
++    sdl2_gl_fit_viewport(scon, ww, wh, surface_width(scon->surface),
++                         surface_height(scon->surface));
+     surface_gl_setup_viewport(scon->gls, scon->surface, ww, wh);
+ 
+     surface_gl_render_texture(scon->gls, scon->surface);
+@@ -190,7 +252,14 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
+ 
+     SDL_GetWindowSize(scon->real_window, &ww, &wh);
+     egl_fb_setup_default(&scon->win_fb, ww, wh);
+-    egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
++    sdl2_gl_fit_viewport(scon, ww, wh, scon->w, scon->h);
+ 
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scon->win_fb.framebuffer);
++    glViewport(0, 0, ww, wh);
++    glClearColor(0.0, 0.0, 0.0, 1.0);
++    glClear(GL_COLOR_BUFFER_BIT);
++    egl_fb_blit_rect(&scon->win_fb, &scon->guest_fb, !scon->y0_top,
++                     scon->viewport_x, scon->viewport_y,
++                     scon->viewport_w, scon->viewport_h);
+     SDL_GL_SwapWindow(scon->real_window);
+ }
+diff --git a/ui/sdl2.c b/ui/sdl2.c
+index b3c6aa7228..4df6c808e5 100644
+--- a/ui/sdl2.c
++++ b/ui/sdl2.c
+@@ -300,6 +300,9 @@ static void sdl_send_mouse_event(struct sdl2_console *scon, int dx, int dy,
+     }
+ 
+     if (qemu_input_is_absolute(scon->dcl.con)) {
++        if (scon->opengl) {
++            sdl2_gl_map_mouse(scon, &x, &y);
++        }
+         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_X,
+                              x, 0, surface_width(scon->surface));
+         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_Y,

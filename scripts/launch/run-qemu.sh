@@ -8,6 +8,9 @@
 #                           QEMU executable used for capability probes and
 #                           launch. Set to an absolute path when scouting a
 #                           custom rutabaga/gfxstream build.
+#                           When unset, x86 SDL launches use the repository's
+#                           aspect/input-corrected QEMU build and fail closed
+#                           with its build command if that binary is missing.
 #   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
 #   QEMU_GDB_PORT=2159      Use a different GDB stub port.
 #   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
@@ -51,11 +54,28 @@
 #   QEMU_WSL_GL_DISPLAY=gtk QEMU display backend to use for WSL D3D12 GL.
 #                           The default uses GTK with the virgl adapter as the
 #                           visible primary display.
-#   QEMU_ALLOW_WSL_SDL_GL=0 SDL GL presents a black QEMU window on WSLg/D3D12
-#                           on tested hosts, so virgl launches are switched
-#                           back to GTK unless this is set to 1.
+#   QEMU_ALLOW_WSL_SDL_GL=1 SDL GL is supported on WSLg/D3D12 when its owned
+#                           window is fitted to the Windows work area. Set 0
+#                           to reinstate the old fail-closed diagnostic block.
+#   QEMU_DISPLAY_FALLBACK=error
+#                           Policy when an explicitly requested WSL SDL/GL
+#                           path is still blocked: error (default) or gtk.
+#                           The non-default gtk policy is reported loudly and
+#                           must not be used as SDL validation evidence.
+#   QEMU_DISPLAY_REPORT=1  Emit one machine-readable display-contract row with
+#                           requested/resolved frontend, GPU, host GL, mode,
+#                           and SDL video driver.
 #   QEMU_WSL_SDL_VIDEODRIVER=wayland
 #                           SDL backend to use on WSL when SDL is selected.
+#   QEMU_SDL_HIGHDPI=off    Disable SDL's high-DPI window flag for 1:1 guest
+#                           geometry (default off). Set on for a controlled
+#                           DPI-scaling A/B.
+#   QEMU_SDL_GEOMETRY_TRACE_LIB=
+#                           Optional trace-only SDL interposer. The file must
+#                           be a regular shared library; it records logical
+#                           window and GL drawable sizes without changing them.
+#   QEMU_SDL_GEOMETRY_TRACE_LOG=/tmp/xv6-sdl-geometry-trace.log
+#                           Output file used by the trace interposer.
 #   QEMU_VMMOUSE=1          Enable VMware absolute pointer. The default input
 #                           path is the virtio tablet, which avoids host GTK
 #                           pointer-grab scaling ambiguity.
@@ -95,9 +115,19 @@
 #                           Keep the host cursor visible. WSLg's SDL/X11 grab
 #                           path can stop delivering focused pointer motion when
 #                           the cursor is hidden/captured.
+#   QEMU_WSL_SDL_FIT=maximize
+#                           Maximize the unique tokenized SDL window into its
+#                           Windows work area on WSL (default). Set off for a
+#                           placement control.
 #   QEMU_DRY_RUN=1          Print the resolved qemu command and exit.
+#   QEMU_DISK_FORMAT=raw    Disk image format: raw (default) or qcow2. The
+#                           latter supports read-only-base performance runs.
+#   QEMU_RUN_TOKEN=         Optional safe token embedded in QEMU's process
+#                           name for exact owned-process cleanup.
+#   QEMU_PIDFILE=           Optional QEMU pidfile used by owned launchers.
 #   QEMU_EXTRA='...'        Still accepted for extra raw QEMU args.
 set -euo pipefail
+RUN_QEMU_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ $# -ne 3 ]]; then
         echo "usage: $0 <arch> <kernel-image> <fs.img>" >&2
@@ -105,7 +135,16 @@ if [[ $# -ne 3 ]]; then
 fi
 ARCH="$1"; KERNEL="$2"; FSIMG="$3"
 
+if [[ -n "${QEMU_BIN+x}" ]]; then
+        QEMU_BIN_EXPLICIT=1
+else
+        QEMU_BIN_EXPLICIT=0
+fi
 QEMU_BIN="${QEMU_BIN:-qemu-system-${ARCH}}"
+QEMU_SDL_PATCHED_BIN="${QEMU_SDL_PATCHED_BIN:-${RUN_QEMU_DIR}/../../build-x86_64/qemu-sdl/bin/qemu-system-x86_64}"
+QEMU_SDL_DATA_DIR="${QEMU_SDL_DATA_DIR:-${RUN_QEMU_DIR}/../../build-x86_64/qemu-sdl/share/qemu}"
+QEMU_SDL_ASPECT_FIX="not-applicable"
+QEMU_DATA_ARGS=()
 QEMU_EXTRA="${QEMU_EXTRA:-}"
 QEMU_CPUS="${QEMU_CPUS:-6}"
 QEMU_MEMORY="${QEMU_MEMORY:-4G}"
@@ -149,8 +188,13 @@ QEMU_REQUIRE_KVM="${QEMU_REQUIRE_KVM:-auto}"
 QEMU_HOST_GL="${QEMU_HOST_GL:-auto}"
 QEMU_WSL_D3D12_ADAPTER="${QEMU_WSL_D3D12_ADAPTER:-auto}"
 QEMU_WSL_GL_DISPLAY="${QEMU_WSL_GL_DISPLAY:-gtk}"
-QEMU_ALLOW_WSL_SDL_GL="${QEMU_ALLOW_WSL_SDL_GL:-0}"
+QEMU_ALLOW_WSL_SDL_GL="${QEMU_ALLOW_WSL_SDL_GL:-1}"
 QEMU_WSL_SDL_VIDEODRIVER="${QEMU_WSL_SDL_VIDEODRIVER:-x11}"
+QEMU_DISPLAY_FALLBACK="${QEMU_DISPLAY_FALLBACK:-error}"
+QEMU_DISPLAY_REPORT="${QEMU_DISPLAY_REPORT:-1}"
+QEMU_SDL_HIGHDPI="${QEMU_SDL_HIGHDPI:-off}"
+QEMU_SDL_GEOMETRY_TRACE_LIB="${QEMU_SDL_GEOMETRY_TRACE_LIB:-}"
+QEMU_SDL_GEOMETRY_TRACE_LOG="${QEMU_SDL_GEOMETRY_TRACE_LOG:-/tmp/xv6-sdl-geometry-trace.log}"
 QEMU_GTK_FULLSCREEN="${QEMU_GTK_FULLSCREEN:-off}"
 QEMU_GTK_ZOOM_TO_FIT="${QEMU_GTK_ZOOM_TO_FIT:-off}"
 QEMU_GTK_GRAB_ON_HOVER="${QEMU_GTK_GRAB_ON_HOVER:-on}"
@@ -174,6 +218,31 @@ QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
 QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
 QEMU_SDL_GRAB_MOD="${QEMU_SDL_GRAB_MOD:-lctrl-lalt}"
 QEMU_SDL_SHOW_CURSOR="${QEMU_SDL_SHOW_CURSOR:-on}"
+QEMU_WSL_SDL_FIT="${QEMU_WSL_SDL_FIT:-maximize}"
+QEMU_WSL_SDL_FIT_LOG="${QEMU_WSL_SDL_FIT_LOG:-}"
+QEMU_DISK_FORMAT="${QEMU_DISK_FORMAT:-raw}"
+QEMU_RUN_TOKEN="${QEMU_RUN_TOKEN:-}"
+QEMU_PIDFILE="${QEMU_PIDFILE:-}"
+
+case "${QEMU_DISK_FORMAT}" in
+        raw|qcow2) ;;
+        *)
+                echo "unsupported QEMU_DISK_FORMAT: ${QEMU_DISK_FORMAT} (expected raw or qcow2)" >&2
+                exit 2
+                ;;
+esac
+if [[ -n "${QEMU_RUN_TOKEN}" &&
+      ! "${QEMU_RUN_TOKEN}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "unsupported QEMU_RUN_TOKEN: use only A-Z, a-z, 0-9, dot, underscore, or dash" >&2
+        exit 2
+fi
+case "${QEMU_WSL_SDL_FIT}" in
+		off|maximize) ;;
+		*)
+			echo "unsupported QEMU_WSL_SDL_FIT: ${QEMU_WSL_SDL_FIT} (expected off or maximize)" >&2
+                exit 2
+                ;;
+esac
 
 if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
         QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
@@ -445,13 +514,14 @@ case "${ARCH}" in
                         -bios default \
                         -kernel "${KERNEL}" \
                         -global virtio-mmio.force-legacy=false \
-                        -drive file="${FSIMG}",if=none,format=raw,id=x0 \
+                        -drive file="${FSIMG}",if=none,format="${QEMU_DISK_FORMAT}",id=x0 \
                         -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
                         "${QEMU_GDB_ARGS[@]}" \
                         ${QEMU_EXTRA}
                 ;;
         x86_64)
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
+                REQUESTED_DISPLAY_MODE="${DISPLAY_MODE}"
                 QEMU_ENV_ARGS=()
                 HOST_GL_MODE="${QEMU_HOST_GL}"
                 if [[ "${HOST_GL_MODE}" == "auto" ]]; then
@@ -524,12 +594,67 @@ case "${ARCH}" in
                                 DISPLAY_MODE="${WSL_GL_DISPLAY}"
                         elif [[ "${DISPLAY_MODE}" == "sdl" &&
                                 "${QEMU_ALLOW_WSL_SDL_GL}" != "1" ]]; then
-                                echo "run-qemu: SDL GL presents a black window on WSLg/D3D12; switching display sdl -> gtk (set QEMU_ALLOW_WSL_SDL_GL=1 to force)" >&2
-                                DISPLAY_MODE="gtk"
+                                case "${QEMU_DISPLAY_FALLBACK}" in
+                                        error)
+                                                echo "run-qemu: explicit SDL GL launch is blocked by the stale WSL safety policy; set QEMU_ALLOW_WSL_SDL_GL=1 to exercise SDL, or QEMU_DISPLAY_FALLBACK=gtk for a reported non-SDL fallback" >&2
+                                                exit 2
+                                                ;;
+                                        gtk)
+                                                echo "run-qemu: warning: explicit SDL GL request is falling back sdl -> gtk; this run is not SDL evidence" >&2
+                                                DISPLAY_MODE="gtk"
+                                                ;;
+                                        *)
+                                                echo "unsupported QEMU_DISPLAY_FALLBACK: ${QEMU_DISPLAY_FALLBACK} (expected error or gtk)" >&2
+                                                exit 2
+                                                ;;
+                                esac
+                        fi
+                fi
+                if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                        if [[ "${QEMU_BIN_EXPLICIT}" == "0" ]]; then
+                                if [[ ! -x "${QEMU_SDL_PATCHED_BIN}" ]]; then
+                                        echo "run-qemu: corrected SDL frontend is missing: ${QEMU_SDL_PATCHED_BIN}" >&2
+                                        echo "run-qemu: build it with scripts/build/build-qemu-sdl.sh" >&2
+                                        exit 2
+                                fi
+                                if [[ ! -f "${QEMU_SDL_DATA_DIR}/bios-256k.bin" ||
+                                      ! -f "${QEMU_SDL_DATA_DIR}/linuxboot_dma.bin" ]]; then
+                                        echo "run-qemu: corrected SDL firmware bundle is incomplete: ${QEMU_SDL_DATA_DIR}" >&2
+                                        echo "run-qemu: rebuild it with scripts/build/build-qemu-sdl.sh" >&2
+                                        exit 2
+                                fi
+                                QEMU_BIN="${QEMU_SDL_PATCHED_BIN}"
+                                QEMU_SDL_ASPECT_FIX="patched"
+                                QEMU_DATA_ARGS=(-L "${QEMU_SDL_DATA_DIR}")
+                        else
+                                QEMU_SDL_ASPECT_FIX="explicit-qemu"
                         fi
                 fi
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]]; then
                         QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
+                fi
+                if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                        case "${QEMU_SDL_HIGHDPI}" in
+                                off)
+                                        QEMU_ENV_ARGS+=(SDL_VIDEO_HIGHDPI_DISABLED=1)
+                                        ;;
+                                on)
+                                        ;;
+                                *)
+                                        echo "unsupported QEMU_SDL_HIGHDPI: ${QEMU_SDL_HIGHDPI} (expected off or on)" >&2
+                                        exit 2
+                                        ;;
+                        esac
+                        if [[ -n "${QEMU_SDL_GEOMETRY_TRACE_LIB}" ]]; then
+                                if [[ ! -f "${QEMU_SDL_GEOMETRY_TRACE_LIB}" ]]; then
+                                        echo "run-qemu: SDL geometry trace library is not a regular file: ${QEMU_SDL_GEOMETRY_TRACE_LIB}" >&2
+                                        exit 2
+                                fi
+                                QEMU_ENV_ARGS+=(
+                                        "LD_PRELOAD=${QEMU_SDL_GEOMETRY_TRACE_LIB}${LD_PRELOAD:+:${LD_PRELOAD}}"
+                                        "XV6_SDL_GEOMETRY_TRACE_LOG=${QEMU_SDL_GEOMETRY_TRACE_LOG}"
+                                )
+                        fi
                 fi
                 GTK_GL_MODE="${QEMU_GTK_GL}"
                 if [[ "${GTK_GL_MODE}" == "auto" ]]; then
@@ -593,6 +718,17 @@ case "${ARCH}" in
                         # pipelined-present behaviour.
                         qemu_prepend_default_flag vgpu_async_flush 1
                         qemu_prepend_default_flag vgpu_async_pf 1
+                        if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                                # The KDE/Wayland SDL path needs Linux-like
+                                # non-blocking page-flip completion and a
+                                # phase-stable 60 Hz presentation clock.  The
+                                # paired treatment removes synchronous KWin
+                                # present stalls and cumulative completion-time
+                                # drift.  Explicit key=0 values remain valid
+                                # diagnostic opt-outs.
+                                qemu_prepend_default_flag virtio_gpu_async_present 1
+                                qemu_prepend_default_flag virtio_gpu_present_clock_60hz 1
+                        fi
                         # Virgl/D3D12 can spend close to a minute compiling and
                         # validating early WebKit GL work.  Do not abort the
                         # guest GL contexts during that one-time warmup.
@@ -955,7 +1091,13 @@ case "${ARCH}" in
                                 QEMU_MACHINE="${QEMU_MACHINE},memory-backend=${QEMU_MEM_BACKEND_ID}"
                         fi
                 fi
+                if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]] &&
+                   [[ "${QEMU_WSL_SDL_FIT}" == "maximize" ]] &&
+                   [[ -z "${QEMU_RUN_TOKEN}" ]]; then
+                        QEMU_RUN_TOKEN="sdl-$$-$(date -u +%Y%m%dT%H%M%SZ)"
+                fi
                 QEMU_CMD=("${QEMU_BIN}"
+                        "${QEMU_DATA_ARGS[@]}"
                         -machine "${QEMU_MACHINE}" -smp "${QEMU_CPUS}" -m "${QEMU_MEMORY}"
                         "${MEM_BACKEND_ARGS[@]}"
                         "${KVM_ARGS[@]}" "${CPU_ARGS[@]}"
@@ -963,7 +1105,7 @@ case "${ARCH}" in
                         -debugcon file:/tmp/xv6-debugcon.log
                         -global isa-debugcon.iobase=0xe9
                         -kernel "${KERNEL}"
-                        -drive file="${FSIMG}",if=none,format=raw,id=x0
+                        -drive file="${FSIMG}",if=none,format="${QEMU_DISK_FORMAT}",id=x0
                         -device virtio-blk-pci,drive=x0
                         "${GPU_ARGS[@]}"
                         "${INPUT_ARGS[@]}"
@@ -971,9 +1113,40 @@ case "${ARCH}" in
                         "${AUDIO_ARGS[@]}"
                         -append "${QEMU_APPEND}"
                         "${QEMU_GDB_ARGS[@]}")
+                if [[ -n "${QEMU_RUN_TOKEN}" ]]; then
+                        QEMU_CMD+=( -name "xv6-${QEMU_RUN_TOKEN}" )
+                fi
+                if [[ -n "${QEMU_PIDFILE}" ]]; then
+                        QEMU_CMD+=( -pidfile "${QEMU_PIDFILE}" )
+                fi
                 if [[ -n "${QEMU_EXTRA}" ]]; then
                         read -r -a QEMU_EXTRA_ARGS <<< "${QEMU_EXTRA}"
                         QEMU_CMD+=("${QEMU_EXTRA_ARGS[@]}")
+                fi
+                if [[ "${QEMU_DISPLAY_REPORT}" == "1" ]]; then
+                        SDL_DRIVER="none"
+                        SDL_TRACE="off"
+                        if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                                SDL_DRIVER="${QEMU_WSL_SDL_VIDEODRIVER}"
+                                if [[ -n "${QEMU_SDL_GEOMETRY_TRACE_LIB}" ]]; then
+                                        SDL_TRACE="on"
+                                fi
+                        fi
+                        printf 'run-qemu: display-contract requested=%s resolved=%s frontend=%s gpu=%s host_gl=%s guest_mode=%sx%s sdl_driver=%s sdl_hidpi=%s sdl_trace=%s sdl_fit=%s sdl_aspect_fix=%s disk_format=%s run_token=%s\n' \
+                                "${REQUESTED_DISPLAY_MODE}" \
+                                "${DISPLAY_MODE}" \
+                                "${DISPLAY_ARGS[1]:-${DISPLAY_ARGS[0]}}" \
+                                "${QEMU_GPU}" \
+                                "${HOST_GL_MODE}" \
+                                "${QEMU_VIRTIO_GPU_XRES}" \
+                                "${QEMU_VIRTIO_GPU_YRES}" \
+                                "${SDL_DRIVER}" \
+                                "${QEMU_SDL_HIGHDPI}" \
+                                "${SDL_TRACE}" \
+                                "${QEMU_WSL_SDL_FIT}" \
+                                "${QEMU_SDL_ASPECT_FIX}" \
+                                "${QEMU_DISK_FORMAT}" \
+                                "${QEMU_RUN_TOKEN:-none}" >&2
                 fi
                 if [[ "${QEMU_DRY_RUN:-0}" == "1" ]]; then
                         if [[ ${#QEMU_ENV_ARGS[@]} -gt 0 ]]; then
@@ -986,6 +1159,15 @@ case "${ARCH}" in
                         fi
                         printf '%s\n' "${QEMU_CMD[*]}"
                         exit 0
+                fi
+                if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]] &&
+                   [[ "${QEMU_WSL_SDL_FIT}" == "maximize" ]]; then
+                        fit_log="${QEMU_WSL_SDL_FIT_LOG:-/tmp/xv6-sdl-fit-${QEMU_RUN_TOKEN}.log}"
+                        env XV6_QEMU_WINDOW_FIT_MODE=maximize \
+                            "${RUN_QEMU_DIR}/../gpu/fit-owned-qemu-window.sh" \
+                            "QEMU (xv6-${QEMU_RUN_TOKEN}-0)" \
+                            >"${fit_log}" 2>&1 &
+                        echo "run-qemu: WSL SDL work-area fit pending log=${fit_log}" >&2
                 fi
                 if [[ "${DISPLAY_MODE}" == "gtk" ]]; then
                         exec env \

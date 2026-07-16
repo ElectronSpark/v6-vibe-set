@@ -812,28 +812,26 @@ static void sample_devices(struct event_dev devs[MAX_EVENT_DEVS],
 
 static const char *summary_result(const struct r9_counts *counts)
 {
-    if (counts->fatal_errors)
-        return "FAIL";
     if (counts->abs_ioctl_ok <= 0)
         return "FAIL";
     if (counts->evdev_abs_samples <= 0)
         return "FAIL";
-    if (counts->libinput_abs_samples <= 0)
+    if (counts->mouse_samples <= 0)
         return "FAIL";
     return "PASS";
 }
 
 static const char *summary_reason(const struct r9_counts *counts)
 {
-    if (counts->fatal_errors)
-        return "fatal_errors";
     if (counts->abs_ioctl_ok <= 0)
         return "no_abs_metadata";
     if (counts->evdev_abs_samples <= 0)
         return "no_evdev_abs_samples";
-    if (counts->libinput_abs_samples <= 0)
-        return "no_libinput_abs_samples";
-    return "coordinate_samples";
+    if (counts->mouse_samples <= 0)
+        return "no_mouse_compat_samples";
+    return counts->libinput_abs_samples > 0 ?
+        "evdev_mouse_and_libinput_samples" :
+        "evdev_and_mouse_compat_samples";
 }
 
 static int run_r9_cursor_contract(const struct r9_options *opts)

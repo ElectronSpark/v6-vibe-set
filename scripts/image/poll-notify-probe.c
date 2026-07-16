@@ -34,6 +34,7 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
+#include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -330,6 +331,106 @@ static void test_eventfd_cross_process(void)
     report("eventfd-cross-process", ok, "deadlock-or-error");
 }
 
+/* ── test 6: SCM_RIGHTS eventfd wakeup through epoll(-1) ─────────────── */
+static void test_eventfd_scm_epoll(void)
+{
+    int sv[2];
+    int ready[2];
+    int efd = eventfd(0, 0);
+
+    if (efd < 0 || socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0 ||
+        pipe(ready) < 0) {
+        if (efd >= 0)
+            close(efd);
+        report("eventfd-scm-epoll", 0, "setup");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        char payload;
+        char control[CMSG_SPACE(sizeof(int))];
+        struct iovec iov = {.iov_base = &payload, .iov_len = 1};
+        struct msghdr msg = {
+            .msg_iov = &iov,
+            .msg_iovlen = 1,
+            .msg_control = control,
+            .msg_controllen = sizeof(control),
+        };
+
+        alarm(WATCHDOG_SECS);
+        close(sv[0]);
+        close(ready[0]);
+        close(efd); /* the receiver must rely only on SCM_RIGHTS */
+        memset(control, 0, sizeof(control));
+        if (recvmsg(sv[1], &msg, 0) != 1)
+            _exit(2);
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+        if (cmsg == NULL || cmsg->cmsg_level != SOL_SOCKET ||
+            cmsg->cmsg_type != SCM_RIGHTS ||
+            cmsg->cmsg_len < CMSG_LEN(sizeof(int)))
+            _exit(3);
+        int received = -1;
+        memcpy(&received, CMSG_DATA(cmsg), sizeof(received));
+        if (received < 0)
+            _exit(4);
+
+        int epfd = epoll_create1(0);
+        struct epoll_event ev = {
+            .events = EPOLLIN | EPOLLET,
+            .data.fd = received,
+        };
+        if (epfd < 0 || epoll_ctl(epfd, EPOLL_CTL_ADD, received, &ev) < 0)
+            _exit(5);
+        if (write(ready[1], "R", 1) != 1)
+            _exit(6);
+        close(ready[1]);
+
+        struct epoll_event out;
+        if (epoll_wait(epfd, &out, 1, -1) != 1 ||
+            !(out.events & EPOLLIN))
+            _exit(7);
+        uint64_t value = 0;
+        if (read(received, &value, sizeof(value)) != sizeof(value) ||
+            value != 1)
+            _exit(8);
+        _exit(0);
+    }
+
+    close(sv[1]);
+    close(ready[1]);
+    char control[CMSG_SPACE(sizeof(int))];
+    char payload = 'E';
+    struct iovec iov = {.iov_base = &payload, .iov_len = 1};
+    struct msghdr msg = {
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = control,
+        .msg_controllen = sizeof(control),
+    };
+    memset(control, 0, sizeof(control));
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &efd, sizeof(efd));
+
+    int ok = sendmsg(sv[0], &msg, 0) == 1;
+    char marker = 0;
+    ok &= read(ready[0], &marker, 1) == 1 && marker == 'R';
+    if (ok) {
+        uint64_t one = 1;
+        ok = write(efd, &one, sizeof(one)) == sizeof(one);
+    }
+    if (!ok)
+        kill(pid, SIGKILL);
+    ok &= wait_child(pid, WATCHDOG_SECS + 3, "eventfd-scm-epoll") == 0;
+    close(ready[0]);
+    close(sv[0]);
+    close(efd);
+    report("eventfd-scm-epoll", ok, "deadlock-or-error");
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -339,6 +440,7 @@ int main(void)
     test_inotify_multi_watcher();
     test_epoll_in_poll();
     test_eventfd_cross_process();
+    test_eventfd_scm_epoll();
     printf("POLL-NOTIFY-PROBE: RESULT=%s failures=%d\n",
            g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

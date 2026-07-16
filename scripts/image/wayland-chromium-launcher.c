@@ -225,10 +225,18 @@ int main(int argc, char **argv)
     append_arg(child_argv, &idx, MAX_ARGS, "--disable-renderer-accessibility");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-first-run");
     append_arg(child_argv, &idx, MAX_ARGS, "--no-default-browser-check");
+    /*
+     * Keep xv6's AudioService in the browser process to remove one process
+     * boundary from the real-audio path.  Chromium still uses a private
+     * renderer sync socket for audio data requests, so this flag is not an
+     * AF_UNIX bypass and a sync_reader broken-pipe row remains diagnostic, not
+     * proof that Pulse failed.  Pulse itself uses the independently gated
+     * loopback TCP listener configured by the session.
+     */
     append_arg(child_argv, &idx, MAX_ARGS,
                "--disable-features=AccessibilityService,Crashpad,MediaRouter,"
                "OptimizationHints,CalculateNativeWinOcclusion,"
-               "UseChromeOSDirectVideoDecoder");
+               "UseChromeOSDirectVideoDecoder,AudioServiceOutOfProcess");
     append_arg(child_argv, &idx, MAX_ARGS,
                "--user-data-dir=/tmp/wayland-chromium-profile");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-logging=stderr");

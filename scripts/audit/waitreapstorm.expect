@@ -1,15 +1,14 @@
 #!/usr/bin/env expect
 
-set timeout 240
+set timeout 150
 set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
 set build "$root/build-x86_64"
 set kernel "$build/kernel/build/kernel/xv6.bin"
 set base_img "$build/fs.img"
 set stamp [clock format [clock seconds] -gmt 1 -format %Y%m%dT%H%M%SZ]
-set token "xv6-linuxsyscall-$stamp-[pid]"
-set outdir "$build/linuxsyscallabitest/$stamp-[pid]"
-set scratch "$outdir/trial.fs.img"
-set empty "$outdir/empty-startup"
+set token "xv6-waitreap-$stamp-[pid]"
+set outdir "$build/waitreapstorm/$stamp-[pid]"
+set scratch "$outdir/trial.fs.qcow2"
 set monitor "$outdir/monitor.sock"
 set pidfile "$outdir/qemu.pid"
 set runlog "$outdir/run.log"
@@ -31,7 +30,7 @@ proc owned_identity {pid token} {
         case "${exe##*/}" in qemu-system-x86*|qemu-kvm) ;; *) exit 3 ;; esac
         stat_line=$(<"/proc/$pid/stat")
         rest=${stat_line##*) }
-        read -r -a fields <<<$rest
+        read -r -a fields <<<"$rest"
         [[ "${fields[2]}" == "$pid" ]] || exit 4
         mapfile -d '' -t args <"/proc/$pid/cmdline"
         [[ " ${args[*]} " == *" xv6-$token "* ]] || exit 5
@@ -43,8 +42,7 @@ proc owned_identity {pid token} {
 proc reap_owned {} {
     global root qemu_pid qemu_start token qemu_reaped timeout
     if {$qemu_reaped} { return }
-    if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"] &&
-        $qemu_start > 0} {
+    if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"] && $qemu_start > 0} {
         catch {exec "$root/scripts/launch/cleanup-owned-qemu.sh" \
             $qemu_pid $qemu_start $token} cleanup
     }
@@ -59,40 +57,41 @@ proc reap_owned {} {
 proc finish {code reason} {
     global outdir monitor scratch
     reap_owned
-    file delete -force $monitor $scratch
+    file delete -force $monitor
+    file delete -force $scratch
     set inventory [exact_inventory]
     set fh [open "$outdir/final-qemu-inventory.txt" w]
     puts $fh $inventory
     close $fh
     if {![regexp {exact_x86_qemu_count=0} $inventory]} {
-        puts stderr "LINUXSYSCALLABITEST status=FAIL reason=owned-x86-remains original=$reason evidence=$outdir"
+        puts stderr "WAITREAPSTORM status=FAIL reason=owned-x86-remains original=$reason evidence=$outdir"
         exit 12
     }
-    puts "LINUXSYSCALLABITEST status=[expr {$code == 0 ? {PASS} : {FAIL}}] reason=$reason evidence=$outdir"
+    puts "WAITREAPSTORM status=[expr {$code == 0 ? {PASS} : {FAIL}}] reason=$reason evidence=$outdir"
     exit $code
 }
 
 file mkdir $outdir
+if {[catch {
+    exec qemu-img create -q -f qcow2 -F raw -b $base_img $scratch
+} stage]} {
+    puts stderr "WAITREAPSTORM status=FAIL reason=create-overlay output=$stage"
+    exit 2
+}
+
+# Creating the private copy-on-write overlay does not launch or alter a VM.
+# Wait for every exact QEMU executable to exit naturally.  This helper never
+# signals a VM and is therefore safe for the user's external VM.
 set preflight_rc [catch {
-    exec "$root/scripts/launch/qemu-exact-inventory.sh" --require-zero
+    exec "$root/scripts/launch/qemu-wait-natural-zero.sh" 120
 } preflight]
 set fh [open "$outdir/preflight-qemu-inventory.txt" w]
 puts $fh $preflight
 close $fh
 if {$preflight_rc != 0} {
-    puts stderr "LINUXSYSCALLABITEST status=SKIP reason=preexisting-qemu evidence=$outdir"
-    exit 75
-}
-
-exec cp --reflink=auto --sparse=always -- $base_img $scratch
-close [open $empty w]
-catch {exec debugfs -w -R "rm /etc/startup" $scratch 2>@1}
-if {[catch {
-    exec debugfs -w -R "write $empty /etc/startup" $scratch 2>@1
-} stage]} {
-    puts stderr "LINUXSYSCALLABITEST status=FAIL reason=stage-startup output=$stage evidence=$outdir"
     file delete -force $scratch
-    exit 2
+    puts stderr "WAITREAPSTORM status=SKIP reason=qemu-natural-wait-timeout evidence=$outdir"
+    exit 75
 }
 
 set env(DISPLAY_MODE) nographic
@@ -104,7 +103,7 @@ set env(QEMU_NET) 0
 set env(QEMU_AUDIO) none
 set env(QEMU_CPUS) 6
 set env(QEMU_MEMORY) 4G
-set env(QEMU_DISK_FORMAT) raw
+set env(QEMU_DISK_FORMAT) qcow2
 set env(QEMU_RUN_TOKEN) $token
 set env(QEMU_PIDFILE) $pidfile
 set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 video=80x25"
@@ -117,16 +116,13 @@ set fh [open "$outdir/prelaunch-qemu-inventory.txt" w]
 puts $fh $launch_preflight
 close $fh
 if {$launch_preflight_rc != 0} {
-    puts stderr "LINUXSYSCALLABITEST status=SKIP reason=qemu-appeared-before-launch evidence=$outdir"
-    file delete -force $scratch
+    puts stderr "WAITREAPSTORM status=SKIP reason=qemu-appeared-before-launch evidence=$outdir"
     exit 75
 }
 
 log_file -a $runlog
 spawn setsid --wait bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $scratch
-for {set attempt 0} {$attempt < 100 && ![file isfile $pidfile]} {incr attempt} {
-    after 100
-}
+for {set attempt 0} {$attempt < 100 && ![file isfile $pidfile]} {incr attempt} { after 100 }
 if {![file isfile $pidfile]} { finish 6 qemu-pidfile-timeout }
 set fh [open $pidfile r]
 set qemu_pid [string trim [read $fh]]
@@ -149,19 +145,19 @@ expect {
 }
 
 # Leading assignment accounts for the console's known first-byte drop.
-send [format {x=0;m=LINUXSYSCALLDONE_;m=${m}%d;/bin/linuxsyscallabitest rt-sigtimedwait;echo LINUXSYSCALLABITEST_RC=$?;echo $m} [pid]]
+send [format {x=0;m=WAITREAPDONE_;m=${m}%d;/bin/waitreapstorm;echo WAITREAP_RC=$?;echo $m} [pid]]
 set passed 0
 expect {
-    -re {linuxsyscallabitest: rt_sigtimedwait focused tests passed} {
+    -re {waitreapstorm: PASS} {
         set passed 1
         exp_continue
     }
-    -re {LINUXSYSCALLABITEST_RC=0} {
+    -re {WAITREAP_RC=0} {
         if {!$passed} { finish 10 pass-row-missing }
         exp_continue
     }
-    -re "LINUXSYSCALLDONE_[pid]" {}
-    -re {linuxsyscallabitest: .*failed|LINUXSYSCALLABITEST_RC=[1-9][0-9]*|PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+    -re "WAITREAPDONE_[pid]" {}
+    -re {waitreapstorm: FAIL|PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
         finish 11 reducer-or-guest-failure
     }
     timeout { finish 13 probe-timeout }

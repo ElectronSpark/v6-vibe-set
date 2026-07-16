@@ -17,6 +17,8 @@
   const nonce = nonceMatch ? nonceMatch[1] : "unavailable";
   const forceHd720 = Boolean(nonceMatch && nonceMatch[2] === "1");
   const captureCompletenessDiagnostic = Boolean(nonceMatch && nonceMatch[3] === "1");
+  const requestedDisplayMode = new URLSearchParams(global.location.search)
+    .get("xv6ytmode");
   const MAX_ROWS = forceHd720 ? 30 : 24;
   const MAX_DIAGNOSTIC_ROWS = 64;
   const MAX_DIAGNOSTIC_ROW_BYTES = 320;
@@ -24,9 +26,16 @@
   const SAMPLE_INTERVAL_MS = 1000;
   const FORCE_READY_ATTEMPTS = 120;
   const FORCE_READY_INTERVAL_MS = 500;
-  const FORCE_OBSERVE_ATTEMPTS = 40;
+  // A quality change can make YouTube replace its provisional <video> after
+  // several seconds.  Keep this deadline long enough to observe the final
+  // element, but admit only one stable identity with real media progress.
+  const FORCE_OBSERVE_ATTEMPTS = 120;
   const FORCE_OBSERVE_INTERVAL_MS = 250;
   const FORCE_STABLE_OBSERVATIONS = 4;
+  const POST_MODE_OBSERVE_ATTEMPTS = 120;
+  const POST_MODE_OBSERVE_INTERVAL_MS = 250;
+  const POST_MODE_STABLE_OBSERVATIONS = 16;
+  const POST_MODE_TIMEOUT_MS = 30000;
   let emittedRows = 0;
   let producerReadyEmitted = false;
 
@@ -258,6 +267,33 @@
     return new Promise(resolve => global.setTimeout(resolve, milliseconds));
   }
 
+  function requestPlayback(video) {
+    try {
+      const pending = video.play();
+      if (pending && typeof pending.catch === "function")
+        pending.catch(() => {});
+    } catch (_) {}
+  }
+
+  function emitCodecState() {
+    const player = document.getElementById("movie_player");
+    let statsApi = 0;
+    let fmt = "unavailable";
+    let afmt = "unavailable";
+    try {
+      if (player && typeof player.getVideoStats === "function") {
+        const stats = player.getVideoStats();
+        statsApi = 1;
+        if (stats && typeof stats === "object") {
+          fmt = lib.boundedToken(stats.fmt ?? "unavailable", 24);
+          afmt = lib.boundedToken(stats.afmt ?? "unavailable", 24);
+        }
+      }
+    } catch (_) {}
+    console.info(
+      `YT_CODEC_STATE_V1 schema=1 nonce=${nonce} stats_api=${statsApi} fmt=${fmt} afmt=${afmt}`);
+  }
+
   function qualityState(playerOverride) {
     const player = playerOverride || document.getElementById("movie_player");
     let selected = "unavailable";
@@ -416,22 +452,37 @@
 
     let observeAttempt = 0;
     let stableCount = 0;
-    let firstTime = video ? lib.finiteNumber(video.currentTime, -1) : -1;
-    let lastTime = firstTime;
+    let candidateVideo = null;
+    let firstTime = -1;
+    let lastTime = -1;
     for (observeAttempt = 1;
          observeAttempt <= FORCE_OBSERVE_ATTEMPTS;
          observeAttempt++) {
       player = document.getElementById("movie_player");
       video = document.querySelector("video");
       quality = qualityState(player);
-      lastTime = video ? lib.finiteNumber(video.currentTime, -1) : -1;
+      const observedTime = video ? lib.finiteNumber(video.currentTime, -1) : -1;
       const rawMatch = Boolean(
         video && video.isConnected && quality.selectedApi &&
         quality.availableApi && quality.selected === "hd720" &&
         qualityIncludes(quality.available, "hd720") &&
         video.videoWidth === 1280 && video.videoHeight === 720 &&
         video.readyState >= 2 && !video.paused && !video.ended);
-      stableCount = rawMatch ? stableCount + 1 : 0;
+      if (rawMatch) {
+        if (video !== candidateVideo) {
+          candidateVideo = video;
+          firstTime = observedTime;
+          stableCount = 1;
+        } else {
+          stableCount++;
+        }
+        lastTime = observedTime;
+      } else {
+        candidateVideo = null;
+        firstTime = -1;
+        lastTime = -1;
+        stableCount = 0;
+      }
       if (stableCount >= FORCE_STABLE_OBSERVATIONS &&
           firstTime >= 0 && lastTime - firstTime >= 0.5)
         break;
@@ -458,8 +509,8 @@
 
     diagnosticV2.postVideoProof = {
       selected: quality.selected,
-      videoWidth: video ? video.videoWidth : 0,
-      videoHeight: video ? video.videoHeight : 0,
+      videoWidth: candidateVideo ? candidateVideo.videoWidth : 0,
+      videoHeight: candidateVideo ? candidateVideo.videoHeight : 0,
       stableCount,
       selectorPrerequisites,
       rangeInvoked,
@@ -468,7 +519,12 @@
       qualityThrew,
       progressed: firstTime >= 0 && lastTime - firstTime >= 0.5
     };
-    return video && video.isConnected ? video : null;
+    return diagnosticV2.postVideoProof.selected === "hd720" &&
+      diagnosticV2.postVideoProof.videoWidth === 1280 &&
+      diagnosticV2.postVideoProof.videoHeight === 720 &&
+      diagnosticV2.postVideoProof.stableCount >= FORCE_STABLE_OBSERVATIONS &&
+      diagnosticV2.postVideoProof.progressed && candidateVideo &&
+      candidateVideo.isConnected ? candidateVideo : null;
   }
 
   function playbackQuality(video) {
@@ -520,6 +576,122 @@
     return null;
   }
 
+  function displayModeMatches(mode) {
+    const player = document.getElementById("movie_player");
+    const fullscreenElement = document.fullscreenElement;
+    const documentFullscreen = Boolean(fullscreenElement);
+    const playerFullscreen = Boolean(player && fullscreenElement &&
+      (fullscreenElement === player || fullscreenElement.contains(player) ||
+       player.contains(fullscreenElement)));
+    if (mode === "fullscreen")
+      return documentFullscreen && playerFullscreen;
+    if (mode === "windowed")
+      return !documentFullscreen && !playerFullscreen;
+    return false;
+  }
+
+  function emitDisplayState(video) {
+    const player = document.getElementById("movie_player");
+    const fullscreenElement = document.fullscreenElement;
+    const playerFullscreen = Boolean(player && fullscreenElement &&
+      (fullscreenElement === player || fullscreenElement.contains(player) ||
+       player.contains(fullscreenElement)));
+    console.info(`YT_DISPLAY_STATE_V1 monotonic_ms=${Math.floor(performance.timeOrigin + performance.now())} mode=${requestedDisplayMode || "unspecified"} document_fullscreen=${fullscreenElement ? 1 : 0} player_fullscreen=${playerFullscreen ? 1 : 0} video_playing=${!video.paused && !video.ended ? 1 : 0} video_muted=${video.muted ? 1 : 0} video_volume=${video.volume.toFixed(3)} video_width=${video.videoWidth} video_height=${video.videoHeight}`);
+  }
+
+  function emitWallBoundary(kind) {
+    console.info(`YT_MEDIA_WALL_V1 kind=${kind} schema=1 nonce=${nonce} monotonic_ms=${Math.floor(performance.timeOrigin + performance.now())}`);
+  }
+
+  /*
+   * The host drives fullscreen through CDP with a real user-gesture context.
+   * Do not let the semantic 20-second window start until the requested state
+   * is established.  This keeps a slow host control round trip from turning a
+   * nominal fullscreen trial into a mostly-windowed sample.  Absence of the
+   * parameter preserves the historical probe contract.
+   */
+  async function waitForRequestedDisplayMode() {
+    if (requestedDisplayMode === null)
+      return true;
+    if (requestedDisplayMode !== "windowed" &&
+        requestedDisplayMode !== "fullscreen")
+      return false;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      if (displayModeMatches(requestedDisplayMode))
+        return true;
+      await sleep(500);
+    }
+    return false;
+  }
+
+  /*
+   * Fullscreen and a forced representation change can each make YouTube swap
+   * the media element after the corresponding API call has already returned.
+   * Establish the semantic start boundary only after the requested display
+   * mode owns one advancing element for four continuous seconds.  This gate
+   * is identical on Linux and xv6; it does not alter or reset the subsequent
+   * 20-second wall-clock observation.
+   */
+  async function settleVideoAfterDisplayMode(initialVideo) {
+    let candidate = initialVideo;
+    let stableCount = 0;
+    let firstTime = -1;
+    let lastTime = -1;
+    let replacements = 0;
+    const deadline = performance.now() + POST_MODE_TIMEOUT_MS;
+    for (let attempt = 1; attempt <= POST_MODE_OBSERVE_ATTEMPTS; attempt++) {
+      const observed = document.querySelector("video");
+      if (observed && observed !== candidate) {
+        candidate = observed;
+        replacements++;
+        stableCount = 0;
+        firstTime = -1;
+        lastTime = -1;
+        try {
+          candidate.muted = false;
+          candidate.volume = 0.5;
+        } catch (_) {}
+        requestPlayback(candidate);
+        console.info(
+          `YT_MEDIA_VIDEO_SETTLE_REBIND_V1 schema=1 nonce=${nonce} attempt=${attempt} replacements=${replacements} current_time=${lib.fixed(candidate.currentTime, 3, -1)}`);
+      }
+      const quality = qualityState();
+      const observedTime = candidate
+        ? lib.finiteNumber(candidate.currentTime, -1) : -1;
+      const valid = Boolean(
+        candidate && candidate.isConnected && candidate.videoWidth > 0 &&
+        candidate.videoHeight > 0 && candidate.readyState >= 2 &&
+        !candidate.paused && !candidate.ended &&
+        candidate.playbackRate >= 0.95 && candidate.playbackRate <= 1.05 &&
+        (requestedDisplayMode === null ||
+          displayModeMatches(requestedDisplayMode)) &&
+        (!forceHd720 || (candidate.videoWidth === 1280 &&
+          candidate.videoHeight === 720 && quality.selectedApi &&
+          quality.availableApi && quality.selected === "hd720" &&
+          qualityIncludes(quality.available, "hd720"))));
+      if (valid) {
+        if (stableCount === 0)
+          firstTime = observedTime;
+        stableCount++;
+        lastTime = observedTime;
+      } else {
+        stableCount = 0;
+        firstTime = -1;
+        lastTime = -1;
+      }
+      if (stableCount >= POST_MODE_STABLE_OBSERVATIONS &&
+          firstTime >= 0 && lastTime - firstTime >= 2.0) {
+        return { video: candidate, stableCount, replacements,
+          firstTime, lastTime, attempt };
+      }
+      const remainingMs = deadline - performance.now();
+      if (attempt >= POST_MODE_OBSERVE_ATTEMPTS || remainingMs <= 0)
+        break;
+      await sleep(Math.min(POST_MODE_OBSERVE_INTERVAL_MS, remainingMs));
+    }
+    return null;
+  }
+
   async function run() {
     if (!lib) {
       console.info(`YT_MEDIA_PROBE_V1 kind=failure schema=1 nonce=${nonce} reason=library-missing`);
@@ -538,13 +710,40 @@
     // This is deliberately before video discovery but is liveness only.
     diagnosticV2ProducerStart();
 
-    const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();
+    let video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();
     if (!video) {
       emit("failure", { reason: "video-timeout" });
       return;
     }
+    // Keep the audio condition identical across the Linux reference and xv6.
+    // Autoplay policy can otherwise leave a valid advancing video silently
+    // muted, which would measure video-only throughput instead of A/V parity.
+    try {
+      video.muted = false;
+      video.volume = 0.5;
+    } catch (_) {}
+    requestPlayback(video);
     if (forceHd720)
       diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);
+    if (!(await waitForRequestedDisplayMode())) {
+      emit("failure", { reason: "display-mode-timeout" });
+      return;
+    }
+    const settled = await settleVideoAfterDisplayMode(video);
+    if (!settled) {
+      emit("failure", { reason: "post-mode-video-timeout" });
+      return;
+    }
+    video = settled.video;
+    console.info(
+      `YT_MEDIA_VIDEO_SETTLE_V1 schema=1 nonce=${nonce} attempt=${settled.attempt} stable_count=${settled.stableCount} replacements=${settled.replacements} current_time_first=${lib.fixed(settled.firstTime, 3, -1)} current_time_last=${lib.fixed(settled.lastTime, 3, -1)}`);
+    const startSourceIdentity = lib.sourceIdentity(video.currentSrc);
+    let videoGeneration = 0;
+    let videoRebinds = 0;
+    let lastSampleTime = lib.finiteNumber(video.currentTime, -1);
+    // Diagnostic-only selected-format evidence. It is outside the semantic V1
+    // row family, so absence or an unavailable internal API grants no credit.
+    emitCodecState();
 
     const longTasks = { available: 0, count: 0, durationMs: 0 };
     let observer = null;
@@ -578,67 +777,114 @@
       priorMediaValid: false,
       deltasMs: [],
       active: true,
-      callbackId: 0
+      callbackId: 0,
+      generation: 0
     };
 
-    function onVideoFrame(_now, metadata) {
-      if (!rvfc.active)
-        return;
-      rvfc.callbacks++;
-      diagnosticRvfcCheckpoint(rvfc);
+    /*
+     * YouTube can replace the media element while recovering an output
+     * stream.  rVFC counters belong to an element, so each attachment keeps
+     * its raw counter origin private and maps its first callback onto the
+     * last observed value.  That incomparable generation anchor is not a
+     * semantic callback or interval and earns no presentation credit; only
+     * later raw deltas from the replacement can advance the cumulative
+     * result.  This preserves the summary invariant that every counted
+     * interval is an actual within-element interval.
+     */
+    function attachRvfc(target) {
+      if (typeof target.requestVideoFrameCallback !== "function")
+        return false;
+      const generation = ++rvfc.generation;
+      let firstCallback = true;
+      let presentedOffset = 0;
+      let mediaOffset = 0;
+      function onVideoFrame(_now, metadata) {
+        if (!rvfc.active || generation !== rvfc.generation)
+          return;
+        const rawPresented = Number(metadata.presentedFrames);
+        const rawPresentedValid = Number.isSafeInteger(rawPresented) &&
+          rawPresented >= 0;
+        const rawMedia = Number(metadata.mediaTime);
+        const rawMediaValid = Number.isFinite(rawMedia) && rawMedia >= 0;
+        const generationAnchor = firstCallback && generation > 1;
+        if (firstCallback) {
+          if (rawPresentedValid && rvfc.priorPresentedValid)
+            presentedOffset = rvfc.priorPresented - rawPresented;
+          if (rawMediaValid && rvfc.priorMediaValid)
+            mediaOffset = rvfc.priorMedia - rawMedia;
+          firstCallback = false;
+        }
+        const presented = rawPresentedValid
+          ? rawPresented + presentedOffset : rawPresented;
+        const presentedValid = Number.isSafeInteger(presented) && presented >= 0;
+        const media = rawMediaValid ? rawMedia + mediaOffset : rawMedia;
+        const mediaValid = Number.isFinite(media) && media >= 0;
 
-      const presented = Number(metadata.presentedFrames);
-      const presentedValid = Number.isSafeInteger(presented) && presented >= 0;
-      if (!presentedValid) rvfc.presentedInvalidCallbacks++;
-      if (rvfc.callbacks === 1) {
-        if (presentedValid) rvfc.presentedFirst = presented;
-      } else if (!presentedValid || !rvfc.priorPresentedValid) {
-        rvfc.presentedPairInvalid++;
-      } else if (presented < rvfc.priorPresented) {
-        rvfc.presentedRegressions++;
-      } else if (presented === rvfc.priorPresented) {
-        rvfc.presentedDuplicates++;
+        if (generationAnchor && rvfc.callbacks > 0 && rawPresentedValid &&
+            rvfc.priorPresentedValid && rawMediaValid &&
+            rvfc.priorMediaValid) {
+          try {
+            rvfc.callbackId = target.requestVideoFrameCallback(onVideoFrame);
+          } catch (_) {
+            rvfc.scheduleFailures++;
+            rvfc.active = false;
+          }
+          return;
+        }
+
+        rvfc.callbacks++;
+        diagnosticRvfcCheckpoint(rvfc);
+        if (!presentedValid) rvfc.presentedInvalidCallbacks++;
+        if (rvfc.callbacks === 1) {
+          if (presentedValid) rvfc.presentedFirst = presented;
+        } else if (!presentedValid || !rvfc.priorPresentedValid) {
+          rvfc.presentedPairInvalid++;
+        } else if (presented < rvfc.priorPresented) {
+          rvfc.presentedRegressions++;
+        } else if (presented === rvfc.priorPresented) {
+          rvfc.presentedDuplicates++;
+        }
+        if (presentedValid) rvfc.presentedLast = presented;
+        rvfc.priorPresented = presentedValid ? presented : -1;
+        rvfc.priorPresentedValid = presentedValid;
+
+        if (!mediaValid) rvfc.mediaInvalidCallbacks++;
+        if (rvfc.callbacks === 1) {
+          if (mediaValid) rvfc.mediaFirst = media;
+        } else if (mediaValid && rvfc.priorMediaValid) {
+          rvfc.deltasMs.push((media - rvfc.priorMedia) * 1000);
+        } else {
+          rvfc.deltasMs.push(Number.NaN);
+        }
+        if (mediaValid) rvfc.mediaLast = media;
+        rvfc.priorMedia = mediaValid ? media : -1;
+        rvfc.priorMediaValid = mediaValid;
+
+        try {
+          rvfc.callbackId = target.requestVideoFrameCallback(onVideoFrame);
+        } catch (_) {
+          rvfc.scheduleFailures++;
+          rvfc.active = false;
+        }
       }
-      if (presentedValid) rvfc.presentedLast = presented;
-      rvfc.priorPresented = presentedValid ? presented : -1;
-      rvfc.priorPresentedValid = presentedValid;
-
-      const media = Number(metadata.mediaTime);
-      const mediaValid = Number.isFinite(media) && media >= 0;
-      if (!mediaValid) rvfc.mediaInvalidCallbacks++;
-      if (rvfc.callbacks === 1) {
-        if (mediaValid) rvfc.mediaFirst = media;
-      } else if (mediaValid && rvfc.priorMediaValid) {
-        rvfc.deltasMs.push((media - rvfc.priorMedia) * 1000);
-      } else {
-        rvfc.deltasMs.push(Number.NaN);
-      }
-      if (mediaValid) rvfc.mediaLast = media;
-      rvfc.priorMedia = mediaValid ? media : -1;
-      rvfc.priorMediaValid = mediaValid;
-
       try {
-        rvfc.callbackId = video.requestVideoFrameCallback(onVideoFrame);
+        rvfc.callbackId = target.requestVideoFrameCallback(onVideoFrame);
+        return true;
       } catch (_) {
         rvfc.scheduleFailures++;
-        rvfc.active = false;
+        return false;
       }
     }
 
-    if (rvfc.available) {
-      try {
-        rvfc.callbackId = video.requestVideoFrameCallback(onVideoFrame);
-      } catch (_) {
-        rvfc.available = false;
-        rvfc.scheduleFailures++;
-      }
-    }
+    if (rvfc.available && !attachRvfc(video))
+      rvfc.available = false;
 
+    emitWallBoundary("start");
     emit("start", {
       samples: SAMPLE_COUNT,
       interval_ms: SAMPLE_INTERVAL_MS,
       rvfc_available: rvfc.available ? 1 : 0,
-      src_id: lib.sourceIdentity(video.currentSrc)
+      src_id: startSourceIdentity
     });
 
     const widths = [];
@@ -647,25 +893,117 @@
     let lastVpq = null;
     let firstWebkit = null;
     let lastWebkit = null;
+    const vpqNormalizer = {
+      generation: -1, firstOffset: 0, secondOffset: 0, last: null
+    };
+    const webkitNormalizer = {
+      generation: -1, firstOffset: 0, secondOffset: 0, last: null
+    };
+    function normalizeCounters(raw, state, firstKey, secondKey) {
+      if (!raw.available)
+        return raw;
+      if (state.generation !== videoGeneration) {
+        state.generation = videoGeneration;
+        state.firstOffset = state.last ? state.last[firstKey] - raw[firstKey] : 0;
+        state.secondOffset = state.last ? state.last[secondKey] - raw[secondKey] : 0;
+      }
+      const normalized = {
+        ...raw,
+        [firstKey]: raw[firstKey] + state.firstOffset,
+        [secondKey]: raw[secondKey] + state.secondOffset
+      };
+      state.last = normalized;
+      return normalized;
+    }
     for (let sampleIndex = 1; sampleIndex <= SAMPLE_COUNT; sampleIndex++) {
       diagnosticTimerArm(sampleIndex, rvfc);
       await sleep(SAMPLE_INTERVAL_MS);
       diagnosticTimerFire(sampleIndex, rvfc);
       if (!video.isConnected) {
-        emit("failure", { reason: `video-detached-${sampleIndex}` });
-        rvfc.active = false;
-        if (observer) observer.disconnect();
-        return;
+        const oldVideo = video;
+        const replacement = document.querySelector("video");
+        if (replacement && replacement !== oldVideo) {
+          try {
+            replacement.muted = false;
+            replacement.volume = 0.5;
+          } catch (_) {}
+          requestPlayback(replacement);
+        }
+        const replacementTime = replacement
+          ? lib.finiteNumber(replacement.currentTime, -1) : -1;
+        const replacementQuality = qualityState();
+        const replacementPresent = Boolean(replacement);
+        const replacementDifferent = Boolean(replacement &&
+          replacement !== oldVideo);
+        const replacementConnected = Boolean(replacement &&
+          replacement.isConnected);
+        const replacementSourceMatch = Boolean(replacement &&
+          lib.sourceIdentity(replacement.currentSrc) === startSourceIdentity);
+        const replacementQualityOk = Boolean(!forceHd720 || (replacement &&
+          replacement.videoWidth === 1280 && replacement.videoHeight === 720 &&
+          replacementQuality.selectedApi && replacementQuality.availableApi &&
+          replacementQuality.selected === "hd720" &&
+          qualityIncludes(replacementQuality.available, "hd720")));
+        const replacementDisplayOk = requestedDisplayMode === null ||
+          displayModeMatches(requestedDisplayMode);
+        const replacementTimeNonregress = replacementTime >= lastSampleTime;
+        const replacementValid = Boolean(
+          replacementPresent && replacementDifferent && replacementConnected &&
+          replacementSourceMatch &&
+          replacement.videoWidth > 0 && replacement.videoHeight > 0 &&
+          replacementQualityOk &&
+          replacement.readyState >= 2 && !replacement.paused &&
+          !replacement.ended && replacement.playbackRate >= 0.95 &&
+          replacement.playbackRate <= 1.05 &&
+          replacementTimeNonregress && replacementDisplayOk &&
+          videoRebinds < 4);
+        if (!replacementValid) {
+          console.info(
+            `YT_MEDIA_VIDEO_REBIND_REJECT_V1 schema=1 nonce=${nonce} sample=${sampleIndex} present=${replacementPresent ? 1 : 0} different=${replacementDifferent ? 1 : 0} connected=${replacementConnected ? 1 : 0} source_match=${replacementSourceMatch ? 1 : 0} width=${replacement ? replacement.videoWidth : 0} height=${replacement ? replacement.videoHeight : 0} quality_ok=${replacementQualityOk ? 1 : 0} ready_state=${replacement ? replacement.readyState : -1} paused=${replacement && replacement.paused ? 1 : 0} ended=${replacement && replacement.ended ? 1 : 0} playback_rate=${lib.fixed(replacement ? replacement.playbackRate : -1, 3, -1)} replacement_time=${lib.fixed(replacementTime, 3, -1)} last_sample_time=${lib.fixed(lastSampleTime, 3, -1)} time_nonregress=${replacementTimeNonregress ? 1 : 0} display_ok=${replacementDisplayOk ? 1 : 0} rebind_count=${videoRebinds}`);
+          emit("failure", { reason: `video-replacement-invalid-${sampleIndex}` });
+          rvfc.active = false;
+          if (observer) observer.disconnect();
+          return;
+        }
+        try {
+          if (typeof oldVideo.cancelVideoFrameCallback === "function" &&
+              rvfc.callbackId)
+            oldVideo.cancelVideoFrameCallback(rvfc.callbackId);
+        } catch (_) {}
+        video = replacement;
+        videoGeneration++;
+        videoRebinds++;
+        rvfc.active = true;
+        if (rvfc.available && !attachRvfc(video)) {
+          emit("failure", { reason: `video-replacement-rvfc-${sampleIndex}` });
+          rvfc.active = false;
+          if (observer) observer.disconnect();
+          return;
+        }
+        console.info(
+          `YT_MEDIA_VIDEO_REBIND_V1 schema=1 nonce=${nonce} sample=${sampleIndex} generation=${videoGeneration} current_time=${lib.fixed(replacementTime, 3, -1)} source_id=${startSourceIdentity}`);
       }
+      // YouTube can restore its persisted volume shortly after autoplay.
+      // Keep every accepted Linux/xv6 sample on the declared unmuted 50%
+      // A/V contract instead of silently measuring a different audio load.
+      try {
+        if (video.muted)
+          video.muted = false;
+        if (Math.abs(video.volume - 0.5) > 0.001)
+          video.volume = 0.5;
+      } catch (_) {}
       const quality = qualityState();
-      const vpq = playbackQuality(video);
-      const webkit = webkitQuality(video);
+      const vpq = normalizeCounters(playbackQuality(video), vpqNormalizer,
+        "total", "dropped");
+      const webkit = normalizeCounters(webkitQuality(video), webkitNormalizer,
+        "decoded", "dropped");
       if (!firstVpq) firstVpq = vpq;
       if (!firstWebkit) firstWebkit = webkit;
       lastVpq = vpq;
       lastWebkit = webkit;
       widths.push(video.videoWidth);
       heights.push(video.videoHeight);
+      lastSampleTime = lib.finiteNumber(video.currentTime, lastSampleTime);
       emit("sample", {
         index: sampleIndex,
         video_width: video.videoWidth,
@@ -696,7 +1034,10 @@
         longtask_count: longTasks.count,
         longtask_duration_ms: lib.fixed(longTasks.durationMs, 3, 0)
       });
+      emitDisplayState(video);
     }
+
+    emitWallBoundary("end");
 
     rvfc.active = false;
     try {
