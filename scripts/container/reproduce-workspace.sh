@@ -76,7 +76,8 @@ run_args=(
 )
 
 mount_ready=0
-for attempt in 1 2 3; do
+mount_attempts=8
+for ((attempt = 1; attempt <= mount_attempts; attempt++)); do
     if "${DOCKER[@]}" run "${run_args[@]}" \
         --entrypoint /bin/bash "${IMAGE}" -c '
             test -x /src/xv6-os/scripts/build/reproduce-in-container.sh &&
@@ -85,8 +86,12 @@ for attempt in 1 2 3; do
         mount_ready=1
         break
     fi
-    echo "reproduce-workspace: source bind mount not ready (attempt ${attempt}/3)" >&2
-    sleep "${attempt}"
+    echo "reproduce-workspace: source bind mount not ready (attempt ${attempt}/${mount_attempts})" >&2
+    if (( attempt < mount_attempts )); then
+        delay="${attempt}"
+        (( delay <= 5 )) || delay=5
+        sleep "${delay}"
+    fi
 done
 [[ "${mount_ready}" == "1" ]] || {
     echo "reproduce-workspace: Docker did not expose the expected workspace commit" >&2

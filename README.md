@@ -151,7 +151,9 @@ reliably expose the surrounding WSL distribution's process inventory. Launch
 from the host so the external-VM gate is authoritative.
 Before building, the wrapper also requires the bind-mounted source to expose
 the expected executable build script and exact Git commit, with a bounded
-retry for Docker Desktop's new-path mount-registration delay.
+roughly 30-second retry window for Docker Desktop's new-path mount-registration
+delay. It fails closed without cleaning or building if the identity check never
+passes.
 
 Other useful one-liners (all via the helper or with the UID prefix above):
 
