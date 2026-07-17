@@ -43,9 +43,7 @@ static void wait_for_login1(void)
 
 int main(void)
 {
-    const char *desktop;
     char *argv_kde[] = { "/bin/kde-session", NULL };
-    char *argv_weston[] = { "/bin/weston-session", NULL };
 
     set_default_env();
 
@@ -54,17 +52,9 @@ int main(void)
         return 0;
     }
 
-    desktop = getenv("XV6_DESKTOP_DEFAULT");
-    if (!desktop || !*desktop)
-        desktop = "kde";
-
-    fprintf(stderr, "xv6-desktop-session: selected desktop=%s\n", desktop);
-    if (strcmp(desktop, "weston") == 0)
-        execv(argv_weston[0], argv_weston);
-    else {
-        wait_for_login1();
-        execv(argv_kde[0], argv_kde);
-    }
+    fprintf(stderr, "xv6-desktop-session: selected desktop=kde\n");
+    wait_for_login1();
+    execv(argv_kde[0], argv_kde);
 
     fprintf(stderr, "xv6-desktop-session: exec failed: %s\n", strerror(errno));
     return 127;

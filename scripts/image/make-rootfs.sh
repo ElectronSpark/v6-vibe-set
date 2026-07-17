@@ -1364,7 +1364,7 @@ prune_probe_desktop_links() {
     shopt -u nullglob
 }
 
-write_desktop_link_if_executable "Terminal" "/bin/weston-terminal"
+rm -f "${STAGE}/root/desktop/Terminal"
 write_desktop_link_if_executable "Files" "/bin/xv6-open-files-root"
 write_desktop_link_if_executable "Proc Files" "/bin/xv6-open-files-proc"
 write_desktop_link_if_executable "Python" "/bin/xv6-open-python"
