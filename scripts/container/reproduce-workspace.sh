@@ -55,6 +55,7 @@ trap cleanup_authority EXIT INT TERM HUP
 echo "reproduce-workspace: building container image ${IMAGE}"
 "${DOCKER[@]}" build --target dev -t "${IMAGE}" "${ROOT}"
 image_id="$("${DOCKER[@]}" image inspect "${IMAGE}" --format '{{.Id}}')"
+expected_top_commit="$(git -C "${ROOT}" rev-parse HEAD)"
 
 run_args=(
     --rm
@@ -64,6 +65,7 @@ run_args=(
     -e XV6_SOURCE_DIR=/src/xv6-os
     -e XV6_IN_CONTAINER=1
     -e "XV6_CONTAINER_IMAGE_ID=${image_id}"
+    -e "XV6_EXPECTED_TOP_COMMIT=${expected_top_commit}"
     -e "XV6_ARCH=${ARCH}"
     -e "XV6_PARALLEL_JOBS=${XV6_PARALLEL_JOBS:-2}"
     -e "XV6_KEEP_ITERATIONS=${XV6_KEEP_ITERATIONS:-3}"
@@ -72,6 +74,24 @@ run_args=(
     -e "XV6_HOST_CLEANUP_AUTHORITY_TOKEN=${authority_token}"
     -e HOME=/tmp
 )
+
+mount_ready=0
+for attempt in 1 2 3; do
+    if "${DOCKER[@]}" run "${run_args[@]}" \
+        --entrypoint /bin/bash "${IMAGE}" -c '
+            test -x /src/xv6-os/scripts/build/reproduce-in-container.sh &&
+            test "$(git -C /src/xv6-os rev-parse HEAD)" = "${XV6_EXPECTED_TOP_COMMIT}"
+        '; then
+        mount_ready=1
+        break
+    fi
+    echo "reproduce-workspace: source bind mount not ready (attempt ${attempt}/3)" >&2
+    sleep "${attempt}"
+done
+[[ "${mount_ready}" == "1" ]] || {
+    echo "reproduce-workspace: Docker did not expose the expected workspace commit" >&2
+    exit 66
+}
 
 echo "reproduce-workspace: starting clean container build"
 "${DOCKER[@]}" run "${run_args[@]}" "${IMAGE}" xv6-reproduce

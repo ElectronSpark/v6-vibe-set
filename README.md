@@ -144,6 +144,9 @@ container runs as your host user and all generated output stays owned by you.
 QEMU is intentionally not launched inside Docker because Docker Desktop cannot
 reliably expose the surrounding WSL distribution's process inventory. Launch
 from the host so the external-VM gate is authoritative.
+Before building, the wrapper also requires the bind-mounted source to expose
+the expected executable build script and exact Git commit, with a bounded
+retry for Docker Desktop's new-path mount-registration delay.
 
 Other useful one-liners (all via the helper or with the UID prefix above):
 
