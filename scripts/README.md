@@ -48,6 +48,9 @@ scripts/
 ## image/
 
 - `make-rootfs.sh` - generate the ext4 root filesystem image from the sysroot.
+- `stage-kde-runtime.sh` - download the exact KDE package lock, including a
+  signed Canonical Server Team Backports fallback for locked PPA versions, then
+  verify every archive hash and stage the KDE/Qt overlay.
 - `make-hyperv-image.sh` - generate a Hyper-V Gen2 bootable VHDX from `xv6.bin`
   and `fs.img`.
 - `hyperv-efiloader.c` - EFI loader source compiled by `make-hyperv-image.sh`.

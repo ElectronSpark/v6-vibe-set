@@ -86,7 +86,12 @@ accepted only after those locks pass; changing a lock makes the build fetch and
 validate the replacement instead of silently reusing mutable content.
 The validated KDE package order and archive hashes are also checked into
 `scripts/locks/kde-noble/`, allowing a cold-cache clone to download exact
-package versions before enforcing the same receipt lock.
+package versions before enforcing the same receipt lock. If an exact package
+came from Canonical Server Team Backports and is absent from Noble's primary
+index, the downloader retries only that version against the signed Canonical
+PPA. Its public key is checked in with the lock (fingerprint
+`94E187AD53A59D1847E4880F8A295C4FB8B190B7`), and the archive must still match
+the published SHA-256 lock before it can enter the image.
 
 The launcher waits for every exact `qemu-system-*`/`qemu-kvm` executable to
 exit naturally and never signals an external VM. Its own QEMU receives a

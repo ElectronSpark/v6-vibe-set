@@ -11,6 +11,13 @@ RESOLVED_FILE="${WORKDIR}/packages.resolved.txt"
 ARCHIVE_SHA256_FILE="${KDE_ARCHIVE_SHA256_FILE:-}"
 PACKAGE_LOCKED="${KDE_PACKAGE_LOCKED:-0}"
 DOWNLOAD_ONLY="${KDE_DOWNLOAD_ONLY:-0}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SERVER_BACKPORTS_KEY="${SCRIPT_DIR}/../locks/kde-noble/canonical-server-backports.asc"
+SERVER_BACKPORTS_ROOT="${WORKDIR}/canonical-server-backports-apt"
+SERVER_BACKPORTS_LIST="${SERVER_BACKPORTS_ROOT}/sources.list"
+SERVER_BACKPORTS_LISTS="${SERVER_BACKPORTS_ROOT}/lists"
+SERVER_BACKPORTS_CACHE="${SERVER_BACKPORTS_ROOT}/cache"
+SERVER_BACKPORTS_READY=0
 
 SEEDS=(
     plasma-desktop
@@ -180,6 +187,44 @@ resolve_incremental_packages() {
 download_locked_archives() {
     local expected_hash filename pkg encoded_version version
 
+    prepare_server_backports() {
+        [[ "${SERVER_BACKPORTS_READY}" == "0" ]] || return 0
+        [[ -s "${SERVER_BACKPORTS_KEY}" ]] || {
+            note "Canonical Server Team Backports signing key is missing"
+            exit 1
+        }
+
+        mkdir -p \
+            "${SERVER_BACKPORTS_LISTS}/partial" \
+            "${SERVER_BACKPORTS_CACHE}/archives/partial"
+        printf 'deb [signed-by=%s] https://ppa.launchpadcontent.net/canonical-server/server-backports/ubuntu noble main\n' \
+            "${SERVER_BACKPORTS_KEY}" >"${SERVER_BACKPORTS_LIST}"
+        apt-get \
+            -o "Dir::Etc::sourcelist=${SERVER_BACKPORTS_LIST}" \
+            -o 'Dir::Etc::sourceparts=-' \
+            -o "Dir::State::lists=${SERVER_BACKPORTS_LISTS}" \
+            -o "Dir::Cache=${SERVER_BACKPORTS_CACHE}" \
+            -o "Dir::Cache::archives=${SERVER_BACKPORTS_CACHE}/archives" \
+            update
+        SERVER_BACKPORTS_READY=1
+    }
+
+    download_from_server_backports() {
+        local package_version="$1"
+
+        prepare_server_backports
+        (
+            cd "${ARCHIVES}"
+            apt-get \
+                -o "Dir::Etc::sourcelist=${SERVER_BACKPORTS_LIST}" \
+                -o 'Dir::Etc::sourceparts=-' \
+                -o "Dir::State::lists=${SERVER_BACKPORTS_LISTS}" \
+                -o "Dir::Cache=${SERVER_BACKPORTS_CACHE}" \
+                -o "Dir::Cache::archives=${SERVER_BACKPORTS_CACHE}/archives" \
+                download "${package_version}"
+        )
+    }
+
     while read -r expected_hash filename; do
         [[ -n "${expected_hash}" && -n "${filename}" ]] || continue
         [[ "${filename}" != */* && "${filename}" == *.deb ]] || {
@@ -199,7 +244,10 @@ download_locked_archives() {
         }
 
         note "downloading locked ${pkg}=${version}"
-        (cd "${ARCHIVES}" && apt-get download "${pkg}=${version}")
+        if ! (cd "${ARCHIVES}" && apt-get download "${pkg}=${version}"); then
+            note "locked version is absent from the primary archive; trying signed Canonical Server Team Backports"
+            download_from_server_backports "${pkg}=${version}"
+        fi
         [[ -f "${ARCHIVES}/${filename}" ]] || {
             note "locked download did not produce ${filename}"
             exit 1
