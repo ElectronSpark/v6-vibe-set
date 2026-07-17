@@ -1,4 +1,7 @@
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS base
+
+LABEL org.opencontainers.image.title="xv6-os-dev" \
+      org.xv6.workspace="xv6-os"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -16,6 +19,7 @@ RUN apt-get update \
         cpio \
         curl \
         e2fsprogs \
+        ffmpeg \
         file \
         flex \
         gawk \
@@ -34,16 +38,21 @@ RUN apt-get update \
         libdrm2 \
         libegl-mesa0 \
         libexpat1-dev \
+        libepoxy-dev \
         libgdk-pixbuf2.0-bin \
         libegl1 \
         libepoxy0 \
         libgbm1 \
+        libgbm-dev \
+        libglib2.0-dev \
         libgl1 \
         libgl1-mesa-dri \
         libglx-mesa0 \
         libgmp-dev \
         libsecret-1-0 \
         libltdl-dev \
+        libpixman-1-dev \
+        libslirp-dev \
         libtool \
         m4 \
         libmpc-dev \
@@ -52,6 +61,7 @@ RUN apt-get update \
         meson \
         mtools \
         ninja-build \
+        patch \
         pkg-config \
         python3 \
         python3-mako \
@@ -63,7 +73,9 @@ RUN apt-get update \
         qemu-system-modules-opengl \
         qemu-system-x86 \
         qemu-utils \
+        libsdl2-dev \
         libvirglrenderer1 \
+        libvirglrenderer-dev \
         rsync \
         sparse \
         tar \
@@ -73,8 +85,7 @@ RUN apt-get update \
         xkb-data \
         xz-utils \
         zlib1g-dev \
-    && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2' \
-    && rm -rf /var/lib/apt/lists/*
+    && python3 -m pip install --break-system-packages --no-cache-dir 'meson>=1.4,<2'
 
 COPY scripts/container/container-xv6-command.sh /usr/local/bin/xv6-command
 COPY scripts/container/container-hints.sh /usr/local/bin/xv6-hints
@@ -84,6 +95,8 @@ RUN chmod 0755 /usr/local/bin/xv6-command \
     && chmod 0755 /usr/local/bin/xv6-check-gui-accel \
     && ln -s xv6-command /usr/local/bin/xv6-kernel-x86 \
     && ln -s xv6-command /usr/local/bin/xv6-build \
+    && ln -s xv6-command /usr/local/bin/xv6-build-incremental \
+    && ln -s xv6-command /usr/local/bin/xv6-reproduce \
     && ln -s xv6-command /usr/local/bin/xv6-help \
     && ln -s xv6-command /usr/local/bin/xv6-user-ports \
     && ln -s xv6-command /usr/local/bin/xv6-images \
@@ -129,19 +142,6 @@ ARG XV6_ARCH=x86_64
 ARG XV6_PARALLEL_JOBS=2
 ARG BUILD_DIR=/build/xv6-os
 ARG XV6_WEBKIT_REF_SYSROOT=
-
-COPY . /src/xv6-os
-
-RUN set -eux; \
-    webkit_args=""; \
-    if [ -n "${XV6_WEBKIT_REF_SYSROOT}" ]; then \
-        webkit_args="-DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT} -DXV6_WEBKIT_STRICT_STAGE=ON"; \
-    fi; \
-    cmake -S /src/xv6-os -B "${BUILD_DIR}" \
-        -G Ninja \
-        -DXV6_ARCH="${XV6_ARCH}" \
-        -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}" \
-        ${webkit_args}
 
 WORKDIR /src/xv6-os
 

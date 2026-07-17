@@ -412,10 +412,17 @@ stage_chromium_for_testing() {
     local cache_root="${BUILD_DIR}/wayland-chromium"
     local chrome_dir="${cache_root}/chrome-linux64"
     local chrome_bin="${chrome_dir}/chrome"
-    local zip="${cache_root}/chrome-linux64.zip"
+    local zip="${CHROME_FOR_TESTING_ARCHIVE:-${cache_root}/chrome-linux64.zip}"
+    local expected_sha="${CHROME_FOR_TESTING_SHA256:-}"
     local extract="${cache_root}/extract"
     local url
+    local actual_sha
     local app_root="${OVERLAY}/opt/host-gui/wayland-chromium"
+
+    if [[ -n "${expected_sha}" && ! "${expected_sha}" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "stage-host-gui-runtime: invalid CHROME_FOR_TESTING_SHA256" >&2
+        exit 1
+    fi
 
     if [[ ! -x "${chrome_bin}" ]]; then
         command -v python3 >/dev/null 2>&1 || {
@@ -426,11 +433,21 @@ stage_chromium_for_testing() {
             echo "stage-host-gui-runtime: unzip is required to extract Chrome for Testing" >&2
             exit 1
         }
-
-        mkdir -p "${cache_root}"
-        url="$(chrome_for_testing_url)"
-        note "downloading Chrome for Testing from ${url}"
-        download_file "${url}" "${zip}"
+        mkdir -p "${cache_root}" "$(dirname "${zip}")"
+        if [[ ! -f "${zip}" ]]; then
+            url="$(chrome_for_testing_url)"
+            note "downloading Chrome for Testing from ${url}"
+            download_file "${url}" "${zip}"
+        fi
+        if [[ -n "${expected_sha}" ]]; then
+            actual_sha="$(sha256sum "${zip}" | awk '{print $1}')"
+            if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+                echo "stage-host-gui-runtime: Chrome archive sha256 mismatch" >&2
+                echo "  expected ${expected_sha}" >&2
+                echo "  actual   ${actual_sha}" >&2
+                exit 1
+            fi
+        fi
         rm -rf "${extract}" "${chrome_dir}"
         mkdir -p "${extract}"
         unzip -q "${zip}" -d "${extract}"
@@ -440,6 +457,18 @@ stage_chromium_for_testing() {
         fi
         mv "${extract}/chrome-linux64" "${chrome_dir}"
         rm -rf "${extract}"
+    fi
+
+    if [[ -n "${expected_sha}" ]]; then
+        [[ -f "${zip}" ]] || {
+            echo "stage-host-gui-runtime: locked Chrome archive is missing: ${zip}" >&2
+            exit 1
+        }
+        actual_sha="$(sha256sum "${zip}" | awk '{print $1}')"
+        [[ "${actual_sha}" == "${expected_sha}" ]] || {
+            echo "stage-host-gui-runtime: locked Chrome archive changed after extraction" >&2
+            exit 1
+        }
     fi
 
     rm -rf "${app_root}/chrome-linux64"

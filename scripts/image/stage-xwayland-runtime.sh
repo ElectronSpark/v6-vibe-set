@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Stage host-package Xwayland runtime files into the generated sysroot.
+# Stage locked KDE/host Xwayland runtime files into the generated sysroot.
 set -euo pipefail
 
-SYSROOT="${1:?usage: $0 <sysroot> <xwayland-wrapper>}"
-WRAPPER="${2:?usage: $0 <sysroot> <xwayland-wrapper>}"
+SYSROOT="${1:?usage: $0 <sysroot> <xwayland-wrapper> [runtime-root]}"
+WRAPPER="${2:?usage: $0 <sysroot> <xwayland-wrapper> [runtime-root]}"
+RUNTIME_ROOT="${3:-${SYSROOT}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KDE_WRAPPER_SRC="${SCRIPT_DIR}/xwayland-kde-wrapper.c"
 KDE_WRAPPER_BIN="${SYSROOT}/host-tools/bin/Xwayland-kde-wrapper"
@@ -47,16 +48,19 @@ find_host_tool() {
 find_sysroot_tool() {
     local name="$1"
     local candidate
+    local root
 
-    for candidate in \
-        "${SYSROOT}/bin/${name}.real" \
-        "${SYSROOT}/usr/bin/${name}.real" \
-        "${SYSROOT}/usr/bin/${name}" \
-        "${SYSROOT}/bin/${name}"; do
-        if [[ -x "${candidate}" ]]; then
-            printf '%s\n' "${candidate}"
-            return 0
-        fi
+    for root in "${SYSROOT}" "${RUNTIME_ROOT}"; do
+        for candidate in \
+            "${root}/bin/${name}.real" \
+            "${root}/usr/bin/${name}.real" \
+            "${root}/usr/bin/${name}" \
+            "${root}/bin/${name}"; do
+            if [[ -x "${candidate}" ]]; then
+                printf '%s\n' "${candidate}"
+                return 0
+            fi
+        done
     done
 }
 
@@ -138,6 +142,12 @@ if [[ ! -d "${XKB_ROOT}/xkb" ]]; then
     elif [[ -d "${SYSROOT}/usr/share/X11/xkb" ]]; then
         XKB_ROOT="${SYSROOT}/usr/share/X11"
         XKB_SOURCE="sysroot"
+    elif [[ -d "${RUNTIME_ROOT}/share/X11/xkb" ]]; then
+        XKB_ROOT="${RUNTIME_ROOT}/share/X11"
+        XKB_SOURCE="locked-runtime"
+    elif [[ -d "${RUNTIME_ROOT}/usr/share/X11/xkb" ]]; then
+        XKB_ROOT="${RUNTIME_ROOT}/usr/share/X11"
+        XKB_SOURCE="locked-runtime"
     else
         echo "stage-xwayland-runtime: error: XKB data not found" >&2
         exit 1

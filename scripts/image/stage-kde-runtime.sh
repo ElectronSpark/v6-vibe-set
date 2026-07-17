@@ -6,8 +6,10 @@ OVERLAY="${1:?usage: $0 <overlay> <workdir>}"
 WORKDIR="${2:?usage: $0 <overlay> <workdir>}"
 ARCHIVES="${KDE_ARCHIVES_DIR:-${WORKDIR}/archives}"
 INVENTORY="${WORKDIR}/kde-qt-package-inventory.tsv"
-ORDER_FILE="${WORKDIR}/packages.apt-order.txt"
+ORDER_FILE="${KDE_PACKAGE_ORDER_FILE:-${WORKDIR}/packages.apt-order.txt}"
 RESOLVED_FILE="${WORKDIR}/packages.resolved.txt"
+ARCHIVE_SHA256_FILE="${KDE_ARCHIVE_SHA256_FILE:-}"
+PACKAGE_LOCKED="${KDE_PACKAGE_LOCKED:-0}"
 
 SEEDS=(
     plasma-desktop
@@ -178,7 +180,27 @@ download_missing_archives() {
     local pkg
 
     mkdir -p "${ARCHIVES}"
-    if [[ -s "${ORDER_FILE}" ]]; then
+    if [[ "${PACKAGE_LOCKED}" == "1" ]]; then
+        [[ -s "${ORDER_FILE}" ]] || {
+            note "locked package order is missing: ${ORDER_FILE}"
+            exit 1
+        }
+        [[ -s "${ARCHIVE_SHA256_FILE}" ]] || {
+            note "locked archive checksum file is missing: ${ARCHIVE_SHA256_FILE}"
+            exit 1
+        }
+        shopt -s nullglob
+        locked_archives=("${ARCHIVES}"/*.deb)
+        shopt -u nullglob
+        lock_count="$(awk 'NF >= 2 { count++ } END { print count + 0 }' \
+            "${ARCHIVE_SHA256_FILE}")"
+        if (( ${#locked_archives[@]} != lock_count )); then
+            note "locked archive count mismatch: actual=${#locked_archives[@]} expected=${lock_count}"
+            exit 1
+        fi
+        (cd "${ARCHIVES}" && sha256sum -c "${ARCHIVE_SHA256_FILE}")
+        cp "${ORDER_FILE}" "${RESOLVED_FILE}"
+    elif [[ -s "${ORDER_FILE}" ]]; then
         resolve_incremental_packages
     else
         resolve_packages > "${RESOLVED_FILE}"
@@ -197,6 +219,10 @@ download_missing_archives() {
         fi
         if have_archive_for "${pkg}"; then
             continue
+        fi
+        if [[ "${PACKAGE_LOCKED}" == "1" ]]; then
+            note "locked archive missing for ${pkg}; refusing repository substitution"
+            exit 1
         fi
         note "downloading ${pkg}"
         (cd "${ARCHIVES}" && apt-get download "${pkg}")
@@ -829,6 +855,7 @@ ordered_archives() {
     fi
 }
 
+mkdir -p "${WORKDIR}"
 download_missing_archives
 
 mapfile -t DEBS < <(ordered_archives)

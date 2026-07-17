@@ -22,6 +22,8 @@ scripts/
 - `enter-container.sh` - create or reuse a local Docker development container;
   forwards `/dev/kvm`, `/dev/dri`, `/dev/udmabuf`, and host display sockets when
   they exist. Pass a command (e.g. `xv6-build`) to run it one-shot.
+- `reproduce-workspace.sh` - maintained host one-liner that rebuilds the dev
+  image and performs a clean, receipted kernel + KDE rootfs build.
 - `container-xv6-command.sh` - command dispatcher copied into the image as
   `xv6-build`, `xv6-help`, and friends.
 - `container-hints.sh` - interactive shell hints sourced by the image.
@@ -32,6 +34,11 @@ scripts/
 
 ## build/
 
+- `reproduce-in-container.sh` - clean complete-image build, provenance receipt,
+  dependency-lock capture, and three-iteration retention implementation.
+- `validate-reproduction.sh` - kernel/ext4/KDE-only structural validator.
+- `prune-reproductions.sh` - marker-, protection-, and active-QEMU-aware receipt
+  retention; never signals a VM.
 - `build-linux-host-libs.sh` - stage host glibc runtime support libraries.
 - `build-linux-host-probes.sh` - build small host-glibc ABI probe programs.
 - `patch_vim_exit.sh` - source patch helper used by the Vim port build.
@@ -52,6 +59,12 @@ scripts/
 ## launch/
 
 - `launch-gui.sh` - boot the default x86_64 GUI image in QEMU.
+- `run-owned-qemu.sh` - natural-zero preflight, token/PID/start-time ownership,
+  immutable qcow2 overlay, synchronous reap, and final exact-zero gate.
+- `qemu-exact-inventory.sh` - exact `/proc/*/exe` QEMU inventory without
+  `pgrep` or substring process-name matching.
+- `assert-qemu-path-unused.sh` - prevent generated cleanup of an active VM disk
+  or build/receipt path.
 - `run-qemu.sh` - lower-level QEMU launcher used by CMake and the GUI wrapper.
 
 ## gpu/

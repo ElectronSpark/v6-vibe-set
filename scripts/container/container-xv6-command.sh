@@ -14,7 +14,7 @@ fi
 
 arch="${XV6_ARCH:-x86_64}"
 build_dir="${XV6_BUILD_DIR:-${source_dir}/build-${arch}}"
-jobs="${XV6_PARALLEL_JOBS:-$(nproc)}"
+jobs="${XV6_PARALLEL_JOBS:-2}"
 
 cmake_args=(
     -S "${source_dir}"
@@ -39,7 +39,9 @@ Quick start (from host):
   scripts/container/enter-container.sh             # interactive shell inside container
 
 Build commands (inside container or via enter-container.sh <cmd>):
-  xv6-build           configure and build kernel, userland, ports, and fs.img
+  xv6-build           clean container reproduction with an immutable receipt
+  xv6-reproduce       alias for xv6-build
+  xv6-build-incremental  reuse build tree and build the world target
   xv6-kernel-x86      configure x86_64 and build only the kernel
   xv6-user-ports      build user programs and all ports
   xv6-images          build fs.img, initrd.cpio.gz, and boot.img
@@ -47,16 +49,15 @@ Build commands (inside container or via enter-container.sh <cmd>):
   xv6-hyperv-image    build a Hyper-V Gen2 bootable xv6-hyperv.vhdx
 
 Launch commands (inside container):
-  xv6-launch          build everything (world), then boot QEMU with KVM + GTK GUI
-  xv6-launch-nokvm    build kernel/rootfs, then boot QEMU with USE_KVM=0
-  xv6-qemu-nokvm      alias for xv6-launch-nokvm
+  xv6-launch          refused in-container; launch on the host for VM safety
   xv6-check-gui-accel check host/container KVM, DRI, and udmabuf devices
 
 Environment:
   XV6_SOURCE_DIR        source checkout          default: current repo or /src/xv6-os
   XV6_BUILD_DIR         build directory          default: \$XV6_SOURCE_DIR/build-\$XV6_ARCH
   XV6_ARCH              target arch              default: x86_64
-  XV6_PARALLEL_JOBS     build parallelism        default: nproc
+  XV6_PARALLEL_JOBS     build parallelism        default: 2
+  XV6_KEEP_ITERATIONS   completed receipts       default/max: 3
   DISPLAY_MODE          qemu display mode        default for launch: nographic
   XV6_WEBKIT_REF_SYSROOT  optional WebKitGTK runtime sysroot
 
@@ -98,7 +99,10 @@ case "${command_name}" in
     xv6-help|xv6-command)
         usage
         ;;
-    xv6-build)
+    xv6-build|xv6-reproduce)
+        exec "${source_dir}/scripts/build/reproduce-in-container.sh"
+        ;;
+    xv6-build-incremental)
         build_targets world
         ;;
     xv6-kernel-x86)
@@ -125,17 +129,10 @@ case "${command_name}" in
     xv6-hyperv-image)
         build_targets hyperv-image
         ;;
-    xv6-launch)
-        build_targets world
-        DISPLAY_MODE="${DISPLAY_MODE:-gtk}" \
-            exec "${source_dir}/scripts/launch/launch-gui.sh"
-        ;;
-    xv6-launch-nokvm|xv6-qemu-nokvm)
-        configure
-        cmake --build "${build_dir}" --target kernel rootfs -j "${jobs}"
-        fix_build_ownership
-        USE_KVM=0 DISPLAY_MODE="${DISPLAY_MODE:-nographic}" \
-            cmake --build "${build_dir}" --target qemu
+    xv6-launch|xv6-launch-nokvm|xv6-qemu-nokvm)
+        echo "xv6-command: refusing in-container QEMU because it cannot reliably inventory external host VMs" >&2
+        echo "xv6-command: run scripts/launch/launch-gui.sh on the host" >&2
+        exit 75
         ;;
     *)
         usage >&2

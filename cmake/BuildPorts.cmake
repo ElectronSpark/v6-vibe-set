@@ -61,6 +61,7 @@ ExternalProject_Add(ports
 	                    -DXV6_SYSROOT=${XV6_SYSROOT}
 	                    -DXV6_PORT_CFLAGS=${_port_cflags}
 	                    -DXV6_PORT_CROSS=OFF
+	                    -DXV6_PARALLEL_JOBS=${XV6_PARALLEL_JOBS}
 	                    -DXV6_WEBKIT_REF_SYSROOT=${XV6_WEBKIT_REF_SYSROOT}
 	                    -DXV6_WEBKIT_STRICT_STAGE=${XV6_WEBKIT_STRICT_STAGE}
 	BUILD_COMMAND     ${CMAKE_COMMAND} --build ${_ports_obj} -j${XV6_PARALLEL_JOBS}

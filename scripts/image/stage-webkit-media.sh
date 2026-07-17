@@ -5,6 +5,12 @@ set -euo pipefail
 OVERLAY="${1:?usage: $0 <overlay>}"
 BUILD_DIR="${WEBKIT_MEDIA_BUILD_DIR:-build-x86_64/webkit-media}"
 DEST="${OVERLAY}/share/webkit"
+MEDIA_THREADS="${WEBKIT_MEDIA_THREADS:-2}"
+
+[[ "${MEDIA_THREADS}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "stage-webkit-media: WEBKIT_MEDIA_THREADS must be positive" >&2
+    exit 2
+}
 
 mkdir -p "${DEST}" "${BUILD_DIR}"
 failures=0
@@ -25,13 +31,15 @@ generate_with_gst() {
     local name="$1"
     local pipeline="$2"
     local out="${BUILD_DIR}/${name}"
+    local -a pipeline_args=()
 
     if [[ -f "${out}" ]]; then
         cp -a "${out}" "${DEST}/${name}"
         return 0
     fi
     command -v gst-launch-1.0 >/dev/null 2>&1 || return 1
-    if gst-launch-1.0 -q ${pipeline} "filesink location=${out}"; then
+    read -r -a pipeline_args <<<"${pipeline}"
+    if gst-launch-1.0 -q "${pipeline_args[@]}" '!' filesink "location=${out}"; then
         cp -a "${out}" "${DEST}/${name}"
         return 0
     fi
@@ -71,8 +79,9 @@ generate_with_ffmpeg() {
     case "${container}" in
         mp4)
             if ffmpeg -hide_banner -loglevel error -y \
+                -filter_threads "${MEDIA_THREADS}" \
                 -f lavfi -i "${source}" \
-                -t "${duration}" -an -c:v libx264 -preset veryfast -crf 12 \
+                -t "${duration}" -an -c:v libx264 -threads "${MEDIA_THREADS}" -preset veryfast -crf 12 \
                 -profile:v high -pix_fmt yuv420p -g "${fps}" \
                 -x264-params "keyint=${fps}:min-keyint=${fps}:scenecut=0" \
                 -movflags +faststart \
@@ -82,8 +91,9 @@ generate_with_ffmpeg() {
                 return 0
             fi
             if ffmpeg -hide_banner -loglevel error -y \
+                -filter_threads "${MEDIA_THREADS}" \
                 -f lavfi -i "${source}" \
-                -t "${duration}" -an -c:v mpeg4 -q:v 1 -b:v 24000k -movflags +faststart \
+                -t "${duration}" -an -c:v mpeg4 -threads "${MEDIA_THREADS}" -q:v 1 -b:v 24000k -movflags +faststart \
                 "${out}"; then
                 printf '%s\n' "${profile_version}" > "${meta}"
                 cp -a "${out}" "${DEST}/${name}"
@@ -92,8 +102,9 @@ generate_with_ffmpeg() {
             ;;
         webm)
             if ffmpeg -hide_banner -loglevel error -y \
+                -filter_threads "${MEDIA_THREADS}" \
                 -f lavfi -i "${source}" \
-                -t "${duration}" -an -c:v libvpx -deadline realtime -cpu-used 8 -b:v 800k \
+                -t "${duration}" -an -c:v libvpx -threads "${MEDIA_THREADS}" -deadline realtime -cpu-used 8 -b:v 800k \
                 "${out}"; then
                 cp -a "${out}" "${DEST}/${name}"
                 return 0
@@ -123,10 +134,10 @@ stage_webm() {
     local buffers=$((fps * duration))
 
     copy_from_source_dir "${name}" && return 0
+    generate_with_ffmpeg "${name}" "${width}" "${height}" "${fps}" "${duration}" webm "${detail_profile}" &&
+        return 0
     generate_with_gst "${name}" \
         "videotestsrc num-buffers=${buffers} ! video/x-raw,width=${width},height=${height},framerate=${fps}/1 ! vp8enc deadline=1 ! webmmux" &&
-        return 0
-    generate_with_ffmpeg "${name}" "${width}" "${height}" "${fps}" "${duration}" webm "${detail_profile}" &&
         return 0
     missing_asset "${name}"
 }
@@ -141,14 +152,10 @@ stage_mp4() {
     local buffers=$((fps * duration))
 
     copy_from_source_dir "${name}" && return 0
-    if [[ "${detail_profile}" == "detail" ]]; then
-        generate_with_ffmpeg "${name}" "${width}" "${height}" "${fps}" "${duration}" mp4 "${detail_profile}" &&
-            return 0
-    fi
+    generate_with_ffmpeg "${name}" "${width}" "${height}" "${fps}" "${duration}" mp4 "${detail_profile}" &&
+        return 0
     generate_with_gst "${name}" \
         "videotestsrc num-buffers=${buffers} ! video/x-raw,width=${width},height=${height},framerate=${fps}/1 ! videoconvert ! avenc_mpeg4 ! mp4mux" &&
-        return 0
-    generate_with_ffmpeg "${name}" "${width}" "${height}" "${fps}" "${duration}" mp4 "${detail_profile}" &&
         return 0
     missing_asset "${name}"
 }

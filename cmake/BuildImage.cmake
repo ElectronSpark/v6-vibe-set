@@ -32,6 +32,16 @@ set(_gameboy_rom_overlay "${_generated_rootfs_overlay_root}/gameboy-roms")
 set(_host_gui_runtime_stamp "${_host_gui_overlay}/.stamp")
 set(_webkit_media_stamp "${_webkit_media_overlay}/.stamp")
 set(_kde_runtime_stamp "${_kde_runtime_overlay}/.stamp")
+set(XV6_KDE_ARCHIVES_DIR "${XV6_BUILD_ROOT}/kde-noble-plasma/archives"
+	CACHE PATH "Persistent directory containing the KDE/Plasma .deb archive set")
+set(XV6_KDE_PACKAGE_ORDER_FILE "${XV6_BUILD_ROOT}/kde-noble-plasma/packages.apt-order.txt"
+	CACHE FILEPATH "Optional locked KDE package order")
+	set(XV6_KDE_ARCHIVE_SHA256_FILE ""
+		CACHE FILEPATH "Optional sha256sum file for a locked KDE archive set")
+	option(XV6_KDE_PACKAGE_LOCKED "Require the supplied KDE package order/archive hashes" OFF)
+	set(XV6_CHROME_FOR_TESTING_URL "" CACHE STRING "Pinned Chrome for Testing archive URL")
+	set(XV6_CHROME_FOR_TESTING_SHA256 "" CACHE STRING "Pinned Chrome for Testing archive sha256")
+	set(XV6_CHROME_FOR_TESTING_ARCHIVE "" CACHE FILEPATH "Persistent Chrome for Testing archive")
 set(_gameboy_rom_stamp "${_gameboy_rom_overlay}/.stamp")
 set(_gpup_umd_overlay "${XV6_BUILD_ROOT}/gpup-umd-overlay")
 set(_gpup_umd_overlay_stamp "${_gpup_umd_overlay}/.stamp")
@@ -130,9 +140,9 @@ set(_rootfs_refresh_deps host-gui-runtime webkit-media kde-runtime gameboy-roms 
 			${_xwayland_stage_script}
 			${_xwayland_kde_wrapper_source})
 set(_xwayland_stage_command
-	${CMAKE_COMMAND} -E env
-		${_xwayland_stage_script}
-			${XV6_SYSROOT} ${XV6_SYSROOT}/bin/Xwayland)
+		${CMAKE_COMMAND} -E env
+			${_xwayland_stage_script}
+				${XV6_SYSROOT} ${XV6_SYSROOT}/bin/Xwayland ${_kde_runtime_overlay})
 set(_rootfs_command
 	${CMAKE_COMMAND} -E env
 		ROOTFS_EXTRA_OVERLAYS=${_rootfs_extra_overlays}
@@ -145,6 +155,9 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${_host_gui_overlay}
 	COMMAND ${CMAKE_COMMAND} -E env
 		HOST_GUI_BUILD_DIR=${XV6_BUILD_ROOT}/host-gui-runtime
+		CHROME_FOR_TESTING_URL=${XV6_CHROME_FOR_TESTING_URL}
+		CHROME_FOR_TESTING_SHA256=${XV6_CHROME_FOR_TESTING_SHA256}
+		CHROME_FOR_TESTING_ARCHIVE=${XV6_CHROME_FOR_TESTING_ARCHIVE}
 		${CMAKE_SOURCE_DIR}/scripts/image/stage-host-gui-runtime.sh
 			${_host_gui_overlay}
 			${XV6_SYSROOT}
@@ -161,6 +174,7 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${_webkit_media_overlay}
 	COMMAND ${CMAKE_COMMAND} -E env
 		WEBKIT_MEDIA_BUILD_DIR=${XV6_BUILD_ROOT}/webkit-media
+		WEBKIT_MEDIA_THREADS=${XV6_PARALLEL_JOBS}
 		${CMAKE_SOURCE_DIR}/scripts/image/stage-webkit-media.sh
 			${_webkit_media_overlay}
 	COMMAND ${CMAKE_COMMAND} -E touch ${_webkit_media_stamp}
@@ -175,7 +189,10 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E rm -rf ${_kde_runtime_overlay}
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${_kde_runtime_overlay}
 	COMMAND ${CMAKE_COMMAND} -E env
-		KDE_ARCHIVES_DIR=${XV6_BUILD_ROOT}/kde-noble-plasma/archives
+		KDE_ARCHIVES_DIR=${XV6_KDE_ARCHIVES_DIR}
+		KDE_PACKAGE_ORDER_FILE=${XV6_KDE_PACKAGE_ORDER_FILE}
+		KDE_ARCHIVE_SHA256_FILE=${XV6_KDE_ARCHIVE_SHA256_FILE}
+		KDE_PACKAGE_LOCKED=$<IF:$<BOOL:${XV6_KDE_PACKAGE_LOCKED}>,1,0>
 		${CMAKE_SOURCE_DIR}/scripts/image/stage-kde-runtime.sh
 			${_kde_runtime_overlay}
 			${XV6_BUILD_ROOT}/kde-noble-plasma
@@ -270,10 +287,12 @@ add_custom_target(hyperv-image
 # qemu boot — uses fs.img (the rootfs target).
 # ---------------------------------------------------------------------
 add_custom_target(qemu
-	COMMAND ${CMAKE_SOURCE_DIR}/scripts/launch/run-qemu.sh
-	            ${XV6_ARCH}
-	            ${_qemu_kernel}
-	            ${_fsimg}
+	COMMAND ${CMAKE_COMMAND} -E env
+	            ARCH=${XV6_ARCH}
+	            BUILD_DIR=${XV6_BUILD_ROOT}
+	            KERNEL=${_qemu_kernel}
+	            FSIMG=${_fsimg}
+	            ${CMAKE_SOURCE_DIR}/scripts/launch/launch-gui.sh
 	DEPENDS kernel rootfs
 	USES_TERMINAL
 	COMMENT "Booting ${XV6_ARCH} kernel in qemu")

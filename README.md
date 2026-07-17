@@ -43,13 +43,10 @@ Current x86_64 bring-up reaches the Wayland desktop (`/bin/desktop` ->
 `wlcomp`) from an ext4 rootfs mounted over virtio-blk. The desktop and
 compositor are rebuilt as static binaries by `port-wayland`, so the GUI
 does not depend on dynamic loader state during early session startup.
-The default QEMU GUI path uses a virtio tablet for absolute pointer input and
-forces QEMU's GTK process to `GDK_SCALE=1`/`GDK_DPI_SCALE=1`, keeping the guest
-framebuffer and host window at a predictable 1:1 scale.  VMware absolute pointer
-support is still available with `QEMU_VMMOUSE=1` for debugging.  The `rootfs`
-target builds
-`build-x86_64/fs.img`; `qemu` boots it with GTK display and user-mode
-networking.
+The default QEMU GUI path is the version-pinned, aspect/input-corrected SDL GL
+frontend with a primary virgl adapter. It displays the KDE-only 1280x800 guest
+without stretching it to the host window and maps absolute input through the
+same fitted viewport.
 
 ## Graphics API scope
 
@@ -62,36 +59,42 @@ compatibility path.
 
 ## Build and launch
 
-These are the commands to use from a clean checkout. The root filesystem image
-is generated from the staged sysroot; no prebuilt sysroot is meant to live in
-the repository.
+The maintained path is one command. It rebuilds the development container,
+performs a clean complete x86_64 build from the bind-mounted workspace,
+validates the KDE-only ext4 image, builds the patched QEMU 9.0.2 SDL frontend,
+and writes an immutable receipt with source/tool provenance and hashes:
 
 ```sh
-# fetch sub-repos
 git submodule update --init --recursive
+scripts/container/reproduce-workspace.sh
 
-# configure
-cmake -S . -B build-x86_64 -G Ninja -DXV6_ARCH=x86_64 -DXV6_PARALLEL_JOBS=2
-
-# build the OS: kernel, host-glibc userland, ports, and ext4 rootfs
-cmake --build build-x86_64 --target world -j2
-
-# launch the GUI OS
-./scripts/launch/launch-gui.sh
+# Host-only launch from the newest verified receipt.
+scripts/launch/launch-gui.sh
 ```
 
-For a headless/non-KVM launch, use the CMake QEMU target:
+At most three completed receipts are kept under
+`build-reproductions/x86_64/`. Before a fourth is created, the oldest marked,
+unprotected, confirmed-unused receipt is removed. Add a `.keep` file to a
+deployed receipt to exclude it from automatic cleanup. The mutable CMake tree
+is singular at `build-x86_64`, so intermediate objects are not triplicated.
+
+The container base is pinned by digest. Each receipt also records the exact
+QEMU source archive, Chrome-for-Testing version/archive checksum, KDE package
+install order and archive checksums, Game Boy ROM checksum, generated WebKit
+media checksums, and the container package inventory. Cached downloads are
+accepted only after those locks pass; changing a lock makes the build fetch and
+validate the replacement instead of silently reusing mutable content.
+
+The launcher waits for every exact `qemu-system-*`/`qemu-kvm` executable to
+exit naturally and never signals an external VM. Its own QEMU receives a
+unique token, PID/start-time/process-group verification, synchronous reap, and
+a final exact-zero check. The receipt's rootfs stays immutable: each run uses a
+private qcow2 overlay that is deleted only after its owned QEMU exits.
+
+For a deliberate headless/non-KVM launch, keep the same owned host launcher:
 
 ```sh
-USE_KVM=0 DISPLAY_MODE=nographic cmake --build build-x86_64 --target qemu
-```
-
-The QEMU launcher reads `build-x86_64/kernel/kernel.elf` and
-`build-x86_64/fs.img` by default. If either file is missing, rebuild `kernel`
-and `rootfs`:
-
-```sh
-cmake --build build-x86_64 --target kernel rootfs -j2
+USE_KVM=0 DISPLAY_MODE=nographic scripts/launch/launch-gui.sh
 ```
 
 The build-local sysroot is always `${build_dir}/sysroot`. Do not set
@@ -119,20 +122,14 @@ artifacts should stay out of the repository.
 
 ## Docker
 
-Build the development image:
+Build the container and reproduce the complete kernel/image in one command:
 
 ```sh
-docker compose build
+scripts/container/reproduce-workspace.sh
 ```
 
-Build everything and launch the GUI in one command (via the helper wrapper):
-
-```sh
-scripts/container/enter-container.sh xv6-launch
-```
-
-Or call `docker compose` directly — pass your UID/GID so build artifacts are
-not root-owned on the host:
+The helper detects either native `docker` or Docker Desktop's `docker.exe` on
+WSL. For an already-built image, the equivalent build command is:
 
 ```sh
 XV6_UID=$(id -u) XV6_GID=$(id -g) docker compose run --rm xv6 xv6-build
@@ -140,34 +137,35 @@ XV6_UID=$(id -u) XV6_GID=$(id -g) docker compose run --rm xv6 xv6-build
 
 `enter-container.sh` exports `XV6_UID`/`XV6_GID` automatically, so the
 helper is the more convenient interface for interactive use.  Either way the
-container runs as your host user and all output in `build-x86_64/` stays
-owned by you.
+container runs as your host user and all generated output stays owned by you.
+QEMU is intentionally not launched inside Docker because Docker Desktop cannot
+reliably expose the surrounding WSL distribution's process inventory. Launch
+from the host so the external-VM gate is authoritative.
 
 Other useful one-liners (all via the helper or with the UID prefix above):
 
 ```sh
-scripts/container/enter-container.sh xv6-build         # build only (no launch)
+scripts/container/enter-container.sh xv6-build         # clean receipted build
+scripts/container/enter-container.sh xv6-build-incremental # explicit reuse
 scripts/container/enter-container.sh bash              # interactive shell
 scripts/container/enter-container.sh xv6-help          # list all container commands
 scripts/container/enter-container.sh xv6-hyperv-image  # build Hyper-V VHDX
-scripts/container/enter-container.sh xv6-launch-nokvm  # build + boot without KVM
+scripts/launch/launch-gui.sh                            # safe host launch
 ```
 
-The `compose.yml` at the repo root defines the container: it bind-mounts the
-source tree, forwards the host Wayland/X11 display sockets, and conditionally
-exposes `/dev/kvm`, `/dev/dri`, and `/dev/udmabuf` (only nodes that exist).
+The `compose.yml` at the repo root defines the build/development container and
+bind-mounts the source tree.
 If `/dev/udmabuf` is not present, create it first with:
 
 ```sh
 sudo modprobe udmabuf
 ```
 
-`scripts/container/enter-container.sh` is a thin wrapper around
-`docker compose run --rm xv6` that automatically exports your UID/GID and
-passes any present `/dev/kvm`, `/dev/dri`, `/dev/udmabuf` devices:
+`scripts/container/enter-container.sh` is the interactive/one-shot container
+wrapper. It redirects legacy launch aliases back to the safe host launcher:
 
 ```sh
-scripts/container/enter-container.sh xv6-launch   # same as docker compose run
+scripts/container/enter-container.sh xv6-launch   # host launch, not container QEMU
 scripts/container/enter-container.sh               # interactive shell
 ```
 

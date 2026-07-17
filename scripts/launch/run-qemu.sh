@@ -135,6 +135,15 @@ if [[ $# -ne 3 ]]; then
 fi
 ARCH="$1"; KERNEL="$2"; FSIMG="$3"
 
+if [[ "${ARCH}" == "x86_64" && "${QEMU_DRY_RUN:-0}" != "1" &&
+      "${QEMU_PREFLIGHT_DONE:-0}" != "1" ]]; then
+        if [[ -e /.dockerenv ]]; then
+                echo "run-qemu: refusing direct x86 launch in a container; host /proc is not authoritative" >&2
+                exit 75
+        fi
+        "${RUN_QEMU_DIR}/qemu-exact-inventory.sh" --require-zero
+fi
+
 if [[ -n "${QEMU_BIN+x}" ]]; then
         QEMU_BIN_EXPLICIT=1
 else

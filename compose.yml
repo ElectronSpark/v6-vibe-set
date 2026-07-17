@@ -1,8 +1,7 @@
 # xv6-os development container
 #
 # Common commands:
-#   docker compose run --rm xv6 xv6-launch        # build everything + boot QEMU (KVM + GTK GUI)
-#   docker compose run --rm xv6 xv6-build         # build only (kernel, userland, ports, fs.img)
+#   docker compose run --rm xv6 xv6-build         # clean, receipted kernel + KDE image build
 #   docker compose run --rm xv6 bash              # interactive shell
 #   docker compose run --rm xv6 xv6-help          # list all available commands
 #
@@ -39,6 +38,7 @@ services:
     user: "${XV6_UID:-1000}:${XV6_GID:-1000}"
     environment:
       XV6_SOURCE_DIR: /src/xv6-os
+      XV6_IN_CONTAINER: "1"
       XV6_ARCH: ${XV6_ARCH:-x86_64}
       XV6_PARALLEL_JOBS: ${XV6_PARALLEL_JOBS:-}
       DISPLAY: ${DISPLAY:-}
@@ -47,8 +47,8 @@ services:
       # No /etc/passwd entry exists for the host UID inside the container;
       # point HOME somewhere writable so cmake/pkg-config caches don't error.
       HOME: /tmp
-    # devices are NOT listed here so bare 'docker compose run' works on any host.
-    # enter-container.sh adds --device flags conditionally for existing nodes.
+    # QEMU is deliberately launched on the host, where the exact /proc
+    # inventory can see and preserve unrelated external VMs.
     working_dir: /src/xv6-os
     stdin_open: true
     tty: true
