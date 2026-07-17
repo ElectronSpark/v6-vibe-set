@@ -11,6 +11,7 @@ BUILD="${XV6_BUILD_DIR:-${ROOT}/build-${ARCH}}"
 RECEIPT_ROOT="${XV6_REPRODUCTION_ROOT:-${ROOT}/build-reproductions/${ARCH}}"
 QEMU_CACHE="${XV6_QEMU_SDL_CACHE:-${ROOT}/build-qemu-sdl-cache}"
 KDE_CACHE="${XV6_KDE_PACKAGE_CACHE:-${ROOT}/build-package-cache/kde-noble}"
+KDE_LOCK_DIR="${ROOT}/scripts/locks/kde-noble"
 CHROME_VERSION="151.0.7922.34"
 CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip"
 CHROME_SHA256="ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8"
@@ -149,16 +150,31 @@ seed_kde_cache() {
     if [[ ! -s "${KDE_CACHE}/packages.apt-order.txt" && -s "${source_order}" ]]; then
         cp -- "${source_order}" "${KDE_CACHE}/packages.apt-order.txt"
     fi
+    if [[ ! -s "${KDE_CACHE}/packages.apt-order.txt" ]]; then
+        cp -- "${KDE_LOCK_DIR}/packages.apt-order.txt" \
+            "${KDE_CACHE}/packages.apt-order.txt"
+    fi
+    if [[ ! -s "${KDE_CACHE}/archives.sha256" ]]; then
+        cp -- "${KDE_LOCK_DIR}/archives.sha256" \
+            "${KDE_CACHE}/archives.sha256"
+    fi
     [[ -s "${KDE_CACHE}/packages.apt-order.txt" ]] || {
         echo "reproduce-in-container: cannot lock KDE package order; no validated order file is available" >&2
         exit 1
     }
-    if [[ ! -s "${KDE_CACHE}/archives.sha256" ]]; then
-        (
-            cd "${KDE_CACHE}/archives"
-            sha256sum -- *.deb >"${KDE_CACHE}/archives.sha256"
-        )
-    fi
+    [[ -s "${KDE_CACHE}/archives.sha256" ]] || {
+        echo "reproduce-in-container: validated KDE archive hashes are unavailable" >&2
+        exit 1
+    }
+
+    KDE_ARCHIVES_DIR="${KDE_CACHE}/archives" \
+    KDE_PACKAGE_ORDER_FILE="${KDE_CACHE}/packages.apt-order.txt" \
+    KDE_ARCHIVE_SHA256_FILE="${KDE_CACHE}/archives.sha256" \
+    KDE_PACKAGE_LOCKED=1 \
+    KDE_DOWNLOAD_ONLY=1 \
+        "${ROOT}/scripts/image/stage-kde-runtime.sh" \
+        "${KDE_CACHE}/bootstrap-overlay" "${KDE_CACHE}/bootstrap-work"
+
     shopt -s nullglob
     cached_archives=("${KDE_CACHE}/archives"/*.deb)
     shopt -u nullglob

@@ -84,6 +84,9 @@ install order and archive checksums, Game Boy ROM checksum, generated WebKit
 media checksums, and the container package inventory. Cached downloads are
 accepted only after those locks pass; changing a lock makes the build fetch and
 validate the replacement instead of silently reusing mutable content.
+The validated KDE package order and archive hashes are also checked into
+`scripts/locks/kde-noble/`, allowing a cold-cache clone to download exact
+package versions before enforcing the same receipt lock.
 
 The launcher waits for every exact `qemu-system-*`/`qemu-kvm` executable to
 exit naturally and never signals an external VM. Its own QEMU receives a

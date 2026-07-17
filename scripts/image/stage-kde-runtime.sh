@@ -10,6 +10,7 @@ ORDER_FILE="${KDE_PACKAGE_ORDER_FILE:-${WORKDIR}/packages.apt-order.txt}"
 RESOLVED_FILE="${WORKDIR}/packages.resolved.txt"
 ARCHIVE_SHA256_FILE="${KDE_ARCHIVE_SHA256_FILE:-}"
 PACKAGE_LOCKED="${KDE_PACKAGE_LOCKED:-0}"
+DOWNLOAD_ONLY="${KDE_DOWNLOAD_ONLY:-0}"
 
 SEEDS=(
     plasma-desktop
@@ -176,6 +177,36 @@ resolve_incremental_packages() {
     done
 }
 
+download_locked_archives() {
+    local expected_hash filename pkg encoded_version version
+
+    while read -r expected_hash filename; do
+        [[ -n "${expected_hash}" && -n "${filename}" ]] || continue
+        [[ "${filename}" != */* && "${filename}" == *.deb ]] || {
+            note "invalid locked archive name: ${filename}"
+            exit 1
+        }
+        [[ -f "${ARCHIVES}/${filename}" ]] && continue
+
+        pkg="${filename%%_*}"
+        encoded_version="${filename#*_}"
+        encoded_version="${encoded_version%_*}"
+        version="${encoded_version//%3a/:}"
+        version="${version//%3A/:}"
+        [[ -n "${pkg}" && -n "${version}" ]] || {
+            note "cannot derive package/version from locked archive ${filename}"
+            exit 1
+        }
+
+        note "downloading locked ${pkg}=${version}"
+        (cd "${ARCHIVES}" && apt-get download "${pkg}=${version}")
+        [[ -f "${ARCHIVES}/${filename}" ]] || {
+            note "locked download did not produce ${filename}"
+            exit 1
+        }
+    done < "${ARCHIVE_SHA256_FILE}"
+}
+
 download_missing_archives() {
     local pkg
 
@@ -189,6 +220,7 @@ download_missing_archives() {
             note "locked archive checksum file is missing: ${ARCHIVE_SHA256_FILE}"
             exit 1
         }
+        download_locked_archives
         shopt -s nullglob
         locked_archives=("${ARCHIVES}"/*.deb)
         shopt -u nullglob
@@ -857,6 +889,11 @@ ordered_archives() {
 
 mkdir -p "${WORKDIR}"
 download_missing_archives
+
+if [[ "${DOWNLOAD_ONLY}" == "1" ]]; then
+    note "locked package cache is ready in ${ARCHIVES}"
+    exit 0
+fi
 
 mapfile -t DEBS < <(ordered_archives)
 if [[ "${#DEBS[@]}" -eq 0 ]]; then
