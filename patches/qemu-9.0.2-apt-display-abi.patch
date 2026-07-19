@@ -1,0 +1,12 @@
+diff --git a/qapi/ui.json b/qapi/ui.json
+--- a/qapi/ui.json
++++ b/qapi/ui.json
+@@ -1511,7 +1511,7 @@
+   'data'    : [
+     { 'name': 'default' },
+     { 'name': 'none' },
+-    { 'name': 'gtk', 'if': 'CONFIG_GTK' },
++    { 'name': 'gtk' },
+     { 'name': 'sdl', 'if': 'CONFIG_SDL' },
+     { 'name': 'egl-headless', 'if': 'CONFIG_OPENGL' },
+     { 'name': 'curses', 'if': 'CONFIG_CURSES' },

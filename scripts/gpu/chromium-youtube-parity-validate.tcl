@@ -134,6 +134,19 @@ proc parity_validate_audio {text wav_before wav_after} {
         [expr {$wav_after - $wav_before}]]
 }
 
+proc parity_performance_reason {presented_fps media_wall_ratio drop_percent} {
+    if {$presented_fps < 50.0 || $presented_fps > 75.0} {
+        return [format "presented-fps-out-of-range=%.3f" $presented_fps]
+    }
+    if {$media_wall_ratio < 0.90 || $media_wall_ratio > 1.10} {
+        return [format "media-wall-ratio-out-of-range=%.6f" $media_wall_ratio]
+    }
+    if {$drop_percent > 50.0} {
+        return [format "vpq-drop-percent-too-high=%.3f" $drop_percent]
+    }
+    return pass
+}
+
 if {$argc == 1 && [lindex $argv 0] eq "--self-test"} {
     set nonce 0123456789abcdef0123456789abcdef
     set probe [synthetic_media_probe_evidence $nonce \
@@ -155,6 +168,17 @@ if {$argc == 1 && [lindex $argv 0] eq "--self-test"} {
     set wall "\[412:412:0710/120000.123456:INFO:CONSOLE:42\] \"YT_MEDIA_WALL_V1 kind=start schema=1 nonce=$nonce monotonic_ms=1000\", source: chrome-extension://edfilgocpdgbkehcgdillfgnnhclphol/probe.js (42)\n\[412:412:0710/120020.123456:INFO:CONSOLE:43\] \"YT_MEDIA_WALL_V1 kind=end schema=1 nonce=$nonce monotonic_ms=21000\", source: chrome-extension://edfilgocpdgbkehcgdillfgnnhclphol/probe.js (43)\n"
     if {[parity_validate_wall $wall $nonce] != 20.0} {
         parity_fail "self-test-wall"
+    }
+    foreach {presented ratio dropped expected} {
+        60.0 1.0 1.0 pass
+        49.9 1.0 1.0 presented-fps-out-of-range=49.900
+        60.0 0.89 1.0 media-wall-ratio-out-of-range=0.890000
+        60.0 1.0 50.1 vpq-drop-percent-too-high=50.100
+    } {
+        if {[parity_performance_reason $presented $ratio $dropped] ne
+            $expected} {
+            parity_fail "self-test-performance"
+        }
     }
     puts "YOUTUBE_PARITY_SELF_TEST status=PASS"
     exit 0
@@ -191,6 +215,9 @@ if {$vpq_total <= 0 || $vpq_dropped < 0 || $vpq_dropped > $vpq_total} {
     parity_fail "vpq-counters-invalid"
 }
 set drop_percent [expr {100.0 * $vpq_dropped / $vpq_total}]
+set performance_reason [parity_performance_reason \
+    $presented_fps $media_wall_ratio $drop_percent]
+if {$performance_reason ne "pass"} { parity_fail $performance_reason }
 puts [format \
     "YOUTUBE_PARITY_RESULT status=PASS guest=%s mode=%s presented_fps=%.3f media_seconds=%.6f wall_seconds=%.6f media_wall_ratio=%.6f vpq_total=%d vpq_dropped=%d vpq_drop_percent=%.3f display_samples=%d pulse_stream_bytes_delta=%d hw_played_bytes_delta=%d wav_bytes_delta=%d quality=%s width=1280 height=720" \
     $guest $mode $presented_fps $media_seconds $wall_seconds $media_wall_ratio \

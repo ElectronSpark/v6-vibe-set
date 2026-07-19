@@ -48,6 +48,9 @@ SEEDS=(
     kwrite
     qterminal
     xterm
+    xwayland
+    x11-xkb-utils
+    xkb-data
     libgpgmepp6t64
 )
 
@@ -918,7 +921,34 @@ Rectangle {
 
     Component.onCompleted: console.log("XV6_QT_WAYLAND_SMOKE_READY")
 }
+
 EOF
+}
+
+validate_xwayland_runtime() {
+    local path
+    local missing=0
+
+    for path in \
+        "${OVERLAY}/usr/bin/Xwayland" \
+        "${OVERLAY}/usr/bin/xkbcomp" \
+        "${OVERLAY}/usr/share/X11/xkb/keycodes/evdev"; do
+        if [[ ! -f "${path}" ]]; then
+            note "error: required Xwayland runtime payload missing: ${path#${OVERLAY}/}"
+            missing=1
+        fi
+    done
+    if [[ ! -x "${OVERLAY}/usr/bin/Xwayland" ]]; then
+        note "error: Xwayland payload is not executable: usr/bin/Xwayland"
+        missing=1
+    fi
+    if [[ ! -x "${OVERLAY}/usr/bin/xkbcomp" ]]; then
+        note "error: xkbcomp payload is not executable: usr/bin/xkbcomp"
+        missing=1
+    fi
+    if (( missing != 0 )); then
+        return 1
+    fi
 }
 
 ordered_archives() {
@@ -996,6 +1026,7 @@ cp "${INVENTORY}" "${OVERLAY}/opt/xv6-kde/kde-qt-package-inventory.tsv"
 cp "${ORDER_FILE}" "${OVERLAY}/opt/xv6-kde/packages.apt-order.txt"
 write_qt_wayland_smoke_qml
 printf '%s\n' "source=ubuntu-noble-deb-archives" > "${OVERLAY}/opt/xv6-kde/README.txt"
+validate_xwayland_runtime
 
 note "staged ${#DEBS[@]} KDE/Qt package archives into ${OVERLAY}"
 note "inventory=${INVENTORY}"

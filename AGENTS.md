@@ -28,6 +28,11 @@ verbatim or by explicit reference in every worker prompt.
   handle, synchronously wait on that exact process until it exits before
   starting another search or resource-heavy command. Do not use monitors or
   polling loops that can abandon the real process.
+- Keep at most the three most recent completed iterations of generated build
+  trees and build images. Before creating a fourth iteration, remove the oldest
+  confirmed-unused iteration. Active VM disks, Docker data, deployed runtime
+  images, source trees, and the newest known-good rollback are never automatic
+  cleanup candidates.
 
 ## VM and console safety
 

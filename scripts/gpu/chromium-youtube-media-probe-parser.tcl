@@ -1386,6 +1386,24 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
     set media_sufficient [expr {
         double([dict get $rvfc media_first]) >= 0 &&
         double([dict get $rvfc media_delta]) >= 15.0}]
+    set presented_media_fps [expr {
+        double([dict get $rvfc media_delta]) > 0.0 ?
+        double([dict get $rvfc presented_delta]) /
+            double([dict get $rvfc media_delta]) : 0.0}]
+    # requestVideoFrameCallback is a renderer-main-thread notification, not
+    # the presentation counter itself.  A busy main loop may coalesce several
+    # callbacks while metadata.presentedFrames continues to advance for every
+    # real video presentation.  Admit that shape only when coalescing is
+    # explicit (at least 1.5 presented frames per callback), every callback
+    # interval is otherwise causal/clean, and the independent presentation
+    # counter proves a Linux-like 50-75 fps over at least 15 media seconds.
+    # The outer parity validator still checks the same rate against host wall
+    # time, so slow playback cannot earn credit through media time alone.
+    set cadence_coalesced_60 [expr {
+        $interval_count >= 120 &&
+        [dict get $rvfc interval_positive] == $interval_count &&
+        2 * [dict get $rvfc presented_delta] >= 3 * $interval_count &&
+        $presented_media_fps >= 50.0 && $presented_media_fps <= 75.0}]
 
     if {!$dimensions} {
         set reason "dimensions-not-1280x720"
@@ -1398,7 +1416,7 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
         set reason "cadence-nonpositive"
     } elseif {!$cadence_clean} {
         set reason "cadence-invalid"
-    } elseif {!$cadence_60} {
+    } elseif {!$cadence_60 && !$cadence_coalesced_60} {
         set reason "cadence-not-16p7ms"
     } elseif {!$presented_plausible} {
         set reason "presented-frames-insufficient"
@@ -1408,7 +1426,9 @@ proc parse_media_probe_evidence {text expected_nonce extension_id {force_hd720 0
         set reason "pass"
     }
     set source_proven [expr {$reason eq "pass"}]
-    set detail "reason=$reason intervals=$interval_count median_ms=[dict get $rvfc median_ms] near60_ratio=[format %.4f $near_ratio] time_progress=[format %.3f $time_progress]"
+    set cadence_mode [expr {$cadence_60 ? "direct" :
+        ($cadence_coalesced_60 ? "coalesced" : "invalid")}]
+    set detail "reason=$reason intervals=$interval_count median_ms=[dict get $rvfc median_ms] near60_ratio=[format %.4f $near_ratio] presented_media_fps=[format %.3f $presented_media_fps] cadence_mode=$cadence_mode time_progress=[format %.3f $time_progress]"
     if {$force_hd720} {
         set force_ready [lindex [lindex $rows 0] 1]
         set force_observation [lindex [lindex $rows 5] 1]

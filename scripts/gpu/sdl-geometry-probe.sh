@@ -24,6 +24,8 @@ contract options:
   --gpu MODEL               QEMU GPU model (default: virtio-vga-gl-primary)
   --host-gl MODE            QEMU host GL mode (default: auto)
   --hidpi on|off            SDL high-DPI flag (default: off)
+  --qemu-variant apt|patched
+                            SDL QEMU source (default: apt)
   --mode WIDTHxHEIGHT       requested guest scanout (default: 1280x800)
 
 observe options:
@@ -109,6 +111,8 @@ contract_probe() {
     local gpu="virtio-vga-gl-primary"
     local host_gl="auto"
     local hidpi="off"
+    local qemu_variant="${SDL_GEOMETRY_QEMU_VARIANT:-apt}"
+    local artifact_root="${SDL_GEOMETRY_ARTIFACT_ROOT:-${ROOT}}"
     local mode="${DEFAULT_WIDTH}x${DEFAULT_HEIGHT}"
     local width height rc command diagnostics status owner detail
 
@@ -139,6 +143,11 @@ contract_probe() {
                 hidpi="$2"
                 shift 2
                 ;;
+            --qemu-variant)
+                [[ $# -ge 2 ]] || die "--qemu-variant needs apt or patched"
+                qemu_variant="$2"
+                shift 2
+                ;;
             --mode)
                 [[ $# -ge 2 ]] || die "--mode needs WIDTHxHEIGHT"
                 mode="$2"
@@ -162,6 +171,10 @@ contract_probe() {
         on|off) ;;
         *) die "unsupported high-DPI mode: ${hidpi}" ;;
     esac
+    case "${qemu_variant}" in
+        apt|patched) ;;
+        *) die "unsupported SDL QEMU variant: ${qemu_variant}" ;;
+    esac
     parse_mode "${mode}" width height
     out="${out:-${ROOT}/build-x86_64/sdl-geometry-probe/contract-$(timestamp)}"
     mkdir -p -- "${out}"
@@ -172,9 +185,11 @@ contract_probe() {
         printf 'requested_gpu=%s\n' "${gpu}"
         printf 'requested_host_gl=%s\n' "${host_gl}"
         printf 'requested_sdl_hidpi=%s\n' "${hidpi}"
+        printf 'requested_sdl_qemu_variant=%s\n' "${qemu_variant}"
         printf 'requested_guest_mode=%sx%s\n' "${width}" "${height}"
         printf 'requested_cpus=6\n'
         printf 'requested_memory=8G\n'
+        printf 'artifact_root=%s\n' "${artifact_root}"
         printf 'sdl_geometry_trace=off\n'
         printf 'host_is_wsl=%s\n' "$(host_is_wsl && printf 1 || printf 0)"
         printf 'display=%s\n' "${DISPLAY:-unset}"
@@ -191,14 +206,17 @@ contract_probe() {
     capture_host_display_state "${out}"
 
     set +e
-    env \
+    env -u QEMU_BIN -u QEMU_WSL_SDL_FIT \
         AUTO_BUILD=0 \
+        BUILD_DIR="${artifact_root}/build-x86_64" \
+        FSIMG="${artifact_root}/build-x86_64/fs.img" \
         DISPLAY_MODE=sdl \
         QEMU_DISPLAY_FALLBACK=error \
         QEMU_DISPLAY_REPORT=1 \
         QEMU_ALLOW_WSL_SDL_GL=1 \
         QEMU_WSL_SDL_VIDEODRIVER="${sdl_driver}" \
         QEMU_SDL_HIGHDPI="${hidpi}" \
+        QEMU_SDL_VARIANT="${qemu_variant}" \
         QEMU_GPU="${gpu}" \
         QEMU_HOST_GL="${host_gl}" \
         QEMU_VIRTIO_GPU_XRES="${width}" \
@@ -260,21 +278,48 @@ contract_probe() {
         status="FAIL"
         owner="launcher"
         detail="sdl-highdpi-enable-not-resolved"
-    elif [[ "${command}" == *"LD_PRELOAD="* ||
-            "${diagnostics}" != *"sdl_trace=off"* ]]; then
+    elif [[ "${diagnostics}" != *"sdl_trace=off"* ]] ||
+         [[ "${qemu_variant}" == "patched" &&
+            "${command}" == *"LD_PRELOAD="* ]]; then
         status="FAIL"
         owner="launcher"
-        detail="acceptance-contract-must-be-trace-off"
-    elif [[ "${diagnostics}" != *"sdl_aspect_fix=patched"* ||
-            "${command}" != *"/build-x86_64/qemu-sdl/bin/qemu-system-x86_64"* ]]; then
+        detail="acceptance-contract-must-have-geometry-trace-off"
+    elif [[ "${qemu_variant}" == "apt" ]] &&
+         [[ "${diagnostics}" != *"sdl_qemu=apt"* ||
+            "${diagnostics}" != *"sdl_apt_modules=corrected"* ||
+            "${diagnostics}" != *"sdl_aspect_fix=apt-corrected-modules"* ||
+            "${command}" != *"QEMU_MODULE_DIR="*"/qemu-apt-ui-corrected-modules"* ||
+            "${command}" != *"/usr/bin/qemu-system-x86_64"* ]]; then
         status="FAIL"
         owner="launcher"
-        detail="corrected-sdl-qemu-not-resolved"
-    elif host_is_wsl && [[ "${diagnostics}" != *"sdl_fit=maximize"* ||
-                           "${command}" != *"-name xv6-sdl-"* ]]; then
+        detail="apt-corrected-module-qemu-not-resolved"
+    elif [[ "${qemu_variant}" == "patched" ]] &&
+         [[ "${diagnostics}" != *"sdl_qemu=patched"* ||
+            "${diagnostics}" != *"sdl_aspect_fix=patched"* ||
+            "${command}" != *"/qemu-sdl/bin/qemu-system-x86_64"* ||
+            "${command}" != *"/qemu-sdl/share/qemu"* ]]; then
         status="FAIL"
         owner="launcher"
-        detail="wsl-workarea-fit-or-unique-name-not-resolved"
+        detail="patched-sdl-qemu-not-resolved"
+    elif host_is_wsl && [[ "${qemu_variant}" == "apt" ]] &&
+         [[ "${diagnostics}" != *"sdl_fit=native"* ||
+            "${command}" != *"-name xv6-sdl-"* ]]; then
+        status="FAIL"
+        owner="launcher"
+        detail="apt-native-watch-or-unique-name-not-resolved"
+    elif host_is_wsl && [[ "${qemu_variant}" == "patched" ]] &&
+         [[ "${diagnostics}" != *"sdl_fit=maximize"* ||
+            "${command}" != *"-name xv6-sdl-"* ]]; then
+        status="FAIL"
+        owner="launcher"
+        detail="patched-workarea-fit-or-unique-name-not-resolved"
+    elif [[ "${command}" != *"virtio_gpu_async_present=1"* ||
+            "${command}" != *"virtio_gpu_present_clock_60hz=1"* ||
+            "${command}" != *"vgpu_async_flush=1"* ||
+            "${command}" != *"vgpu_async_pf=1"* ]]; then
+        status="FAIL"
+        owner="launcher"
+        detail="linux-parity-present-profile-not-resolved"
     elif host_is_wsl && [[ "${gpu}" == *-gl* ]] &&
          [[ "${command}" != *"MESA_LOADER_DRIVER_OVERRIDE=d3d12"* ||
             "${command}" != *"GALLIUM_DRIVER=d3d12"* ]]; then

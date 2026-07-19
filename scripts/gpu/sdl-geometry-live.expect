@@ -6,9 +6,21 @@ set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
 if {[info exists env(REPO_ROOT)] && $env(REPO_ROOT) ne ""} {
     set root $env(REPO_ROOT)
 }
-set build "$root/build-x86_64"
+set artifact_root $root
+if {[info exists env(SDL_GEOMETRY_ARTIFACT_ROOT)] &&
+    $env(SDL_GEOMETRY_ARTIFACT_ROOT) ne ""} {
+    set artifact_root $env(SDL_GEOMETRY_ARTIFACT_ROOT)
+}
+set build "$artifact_root/build-x86_64"
 set kernel "$build/kernel/build/kernel/xv6.bin"
 set base_img "$build/fs.img"
+if {[info exists env(SDL_GEOMETRY_KERNEL)] && $env(SDL_GEOMETRY_KERNEL) ne ""} {
+    set kernel $env(SDL_GEOMETRY_KERNEL)
+}
+if {[info exists env(SDL_GEOMETRY_BASE_IMG)] && $env(SDL_GEOMETRY_BASE_IMG) ne ""} {
+    set base_img $env(SDL_GEOMETRY_BASE_IMG)
+}
+set base_format [expr {[info exists env(SDL_GEOMETRY_BASE_FORMAT)] ? $env(SDL_GEOMETRY_BASE_FORMAT) : "raw"}]
 set driver [expr {[info exists env(SDL_GEOMETRY_SDL_DRIVER)] ? $env(SDL_GEOMETRY_SDL_DRIVER) : "x11"}]
 set hidpi [expr {[info exists env(SDL_GEOMETRY_HIGHDPI)] ? $env(SDL_GEOMETRY_HIGHDPI) : "off"}]
 set requested_width [expr {[info exists env(SDL_GEOMETRY_WIDTH)] ? $env(SDL_GEOMETRY_WIDTH) : 1280}]
@@ -16,9 +28,30 @@ set requested_height [expr {[info exists env(SDL_GEOMETRY_HEIGHT)] ? $env(SDL_GE
 set trace_enabled [expr {[info exists env(SDL_GEOMETRY_TRACE)] ? $env(SDL_GEOMETRY_TRACE) : "0"}]
 set extra_append [expr {[info exists env(SDL_GEOMETRY_EXTRA_APPEND)] ? $env(SDL_GEOMETRY_EXTRA_APPEND) : ""}]
 set fit_window [expr {[info exists env(SDL_GEOMETRY_FIT_WINDOW)] ? $env(SDL_GEOMETRY_FIT_WINDOW) : "1"}]
-set fit_mode [expr {[info exists env(SDL_GEOMETRY_FIT_MODE)] ? $env(SDL_GEOMETRY_FIT_MODE) : "maximize"}]
-set visual_app [expr {[info exists env(SDL_GEOMETRY_VISUAL_APP)] ? $env(SDL_GEOMETRY_VISUAL_APP) : "konsole"}]
+set visual_app [expr {[info exists env(SDL_GEOMETRY_VISUAL_APP)] ? $env(SDL_GEOMETRY_VISUAL_APP) : "qtwayland"}]
 set input_probe [expr {[info exists env(SDL_GEOMETRY_INPUT_PROBE)] ? $env(SDL_GEOMETRY_INPUT_PROBE) : "1"}]
+set qemu_gpu [expr {[info exists env(SDL_GEOMETRY_GPU)] ? $env(SDL_GEOMETRY_GPU) : "bochs"}]
+set qemu_cpus [expr {[info exists env(SDL_GEOMETRY_CPUS)] ? $env(SDL_GEOMETRY_CPUS) : 2}]
+set qemu_memory [expr {[info exists env(SDL_GEOMETRY_MEMORY)] ? $env(SDL_GEOMETRY_MEMORY) : "4G"}]
+set explicit_qemu [expr {[info exists env(SDL_GEOMETRY_QEMU_BIN)] ? $env(SDL_GEOMETRY_QEMU_BIN) : ""}]
+set qemu_variant [expr {[info exists env(SDL_GEOMETRY_QEMU_VARIANT)] ? $env(SDL_GEOMETRY_QEMU_VARIANT) : ($explicit_qemu ne "" ? "explicit" : "apt")}]
+set apt_modules [expr {[info exists env(QEMU_SDL_APT_MODULES)] ? $env(QEMU_SDL_APT_MODULES) : "corrected"}]
+set default_fit_mode [expr {$qemu_variant eq "apt" ? "native" : "maximize"}]
+set fit_mode [expr {[info exists env(SDL_GEOMETRY_FIT_MODE)] ? $env(SDL_GEOMETRY_FIT_MODE) : $default_fit_mode}]
+switch -- $qemu_variant {
+    apt {
+        set expected_aspect_fix [expr {$apt_modules eq "corrected" ? "apt-corrected-modules" : "none"}]
+        set expected_apt_modules $apt_modules
+    }
+    patched {
+        set expected_aspect_fix "patched"
+        set expected_apt_modules "not-applicable"
+    }
+    explicit {
+        set expected_aspect_fix "explicit-qemu"
+        set expected_apt_modules "not-applicable"
+    }
+}
 if {$driver ni {x11 wayland}} {
     puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_SDL_DRIVER=$driver"
     exit 2
@@ -40,16 +73,45 @@ if {$fit_window ni {0 1}} {
     puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_FIT_WINDOW=$fit_window"
     exit 2
 }
-if {$fit_mode ni {clamp maximize}} {
+if {$fit_mode ni {clamp native maximize}} {
     puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_FIT_MODE=$fit_mode"
     exit 2
 }
-if {$visual_app ni {none konsole smoke-agent}} {
+if {$qemu_variant ni {apt patched explicit}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_QEMU_VARIANT=$qemu_variant"
+    exit 2
+}
+if {$apt_modules ni {corrected system}} {
+    puts stderr "sdl-geometry-live: invalid QEMU_SDL_APT_MODULES=$apt_modules"
+    exit 2
+}
+if {$qemu_variant eq "explicit" && $explicit_qemu eq ""} {
+    puts stderr "sdl-geometry-live: explicit QEMU variant requires SDL_GEOMETRY_QEMU_BIN"
+    exit 2
+}
+if {$qemu_variant ne "explicit" && $explicit_qemu ne ""} {
+    puts stderr "sdl-geometry-live: SDL_GEOMETRY_QEMU_BIN conflicts with SDL_GEOMETRY_QEMU_VARIANT=$qemu_variant"
+    exit 2
+}
+if {$visual_app ni {none konsole cursorsmoke smoke-agent qtwayland}} {
     puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_VISUAL_APP=$visual_app"
+    exit 2
+}
+if {$base_format ni {raw qcow2}} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_BASE_FORMAT=$base_format"
+    exit 2
+}
+if {![string is integer -strict $qemu_cpus] || $qemu_cpus <= 0} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_CPUS=$qemu_cpus"
     exit 2
 }
 if {$input_probe ni {0 1}} {
     puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_INPUT_PROBE=$input_probe"
+    exit 2
+}
+if {$explicit_qemu ne "" &&
+    (![file isfile $explicit_qemu] || ![file executable $explicit_qemu])} {
+    puts stderr "sdl-geometry-live: invalid SDL_GEOMETRY_QEMU_BIN=$explicit_qemu"
     exit 2
 }
 if {$visual_app eq "smoke-agent"} {
@@ -60,8 +122,10 @@ set nonce [clock format [clock seconds] -gmt 1 -format %Y%m%dT%H%M%SZ]
 append nonce "-[pid]"
 set token "sdl-geometry-$nonce"
 set outdir "$build/sdl-geometry-probe/live-$driver-hidpi-$hidpi-$nonce"
+set custom_outdir 0
 if {[info exists env(SDL_GEOMETRY_OUTDIR)] && $env(SDL_GEOMETRY_OUTDIR) ne ""} {
     set outdir $env(SDL_GEOMETRY_OUTDIR)
+    set custom_outdir 1
 }
 set overlay "$outdir/xv6-sdl.qcow2"
 set monitor "/tmp/xv6-sdl-geometry-[pid].sock"
@@ -84,6 +148,7 @@ set content_width 0
 set content_height 0
 set host_requested_width 0
 set host_requested_height 0
+set capture_via_monitor 0
 
 proc exact_inventory {} {
     global root
@@ -129,6 +194,10 @@ proc reap_owned {} {
     if {$qemu_reaped} {
         return
     }
+    if {$qemu_pid <= 0} {
+        set qemu_reaped 1
+        return
+    }
     if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"]} {
         if {$qemu_start <= 0} {
             puts stderr "sdl-geometry-live: refusing cleanup without captured start ticks pid=$qemu_pid"
@@ -144,16 +213,36 @@ proc reap_owned {} {
     }
     set old_timeout $timeout
     set timeout 20
-    catch { expect eof }
-    catch { wait }
+    set saw_eof 0
+    expect {
+        eof { set saw_eof 1 }
+        timeout {}
+    }
+    if {$saw_eof} {
+        catch { wait }
+        set qemu_reaped 1
+    } else {
+        puts stderr "sdl-geometry-live: owned launcher did not reach EOF after bounded cleanup"
+    }
     set timeout $old_timeout
-    set qemu_reaped 1
+}
+
+proc prune_iterations {} {
+    global root artifact_root custom_outdir
+    if {$artifact_root ne $root || $custom_outdir} {
+        return
+    }
+    catch {
+        exec "$root/scripts/gpu/prune-sdl-geometry-iterations.sh" 3
+    } prune_output
+    if {$prune_output ne ""} {
+        puts $prune_output
+    }
 }
 
 proc finish {code message} {
-    global root outdir qemu_reaped monitor
+    global root outdir qemu_reaped monitor overlay
     reap_owned
-    file delete -force $monitor
     set inventory [exact_inventory]
     set fh [open "$outdir/final-qemu-inventory.txt" w]
     puts $fh $inventory
@@ -165,11 +254,26 @@ proc finish {code message} {
         puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=final-owned-x86-qemu-nonzero original=$message evidence=$outdir"
         exit 12
     }
+    file delete -force $monitor
+    # The QCOW2 is private to this run. Delete it only after the host inventory
+    # proves no x86 QEMU can still have the disk open. A failed ownership
+    # cleanup deliberately leaves the overlay for a later exact audit.
+    file delete -force $overlay
+    if {!$qemu_reaped} {
+        set code 12
+        set message "owned-launcher-reap-timeout"
+    }
+    prune_iterations
     puts "SDL-GEOMETRY-LIVE [expr {$code == 0 ? {PASS} : {FAIL}}] reason=$message evidence=$outdir"
     exit $code
 }
 
+if {[file exists $outdir]} {
+    puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=outdir-already-exists path=$outdir"
+    exit 2
+}
 file mkdir $outdir
+trap {finish 130 "interrupted-signal"} {SIGINT SIGTERM SIGHUP}
 file delete -force $monitor
 set preflight_rc [catch {
     exec "$root/scripts/launch/qemu-exact-inventory.sh" --require-zero
@@ -178,6 +282,10 @@ set fh [open "$outdir/preflight-qemu-inventory.txt" w]
 puts $fh $preflight
 close $fh
 if {$preflight_rc != 0} {
+    set fh [open "$outdir/completed-skip.txt" w]
+    puts $fh "reason=preexisting-qemu"
+    close $fh
+    prune_iterations
     puts stderr "SDL-GEOMETRY-LIVE-SKIP reason=preexisting-qemu evidence=$outdir"
     exit 75
 }
@@ -187,7 +295,7 @@ foreach path [list $kernel $base_img] {
         exit 2
     }
 }
-exec qemu-img create -q -f qcow2 -F raw -b $base_img $overlay
+exec qemu-img create -q -f qcow2 -F $base_format -b $base_img $overlay
 if {$trace_enabled eq "1"} {
     exec "$root/scripts/gpu/build-sdl-geometry-trace.sh" $trace_lib
 }
@@ -195,12 +303,26 @@ if {$trace_enabled eq "1"} {
 set env(DISPLAY_MODE) sdl
 set env(USE_KVM) 1
 set env(QEMU_REQUIRE_KVM) 1
-set env(QEMU_GPU) virtio-vga-gl-primary
+set env(QEMU_GPU) $qemu_gpu
 set env(QEMU_HOST_GL) auto
 set env(QEMU_ALLOW_WSL_SDL_GL) 1
 set env(QEMU_DISPLAY_FALLBACK) error
 set env(QEMU_WSL_SDL_VIDEODRIVER) $driver
 set env(QEMU_SDL_HIGHDPI) $hidpi
+if {$explicit_qemu ne ""} {
+    set env(QEMU_BIN) $explicit_qemu
+} else {
+    catch { unset env(QEMU_BIN) }
+}
+set env(QEMU_SDL_VARIANT) $qemu_variant
+if {$qemu_variant eq "patched"} {
+    if {![info exists env(QEMU_SDL_PATCHED_BIN)]} {
+        set env(QEMU_SDL_PATCHED_BIN) "$artifact_root/build-x86_64/qemu-sdl/bin/qemu-system-x86_64"
+    }
+    if {![info exists env(QEMU_SDL_DATA_DIR)]} {
+        set env(QEMU_SDL_DATA_DIR) "$artifact_root/build-x86_64/qemu-sdl/share/qemu"
+    }
+}
 if {$trace_enabled eq "1"} {
     set env(QEMU_SDL_GEOMETRY_TRACE_LIB) $trace_lib
     set env(QEMU_SDL_GEOMETRY_TRACE_LOG) $trace_log
@@ -208,8 +330,8 @@ if {$trace_enabled eq "1"} {
     catch { unset env(QEMU_SDL_GEOMETRY_TRACE_LIB) }
     catch { unset env(QEMU_SDL_GEOMETRY_TRACE_LOG) }
 }
-set env(QEMU_CPUS) 6
-set env(QEMU_MEMORY) 8G
+set env(QEMU_CPUS) $qemu_cpus
+set env(QEMU_MEMORY) $qemu_memory
 set env(QEMU_INPUT) virtio
 set env(QEMU_NET) 0
 set env(QEMU_AUDIO) none
@@ -250,7 +372,7 @@ set old_timeout $timeout
 set timeout 30
 set expected_trace [expr {$trace_enabled eq "1" ? "on" : "off"}]
 expect {
-    -re "display-contract requested=sdl resolved=sdl\[^\\r\\n\]*sdl_trace=$expected_trace\[^\\r\\n\]*sdl_aspect_fix=patched\[^\\r\\n\]*disk_format=qcow2\[^\\r\\n\]*run_token=sdl-geometry-" {}
+    -re "display-contract requested=sdl resolved=sdl\[^\\r\\n\]*sdl_trace=$expected_trace\[^\\r\\n\]*sdl_qemu=$qemu_variant\[^\\r\\n\]*sdl_apt_modules=$expected_apt_modules\[^\\r\\n\]*sdl_aspect_fix=$expected_aspect_fix\[^\\r\\n\]*disk_format=qcow2\[^\\r\\n\]*run_token=sdl-geometry-" {}
     -re {explicit SDL GL launch is blocked|Could not initialize SDL|failed to initialize display} {
         finish 3 "sdl-launch-failed"
     }
@@ -269,9 +391,12 @@ expect {
 }
 
 set window_title "QEMU (xv6-$token-0)"
+set fit_output ""
 if {$fit_window eq "1"} {
     set fit_rc [catch {
         exec env "XV6_QEMU_WINDOW_FIT_MODE=$fit_mode" \
+            "XV6_QEMU_WINDOW_TARGET_WIDTH=$requested_width" \
+            "XV6_QEMU_WINDOW_TARGET_HEIGHT=$requested_height" \
             "$root/scripts/gpu/fit-owned-qemu-window.sh" $window_title
     } fit_output]
     set fh [open "$outdir/fit-window.txt" w]
@@ -318,6 +443,116 @@ if {$visual_app eq "konsole"} {
             timeout { finish 18 "visual-app-prompt-timeout-phase-$app_phase" }
             eof { finish 9 "visual-app-prompt-eof" }
         }
+    }
+}
+if {$visual_app eq "cursorsmoke"} {
+    set cursor_ready 0
+    set cursor_phase 0
+    foreach command {
+        {true}
+        {XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root;export XDG_RUNTIME_DIR}
+        {WAYLAND_DISPLAY=wayland-0;export WAYLAND_DISPLAY}
+        {rm -f /tmp/cs;/bin/cursorsmoke >/tmp/cs 2>&1&cp=$!}
+        {sleep 5}
+        {cat /tmp/cs}
+    } {
+        incr cursor_phase
+        set cursor_marker "SDLCURSOR_${cursor_phase}_$nonce"
+        send "x=0;m=SDLCURSOR_;m=\${m}${cursor_phase}_$nonce;$command;echo \$m\r"
+        set timeout 30
+        expect {
+            -re {cursorsmoke: ready; move pointer over window} {
+                set cursor_ready 1
+                exp_continue
+            }
+            -re $cursor_marker {}
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 19 "cursorsmoke-crash"
+            }
+            timeout { finish 20 "cursorsmoke-phase-$cursor_phase-timeout" }
+            eof { finish 9 "cursorsmoke-eof" }
+        }
+        expect {
+            -re {root:/# } {}
+            timeout { finish 20 "cursorsmoke-phase-$cursor_phase-prompt-timeout" }
+            eof { finish 9 "cursorsmoke-prompt-eof" }
+        }
+    }
+    if {!$cursor_ready} {
+        finish 20 "cursorsmoke-ready-missing"
+    }
+}
+if {$visual_app eq "qtwayland"} {
+    set qt_ready 0
+    set qt_frame 0
+    set qt_phase 0
+    foreach command {
+        {XDG_RUNTIME_DIR=/dev/shm/xdg-runtime-root;export XDG_RUNTIME_DIR}
+        {WAYLAND_DISPLAY=wayland-0;export WAYLAND_DISPLAY}
+        {rm -f /tmp/qt-wayland-smoke.log;/bin/qt-wayland-smoke-launcher}
+    } {
+        incr qt_phase
+        set qt_marker "SDLQT_${qt_phase}_$nonce"
+        send "x=0;m=SDLQT_;m=\${m}${qt_phase}_$nonce;$command;echo \$m\r"
+        set timeout [expr {$qt_phase == 3 ? 90 : 30}]
+        expect {
+            -re {XV6_QT_WAYLAND_SMOKE_READY} {
+                set qt_ready 1
+                exp_continue
+            }
+            -re {XV6_QT_WAYLAND_SMOKE_FRAME} {
+                set qt_frame 1
+                exp_continue
+            }
+            -re $qt_marker {}
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 19 "qtwayland-crash"
+            }
+            timeout { finish 20 "qtwayland-phase-$qt_phase-timeout" }
+            eof { finish 9 "qtwayland-eof" }
+        }
+        expect {
+            -re {root:/# } {}
+            timeout { finish 20 "qtwayland-phase-$qt_phase-prompt-timeout" }
+            eof { finish 9 "qtwayland-prompt-eof" }
+        }
+    }
+
+    # Poll from the host with short, prompt-delimited serial transactions.
+    # Guest timer pacing can be slower than host wall time, so a guest-side
+    # `sleep` loop can outlive Expect's deadline even though the compositor is
+    # making progress.  It also creates an unnecessarily long serial command.
+    for {set qt_poll 1} {$qt_poll <= 60 && (!$qt_ready || !$qt_frame)} {incr qt_poll} {
+        set qt_poll_marker "SDLQT_POLL_${qt_poll}_$nonce"
+        send "x=0;m=SDLQT_POLL_;m=\${m}${qt_poll}_$nonce;cat /tmp/qt-wayland-smoke.log;echo \$m\r"
+        set timeout 15
+        expect {
+            -re {XV6_QT_WAYLAND_SMOKE_READY} {
+                set qt_ready 1
+                exp_continue
+            }
+            -re {XV6_QT_WAYLAND_SMOKE_FRAME} {
+                set qt_frame 1
+                exp_continue
+            }
+            -re $qt_poll_marker {}
+            -re {PANIC|fatal page fault|spin_lock reentry|segmentation fault|coredump: generating} {
+                finish 19 "qtwayland-crash"
+            }
+            timeout { finish 20 "qtwayland-poll-$qt_poll-timeout" }
+            eof { finish 9 "qtwayland-eof" }
+        }
+        expect {
+            -re {root:/# } {}
+            timeout { finish 20 "qtwayland-poll-$qt_poll-prompt-timeout" }
+            eof { finish 9 "qtwayland-prompt-eof" }
+        }
+        if {!$qt_ready || !$qt_frame} {
+            after 1000
+        }
+    }
+    if {!$qt_ready || !$qt_frame} {
+        finish 20 "qtwayland-ready-or-frame-missing"
     }
 }
 if {$visual_app eq "smoke-agent"} {
@@ -408,6 +643,12 @@ if {$input_probe eq "1"} {
             set input_surface_width $fit_w
             set input_surface_height $fit_h
         }
+    }
+    if {$qemu_variant eq "apt" && $fit_window eq "1" &&
+        $fit_mode eq "native" &&
+        [regexp "status=PASS\[^\\r\\n\]*client_final=${requested_width}x${requested_height}" $fit_output]} {
+        set input_surface_width $requested_width
+        set input_surface_height $requested_height
     }
     if {$input_surface_width <= 0 || $input_surface_height <= 0} {
         finish 23 "qemu-input-surface-evidence-missing"
@@ -506,6 +747,20 @@ if {$input_probe eq "1"} {
 # boot fbdev mode.  Maximizing SDL causes QEMU to report its inner client size
 # to KWin; KWin can then present a larger virgl resource while /dev/fb0 keeps
 # the EDID mode used at boot.
+set mode_sync_prefix "SDLMODE_SYNC_"
+set mode_sync_marker "${mode_sync_prefix}${nonce}"
+send "x=0;m=$mode_sync_prefix;m=\${m}$nonce;true;echo \$m\r"
+set timeout 30
+expect {
+    -re $mode_sync_marker {}
+    timeout { finish 11 "guest-mode-sync-timeout" }
+    eof { finish 9 "guest-mode-sync-eof" }
+}
+expect {
+    -re {root:/# } {}
+    timeout { finish 11 "guest-mode-sync-prompt-timeout" }
+    eof { finish 9 "guest-mode-sync-prompt-eof" }
+}
 set mode_marker_prefix "SDLMODE_"
 set mode_marker "${mode_marker_prefix}${nonce}"
 send "x=0;m=$mode_marker_prefix;m=\${m}$nonce;fbstat mode;echo \$m\r"
@@ -546,32 +801,45 @@ if {!$got_mode} {
 set content_width $guest_width
 set content_height $guest_height
 set got_content 1
-set capture_marker_prefix "SDLCAPTURE_"
-set capture_marker "${capture_marker_prefix}${nonce}"
-send "x=0;m=$capture_marker_prefix;m=\${m}$nonce;fbstat ppm-current /sdl-geometry-guest.ppm 0 0 $content_width $content_height;sync;echo \$m\r"
-set timeout 90
-expect {
-    -re $capture_marker {}
-    -re {PANIC|fatal page fault|spin_lock reentry|fbstat:} {
-        finish 10 "guest-capture-failed"
+monitor_command "screendump $monitor_ppm"
+if {[file isfile $monitor_ppm] &&
+    [file size $monitor_ppm] >= $content_width * $content_height * 3} {
+    set capture_via_monitor 1
+} else {
+    # HMP screendump is the fast, direct scanout capture for Bochs.  Keep the
+    # guest readback as a fallback for QEMU display listeners that report no
+    # surface, but do not impose its multi-minute software copy on every SDL
+    # validation run.
+    set capture_marker_prefix "SDLCAPTURE_"
+    set capture_marker "${capture_marker_prefix}${nonce}"
+    send "x=0;m=$capture_marker_prefix;m=\${m}$nonce;fbstat ppm-current /sdl-geometry-guest.ppm 0 0 $content_width $content_height;sync;echo \$m\r"
+    set timeout 180
+    expect {
+        -re $capture_marker {}
+        -re {PANIC|fatal page fault|spin_lock reentry|fbstat:} {
+            finish 10 "guest-capture-failed"
+        }
+        timeout { finish 11 "guest-capture-timeout" }
+        eof { finish 9 "guest-capture-eof" }
     }
-    timeout { finish 11 "guest-capture-timeout" }
-    eof { finish 9 "guest-capture-eof" }
 }
 
-monitor_command "screendump $monitor_ppm"
 set observe_command [list "$root/scripts/gpu/sdl-geometry-probe.sh" observe \
     --pid $qemu_pid \
     --window-title $window_title \
     --guest-mode "${guest_width}x${guest_height}" \
     --guest-content-mode "${content_width}x${content_height}" \
-    --guest-pitch $guest_pitch \
-    --qemu-log $runlog]
+    --guest-pitch $guest_pitch]
 if {$trace_enabled eq "1"} {
     lappend observe_command --sdl-trace $trace_log
 }
+if {$qemu_variant eq "patched"} {
+    lappend observe_command --qemu-log $runlog
+}
 lappend observe_command --out $observe_dir
-set observe_rc [catch { exec {*}$observe_command } observe_output]
+set observe_rc [catch {
+    exec timeout --signal=TERM --kill-after=5s 90s {*}$observe_command
+} observe_output]
 set fh [open "$outdir/observe-command.txt" w]
 puts $fh "rc=$observe_rc output=$observe_output"
 close $fh
@@ -591,19 +859,26 @@ set fh [open "$outdir/final-qemu-inventory.txt" w]
 puts $fh $inventory
 close $fh
 if {![regexp {exact_qemu_count=0} $inventory]} {
-    puts stderr "SDL-GEOMETRY-LIVE-FAIL reason=final-exact-qemu-nonzero evidence=$outdir"
-    exit 12
+    finish 12 "final-exact-qemu-nonzero"
 }
 
 file delete -force $monitor
 set merged_raw "$outdir/xv6-sdl-merged.raw"
 set guest_source_path "/sdl-geometry-guest.ppm"
-set extract_rc [catch {
-    exec qemu-img convert -O raw -S 4k $overlay $merged_raw
-    exec debugfs -R "dump $guest_source_path $guest_ppm" $merged_raw
-} extract_error]
+if {$capture_via_monitor} {
+    set extract_rc [catch {
+        file copy -force $monitor_ppm $guest_ppm
+    } extract_error]
+    set extract_source "qemu-hmp-screendump"
+} else {
+    set extract_rc [catch {
+        exec qemu-img convert -O raw -S 4k $overlay $merged_raw
+        exec debugfs -R "dump $guest_source_path $guest_ppm" $merged_raw
+    } extract_error]
+    set extract_source "guest-fbstat-readback"
+}
 set fh [open "$outdir/guest-extract.txt" w]
-puts $fh "rc=$extract_rc error=$extract_error"
+puts $fh "rc=$extract_rc source=$extract_source error=$extract_error"
 close $fh
 file delete -force $merged_raw
 # debugfs returns 1 for some successful read-only dump operations.  The
@@ -656,4 +931,28 @@ if {![file isfile "$observe_dir/host-window-windows.png"] ||
     ![file isfile $guest_ppm]} {
     finish 15 "visual-evidence-missing"
 }
-finish 0 "numeric-and-screenshot-capture"
+set visual_gate_receipt "$outdir/visual-content-receipt.json"
+set visual_gate_command [list \
+    "$root/scripts/gpu/sdl-visual-content-gate.py" \
+    --guest $guest_ppm \
+    --host "$observe_dir/host-window-windows.png" \
+    --receipt $visual_gate_receipt]
+if {$visual_app ne "qtwayland"} {
+    lappend visual_gate_command --boot-logo-only
+}
+set visual_gate_rc [catch {
+    exec timeout --signal=TERM --kill-after=5s 45s {*}$visual_gate_command
+} visual_gate_output]
+set fh [open "$outdir/visual-content-gate.txt" w]
+puts $fh "rc=$visual_gate_rc output=$visual_gate_output"
+close $fh
+if {$visual_gate_rc != 0 ||
+    ![regexp {SDL-VISUAL-CONTENT-GATE status=PASS} $visual_gate_output]} {
+    finish 16 "visual-content-gate-failed"
+}
+set finish_reason [expr {
+    $visual_app eq "qtwayland" ?
+        "numeric-screenshot-and-qt-content-gates" :
+        "numeric-screenshot-and-boot-logo-gates"
+}]
+finish 0 $finish_reason

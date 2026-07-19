@@ -15,6 +15,7 @@ fi
 arch="${XV6_ARCH:-x86_64}"
 build_dir="${XV6_BUILD_DIR:-${source_dir}/build-${arch}}"
 jobs="${XV6_PARALLEL_JOBS:-2}"
+apt_metadata_refreshed=0
 
 cmake_args=(
     -S "${source_dir}"
@@ -77,6 +78,28 @@ configure() {
     cmake "${cmake_args[@]}"
 }
 
+cleanup_refreshed_apt_metadata() {
+    if [[ "${apt_metadata_refreshed}" == "1" &&
+          "${XV6_KEEP_APT_LISTS:-0}" != "1" ]]; then
+        rm -rf /var/lib/apt/lists/*
+    fi
+}
+
+ensure_apt_metadata() {
+    if compgen -G '/var/lib/apt/lists/*_Packages' >/dev/null; then
+        return 0
+    fi
+    if [[ "$(id -u)" -ne 0 || ! -x /usr/bin/apt-get ]]; then
+        echo "xv6-command: KDE image generation needs APT package metadata; run apt-get update" >&2
+        return 1
+    fi
+
+    echo "xv6-command: refreshing temporary APT metadata for the KDE runtime image" >&2
+    apt-get update
+    apt_metadata_refreshed=1
+    trap cleanup_refreshed_apt_metadata EXIT
+}
+
 fix_build_ownership() {
     # The dev container runs as root, so artifacts written into the
     # bind-mounted build dir end up root-owned on the host and block
@@ -95,15 +118,28 @@ build_targets() {
     fix_build_ownership
 }
 
+build_complete_x86() {
+    ensure_apt_metadata
+    build_targets world
+    if [[ "${arch}" == "x86_64" ]]; then
+        "${source_dir}/scripts/build/build-qemu-apt-sdl-modules.sh"
+        fix_build_ownership
+    fi
+}
+
 case "${command_name}" in
     xv6-help|xv6-command)
         usage
         ;;
     xv6-build|xv6-reproduce)
-        exec "${source_dir}/scripts/build/reproduce-in-container.sh"
+        "${source_dir}/scripts/build/reproduce-in-container.sh"
+        if [[ "${arch}" == "x86_64" ]]; then
+            "${source_dir}/scripts/build/build-qemu-apt-sdl-modules.sh"
+            fix_build_ownership
+        fi
         ;;
     xv6-build-incremental)
-        build_targets world
+        build_complete_x86
         ;;
     xv6-kernel-x86)
         arch="x86_64"
@@ -121,12 +157,15 @@ case "${command_name}" in
         build_targets user ports
         ;;
     xv6-images)
+        ensure_apt_metadata
         build_targets rootfs initrd image
         ;;
     xv6-rootfs-refresh)
+        ensure_apt_metadata
         build_targets rootfs-refresh
         ;;
     xv6-hyperv-image)
+        ensure_apt_metadata
         build_targets hyperv-image
         ;;
     xv6-launch|xv6-launch-nokvm|xv6-qemu-nokvm)

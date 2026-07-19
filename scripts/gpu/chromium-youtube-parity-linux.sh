@@ -9,9 +9,52 @@ case "$mode" in windowed|fullscreen) ;; *)
     echo "usage: $0 <windowed|fullscreen>" >&2; exit 64;;
 esac
 
-qemu="$root/build-x86_64/qemu-sdl/bin/qemu-system-x86_64"
-qemu_data="$root/build-x86_64/qemu-sdl/share/qemu"
-base="$root/build-x86_64/linux-kde-reference/linux-kde-behavior-20260714T024146Z.qcow2"
+qemu_variant=${LINUX_YOUTUBE_QEMU_VARIANT:-apt}
+apt_modules=${LINUX_YOUTUBE_APT_MODULES:-system}
+allow_external_qemu=${LINUX_YOUTUBE_ALLOW_EXTERNAL_QEMU:-0}
+recover_cloud_init=${LINUX_YOUTUBE_RECOVER_CLOUD_INIT:-0}
+case "$qemu_variant" in apt|patched) ;; *)
+    echo "unsupported LINUX_YOUTUBE_QEMU_VARIANT=$qemu_variant" >&2; exit 64;;
+esac
+case "$apt_modules" in system|corrected) ;; *)
+    echo "unsupported LINUX_YOUTUBE_APT_MODULES=$apt_modules" >&2; exit 64;;
+esac
+case "$allow_external_qemu" in 0|1) ;; *)
+    echo "unsupported LINUX_YOUTUBE_ALLOW_EXTERNAL_QEMU=$allow_external_qemu" >&2
+    exit 64
+    ;;
+esac
+case "$recover_cloud_init" in 0|1) ;; *)
+    echo "unsupported LINUX_YOUTUBE_RECOVER_CLOUD_INIT=$recover_cloud_init" >&2
+    exit 64
+    ;;
+esac
+qemu_env=(-u LD_PRELOAD)
+qemu_data_args=()
+if [[ "$qemu_variant" == apt ]]; then
+    qemu=${QEMU_SDL_APT_BIN:-/usr/bin/qemu-system-x86_64}
+    if [[ "$apt_modules" == corrected ]]; then
+        apt_module_dir=${QEMU_SDL_APT_MODULE_DIR:-$root/build-x86_64/qemu-apt-ui-corrected-modules}
+        qemu_env+=("QEMU_MODULE_DIR=$apt_module_dir")
+    else
+        qemu_env+=(-u QEMU_MODULE_DIR)
+    fi
+else
+    qemu="$root/build-x86_64/qemu-sdl/bin/qemu-system-x86_64"
+    qemu_data="$root/build-x86_64/qemu-sdl/share/qemu"
+    qemu_data_args=(-L "$qemu_data")
+    qemu_env+=(-u QEMU_MODULE_DIR)
+    apt_modules=not-applicable
+fi
+prepared_base=${LINUX_YOUTUBE_PREPARED_BASE:-$root/build-x86_64/linux-kde-reference/linux-kde-behavior-20260714T024146Z.qcow2}
+cloud_base="$root/build-x86_64/linux-kde-reference/ubuntu-24.04-server-cloudimg-amd64.img"
+if [[ -f "$prepared_base" ]]; then
+    base="$prepared_base"
+    base_kind=prepared
+else
+    base="$cloud_base"
+    base_kind=official-cloud-bootstrap
+fi
 chromium_dir=/usr/lib/chromium
 probe_dir="$root/rootfs-overlay/share/chromium-youtube-media-probe"
 trace_dir="$root/build-x86_64/host-gui-runtime"
@@ -28,16 +71,20 @@ for command in qemu-img genisoimage ssh sshpass python3 powershell.exe; do
     command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 2; }
 done
 
-inventory_before=$("$root/scripts/launch/qemu-exact-inventory.sh")
+if [[ "$allow_external_qemu" == 1 ]]; then
+    inventory_before=$("$root/scripts/launch/qemu-exact-inventory.sh")
+else
+    inventory_before=$("$root/scripts/launch/qemu-wait-natural-zero.sh" 120)
+fi
 printf '%s\n' "$inventory_before"
-[[ "$inventory_before" == $'exact_qemu_count=0\nexact_x86_qemu_count=0' ]] || {
-    echo "YOUTUBE_PARITY_LINUX status=SKIP reason=preexisting-qemu"; exit 75;
+[[ "$allow_external_qemu" == 1 || "$inventory_before" == *"exact_qemu_count=0"* ]] || {
+    echo "YOUTUBE_PARITY_LINUX status=SKIP reason=preexisting-qemu-timeout"; exit 75;
 }
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 nonce=$(printf '%032x' "$(( (10#$(date +%s) << 12) ^ $$ ))")
 token="linux-yt-${mode}-${stamp}-$$"
-out="$root/build-x86_64/youtube-parity/linux-${mode}-${stamp}-$$"
+out="$root/build-x86_64/youtube-parity/linux-${mode}-${stamp}-$$-${qemu_variant}-${apt_modules}"
 mkdir -p "$out"
 mkdir -p "$out/host-libs"
 install -m 0755 "$openh264" "$out/host-libs/libopenh264.so.7"
@@ -67,8 +114,17 @@ cdp_port=$(choose_port)
 [[ "$ssh_port" != "$cdp_port" ]] || cdp_port=$(choose_port)
 printf 'guest=linux mode=%s nonce=%s token=%s ssh_port=%s cdp_port=%s\n' \
     "$mode" "$nonce" "$token" "$ssh_port" "$cdp_port" >"$out/contract.txt"
+printf 'qemu_variant=%s apt_modules=%s qemu=%s\n' \
+    "$qemu_variant" "$apt_modules" "$qemu" >>"$out/contract.txt"
+printf 'allow_external_qemu=%s\n' "$allow_external_qemu" >>"$out/contract.txt"
+printf 'recover_cloud_init=%s\n' "$recover_cloud_init" >>"$out/contract.txt"
+printf 'base_kind=%s base=%s\n' "$base_kind" "$base" >>"$out/contract.txt"
+printf '%s\n' "$inventory_before" >"$out/baseline-qemu-inventory.txt"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$base" "$overlay"
+if [[ "$base_kind" == official-cloud-bootstrap ]]; then
+    qemu-img resize "$overlay" 40G >/dev/null
+fi
 mkdir -p "$out/seed"
 printf '%s\n' \
     'instance-id: youtube-parity-'"$token" \
@@ -83,9 +139,27 @@ printf '%s\n' \
     '    - {name: ubuntu, password: linux-kde-reference, type: text}' \
     'package_update: true' \
     'packages:' \
+    '  - plasma-desktop' \
+    '  - plasma-workspace-wayland' \
+    '  - kwin-wayland' \
+    '  - sddm' \
+    '  - network-manager' \
+    '  - konsole' \
+    '  - mesa-utils' \
+    '  - glmark2-wayland' \
+    '  - kde-spectacle' \
+    '  - openssh-server' \
     '  - linux-modules-extra-6.8.0-134-generic' \
     '  - pulseaudio-utils' \
     '  - alsa-utils' \
+    'write_files:' \
+    '  - path: /etc/sddm.conf.d/90-linux-kde-reference.conf' \
+    '    permissions: "0644"' \
+    '    content: |' \
+    '      [Autologin]' \
+    '      User=ubuntu' \
+    '      Session=plasmawayland' \
+    '      Relogin=true' \
     'bootcmd:' \
     '  - [rm, -f, /home/ubuntu/.config/autostart/linux-kde-reference.desktop, /home/ubuntu/.config/autostart/linux-kde-behavior.desktop]' \
     '  - [systemctl, mask, --runtime, linux-kde-reference-timeout.service]' \
@@ -94,6 +168,9 @@ printf '%s\n' \
     'runcmd:' \
     '  - [systemctl, enable, --now, ssh.service]' \
     '  - [systemctl, restart, NetworkManager.service]' \
+    '  - [systemctl, set-default, graphical.target]' \
+    '  - [systemctl, enable, sddm.service]' \
+    '  - [systemctl, restart, sddm.service]' \
     'ssh_pwauth: true' >"$out/seed/user-data"
 printf '%s\n' \
     'version: 2' \
@@ -126,7 +203,13 @@ cleanup() {
             "$qemu_pid" "$qemu_start" "$token" >>"$out/cleanup.log" 2>&1
     fi
     if ((qemu_pid > 0)); then wait "$qemu_pid" 2>/dev/null; fi
-    "$root/scripts/launch/qemu-exact-inventory.sh" >"$out/final-qemu-inventory.txt"
+    final_inventory=$("$root/scripts/launch/qemu-exact-inventory.sh")
+    printf '%s\n' "$final_inventory" >"$out/final-qemu-inventory.txt"
+    if [[ "$allow_external_qemu" == 1 && "$final_inventory" != "$inventory_before" ]]; then
+        printf '%s\n' \
+            'external QEMU inventory changed independently during owned Linux trial' \
+            >>"$out/cleanup.log"
+    fi
     exit "$rc"
 }
 trap cleanup EXIT INT TERM
@@ -134,7 +217,16 @@ trap cleanup EXIT INT TERM
 export SDL_VIDEODRIVER=x11 SDL_VIDEO_HIGHDPI_DISABLED=1
 export GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA
 export LIBGL_ALWAYS_SOFTWARE=0
-setsid "$qemu" -L "$qemu_data" \
+prelaunch_inventory=$("$root/scripts/launch/qemu-exact-inventory.sh") || {
+    printf '%s\n' "$prelaunch_inventory" >"$out/prelaunch-qemu-inventory.txt"
+    echo "YOUTUBE_PARITY_LINUX status=SKIP reason=qemu-inventory-failed-before-launch"; exit 75;
+}
+printf '%s\n' "$prelaunch_inventory" >"$out/prelaunch-qemu-inventory.txt"
+if [[ "$prelaunch_inventory" != "$inventory_before" ]]; then
+    echo "YOUTUBE_PARITY_LINUX status=SKIP reason=qemu-inventory-changed-before-launch"
+    exit 75
+fi
+setsid env "${qemu_env[@]}" "$qemu" "${qemu_data_args[@]}" \
     -name "xv6-${token}" -pidfile "$pidfile" \
     -machine pc,vmport=off,accel=kvm -enable-kvm -cpu host -smp 6 -m 8G \
     -display sdl,gl=on,show-cursor=on,grab-mod=lctrl-lalt \
@@ -168,9 +260,23 @@ qemu_start=${stat_fields[19]}
     "$qemu_pid" "$qemu_start" "$token" >"$out/owned-process.txt"
 
 title="QEMU (xv6-${token}-0)"
+for _ in $(seq 1 40); do
+    if QEMU_WINDOW_TITLE="$title" "$root/scripts/gpu/capture-host-screen.sh" \
+        "$out/host-window-before-fit.png" >"$out/host-window-before-fit.log" 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+fit_mode=${LINUX_YOUTUBE_FIT_MODE:-}
+if [[ -z "$fit_mode" ]]; then
+    [[ "$qemu_variant" == apt ]] && fit_mode=native || fit_mode=maximize
+fi
 for _ in $(seq 1 80); do
     if fit=$(
-        "$root/scripts/gpu/fit-owned-qemu-window.sh" "$title" 2>/dev/null
+        env XV6_QEMU_WINDOW_FIT_MODE="$fit_mode" \
+            XV6_QEMU_WINDOW_TARGET_WIDTH=1280 \
+            XV6_QEMU_WINDOW_TARGET_HEIGHT=768 \
+            "$root/scripts/gpu/fit-owned-qemu-window.sh" "$title" 2>/dev/null
     ); then
         printf '%s\n' "$fit" >"$out/fit-window.txt"
         break
@@ -178,13 +284,30 @@ for _ in $(seq 1 80); do
     sleep 0.25
 done
 [[ -s "$out/fit-window.txt" ]] || { echo "SDL window fit failed" >&2; exit 4; }
-
-expect "$root/scripts/gpu/linux-kde-serial-prepare.expect" \
-    "$serial_socket" "$nonce" >"$out/serial-prepare.log" 2>&1
+QEMU_WINDOW_TITLE="$title" "$root/scripts/gpu/capture-host-screen.sh" \
+    "$out/host-window-after-fit.png" >"$out/host-window-after-fit.log" 2>&1 || true
+if [[ -s "$out/host-window-after-fit.png" ]] && command -v convert >/dev/null 2>&1; then
+    convert "$out/host-window-after-fit.png" \
+        -format '%[fx:mean] %[fx:standard_deviation] %[fx:maxima] %[colors]\n' \
+        info: >"$out/host-window-visual-stats.txt"
+fi
 
 ssh_base=(sshpass -p linux-kde-reference ssh -p "$ssh_port" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR -o ConnectTimeout=3 ubuntu@127.0.0.1)
+ssh_ready=0
+for _ in $(seq 1 45); do
+    if "${ssh_base[@]}" 'test "$(hostname)" = linux-kde-reference' \
+        >/dev/null 2>&1; then
+        ssh_ready=1
+        break
+    fi
+    sleep 1
+done
+if ((ssh_ready == 0)); then
+    expect "$root/scripts/gpu/linux-kde-serial-prepare.expect" \
+        "$serial_socket" "$nonce" >"$out/serial-prepare.log" 2>&1
+fi
 for _ in $(seq 1 180); do
     if "${ssh_base[@]}" 'test "$(hostname)" = linux-kde-reference' \
         >/dev/null 2>&1; then break; fi
@@ -195,8 +318,17 @@ cloud_rc=0
 "${ssh_base[@]}" 'sudo cloud-init status --wait --long' \
     >"$out/cloud-init-status.txt" 2>&1 || cloud_rc=$?
 if ((cloud_rc != 0)) || [[ "$(<"$out/cloud-init-status.txt")" != *"status: done"* ]]; then
-    echo "Linux reference package provisioning failed" >&2
-    exit 4
+    if [[ "$recover_cloud_init" != 1 ]]; then
+        echo "Linux reference package provisioning failed" >&2
+        exit 4
+    fi
+    "${ssh_base[@]}" \
+        'sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a && sudo env DEBIAN_FRONTEND=noninteractive apt-get -f install -y && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y plasma-desktop plasma-workspace-wayland kwin-wayland sddm network-manager konsole mesa-utils glmark2-wayland kde-spectacle openssh-server linux-modules-extra-6.8.0-134-generic pulseaudio-utils alsa-utils && sudo systemctl set-default graphical.target && sudo systemctl enable ssh.service sddm.service && sudo systemctl restart ssh.service sddm.service' \
+        >"$out/cloud-init-recovery.txt" 2>&1 || {
+            echo "Linux reference package recovery failed" >&2
+            exit 4
+        }
+    printf 'status=recovered\n' >"$out/cloud-init-recovery-status.txt"
 fi
 "${ssh_base[@]}" 'sync'
 sleep 5
@@ -240,9 +372,28 @@ printf '%s\n' "$renderer" >"$out/renderer.txt"
 [[ "$renderer" == *"virgl (D3D12 (NVIDIA"* ]] || {
     echo "renderer is not virgl/NVIDIA D3D12" >&2; exit 5;
 }
+QEMU_WINDOW_TITLE="$title" "$root/scripts/gpu/capture-host-screen.sh" \
+    "$out/host-window-kde-ready.png" >"$out/host-window-kde-ready.log" 2>&1 || true
+if [[ -s "$out/host-window-kde-ready.png" ]] && command -v convert >/dev/null 2>&1; then
+    convert "$out/host-window-kde-ready.png" \
+        -format '%[fx:mean] %[fx:standard_deviation] %[fx:maxima] %[colors]\n' \
+        info: >"$out/host-window-kde-ready-visual-stats.txt"
+fi
+env XV6_QEMU_WINDOW_FIT_MODE="$fit_mode" \
+    XV6_QEMU_WINDOW_TARGET_WIDTH=1280 \
+    XV6_QEMU_WINDOW_TARGET_HEIGHT=768 \
+    "$root/scripts/gpu/fit-owned-qemu-window.sh" "$title" \
+    >"$out/fit-window-kde-ready.txt"
+QEMU_WINDOW_TITLE="$title" "$root/scripts/gpu/capture-host-screen.sh" \
+    "$out/host-window-kde-ready-fitted.png" \
+    >"$out/host-window-kde-ready-fitted.log" 2>&1 || true
 
 url="https://www.youtube.com/watch?v=aqz-KE-bpKQ&vq=hd720&autoplay=1&xv6ytmode=$mode#xv6ytprobe=$nonce&xv6ythd720=1"
-launch="$session_env; export CHROME_LOG_FILE='$guest_root/chrome.log' XV6_PULSE_TRACE=1 XV6_PULSE_TRACE_LOG='$guest_root/pulse.log'; export LD_LIBRARY_PATH=/mnt/ythostlibs LD_PRELOAD=/mnt/yttrace/chromium-pulse-byte-trace-preload.so; nohup /mnt/hostchromium/chromium --user-data-dir='$guest_root/profile' --no-first-run --no-default-browser-check --ozone-platform=wayland --enable-logging=stderr --v=1 --autoplay-policy=no-user-gesture-required --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --load-extension=/mnt/ytprobe '$url' >'$guest_root/launch.log' 2>&1 & echo \$!"
+# The xv6 image has no accepted microphone-capture workload.  Match that
+# boundary here: keep real Pulse output enabled, but omit Chromium's otherwise
+# unused Chrome-wide AEC output mixer so normal media-element replacement does
+# not add a capture-only stream lifecycle to either side of the comparison.
+launch="$session_env; export CHROME_LOG_FILE='$guest_root/chrome.log' XV6_PULSE_TRACE=1 XV6_PULSE_TRACE_LOG='$guest_root/pulse.log'; export LD_LIBRARY_PATH=/mnt/ythostlibs LD_PRELOAD=/mnt/yttrace/chromium-pulse-byte-trace-preload.so; nohup /mnt/hostchromium/chromium --user-data-dir='$guest_root/profile' --no-first-run --no-default-browser-check --ozone-platform=wayland --enable-logging=stderr --v=1 --autoplay-policy=no-user-gesture-required --disable-features=ChromeWideEchoCancellation --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --load-extension=/mnt/ytprobe '$url' >'$guest_root/launch.log' 2>&1 & echo \$!"
 chrome_pid=$("${ssh_base[@]}" "$launch" | tail -n 1)
 [[ "$chrome_pid" =~ ^[1-9][0-9]*$ ]] || { echo "Chromium launch failed" >&2; exit 6; }
 
@@ -285,6 +436,18 @@ with urllib.request.urlopen(f"http://127.0.0.1:{sys.argv[1]}/json", timeout=3) a
 PY
     echo "Chromium CDP target/display mode did not become ready" >&2
     exit 6
+fi
+env XV6_QEMU_WINDOW_FIT_MODE="$fit_mode" \
+    XV6_QEMU_WINDOW_TARGET_WIDTH=1280 \
+    XV6_QEMU_WINDOW_TARGET_HEIGHT=768 \
+    "$root/scripts/gpu/fit-owned-qemu-window.sh" "$title" \
+    >"$out/fit-window-youtube-ready.txt"
+QEMU_WINDOW_TITLE="$title" "$root/scripts/gpu/capture-host-screen.sh" \
+    "$out/host-window-youtube-ready.png" >"$out/host-window-youtube-ready.log" 2>&1 || true
+if [[ -s "$out/host-window-youtube-ready.png" ]] && command -v convert >/dev/null 2>&1; then
+    convert "$out/host-window-youtube-ready.png" \
+        -format '%[fx:mean] %[fx:standard_deviation] %[fx:maxima] %[colors]\n' \
+        info: >"$out/host-window-youtube-ready-visual-stats.txt"
 fi
 
 state_expr='(()=>{const v=document.querySelector("video");const p=document.getElementById("movie_player");const f=document.fullscreenElement;const owns=!!p&&!!f&&(f===p||f.contains(p)||p.contains(f));return {documentFullscreen:!!f,playerFullscreen:owns,videoPlaying:!!v&&!v.paused&&!v.ended,width:v?v.videoWidth:0,height:v?v.videoHeight:0};})()'

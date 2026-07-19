@@ -32,10 +32,9 @@ services:
       - ${XDG_RUNTIME_DIR:-/run/user/1000}:${XDG_RUNTIME_DIR:-/run/user/1000}
       # X11 socket (WSLg / standard Linux desktop)
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
-    # Run as the calling user so build artifacts are not root-owned on the host.
-    # enter-container.sh exports XV6_UID/XV6_GID automatically.
-    # For bare docker compose run: XV6_UID=$(id -u) XV6_GID=$(id -g) docker compose run ...
-    user: "${XV6_UID:-1000}:${XV6_GID:-1000}"
+    # Image generation may refresh APT metadata and therefore runs as the
+    # container's default root user. xv6-command re-owns generated build trees
+    # to the bind-mounted source tree owner before returning.
     environment:
       XV6_SOURCE_DIR: /src/xv6-os
       XV6_IN_CONTAINER: "1"
@@ -44,8 +43,7 @@ services:
       DISPLAY: ${DISPLAY:-}
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
       XDG_RUNTIME_DIR: ${XDG_RUNTIME_DIR:-/run/user/1000}
-      # No /etc/passwd entry exists for the host UID inside the container;
-      # point HOME somewhere writable so cmake/pkg-config caches don't error.
+      # Keep transient package/build caches out of the bind-mounted host home.
       HOME: /tmp
     # QEMU is deliberately launched on the host, where the exact /proc
     # inventory can see and preserve unrelated external VMs.

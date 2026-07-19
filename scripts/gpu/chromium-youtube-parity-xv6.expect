@@ -34,15 +34,59 @@ if {[info exists env(XV6_YOUTUBE_DIRECT_PULSE)] &&
     $env(XV6_YOUTUBE_DIRECT_PULSE) eq "1"} {
     set direct_pulse_enabled 1
 }
+set pulse_full_trace_enabled 0
+if {[info exists env(XV6_YOUTUBE_PULSE_FULL_TRACE)] &&
+    $env(XV6_YOUTUBE_PULSE_FULL_TRACE) eq "1"} {
+    set pulse_full_trace_enabled 1
+}
+set qemu_variant "apt"
+if {[info exists env(XV6_YOUTUBE_QEMU_VARIANT)] &&
+    $env(XV6_YOUTUBE_QEMU_VARIANT) ne ""} {
+    set qemu_variant $env(XV6_YOUTUBE_QEMU_VARIANT)
+}
+if {$qemu_variant ni {apt patched}} {
+    puts stderr "chromium-youtube-parity-xv6: invalid XV6_YOUTUBE_QEMU_VARIANT=$qemu_variant"
+    exit 64
+}
+set apt_modules "corrected"
+if {[info exists env(XV6_YOUTUBE_APT_MODULES)] &&
+    $env(XV6_YOUTUBE_APT_MODULES) ne ""} {
+    set apt_modules $env(XV6_YOUTUBE_APT_MODULES)
+}
+if {$apt_modules ni {corrected system}} {
+    puts stderr "chromium-youtube-parity-xv6: invalid XV6_YOUTUBE_APT_MODULES=$apt_modules"
+    exit 64
+}
+if {$qemu_variant eq "apt"} {
+    set expected_aspect_fix [expr {$apt_modules eq "corrected" ? "apt-corrected-modules" : "none"}]
+    set expected_apt_modules $apt_modules
+    set fit_mode "native"
+} else {
+    set expected_aspect_fix "patched"
+    set expected_apt_modules "not-applicable"
+    set fit_mode "maximize"
+}
 set sched_starve_probe_enabled 0
 if {[info exists env(XV6_YOUTUBE_SCHED_STARVE_PROBE)] &&
     $env(XV6_YOUTUBE_SCHED_STARVE_PROBE) eq "1"} {
     set sched_starve_probe_enabled 1
 }
-set build "$root/build-x86_64"
+set artifact_root $root
+if {[info exists env(XV6_YOUTUBE_ARTIFACT_ROOT)] &&
+    $env(XV6_YOUTUBE_ARTIFACT_ROOT) ne ""} {
+    set artifact_root $env(XV6_YOUTUBE_ARTIFACT_ROOT)
+}
+set build "$artifact_root/build-x86_64"
 set kernel "$build/kernel/build/kernel/xv6.bin"
 set base_img "$build/fs.img"
-set trace_so "$build/host-gui-runtime/chromium-pulse-byte-trace-preload.so"
+if {$pulse_full_trace_enabled} {
+    # Diagnostic only: this existing lifecycle tracer records Pulse stream
+    # state plus Start/Stop/Reset operation results.  Keep the compact byte
+    # tracer as the normal parity path so measurement overhead stays matched.
+    set trace_so "$build/host-gui-runtime/chromium-pulse-trace-preload.so"
+} else {
+    set trace_so "$build/host-gui-runtime/chromium-pulse-byte-trace-preload.so"
+}
 set probe_js "$root/rootfs-overlay/share/chromium-youtube-media-probe/probe.js"
 set probe_manifest "$root/rootfs-overlay/share/chromium-youtube-media-probe/manifest.json"
 set probe_performance_manifest "$root/rootfs-overlay/share/chromium-youtube-media-probe/manifest-performance.json"
@@ -59,6 +103,9 @@ set token "xv6-yt-$mode-$stamp-[pid]"
 set treatment_suffix ""
 if {$direct_pulse_enabled} {
     set treatment_suffix "-direct-pulse"
+}
+if {$pulse_full_trace_enabled} {
+    append treatment_suffix "-pulse-full-trace"
 }
 set outdir "$build/youtube-parity/xv6-$mode-$stamp-[pid]$treatment_suffix"
 set scratch "$outdir/xv6-trial.fs.img"
@@ -216,6 +263,8 @@ proc finish {code reason} {
                 /yt-cpu-after.txt cpu-after-failure.txt \
                 /yt-renderer-main-before.txt renderer-main-before-failure.txt \
                 /yt-renderer-main-after.txt renderer-main-after-failure.txt \
+                /yt-renderer-threads-before.txt renderer-threads-before-failure.txt \
+                /yt-renderer-threads-after.txt renderer-threads-after-failure.txt \
                 /yt-sched-roles-before.txt sched-roles-before-failure.txt \
                 /yt-sched-roles-after.txt sched-roles-after-failure.txt \
                 /yt-fb-before.txt fb-before-failure.txt \
@@ -392,6 +441,13 @@ proc snd_played {path} {
 }
 
 file mkdir $outdir
+# A caller or terminal may stop a long parity trial while the guest is still
+# running.  Route catchable termination signals through the same identity-
+# bound cleanup and evidence extraction path as every normal failure; otherwise
+# an interrupted trial can strand both QEMU and its private 8+ GiB image.
+trap {finish 143 signal-SIGTERM} SIGTERM
+trap {finish 130 signal-SIGINT} SIGINT
+trap {finish 129 signal-SIGHUP} SIGHUP
 foreach required [list $kernel $base_img $trace_so $probe_js \
         $probe_manifest $probe_performance_manifest $probe_background $cdp_eval] {
     if {![file isfile $required]} {
@@ -465,11 +521,12 @@ puts $fh {  start)}
 puts $fh {    rm -rf "$runtime"; rm -f "$owner" "$server_log" "$client_log"}
 puts $fh {    mkdir -m 0700 -p "$runtime"}
 # Chromium briefly tears down and recreates its stream when YouTube replaces a
-# fullscreen media element.  A one-second idle timeout can suspend ALSA inside
-# that normal transition and turn it into AUDIO_RENDERER_ERROR.  Keep the
-# one-second policy in pulsealsaperf-guest.sh, where suspend/resume is the
-# behavior under test; the parity workload gets a five-second transition grace.
-puts $fh {    PULSE_RUNTIME_PATH="$runtime" XDG_RUNTIME_DIR="$runtime" /bin/chromium-pulse-stream-reducer --pgroup-leader pulseaudio "$owner" -- /usr/bin/pulseaudio -n --daemonize=no --system=false --use-pid-file=false --exit-idle-time=-1 --log-target=stderr --log-level=info --load="module-native-protocol-tcp listen=127.0.0.1 port=47139 auth-anonymous=1" --load="module-alsa-sink device=hw:0 sink_name=xv6_direct_alsa rate=48000 channels=2 tsched=0 fragments=4 fragment_size=4800" --load="module-suspend-on-idle timeout=5" >"$server_log" 2>&1 &}
+# fullscreen media element.  Suspending ALSA inside that normal transition can
+# turn it into AUDIO_RENDERER_ERROR and invalidate an otherwise healthy video
+# sample.  Keep the one-second policy in pulsealsaperf-guest.sh, where
+# suspend/resume is the behavior under test; the parity workload keeps the sink
+# awake beyond its complete setup and measurement window.
+puts $fh {    PULSE_RUNTIME_PATH="$runtime" XDG_RUNTIME_DIR="$runtime" /bin/chromium-pulse-stream-reducer --pgroup-leader pulseaudio "$owner" -- /usr/bin/pulseaudio -n --daemonize=no --system=false --use-pid-file=false --exit-idle-time=-1 --log-target=stderr --log-level=info --load="module-native-protocol-tcp listen=127.0.0.1 port=47139 auth-anonymous=1" --load="module-alsa-sink device=hw:0 sink_name=xv6_direct_alsa rate=48000 channels=2 tsched=0 fragments=4 fragment_size=4800" --load="module-suspend-on-idle timeout=120" >"$server_log" 2>&1 &}
 puts $fh {    server_pid=$!; emit "phase=spawn pid=$server_pid server=$server"}
 puts $fh {    ready=0; attempts=0; while [ "$attempts" -lt 20 ]; do attempts=$((attempts + 1)); PULSE_SERVER="$server" /bin/chromium-pulse-stream-reducer --run-bounded 2 pactl -- /usr/bin/pactl info >/yt-direct-pulse-pactl.log 2>&1; if [ "$?" -eq 0 ]; then ready=1; break; fi; done}
 puts $fh {    /bin/chromium-pulse-stream-reducer --pgroup-identity "$owner" >>"$client_log" 2>&1; identity_rc=$?}
@@ -498,8 +555,9 @@ puts $fh "nonce='$nonce'"
 puts $fh {source=/host-gui-wayland-chromium.log}
 puts $fh {check() { kind=$1; case "$kind" in ready) pattern="YT_MEDIA_PROBE_V1 kind=force_observation schema=1 nonce=$nonce ";; start) pattern="YT_MEDIA_PROBE_V1 kind=start schema=1 nonce=$nonce ";; done) pattern="YT_MEDIA_PROBE_V1 kind=done schema=1 nonce=$nonce status=complete";; *) echo "YTCTL_CHECK status=FAIL kind=$kind reason=argument"; return 2;; esac; failure_pattern="YT_MEDIA_PROBE_V1 kind=failure schema=1 nonce=$nonce "; failure=/tmp/ytctl-failure-$$; /bin/grep "$failure_pattern" "$source" > "$failure" 2>/dev/null; counts=$(/bin/wc < "$failure"); set -- $counts; if [ "$#" -eq 3 ] && [ "$1" -gt 0 ] 2>/dev/null; then reason=producer; while read -r line; do for word in $line; do case "$word" in reason=*) reason=${word#reason=}; reason=${reason%%\"*}; reason=${reason%%,*};; esac; done; break; done < "$failure"; rm -f "$failure"; echo "YTCTL_CHECK status=FAIL kind=$kind reason=$reason"; return 2; fi; rm -f "$failure"; match=/tmp/ytctl-match-$$; /bin/grep "$pattern" "$source" > "$match" 2>/dev/null; counts=$(/bin/wc < "$match"); rm -f "$match"; set -- $counts; if [ "$#" -eq 3 ] && [ "$1" -gt 0 ] 2>/dev/null; then echo "YTCTL_CHECK status=PASS kind=$kind rows=$1"; return 0; fi; echo "YTCTL_CHECK status=PENDING kind=$kind"; return 1; }}
 puts $fh {renderer_main_snapshot() { phase=$1; cpu="/yt-cpu-$phase.txt"; if [ "$phase" = before ]; then best_pid=""; best_rss=0; while read -r pid tid psr pri ni state pcpu rss comm args; do if [ "$comm" = dav1d-worker ] && [ "$rss" -gt "$best_rss" ] 2>/dev/null; then best_rss=$rss; best_pid=$pid; fi; done <"$cpu"; if [ -z "$best_pid" ]; then while read -r pid tid psr pri ni state pcpu rss comm args; do case "$pid:$tid:$args" in "$pid:$pid:"*--type=renderer*) if [ "$rss" -gt "$best_rss" ] 2>/dev/null; then best_rss=$rss; best_pid=$pid; fi;; esac; done <"$cpu"; fi; printf '%s\n' "$best_pid" >/yt-renderer-main.pid; else best_pid=$(cat /yt-renderer-main.pid 2>/dev/null); best_rss=0; fi; out="/yt-renderer-main-$phase.txt"; if [ -n "$best_pid" ] && [ -r "/proc/$best_pid/stat" ]; then run_wait_ticks=0; run_slices=0; while read -r key value rest; do case "$key" in RunWaitTicks:) run_wait_ticks=$value;; RunSlices:) run_slices=$value;; esac; done <"/proc/$best_pid/status"; echo "YT_RENDERER_MAIN_V2 phase=$phase pid=$best_pid selected_rss_kb=$best_rss run_wait_ticks=$run_wait_ticks run_slices=$run_slices stat=$(cat /proc/$best_pid/stat 2>/dev/null)" >"$out"; else echo "YT_RENDERER_MAIN_V2 phase=$phase status=missing pid=$best_pid" >"$out"; fi; }}
+puts $fh {renderer_threads_snapshot() { phase=$1; pid=$(cat /yt-renderer-main.pid 2>/dev/null); out="/yt-renderer-threads-$phase.txt"; : >"$out"; if [ -z "$pid" ] || [ ! -d "/proc/$pid/task" ]; then echo "YT_RENDERER_THREAD_V1 phase=$phase status=missing pid=$pid" >"$out"; return; fi; for task in /proc/$pid/task/[0-9]*; do tid=${task##*/}; comm=$(cat "$task/comm" 2>/dev/null); role=""; if [ "$tid" = "$pid" ]; then role=main; else case "$comm" in Chrome_ChildIOT) role=child_io;; Compositor) role=compositor;; VideoFrameCompo) role=video_frame_compositor;; Media) role=media;; esac; fi; [ -n "$role" ] || continue; run_wait_ticks=0; run_slices=0; state=unknown; while read -r key value rest; do case "$key" in State:) state=$value;; RunWaitTicks:) run_wait_ticks=$value;; RunSlices:) run_slices=$value;; esac; done <"$task/status"; echo "YT_RENDERER_THREAD_V1 phase=$phase role=$role pid=$pid tid=$tid comm=$comm state=$state run_wait_ticks=$run_wait_ticks run_slices=$run_slices wchan=$(cat "$task/wchan" 2>/dev/null) syscall=$(cat "$task/syscall" 2>/dev/null) stat=$(cat "$task/stat" 2>/dev/null)" >>"$out"; done; }}
 puts $fh {sched_roles_snapshot() { phase=$1; cpu="/yt-cpu-$phase.txt"; out="/yt-sched-roles-$phase.txt"; : >"$out"; while read -r pid tid psr pri ni state pcpu rss comm args; do role=""; case "$comm" in AudioThread) role=chromium_audio;; pipewire) role=pipewire;; pipewire-pulse) role=pipewire_pulse;; wireplumber) role=wireplumber;; pulseaudio) role=direct_pulse;; esac; [ -n "$role" ] || continue; status="/proc/$pid/task/$tid/status"; stat="/proc/$pid/task/$tid/stat"; [ -r "$status" ] || continue; run_wait_ticks=0; run_slices=0; while read -r key value rest; do case "$key" in RunWaitTicks:) run_wait_ticks=$value;; RunSlices:) run_slices=$value;; esac; done <"$status"; echo "YT_SCHED_ROLE_V1 phase=$phase role=$role pid=$pid tid=$tid comm=$comm state=$state pcpu=$pcpu rss_kb=$rss run_wait_ticks=$run_wait_ticks run_slices=$run_slices stat=$(cat "$stat" 2>/dev/null)" >>"$out"; done <"$cpu"; }}
-puts $fh {snapshot() { phase=$1; cat /dev/sndstat >"/yt-snd-$phase.txt" 2>/dev/null; fbstat >"/yt-fb-$phase.txt" 2>&1; ps -eLo pid,tid,psr,pri,ni,stat,pcpu,rss,comm,args >"/yt-cpu-$phase.txt" 2>&1; renderer_main_snapshot "$phase"; sched_roles_snapshot "$phase"; if [ -f /yt-pulse.log ]; then cp /yt-pulse.log "/yt-pulse-$phase.log"; else : >"/yt-pulse-$phase.log"; fi; sync; echo "YTCTL_SNAPSHOT status=PASS phase=$phase"; }}
+puts $fh {snapshot() { phase=$1; cat /dev/sndstat >"/yt-snd-$phase.txt" 2>/dev/null; fbstat >"/yt-fb-$phase.txt" 2>&1; ps -eLo pid,tid,psr,pri,ni,stat,pcpu,rss,comm,args >"/yt-cpu-$phase.txt" 2>&1; renderer_main_snapshot "$phase"; renderer_threads_snapshot "$phase"; sched_roles_snapshot "$phase"; if [ -f /yt-pulse.log ]; then cp /yt-pulse.log "/yt-pulse-$phase.log"; else : >"/yt-pulse-$phase.log"; fi; sync; echo "YTCTL_SNAPSHOT status=PASS phase=$phase"; }}
 puts $fh {forensic() { { echo "YT_TIMEOUT_FORENSIC_V1 nonce=$nonce"; date 2>/dev/null; cat /proc/uptime /proc/loadavg /proc/schedstat 2>/dev/null; ps -eLo pid,ppid,tid,psr,pri,ni,stat,pcpu,comm,args 2>/dev/null || ps -ef 2>/dev/null; targets=""; echo CHROME_FDS_BEGIN; for p in /proc/[0-9]*; do comm=$(cat "$p/comm" 2>/dev/null); case "$comm" in chromium*|chrome*) rss=0; while read -r key value rest; do if [ "$key" = "VmRSS:" ]; then rss=$value; break; fi; done <"$p/status"; childio19=0; for t in "$p"/task/[0-9]*; do tcomm=$(cat "$t/comm" 2>/dev/null); if [ "$tcomm" = "Chrome_ChildIOT" ]; then syscall=$(cat "$t/syscall" 2>/dev/null); set -- $syscall; if [ "$1" = "232" ] && [ "$2" = "0x13" ]; then childio19=1; fi; fi; done; if [ "$childio19" -eq 1 ] && [ "$rss" -ge 100000 ] 2>/dev/null; then targets="$targets $p"; cmd=$(tr '\000' ' ' <"$p/cmdline" 2>/dev/null); echo "CHROME_FDS path=$p comm=$comm rss_kb=$rss argv=$cmd"; for f in "$p"/fd/[0-9]*; do echo "FD path=$f target=$(readlink "$f" 2>/dev/null)"; done; for f in "$p"/fdinfo/[0-9]*; do echo "FDINFO path=$f"; cat "$f" 2>/dev/null; done; fi;; esac; done; cat /proc/net/unix /proc/net/tcp /proc/net/tcp6 2>/dev/null; echo CHROME_FDS_END; echo CHROME_DEVTOOLS_JSON_BEGIN; /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/9222 || exit 1; printf "GET /json/list HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; while IFS= read -r -t 1 line <&3; do printf "%s\n" "$line"; done' || echo CHROME_DEVTOOLS_JSON_UNAVAILABLE; echo CHROME_DEVTOOLS_JSON_END; for p in $targets; do comm=$(cat "$p/comm" 2>/dev/null); echo "PROCESS path=$p comm=$comm"; cat "$p/status" "$p/stat" "$p/wchan" "$p/syscall" 2>/dev/null; for t in "$p"/task/[0-9]*; do echo "THREAD path=$t"; cat "$t/status" "$t/stat" "$t/wchan" "$t/syscall" 2>/dev/null; done; done; cat /dev/sndstat 2>/dev/null; } > /yt-timeout-forensic.txt 2>&1; sync; echo YTCTL_FORENSIC status=PASS; }}
 puts $fh {browseripc() { { echo CHROME_BROWSER_IPC_BEGIN; for p in /proc/[0-9]*; do comm=$(cat "$p/comm" 2>/dev/null); case "$comm" in chromium*|chrome*) browser=0; for t in "$p"/task/[0-9]*; do tcomm=$(cat "$t/comm" 2>/dev/null); if [ "$tcomm" = "Chrome_IOThread" ]; then browser=1; break; fi; done; if [ "$browser" -eq 1 ]; then echo "CHROME_BROWSER path=$p"; for f in "$p"/fdinfo/[0-9]*; do info=$(cat "$f" 2>/dev/null); case "$info" in *"xv6_kind:"*"6 target="*) echo "BROWSER_FDINFO path=$f"; printf '%s\n' "$info";; esac; done; fi;; esac; done; echo CHROME_BROWSER_IPC_END; } >> /yt-timeout-forensic.txt 2>&1; sync; }}
 puts $fh {pendingpeers() { { peers=""; for p in /proc/[0-9]*; do comm=$(cat "$p/comm" 2>/dev/null); case "$comm" in chromium*|chrome*) browser=0; for t in "$p"/task/[0-9]*; do tcomm=$(cat "$t/comm" 2>/dev/null); if [ "$tcomm" = "Chrome_IOThread" ]; then browser=1; break; fi; done; if [ "$browser" -eq 1 ]; then for f in "$p"/fdinfo/[0-9]*; do info=$(cat "$f" 2>/dev/null); tx=$(printf '%s\n' "$info" | /bin/grep '^xv6_unix_tx:' 2>/dev/null); set -- $tx; case "$2" in 0/*|"") continue;; esac; peer=$(printf '%s\n' "$info" | /bin/grep '^xv6_unix_peer:' 2>/dev/null); set -- $peer; if [ "$2" != "0" ] && [ -n "$2" ]; then peers="$peers $2"; echo "CHROME_PENDING_SOURCE path=$p fdinfo=$f peer_ino=$2 tx=$tx"; fi; done; fi;; esac; done; echo "CHROME_PENDING_PEERS peers=$peers"; for p in /proc/[0-9]*; do comm=$(cat "$p/comm" 2>/dev/null); case "$comm" in chromium*|chrome*) for f in "$p"/fdinfo/[0-9]*; do info=$(cat "$f" 2>/dev/null); ino=$(printf '%s\n' "$info" | /bin/grep '^xv6_unix_ino:' 2>/dev/null); set -- $ino; case " $peers " in *" $2 "*) echo "CHROME_PENDING_PEER path=$p fdinfo=$f ino=$2"; printf '%s\n' "$info";; esac; done;; esac; done; } >> /yt-timeout-forensic.txt 2>&1; sync; }}
@@ -546,6 +604,19 @@ set env(QEMU_ALLOW_WSL_SDL_GL) 1
 set env(QEMU_DISPLAY_FALLBACK) error
 set env(QEMU_WSL_SDL_VIDEODRIVER) x11
 set env(QEMU_SDL_HIGHDPI) off
+set env(QEMU_SDL_VARIANT) $qemu_variant
+if {$qemu_variant eq "apt"} {
+    set env(QEMU_SDL_APT_MODULES) $apt_modules
+}
+catch {unset env(QEMU_BIN)}
+if {$qemu_variant eq "patched"} {
+    if {![info exists env(QEMU_SDL_PATCHED_BIN)]} {
+        set env(QEMU_SDL_PATCHED_BIN) "$artifact_root/build-x86_64/qemu-sdl/bin/qemu-system-x86_64"
+    }
+    if {![info exists env(QEMU_SDL_DATA_DIR)]} {
+        set env(QEMU_SDL_DATA_DIR) "$artifact_root/build-x86_64/qemu-sdl/share/qemu"
+    }
+}
 set env(QEMU_CPUS) 6
 set env(QEMU_MEMORY) 8G
 set env(QEMU_INPUT) virtio
@@ -629,7 +700,7 @@ close $fh
 
 set timeout 45
 expect {
-    -re "display-contract requested=sdl resolved=sdl\[^\r\n\]*sdl_aspect_fix=patched\[^\r\n\]*run_token=$token" {}
+    -re "display-contract requested=sdl resolved=sdl\[^\r\n\]*sdl_qemu=$qemu_variant\[^\r\n\]*sdl_apt_modules=$expected_apt_modules\[^\r\n\]*sdl_aspect_fix=$expected_aspect_fix\[^\r\n\]*run_token=$token" {}
     timeout { finish 4 "display-contract-timeout" }
     eof { finish 5 "display-contract-eof" }
 }
@@ -654,12 +725,18 @@ if {![regexp {run-qemu: using KVM acceleration} $boot_text] ||
 }
 
 set title "QEMU (xv6-$token-0)"
-set fit_rc [catch {exec env XV6_QEMU_WINDOW_FIT_MODE=maximize \
+set fit_rc [catch {exec env XV6_QEMU_WINDOW_FIT_MODE=$fit_mode \
+    XV6_QEMU_WINDOW_TARGET_WIDTH=1280 \
+    XV6_QEMU_WINDOW_TARGET_HEIGHT=800 \
     "$root/scripts/gpu/fit-owned-qemu-window.sh" $title} fit]
 set fh [open "$outdir/fit-window.txt" w]
 puts $fh "rc=$fit_rc output=$fit"
 close $fh
 if {$fit_rc != 0 || ![regexp {status=PASS} $fit]} { finish 11 "window-fit-failed" }
+if {$qemu_variant eq "apt" &&
+    ![regexp {client_final=1280x800} $fit]} {
+    finish 11 "apt-native-client-size-mismatch"
+}
 
 if {[catch {guest_command YTSYNC_ {true} 30} sync_output]} { finish 13 $sync_output }
 if {$direct_pulse_enabled} {
@@ -759,6 +836,8 @@ set durable_guest_files [list \
         /yt-cpu-after.txt "$outdir/cpu-after.txt" \
         /yt-renderer-main-before.txt "$outdir/renderer-main-before.txt" \
         /yt-renderer-main-after.txt "$outdir/renderer-main-after.txt" \
+        /yt-renderer-threads-before.txt "$outdir/renderer-threads-before.txt" \
+        /yt-renderer-threads-after.txt "$outdir/renderer-threads-after.txt" \
         /yt-sched-roles-before.txt "$outdir/sched-roles-before.txt" \
         /yt-sched-roles-after.txt "$outdir/sched-roles-after.txt" \
         /yt-fb-before.txt "$outdir/fb-before.txt" \

@@ -102,6 +102,33 @@ stage_chromium_pulse_trace_preload() {
     fi
 }
 
+stage_chromium_host_atk() {
+    local chrome="${OVERLAY}/opt/host-gui/wayland-chromium/chrome-linux64/chrome"
+    local host_atk
+    local dst="${OVERLAY}/opt/host-gui/wayland-chromium/lib/libatk-1.0.so.0"
+
+    [[ -x "${chrome}" ]] || {
+        note "Chromium binary missing while staging its host ATK runtime"
+        return 1
+    }
+    host_atk="$(
+        ldd "${chrome}" 2>/dev/null |
+        awk '$1 == "libatk-1.0.so.0" && $2 == "=>" { print $3; exit }'
+    )"
+    if [[ -z "${host_atk}" || ! -e "${host_atk}" ]]; then
+        note "Chromium host libatk-1.0.so.0 dependency is unresolved"
+        return 1
+    fi
+
+    # Chromium and libatk-bridge come from the host distribution, while xv6's
+    # GTK port uses the older ATK 2.38 ABI.  Keep the imported browser on its
+    # matching host ATK without moving host Mesa/DRM/Wayland ahead of the
+    # guest graphics stack.  GTK must remain dynamically linked to ATK so this
+    # single SONAME instance serves both callers in the Chromium process.
+    stage_host_file "${host_atk}" "${dst}"
+    note "staged Chromium host ATK runtime from ${host_atk}"
+}
+
 stage_host_file() {
     local src="$1"
     local dst="$2"
@@ -485,5 +512,6 @@ stage_idle_if_available
 stage_chromium_egl_trace_preload
 stage_chromium_pulse_trace_preload
 stage_chromium_for_testing
+stage_chromium_host_atk
 
 note "overlay=${OVERLAY}"

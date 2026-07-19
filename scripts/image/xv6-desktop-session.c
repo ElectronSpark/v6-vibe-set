@@ -43,6 +43,7 @@ static void wait_for_login1(void)
 
 int main(void)
 {
+    const char *desktop;
     char *argv_kde[] = { "/bin/kde-session", NULL };
 
     set_default_env();
@@ -52,6 +53,13 @@ int main(void)
         return 0;
     }
 
+    desktop = getenv("XV6_DESKTOP_DEFAULT");
+    if (desktop && *desktop && strcmp(desktop, "kde") != 0 &&
+        strcmp(desktop, "plasma") != 0)
+        fprintf(stderr,
+                "xv6-desktop-session: ignoring unsupported desktop=%s; "
+                "Plasma/KWin is required\n",
+                desktop);
     fprintf(stderr, "xv6-desktop-session: selected desktop=kde\n");
     wait_for_login1();
     execv(argv_kde[0], argv_kde);

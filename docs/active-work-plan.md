@@ -1,6 +1,6 @@
 # Active goal: stable SDL KDE and Linux-comparable YouTube playback
 
-Updated: 2026-07-16 UTC
+Updated: 2026-07-19 UTC
 
 ## Outcome
 
@@ -11,9 +11,40 @@ the matched Linux KDE VM.
 
 Current status:
 
-- [x] SDL geometry, non-black output, and scaled absolute input are fixed.
+- [x] SDL native geometry and scaled absolute input are controlled. A guest
+  mode transition can still make stock APT SDL drift from 1280x768 to
+  1356x897, so the launcher re-applies the fit only when the client changes.
+- [x] Current xv6 KDE renders on the untouched stock-APT SDL/OpenGL modules.
+  The nonce-bound 2026-07-18 gate proves a live Qt Wayland surface in both the
+  direct QEMU scanout and host SDL window at 1280x800, with the kernel boot logo
+  absent from both captures.
+- [x] A complete rootfs was rebuilt from the current workspace and passes
+  read-only `e2fsck`. The image is KDE/Plasma-only: stale Weston payloads are
+  pruned, the validated Xwayland wrapper and real server are both present, and
+  the required XKB compiler/data are staged reproducibly.
+- [x] The final N=2 xv6 windowed YouTube receipts pass after the rootfs
+  rebuild. The loader repair is reproducible: the ATK port builds a real
+  versioned shared library for GTK, while Chromium receives Ubuntu's matching
+  ATK beside its private `libatk-bridge`; Mesa/DRM/Wayland remain guest-owned.
+  The untraced receipt presents 59.618 fps with 2.174% VPQ drops and the traced
+  receipt presents 59.835 fps with 1.131% drops. Both advance media at real
+  time and prove Pulse stream, hardware-played, and QEMU WAV byte growth.
+- [x] The opening-image stall was reduced to three xv6 DRM/KMS compatibility
+  gaps: dynamic libdrm MODE_ID blobs were rejected, KWin's ordinary unfenced
+  `NONBLOCK|PAGE_FLIP_EVENT` commits were rejected, and xv6 advertised a cursor
+  plane on Bochs even though only virtio-gpu owns a cursor queue. All three are
+  fixed and the Wayland sentinel now advances frames.
+- [x] A fresh same-host Linux control on the untouched APT QEMU renders KDE
+  and Chromium/Wayland and sustains 62.834 presented fps for 1280x720 video.
+  This supplies the behavioral boundary before further kernel changes.
+- [x] Three current stock-APT behavior samples complete native Wayland registry
+  and KWin D-Bus roundtrips. Their pooled warm Konsole median is 206 ms, idle
+  CPU averages 0.271% across six vCPUs, and the two untraced glmark scores
+  average 98. The third sample supplies a current syscall trace.
 - [x] The external VM coexistence contract is enforced without signalling the
-  external VM.
+  external VM. The external RISC-V supervisor may replace its PID during a
+  long control; the harness records that churn while cleanup targets only its
+  own PID/start-time/token.
 - [x] Browser/kernel freezes found during this work have focused reducers and
   fixes; the fresh delayed-group wait/reap reducer passes after the final
   wait-family repair.
@@ -32,24 +63,78 @@ Current status:
   51.347 fps. The refreshed matched Linux trials pass at 51.887 and 49.732
   fps, so xv6 reaches 100.3% of the Linux N=2 presented-fps mean.
 - [x] SDL+virgl launches default to asynchronous KMS presents and the corrected
-  phase-stable 60 Hz present clock. Explicit `key=0` cmdline values remain
-  available for A/B diagnosis.
+  phase-stable 60 Hz present clock. The Bochs compatibility path now accepts
+  KWin's unfenced NONBLOCK flips but still completes them synchronously; it is
+  documented as compatibility, not misreported as true async behavior.
+- [x] SDL+virgl launches also default the virtio-gpu submit admission depth to
+  three. That is the measured performance fix: it lets host virgl/D3D12 work
+  overlap instead of repeatedly stalling the guest submit path, while an
+  explicit kernel flag remains available for diagnostic controls.
+- [x] Async `SUBMIT_3D` admission is now independent of async KMS
+  flush/scanout occupancy, and its capacity wait drops the global virtio-gpu
+  operation lock. KWin still has one event-bearing page flip pending at a time,
+  as on Linux, but renderer admission no longer serializes the KMS worker
+  behind the previous virgl submission.
+- [x] The 2026-07-19 long-lived desktop observation exposed a remaining KMS
+  ownership regression: repeated hover/cursor damage left vertical trails and
+  responsiveness degraded over time. The page-flip path incorrectly treated
+  `SET_SCANOUT` as permanent resource registration: after KWin's three BOs had
+  each appeared once, cycling back to an older BO skipped the rebind and QEMU
+  kept scanning out a different resource. Every actual resource switch now
+  issues `SET_SCANOUT`; the three-resource set is diagnostic only. Per-flip
+  host waits, fenced scanout flushes, and broad resource-reuse waits are
+  rejected as defaults because they reduce hover to 6--8 seconds or video to
+  37.769 fps. On the corrected unfenced/pipelined path, 12/12 hover-ins complete
+  at 258.042 ms median and 12/12 hover-outs at 183.631 ms, and the final host
+  capture has no accumulated plus-sign trails. Build, Sparse, owned teardown,
+  and the error-log scan pass.
+- [x] The remaining multi-second Kickoff latency was an input/session issue,
+  not normal scanout cost. Evdev now timestamps records from the kernel's real
+  monotonic clock instead of advancing a synthetic clock by 1 ms per record,
+  eliminating KWin event backlogs that had reached 425 seconds. Absolute tablet
+  packets no longer emit duplicate relative motion. The warm-up/probe dismissal
+  point also moved from the screen center—which is inside an open Kickoff popup
+  and had launched System Settings—to an empty upper-right desktop point. The
+  final fresh-image run completed pristine (`pristine=1`), with no accidental
+  System Settings process or plus-sign trails: the cold 2143 ms open becomes
+  320--365 ms after desktop warm-up, closes take 140--149 ms, and associated
+  framebuffer presents average about 2.6--8.8 ms. Supported SDL+virgl launches
+  now enable Kickoff/tooltip warm-up and a 50 ms tooltip delay by default; every
+  policy remains explicitly opt-out with a kernel command-line value of zero.
+- [x] Asynchronous GPU commands have one coalesced watchdog armed for five
+  seconds from the oldest host post; timer/workqueue dispatch then reaps and
+  rechecks the actual command age before recovery. The separate 60-second
+  synchronous budget remains available for cold shader setup, but it can no
+  longer turn a command that is already about 15 seconds old into a 74.9-second
+  async wait. Timeout recovery quarantines the still device-owned slots and
+  fails affected contexts; it does not claim to cancel an operation already
+  owned by host virgl.
 - [x] The EEVDF timebase repair materially reduces renderer runnable delay and
   closes the strict two-sample windowed VPQ envelope without a priority hack.
-- [x] The SDL live probe, GUIHD scheduler probe, kernel build, and Sparse pass
-  after the final kernel changes.
+- [x] The SDL live probe and GUIHD scheduler probe passed the pre-regression
+  kernel. The corrected-SET_SCANOUT kernel also has a fresh full build, 209-file
+  Sparse pass, clean SDL capture, repeated-hover pass, and a depth-2 stability
+  A/B; the reproducible performance policy retains submit depth 3.
+- [x] The host-only YouTube contract suite passes in the cleaned workspace.
+  Its manifest digest matches the document-start producer hook, its V3 source
+  check follows the live post-mode video rebind, and deleted July 10-11 build
+  logs are optional historical replays rather than fresh-clone prerequisites.
+  Mandatory embedded CRLF/CRCRLF, framing, mutation, 60-fps coalescing, and
+  ordinary-30-fps rejection fixtures still run on every static check.
 - [x] The intermittent VFS inode-cache warning is fixed. The investigation
   closed three ownership races: the dirty-sync destroying gap, the stale
   ref-count-one unmount evictor contract, and procfs/tmpfs eviction crossing a
   `vfs_iput()` destruction already in progress.
-- [ ] Chromium can still hit a separate Pulse client-context restart failure
-  while YouTube replaces its audio stream. The final VM remains live and the
-  VFS warning stays absent, but Chromium reports `pa_operation is nullptr`,
-  `AUDIO_RENDERER_ERROR`, and replaces the video with an unready time-zero
-  element. This is now the primary reliability issue.
-- [ ] Re-run the shared post-mode boundary in windowed Linux/xv6 mode before
-  publishing a new windowed cross-OS ratio; older windowed receipts remain
-  useful historical evidence but are not byte-identical to the new boundary.
+- [ ] Chromium's separate Pulse client-context restart failure remains a
+  reliability follow-up, but it is downstream of restoring basic Wayland
+  registry dispatch and visible compositor output.
+- [x] The shared post-mode windowed boundary is complete. The xv6 N=2 mean is
+  59.727 presented fps, 95.9% of the matched Linux N=2 mean of 62.285 fps and
+  above the predeclared 56.06-fps floor. JavaScript
+  `requestVideoFrameCallback` delivery is coalesced on xv6's renderer main
+  thread (typically 50 ms), but the callback metadata presentation counter,
+  media/wall clock, VPQ counters, KMS flips, and audio counters independently
+  prove that this is not a 20-fps playback result.
 
 “Reasonably close” does not mean weakening the workload. Accepted samples use
 the same real YouTube URL, Chromium/Wayland/virgl path, 1280x720 `hd720` media,
@@ -64,6 +149,29 @@ The matched control is Ubuntu 24.04.4, Linux 6.8.0-134, Plasma 5.27.12/KWin
 D3D12 virgl renderer. Durable details are in
 `docs/linux-kde-plasma-reference.md`.
 
+Current stock-APT behavioral boundary:
+
+| Metric | Current result |
+| --- | ---: |
+| Native Wayland registry / KWin D-Bus | 3/3 PASS / 3/3 PASS |
+| Konsole warm launches | 15/15 PASS |
+| Konsole warm min / median / mean / max | 188 / 206 / 213.5 / 288 ms |
+| Konsole captured runqueue wait | 0.441-1.226 ms |
+| Guest idle CPU busy | 0.271% N=3 mean across 6 vCPU |
+| glmark guest CPU busy | 5.505% untraced N=2 mean across 6 vCPU |
+| glmark KWin CPU | 57.964% untraced N=2 mean of one core |
+| glmark score | 99 / 97; 98.0 untraced mean |
+| Current syscall trace | 10,161 calls; 77.48% poll+futex time |
+| Screenshot / teardown | 3/3 1280x768; zero residual clients/QEMU |
+
+Healthy Linux KWin also sleeps in `poll` on its main, D-Bus, libinput, and QML
+threads and in `futex` on workers. The xv6 discriminator is therefore failure
+to wake and finish a pending exchange, not the existence of blocking waits.
+The historical glmark score 127 is retained as older evidence; 98 is the
+current untraced stock-APT graphics reference. The trace-complete run's score
+84 is excluded from that mean because its prior instrumentation increased
+the downstream aggregate guest load.
+
 Current shared-boundary fullscreen controls:
 
 | Guest | Receipt | Presented fps | Media/wall | VPQ drops |
@@ -73,11 +181,29 @@ Current shared-boundary fullscreen controls:
 | Linux 1 | `linux-fullscreen-20260716T033032Z-591724` | 51.887 | 1.051494 | 34.522% |
 | Linux 2 | `linux-fullscreen-20260716T033341Z-593897` | 49.732 | 1.025689 | 37.249% |
 
+Current shared-boundary windowed xv6 controls:
+
+| Receipt | Trace | Presented fps | Media/wall | VPQ drops |
+| --- | --- | ---: | ---: | ---: |
+| `xv6-windowed-20260718T223622Z-2490797-direct-pulse` | off | 59.618 | 0.999437 | 2.174% |
+| `xv6-windowed-20260718T225053Z-2503729-direct-pulse` | epoll diagnostic | 59.835 | 1.000563 | 1.131% |
+
+These rows are post-run revalidations of immutable receipts. Their original
+`result.txt` files record the former callback-only cadence verdict; the current
+validator accepts coalesced callback delivery only when the clean callback
+stream carries at least 1.5 presented frames per callback and the independent
+presentation count proves 50-75 fps against both media time and host wall
+time. A synthetic ordinary 30-fps stream still fails.
+
 Current acceptance contract:
 
 - the strict nonce-bound validator must pass without accepting a rewind,
   detached element, counter regression, nonpositive cadence, or shortened
   observation;
+- presentation must remain 50-75 fps against host monotonic wall time,
+  media/wall must remain 0.90-1.10, and browser VPQ drops must not exceed 50%;
+  direct 15-18.5-ms callbacks pass, while coalesced callbacks require the
+  independent metadata presentation counter to prove the same frame rate;
 - reasonable cross-OS fullscreen throughput requires the xv6 N>=2 presented
   fps mean to remain at least 90% of a refreshed Linux N>=2 mean under the
   identical shared boundary; the current result is 100.3%;
@@ -85,7 +211,83 @@ Current acceptance contract:
 - positive Pulse stream, hardware-played, and QEMU WAV byte deltas;
 - virgl renderer, correct 1280x800 desktop, 1280x720 media, no freeze.
 
-## Completed SDL repair
+## Active APT QEMU migration
+
+The target host frontend is the Ubuntu APT `/usr/bin/qemu-system-x86_64`, with
+the repository-patched QEMU retained only as a rollback. The APT profile must
+keep the already accepted performance contract: KVM, `-cpu host`, six vCPUs,
+8 GiB, virgl on WSL D3D12, and the guest's asynchronous/phase-stable 60 Hz
+present flags. Do not trade the black-window fix for synchronous GPU waits,
+software rendering, fewer resources, or a non-KDE desktop.
+
+Current Linux control:
+
+- `linux-windowed-20260718T045117Z-1249241-apt-system` ran the system APT QEMU
+  with `QEMU_MODULE_DIR` unset and passed the real YouTube validator at 62.834
+  presented fps, 1.097489 media/wall, and 7.862% VPQ drops. Pulse stream,
+  hardware-played, and QEMU WAV byte counts all advanced.
+- Direct rendering was active through
+  `virgl (D3D12 (NVIDIA GeForce RTX 4060 Laptop GPU))`.
+- KWin/Plasma and a native Wayland Chromium client rendered visibly. This
+  proves stock APT SDL/OpenGL, WSLg, virgl, and the host adapter can carry the
+  required workload together.
+- The APT client initially fit 1280x768, drifted to 1356x897 after the Linux
+  mode transition, then returned to 1280x768 when the native fit was re-applied.
+  Geometry drift is real but independent of the xv6 black frame.
+- The reusable prepared control is
+  `build-x86_64/linux-kde-reference/linux-kde-behavior-20260714T024146Z.qcow2`;
+  `qemu-img check` passes. The two latest successful YouTube receipts and three
+  latest completed behavior iterations are retained.
+
+Current xv6 observation:
+
+- The visible "opening image" was xv6's kernel framebuffer logo. KWin's first
+  dynamic `TEST_ONLY|ALLOW_MODESET` request failed because xv6 accepted only
+  immutable MODE_ID 5; after that repair, real frame commits still failed when
+  the nonexistent Bochs hardware cursor aborted the combined atomic update.
+- Dynamic blobs are now accepted only when they exactly copy the active mode.
+  Until atomic resize state is genuinely implemented, the connector advertises
+  only that active mode and rejects nonadvertised blobs, avoiding
+  successful-but-ignored modesets.
+- Bochs exposes only its primary plane. The cursor plane is exposed only when
+  virtio-gpu owns the visible scanout and its optional cursor queue completed
+  initialization; every hidden-plane ioctl path rejects plane ID 7.
+- GETCRTC, the CRTC `MODE_ID`/`ACTIVE` properties, and the primary plane's
+  framebuffer now report one coherent state after legacy, direct-property, and
+  atomic updates instead of allowing KWin to observe contradictory ownership.
+- Ordinary unfenced KWin `0x201` commits now complete successfully. Focused
+  traces measured roughly 4.0-5.8 ms per software present, within a 60 Hz
+  frame budget, while fenced NONBLOCK remains fail-closed pending a real
+  deferred worker.
+- `build-x86_64/sdl-geometry-probe/live-x11-hidpi-off-20260718T205013Z-2308562`
+  is the fresh-workspace proof on `/usr/bin/qemu-system-x86_64` with untouched
+  system SDL/OpenGL modules. The guest mode and fitted SDL client are exactly
+  1280x800; guest and host captures both show the alternating Qt Wayland
+  sentinel, frame 1 advances, and neither capture matches the boot-logo
+  detector.
+- The same fresh image passes the full headless `drmiftest` runtime matrix.
+  Its receipt records one advertised 1280x800 mode, hidden Bochs cursor,
+  dynamic MODE_ID and active-mode coherence, ordinary unfenced NONBLOCK flip
+  compatibility, per-commit events, fence lifetime, and final `drmiftest: ok`.
+
+Remaining follow-ups, in order:
+
+1. Treat the xv6 renderer-main notification latency as a separate scheduler /
+   userspace wakeup investigation. It is not a graphics-throughput blocker:
+   native blocking epoll, flattening nice weights, and changing the EEVDF
+   sleeper floor did not improve it and are not retained. PCID also remains
+   disabled because the kernel lacks a correct per-PCID INVPCID invalidation
+   path and the prior global-flush experiment regressed KDE.
+2. Implement a true deferred Bochs atomic worker only if matched profiling
+   shows the current 4.0-5.8 ms synchronous compatibility path is limiting the
+   workload. It must retain BO/owner refs and correlate in-fence, out-fence,
+   and page-flip events; accepting a flag alone is not an async implementation.
+3. Keep the direct-scanout/host-window visual content gate in the normal SDL
+   reducer so a non-black boot logo can never satisfy the screenshot check.
+4. Keep all cleanup exact to the owned PID/start-time/token. External VM PID
+   churn is evidence to record, never permission to signal it.
+
+## Completed SDL repair (patched rollback)
 
 The oversized-window symptom belonged to QEMU 9.0.2's SDL GL frontend, not to
 xv6 KMS. The host window could be 1908x987 while SDL stretched the 1280x800
@@ -128,6 +330,15 @@ their reducers; do not replace them with timeouts or priority hacks.
   longer acknowledge a newer shootdown. This closes the D-Bus #GP reproduced
   under concurrent VM teardown.
 - GPU IRQ completion no longer re-enters the shared virtio operation lock.
+- Async virtio-gpu admission tracks renderer submissions separately from KMS
+  transfer/flush commands. A renderer waiting for depth now releases the
+  global operation lock, and one scheduler-timer/workqueue watchdog covers the
+  oldest posted async command at a time rather than inheriting the 60-second
+  synchronous cold-start allowance. Recovery reaps once more and checks age
+  under the serialized reaper before quarantining device-owned slots, so a
+  completion race cannot sacrifice younger work. A monotonic abort generation
+  also prevents a concurrently sleeping fence drain from reporting quarantine
+  as successful completion.
 - `wait`, `waitpid`, and `waitid` now rescan child state when their generic
   interruptible queue reports `-EINTR` without a deliverable signal. Harmless
   asynchronous scheduler wakes can no longer escape to userspace as a false
@@ -164,6 +375,46 @@ Key post-fix receipts include:
 The starvation probe stayed silent in both latest fullscreen samples. There
 is no evidence for another broad scheduler rewrite.
 
+Two 2026-07-19 SDL hover reducer runs validate the new GPU admission policy,
+and the final run validates the active watchdog, without a kernel fault,
+watchdog allocation failure, async timeout, or leaked QEMU process. The final
+warm hover-in samples are 200--240 ms; the first cold hover is still 442 ms, so
+the remaining ordinary delay is in Plasma/QML animation and tooltip work
+rather than a reason to queue multiple event-bearing KMS flips. Hover-out
+samples are 134--264 ms. The click pixel probe changes in four of six samples
+at 19--296 ms and times out twice; that probe is not a semantic launcher-open
+assertion and its framebuffer readback drains GPU work, so it is retained as
+diagnostic evidence rather than a pass claim.
+
+The corresponding fresh windowed 720p YouTube trial reaches playback and
+tears down cleanly with no GPU timeout, but fails the Linux-parity cadence
+gate: 37.331 presented fps, 50.000 ms median callback interval, and 22.81%
+near-60-Hz intervals. This separates the fixed 74.9-second hang exposure from
+the still-open steady-state video-throughput problem; one failed trial does
+not replace the accepted matched N=2 control above.
+
+A second trial, before the active timer was added, reproduced the rare host
+failure. The posted-age admission check quarantined the valid `SUBMIT_3D` at
+7.747 seconds instead of 74.9 seconds and isolated context 6, but detection
+still waited for the next queue user; playback consequently failed at 28.951
+fps. That observation directly motivated the coalesced active watchdog. The
+post-watchdog hover run proves normal timer rearm/disarm and teardown. A later
+post-watchdog media trial then reproduced the backend failure naturally: the
+watchdog quarantined the still-owned `SUBMIT_3D` at 5.000712 seconds and
+isolated context 2, directly proving the active bound. That client could not
+recover video replacement (`video-replacement-invalid-7`), which is expected
+context-loss fallout rather than a 74.9-second desktop freeze. The host-owned
+command cannot be cancelled safely, so both recovery receipts remain durable
+evidence instead of being hidden.
+
+The second post-watchdog media trial completes without a timeout but still
+fails cadence at 30.462 presented fps and a 33.333-ms median. Its end snapshot
+has 867 KMS presents, zero present-copy calls, 1.032 ms last host-present time,
+and 104 renderer admission waits with an 18.666-ms maximum. Thus the remaining
+video deficit is not another 74.9-second wait, framebuffer copying, or the
+single event-bearing KMS flip contract; renderer/media scheduling and the
+frequent present-clock late snaps remain the next throughput investigation.
+
 ## YouTube performance treatment
 
 The honest default fullscreen baseline was:
@@ -178,7 +429,9 @@ real present completion, so per-frame work accumulated onto the nominal
 The retained treatment is paired:
 
 1. `virtio_gpu_async_present=1` moves the fenced present out of KWin's page
-   flip ioctl while pinning the BO until host access completes.
+   flip ioctl. The current candidate records the host-read fence on the
+   scanout resource and synchronizes a later renderer reuse instead of
+   blocking every KMS completion.
 2. `virtio_gpu_present_clock_60hz=1` gives KWin a wall-clock-anchored 60 Hz
    completion sequence.
 3. If a worker completes after its target edge, the clock now snaps to the
@@ -197,17 +450,22 @@ but neither receipt satisfies the strict two-sample fullscreen drop envelope.
 The first misses by only 0.321 percentage points; the second contains a larger
 renderer-long-task tail.
 
-Direct scanout is already working. The runs show zero framebuffer-copy ticks
-and about 1.4--1.7 ms average virtio present time. Increasing async submit
-depth is rejected: depth 3 removed almost every admission wait without
-improving presented output, while depth 8/32 caused worse loss or startup
-regressions. Keep depth 2.
+Direct scanout was already working in this historical fullscreen treatment.
+The runs show zero framebuffer-copy ticks and about 1.4--1.7 ms average virtio
+present time. In that 2026-07-15 experiment, depth 3 removed almost every
+admission wait without improving presented output, while depth 8/32 caused
+worse loss or startup regressions, so the then-current treatment retained
+depth 2. The current SDL policy uses depth 3 with renderer admission accounted
+independently from KMS commands, as documented above; the two configurations
+are not equivalent.
 
 One trial,
 `xv6-fullscreen-20260715T055314Z-1928860`, hit a single 95.9-second host virgl
 `SUBMIT_3D` stall and failed media start. Adjacent identical runs did not
 reproduce it. Retain it as a host/virgl outlier receipt; do not mislabel it as
-kernel corruption or hide it.
+kernel corruption or hide it. The current five-second posted-age hangcheck
+bounds the guest-visible wait and recovers affected contexts if this host
+failure recurs.
 
 ## Direct-Pulse freeze repair and remaining startup tail
 
@@ -515,21 +773,29 @@ old one-second ALSA suspend policy and not a validator flake.
 
 ## Execution queue
 
-1. Treat the SDL oversize/black/input defect, D-Bus TLB race, virtio-snd
+1. Retain the fenced-present-reuse design and its corrected-APT-SDL 12-cycle
+   receipt. Do not restore either unsafe immediate buffer reuse or the rejected
+   6.4--8.0-second per-flip strict-retirement wait.
+2. Treat the SDL oversize/black/input defect, D-Bus TLB race, virtio-snd
    descriptor freeze, EEVDF timebase defect, VFS destruction races, and
    reasonable N=2 fullscreen performance as closed. Retain every failed
    receipt above as regression evidence.
-2. Reproduce the remaining Chromium/Pulse client-context restart failure with
+3. Reproduce the remaining Chromium/Pulse client-context restart failure with
    a focused stream-replacement reducer. Inspect client socket/context and
    operation lifetime around output recreation; do not weaken the media
    rebind marker or attribute this failure to idle suspend without evidence.
-3. Refresh N>=2 windowed Linux and xv6 controls with the shared post-mode
+4. Refresh N>=2 windowed Linux and xv6 controls with the shared post-mode
    boundary before publishing a new windowed ratio.
-4. Re-run the focused media-probe reducer in a Node-capable environment. Host
+5. Re-run the focused media-probe reducer in a Node-capable environment. Host
    Chromium currently proves both JavaScript files parse, and the live N=2
    trials prove the replacement path, but the local host has no Node runtime.
-5. After any further kernel/ABI change, repeat the relevant focused reducer,
+6. After any further kernel/ABI change, repeat the relevant focused reducer,
    build/Sparse checks, SDL/GUIHD checks, and at least N=2 matched media trials.
+7. Recover the current windowed media cadence from the post-watchdog N=2 set
+   (one context-loss recovery and one 30.462-fps reject) before publishing a
+   new Linux ratio. Keep the five-second GPU hangcheck while tracing renderer
+   runnable delay, present-clock late snaps, and host virgl submission
+   latency; do not re-expand the async deadline to hide throughput.
 
 ## VM and artifact safety
 
@@ -552,6 +818,11 @@ old one-second ALSA suspend policy and not a validator flake.
   488,866,713,600 allocated bytes (about 456 GiB). It preserved
   `build-x86_64/fs.img`, both Linux KDE reference QCOW2 images, source, and
   diagnostic receipts/logs.
+- The 2026-07-19 SDL follow-up removed the completed smoke VM's 7.5-GiB logical
+  (3.8-GiB allocated) temporary filesystem plus two redundant 3-MiB PPM proof
+  frames. It retains the current final capture, two compact hover/sweep receipts,
+  the Linux control, and only three xv6 YouTube iterations (known-good,
+  watchdog recovery, and latest A/B).
 
 ## Durable files
 
@@ -566,6 +837,122 @@ old one-second ALSA suspend policy and not a validator flake.
 
 ## Latest validation
 
+- current corrected-SET_SCANOUT/unfenced-present candidate: full x86 kernel
+  build PASS; kernel Sparse checks 209 files with zero failures/errors (known
+  warnings only);
+- corrected APT SDL repeated-hover gate: 12/12 hover-ins changed at 231.656 ms
+  median (188.604--574.249 ms), 11/12 hover-outs changed at 163.116 ms median,
+  and click changes have a 269.348 ms median. The host-final capture is clean
+  after the repeated activity, with no vertical plus-sign trail. The run log
+  has no watchdog, fence, context, panic, or page-fault error and the exact
+  final inventory is zero QEMU;
+- first post-reuse-fix windowed YouTube trial
+  `xv6-windowed-20260719T015650Z-2638945-direct-pulse`: GPU/KMS and exact
+  teardown are clean, 1280x720 presentation reaches 50.588 fps with 158/1112
+  (14.21%) VPQ drops, but the validator correctly rejects the receipt because
+  rVFC covers only 12.750 seconds while media advances 18.305 seconds.
+  Chromium reports the already-open Pulse client restart error after the
+  sample summary. This is a failed N=1, not a replacement for the accepted
+  N=2 control; repeat once before attributing its lower cadence to the new
+  present-reuse synchronization;
+- the first attempted repeat
+  `xv6-windowed-20260719T020027Z-2643185-direct-pulse` never reached the media
+  workload: pid 54 (`dbus-daemon-host`) took a userspace #GP in
+  `libdbus-1.so.3` with the invalid ASCII-derived pointer
+  `0x3638782f73706163` (`"caps/x86"` in little-endian bytes). All three KWin
+  startup attempts then failed because the system bus was gone. The owned VM
+  still reaped cleanly and the exact final QEMU inventory was zero. Treat this
+  as a separate guest VM/TLB startup instability, not a GPU cadence sample;
+- the clean strict-reuse repeat
+  `xv6-windowed-20260719T020359Z-2646907-direct-pulse` confirms that policy is
+  too conservative: it finishes without a GPU timeout or visual corruption,
+  but 720p presentation falls to 37.769 fps with a 50.000 ms median callback.
+  Virgl's submit resource array is not a read/write access mask, so waiting on
+  every referenced resource serializes ordinary renderer work behind nearly
+  every scanout flush. Keep `virtio_gpu_present_reuse_wait=1` only as an A/B
+  diagnostic;
+- fenced-flush/pipelined-reuse SDL hover gate after disabling that diagnostic:
+  desktop visible in 6.389 seconds; 12/12 hover-ins changed at 243.978 ms
+  median and 12/12 hover-outs at 190.780 ms median. Seven click samples changed
+  at 278.978 ms median (the alternating no-change click state still times out).
+  The final host capture is clean after all transitions, the exact final QEMU
+  inventory is zero, and there is no vertical plus-sign trail. This is the
+  candidate for the next media measurement;
+- first fenced-flush/pipelined-reuse windowed YouTube sample
+  `xv6-windowed-20260719T021108Z-2658412-direct-pulse`: PASS at 59.526
+  presented fps, 0.995421 media/wall, and 9/1147 (0.785%) VPQ drops. The media
+  advances for the full 20.000 seconds, Pulse stream/hardware/WAV counters all
+  advance, and exact owned teardown passes. This is 94.7% of the 62.834-fps
+  Linux APT-QEMU control and restores the required >=90% cross-OS throughput;
+- second fenced-flush sample
+  `xv6-windowed-20260719T021305Z-2661107-direct-pulse`: FAIL after two
+  `RESOURCE_FLUSH` (0x104) fences each stopped retiring and were quarantined by
+  the watchdog at 5.001 seconds. The validator correctly rejects the resulting
+  11.646 fps sample. This proves fenced scanout flushes cannot be the normal
+  fix even though one sample reached Linux-like throughput;
+- root presentation bug and unfenced correction: the page-flip path treated
+  SET_SCANOUT as a permanent registration. After resources 4, 5, and 15 were
+  seen once, a cycle back logged `already_bound=0 registered=1 rebind=0`; QEMU
+  therefore remained bound to the wrong BO and the flush targeted a stale
+  resource. SET_SCANOUT now runs for every actual resource switch, while the
+  three-resource set remains diagnostics only. Fenced flush is opt-in through
+  `virtio_gpu_fenced_scanout_flush=1` and strict reuse additionally requires
+  `virtio_gpu_present_reuse_wait=1`;
+- corrected-SET_SCANOUT/unfenced SDL hover gate: logs show `registered=1
+  rebind=1 async_scanout=1` when each previously seen BO cycles back; desktop
+  visibility is 6.304 seconds; 12/12 hover-ins change at 258.042 ms median and
+  12/12 hover-outs at 183.631 ms median. The host-final capture is clean after
+  the full sequence with no plus-sign trail, and exact teardown passes;
+- first corrected-SET_SCANOUT media attempt
+  `xv6-windowed-20260719T021952Z-2670295-direct-pulse` is not a cadence sample:
+  the naturally recurring host virgl `SUBMIT_3D` hang occurred while Chromium
+  replaced the video, and the media producer reports
+  `video-replacement-invalid-18`. The watchdog quarantined context 2 at
+  5.000495 seconds and owned teardown passed, so the desktop did not enter the
+  former 74.9-second global freeze. Retry once for throughput evidence;
+- second corrected-SET_SCANOUT media attempt
+  `xv6-windowed-20260719T022229Z-2672790-direct-pulse` has no GPU timeout. Its
+  presentation counter advances 429, 489, 550, and 612 over the first four
+  one-second samples (about 60.6 fps with no drops), then Chromium reports
+  `pa_operation is nullptr` and `AUDIO_RENDERER_ERROR` while YouTube replaces
+  the media element; the validator correctly rejects it as
+  `video-replacement-invalid-6`. The direct-Pulse harness had already suspended
+  its ALSA sink after a five-second idle gap and resumed it for Chromium. Its
+  idle timeout is now 120 seconds, beyond the complete setup and measurement
+  window, so a normal quality/element transition cannot suspend ALSA under the
+  strict cadence gate;
+- the first 120-second-idle-timeout retry
+  `xv6-windowed-20260719T022703Z-2677178-direct-pulse` never becomes a cadence
+  sample: YouTube remains in player state 3 with `ready_state=1`, a 640x360
+  medium stream, and unavailable quality setters through attempt 120. There is
+  no GPU watchdog, quarantine, or audio renderer error; Pulse confirms the new
+  timeout was loaded and owned teardown leaves zero QEMU. Treat this as a
+  transient media/network readiness failure and retry once;
+- the next retry
+  `xv6-windowed-20260719T022948Z-2680006-direct-pulse` also remains in media
+  readiness, but this time supplies a direct remaining-stall receipt: one
+  valid KWin `SUBMIT_3D` (ctx 2, fence 1219) stops retiring and is quarantined
+  at 5.000036 seconds. The old 74.9-second global freeze is still prevented,
+  but losing the compositor context invalidates the media run. Since historical
+  depth 3 removed admission waits without increasing presented fps, test the
+  smaller Linux-like bounded overlap at submit depth 2 before retaining depth
+  3 as the SDL default;
+- submit-depth-2 A/B
+  `xv6-windowed-20260719T023315Z-2683063-direct-pulse` also encounters the
+  current transient YouTube player-state-3/readiness failure, so it is not a
+  throughput sample. Unlike the adjacent depth-3 retry, it completes the full
+  bounded readiness interval with no async GPU timeout or context quarantine.
+  The exact local hover A/B then passes without a GPU timeout, but hover-in is
+  279.492 ms median versus 258.042 ms at depth 3 (+8.3%), and hover-out is
+  202.200 ms versus 183.631 ms (+10.1%); click response improves from 305.530
+  to 279.828 ms. One timeout-free run with no valid media sample does not
+  justify trading away the common hover path, so the reproducible SDL launcher
+  retains depth 3 and the five-second posted-age watchdog while explicit depth
+  2 remains the stability diagnostic;
+- rejected strict-retirement experiment: it produced a visually clean GTK
+  host capture, but hover changes were 6992, 6405, and 8029 ms. The harness
+  resolved `gtk`, not `sdl`, so this is a useful failure/control and not SDL
+  acceptance evidence;
 - full x86 kernel build after the virtio-sound assembler, EEVDF timebase, and
   TLB-ticket repairs: PASS;
 - kernel Sparse after those repairs: 209 files, zero failures/errors (known
@@ -583,7 +970,22 @@ old one-second ALSA suspend policy and not a validator flake.
   expected runtime results are `library-missing` for the standalone probe and
   `require is not defined` for the Node reducer in a browser context;
 - top-level and kernel `git diff --check`: PASS;
-- protected KDE smoke file SHA-256 remains
-  `706ba413c8687ba82dcbd38286477333362345592f385a3a3446ccfdd26b532a`;
+- post-watchdog SDL hover run: clean kernel/timer/teardown, warm hover-in
+  200--240 ms, cold first hover 442 ms; the remaining cold QML/tooltip delay
+  is open;
+- posted-age 720p YouTube N=2 diagnostic: one cadence reject at 37.331 fps and
+  one reproduced host `SUBMIT_3D` hang recovered at 7.747 seconds instead of
+  74.9 seconds; the second playback result is a 28.951-fps reject. The active
+  coalesced watchdog was added after that recovery sample;
+- post-watchdog YouTube N=2: recovery receipt
+  `xv6-windowed-20260719T011611Z-2590798-direct-pulse`: the naturally recurring
+  host stall is detected at 5.000712 seconds, context 2 is isolated, and exact
+  owned x86 teardown passes. Video replacement then fails explicitly rather
+  than the desktop waiting 74.9 seconds. The second receipt
+  `xv6-windowed-20260719T012037Z-2597067-direct-pulse` has no timeout and clean
+  teardown, but is a cadence reject at 30.462 fps;
+- KDE smoke harness SHA-256 after the intentional SDL-mode override and exact
+  PID/start-time/token cleanup repair is
+  `ec2b3b0575ab6c269a60a4b0fb2d6a98d2321e26802b279e4a36de01bb463da8`;
 - final exact inventory after every owned run: zero x86 QEMU. Any external VM
   remains governed by the natural-zero gate and is never signalled or stopped.

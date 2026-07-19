@@ -7243,7 +7243,7 @@ if {[info exists env(YT_STATIC_CHECK)] && $env(YT_STATIC_CHECK) eq "1"} {
         "$media_probe_host_dir/manifest.json"]
     set static_manifest_sha [sha256_file "$media_probe_host_dir/manifest.json"]
     if {$static_manifest_sha ne
-            "46dced0c2886a66f93b04da8646d427a3b0c1563a7de7fb052bd6af56d63ac22" ||
+            "0396b6ae3e6ef76ebc5dad5ed1d0c7fa0dcb9e071adba3ea75ef6fe76953a7fd" ||
         ![regexp {"matches"[ \t]*:[ \t]*\["https://www\.youtube\.com/\*"\]} \
             $static_manifest] ||
         ![regexp {"world"[ \t]*:[ \t]*"MAIN"} $static_manifest] ||
@@ -8839,6 +8839,10 @@ virgl_bo_presents 1
     foreach boundary_case [list \
         [list median-lower [dict create median_ms 15.000] 1 pass] \
         [list median-upper [dict create median_ms 18.500] 1 pass] \
+        [list cadence-coalesced-presented-60 [dict create \
+            interval_positive 600 interval_near60 0 interval_other30 600 \
+            interval_sum_ms 19999.800 median_ms 33.333 \
+            media_delta 19.999800 presented_delta 1200] 1 pass] \
         [list median-b14-rounds-up [dict create interval_near60 0 \
             interval_b14_15 1200 interval_sum_ms 17999.520 \
             median_ms 15.000 media_delta 17.999520] 0 cadence-not-16p7ms] \
@@ -9242,6 +9246,13 @@ virgl_bo_presents 1
     # boundary, payload CRs remain present, and the independent RC/fence frame
     # still parses without capture-side normalization.
     set retained_capture_path "$root/build-x86_64/chromium-youtube-m7/20260711T082215Z-a1-windowed-n2-t1-mp1-audio1-media1-hd7201/qemu-debugcon.log"
+    set retained_artifacts_available [expr {
+        [file exists $retained_capture_path] &&
+        [file exists "$root/build-x86_64/chromium-youtube-m7/20260711T082215Z-a1-windowed-n2-t1-mp1-audio1-media1-hd7201/yt-media-probe.serial.txt"] &&
+        [file exists "$root/build-x86_64/chromium-youtube-m7/20260711T095541Z-a1-windowed-n2-framingfixed-t1-mp1-audio1-media1-hd7201/yt-media-probe.serial.txt"]}]
+    set retained_artifact_status ABSENT_BY_RETENTION
+    if {$retained_artifacts_available} {
+    set retained_artifact_status VERIFIED
     set retained_capture_nonce 4daf914957670e9581ed927448b3b63e
     set retained_capture_frame_marker YTP15305211783758135763331C7
     set retained_capture_sha256 6ab0c6493c33c3df914f93a36b9e8212da681c7ad82862ba8cd1c6845ce2b8da
@@ -9361,6 +9372,7 @@ virgl_bo_presents 1
     }
     if {!$retained_pty_ok} {
         fail_preflight "static-check-media-probe-retained-pty-crcrlf results=$retained_pty_results"
+    }
     }
 
     # The live guest helper is intentionally a byte/order-preserving capture
@@ -10625,6 +10637,13 @@ cat /host-gui-wayland-chromium.log
             895f22c253a573abeac2538486778598e3044e2a404f842f32ba90a6d38fbea7 \
             YTP3264071783712593687233C1]]
     set retained_fence_results {}
+    set retained_fence_artifacts_available 1
+    foreach replay $retained_fence_replays {
+        if {![file exists [lindex $replay 0]]} {
+            set retained_fence_artifacts_available 0
+        }
+    }
+    if {$retained_fence_artifacts_available} {
     foreach replay $retained_fence_replays {
         lassign $replay replay_path replay_sha replay_marker
         set replay_fh [open $replay_path rb]
@@ -10640,6 +10659,7 @@ cat /host-gui-wayland-chromium.log
             [expr {[string first $replay_expected $replay_raw] >= 0}] \
             [regexp -- $replay_regex $replay_raw] \
             $replay_parse]
+    }
     }
     set retained_fence_results_ok 1
     foreach replay_result $retained_fence_results {
@@ -14383,7 +14403,7 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
     proc static_capture_diag_v3_source_order_contract {source} {
         set errors {}
         set producer_call "diagnosticV2ProducerStart();"
-        set selector_call "const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();"
+        set selector_call "let video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();"
         set ready_call "diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);"
         set producer_at [string first $producer_call $source]
         set selector_at [string first $selector_call $source]
@@ -14437,9 +14457,9 @@ wayland-chromium-launcher: child_exec path=/opt/host-gui/wayland-chromium/chrome
         {diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);}] \
         $static_v3_probe_source]
     set static_v3_ready_before_selector [string map [list \
-        {const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();} \
+        {let video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();} \
         {diagnosticV2PostVideoHd720Ready(diagnosticV2.postVideoProof);
-    const video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();}] \
+    let video = forceHd720 ? await exerciseHd720Selector() : await waitForVideo();}] \
         $static_v3_probe_source]
     set static_v3_missing_hd720 [string map [list \
         {proof.videoWidth !== 1280 ||} {}] $static_v3_probe_source]
@@ -15210,6 +15230,7 @@ exit 0
     }
     catch {file delete -force $static_c1_reducer_dir}
     catch {file delete -force $reducer_image $reducer_host $reducer_missing_image}
+    puts "YT-RETAINED-BUILD-ARTIFACT-STATIC status=$retained_artifact_status fence_replays_available=$retained_fence_artifacts_available mandatory=0 retention_limit=3"
     puts "YT-QEMU-PERFORMANCE-PROFILE-STATIC-PASS default6=PASS explicit_normal6=PASS normal1=REJECT reducer1=PASS diag1=PASS forensics1=PASS malformed_range=REJECT env_raw_noncanonical=REJECT receipt_source_spawn_routing=PASS"
     puts "YT-C1-TERMINAL-REDUCER-STATIC-PASS env_default_0_optin_1_invalid_reject=PASS mutually_exclusive_capturediag=PASS post_kvm_virgl_kde_pre_chromium=PASS private_helper_0600_only_scratch_stage=PASS executed_private_inode_regular_mode0600_uid0_gid0_bytes=PASS ordinary_helper_default_mode0755=PASS private_mode_0755_0640_0601_uid_gid_drift=REJECT generated_helper_bash_n=PASS short_command_first_drop_marker=PASS preexisting_regular_symlink_fifo_preserved=PASS create_type_count_cleanup_failures=FALLBACK recorder_r0_r2_r3_r4_presence=PASS absent_rc_only_committed=PASS fence_continuation_to_prompt=PASS generic_flag0_authenticated=PASS fallback_never_authenticates=PASS wrong_replay_duplicate_contamination_malformed_noncanonical_impossible_order_adjacency=REJECT bracketed_paste_disable_prefix=PASS bracketed_paste_foreign_duplicate_nonrow_nonfirst=REJECT missing_status_prompt=REJECT diagnostic_only_no_fps_no_semantic=PASS staging_cleanup_qemu_exact=PASS normal_c1_c6_c7_c8_byte_semantic_invariance=PASS"
     puts "YT-CAPTURE-DIAG-ROUTE-STATIC-PASS diag1_branch_before_idle_render_media_frames=PASS source_order_mutation=REJECT diag1_poison_normal_helpers=PASS diag0_poison_diagnostic_runner=PASS terminal_api_static_contract=PASS terminal_complete=PASS terminal_incomplete=PASS terminal_invalid_launch_before_after=PASS global_nonce_fixture_args=PASS global_nonce_fixture_count=$static_capture_diag_global_nonce_fixture_count v3_source_order_phase_receipts_raw0=PASS v3_lifecycle_freeze_reorder_duplicate=PASS v3_terminal_serial_summary_raw_drift=PASS v3_165_reject_210_stage_edges=PASS v3_real_pre_send_zero_inner_tail=PASS v3_expired_negative_malformed_fail_closed=PASS v3_single_reserve_zero_slack=PASS v3_diag0_off_parity=PASS raw_status_retained=PASS nonce_parser_replay_cap=RETAINED js_guest_runtime=UNEXECUTED"

@@ -224,6 +224,60 @@ if [[ -n "${ROOTFS_EXTRA_OVERLAYS:-}" ]]; then
     done
 fi
 
+# Plasma/KWin is the supported desktop.  A reused sysroot may still contain
+# artifacts from the retired Weston diagnostic ports; do not let those stale
+# files silently reintroduce a second compositor into a reproducible image.
+prune_legacy_weston_runtime() {
+    local path
+
+    shopt -s nullglob
+    for path in \
+        "${STAGE}/bin"/weston* \
+        "${STAGE}/bin"/libexec_weston.so* \
+        "${STAGE}/usr/bin"/weston* \
+        "${STAGE}/usr/bin"/libexec_weston.so* \
+        "${STAGE}/lib"/libweston*.so* \
+        "${STAGE}/lib/x86_64-linux-gnu"/libweston*.so* \
+        "${STAGE}/usr/lib"/libweston*.so* \
+        "${STAGE}/usr/lib/x86_64-linux-gnu"/libweston*.so*; do
+        rm -f -- "${path}"
+    done
+    shopt -u nullglob
+
+    rm -rf -- \
+        "${STAGE}/etc/xdg/weston" \
+        "${STAGE}/lib"/libweston-* \
+        "${STAGE}/lib/weston" \
+        "${STAGE}/libexec"/weston* \
+        "${STAGE}/share/weston" \
+        "${STAGE}/usr/lib"/libweston-* \
+        "${STAGE}/usr/lib/weston" \
+        "${STAGE}/usr/libexec"/weston* \
+        "${STAGE}/usr/share/weston"
+}
+
+prune_legacy_weston_runtime
+
+# Generated overlays are applied after the sysroot and may contain the
+# distribution's real /usr/bin/Xwayland.  Re-apply the validated wrapper last
+# while retaining its payload at the path compiled into the wrapper.
+restore_staged_xwayland_entrypoints() {
+    local wrapper="${SYSROOT}/bin/Xwayland"
+    local real="${SYSROOT}/bin/Xwayland.real"
+
+    if [[ ! -x "${wrapper}" || ! -x "${real}" ]]; then
+        echo "make-rootfs: validated Xwayland wrapper/payload missing from sysroot" >&2
+        exit 1
+    fi
+
+    mkdir -p "${STAGE}/bin" "${STAGE}/usr/bin"
+    cp -a "${wrapper}" "${STAGE}/bin/Xwayland"
+    cp -a "${wrapper}" "${STAGE}/usr/bin/Xwayland"
+    cp -a "${real}" "${STAGE}/bin/Xwayland.real"
+}
+
+restore_staged_xwayland_entrypoints
+
 # Linux desktop daemons expect the conventional libmount runtime state.
 # xv6 synthesizes /proc mounts in-kernel, but GLib/libmount also probes
 # /run/mount and /etc/mtab while constructing Unix mount monitors.
@@ -924,13 +978,21 @@ stage_kde_wayland_seat_probe() {
         echo "make-rootfs: pkg-config not found; cannot build kde-wayland-seat-probe" >&2
         exit 1
     fi
+    if ! PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+         PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+         pkg-config --exists wayland-client; then
+        echo "make-rootfs: wayland-client is missing from ${SYSROOT}; build the ports target or use the full rootfs target before rootfs-refresh" >&2
+        exit 1
+    fi
 
     cflags="$(
-        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
             pkg-config --cflags wayland-client
     )"
     libs="$(
-        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
             pkg-config --libs wayland-client
     )"
 
@@ -956,13 +1018,21 @@ stage_kde_wayland_registry_probe() {
         echo "make-rootfs: pkg-config not found; cannot build kde-wayland-registry-probe" >&2
         exit 1
     fi
+    if ! PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+         PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+         pkg-config --exists wayland-client; then
+        echo "make-rootfs: wayland-client is missing from ${SYSROOT}; build the ports target or use the full rootfs target before rootfs-refresh" >&2
+        exit 1
+    fi
 
     cflags="$(
-        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
             pkg-config --cflags wayland-client
     )"
     libs="$(
-        PKG_CONFIG_LIBDIR="${pcdir}" PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
+        PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${pcdir}" \
+            PKG_CONFIG_SYSROOT_DIR="${SYSROOT}" \
             pkg-config --libs wayland-client
     )"
 

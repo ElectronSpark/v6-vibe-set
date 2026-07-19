@@ -1136,11 +1136,11 @@ static void run_egl_readiness_gate(void)
  * is non-blocking for the rest of startup. At session start nothing else is
  * running, so the injected clicks cannot steal focus from the user.
  *
- * Default OFF (opt-in) per the guardrails -- an injected click has a non-~0
- * one-time cost (~2s of prewarm work paid at login, though nearly free within
- * the ~6.2-6.6s M5 first-visible window). Enable with cmdline
- * kde_kickoff_prewarm=1 or env KDE_KICKOFF_PREWARM=1. Promotion to default-on
- * needs the standard same-session A/B + owner sign-off + regression battery.
+ * The worker itself remains gated by kde_kickoff_prewarm=1 or the
+ * KDE_KICKOFF_PREWARM environment variable.  The supported SDL launcher turns
+ * that gate on by default after the same-session A/B demonstrated a 2.14s cold
+ * open becoming a 320--365ms first user open, with pristine=1 after dismissal.
+ * An explicit kde_kickoff_prewarm=0 remains a diagnostic opt-out.
  */
 #define KICKOFF_MOUSE_DEV        "/dev/mouse"
 #define KICKOFF_FB_DEV           "/dev/fb0"
@@ -1150,8 +1150,12 @@ static void run_egl_readiness_gate(void)
 /* Validated defaults from the M11 A/B (screen 1280x800). */
 #define KICKOFF_ICON_ABS_X   1200
 #define KICKOFF_ICON_ABS_Y   64200
-#define KICKOFF_AWAY_ABS_X   32768
-#define KICKOFF_AWAY_ABS_Y   32768
+/* Kickoff occupies most of the lower-left quadrant at 1280x800.  The old
+ * screen-centre point (32768,32768 -> 640,400) lands inside its application
+ * grid and can launch System Settings instead of dismissing the popup.  Use
+ * the empty upper-right desktop, outside the popup and panel. */
+#define KICKOFF_AWAY_ABS_X   60000
+#define KICKOFF_AWAY_ABS_Y   10000
 #define KICKOFF_DWELL_MS     4000
 #define KICKOFF_SETTLE_MS    900
 #define KICKOFF_GATE_MS      60000

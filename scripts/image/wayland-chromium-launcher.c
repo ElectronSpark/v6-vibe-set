@@ -232,11 +232,22 @@ int main(int argc, char **argv)
      * AF_UNIX bypass and a sync_reader broken-pipe row remains diagnostic, not
      * proof that Pulse failed.  Pulse itself uses the independently gated
      * loopback TCP listener configured by the session.
+     *
+     * This image has no supported microphone-capture workload, so Chrome-wide
+     * echo cancellation cannot provide useful AEC here.  Leaving it enabled
+     * nevertheless wraps every low-latency output in OutputDeviceMixerImpl.
+     * During YouTube's normal audio-element replacement that unused wrapper
+     * can report an independent-playback failure after the old Pulse context
+     * is already closing, even while the replacement stream is successfully
+     * writing real samples.  Disable only that capture-side mixer; Pulse
+     * output, Chromium's renderer SyncSocket, ALSA, and virtio-snd remain live
+     * and are still required by the parity validator.
      */
     append_arg(child_argv, &idx, MAX_ARGS,
                "--disable-features=AccessibilityService,Crashpad,MediaRouter,"
                "OptimizationHints,CalculateNativeWinOcclusion,"
-               "UseChromeOSDirectVideoDecoder,AudioServiceOutOfProcess");
+               "UseChromeOSDirectVideoDecoder,AudioServiceOutOfProcess,"
+               "ChromeWideEchoCancellation");
     append_arg(child_argv, &idx, MAX_ARGS,
                "--user-data-dir=/tmp/wayland-chromium-profile");
     append_arg(child_argv, &idx, MAX_ARGS, "--enable-logging=stderr");

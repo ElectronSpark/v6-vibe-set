@@ -7,6 +7,7 @@
 # Usage:
 #   enter-container.sh                 # interactive bash shell
 #   enter-container.sh xv6-build       # clean kernel + KDE image reproduction
+#   enter-container.sh xv6-launch      # launch the built VM safely on the host
 #   enter-container.sh xv6-help        # list all container commands
 set -euo pipefail
 
@@ -57,10 +58,11 @@ fi
 
 XDG_RT="${XDG_RUNTIME_DIR:-/run/user/1000}"
 
-# Run as the calling user so build artifacts are not root-owned on the host.
+# KDE image generation may refresh APT metadata, so run as the container's
+# default root user. xv6-command re-owns generated build trees to the source
+# bind mount's host owner before returning.
 run_args=(
     --rm
-    -u "$(id -u):$(id -g)"
     -w /src/xv6-os
     -v "${ROOT}:/src/xv6-os"
     -v "${XDG_RT}:${XDG_RT}"

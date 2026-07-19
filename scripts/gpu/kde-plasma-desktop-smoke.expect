@@ -16,6 +16,8 @@ set qemu_trace_events "$outdir/qemu-trace-events"
 set qemu_trace "$outdir/kde-plasma-qemu.trace"
 set qemu_trace_summary "$outdir/kde-plasma-qemu-trace-summary.txt"
 set final_status "$outdir/kde-plasma-desktop-smoke.status"
+set qemu_owned_token "kde-smoke-[pid]-[clock seconds]"
+set qemu_owned_pidfile "$outdir/qemu-owned.pid"
 set guest_before_ppm "/kde-plasma-before.ppm"
 set guest_after_ppm "/kde-plasma-after.ppm"
 set guest_final_ppm "/kde-plasma-final.ppm"
@@ -666,7 +668,14 @@ for {set i 0} {$i < $chromium_video_sample_count} {incr i} {
     catch { exec sh -c "debugfs -w -R 'rm $guest_chromium_video_ppm' '$tmpimg' >/dev/null 2>&1" }
 }
 
-set env(DISPLAY_MODE) "gtk"
+set env(DISPLAY_MODE) [expr {
+    [info exists env(KDE_SMOKE_DISPLAY_MODE)] ?
+        $env(KDE_SMOKE_DISPLAY_MODE) : "gtk"
+}]
+if {$env(DISPLAY_MODE) ne "gtk" && $env(DISPLAY_MODE) ne "sdl"} {
+    puts "KDE-PLASMA-DESKTOP-SMOKE-FAIL display-mode=$env(DISPLAY_MODE) expected=gtk-or-sdl"
+    exit 2
+}
 set env(USE_KVM) [expr {[info exists env(USE_KVM)] ? $env(USE_KVM) : "1"}]
 set env(QEMU_GPU) [expr {[info exists env(QEMU_GPU)] ? $env(QEMU_GPU) : "virtio-vga-gl-primary"}]
 set env(QEMU_INPUT) [expr {[info exists env(QEMU_INPUT)] ? $env(QEMU_INPUT) : "virtio"}]
@@ -13513,9 +13522,8 @@ proc finish {code label} {
     write_final_status $code $label "finish-entry"
     host_screenshot "final" $host_final_png
     optional_monitor_screendump
-    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
-    catch { exec kill $qemu_pid }
-    sleep 1
+    cleanup_owned_qemu
+    catch { wait }
 
     if {[file exists $ppm]} {
         catch { exec convert $ppm $png }
@@ -13732,6 +13740,39 @@ proc finish {code label} {
     write_final_status $code $label "final"
     puts "\n$label log=$runlog ppm=$ppm png=$png before_png=$before_png after_png=$after_png taskbar_settled_before_hover_png=$taskbar_settled_before_hover_png profiled_hover_after_png=$profiled_hover_after_png profiled_hover_diff_png=$profiled_hover_diff_png host_taskbar_settled_before_hover_png=$host_taskbar_settled_before_hover_png host_profiled_hover_after_png=$host_profiled_hover_after_png host_profiled_hover_diff_png=$host_profiled_hover_diff_png host_direct_launch_after_png=$host_direct_launch_after_png direct_launch_before_png=$direct_launch_before_png direct_launch_after_png=$direct_launch_after_png direct_launch_diff_png=$direct_launch_diff_png"
     exit $code
+}
+
+proc cleanup_owned_qemu {} {
+    global qemu_owned_pidfile qemu_owned_token root
+
+    if {![file exists $qemu_owned_pidfile]} {
+        return
+    }
+    set fh [open $qemu_owned_pidfile r]
+    set owned_pid [string trim [read $fh]]
+    close $fh
+    if {![string is integer -strict $owned_pid] || $owned_pid <= 1 ||
+        ![file exists "/proc/$owned_pid/stat"]} {
+        return
+    }
+    set fh [open "/proc/$owned_pid/stat" r]
+    set stat_fields [split [string trim [read $fh]]]
+    close $fh
+    if {[llength $stat_fields] < 22} {
+        return
+    }
+    set start_ticks [lindex $stat_fields 21]
+    if {![string is integer -strict $start_ticks] || $start_ticks <= 0} {
+        return
+    }
+    if {[catch {
+        exec "$root/scripts/launch/cleanup-owned-qemu.sh" \
+            $owned_pid $start_ticks $qemu_owned_token
+    } cleanup_out]} {
+        puts "KDE-PLASMA-DESKTOP-SMOKE-WARN owned-qemu-cleanup=$cleanup_out"
+    } else {
+        puts $cleanup_out
+    }
 }
 
 proc optional_prompt {} {
@@ -19218,8 +19259,10 @@ proc wait_for_taskbar_settled_before_hover {min_nonblack attempts interval_ms ex
 }
 
 proc run_hoverprobe_instrument {icon_x icon_y} {
-    set away_x [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_X 32768 0 65535]
-    set away_y [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_Y 32768 0 65535]
+    # Keep the rest/dismiss point outside Kickoff's lower-left popup.  Screen
+    # centre is inside its application grid at 1280x800 and can launch an app.
+    set away_x [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_X 60000 0 65535]
+    set away_y [env_int_range KDE_SMOKE_HOVERPROBE_AWAY_Y 10000 0 65535]
     set iters [env_int_range KDE_SMOKE_HOVERPROBE_ITERS 6 1 32]
     set rw [env_int_range KDE_SMOKE_HOVERPROBE_RW 56 8 400]
     set rh [env_int_range KDE_SMOKE_HOVERPROBE_RH 40 8 400]
@@ -20777,7 +20820,10 @@ if {$kde_preflight_enabled &&
 }
 
 log_file -a $runlog
-spawn timeout --foreground $qemu_timeout bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+file delete -force $qemu_owned_pidfile
+set env(QEMU_RUN_TOKEN) $qemu_owned_token
+set env(QEMU_PIDFILE) $qemu_owned_pidfile
+spawn timeout --foreground $qemu_timeout setsid bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
 set qemu_pid [exp_pid]
 
 expect {

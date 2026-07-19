@@ -66,6 +66,12 @@ if [[ "${USE_SYSTEM_DEPS}" != "1" ]]; then
                 -type f -name '*.a' -delete
 fi
 
+if [[ "${QEMU_SDL_PREPARE_ONLY:-0}" == "1" ]]; then
+        printf 'qemu_sdl_source=%s\n' "${SOURCE}"
+        printf 'qemu_sdl_devroot=%s\n' "${DEVROOT}"
+        exit 0
+fi
+
 mkdir -p -- "${BUILD}"
 config_key="mode=${USE_SYSTEM_DEPS} patch=${PATCH_SHA}"
 if [[ ! -f "${BUILD}/build.ninja" || "$(cat "${CONFIG_STAMP}" 2>/dev/null || true)" != "${config_key}" ]]; then

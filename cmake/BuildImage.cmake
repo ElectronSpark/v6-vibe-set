@@ -123,6 +123,7 @@ set(_rootfs_image_sources
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-libinput-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-drm-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-wayland-seat-probe.c
+			${CMAKE_SOURCE_DIR}/scripts/image/kde-wayland-registry-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kde-kwin-screenshot-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/icu-elf-tail-probe.c
 			${CMAKE_SOURCE_DIR}/scripts/image/kf5coreaddons-elf-tail-probe.c

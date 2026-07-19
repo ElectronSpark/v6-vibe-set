@@ -5,6 +5,17 @@ LABEL org.opencontainers.image.title="xv6-os-dev" \
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG QEMU_APT_VERSION=1:9.0.2+ds-4ubuntu5.1~backport24.04.202411210348~ubuntu24.04.1
+
+# Match the host APT QEMU used by the SDL performance profile.  Noble's base
+# archive carries QEMU 8.2; the Canonical Server backports PPA carries the
+# 9.0.2 package whose frontend ABI is validated by the repository builder.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        software-properties-common \
+    && add-apt-repository -y ppa:canonical-server/server-backports
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         adwaita-icon-theme \
@@ -14,7 +25,6 @@ RUN apt-get update \
         bash \
         bison \
         build-essential \
-        ca-certificates \
         cmake \
         cpio \
         curl \
@@ -69,10 +79,10 @@ RUN apt-get update \
         python3-pip \
         python3-yaml \
         mesa-utils \
-        qemu-system-gui \
-        qemu-system-modules-opengl \
-        qemu-system-x86 \
-        qemu-utils \
+        qemu-system-gui="${QEMU_APT_VERSION}" \
+        qemu-system-modules-opengl="${QEMU_APT_VERSION}" \
+        qemu-system-x86="${QEMU_APT_VERSION}" \
+        qemu-utils="${QEMU_APT_VERSION}" \
         libsdl2-dev \
         libvirglrenderer1 \
         libvirglrenderer-dev \
@@ -134,7 +144,10 @@ RUN set -eux; \
         -DXV6_PARALLEL_JOBS="${XV6_PARALLEL_JOBS}" \
         ${webkit_args}
 
-RUN cmake --build "${BUILD_DIR}" --target "${BUILD_TARGET}"
+RUN set -eux; \
+    apt-get update; \
+    cmake --build "${BUILD_DIR}" --target "${BUILD_TARGET}"; \
+    rm -rf /var/lib/apt/lists/*
 
 FROM base AS dev
 

@@ -8,9 +8,23 @@
 #                           QEMU executable used for capability probes and
 #                           launch. Set to an absolute path when scouting a
 #                           custom rutabaga/gfxstream build.
-#                           When unset, x86 SDL launches use the repository's
-#                           aspect/input-corrected QEMU build and fail closed
-#                           with its build command if that binary is missing.
+#   QEMU_SDL_VARIANT=apt    x86 SDL QEMU source: apt (default) uses the host
+#                           /usr/bin QEMU with an exact native-size window;
+#                           patched retains the repository aspect/input patch;
+#                           explicit is selected automatically by QEMU_BIN.
+#   QEMU_SDL_APT_BIN=/usr/bin/qemu-system-x86_64
+#                           System QEMU selected by the apt SDL variant.
+#   QEMU_SDL_APT_MODULES=corrected
+#                           Use the repository's ABI-matched corrected SDL and
+#                           OpenGL modules with the APT executable (default).
+#                           Set system for the untouched APT-module control.
+#                           Current xv6 KMS renders there too, but those modules
+#                           do not contain the repository's aspect correction.
+#   QEMU_SDL_APT_MODULE_DIR=
+#                           Override the generated corrected-module directory.
+#   QEMU_SDL_APT_SYSTEM_MODULE_DIR=
+#                           Override the installed APT module directory used
+#                           for package-stamp validation.
 #   QEMU_GDB=1              Enable QEMU's GDB stub on tcp::1234.
 #   QEMU_GDB_PORT=2159      Use a different GDB stub port.
 #   QEMU_GDB_WAIT=1         Start paused at reset until GDB continues.
@@ -115,10 +129,15 @@
 #                           Keep the host cursor visible. WSLg's SDL/X11 grab
 #                           path can stop delivering focused pointer motion when
 #                           the cursor is hidden/captured.
-#   QEMU_WSL_SDL_FIT=maximize
-#                           Maximize the unique tokenized SDL window into its
-#                           Windows work area on WSL (default). Set off for a
-#                           placement control.
+#   QEMU_WSL_SDL_FIT=auto   Owned SDL-window policy on WSL: auto selects native
+#                           for APT QEMU and maximize for patched QEMU. native
+#                           makes the Windows client exactly match the guest
+#                           mode; clamp only moves it inside the work area;
+#                           maximize and off remain available for controls.
+#   QEMU_WSL_SDL_FIT_WATCH_SECONDS=auto
+#                           Re-apply APT native sizing after later guest mode
+#                           changes (default 180 seconds). Patched/explicit
+#                           profiles default to a one-shot fit.
 #   QEMU_DRY_RUN=1          Print the resolved qemu command and exit.
 #   QEMU_DISK_FORMAT=raw    Disk image format: raw (default) or qcow2. The
 #                           latter supports read-only-base performance runs.
@@ -150,9 +169,25 @@ else
         QEMU_BIN_EXPLICIT=0
 fi
 QEMU_BIN="${QEMU_BIN:-qemu-system-${ARCH}}"
+if [[ -n "${QEMU_SDL_VARIANT+x}" ]]; then
+        QEMU_SDL_VARIANT_EXPLICIT=1
+else
+        QEMU_SDL_VARIANT_EXPLICIT=0
+        if [[ "${QEMU_BIN_EXPLICIT}" == "1" ]]; then
+                QEMU_SDL_VARIANT="explicit"
+        else
+                QEMU_SDL_VARIANT="apt"
+        fi
+fi
+QEMU_SDL_APT_BIN="${QEMU_SDL_APT_BIN:-/usr/bin/qemu-system-${ARCH}}"
+QEMU_SDL_APT_MODULES="${QEMU_SDL_APT_MODULES:-corrected}"
+QEMU_SDL_APT_MODULE_DIR="${QEMU_SDL_APT_MODULE_DIR:-${RUN_QEMU_DIR}/../../build-x86_64/qemu-apt-ui-corrected-modules}"
+QEMU_SDL_APT_SYSTEM_MODULE_DIR="${QEMU_SDL_APT_SYSTEM_MODULE_DIR:-/usr/lib/x86_64-linux-gnu/qemu}"
 QEMU_SDL_PATCHED_BIN="${QEMU_SDL_PATCHED_BIN:-${RUN_QEMU_DIR}/../../build-x86_64/qemu-sdl/bin/qemu-system-x86_64}"
 QEMU_SDL_DATA_DIR="${QEMU_SDL_DATA_DIR:-${RUN_QEMU_DIR}/../../build-x86_64/qemu-sdl/share/qemu}"
 QEMU_SDL_ASPECT_FIX="not-applicable"
+QEMU_SDL_VARIANT_RESOLVED="not-applicable"
+QEMU_SDL_APT_MODULES_RESOLVED="not-applicable"
 QEMU_DATA_ARGS=()
 QEMU_EXTRA="${QEMU_EXTRA:-}"
 QEMU_CPUS="${QEMU_CPUS:-6}"
@@ -227,8 +262,9 @@ QEMU_GTK_GDK_SCALE="${QEMU_GTK_GDK_SCALE:-1}"
 QEMU_GTK_GDK_DPI_SCALE="${QEMU_GTK_GDK_DPI_SCALE:-1}"
 QEMU_SDL_GRAB_MOD="${QEMU_SDL_GRAB_MOD:-lctrl-lalt}"
 QEMU_SDL_SHOW_CURSOR="${QEMU_SDL_SHOW_CURSOR:-on}"
-QEMU_WSL_SDL_FIT="${QEMU_WSL_SDL_FIT:-maximize}"
+QEMU_WSL_SDL_FIT="${QEMU_WSL_SDL_FIT:-auto}"
 QEMU_WSL_SDL_FIT_LOG="${QEMU_WSL_SDL_FIT_LOG:-}"
+QEMU_WSL_SDL_FIT_WATCH_SECONDS="${QEMU_WSL_SDL_FIT_WATCH_SECONDS:-auto}"
 QEMU_DISK_FORMAT="${QEMU_DISK_FORMAT:-raw}"
 QEMU_RUN_TOKEN="${QEMU_RUN_TOKEN:-}"
 QEMU_PIDFILE="${QEMU_PIDFILE:-}"
@@ -246,12 +282,50 @@ if [[ -n "${QEMU_RUN_TOKEN}" &&
         exit 2
 fi
 case "${QEMU_WSL_SDL_FIT}" in
-		off|maximize) ;;
+		auto|off|clamp|native|maximize) ;;
 		*)
-			echo "unsupported QEMU_WSL_SDL_FIT: ${QEMU_WSL_SDL_FIT} (expected off or maximize)" >&2
+			echo "unsupported QEMU_WSL_SDL_FIT: ${QEMU_WSL_SDL_FIT} (expected auto, off, clamp, native, or maximize)" >&2
                 exit 2
                 ;;
 esac
+case "${QEMU_WSL_SDL_FIT_WATCH_SECONDS}" in
+        auto) ;;
+        ''|*[!0-9]*)
+                echo "unsupported QEMU_WSL_SDL_FIT_WATCH_SECONDS: ${QEMU_WSL_SDL_FIT_WATCH_SECONDS} (expected auto or 0..600)" >&2
+                exit 2
+                ;;
+        *)
+                if ((QEMU_WSL_SDL_FIT_WATCH_SECONDS > 600)); then
+                        echo "unsupported QEMU_WSL_SDL_FIT_WATCH_SECONDS: ${QEMU_WSL_SDL_FIT_WATCH_SECONDS} (expected auto or 0..600)" >&2
+                        exit 2
+                fi
+                ;;
+esac
+case "${QEMU_SDL_VARIANT}" in
+        apt|patched|explicit) ;;
+        *)
+                echo "unsupported QEMU_SDL_VARIANT: ${QEMU_SDL_VARIANT} (expected apt, patched, or explicit)" >&2
+                exit 2
+                ;;
+esac
+case "${QEMU_SDL_APT_MODULES}" in
+        corrected|system) ;;
+        *)
+                echo "unsupported QEMU_SDL_APT_MODULES: ${QEMU_SDL_APT_MODULES} (expected corrected or system)" >&2
+                exit 2
+                ;;
+esac
+if [[ "${QEMU_SDL_VARIANT}" == "explicit" &&
+      "${QEMU_BIN_EXPLICIT}" != "1" ]]; then
+        echo "run-qemu: QEMU_SDL_VARIANT=explicit requires QEMU_BIN" >&2
+        exit 2
+fi
+if [[ "${QEMU_SDL_VARIANT_EXPLICIT}" == "1" &&
+      "${QEMU_SDL_VARIANT}" != "explicit" &&
+      "${QEMU_BIN_EXPLICIT}" == "1" ]]; then
+        echo "run-qemu: QEMU_BIN conflicts with QEMU_SDL_VARIANT=${QEMU_SDL_VARIANT}; use QEMU_SDL_APT_BIN or QEMU_SDL_PATCHED_BIN to override that variant" >&2
+        exit 2
+fi
 
 if [[ "${ARCH}" == "x86_64" && " ${QEMU_APPEND} " != *" video="* ]]; then
         QEMU_APPEND="${QEMU_APPEND} video=${QEMU_VIRTIO_GPU_XRES}x${QEMU_VIRTIO_GPU_YRES}"
@@ -507,6 +581,21 @@ qemu_device_help_has_option() {
         grep -Eq "^[[:space:]]+${option}(=|<)" <<< "${help}"
 }
 
+qemu_dynamic_module_stamp() {
+        local module="$1"
+        local stamps=()
+
+        mapfile -t stamps < <(
+                readelf --dyn-syms --wide "${module}" |
+                        awk '$8 ~ /^qemu_stamp_[[:xdigit:]]+$/ { print $8 }'
+        )
+        if [[ ${#stamps[@]} -ne 1 ]]; then
+                echo "run-qemu: expected one dynamic QEMU stamp in ${module}, found ${#stamps[@]}" >&2
+                return 1
+        fi
+        printf '%s\n' "${stamps[0]}"
+}
+
 case "${ARCH}" in
         riscv64)
                 DISPLAY_MODE="${DISPLAY_MODE:-nographic}"
@@ -532,6 +621,7 @@ case "${ARCH}" in
                 DISPLAY_MODE="${DISPLAY_MODE:-gtk}"
                 REQUESTED_DISPLAY_MODE="${DISPLAY_MODE}"
                 QEMU_ENV_ARGS=()
+                QEMU_SDL_PRELOADS=()
                 HOST_GL_MODE="${QEMU_HOST_GL}"
                 if [[ "${HOST_GL_MODE}" == "auto" ]]; then
                         if host_wsl_d3d12_available; then
@@ -620,7 +710,50 @@ case "${ARCH}" in
                         fi
                 fi
                 if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
-                        if [[ "${QEMU_BIN_EXPLICIT}" == "0" ]]; then
+                        case "${QEMU_SDL_VARIANT}" in
+                        apt)
+                                if [[ ! -x "${QEMU_SDL_APT_BIN}" ]]; then
+                                        echo "run-qemu: APT SDL QEMU is missing or not executable: ${QEMU_SDL_APT_BIN}" >&2
+                                        echo "run-qemu: install qemu-system-x86 and qemu-system-gui" >&2
+                                        exit 2
+                                fi
+                                QEMU_BIN="${QEMU_SDL_APT_BIN}"
+                                QEMU_SDL_VARIANT_RESOLVED="apt"
+                                case "${QEMU_SDL_APT_MODULES}" in
+                                corrected)
+                                        for module in ui-sdl.so ui-opengl.so; do
+                                                if [[ ! -f "${QEMU_SDL_APT_MODULE_DIR}/${module}" ||
+                                                      -L "${QEMU_SDL_APT_MODULE_DIR}/${module}" ]]; then
+                                                        echo "run-qemu: corrected APT QEMU module is missing or a symlink: ${QEMU_SDL_APT_MODULE_DIR}/${module}" >&2
+                                                        echo "run-qemu: build the matched pair with scripts/build/build-qemu-apt-sdl-modules.sh" >&2
+                                                        exit 2
+                                                fi
+                                                if [[ ! -f "${QEMU_SDL_APT_SYSTEM_MODULE_DIR}/${module}" ||
+                                                      -L "${QEMU_SDL_APT_SYSTEM_MODULE_DIR}/${module}" ]]; then
+                                                        echo "run-qemu: installed APT QEMU module is missing or a symlink: ${QEMU_SDL_APT_SYSTEM_MODULE_DIR}/${module}" >&2
+                                                        exit 2
+                                                fi
+                                        done
+                                        apt_module_stamp="$(qemu_dynamic_module_stamp "${QEMU_SDL_APT_SYSTEM_MODULE_DIR}/ui-sdl.so")"
+                                        if [[ "$(qemu_dynamic_module_stamp "${QEMU_SDL_APT_SYSTEM_MODULE_DIR}/ui-opengl.so")" != "${apt_module_stamp}" ||
+                                              "$(qemu_dynamic_module_stamp "${QEMU_SDL_APT_MODULE_DIR}/ui-sdl.so")" != "${apt_module_stamp}" ||
+                                              "$(qemu_dynamic_module_stamp "${QEMU_SDL_APT_MODULE_DIR}/ui-opengl.so")" != "${apt_module_stamp}" ]]; then
+                                                echo "run-qemu: corrected SDL/OpenGL module pair does not match the installed APT QEMU package" >&2
+                                                echo "run-qemu: rebuild the pair with scripts/build/build-qemu-apt-sdl-modules.sh" >&2
+                                                exit 2
+                                        fi
+                                        QEMU_ENV_ARGS+=("QEMU_MODULE_DIR=${QEMU_SDL_APT_MODULE_DIR}")
+                                        QEMU_SDL_APT_MODULES_RESOLVED="corrected"
+                                        QEMU_SDL_ASPECT_FIX="apt-corrected-modules"
+                                        ;;
+                                system)
+                                        QEMU_SDL_APT_MODULES_RESOLVED="system"
+                                        QEMU_SDL_ASPECT_FIX="none"
+                                        echo "run-qemu: using untouched APT SDL/OpenGL modules; xv6 content is supported, but repository aspect correction is disabled" >&2
+                                        ;;
+                                esac
+                                ;;
+                        patched)
                                 if [[ ! -x "${QEMU_SDL_PATCHED_BIN}" ]]; then
                                         echo "run-qemu: corrected SDL frontend is missing: ${QEMU_SDL_PATCHED_BIN}" >&2
                                         echo "run-qemu: build it with scripts/build/build-qemu-sdl.sh" >&2
@@ -634,10 +767,33 @@ case "${ARCH}" in
                                 fi
                                 QEMU_BIN="${QEMU_SDL_PATCHED_BIN}"
                                 QEMU_SDL_ASPECT_FIX="patched"
+                                QEMU_SDL_VARIANT_RESOLVED="patched"
                                 QEMU_DATA_ARGS=(-L "${QEMU_SDL_DATA_DIR}")
-                        else
+                                ;;
+                        explicit)
                                 QEMU_SDL_ASPECT_FIX="explicit-qemu"
+                                QEMU_SDL_VARIANT_RESOLVED="explicit"
+                                ;;
+                        esac
+                        if [[ "${QEMU_WSL_SDL_FIT}" == "auto" ]]; then
+                                if [[ "${QEMU_SDL_VARIANT_RESOLVED}" == "apt" ]]; then
+                                        QEMU_WSL_SDL_FIT="native"
+                                else
+                                        QEMU_WSL_SDL_FIT="maximize"
+                                fi
                         fi
+                        if [[ "${QEMU_WSL_SDL_FIT_WATCH_SECONDS}" == "auto" ]]; then
+                                if [[ "${QEMU_SDL_VARIANT_RESOLVED}" == "apt" &&
+                                      "${QEMU_WSL_SDL_FIT}" == "native" ]]; then
+                                        QEMU_WSL_SDL_FIT_WATCH_SECONDS=180
+                                else
+                                        QEMU_WSL_SDL_FIT_WATCH_SECONDS=0
+                                fi
+                        fi
+                elif [[ "${QEMU_WSL_SDL_FIT}" == "auto" ]]; then
+                        QEMU_WSL_SDL_FIT="off"
+                        [[ "${QEMU_WSL_SDL_FIT_WATCH_SECONDS}" == "auto" ]] &&
+                                QEMU_WSL_SDL_FIT_WATCH_SECONDS=0
                 fi
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]]; then
                         QEMU_ENV_ARGS+=("SDL_VIDEODRIVER=${QEMU_WSL_SDL_VIDEODRIVER}")
@@ -659,10 +815,12 @@ case "${ARCH}" in
                                         echo "run-qemu: SDL geometry trace library is not a regular file: ${QEMU_SDL_GEOMETRY_TRACE_LIB}" >&2
                                         exit 2
                                 fi
-                                QEMU_ENV_ARGS+=(
-                                        "LD_PRELOAD=${QEMU_SDL_GEOMETRY_TRACE_LIB}${LD_PRELOAD:+:${LD_PRELOAD}}"
-                                        "XV6_SDL_GEOMETRY_TRACE_LOG=${QEMU_SDL_GEOMETRY_TRACE_LOG}"
-                                )
+                                QEMU_SDL_PRELOADS+=("${QEMU_SDL_GEOMETRY_TRACE_LIB}")
+                                QEMU_ENV_ARGS+=("XV6_SDL_GEOMETRY_TRACE_LOG=${QEMU_SDL_GEOMETRY_TRACE_LOG}")
+                        fi
+                        if [[ ${#QEMU_SDL_PRELOADS[@]} -gt 0 ]]; then
+                                sdl_preload="$(IFS=:; printf '%s' "${QEMU_SDL_PRELOADS[*]}")"
+                                QEMU_ENV_ARGS+=("LD_PRELOAD=${sdl_preload}${LD_PRELOAD:+:${LD_PRELOAD}}")
                         fi
                 fi
                 GTK_GL_MODE="${QEMU_GTK_GL}"
@@ -737,6 +895,42 @@ case "${ARCH}" in
                                 # diagnostic opt-outs.
                                 qemu_prepend_default_flag virtio_gpu_async_present 1
                                 qemu_prepend_default_flag virtio_gpu_present_clock_60hz 1
+                        fi
+                        if [[ "${DISPLAY_MODE}" == "sdl" ]]; then
+                                # KWin's 720p Chromium path needs three
+                                # in-flight SUBMIT_3D requests to overlap host
+                                # virgl/D3D12 completion.  Depth 2 remains a
+                                # stability A/B but measured 8--10% slower
+                                # hover response and has not produced a valid
+                                # media-throughput sample.  The kernel keeps
+                                # renderer admission separate from KMS traffic;
+                                # explicit values remain diagnostic opt-outs.
+                                qemu_prepend_default_flag virtio_gpu_async_submit_depth 3
+                                # A renderer that reaches the submit limit must
+                                # wait without owning the global virtio-gpu op
+                                # lock.  Otherwise the async KMS worker queues
+                                # behind the stalled submit and a hover repaint
+                                # inherits the host's retire latency.
+                                qemu_prepend_default_flag virtio_gpu_submit_unlocked_wait 1
+                                # Keep the 60-second synchronous cold-shader
+                                # allowance below, but never let an async ring
+                                # stall freeze GUI admission for that long.
+                                # The kernel also defaults this split to 5s;
+                                # spell it out in the reproducible SDL profile.
+                                qemu_prepend_default_flag virtio_gpu_async_stall_ms 5000
+                                # Pay Plasma's one-time Kickoff and tooltip QML
+                                # construction during session startup.  The
+                                # worker waits for the panel, uses an
+                                # upper-right desktop dismissal point outside
+                                # the popup, and verifies that the menu-body ROI
+                                # returns to its pristine hash.  Together with
+                                # the Linux-like evdev timestamps this moves the
+                                # first user menu open out of the multi-second
+                                # cold path.  Explicit key=0 values remain
+                                # supported diagnostic opt-outs.
+                                qemu_prepend_default_flag kde_kickoff_prewarm 1
+                                qemu_prepend_default_flag kde_tooltip_prewarm 1
+                                qemu_prepend_default_flag kde_plasma_tooltip_delay 50
                         fi
                         # Virgl/D3D12 can spend close to a minute compiling and
                         # validating early WebKit GL work.  Do not abort the
@@ -1101,7 +1295,7 @@ case "${ARCH}" in
                         fi
                 fi
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]] &&
-                   [[ "${QEMU_WSL_SDL_FIT}" == "maximize" ]] &&
+                   [[ "${QEMU_WSL_SDL_FIT}" != "off" ]] &&
                    [[ -z "${QEMU_RUN_TOKEN}" ]]; then
                         QEMU_RUN_TOKEN="sdl-$$-$(date -u +%Y%m%dT%H%M%SZ)"
                 fi
@@ -1141,7 +1335,7 @@ case "${ARCH}" in
                                         SDL_TRACE="on"
                                 fi
                         fi
-                        printf 'run-qemu: display-contract requested=%s resolved=%s frontend=%s gpu=%s host_gl=%s guest_mode=%sx%s sdl_driver=%s sdl_hidpi=%s sdl_trace=%s sdl_fit=%s sdl_aspect_fix=%s disk_format=%s run_token=%s\n' \
+                        printf 'run-qemu: display-contract requested=%s resolved=%s frontend=%s gpu=%s host_gl=%s guest_mode=%sx%s sdl_driver=%s sdl_hidpi=%s sdl_trace=%s sdl_fit=%s sdl_qemu=%s sdl_apt_modules=%s sdl_aspect_fix=%s disk_format=%s run_token=%s\n' \
                                 "${REQUESTED_DISPLAY_MODE}" \
                                 "${DISPLAY_MODE}" \
                                 "${DISPLAY_ARGS[1]:-${DISPLAY_ARGS[0]}}" \
@@ -1153,6 +1347,8 @@ case "${ARCH}" in
                                 "${QEMU_SDL_HIGHDPI}" \
                                 "${SDL_TRACE}" \
                                 "${QEMU_WSL_SDL_FIT}" \
+                                "${QEMU_SDL_VARIANT_RESOLVED}" \
+                                "${QEMU_SDL_APT_MODULES_RESOLVED}" \
                                 "${QEMU_SDL_ASPECT_FIX}" \
                                 "${QEMU_DISK_FORMAT}" \
                                 "${QEMU_RUN_TOKEN:-none}" >&2
@@ -1170,9 +1366,12 @@ case "${ARCH}" in
                         exit 0
                 fi
                 if host_is_wsl && [[ "${DISPLAY_MODE}" == "sdl" ]] &&
-                   [[ "${QEMU_WSL_SDL_FIT}" == "maximize" ]]; then
+                   [[ "${QEMU_WSL_SDL_FIT}" != "off" ]]; then
                         fit_log="${QEMU_WSL_SDL_FIT_LOG:-/tmp/xv6-sdl-fit-${QEMU_RUN_TOKEN}.log}"
-                        env XV6_QEMU_WINDOW_FIT_MODE=maximize \
+                        env XV6_QEMU_WINDOW_FIT_MODE="${QEMU_WSL_SDL_FIT}" \
+                            XV6_QEMU_WINDOW_TARGET_WIDTH="${QEMU_VIRTIO_GPU_XRES}" \
+                            XV6_QEMU_WINDOW_TARGET_HEIGHT="${QEMU_VIRTIO_GPU_YRES}" \
+                            XV6_QEMU_WINDOW_FIT_WATCH_SECONDS="${QEMU_WSL_SDL_FIT_WATCH_SECONDS}" \
                             "${RUN_QEMU_DIR}/../gpu/fit-owned-qemu-window.sh" \
                             "QEMU (xv6-${QEMU_RUN_TOKEN}-0)" \
                             >"${fit_log}" 2>&1 &

@@ -7,9 +7,19 @@ if [[ "$(hostname)" != "linux-kde-reference" ]]; then
     exit 2
 fi
 
+poweroff_on_finish=${LINUX_KDE_BEHAVIOR_POWEROFF:-1}
+require_strace=${LINUX_KDE_BEHAVIOR_REQUIRE_STRACE:-1}
+case "$poweroff_on_finish:$require_strace" in
+    0:0|0:1|1:0|1:1) ;;
+    *)
+        echo "LINUX_KDE_BEHAVIOR_POWEROFF and LINUX_KDE_BEHAVIOR_REQUIRE_STRACE must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+
 fallback_out=/var/lib/linux-kde-reference
 host_out=/mnt/linux-kde-reference-host
-mkdir -p "$fallback_out"
+sudo install -d -m 0755 "$fallback_out"
 out="$fallback_out"
 
 finish()
@@ -23,7 +33,9 @@ finish()
     fi
     sync
     sleep 2
-    sudo systemctl poweroff
+    if [[ "$poweroff_on_finish" == 1 ]]; then
+        sudo systemctl poweroff
+    fi
     exit "$rc"
 }
 trap finish EXIT
@@ -137,6 +149,35 @@ if [[ "$renderer_text" != *"virgl (D3D12 (NVIDIA"* ]]; then
     exit 14
 fi
 printf 'renderer_status=PASS active=virgl-nvidia\n' >"$out/renderer-status.txt"
+
+{
+    printf 'xdg_session_type=%s\n' "${XDG_SESSION_TYPE-}"
+    printf 'wayland_display=%s\n' "${WAYLAND_DISPLAY-}"
+    printf 'qt_qpa_platform=%s\n' "${QT_QPA_PLATFORM-}"
+    printf 'runtime_dir=%s\n' "${XDG_RUNTIME_DIR-}"
+    test -S "${XDG_RUNTIME_DIR-}/${WAYLAND_DISPLAY-}"
+    printf 'wayland_socket_status=PASS\n'
+} >"$out/wayland-session.txt"
+if command -v qdbus >/dev/null 2>&1 && \
+    timeout 10s qdbus org.kde.KWin /KWin supportInformation \
+        >"$out/kwin-dbus-roundtrip.txt" 2>&1; then
+    printf 'kwin_dbus_roundtrip=PASS\n' >"$out/kwin-dbus-status.txt"
+else
+    printf 'kwin_dbus_roundtrip=UNAVAILABLE\n' >"$out/kwin-dbus-status.txt"
+fi
+if command -v wayland-info >/dev/null 2>&1; then
+    if timeout 10s wayland-info >"$out/wayland-info.txt" 2>&1; then
+        printf 'wayland_registry_roundtrip=PASS\n' >"$out/wayland-info-status.txt"
+    else
+        printf 'wayland_registry_roundtrip=FAIL\n' >"$out/wayland-info-status.txt"
+        exit 21
+    fi
+else
+    printf 'wayland_registry_roundtrip=UNAVAILABLE tool=wayland-info\n' \
+        >"$out/wayland-info-status.txt"
+fi
+sudo ps -L -p "$kwin_pid" -o pid,tid,psr,stat,wchan:32,pcpu,comm \
+    >"$out/kwin-thread-waits.txt"
 
 snapshot_system()
 {
@@ -291,23 +332,26 @@ strace_bin=/opt/linux-kde-behavior/strace
 strace_lib=/opt/linux-kde-behavior/lib
 if [[ ! -x "$strace_bin" ]]; then
     printf 'strace_status=MISSING\n' >"$out/strace-status.txt"
-    exit 15
+    if [[ "$require_strace" == 1 ]]; then
+        exit 15
+    fi
+else
+    rm -f "$instrument_marker"
+    timeout 30s env LD_LIBRARY_PATH="$strace_lib" "$strace_bin" -f -qq -c \
+        -o "$out/konsole-strace-summary.txt" \
+        env -u LD_LIBRARY_PATH konsole --separate -e /bin/bash -lc \
+        "date +%s%N > '$instrument_marker'; sleep 2" || true
+    if [[ ! -s "$out/konsole-strace-summary.txt" ]]; then
+        printf 'strace_status=EMPTY\n' >"$out/strace-status.txt"
+        exit 16
+    fi
+    rm -f "$instrument_marker"
+    timeout 30s env LD_LIBRARY_PATH="$strace_lib" "$strace_bin" -f -qq \
+        -e trace=%file -s 160 -o "$out/konsole-strace-file.txt" \
+        env -u LD_LIBRARY_PATH konsole --separate -e /bin/bash -lc \
+        "date +%s%N > '$instrument_marker'; sleep 2" || true
+    printf 'strace_status=PASS\n' >"$out/strace-status.txt"
 fi
-rm -f "$instrument_marker"
-timeout 30s env LD_LIBRARY_PATH="$strace_lib" "$strace_bin" -f -qq -c \
-    -o "$out/konsole-strace-summary.txt" \
-    env -u LD_LIBRARY_PATH konsole --separate -e /bin/bash -lc \
-    "date +%s%N > '$instrument_marker'; sleep 2" || true
-if [[ ! -s "$out/konsole-strace-summary.txt" ]]; then
-    printf 'strace_status=EMPTY\n' >"$out/strace-status.txt"
-    exit 16
-fi
-rm -f "$instrument_marker"
-timeout 30s env LD_LIBRARY_PATH="$strace_lib" "$strace_bin" -f -qq \
-    -e trace=%file -s 160 -o "$out/konsole-strace-file.txt" \
-    env -u LD_LIBRARY_PATH konsole --separate -e /bin/bash -lc \
-    "date +%s%N > '$instrument_marker'; sleep 2" || true
-printf 'strace_status=PASS\n' >"$out/strace-status.txt"
 
 glmark_bin="$(command -v glmark2-wayland || command -v glmark2-es2-wayland || \
     command -v glmark2 || true)"

@@ -12,6 +12,111 @@ The deeper behavioral reference is:
 
 `build-x86_64/linux-kde-reference/run-behavior-20260714T030916Z`
 
+An additional 2026-07-18 control replayed the real windowed YouTube workload
+on the original APT `/usr/bin/qemu-system-x86_64` and its unmodified packaged
+SDL/OpenGL modules (`QEMU_MODULE_DIR` explicitly unset):
+
+`build-x86_64/youtube-parity/linux-windowed-20260718T021241Z-1151893-apt-system`
+
+It passed at 61.735 presented fps with 1280x720 media, a 9.740% VPQ drop rate,
+positive Pulse/hardware/WAV audio deltas, and visibly rendered KDE/YouTube host
+captures. KDE-ready and YouTube-ready host pixel statistics were respectively
+mean/stddev/colors `0.104454/0.27441/29717` and
+`0.7799/0.347413/35394`. This proves that the all-black xv6 result is not an
+inherent failure of the original APT frontend on WSLg.
+
+The replay also observed APT SDL resizing its client again after a guest mode
+transition: the one-shot native fit reached 1280x768, then KDE-ready capture
+measured 1356x897. Linux remained fully visible and fast, but this confirms
+that launch-time-only window sizing is insufficient. The repository launcher
+now watches the early mode-set interval and re-applies native sizing only when
+the client has drifted.
+
+A fresh 2026-07-18 replay repeated that behavior on the same untouched APT
+frontend and modules:
+
+`build-x86_64/youtube-parity/linux-windowed-20260718T045117Z-1249241-apt-system`
+
+It passed at 62.834 presented fps with 1280x720 media, a 7.862% VPQ drop rate,
+1.097489 media/wall ratio, 17 valid display samples, and positive Pulse,
+hardware, and WAV audio deltas. The renderer remained direct virgl on the
+NVIDIA D3D12 adapter. The client again drifted from an exact 1280x768 fit to
+1356x897 after KDE's mode transition and returned to 1280x768 after a second
+native fit. KDE-ready and YouTube-ready client-capture statistics were
+mean/stddev/colors `0.132584/0.318188/8154` and
+`0.862901/0.247212/15520`. The generated host capture bitmaps were removed
+after visual inspection; the numeric, renderer, geometry, media, audio, and
+cleanup receipts remain.
+
+The completed guest was consolidated into the reusable prepared control at
+`build-x86_64/linux-kde-reference/linux-kde-behavior-20260714T024146Z.qcow2`.
+`qemu-img check` reports no errors. The failed bootstrap layers were removed,
+leaving only the two most recent successful Linux run receipts.
+
+## Stock-APT behavioral refresh
+
+Three clean 2026-07-18 behavior runs used that prepared image with the system
+`/usr/bin/qemu-system-x86_64`, unmodified system SDL/OpenGL modules, six vCPUs,
+8 GiB, KVM, and NVIDIA-backed virgl:
+
+- `build-x86_64/linux-kde-behavior-live/behavior-20260718T151846Z-1468713`
+- `build-x86_64/linux-kde-behavior-live/behavior-20260718T152257Z-1472243`
+- `build-x86_64/linux-kde-behavior-live/behavior-20260718T152921Z-1476147`
+
+All three report `LINUX_KDE_BEHAVIOR_DONE`, a responsive KWin D-Bus
+roundtrip, a successful native `wayland-info` registry roundtrip on
+`wayland-0`, direct virgl/NVIDIA rendering, 1280x768@60 at scale 1, a
+non-black 1280x768 guest-side Spectacle capture, zero residual Konsole or
+zombie processes, clean QEMU teardown, and zero exact QEMU processes after
+the run.
+
+| Observation | Run 1 | Run 2 | Run 3 | Current aggregate |
+| --- | ---: | ---: | ---: | ---: |
+| First Konsole readiness | 258 ms | 249 ms | 242 ms | 249.7 ms mean |
+| Warm Konsole median | 206 ms | 206 ms | 212 ms | 206 ms pooled median |
+| Warm Konsole range | 188-232 ms | 197-232 ms | 188-288 ms | 188-288 ms |
+| Guest idle CPU busy | 0.240% | 0.314% | 0.259% | 0.271% mean |
+| Idle KWin CPU, one-core basis | 0.000% | 0.100% | 0.000% | 0.033% mean |
+| glmark guest CPU busy | 5.529% | 5.480% | 9.132% traced | 5.505% untraced mean |
+| glmark KWin CPU, one-core basis | 58.225% | 57.703% | 60.879% traced | 57.964% untraced mean |
+| glmark build FPS | 120 | 108 | 115 traced | 114.0 untraced mean |
+| glmark texture FPS | 127 | 123 | 119 traced | 125.0 untraced mean |
+| glmark shading FPS | 119 | 129 | 99 traced | 124.0 untraced mean |
+| glmark buffer FPS | 47 | 46 | 30 traced | 46.5 untraced mean |
+| glmark ideas FPS | 87 | 85 | 64 traced | 86.0 untraced mean |
+| glmark score | 99 | 97 | 84 traced | 98.0 untraced mean |
+
+The captured first/warm Konsole main threads spent 190.195-230.352 ms in
+execution but only 0.441-1.226 ms waiting on the runqueue. Across all 15 warm
+launches the min/median/mean/max is 188/206/213.5/288 ms. This reinforces the
+earlier conclusion that Linux's interactive latency is execution and event
+dispatch, not broad scheduler starvation.
+
+With privileged wait-channel visibility, healthy KWin normally has its main,
+D-Bus, libinput, and QML threads blocked in `poll`, and worker threads blocked
+in `futex`. Blocking in `poll` is therefore not itself an xv6 defect. The
+actionable xv6 difference is that its known-pending initial Wayland registry
+exchange does not wake and complete, while all three Linux exchanges do.
+
+The two untraced current stock-APT glmark scores average 98, lower than the
+historical behavior score of 127. Both runs began and ended with no other QEMU,
+so use 98 for current APT graphics comparisons and keep 127 as historical
+evidence until frontend provenance is matched. The trace-complete run scored
+84 and used 9.132% aggregate guest CPU after its instrumentation interval, so
+it is deliberately excluded from the uninstrumented graphics mean. This does
+not lower the media target: the same stock-APT control separately sustained
+61.735 and 62.834 presented fps in real 1280x720 YouTube trials.
+
+The third retained run stages the host's ABI-matched Ubuntu `strace 6.8` only
+inside its disposable overlay and records `strace_status=PASS`. It traced
+10,161 calls with 1,602 errors and 0.738341 seconds of accumulated syscall
+time. `poll` and `futex` account for 77.48% of that time; `wait4` contributes
+another 12.21%. `statx`, `openat`, `access`, and `readlink` together account
+for only 2.93%, again making event waits more material than failed path probes.
+The tracer and its downstream graphics sample are kept separate from the two
+untraced performance samples rather than silently pooling instrumentation
+overhead into the reference.
+
 Both runs exited successfully. The behavioral run reports
 `LINUX_KDE_BEHAVIOR_DONE`, an empty QEMU stderr, and zero remaining QEMU
 processes owned by its harness. Its before/after inventories are retained so

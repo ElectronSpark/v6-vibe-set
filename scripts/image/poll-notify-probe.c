@@ -36,6 +36,7 @@
 #include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -431,6 +432,162 @@ static void test_eventfd_scm_epoll(void)
     report("eventfd-scm-epoll", ok, "deadlock-or-error");
 }
 
+/*
+ * The first Wayland-client ordering used by KWin.  A client connects and
+ * sends display.get_registry + display.sync before the compositor accepts.
+ * The compositor adds that already-readable fd to an inner epoll instance,
+ * then blocks in poll() on the epoll fd.  Linux reports it immediately.
+ */
+static int unix_preaccept_worker(void)
+{
+    char path[96];
+    int ready[2] = {-1, -1};
+    int listener = -1;
+    int accepted = -1;
+    int epfd = -1;
+    pid_t client = -1;
+    int rc = 2;
+
+    alarm(WATCHDOG_SECS);
+    snprintf(path, sizeof(path), "/tmp/poll-notify-wayland-%ld",
+             (long)getpid());
+    unlink(path);
+
+    listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (listener < 0 || pipe(ready) < 0) {
+        rc = 20;
+        goto out;
+    }
+
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", path);
+    if (bind(listener, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        fprintf(stderr, "poll-notify-probe: unix bind: %s\n",
+                strerror(errno));
+        rc = 21;
+        goto out;
+    }
+    if (listen(listener, 4) < 0) {
+        fprintf(stderr, "poll-notify-probe: unix listen: %s\n",
+                strerror(errno));
+        rc = 21;
+        goto out;
+    }
+
+    client = fork();
+    if (client < 0) {
+        rc = 22;
+        goto out;
+    }
+    if (client == 0) {
+        static const unsigned char first_wayland_batch[24] = {
+            /* wl_display.get_registry(new_id=2) */
+            1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0,
+            /* wl_display.sync(new_id=3) */
+            1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0,
+        };
+        close(ready[0]);
+        close(listener);
+        alarm(WATCHDOG_SECS);
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0 ||
+            connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 ||
+            send(fd, first_wayland_batch, sizeof(first_wayland_batch), 0) !=
+                (ssize_t)sizeof(first_wayland_batch) ||
+            write(ready[1], "R", 1) != 1)
+            _exit(10);
+        close(ready[1]);
+        char ack = 0;
+        if (recv(fd, &ack, 1, 0) != 1 || ack != 'A')
+            _exit(11);
+        close(fd);
+        _exit(0);
+    }
+
+    close(ready[1]);
+    ready[1] = -1;
+    char marker = 0;
+    if (read(ready[0], &marker, 1) != 1 || marker != 'R') {
+        rc = 23;
+        goto out;
+    }
+
+    accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (accepted < 0) {
+        rc = 24;
+        goto out;
+    }
+    epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (epfd < 0) {
+        rc = 25;
+        goto out;
+    }
+    struct epoll_event ev = {
+        .events = EPOLLIN | EPOLLET,
+        .data.fd = accepted,
+    };
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, accepted, &ev) < 0) {
+        rc = 26;
+        goto out;
+    }
+
+    struct pollfd outer = {.fd = epfd, .events = POLLIN};
+    if (poll(&outer, 1, -1) != 1 || !(outer.revents & POLLIN)) {
+        rc = 27;
+        goto out;
+    }
+    struct epoll_event observed;
+    if (epoll_wait(epfd, &observed, 1, 0) != 1 ||
+        !(observed.events & EPOLLIN)) {
+        rc = 28;
+        goto out;
+    }
+    unsigned char request[24];
+    if (recv(accepted, request, sizeof(request), 0) !=
+        (ssize_t)sizeof(request)) {
+        rc = 29;
+        goto out;
+    }
+    if (send(accepted, "A", 1, 0) != 1) {
+        rc = 30;
+        goto out;
+    }
+    rc = wait_child(client, WATCHDOG_SECS,
+                    "unix-preaccept-client") == 0 ? 0 : 12;
+    client = -1;
+
+out:
+    if (client > 0) {
+        kill(client, SIGKILL);
+        waitpid(client, NULL, 0);
+    }
+    if (epfd >= 0)
+        close(epfd);
+    if (accepted >= 0)
+        close(accepted);
+    if (listener >= 0)
+        close(listener);
+    if (ready[0] >= 0)
+        close(ready[0]);
+    if (ready[1] >= 0)
+        close(ready[1]);
+    unlink(path);
+    return rc;
+}
+
+static void test_unix_preaccept_epoll_in_poll(void)
+{
+    pid_t pid = fork();
+    if (pid == 0)
+        _exit(unix_preaccept_worker());
+    int ok = pid > 0 &&
+        wait_child(pid, WATCHDOG_SECS + 3,
+                   "unix-preaccept-worker") == 0;
+    report("unix-preaccept-epoll-in-poll", ok, "deadlock-or-error");
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -441,6 +598,7 @@ int main(void)
     test_epoll_in_poll();
     test_eventfd_cross_process();
     test_eventfd_scm_epoll();
+    test_unix_preaccept_epoll_in_poll();
     printf("POLL-NOTIFY-PROBE: RESULT=%s failures=%d\n",
            g_failures == 0 ? "PASS" : "FAIL", g_failures);
     return g_failures == 0 ? 0 : 1;

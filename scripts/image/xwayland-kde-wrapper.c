@@ -5,6 +5,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef XV6_XWAYLAND_HAS_GLAMOR_OPTION
+#define XV6_XWAYLAND_HAS_GLAMOR_OPTION 0
+#endif
+
+#ifndef XV6_XWAYLAND_REAL_PATH
+#define XV6_XWAYLAND_REAL_PATH "/bin/Xwayland.real"
+#endif
+
 static void
 set_default_env(const char *name, const char *value)
 {
@@ -47,6 +55,13 @@ valid_decimal_range(const char *value, int min, int max)
     }
 
     return n >= min;
+}
+
+static int
+valid_glamor_mode(const char *value)
+{
+    return strcmp(value, "off") == 0 || strcmp(value, "auto") == 0 ||
+           strcmp(value, "gl") == 0 || strcmp(value, "es") == 0;
 }
 
 static const char *
@@ -95,10 +110,11 @@ log_final_argv(char **child, int count)
 int
 main(int argc, char **argv)
 {
-    const char *real = "/bin/Xwayland.real";
+    const char *real = XV6_XWAYLAND_REAL_PATH;
     const char *glamor_env = getenv("XV6_XWAYLAND_GLAMOR");
-    const char *glamor = (glamor_env && glamor_env[0] != '\0') ? glamor_env : "off";
-    const char *argv_glamor = strcmp(glamor, "auto") == 0 ? "es" : glamor;
+    const char *glamor = (glamor_env && glamor_env[0] != '\0') ? glamor_env : "auto";
+    const int glamor_explicit = glamor_env && glamor_env[0] != '\0';
+    const char *argv_glamor = NULL;
     const char *virgl_debug = getenv("XV6_XWAYLAND_VIRGL_DEBUG");
     const char *verbose_env = getenv("XV6_XWAYLAND_VERBOSE");
     const char *audit_env = getenv("XV6_XWAYLAND_AUDIT");
@@ -109,6 +125,39 @@ main(int argc, char **argv)
     const int enable_glx = env_enabled(enable_glx_env);
     int extra = 2;
     int pos = 0;
+
+    /*
+     * Ubuntu and port-built Xwayland binaries do not expose a stable
+     * -glamor command-line ABI.  Passing the option to a binary that lacks it
+     * makes Xwayland exit before writing its displayfd; KWin then remains in
+     * its synchronous startup poll and never services Wayland clients.  The
+     * staging script probes the exact binary and enables this only when its
+     * own help advertises the option.  "auto" always means server default.
+     */
+    if (glamor_explicit && !valid_glamor_mode(glamor)) {
+        fprintf(stderr,
+                "Xwayland KDE wrapper: error: invalid "
+                "XV6_XWAYLAND_GLAMOR=%s; expected auto, off, gl, or es\n",
+                glamor);
+        return 64;
+    }
+    if (!XV6_XWAYLAND_HAS_GLAMOR_OPTION && glamor_explicit &&
+        strcmp(glamor, "auto") != 0) {
+        fprintf(stderr,
+                "Xwayland KDE wrapper: error: XV6_XWAYLAND_GLAMOR=%s "
+                "requires the -glamor option, but the staged Xwayland "
+                "does not advertise it; refusing to start\n",
+                glamor);
+        return 64;
+    }
+    if (!XV6_XWAYLAND_HAS_GLAMOR_OPTION) {
+        fprintf(stderr,
+                "Xwayland KDE wrapper: -glamor capability=unsupported "
+                "request=%s action=server-default\n",
+                glamor_explicit ? glamor : "implicit-auto");
+    } else if (strcmp(glamor, "auto") != 0) {
+        argv_glamor = glamor;
+    }
 
     set_default_env("EGL_PLATFORM", "wayland");
     set_default_env("LIBGL_ALWAYS_SOFTWARE", "0");
@@ -134,7 +183,7 @@ main(int argc, char **argv)
         fprintf(stderr,
                 "Xwayland KDE wrapper: ignoring invalid XV6_XWAYLAND_AUDIT\n");
 
-    if (strcmp(argv_glamor, "auto") != 0)
+    if (argv_glamor != NULL)
         extra += 2;
     if (verbose)
         extra += 2;
@@ -150,7 +199,7 @@ main(int argc, char **argv)
     }
 
     child[pos++] = (char *)real;
-    if (strcmp(argv_glamor, "auto") != 0) {
+    if (argv_glamor != NULL) {
         child[pos++] = "-glamor";
         child[pos++] = (char *)argv_glamor;
     }
@@ -182,7 +231,7 @@ main(int argc, char **argv)
             env_value("GALLIUM_DRIVER"),
             env_value("MESA_LOADER_DRIVER_OVERRIDE"),
             glamor,
-            argv_glamor,
+            argv_glamor ? argv_glamor : "server-default",
             loader_debug ? "1" : "0",
             enable_glx_env ? enable_glx_env : "0",
             diagnostic_decimal_env("XV6_XWAYLAND_VERBOSE", verbose),
