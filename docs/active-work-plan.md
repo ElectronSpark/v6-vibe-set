@@ -14,7 +14,22 @@ inventories, reference documents, and reusable skills remain separate references
 
 ## Latest graphical audit — 2026-09-07
 
-The subsequent [YouTube watch-page audit](chromium-youtube-audit-20260907.md)
+The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
+the September YouTube audio-renderer failure below. Ordinary AF_UNIX stream
+writes now publish bytes and credentials under one sender lock before waking
+readers, including partial writes. The original kernel failed the new
+credential regression; the rebuilt kernel passed 4,096 rounds, six Chromium
+IPC checks, a 9.7 MB stream transfer and two 20-second ordinary Unix Pulse
+streams with clean teardown. In the same SDL/virgl KDE boot, opt-in multiprocess
+Chromium played YouTube through 5:28 with working mouse pause/resume, mute,
+seek and fullscreen. Stats reported 1280x720@30 AV1/Opus, and an isolated
+321.2-second recording contains non-silent media PCM, excluding test tones.
+Chromium and QEMU exited cleanly; exact QEMU inventory is zero. This closes
+the observed September audio failure, with no matched performance, 60 fps,
+hardware-decode or host-speaker listening claim. **DESK-01** retains its
+separate historical stream-replacement scope; **DESK-03** remains open.
+
+The earlier [YouTube watch-page audit](chromium-youtube-audit-20260907.md)
 uses the existing image and the accelerated multiprocess Chromium mode below.
 The Big Buck Bunny watch page, description, comments and recommendations load,
 but playback reports **"Audio renderer error. Please restart your computer."**
@@ -205,6 +220,12 @@ there is no replacement accepted N=2 pair for that final candidate.
   opt-in multiprocess Chromium. Localize that fresh failure separately from
   the historical dedicated-Pulse treatment; the error text alone does not
   establish the same underlying cause.
+  The later [September audio fix](chromium-audio-fix-20260907.md) closes that
+  fresh ordinary-Unix failure with a kernel credential-publication repair,
+  a Linux/xv6 regression, two passing Pulse streams and graphical YouTube
+  playback with captured media audio. Reuse the existing Chromium-shaped
+  reducer for the historical stream-replacement case; do not reopen the
+  fixed ordinary-write failure without a new reproduction.
 - [ ] **DESK-02:** Investigate recurring valid host `SUBMIT_3D` stalls and
   context recovery. Preserve posted-age accounting, quarantined ownership,
   abort-generation semantics, exact teardown, and failed receipts. Do not
