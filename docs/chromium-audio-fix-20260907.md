@@ -166,6 +166,11 @@ The observed September audio failure is fixed. Historical dedicated-Pulse
 stream-replacement failures, matched performance, dropped frames and other
 desktop issues remain separate work in the [active plan](active-work-plan.md).
 
+Artifact-retention update: the subsequent [virgl fence investigation](virgl-fence-publication-fix-20260907.md)
+retired the unused pre-fix kernel binary, ELF and symbols to keep three
+generated kernel iterations. Their hashes and all run logs remain; the
+audio-fixed rollback binary and private regression filesystem are preserved.
+
 [diagnostic]: ../build-x86_64/gui-progress-audit/audio-diagnostic-20260907T180625Z/
 [baseline]: ../build-x86_64/gui-progress-audit/audio-passcred-baseline-20260907T182610Z/
 [build]: ../build-x86_64/gui-progress-audit/audio-passcred-build-20260907T183054Z/

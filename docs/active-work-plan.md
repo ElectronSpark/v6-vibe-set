@@ -14,6 +14,22 @@ inventories, reference documents, and reusable skills remain separate references
 
 ## Latest graphical audit — 2026-09-07
 
+The [virgl fence investigation](virgl-fence-publication-fix-20260907.md)
+fixes a demonstrated publication-order defect: a command could be classified
+as complete before it entered the GPU queue. The deterministic baseline
+returned A=169 after B=170 had completed; the fixed kernel leaves A unnumbered
+until publication, then returns A=203 after B=202. The regression exits zero
+on the fix, and the focused kernel build and sparse checks pass.
+In the accelerated Chromium mode, mouse-triggered WebGL 1 and 2 loss/restoration
+rebuilds resources and passes pixel checks. The [fixed-kernel GUI audit](chromium-gl-recovery-audit-20260907.md)
+still pauses during ordinary animation, including after a separate host-focus
+intervention and a clean browser restart with a fresh profile. Final captured
+GPU timeouts, failures and failed contexts remain zero, with all 3,106 submitted
+commands retired. The [earlier lifecycle baseline](chromium-gl-lifecycle-audit-20260907.md)
+also paused. This does **not** close **DESK-02** or establish host-hang recovery;
+animation callback delivery and synchronous-timeout DMA lifetime remain open.
+The normal Chromium launcher policy is unchanged.
+
 The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
 the September YouTube audio-renderer failure below. Ordinary AF_UNIX stream
 writes now publish bytes and credentials under one sender lock before waking
