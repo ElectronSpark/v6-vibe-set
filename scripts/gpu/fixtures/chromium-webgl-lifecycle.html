@@ -55,11 +55,15 @@
 <script>
 'use strict';
 (() => {
-  const VERSION = 'chromium-webgl-lifecycle-v1';
+  const VERSION = 'chromium-webgl-lifecycle-v2';
   const SOAK_MS = 60000, STALL_MS = 5000, OPERATION_MS = 5000;
   const COLORS = [[51, 204, 102, 255], [51, 102, 230, 255]];
   const endpoint = '/webgl-result';
-  const token = (new URLSearchParams(location.search).get('run') || 'unlabeled').slice(0, 128);
+  const parameters = new URLSearchParams(location.search);
+  const token = (parameters.get('run') || 'unlabeled').slice(0, 128);
+  // Observation preserves pending callbacks after a gap, but never turns a
+  // failed progress bound into PASS. The existing 60-second deadline remains.
+  const observeStalls = parameters.get('observe') === '1';
   const opened = performance.now();
   const $ = id => document.getElementById(id);
   const states = [];
@@ -94,6 +98,7 @@
       fixture: VERSION, run: token, sequence: ++sequence, phase,
       wall_ms: Date.now(), monotonic_ms: Math.round(performance.now() - opened),
       visibility: document.visibilityState, fullscreen: Boolean(document.fullscreenElement),
+      has_focus: document.hasFocus(), observe_stalls: observeStalls,
       global_errors: globalErrors, contexts: states.map(stateResult),
       soak: soak ? soakResult('RUNNING') : lastSoak,
       controls: {start_enabled: !$('start').disabled, resize_enabled: !$('resize').disabled},
@@ -312,9 +317,20 @@
   }
 
   function soakResult(status, reason = '') {
+    const current = performance.now();
     return {status, reason, target_ms: SOAK_MS, elapsed_wall_ms: Date.now() - soak.startWall,
-      elapsed_monotonic_ms: Math.round(performance.now() - soak.startMono),
-      last_frame_gap_ms: Math.round(performance.now() - soak.lastFrame),
+      elapsed_monotonic_ms: Math.round(current - soak.startMono),
+      last_frame_gap_ms: Math.round(current - soak.lastFrame),
+      timing: {callbacks: soak.callbacks, timer_ticks: soak.timerTicks,
+        callback_entry_age_ms: Math.round(current - soak.lastCallbackEntry),
+        callback_exit_age_ms: Math.round(current - soak.lastCallbackExit),
+        max_callback_entry_gap_ms: Math.round(soak.maxCallbackGap),
+        max_callback_duration_ms: Math.round(soak.maxCallbackDuration),
+        max_timer_gap_ms: Math.round(soak.maxTimerGap),
+        raf_timestamp_offset_ms: Math.round(soak.timestampOffset),
+        max_raf_timestamp_offset_ms: Math.round(soak.maxTimestampOffset),
+        stall_count: soak.stallCount, resume_count: soak.resumeCount,
+        stall_active: soak.stallActive, observations: soak.observations.slice()},
       contexts: states.map((s, i) => ({api: s.api, draws: s.frames - soak.frames[i],
         checks: s.checks - soak.checks[i], errors: s.errors.length - soak.errors[i],
         unexpected_losses: s.unexpectedLosses - soak.losses[i]}))};
@@ -325,7 +341,9 @@
     clearInterval(timer); clearTimeout(stopTimer); cancelAnimationFrame(raf);
     if (status === 'PASS') {
       const elapsed = Date.now() - soak.startWall;
-      if (performance.now() - soak.lastFrame > STALL_MS) { status = 'FAIL'; reason = 'animation stale at terminal deadline'; }
+      const lastProgress = observeStalls ? soak.lastCallbackEntry : soak.lastFrame;
+      if (soak.stallCount) { status = 'FAIL'; reason = 'observation completed with animation gaps'; }
+      else if (performance.now() - lastProgress > STALL_MS) { status = 'FAIL'; reason = 'animation stale at terminal deadline'; }
       else if (elapsed < SOAK_MS || elapsed > SOAK_MS + STALL_MS) { status = 'FAIL'; reason = 'wall deadline missed'; }
       else if (states.some((s, i) => s.state !== 'ready' || s.frames - soak.frames[i] < 10 ||
         s.checks - soak.checks[i] < 20 || s.errors.length !== soak.errors[i] || s.unexpectedLosses !== soak.losses[i])) {
@@ -339,14 +357,41 @@
     event('soak-complete', lastSoak); refresh(); report('soak-complete');
   }
 
+  function observeGap(current, gap) {
+    if (soak.stallActive) return;
+    soak.stallActive = true; soak.stallCount++;
+    const detail = {kind: 'gap-detected', elapsed_ms: Math.round(current - soak.startMono),
+      entry_gap_ms: Math.round(gap), callbacks: soak.callbacks};
+    if (soak.observations.length < 16) soak.observations.push(detail);
+    $('summary').textContent = 'OBSERVING: animation gap detected; callbacks remain pending until 60 seconds';
+    $('summary').className = 'status waiting';
+    event('animation-gap', detail); report('animation-gap');
+  }
+
   function frame(now) {
     if (!soak) return;
-    if (now - soak.lastFrame > STALL_MS) { finishSoak('FAIL', 'animation stalled for more than 5 seconds'); return; }
+    const entered = performance.now(), entryGap = entered - soak.lastCallbackEntry;
+    soak.maxCallbackGap = Math.max(soak.maxCallbackGap, entryGap);
+    if (observeStalls) {
+      if (entryGap > STALL_MS) observeGap(entered, entryGap);
+      if (soak.stallActive) {
+        soak.stallActive = false; soak.resumeCount++;
+        const detail = {kind: 'callbacks-resumed', elapsed_ms: Math.round(entered - soak.startMono),
+          entry_gap_ms: Math.round(entryGap), callbacks: soak.callbacks + 1};
+        if (soak.observations.length < 16) soak.observations.push(detail);
+        event('animation-resumed', detail);
+      }
+    } else if (now - soak.lastFrame > STALL_MS) { finishSoak('FAIL', 'animation stalled for more than 5 seconds'); return; }
+    soak.callbacks++; soak.lastCallbackEntry = entered;
+    soak.timestampOffset = entered - now;
+    soak.maxTimestampOffset = Math.max(soak.maxTimestampOffset, soak.timestampOffset);
     soak.lastFrame = now;
     const sample = now - soak.lastSample >= 2000;
     if (sample) soak.lastSample = now;
     for (const s of states) { drawChecked(s, sample); if (!soak) return; }
     if (sample) refresh();
+    soak.lastCallbackExit = performance.now();
+    soak.maxCallbackDuration = Math.max(soak.maxCallbackDuration, soak.lastCallbackExit - entered);
     raf = requestAnimationFrame(frame);
   }
 
@@ -354,9 +399,14 @@
     if (soak || !states.every(s => s.state === 'ready') || document.hidden) return;
     const now = performance.now();
     soak = {startWall: Date.now(), startMono: now, lastFrame: now, lastSample: now,
+      callbacks: 0, timerTicks: 0, lastCallbackEntry: now, lastCallbackExit: now,
+      maxCallbackGap: 0, maxCallbackDuration: 0, lastTimer: now, maxTimerGap: 0,
+      timestampOffset: 0, maxTimestampOffset: 0,
+      stallActive: false, stallCount: 0, resumeCount: 0, observations: [],
       frames: states.map(s => s.frames), checks: states.map(s => s.checks),
       errors: states.map(s => s.errors.length), losses: states.map(s => s.unexpectedLosses)};
-    $('summary').textContent = 'RUNNING: 60-second animation and periodic pixel checks';
+    $('summary').textContent = observeStalls ? 'OBSERVING: 60 seconds, including any animation gaps' :
+      'RUNNING: 60-second animation and periodic pixel checks';
     $('summary').className = 'status waiting';
     event('soak-started'); refresh(); report('soak-started');
     raf = requestAnimationFrame(frame);
@@ -364,7 +414,14 @@
     timer = setInterval(() => {
       if (!soak) return;
       const current = performance.now(), elapsed = Date.now() - soak.startWall;
-      if (current - soak.lastFrame > STALL_MS) { finishSoak('FAIL', 'animation stopped progressing'); return; }
+      soak.timerTicks++;
+      soak.maxTimerGap = Math.max(soak.maxTimerGap, current - soak.lastTimer);
+      soak.lastTimer = current;
+      const progressGap = current - (observeStalls ? soak.lastCallbackEntry : soak.lastFrame);
+      if (progressGap > STALL_MS) {
+        if (observeStalls) observeGap(current, progressGap);
+        else { finishSoak('FAIL', 'animation stopped progressing'); return; }
+      }
       $('progress').textContent = `${Math.floor(elapsed / 1000)} / 60 seconds; ${states.map((s, i) => `${s.api}: ${s.frames - soak.frames[i]} draws`).join('; ')}`;
       if (current - lastReport >= 2000) { lastReport = current; report('soak-progress'); }
     }, 250);
@@ -399,12 +456,17 @@
     if (document.hidden && soak) finishSoak('INCOMPLETE', 'page hidden during soak');
     report('visibility-changed');
   });
+  for (const type of ['focus', 'blur']) window.addEventListener(type, () => {
+    event('window-' + type, {has_focus: document.hasFocus()});
+    report('window-' + type);
+  });
   window.addEventListener('error', e => {
     globalErrors++; event('javascript-error', {message: e.message});
     if (soak) finishSoak('FAIL', 'JavaScript error');
     report('javascript-error');
   });
   $('run').textContent = `Fixture ${VERSION}; run=${token}; ${location.origin}`;
+  if (observeStalls) $('start').textContent = 'Observe 60 seconds';
   initialize(1); initialize(2); refresh();
   if (states.every(s => s.state === 'ready')) {
     $('summary').textContent = 'READY: both APIs passed initial drawing and pixel checks';

@@ -26,8 +26,36 @@ still pauses during ordinary animation, including after a separate host-focus
 intervention and a clean browser restart with a fresh profile. Final captured
 GPU timeouts, failures and failed contexts remain zero, with all 3,106 submitted
 commands retired. The [earlier lifecycle baseline](chromium-gl-lifecycle-audit-20260907.md)
-also paused. This does **not** close **DESK-02** or establish host-hang recovery;
-animation callback delivery and synchronous-timeout DMA lifetime remain open.
+also paused. This did **not** close **DESK-02** or establish host-hang recovery;
+the callback pauses are investigated below, and synchronous-timeout DMA
+lifetime remains open.
+The [subsequent frame-callback audit](chromium-frame-callback-audit-20260907.md)
+keeps animation running after the five-second threshold and observes natural
+resumption. Its retained 60-second repeat has four 6.9–7.5-second callback-entry
+gaps, each matching a delayed Wayland frame callback and previous-buffer release.
+JavaScript timers continue, focus remains active, and sampled GPU/DRM queues
+drain without errors. Both observations still fail the animation progress bound.
+A subsequent memory-only first-gap capture found both Wayland socket directions
+empty and KWin blocked, uninterruptible, in `DRM_IOCTL_VIRTGPU_EXECBUFFER`.
+The debugger interrupted that trial for 1.850 seconds, so its resumption has no
+natural-recovery credit. An expanded capture finds Chromium's GPU process
+holding the resource-operation mutex and waiting for asynchronous progress,
+with all 60 async slots free and posted work fully retired; KWin waits for that
+same mutex. The [progress-wait registration repair](virgl-progress-wait-fix-20260907.md)
+preserves the caller's retirement sequence across predicate checks and waiter
+registration. The deterministic baseline fails four race cases; the candidate
+passes all ten cases, kernel build and Sparse. Two fresh virgl boots pass the
+unchanged 60-second WebGL observation, with zero stalls/errors and maximum
+callback-entry gaps of 229 and 212 ms. Both retained traces have no callback
+receipt wait above one second. Mouse context restoration, fullscreen, canvas
+resize and the GUIHD scheduler workload also pass. Two traced local-video
+trials play without an HTML video error but fail the unchanged dropped-frame gate
+(15.48% and 14.70%, versus less than 10%). A separate untraced YouTube trial
+advances to 3:23 with mouse pause/resume/fullscreen and 233.4 seconds of captured
+non-silent PCM; direct browser and owned VM exits are clean. All three candidate
+VMs are reaped and exact QEMU inventory is zero. Kernel fix commit: `81cbd0c5`.
+This repairs a guest registration race without establishing actual host-hang
+recovery or closing media performance and synchronous-timeout lifetime work.
 The normal Chromium launcher policy is unchanged.
 
 The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
@@ -246,9 +274,22 @@ there is no replacement accepted N=2 pair for that final candidate.
   context recovery. Preserve posted-age accounting, quarantined ownership,
   abort-generation semantics, exact teardown, and failed receipts. Do not
   lengthen the deadline or enable per-flip host waits to disguise stalls.
+  The September fence publication-order defect has a passing deterministic
+  regression. The remaining ordinary Chromium animation pauses now correlate
+  with delayed Wayland callback/release receipt. An expanded wait capture finds
+  Chromium GPU resource cleanup holding the operation mutex while waiting for
+  already-retired work, blocking KWin EXECBUFFER. The
+  [registration fix](virgl-progress-wait-fix-20260907.md) has a failing baseline,
+  ten passing host cases, kernel build/Sparse, two fresh passing 60-second GL
+  observations, mouse context restoration and GUIHD coverage. Actual host-hang
+  recovery and synchronous-timeout DMA lifetime remain separate open work.
 - [ ] **DESK-03:** Restore a complete current windowed measurement and refresh
   N>=2 Linux/xv6 windowed and fullscreen controls before publishing a new
   ratio. Separate media/network readiness from cadence and audio failures.
+  September's two traced local-video trials on the progress-wait candidate
+  fail the unchanged drop gate at 15.48% and 14.70%, despite near-real-time
+  media advance and no HTML video error. There is no matched pre-fix media pair;
+  do not attribute the drops to this repair or use these runs as parity proof.
   Trace renderer runnable delay, notification latency, present-clock late
   edges and host submission latency only where the new receipt implicates them.
 - [ ] **DESK-04:** Retain the direct-scanout/host-window content gate and
