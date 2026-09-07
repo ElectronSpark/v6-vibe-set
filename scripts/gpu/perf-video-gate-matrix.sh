@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the §8 WebKit fullscreen-video performance gate repeatedly and summarize
-# the pass/fail metrics needed by docs/linux-drm-abi-compat-plan.md §13.
+# the pass/fail metrics needed by docs/active-work-plan.md (validation and execution rules).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

@@ -4,6 +4,11 @@ Umbrella for building a self-hosted xv6-derived OS: kernel, host-glibc
 Linux userland, ported third-party software, and bootable ext4 root
 image / qemu launcher - all driven from a single top-level CMake.
 
+All first-party implementation work is tracked in the
+[consolidated work plan](docs/active-work-plan.md). The
+[plan archive](docs/archive/plan-consolidation-20260907/README.md) preserves
+the original roadmaps and detailed run history.
+
 ## Layout
 
 ```

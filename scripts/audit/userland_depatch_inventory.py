@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PLAN = ROOT / "docs/linux-userland-upstream-depatch-plan.md"
+DEFAULT_PLAN = ROOT / "docs/active-work-plan.md"
 DEFAULT_OUT = ROOT / "build-x86_64/userland-depatch-inventory.tsv"
 DEFAULT_ALLOWLIST = ROOT / "build-x86_64/userland-depatch-allowlist.tsv"
 DEFAULT_REVIEWED_ALLOWLIST = ROOT / "docs/linux-userland-depatch-allowlist.tsv"

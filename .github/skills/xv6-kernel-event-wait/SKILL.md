@@ -26,19 +26,19 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 
 ## Core Objects
 
-- `struct kqueue` contains `lock`, `waitq`, `registered`, `ready`, `nregistered`, `nready`, `closed`, `waiters`, and `file`.
+- `struct kqueue` owns the registered/ready lists, wait queue, compatibility flags, registration sequence, and `waiters`/`pollers`/`registrars` lifetime counts.
 - `struct knote` lives on up to three lists at once: `kq->registered`, `kq->ready`, and one source list such as `vfs_file::knote_list`, `vfs_inode::knote_list`, `thread::kqueue_proc_knotes`, or `sigacts_t::kqueue_signal_knotes[]`.
 - Knote identity is `(ident, filter)`. For fd filters, `ident` is the watched fd number in the registering process.
 - Knote user fields mirror `struct kevent`: `ident`, `filter`, `flags`, `fflags`, `data`, and `udata`.
 - `sfflags` preserves subscribed vnode/proc flags across `EV_CLEAR`; `fflags` is delivered event state.
-- Status bits are `KN_ACTIVE`, `KN_QUEUED`, `KN_DISABLED`, `KN_DETACHED`, and `KN_TIMER`.
+- Status also tracks edge/level delivery and deferred notifications through `KN_EDGE_ACTIVE`, `KN_LEVEL_SEEN`, `KN_DELIVERING`, and `KN_PENDING`. `poll_refs` and registration generations protect unlocked poll callbacks.
 - `kq->file` is a back-pointer to the kqueue's VFS file so nested epoll/kqueue can propagate readiness to watchers of the epoll fd itself.
 
 ## Key Findings
 
 - xv6-os implements epoll compatibility over kqueue; epoll read/write interest becomes `EVFILT_READ`/`EVFILT_WRITE` knotes.
 - Read/write filter readiness is level-triggered through `.poll`: first `vfs_file_ops.poll`, then cdev `.poll` fallback for files with `f->ops == NULL`.
-- `kqueue_wait()` rescans all registered, enabled, unqueued, attached knotes before sleeping. This is required for fd types whose readiness changes without explicit `vfs_file_knote_notify()`.
+- `kqueue_wait()` rescans eligible registrations before sleeping. Each rescan has its own registration-ID cursor and high-water snapshot; file polling drops the queue lock, so a list cursor cannot survive across that boundary.
 - Explicit producers still matter for instant wakeups: pipes, Unix sockets, lwIP sockets, eventfd, timerfd, file/vnode changes, proc events, and signal events all call kqueue notify helpers.
 - `knote_enqueue()` and `knote_enqueue_with_data()` wake `kq->waitq` and propagate read readiness to outer watchers of the kqueue fd.
 - `vfs_file_knote_notify()` holds `file->knote_lock`, uses `__knote_enqueue_core()`, then propagates to outer kqueues after dropping the source lock to avoid recursive `knote_lock` re-entry.
@@ -51,10 +51,10 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 ## Registration Semantics
 
 - `EV_ADD` creates or updates a knote. New knotes attach to their source, are inserted into `kq->registered`, and are immediately checked with `ops->event()`.
-- `EV_DELETE` finds the `(ident, filter)` knote, detaches it from source lists, removes it from `ready` if queued, removes it from `registered`, marks `KN_DETACHED`, and frees it unless it is a timer knote.
+- `EV_DELETE` finds the `(ident, filter)` knote, detaches source/ready/registered links and marks `KN_DETACHED`. Active poll references defer freeing; timer work has its separate deferred-lifetime restriction.
 - `EV_ENABLE` clears `KN_DISABLED` and rechecks current readiness outside `kq->lock` before enqueueing.
 - `EV_DISABLE` sets `KN_DISABLED`; disabled knotes remain registered but are not queued.
-- `EV_ONESHOT` auto-deletes the knote after delivery.
+- Native kqueue `EV_ONESHOT` deletes after delivery. On `KQ_EPOLL_COMPAT` queues, it disables both read/write registrations for the fd until `EPOLL_CTL_MOD` rearms them.
 - `EV_CLEAR` clears delivered `fflags` and `data` after delivery. Timer filters save their interval in `timer_ms` because `data` may be cleared.
 - Per-change errors are reported by rewriting the user change with `EV_ERROR` and negative errno in `data`.
 
@@ -79,9 +79,10 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 - If an ADD/MOD event has no read or write bits, the bridge currently registers a read knote anyway.
 - User `epoll_data` is stored in `kevent.udata` and copied back unchanged.
 - `struct k_epoll_event` is packed to 12 bytes on x86_64 and naturally 16 bytes on RISC-V. Keep this ABI split intact.
-- `sys_epoll_pwait()` currently ignores the optional sigmask, allocates up to `2 * maxevents` kevents capped at 256, and emits one epoll event per read/write kevent without coalescing duplicate fd events.
+- `epoll_pwait_common()` validates and temporarily installs the optional signal mask, restoring it on exit. It uses a full 256-kevent internal batch and coalesces read/write results by watched fd and `udata`; the output still respects `maxevents`. `epoll_pwait2` validates and rounds its timespec to the supported millisecond resolution.
+- Blocking epoll calls currently rescan in 20 ms internal slices, including infinite waits. Treat that as an implementation detail when measuring timeout accuracy, wake latency and CPU use; do not hide lost producer notifications with additional application polling.
 - Only `EVFILT_READ` and `EVFILT_WRITE` are mapped back to epoll events. Other kqueue filters are skipped by epoll output conversion.
-- `EV_EOF` maps to `EPOLLHUP`; `EV_ERROR` maps to `EPOLLERR`.
+- Output combines current poll bits with the requested mask. `EV_EOF` becomes `EPOLLHUP` only with `POLLHUP`; requested `EPOLLRDHUP` is distinct. `EV_ERROR` maps to `EPOLLERR`.
 
 ## Wait And Timeout Path
 
@@ -91,8 +92,7 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 - `__kq_timed_sleep_cb()` must track whether `sched_timer_set()` succeeded; tiny waits such as `timeout=1` can race the scheduler tick and fail as already expired, and sleeping anyway leaves the waiter stranded until another event.
 - `THREAD_INTERRUPTIBLE` waits return `-EINTR` if a signal is pending.
 - If a timed wait wakes and the ready list is still empty, `kqueue_wait()` treats it as a timeout and returns 0.
-- `kqueue_close()` marks closed, detaches all registered knotes, wakes all waiters with `-EBADF`, and frees immediately only if no waiters are inside `kqueue_wait()`.
-- The final waiter frees a closed kqueue after leaving `kqueue_wait()`.
+- `kqueue_close()` marks closed, detaches registrations and wakes waiters with `-EBADF`. Freeing requires `waiters`, `pollers`, and `registrars` all to reach zero; the final active operation may perform that free.
 
 ## Producer Notification Map
 
@@ -109,9 +109,11 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 - `vfs_file::knote_lock` protects file source lists; `vfs_inode::knote_lock` protects vnode source lists; proc and signal source lists have their own locks.
 - The intended file notification nesting is `file->knote_lock` to `kq->lock` inside `__knote_enqueue_core()`.
 - Code should not hold `kq->lock` while acquiring `file->knote_lock`; register and detach paths release `kq->lock` before source attach/detach.
-- `kqueue_rescan_registered_locked()` calls `kn->ops->event()` while holding `kq->lock`; this is a known risk boundary because poll callbacks must not block or try to acquire locks that invert with kqueue.
+- File/cdev `.poll` runs without `kq->lock`. Pin the knote and file, snapshot registration generation/identity, drop the lock, dispatch, then relock and reject stale results after MOD, disable, DEL, close, fd reuse or re-add. Do not restore the old callback-under-lock path.
+- Notifications during delivery use pending/coalescing state. Preserve it across unlocked callbacks and reject stale results without leaving `KN_DELIVERING` set forever.
 - `vfs_file_knote_notify()` takes file refs for outer propagation and releases them after recursive notification.
-- FD read/write filters hold `attached_file` references from attach to detach.
+- FD filters hold `attached_file` references, but those internal references must not keep a Linux epoll watch alive after the final visible fd closes. Preserve visible-fd checks, closed-file purging and nested-queue cycle/lifetime validation.
+- A detached knote with active `poll_refs` remains allocated until its last callback drops the reference.
 - Vnode filters hold the file so the inode remains valid while watched.
 - Timer knote freeing is deferred because timer callbacks can still hold the knote pointer after detach.
 
@@ -137,13 +139,11 @@ argument-hint: 'Describe the blocked wait or readiness issue'
    - `knote_enqueue()` should skip disabled, detached, or already queued knotes.
    - `kq->nready` must match the ready list; mismatches cause stuck or phantom readiness.
 6. Check timeout and signal interactions:
-   - Use `xv6-syscall wlcomp` to verify whether `epoll_pwait` received `timeout=0`, a positive timeout, or `-1`.
+   - Use `xv6-syscall <same-run-pid-or-name>` to verify whether `epoll_pwait` received `timeout=0`, a positive timeout, or `-1`.
    - If a positive timeout waiter remains asleep beyond its deadline, check whether `sched_timer_set()` failure is handled by immediate wake/self-timeout instead of entering an unarmed wait.
    - For `timeout_ms > 0`, pair with `xv6-kernel-timers` and inspect scheduler timer state.
    - For interrupted waits, inspect `signal_pending(current)` and signal delivery paths.
-7. Separate readiness bugs from user-space event-loop bugs:
-   - Confirm generated compositor reaches `epoll_wait(epfd, events, 8, 16)`.
-   - `wl_event_loop_dispatch(loop, 0)` should stay nonblocking before the compositor's own `epoll_wait`.
+7. Separate readiness bugs from user-space event-loop bugs using the actual compositor/browser process, syscall arguments and fd graph. The normal desktop policy is maintained in `docs/active-work-plan.md`; an old generated `wlcomp` loop is not the current desktop contract.
 8. If a freeze persists, route through `xv6-kernel-freeze-triage` and use this skill after the capture identifies kqueue/epoll/readiness.
 
 ## Relevant Files
@@ -163,14 +163,14 @@ argument-hint: 'Describe the blocked wait or readiness issue'
 - `kernel/kernel/lwip_port/sys_socket.c`
 - `kernel/kernel/dev/ps2mouse.c`
 - `kernel/kernel/dev/ps2kbd.c`
-- `ports/wayland/src/wlcomp.c`
+- `scripts/debug/xv6.gdb`
 
 ## Pitfalls
 
 - Do not treat `CHAN=0` as proof that a thread is not sleeping on a kernel mechanism; timed waits can hide the channel.
 - Do not add busy polling in user space until kqueue level-triggered readiness has been checked.
-- Do not broaden kqueue locking casually; event callbacks under `kq->lock` need deadlock review.
+- Do not broaden kqueue locking casually; file/cdev poll must retain its unlocked callback and validated snapshot boundary.
 - Do not call `vfs_file_knote_notify()` while holding locks that can invert with `file->knote_lock` or `kq->lock` unless the source path already documents that order.
 - Do not free detached timer knotes until the timer path becomes cancelable.
-- Do not assume epoll coalesces read/write events for the same fd; current bridge emits one epoll event per returned kevent.
-- Do not assume `poll(2)` and epoll have identical wake behavior: VFS poll adds a periodic rescan because some fd types have `.poll` but no explicit kqueue notification.
+- Test coalescing, one-shot rearm, edge transitions, duplicate fds and close/reuse explicitly; a successful basic wait is not full epoll conformance.
+- Do not assume `poll(2)` and epoll have identical wake behavior: inspect each consumer's rescan/deadline path as well as explicit producer notifications.

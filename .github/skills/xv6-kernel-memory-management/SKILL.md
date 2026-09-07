@@ -14,6 +14,8 @@ argument-hint: 'Describe the memory symptom or fault path'
 
 ## Source Map
 
+Unless qualified otherwise, implementation files below are under `kernel/kernel/mm/`.
+
 - Physical pages: `early_allocator.c`, `page.c`, `kalloc.c`.
 - Slab/folios: `slab.c`, `folio.c`.
 - VM and syscalls: `vm.c`, `sysmm.c`, `kernel/kernel/inc/mm/vm*.h`.
@@ -34,3 +36,7 @@ argument-hint: 'Describe the memory symptom or fault path'
 - Page cache pins can make reclaim look broken while ownership is correct.
 - Rmap/VMA lock ordering can deadlock with fault handling if changed casually.
 - Slab, RCU, and shrinker interactions can delay frees well after logical release.
+- User VM locks are writer-priority. A full-page file read fault pins its backing objects, drops the address-space lock for blocking I/O, then revalidates mapping identity and file offset before installing the PTE. Preserve EOF/partial-tail semantics; do not extend adjacent-page installation without an unaligned/tail reducer.
+- Fork/COW copying visits present page-table leaves rather than scanning every page in sparse VMA spans. Preserve parent write protection, page references, rmap ownership and TLB invalidation when changing it.
+- Anon-rmap AVC keys are stable object keys, not mutable `vma->start` values. Keep-right VMA splits must preserve exact-node unlink, cloned links and maple-update rollback.
+- Use the VM workstream in `docs/active-work-plan.md` for current reducers and acceptance evidence; historical Chromium symptoms do not authorize application-specific workarounds.

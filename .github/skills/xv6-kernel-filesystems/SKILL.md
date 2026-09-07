@@ -1,6 +1,6 @@
 ---
 name: xv6-kernel-filesystems
-description: 'Use when: debugging xv6-os tmpfs, xv6fs, devtmpfs, procfs, ext4 via lwext4, filesystem mount operations, inode/file ops, truncation, orphan cleanup, or filesystem-backed I/O.'
+description: 'Debug xv6-os filesystem backends: tmpfs, xv6fs, devtmpfs, procfs/sysfs and ext4 via lwext4, including mount operations, inode/file ops, truncation and orphan cleanup.'
 argument-hint: 'Describe the filesystem or mount symptom'
 ---
 
@@ -18,6 +18,7 @@ argument-hint: 'Describe the filesystem or mount symptom'
 - xv6fs: `kernel/kernel/vfs/xv6fs/`.
 - devtmpfs: `kernel/kernel/vfs/devtmpfs/`.
 - procfs: `kernel/kernel/vfs/procfs/`.
+- sysfs: `kernel/kernel/vfs/sysfs/`.
 - ext4: `kernel/kernel/lwext4/`, `kernel/kernel/lwext4_port/`.
 - Generic VFS: `kernel/kernel/vfs/`.
 
@@ -27,7 +28,8 @@ argument-hint: 'Describe the filesystem or mount symptom'
 2. Check backend-specific refcounts, dirty state, truncation behavior, and orphan cleanup.
 3. For disk filesystems, trace through page cache, buffer heads, and block I/O.
 4. For devtmpfs, confirm device registration and cdev/blkdev lifetime first.
-5. For procfs, verify generated data is stable while user reads and seeks.
+5. For procfs/sysfs, verify generated data and referenced process/device lifetimes remain valid while user reads and seeks; do not substitute a cached display value for live Linux discovery semantics.
+6. For regular-file transfer refactors, use [VFS data I/O](../xv6-kernel-vfs-data-io/SKILL.md). Its mapping/write-lifecycle interface is separate from backend-owned metadata and transaction operations; old unchecked migration steps need a current source audit.
 
 ## Pitfalls
 

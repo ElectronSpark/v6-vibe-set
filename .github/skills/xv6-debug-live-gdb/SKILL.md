@@ -1,64 +1,84 @@
 ---
 name: xv6-debug-live-gdb
-description: 'Use when: debugging a live xv6-os QEMU/GDB session, GDB attach state, QEMU_GDB, QEMU_GDB_WAIT, xv6-freeze, xv6-syscall, xv6-kqueue, HMP monitor captures, stale VM sessions, or post-patch runtime validation.'
+description: 'Use when: an authorized xv6-os live QEMU/GDB inspection needs matching kernel symbols, same-boot process/thread selection, saved syscall and wait state, or a bounded freeze capture.'
 argument-hint: 'Describe the live VM/GDB state or paste the capture'
 ---
-
 # xv6 Live GDB Debugging
 
-## Fluidity Notice
+Use `scripts/debug/attach-gdb.sh` and `scripts/debug/xv6.gdb`. Inspect their
+current behavior before attaching. A read-only review does not authorize a VM
+launch, debugger pause, kernel call, instrumentation patch, or rebuild.
 
-This skill captures current live-debugging practice. It is not ground truth and can become deprecated without notice when scripts, GDB helpers, QEMU flags, or kernel debug structures change. Prefer `scripts/xv6.gdb`, current source, and fresh captures over this text.
+## Establish ownership and symbols
 
-## When to Use
+1. Apply root `AGENTS.md`: guarded `/home/es/.local/bin/rg`, no banned recursive
+   options/generated-tree content searches, checked explicit artifact files via
+   `scripts/audit/safe-rg-artifact.sh`, and the global search lock. Synchronously
+   wait on exact process/tool handles before new searches or heavy commands.
+2. Identify the owned VM by exact executable, PID/start time, run token and
+   command line. Use `scripts/launch/qemu-exact-inventory.sh`; do not use `pgrep`
+   patterns that match the invoking shell. Discovering a VM does not authorize
+   pausing or terminating an unrelated process.
+3. For an authorized new VM, the conductor must verify no VM worker is active
+   and exact QEMU count is zero before dispatch. Keep one VM owner and all other
+   lanes NO-BOOT. Use `scripts/launch/launch-gui.sh` with `QEMU_GDB=1` and
+   `AUTO_BUILD=0` for the existing-image GUI route; `QEMU_GDB_WAIT=1` deliberately
+   starts stopped. Preserve the owned launcher handle through the entire session.
+4. Record the runtime's kernel image and symbol artifact hashes, receipt and
+   start time. An older VM remains evidence for its own code, not a rebuilt
+   kernel. Do not attach new symbols to an old image or relaunch outside scope.
+5. Point the debugger explicitly at the matching symbols and GDB port:
 
-- A VM is already running and you need to decide whether it is useful evidence.
-- You are attaching to QEMU with `scripts/attach-gdb.sh`.
-- You need to sample a running GUI or freeze without perturbing it more than necessary.
-- You are validating a patch with live GDB commands.
+   ```sh
+   KERNEL=/absolute/path/to/matching/kernel.elf GDB_PORT=1234 bash scripts/debug/attach-gdb.sh
+   ```
 
-## Workflow
+   `attach-gdb.sh` does not automatically select `launch-gui.sh`'s latest receipt.
+   Set `KERNEL` or `BUILD_DIR` explicitly when using a reproduction receipt. Its
+   comments may show retired top-level paths; use the `scripts/debug/` paths.
+   If the VM was deliberately started stopped, send `c` once and wait until the
+   intended workload is actually running before interpreting a later freeze.
 
-1. Identify the runtime before sampling:
-   - `pgrep -af 'qemu-system-x86_64|gdb .*kernel|scripts/attach-gdb.sh'`
-   - Confirm the QEMU command, `USE_KVM`, `QEMU_GDB`, `QEMU_GDB_WAIT`, kernel path, and image path.
-2. If QEMU was started before the last rebuild, stop and relaunch before using it for validation.
-3. Attach with `bash scripts/attach-gdb.sh`; if started with `QEMU_GDB_WAIT=1`, run `c` once to boot.
-4. For a freeze, press Ctrl-C in GDB and run `xv6-freeze` first.
-5. For targeted GUI/event bugs, run the narrow helpers after the first capture:
-   - `xv6-syscall wlcomp`
-   - `xv6-kqueue wlcomp`
-   - `xv6-input`
-   - `xv6-timers`
-6. After a healthy sample, continue the VM with `c` unless you need it paused for inspection.
+## Capture state without inventing the subject
 
-## Methodology
+1. Pause only the authorized VM. At a fresh GDB prompt, save diagnostics to the
+   current run's log. Issue one command per prompt and wait for completion; do
+   not paste concatenated helpers such as `xv6-freeze...` plus another command.
+2. Start with debugger memory inspection: `info threads`, `thread apply all bt`,
+   `xv6-cpus`, `xv6-threads`, `xv6-chan`, `xv6-input`, and `xv6-timers` as relevant.
+   QEMU's GDB thread list describes target vCPUs/harts; it is not the xv6 process
+   table. Saved xv6 thread/trapframe state identifies the application context.
+3. Select the exact same-boot thread/PID from `xv6-threads`, then call
+   `xv6-syscall <pid>` and `xv6-kqueue <pid>` for the relevant subject. The helper
+   accepts a numeric PID or exact thread name, and defaults to the historical
+   `wlcomp` name. KDE/browser processes need current role-specific selection;
+   do not reuse a PID from another run or assume a truncated name is unique.
+4. Inspect saved syscall/trapframe registers for user arguments rather than
+   registers from an arbitrary selected CPU. Tie fd state, pending readiness,
+   wait registration, wakeup and consumption to the same process/object lifetime.
+5. Be explicit about helpers that execute target code. `xv6-procs`,
+   `xv6-bt-blocked`, and `xv6-bt-pid` call kernel functions. `xv6-freeze` includes
+   two of those calls and hardcodes `wlcomp`; it is not a purely read-only
+   all-purpose KDE capture. Prefer the memory-reading sequence above. Use target
+   calls only as a deliberate part of the authorized diagnostic with understood
+   stop-state constraints; do not call arbitrary kernel functions in a suspect
+   lock/scheduler state.
+6. Resume with `c` when the capture is complete and continuation remains within
+   the owned run. A stopped kernel explains an unresponsive desktop; do not
+   report the pause itself as a GUI freeze. If a resumed sample is needed, bind
+   both samples to the same workload and time interval.
 
-- Start every live-debug session by proving which binary is running. A precise GDB capture from the wrong VM is worse than no capture.
-- Use broad captures once, then narrow helpers repeatedly. `xv6-freeze` gives the map; `xv6-syscall`, `xv6-kqueue`, `xv6-input`, and `xv6-timers` test specific theories.
-- Sample the same target more than once before calling it stuck. A rendering loop, timer path, or network path may be caught in a hot function by chance.
-- Prefer saved trapframe arguments over source assumptions when debugging syscalls.
-- Keep GDB interaction low-impact: interrupt, inspect, then continue unless the VM must remain paused.
-- Write down whether the sample is a freeze capture, a healthy control sample, or a post-patch validation sample.
+## Interpretation and completion
 
-## Common Problems
+Repeated but changing samples show sampled execution progress, not visible
+content, completed I/O or a healthy renderer. An event wait can be correct;
+`waiters=0` is not a general health verdict. Do not replace event waits with
+sleeps or change application flags to manufacture a pass. Route supported
+findings to [fluid triage](../xv6-debug-fluid-triage/SKILL.md) and the current
+owner without expanding an observation task into implementation.
 
-- **Paused-at-reset confusion**: `QEMU_GDB_WAIT=1` leaves the VM stopped until GDB runs `c`.
-- **Wrong thread interpretation**: GDB's selected thread is a QEMU host thread, not automatically the xv6 process of interest.
-- **Concatenated commands**: sending multiple GDB commands in one terminal input can turn `wlcomp` plus the next command into one invalid selector.
-- **False stuck samples**: one interrupt during framebuffer copy, timer tick, or idle loop is not enough to prove a freeze.
-- **Unpublished helper drift**: `scripts/xv6.gdb` and kernel structs can get out of sync; helper failures may be tooling bugs.
-- **Forgotten continue**: leaving GDB paused can look like a VM hang from the GUI side.
-
-## Interpretation Notes
-
-- `wlcomp` in framebuffer `ioctl` during repeated samples usually means the compositor is rendering, not stuck in internal event wait.
-- `epoll_pwait` trapframe arguments are more reliable than source-level assumptions about timeout values.
-- `waiters=0` on both internal and outer compositor kqueues is a useful healthy sample for the KVM GUI freeze class.
-- A stopped GDB thread is a host/QEMU CPU thread, not automatically the xv6 thread that owns the symptom.
-
-## Pitfalls
-
-- Sending multiple GDB commands in one terminal input can concatenate into one invalid helper argument.
-- A live VM that reached desktop before a rebuild cannot validate the rebuilt kernel.
-- Do not call arbitrary kernel functions from GDB when read-only helpers can answer the question.
+Keep serial commands short, use marker variables, handle the known first-character
+drop after bracketed paste, and wait for the actual command and fresh prompt;
+silence is not completion. End through the owned runner, synchronously reap the
+launcher, perform bounded token/PID-verified cleanup, and retain a final exact
+zero-QEMU result. Never leave the debug VM running or signal unrelated QEMU/GDB.

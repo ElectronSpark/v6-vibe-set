@@ -16,8 +16,8 @@ argument-hint: 'Describe the timer symptom or paste xv6-timers output'
 ## Key Findings
 
 - Hardware jiffies and scheduler milliseconds are separate values to inspect.
-- `sched_timer_tick()` advances static `__sched_timer_ms`; `__do_timer_tick()` processes `__sched_timer` against that value.
-- Scheduler timer callbacks wake sleeping threads by calling `wakeup(p)` when the target thread is still sleeping.
+- `sched_timer_refresh_ms()` advances `__sched_timer_ms` monotonically from `r_time()` and `__timebase_frequency`, on any CPU. `sched_timer_tick()`, `sched_timer_now_ms()`, arming and `__do_timer_tick()` refresh it; this is not a CPU-0 tick counter.
+- Scheduler timer callbacks resolve the stored PID under RCU and call `wakeup()` only for a still-live sleeping thread. Do not replace this with an unpinned thread pointer.
 - `timer_node_init()` must store the caller-provided `retry_limit`; otherwise one-shot timed waits can behave incorrectly.
 - Many scheduler timer users pass retry limit `1`, so retry-limit initialization is not optional.
 - Callers that sleep after `sched_timer_set()` must handle a nonzero return; short waits can expire before insertion and must not continue into an unarmed sleep.
@@ -26,21 +26,21 @@ argument-hint: 'Describe the timer symptom or paste xv6-timers output'
 ## Procedure
 
 1. Capture timer state with GDB:
-   - Run `xv6-timers` directly or through `xv6-freeze`.
+   - Run `xv6-timers` directly using the matching-symbol [live-GDB workflow](../xv6-debug-live-gdb/SKILL.md). The legacy `xv6-freeze` composite also executes target kernel functions; it is not needed for a timer snapshot.
    - Inspect `sched_ms`, `jiffies`, `current_tick`, `next_tick`, `next_delta_ms`, and pending timer nodes.
 2. Interpret the timer root:
    - `sched_ms` advancing and `current_tick` catching up: scheduler timer processing is likely active.
    - `sched_ms` advancing but `current_tick` stale or `next_tick` overdue: processing path may not be running.
    - Pending timers with negative deltas: expired timers are not being processed or callbacks are not waking targets.
 3. Inspect timer initialization:
-   - `kernel/kernel/timer/timer.c:timer_node_init()` should set `node->retry_limit = retry_limit > 0 ? retry_limit : TIMER_DEFAULT_RETRY_LIMIT`.
+   - In `kernel/kernel/timer/timer.c`, `timer_node_init()` should set `node->retry_limit = retry_limit > 0 ? retry_limit : TIMER_DEFAULT_RETRY_LIMIT`.
    - Confirm `timer_tick()` removes one-shot timers when `retry >= retry_limit`.
 4. Inspect scheduler timer callers:
    - `kernel/kernel/timer/sched_timer.c` should pass retry limit `1` for one-shot scheduler timers.
    - `__sched_timer_callback()` should wake the target only if it is still sleeping.
    - Timed wait callbacks such as kqueue should record `timer_armed = sched_timer_set(...) == 0` and immediately wake or avoid sleeping when the timer is already expired.
 5. If timed waits remain stuck:
-   - Check whether boot-hart timer interrupts still call `sched_timer_tick()`.
+   - On x86_64, check local timer delivery and `sched_timer_tick()` / `__do_timer_tick()` on each CPU. RISC-V has a different interrupt path; inspect its implementation when that architecture is the target.
    - Check whether `__do_timer_tick()` is reachable from idle/scheduler paths when all runnable work is gone.
    - Avoid moving arbitrary wakeups into hard IRQ context without lock and context-safety review.
 
@@ -49,7 +49,7 @@ argument-hint: 'Describe the timer symptom or paste xv6-timers output'
 - `kernel/kernel/timer/timer.c`
 - `kernel/kernel/timer/sched_timer.c`
 - `kernel/kernel/inc/timer/timer.h`
-- `scripts/xv6.gdb`
+- `scripts/debug/xv6.gdb`
 - `kernel/kernel/proc/`
 
 ## Pitfalls

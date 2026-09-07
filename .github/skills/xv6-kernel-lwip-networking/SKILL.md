@@ -14,11 +14,12 @@ argument-hint: 'Describe the lwIP/socket/protocol symptom'
 
 ## Source Map
 
-- Imported lwIP: `kernel/kernel/lwip/src/core`, `api`, `netif`.
-- xv6 port: `kernel/kernel/lwip_port/sys_arch.c`, `lwip_glue.c`, `sys_socket.c`, `lwipopts.h`, `arch/`.
+- Imported lwIP: `kernel/kernel/lwip/src/core/`, `kernel/kernel/lwip/src/api/`, `kernel/kernel/lwip/src/netif/`.
+- xv6 port: `kernel/kernel/lwip_port/` (`sys_arch.c`, `lwip_glue.c`, `sys_socket.c`, `lwipopts.h`, `arch/`).
 - Netdev bridge: `kernel/kernel/net.c`, `kernel/kernel/dev/netdev.c`.
 - Daemons: `kernel/kernel/daemons/`.
 - Device layer: `xv6-kernel-network-devices`.
+- Performance status: [active network plan](../../../docs/active-work-plan.md#network-performance); old targets and blank result rows are not measured improvements.
 
 ## Workflow
 
@@ -27,7 +28,13 @@ argument-hint: 'Describe the lwIP/socket/protocol symptom'
 3. For socket bugs, follow file/VFS socket integration and poll readiness as well as lwIP state.
 4. For DHCP/DNS, inspect timers and packet RX together.
 5. For daemon issues, verify service startup, socket creation, and kernel thread scheduling.
-6. For browser fetch failures, prove the user-space layer first: NetSurf should be built with curl/OpenSSL, `/etc/resolv.conf` should exist in the rootfs, and QEMU user networking normally exposes DNS at `10.0.2.3`.
+6. For browser fetch failures, separate name resolution, connect, TLS, body transfer and application/IPC progress. Check the active application's resolver/TLS configuration and actual DHCP/resolv.conf state; `10.0.2.3` is the default QEMU SLIRP DNS address, not a TAP or arbitrary-host invariant. A still-readable TCP socket whose consumer sleeps needs socket/epoll evidence, not a browser workaround.
+
+## Performance Changes
+
+- Record NIC model and SLIRP/TAP backend with P1/P4/P8 throughput, CPU use and failures. Do not attribute a host-network bottleneck to lwIP from one run.
+- For RX zero-copy, keep the mbuf alive until lwIP drops the final custom-pbuf reference, including receive queues; free it exactly once. Audit the current `net_rx` path and options before implementing an archived proposal.
+- Change one measured lever at a time and retain DHCP/ping and concurrent TCP behavior. The earlier core-locking experiment did not improve the serial core ceiling; more vCPUs alone are not proof of stack scaling.
 
 ## Pitfalls
 

@@ -14,9 +14,9 @@ argument-hint: 'Describe the block/storage symptom'
 
 ## Source Map
 
-- Block core: `kernel/kernel/dev/blkdev.c`, `bio.c`, `iosched.c`.
-- Disk topology: `gendisk.c`, `mbr.c`, `gpt.c`.
-- Drivers: `kernel/kernel/virtio_disk.c`, `ramdisk.c`, `kernel/kernel/dev/loop.c`, `x1_sdhci.c`.
+- Block core: `kernel/kernel/dev/blkdev.c`, `kernel/kernel/dev/bio.c`, `kernel/kernel/dev/iosched.c`.
+- Disk topology: `kernel/kernel/dev/gendisk.c`, `kernel/kernel/dev/mbr.c`, `kernel/kernel/dev/gpt.c`.
+- Drivers: `kernel/kernel/virtio_disk.c`, `kernel/kernel/ramdisk.c`, `kernel/kernel/dev/loop.c`, `kernel/kernel/dev/x1_sdhci.c`.
 - Legacy/shared bio: `kernel/kernel/bio.c`.
 - Filesystem consumers: VFS, xv6fs, lwext4 port, page cache, buffer heads.
 
@@ -24,7 +24,7 @@ argument-hint: 'Describe the block/storage symptom'
 
 1. Separate request submission, scheduling, driver dispatch, completion, and filesystem consumption.
 2. Verify block size, sector number, partition offset, and bio lifetime before suspecting the filesystem.
-3. For cache incoherence, inspect `mm/pcache.c` and `mm/buffer.c` as well as the driver.
+3. For cache incoherence, inspect `kernel/kernel/mm/pcache.c` and `kernel/kernel/mm/buffer.c` as well as the driver. Filesystems supply block mappings; generic data I/O constructs BIOs; block drivers execute them. Use [VFS data I/O](../xv6-kernel-vfs-data-io/SKILL.md) when the fault crosses those boundaries.
 4. For virtio/QEMU, prefer current x86_64/QEMU driver behavior over xv6-tmp hardware notes.
 5. Confirm completions wake every waiter and release all references.
 

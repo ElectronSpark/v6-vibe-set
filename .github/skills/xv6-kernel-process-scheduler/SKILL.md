@@ -16,7 +16,7 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 
 - Scheduler: `kernel/kernel/proc/sched.c`, `rq.c`, `sched_idle.c`, `sched_fifo.c`, `sched_eevdf.c`.
 - Design docs: `kernel/kernel/proc/SCHEDULER_DESIGN.md`, `THREAD_QUEUE_DESIGN.md`.
-- Lifecycle: `thread.c`, `clone.c`, `exit.c`, `thread_group.c`, `pid.c`, `pgroup.c`.
+- Lifecycle under `kernel/kernel/proc/`: `thread.c`, `clone.c`, `exit.c`, `thread_group.c`, `pid.c`, `pidfd.c`, `pgroup.c`.
 - Async work: `workqueue.c`, `kernel/kernel/inc/proc/workqueue*.h`.
 - Signals and futexes: `signal.c`, `sys_signal.c`, `futex.c`.
 
@@ -24,9 +24,9 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 
 - When a GUI app freezes after its main thread exits, check whether the thread-group leader is `ZOMBIE` while other threads with the same `TGID` remain `INTERRUPTIBLE`, `WAKENING`, or `RUNNING`.
 - This can leave parent `waitpid(pid, WNOHANG)` unable to reap the process yet, while user-visible state such as Wayland surfaces and helper processes still exists.
-- For WebKit, expect helper processes such as `WebKitNetworkPr` and `WebKitWebProces` to survive separately from the MiniBrowser UI thread group unless the launcher/compositor kills the process group.
+- WebKit helpers can be separate thread groups. Identify them from same-run argv/exe/TGID and IPC/lifecycle evidence; their existence alone does not authorize killing them or changing launcher policy.
 - Fatal signal handling and killed-on-trap-return paths should terminate the whole thread group with `thread_group_exit()`, not plain `exit()`. Plain per-thread exit can strand a multi-threaded GUI process with a zombie leader and live sibling threads.
-- Treat `exit()` itself as a lifecycle backstop: if a user thread-group leader reaches plain per-thread exit while `live_threads > 1`, promote it to `thread_group_exit()` so obscure fatal callers cannot strand the process.
+- Current `sys_exit()` / `exit()` contain a leader-to-group-exit compatibility backstop when `live_threads > 1`. Treat that as an existing implementation policy, not proof of Linux raw `exit(60)` semantics; preserve the distinction between intentional per-thread exit and fatal/`exit_group` teardown when auditing it.
 - The wait/reap path must honor delayed thread-group leaders: a zombie group leader is not reapable until its `thread_group->live_threads` count reaches zero. Otherwise the parent can destroy the leader while same-TGID workers continue running.
 - Audit unusual fatal paths, not just syscall `exit_group`: failed `sys_sigreturn()` / signal-frame restore, killed-at-usertrap-return, and signal default termination should all route through `thread_group_exit()` for user thread groups.
 
@@ -43,3 +43,4 @@ argument-hint: 'Describe the process/scheduler symptom or paste xv6-threads outp
 - The scheduler is a direct context-switch model, not a separate scheduler thread.
 - `CHAN=0` can be a timed sleep; inspect timer state before assuming a lost wait channel.
 - Do not solve run queue corruption by adding broad locks without checking lock order and IRQ context.
+- A wait-family queue wake reported internally as `-EINTR` is not by itself a userspace signal interruption. `wait`/`waitpid`/`waitid` rescan under the PID lock when no deliverable signal is pending. Publish final child/leader state before the child-event notification.

@@ -1,58 +1,75 @@
 ---
 name: xv6-debug-fluid-triage
-description: 'Use when: debugging xv6-os with incomplete evidence, evolving hypotheses, uncertain freeze causes, provisional diagnostics, contradictory captures, or fast-changing runtime symptoms that are not ready to become source-derived ground truth.'
+description: 'Use when: debugging xv6-os freezes, regressions, or evolving failures where runtime identity, partial observations, older workarounds and competing hypotheses must be separated before choosing a bounded next step.'
 argument-hint: 'Describe the symptom, latest capture, and current uncertainty'
 ---
+# xv6 Fluid Triage
 
-# xv6 Fluid Debug Triage
-
-## Fluidity Notice
-
-This skill is intentionally provisional. It is not ground truth, may be incomplete, and can become outdated or deprecated without notice as new captures, source changes, or better subsystem skills replace it. Prefer current source code and validated subsystem skills whenever they conflict with this document.
-
-## When to Use
-
-- The symptom is real but the root cause is still moving.
-- Captures disagree, are stale, or were taken from different kernels/images.
-- You need a safe place to track hypotheses before promoting a finding into a module skill.
-- A freeze, crash, or regression crosses several subsystems and no single skill owns it yet.
+Keep observations durable and hypotheses revisable. The current source and
+[active plan](../../../docs/active-work-plan.md) supersede historical working
+theories; neither proves what ran in a particular VM.
 
 ## Workflow
 
-1. State what is known, what is suspected, and what is merely a working theory.
-2. Record the exact runtime being observed: branch, commit, submodule SHAs, kernel timestamp, image timestamp, QEMU command, KVM setting, and whether GDB is attached.
-3. Capture evidence before editing code. For freezes, prefer `xv6-freeze`, `xv6-syscall <name>`, `xv6-kqueue <name>`, and targeted subsystem dumps.
-4. Separate stale evidence from fresh evidence. If QEMU was started before a rebuild, discard that capture for validating the new kernel.
-5. Convert one hypothesis into one small test or patch, then retest with a fresh VM when the kernel or image changed.
-6. Promote stable conclusions into the relevant source-derived skill only after the behavior is reproduced or explained by current source.
+1. Write the requested outcome and scope: observation/audit, diagnosis, or an
+   authorized implementation. A new failure during GUI exploration is a finding,
+   not automatic authorization for fixes, rebuilds, reducers or altered launch
+   policy. Continue independent work already within scope.
+2. Bind evidence to UTC interval, source/submodule identity and dirty state,
+   kernel/symbol/image hashes or receipt, actual QEMU arguments, application
+   roles, and capture route. An existing image is not a clean-build receipt.
+   Older evidence remains useful context but cannot validate later code.
+3. Capture the failure before modifying its conditions. Preserve the ordinary
+   launch path and the semantic action before/after, including unexpected UI
+   outcomes. Reacquire coordinates after layout changes. Keep single-click,
+   double-click and hover outcomes specific to each view/toolkit.
+4. Label each claim:
+   - **Observed:** directly supported by a retained capture, same-run log segment,
+     process state or matched-source diagnostic.
+   - **Inferred:** follows from identified evidence, with its assumptions stated.
+   - **Hypothesis:** a proposed mechanism with a discriminating next observation.
+   - **Deprecated:** an earlier theory contradicted or superseded by evidence.
+5. Use a small hypothesis ledger: symptom, evidence for, evidence against, missing
+   evidence and the smallest distinguishing check. Separate producer, waiter,
+   consumer and visible output. For example, a mapped terminal does not prove its
+   shell is ready; working editor input narrows but does not explain that failure.
+6. Choose one next check within scope. An authorized live freeze capture follows
+   [live GDB](../xv6-debug-live-gdb/SKILL.md), with the current process roles/PIDs.
+   Do not assume the historical `wlcomp` selector exists. Source inspection can
+   identify an owner without changing that owner or declaring a kernel cause.
+7. If implementation is authorized, turn the supported hypothesis into a bounded
+   fix and meaningful validation; bind the result to the new artifacts. Retest
+   only what the change or remaining uncertainty requires. Otherwise record the
+   follow-up in the active plan and finish the requested audit.
 
-## Methodology
+## Evidence boundaries
 
-- Keep a hypothesis ledger: one line for evidence, one line for interpretation, one line for the next test.
-- Prefer falsifiable questions over broad explanations. Example: ask whether `wlcomp` is blocked in a syscall before deciding the compositor is frozen.
-- Change only one layer per experiment when possible: kernel wait path, generated compositor, QEMU launch flags, image/rootfs, or toolchain/build graph.
-- Treat a successful workaround as a diagnostic result first. Only promote it to a fix after explaining why it works.
-- Re-run the smallest capture that can disprove the current theory before widening the search.
-- When a theory crosses subsystems, name the handoff explicitly: producer, readiness notification, waiter, timeout, scheduler, or user-space consumer.
+- Repeated execution samples establish sampled code progress, not completion,
+  readiness, input delivery, or visible rendering. A framebuffer ioctl stack
+  alone is not proof of acceleration or a healthy event loop. Idle waits can be
+  correct; require a pending event and broken wake/consume transition to call a
+  wait a deadlock.
+- Inspect append/truncate behavior. A whole-file match in a guest log inherited
+  from the base image is not fresh boot evidence. Keep a verified same-run byte
+  boundary, producer identity or unambiguous start marker and the new segment.
+- Window disappearance is not independently proven process exit. Match PID/TGID,
+  process role, time and exit/assertion evidence before attribution. Duplicate
+  event lines in two logs are one event. A nearby helper-thread kill or a
+  software-rendering flag is not a proven cause of a browser disappearance.
+- Successful input-helper return values, screenshot filenames, and one working
+  hover path do not certify their intended semantic action. Preserve mixed hover
+  evidence and failed guest-capture attempts instead of flattening them into a
+  global pass/fail. Host-visible PNGs cannot replace a required independent
+  guest/host pair or measured performance/audio evidence.
+- Absence of matching fatal/stall markers is limited to inspected files and time.
+  Simple UI success does not close long-stress, FPS, audio or media gates. Link
+  one-off observations to audit documents rather than turning them into rules.
 
-## Common Problems
-
-- **Stale runtime**: QEMU is still running an older kernel or rootfs after a rebuild.
-- **Mixed captures**: evidence from KVM and non-KVM runs, or from different submodule commits, is combined as if it came from one run.
-- **Symptom tunneling**: the first visible symptom, such as cursor freeze, is mistaken for the failing subsystem without checking the event path.
-- **Overfitting to one stack**: a backtrace from one CPU is treated as the whole system state.
-- **Hidden timeout behavior**: timed waits show unclear channels and can masquerade as ordinary sleeps.
-- **Patch pile-up**: several plausible fixes are applied together, making validation impossible.
-
-## Evidence Labels
-
-- **Observed**: directly captured from current source/runtime.
-- **Inferred**: strongly implied by source and captures, but not directly observed.
-- **Hypothesis**: plausible explanation waiting for validation.
-- **Deprecated**: a previous explanation contradicted by newer source or captures.
-
-## Pitfalls
-
-- Do not let a plausible theory harden into documentation without a matching capture or source path.
-- Do not mix captures from old and new QEMU sessions after rebuilding.
-- Do not patch multiple unrelated theories at once unless the user explicitly asks for a broad experiment.
+Apply root `AGENTS.md` throughout: guarded `/home/es/.local/bin/rg`, no banned
+recursive options/generated-tree searches, explicit checked artifact files via
+`scripts/audit/safe-rg-artifact.sh`, and the global search lock. Synchronously
+wait on exact process/tool handles before new searches or heavy work. Keep serial
+commands short with markers, handle first-character drop, and wait on the real
+command plus a fresh prompt. Avoid `pgrep` self-matches. A VM lane requires a
+single designated owner, exact zero-QEMU preflight, token/PID ownership, bounded
+cleanup, synchronous reap and final exact zero; all other lanes are NO-BOOT.

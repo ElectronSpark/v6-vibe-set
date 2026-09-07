@@ -45,7 +45,7 @@ Record this before stopping a long GPU session:
 ### Integrator
 
 - Owns the current blocker, applies patches, runs builds, deploys images, and
-  updates `GPU_REMAINING_GAPS.md`.
+  updates `docs/active-work-plan.md`.
 - Keeps the critical path moving. If a long serial probe is running, use local
   inspection for non-overlapping prep work.
 - Ensures final claims match the newest user request and the latest evidence.
@@ -91,7 +91,7 @@ Record this before stopping a long GPU session:
 
 ### Documentation Reviewer
 
-- Keeps `.github/skills`, `GPU_REMAINING_GAPS.md`, and validation scripts in
+- Keeps `.github/skills`, `docs/active-work-plan.md`, and validation scripts in
   sync with real evidence.
 - Converts repeated mistakes into durable skill guidance.
 - Removes stale or misleading claims, especially anything implying Hyper-V

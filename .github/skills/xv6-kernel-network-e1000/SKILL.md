@@ -1,17 +1,17 @@
 ---
 name: xv6-kernel-network-e1000
-description: 'Use when: debugging xv6-os e1000 NIC, lwIP, DHCP, timer interrupt hotspots, RX path freezes, network app display, /dev/netconf, or CPU0 stuck in e1000_poll_rx/e1000_recv.'
+description: 'Debug xv6-os e1000 RX/TX, interrupt or timer hotspots and RX workqueue races when the active NIC or captured stack is e1000. Use the broader networking skills for virtio-net or protocol failures.'
 argument-hint: 'Describe the NIC/network symptom or CPU stack'
 ---
 
-# xv6 Kernel Network And e1000
+# xv6 Kernel e1000
 
 ## When to Use
 
 - CPU0 appears stuck in e1000 RX from timer or IRQ context.
-- DHCP, lwIP, host forwarding, or the desktop Network app behaves oddly.
+- The active e1000 device drops traffic or its descriptor/completion path stalls.
 - A freeze capture shows network RX work on the timer path.
-- You need to distinguish NIC/kernel issues from GUI display issues.
+- Check the actual NIC first; a DHCP or browser symptom alone does not select this driver.
 
 ## Key Findings
 
@@ -19,18 +19,18 @@ argument-hint: 'Describe the NIC/network symptom or CPU stack'
 - The safer path is to schedule RX onto a kernel workqueue and keep timer/interrupt handlers short.
 - `e1000_poll_rx()` may still be called from CPU0 timer tick, but it should only schedule work when RX is pending.
 - A pending flag is needed so repeated interrupts/timer polls do not enqueue unbounded duplicate RX work.
-- The desktop Network app should read xv6-specific `/dev/netconf`, not Linux `/proc/net/dev` or `/etc/resolv.conf` assumptions.
+- `/dev/netconf` is a useful xv6 driver diagnostic. Upstream applications may use Linux discovery and resolver interfaces; do not replace their contracts with the old custom desktop application's policy.
 
 ## Procedure
 
-1. From `xv6-freeze`, inspect CPU stacks:
+1. With matching kernel symbols and the [freeze workflow](../xv6-kernel-freeze-triage/SKILL.md), inspect CPU stacks:
    - If CPU0 is in `e1000_recv()` from timer/IRQ, inspect the RX deferral path.
-   - If all CPUs are idle, network is probably not the active freeze root.
+   - Idle CPUs do not exclude a missed RX wakeup; correlate pending descriptors, worker state and waiting consumers.
 2. Check the e1000 RX structure:
    - `e1000_init()` initializes the RX workqueue and work item.
    - `e1000_rx_pending()` cheaply checks hardware state.
    - `e1000_schedule_rx()` uses an atomic pending flag before queueing work.
-   - `e1000_rx_work_func()` clears the pending flag and drains RX with `e1000_recv()`.
+   - `e1000_rx_work_func()` drains RX with `e1000_recv()`, then clears the pending flag and rechecks for arrivals. Preserve the recheck/requeue and failed-queue reset paths so a packet arriving at the handoff cannot strand work.
 3. Keep interrupt/timer handlers short:
    - `e1000_intr()` should schedule work, acknowledge interrupt state, and return.
    - `e1000_poll_rx()` should schedule work rather than drain packets directly.
@@ -42,11 +42,11 @@ argument-hint: 'Describe the NIC/network symptom or CPU stack'
 
 - `kernel/kernel/e1000.c`
 - `kernel/kernel/lwip_port/`
-- `ports/wayland/src/wlcomp.c`
-- `scripts/run-qemu.sh`
+- `kernel/kernel/dev/netdev.c`
+- `scripts/launch/run-qemu.sh`
 
 ## Pitfalls
 
 - Do not do heavy RX draining from timer interrupt context.
 - Do not enqueue repeated RX work without an atomic pending guard.
-- Do not use Linux `/proc/net/dev` expectations for xv6 desktop network display.
+- Once driver handoff is proven, route socket/readiness failures to [lwIP networking](../xv6-kernel-lwip-networking/SKILL.md).

@@ -14,11 +14,16 @@ poll, futex, clone, pidfd, and process lifecycle all belong here when the
 symptom is a GUI program failing, hanging, not mapping, not rendering, or not
 tearing down cleanly.
 
-Do not use this skill as an app-porting playbook. Host GUI apps are probes.
-The deliverable is Linux ABI compatibility or a reduced mismatch, not a custom
-launcher, patched app, or one-off packaging workaround.
+Host GUI apps are probes of Linux compatibility. For an audit, operate the
+requested views and report observed behavior and limits; route the interaction
+and capture workflow to `xv6-debug-gui-runtime`. For an implementation request,
+localize the ABI mismatch before changing the kernel or app packaging. A GUI
+failure alone does not establish which layer is wrong.
 
 ## Reducer-First Debugging
+
+Apply this section when investigating or fixing an ABI mismatch. It does not
+require an audit-only task to grow into reducer development or a rebuild.
 
 - Default to localizing mismatches with the smallest program that reproduces the
   suspected Linux ABI behavior.
@@ -56,7 +61,7 @@ launcher, patched app, or one-off packaging workaround.
 
 ## Build Discipline
 
-- Default to kernel-only iteration for kernel-facing GUI ABI issues:
+- For kernel implementation changes, default to kernel-only iteration:
   `cmake --build build-x86_64 --target kernel -j2`.
 - Do not rebuild user programs, ports, imported host payloads, rootfs overlays,
   or the toolchain unless a changed file or trace proves that layer is involved.
@@ -65,9 +70,10 @@ launcher, patched app, or one-off packaging workaround.
   that the current image is stale.
 - If rootfs/sysroot/user/ports contents changed, refresh the image before
   booting and record the refresh method.
-- Run the project’s mandatory GPU/video gate after GPU/DRM/desktop-visible
-  changes. A local video gate passing is a regression guard, not proof that
-  every external video workload is solved.
+- For GPU/DRM/desktop-visible implementation changes, use the applicable
+  GPU/video regression gate described in `xv6-debug-gui-runtime` and the active
+  plan. A passing local gate does not prove every external video workload is
+  solved. Documentation edits and observational audits do not require a build.
 
 ## Evidence Discipline
 
@@ -79,9 +85,14 @@ launcher, patched app, or one-off packaging workaround.
 - Treat "desktop only", "icon exists", or "process is alive" as incomplete
   evidence for GUI support. A mapped window, input response, render/content
   change, and clean teardown prove different layers.
-- When a large app fails, name the smallest ABI surface it implicates and either
-  write a reducer for that surface or explicitly record why the full process is
-  the simpler reproducer for this step.
+- Distinguish a disappeared window from a confirmed process exit. Derive the
+  role and lifecycle in the same run before attributing a signal or fault.
+- Capture append-only log baselines or session boundaries; an inherited
+  renderer line does not prove the current process used that renderer.
+- When a large app fails, record the observed phase and evidence. For a requested
+  investigation, identify the smallest implicated ABI surface and reduce it,
+  or explain why full-process timing is necessary. An audit may leave the
+  cause unresolved while completing the requested interaction coverage.
 
 ## Dynamic Role Discovery
 
@@ -100,8 +111,9 @@ launcher, patched app, or one-off packaging workaround.
 - Treat Chromium/WebKit and other large host apps as stress probes.
 - Separate failures into launch, process supervision, IPC, socket connection,
   request/response, render, input, and teardown phases.
-- After identifying a failing phase, stop and build a focused reproducer unless
-  the phase depends on the full app's process graph or timing.
+- In an ABI investigation, use the failing phase to select a focused reproducer
+  unless it depends on the full process graph or timing. In a graphical audit,
+  preserve the failure and continue independent requested views where possible.
 - For host HTTP or local fixture tests, prove each phase separately:
   - fixture reachable from the host;
   - app argv or navigation carries the requested URL;

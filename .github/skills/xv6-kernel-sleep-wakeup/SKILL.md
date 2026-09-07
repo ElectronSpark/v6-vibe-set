@@ -33,3 +33,5 @@ argument-hint: 'Describe the blocked wait or paste thread/timer state'
 - Wait-channel output alone is insufficient for timer-backed waits.
 - Waking before enqueue or after state transition can lose the event even when the wake function is called.
 - Avoid wakeups from contexts that cannot safely acquire the required locks.
+- Thread-queue return codes are not automatically syscall verdicts: an asynchronous wake can report `-EINTR` internally. Consumers such as wait-family syscalls must recheck their condition under its lock and report interruption only when a deliverable signal is pending.
+- A failed `sched_timer_set()` must not be followed by an unarmed sleep. Cancel caller-owned timer nodes before stack or object storage can expire.

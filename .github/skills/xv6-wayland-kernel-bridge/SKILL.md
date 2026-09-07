@@ -1,196 +1,111 @@
 ---
 name: xv6-wayland-kernel-bridge
-description: 'Use when: debugging xv6-os Wayland compositor interactions with kernel input, epoll, kqueue, generated wlcomp.c, desktop GUI freeze, NetSurf launch, file manager, or compositor event-loop regressions.'
+description: 'Use when: tracing xv6-os compositor/kernel boundaries: KWin or legacy wlcomp input, evdev/readiness, Wayland fd passing and buffers, DRM/KMS presentation, or GUI event-loop freezes.'
 argument-hint: 'Describe the GUI/compositor symptom'
 ---
 
 # xv6 Wayland Kernel Bridge
 
-## When to Use
+## Select the running compositor
 
-- Kernel input is queued but the GUI cursor or desktop does not respond.
-- Generated `wlcomp.c` differs from `ports/wayland/src/wlcomp.c` or the working reference tree.
-- NetSurf, desktop, or file manager behavior looks like a kernel freeze but may be user-space event-loop blocking.
-- You need to validate compositor CMake source rewrites.
-- Wayland clients map a surface but do not draw, receive input, or get frame callbacks.
-- Built-in desktop apps touch kernel devices, procfs, PTYs, filesystems, networking, or framebuffer ioctls.
+Start with the actual image, startup configuration, executable, and same-run
+process roles. Current `rootfs-overlay/etc/startup` launches D-Bus, login1, and
+`xv6-desktop-session`; `scripts/image/xv6-desktop-session.c` selects KDE, and
+`scripts/image/kde-session.c` starts KWin with Xwayland and a Plasma child.
+KWin uses the DRM device and Linux input stack. A historical `wlcomp` window,
+log, or generated file is not evidence about this session.
 
-## Overall Design
+For mouse exploration or visual progress audits, use
+[GUI runtime](../xv6-debug-gui-runtime/SKILL.md). Investigate an ABI mismatch via
+[Linux GUI ABI](../xv6-linux-gui-abi/SKILL.md). Use this skill to locate the
+boundary that stalled; it does not require an audit to become an implementation
+project. Root `AGENTS.md` and [repo workflow](../xv6-os-debugging/SKILL.md)
+govern searches, waits, serial access, VM ownership, and cleanup.
 
-- `/etc/startup` starts `/bin/desktop`; `desktop` forks `/bin/wlcomp`, waits for `/tmp/wayland-0.lock`, checks `/proc/cmdline` for `netsurf=0`, and optionally forks `/bin/netsurf` with `WAYLAND_DISPLAY=wayland-0`, `GDK_BACKEND=wayland`, and `XDG_RUNTIME_DIR=/tmp`.
-- GUI-session terminal shells are launched by `wlcomp` as `sh --gui-session`. The shell seeds Wayland/GTK/XDG/NetSurf certificate environment variables into its own env table so GUI apps launched from the desktop terminal inherit the active session without extra parameters.
-- Native shell sessions that do not have `XV6_GUI_SESSION=wayland`, `XDG_RUNTIME_DIR`, and `WAYLAND_DISPLAY` refuse known GUI-only commands such as `netsurf`, `MiniBrowser`, `wlcomp`, and `desktop`; serial, ssh, and telnet shells should not start GUI-only programs.
-- `wlcomp` is both a Wayland compositor and a small desktop shell. It owns `/dev/fb0`, `/dev/mouse`, `/dev/kbd`, the Wayland socket, internal desktop windows, client surface state, app launchers, and the final render loop.
-- The compositor implements `wl_compositor`, `wl_shm`, `wl_seat`, `wl_output`, `xdg_wm_base`, minimal `xdg_popup`, and a stub `wl_data_device_manager` for GTK compatibility.
-- Rendering is direct software composition into `g_fb_buf`, then one `FB_GPU_BLIT` ioctl to `/dev/fb0` per frame.
-- Input comes from nonblocking `/dev/mouse` and `/dev/kbd`, is drained in batches each frame, and is routed either to built-in internal windows or to focused Wayland clients.
+## Current session and launch
 
-## Build And Generation
+- `scripts/launch/launch-gui.sh` uses the owned launcher and defaults to
+  SDL/virgl. Read its resolved frontend, input device, and guest geometry;
+  neither GTK nor VMware mouse is universal. Capture host input through the
+  visible window when auditing real mouse behavior.
+- `scripts/image/kde-session.c` sets the KDE environment, DRM card selection,
+  XDG paths, KWin arguments, and optional diagnostic probes. Check actual
+  environment and launch logs if a shell-launched app differs from its desktop
+  launcher. Source defaults may differ from an older staged image.
+- KDE's runtime directory is seeded under `/dev/shm/xdg-runtime-root`; derive
+  `WAYLAND_DISPLAY` and the effective process environment in the current
+  session. Do not substitute the legacy `/tmp/wayland-0.lock` readiness test.
+- KWin and Plasma child logs are opened with `O_APPEND`. Capture baseline
+  length/session boundaries before assigning a renderer line or failure to
+  this boot. A socket, process, or `GL_RENDERER` line alone does not establish
+  a visible, responsive desktop.
 
-- The source compositor is `ports/wayland/src/wlcomp.c`; the built compositor source is generated at `build-x86_64/ports/wayland/wlcomp-build/wlcomp.c` by `ports/wayland/CMakeLists.txt`.
-- Always inspect the generated file before booting GUI changes. Source files alone are misleading because the CMake port layer applies behavioral sed/perl rewrites.
-- Current generated rewrites:
-  - Cast absolute mouse `ev.dx` and `ev.dy` through `uint16_t` before widening to `uint32_t`.
-- Desktop and menu launchers are data-driven from `/root/Desktop`; do not expect fixed Browser `case` numbers in generated code.
-- The source file still contains `wl_buffer_send_release` both on buffer replacement and at the end of the composite pass. The generated file keeps replacement release but suppresses per-frame release of the current committed buffer.
-- `wlcomp` is compiled static with Wayland server, XDG shell generated by `wayland-scanner`, libffi, pthread, rt, and math. `desktop` is also compiled static.
+## Trace input across layers
 
-## Runtime Launch
+1. Observe the target and pointer in a fresh screenshot. Account for host
+   window decorations, viewport scaling, focus, and occlusion. Recompute
+   coordinates after a window move, resize, menu, or view change.
+2. Verify the selected host/QEMU device and kernel producer. Use the
+   [input skill](../xv6-kernel-input/SKILL.md) for PS/2, VMware absolute input,
+   virtio input, and evdev; do not read only legacy `/dev/mouse` counters when
+   the compositor consumes `/dev/input/event*`.
+3. Follow queued events, per-open reads/readiness, and compositor consumption.
+   Queued input with no reads points toward registration or wakeup/dispatch;
+   advancing reads with no semantic response points toward decoding, focus,
+   hit testing, or client dispatch. These are hypotheses to distinguish.
+4. Verify the specific effect: hover highlight, submenu opening, selection,
+   navigation, drag, scroll, or activation. Single/double-click behavior may
+   differ between desktop icons, file views, and dialogs. Pointer movement
+   alone does not prove the intended button received the event.
+5. For a frozen reader, route poll/epoll/kqueue and timed waits to
+   [event wait](../xv6-kernel-event-wait/SKILL.md) and
+   [timers](../xv6-kernel-timers/SKILL.md). Preserve producer/waiter/consumer
+   identity and fd lifetime across the sample; do not replace readiness with
+   an unconditional sleep as a final fix.
 
-- `scripts/launch-gui.sh` is the x86_64 GUI wrapper. It locates `build-x86_64/fs.img`, finds the kernel from `KERNEL` or known build paths, forces `DISPLAY_MODE=gtk`, and delegates to `scripts/run-qemu.sh`.
-- `scripts/run-qemu.sh` supplies the VM defaults: 6 CPUs, 4G RAM, `qemu64`, GTK display, vmport enabled, optional KVM, optional QEMU GDB stub, and optional `netsurf=0` kernel cmdline.
-- With `QEMU_NETSURF=auto`, NetSurf is disabled under KVM by appending `netsurf=0`. This keeps browser startup out of kernel freeze triage unless explicitly requested.
-- For freeze triage, launch with `QEMU_GDB=1` and attach with `scripts/attach-gdb.sh`; use the GDB helper commands from `scripts/xv6.gdb`.
+## Wayland and display boundaries
 
-## Compositor State
+- Separate protocol connection and fd transfer, surface mapping/configure,
+  buffer attach/commit, rendering, fence completion, KMS/page flip, and visible
+  host presentation. A successful earlier phase does not prove a later one.
+- For `wl_shm`, verify fd size, mapping bounds, stride/format, sharing, and
+  buffer lifetime. For dma-buf, additionally verify format/modifier support,
+  import/export ownership, synchronization, and render versus display device.
+- Buffer release and frame callbacks have different meanings. Do not release
+  a buffer still in use, or treat a callback as independent scanout proof.
+- For AF_UNIX ancillary data, distinguish stream reads from `recvmsg` and
+  preserve rights/control-message semantics; use the Linux GUI ABI skill.
+- For DRM/KMS, inspect the relevant fragments under
+  `kernel/kernel/dev/fb/` through `module.c`, plus
+  `kernel/kernel/dev/drm_core.c`. Check commit acceptance, event/fence
+  provenance, and teardown separately from actual visual progress.
+- Capture both host/QEMU errors and guest evidence for graphics teardown.
+  A disappearing client window is not sufficient evidence of process exit,
+  a kernel fault, or a host renderer failure.
 
-- `struct wlcomp_surface` tracks one Wayland surface: `resource`, `xdg_surface`, `xdg_toplevel`, pending/committed buffers, frame callback, mapping/minimize/maximize state, cursor-surface flag, position, saved geometry, title, and list link.
-- `g_surfaces` stores all compositor surfaces; list order is used for stacking and hit testing. New surfaces are inserted at the head and hit testing walks in reverse/top-first order.
-- `g_focused` is pointer focus. `g_kbd_focused` is click-to-focus keyboard focus. `g_kbd_enter_pending` defers initial keyboard enter until keyboard resources are available.
-- `g_cursor_surface` and hotspot fields hold a client-provided cursor surface; otherwise the compositor draws a built-in arrow.
-- `g_grab_surface`, `g_grab_mode`, and grab geometry track client-requested Wayland move/resize operations.
+## Conditional legacy workflow
 
-## Wayland Protocol Details
+Read [legacy compositor notes](references/legacy-wlcomp.md) only for an
+explicitly identified old `wlcomp` image or a task restoring that compositor.
+The current `ports/wayland/CMakeLists.txt` removes staged `wlcomp`/`desktop`
+executables; its old generated `wlcomp-build/wlcomp.c` is not the current
+normal compositor build. Do not add generation rewrites to fix a KWin symptom.
 
-- `wl_shm.create_pool` mmaps the client FD with `MAP_SHARED`; `wl_shm_pool.create_buffer` records offset, width, height, stride, and format. Formats advertised are `ARGB8888` and `XRGB8888`.
-- `wl_surface.attach` sets a pending buffer and frees any replaced unreferenced pending buffer. `wl_surface.commit` promotes pending to committed, releases the old committed buffer if replaced, centers first-mapped toplevels above the taskbar, and defers initial keyboard focus.
-- Damage and input/opaque regions are ignored because the compositor repaints the whole screen every frame and performs simple rectangle hit testing.
-- `wl_surface.frame` stores the latest callback only; after each composite pass, `wl_callback.done` is sent and the callback resource is destroyed.
-- `xdg_surface.get_toplevel` sends an initial configure at about 80 percent of usable screen size and marks the toplevel activated.
-- Maximize/fullscreen saves current geometry, sends `MAXIMIZED` plus `ACTIVATED`, and snaps the client to `(0,0)` with height excluding the 36px taskbar. Unmaximize restores saved geometry.
-- `xdg_popup` and `xdg_positioner` are minimal stubs so GTK can create popup proxies without crashing.
-- `wl_data_device_manager` is a no-op clipboard/drag-drop stub required by GTK3 clients.
+## Source map
 
-## Drawing And Compositing
-
-- `init_framebuffer` opens `/dev/fb0`, reads `FBIOGET_VSCREENINFO`, allocates `g_fb_buf`, and keeps geometry in `g_fb_w`, `g_fb_h`, and `g_fb_pitch`.
-- `composite_and_flip` renders wallpaper, desktop icons, internal windows, Wayland surfaces, taskbar, menu, cursor, then submits `FB_GPU_BLIT`.
-- Internal windows draw behind Wayland surfaces when no internal window is focused, and on top when an internal window is focused.
-- Wayland surfaces are alpha blended per pixel from committed shared-memory buffers; fully opaque pixels overwrite, transparent pixels skip, and partial alpha blends against the current framebuffer buffer.
-- The taskbar is always on top and reserves the bottom 36px; `surface_at` never hits Wayland surfaces inside that taskbar region.
-- After the GPU blit, frame callbacks are completed. In generated code, the current committed buffer is not released during the same pass; it remains owned until replacement.
-- Settings can attempt `FBIOPUT_VSCREENINFO` (`0x4601`) to change resolution, then reallocates `g_fb_buf` and relayouts icons.
-
-## Input ABI And Routing
-
-- Mouse ABI must match kernel `struct mouse_event`: `int16_t dx, dy`, `uint8_t buttons`, `uint8_t flags`, `int8_t dz`, one byte pad. `MOUSE_EVENT_F_ABSOLUTE` means dx/dy are normalized 16-bit absolute coordinates.
-- The generated compositor computes absolute cursor position with `(uint32_t)(uint16_t)ev.dx * g_fb_w / 65536` and similarly for `dy`. This preserves VMware absolute mouse values that would otherwise look negative after sign extension.
-- `process_mouse` drains up to 64 mouse events per frame, clamps the cursor, computes pressed/released edges, updates internal-window drags/resizes, handles Wayland move/resize grabs, and then routes clicks.
-- Click routing priority depends on focus: focused internal windows are checked first; otherwise Wayland surfaces are checked first. Taskbar/menu/desktop clicks can consume the event and suppress client pointer delivery.
-- Wayland pointer delivery sends leave/enter on focus changes, motion on cursor movement, button events for left/middle/right as Linux button codes `0x110`..`0x112`, then `wl_pointer.frame`.
-- Keyboard ABI must match kernel `struct kbd_event`: `keycode`, `scancode`, `pressed`, `modifiers`.
-- `seat_get_keyboard` writes a temporary XKB keymap file at `/tmp/.wlcomp_keymap`, sends it by FD, and advertises repeat info of 25 keys/sec with a 400ms delay.
-- `process_keyboard` filters bounce within 30ms, routes to an internal window if focused, otherwise to `g_kbd_focused`, maps extended xv6 keycodes `0x80`..`0x89` to evdev arrows/navigation codes, suppresses hardware typematic repeats with a bitmap, sends key events, and sends modifier events only when changed.
-
-## Event Loop And Event-Wait Contract
-
-- The required main loop shape is:
-  - `wl_display_flush_clients(g_display)`
-  - `wl_event_loop_dispatch(loop, 0)`
-  - `process_mouse()` and `process_keyboard()`
-  - `process_terminals()`
-  - `composite_and_flip()`
-  - `reap_children()`
-  - `wl_display_flush_clients(g_display)`
-  - `epoll_wait(epfd, events, 8, 16)`
-- `wl_event_loop_dispatch(loop, 0)` must remain nonblocking. Changing it to blocking dispatch can stop the loop before mouse/kbd draining and make kernel input rings fill with no user-space reads.
-- `epoll_wait(..., 16)` is a 60fps pacing wait over the Wayland event-loop FD, mouse FD, and keyboard FD. Replacing it with `usleep(16000)` hides readiness bugs and increases latency.
-- If `wlcomp` is asleep inside the internal Wayland event-loop kqueue while the outer compositor kqueue has input queued, run `xv6-syscall wlcomp` to check whether libwayland's `wl_event_loop_dispatch(loop, 0)` reached the kernel as `epoll_pwait(..., timeout=0)`.
-- GUI freezes often sit at the boundary between cdev `.poll` callbacks, kqueue/epoll readiness, AF_UNIX socket readiness, timer wakeups, and compositor dispatch. Verify both the kernel wait path and generated compositor loop before changing either side.
-- If rings are nonempty but compositor reads do not increase, suspect event-loop blocking or epoll/kqueue readiness. If reads increase but cursor does not move, suspect input ABI, absolute-coordinate conversion, or compositor routing.
-
-## Desktop Apps And Kernel Touchpoints
-
-- Desktop icons and menu entries are loaded from `.desktop`-style shortcuts in `/root/Desktop`, with built-in fallback entries for Terminal, Files, System Info, Calculator, Network, Settings, System Monitor, 3D Demo, Editor, Browser, and WebKit.
-- Terminal and Editor use `/dev/ptmx`, `TIOCGPTN`, `/dev/pts/<n>`, `setsid`, `TIOCSWINSZ`, and fork/exec `/bin/sh` or `/bin/vim`; PTY output is drained nonblocking each frame.
-- File manager uses direct `opendir`, `readdir`, `stat`, selected-entry state, and path construction. First click selects; second click opens, matching desktop icon behavior. Directories navigate, executable files launch, `.desktop` files run their shortcut, `.html` opens in NetSurf, and text-like files open in Vim. Avoid overlapping source/destination buffers in `snprintf` when changing this code.
-- System Info and Monitor read procfs files such as `/proc/version`, `/proc/uptime`, `/proc/meminfo`, `/proc/cpuinfo`, and `/proc/stat`.
-- Network reads `/dev/netconf` into a compositor-local `struct netconf_req` and formats little-endian IPv4 fields. A short read means lwIP/network config is not ready yet.
-- Settings touches framebuffer mode changes and must update compositor dimensions, pitch, buffer allocation, and icon layout together.
-- Power Off invokes xv6 syscall number 166 directly because the musl headers do not define that wrapper.
-
-## NetSurf And Browser Controls
-
-- There are two NetSurf paths: `desktop.c` autostarts `/bin/netsurf` unless `netsurf=0`, while `wlcomp.c` can launch NetSurf from `/root/Desktop/browser.desktop`, the shared menu shortcut list, file-manager `.desktop` activation, or `.html` file association.
-- `desktop.c` reads `/proc/cmdline` and only treats exact token `netsurf=0` as disabled.
-- `run-qemu.sh` can append `netsurf=0` using `QEMU_NETSURF=0`, or automatically under KVM with `QEMU_NETSURF=auto`.
-- When NetSurf is launched by `wlcomp`, it creates `/.netsurf/Choices`, redirects stdout/stderr to `/tmp/app_log.txt`, and supplies Wayland, GTK, and certificate environment variables. Keep verbose GLib/WebKit debug variables out of normal browser launch environments unless deliberately capturing a short focused trace.
-- NetSurf launch setup writes `/.netsurf/Choices` with the local welcome page and certificate bundle.
-- WebKit/MiniBrowser staging is optional and explicit. Runtime requires MiniBrowser, `WebKitNetworkProcess`, `WebKitWebProcess`, WebKit/JSC shared libraries, the injected bundle, and the GIO OpenSSL module; provide those through `XV6_WEBKIT_REF_SYSROOT` or a populated repo-local `ports/webkit/sysroot`.
-- When MiniBrowser is launched by `desktop.c` or `wlcomp`, it supplies Wayland/GTK variables plus `GIO_MODULE_DIR=/lib/gio/modules`, `GIO_USE_TLS=openssl`, `WEBKIT_EXEC_PATH=/libexec/webkit2gtk-4.1`, `WEBKIT_INJECTED_BUNDLE_PATH=/lib/webkit2gtk-4.1/injected-bundle`, `SOUP_FORCE_HTTP1=1`, `GDK_DPI_SCALE=1.35`, a local default URL, and a lightweight WebKitSettings argv profile that keeps JavaScript enabled and disables WebGL/WebAudio/mediasource/media-stream/page-cache/DNS-prefetch/offline-app-cache for current xv6 responsiveness. MiniBrowser also runs JavaScriptCore in interpreter-only mode with JIT and concurrent compiler paths disabled.
-- Debug launch failures by identifying which path was supposed to launch: boot autostart from `desktop.c`, a compositor icon/menu action, or a manual shell command.
-- For boot autostart, inspect `/proc/cmdline`, desktop startup output, `/tmp/wayland-0.lock`, and whether `/bin/netsurf` appears in process listings before assuming the browser crashed.
-- For compositor launchers, inspect generated `wlcomp.c` and `/root/Desktop/*.desktop` inside `fs.img` to verify the shortcuts actually staged.
-- If NetSurf starts and exits, read `/tmp/app_log.txt` before changing Wayland, GTK, network, or kernel code.
-- Do not debug browser crashes as kernel freezes until the compositor/event loop, Wayland environment, `/tmp/app_log.txt`, and `netsurf=0` behavior have been checked.
-
-## Kernel Interface Dependencies
-
-- `/dev/fb0`: must support `FBIOGET_VSCREENINFO`, `FB_GPU_BLIT`, and any tested `FBIOPUT_VSCREENINFO` path. A bad pitch/geometry update corrupts all compositor drawing.
-- `/dev/mouse`: must deliver records matching compositor ABI, support nonblocking reads, provide `.poll` readiness, and wake epoll/kqueue when events are queued.
-- QEMU GTK launches should use `grab-on-hover=on,show-cursor=off` for xv6 GUI validation. This captures pointer events as soon as the host cursor enters the VM window and avoids a frozen host cursor being mistaken for the guest compositor cursor.
-- `/dev/kbd`: must deliver records matching compositor ABI, support nonblocking reads, provide `.poll` readiness, and wake epoll/kqueue when events are queued.
-- AF_UNIX sockets and libwayland: the Wayland display socket must provide readiness compatible with libwayland's event-loop FD.
-- kqueue/epoll bridge: readiness must be level-correct enough for cdevs and sockets; missed rechecks can strand data until another producer event arrives.
-- timer/scheduler: `epoll_wait` timeout, `usleep`, desktop supervision, terminal refresh, and internal app auto-refresh all depend on reliable timer wakeups.
-- VFS/procfs/devtmpfs: GUI startup depends on `/etc/startup`, `/bin/desktop`, `/bin/wlcomp`, `/tmp`, `/proc/cmdline`, device nodes, PTYs, and procfs files.
-- Networking: Network app and NetSurf exercise `/dev/netconf`, e1000/lwIP, DNS/curl/TLS stack, and can amplify timer/IRQ/network freezes.
-
-## Debugging Procedure
-
-1. Compare source and generated compositor code before booting:
-   - `ports/wayland/src/wlcomp.c`
-   - `build-x86_64/ports/wayland/wlcomp-build/wlcomp.c`
-   - Check generated NetSurf disables, homepage rewrite, absolute mouse casts, committed-buffer release patch, and event-loop shape.
-2. Confirm launch path:
-   - `/etc/startup` runs `/bin/desktop`.
-   - `desktop` starts `/bin/wlcomp` and waits for `/tmp/wayland-0.lock`.
-   - `desktop` only starts NetSurf when `/proc/cmdline` does not contain `netsurf=0`.
-3. Confirm compositor event loop:
-   - `wl_event_loop_dispatch(loop, 0)` is nonblocking.
-   - Mouse and keyboard processing run before the blocking `epoll_wait`.
-   - `epoll_wait(epfd, events, 8, 16)` remains present unless deliberately testing kernel waits.
-4. If input freezes:
-   - Use `xv6-input` to verify kernel packet/ring state.
-   - Use kqueue/epoll inspection if rings are nonempty but user-space reads do not succeed.
-   - Check generated compositor blocking behavior before changing the kernel.
-   - Separate mouse decode problems from compositor routing by comparing ring counters, successful reads, cursor coordinate changes, and pointer events.
-5. If Wayland clients map but do not repaint:
-   - Verify frame callbacks are sent after composite.
-   - Verify generated buffer release behavior matches the current ownership assumption.
-   - Check that `wl_display_flush_clients` runs before and after compositor work.
-6. If NetSurf or GUI startup destabilizes KVM debugging:
-   - Use `QEMU_NETSURF=0` or rely on KVM auto-disable behavior while kernel freezes are being isolated.
-   - Re-enable NetSurf only after input/timer/event waits are stable.
-   - Inspect `/tmp/app_log.txt` after client exits.
-7. Rebuild after compositor generation changes and verify generated output before booting.
-
-## Relevant Files
-
-- `ports/wayland/CMakeLists.txt`
-- `ports/wayland/src/wlcomp.c`
-- `ports/wayland/src/desktop.c`
-- `build-x86_64/ports/wayland/wlcomp-build/wlcomp.c`
-- `rootfs-overlay/etc/startup`
-- `kernel/kernel/dev/fb.c`
-- `kernel/kernel/dev/ps2mouse.c`
-- `kernel/kernel/dev/ps2kbd.c`
-- `kernel/kernel/kqueue/kqueue.c`
-- `kernel/kernel/timer/timer.c`
-- `kernel/kernel/net/*`
-- `scripts/launch-gui.sh`
-- `scripts/run-qemu.sh`
-- `scripts/attach-gdb.sh`
-
-## Pitfalls
-
-- Do not assume a kernel input bug until generated compositor blocking behavior is ruled out.
-- Do not add CMake rewrites that silently change event-loop blocking semantics.
-- Do not validate only the source compositor; verify the generated build artifact.
-- Do not re-enable per-frame `wl_buffer_send_release` in generated code without revalidating client buffer reuse and frame timing.
-- Do not treat `CHAN=0` alone as proof of a bad wait channel; GUI code uses timed waits and polling paths.
-- Do not debug NetSurf, MiniBrowser, e1000, or lwIP at the same time as basic input readiness unless the browser is the current target.
-- Do not treat a mapped MiniBrowser window as proof that the full WebKit runtime is present; the network and web helper processes are separate executables with a shared-library closure.
-- Do not replace `epoll_wait` with sleep as a final fix; use it only as a temporary experiment and then fix the kernel readiness or compositor dispatch cause.
-- Do not change input struct layouts in the kernel without updating `wlcomp.c` ABI definitions and generated code.
-- Do not forget static install artifacts: changing source without rebuilding `port-wayland`, `rootfs`, and `image` leaves stale GUI binaries in the VM.
+- Startup and environment: `rootfs-overlay/etc/startup`,
+  `scripts/image/xv6-desktop-session.c`, `scripts/image/kde-session.c`,
+  `scripts/image/kde-plasma-session-child.c`.
+- Device input: `kernel/kernel/dev/ps2mouse.c`,
+  `kernel/kernel/dev/ps2kbd.c`, `kernel/kernel/dev/evdev.c`; use the input skill
+  to find the selected producer and its public ABI.
+- Readiness: `kernel/kernel/kqueue/kqueue.c` and the event-wait skill.
+- Graphics: `kernel/kernel/dev/fb/module.c`,
+  `kernel/kernel/dev/drm_core.c`, and `docs/linux-drm-abi-audit.md`.
+- Existing focused probes: `scripts/image/kde-libinput-probe.c`,
+  `scripts/image/kde-wayland-seat-probe.c`,
+  `scripts/image/kde-wayland-registry-probe.c`,
+  `scripts/image/kde-drm-probe.c`, and
+  `scripts/image/kde-kwin-screenshot-probe.c`. Select a probe only when its
+  boundary matches the requested investigation; a probe pass is narrower
+  than end-to-end GUI behavior.
