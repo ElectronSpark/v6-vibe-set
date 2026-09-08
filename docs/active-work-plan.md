@@ -12,7 +12,7 @@ maps all 15 original plans to unchanged snapshots, including their full
 checklists, experiments, commands, and receipts. Generated audits, reviewed TSV
 inventories, reference documents, and reusable skills remain separate references.
 
-## Latest graphical audit — 2026-09-07
+## Graphical audits — 2026-09-07 and 2026-09-08
 
 The [virgl fence investigation](virgl-fence-publication-fix-20260907.md)
 fixes a demonstrated publication-order defect: a command could be classified
@@ -94,6 +94,24 @@ submission rejection reasons/ACK timing and the missing GPU/worker scheduling
 data before changing lock, scheduler, timer or RCU policy. No production kernel
 change follows from these diagnostic aggregates; the VM is reaped and exact
 QEMU inventory is zero.
+
+The [September 8 desktop responsiveness audit](desktop-responsiveness-audit-20260908.md)
+adds repeated mouse oscillation, held selection, window movement and resize,
+file-view changes and overlapping-window checks on the progress-wait candidate.
+An isolated Create New menu hover remains inactive for over nine seconds;
+a five-pixel move within the same row opens it. A mapped QMP absolute-input
+control reproduces the same behavior, remaining inactive at a capture about
+43 seconds after its first movement. A continuous host path succeeds. This
+keeps virtual/guest input, popup entry and painting boundaries open, without
+establishing a scheduler, softirq, locking or RCU cause. Two Dolphin windows
+also reproduce clipped wrapped warning text after narrowing, while a warning
+created in a narrow split pane displays both lines. Check warning-widget
+height recalculation separately from input/presentation progress. **DESK-04**
+remains open. Buffered final icon sweeps retain old highlights/badges before
+natural recovery by approximately 390/289 ms; successful settled endpoints do
+not establish smooth motion or Linux performance parity. The audit retains
+461 explicit move steps and 242 screenshots. Its VM is reaped, overlay removed,
+base metadata unchanged and independent exact QEMU inventory zero.
 
 The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
 the September YouTube audio-renderer failure below. Ordinary AF_UNIX stream
@@ -267,9 +285,12 @@ Sources: [July active plan](archive/plan-consolidation-20260907/docs/active-work
   `virtio_gpu_async_present=1` and `virtio_gpu_present_clock_60hz=1`.
   Asynchronous KMS and the corrected phase-stable 60 Hz clock remain part of
   the APT migration contract, alongside renderer admission and real audio.
-- [x] Every actual scanout-resource switch now issues SET_SCANOUT. Repeated
-  hover no longer accumulates plus-sign trails. Fenced flush and broad reuse
-  waits remain opt-in diagnostics because they stalled or reduced throughput.
+- [x] Every actual scanout-resource switch issues SET_SCANOUT. The earlier
+  recorded repeated-hover control no longer accumulated plus-sign trails.
+  The September 8 audit separately observes transient old badges/highlights
+  before natural recovery; the earlier result does not establish that current
+  interactions lack trails. Fenced flush and broad reuse waits remain
+  opt-in diagnostics because they stalled or reduced throughput.
 - [x] Monotonic evdev timestamps, duplicate-motion removal, safe popup
   dismissal, desktop warm-up and 50 ms tooltip policy reduce warm Kickoff
   opens to 320–365 ms in the final recorded run; cold open was 2143 ms.
@@ -349,6 +370,13 @@ there is no replacement accepted N=2 pair for that final candidate.
   results: Desktop Icons and KWrite Borders needed clicks, and one Kickoff
   Utilities hover left Internet selected. Isolate input/timing/toolkit behavior
   before treating every hover path as validated.
+  The September 8 audit reproduces first-entry menu inactivity through both
+  host and QMP input, with a small subsequent movement restoring the submenu;
+  repeated movement through the menu works. Trace input consumption, popup
+  enter/motion and paint delivery before attributing this to GPU or scheduling.
+  Its repeated Dolphin warning clipping depends on width and widget creation
+  history; compare actual fixed height with `heightForWidth` and trace
+  Resize/LayoutRequest before changing the graphics stack.
   The YouTube audit also separates uncertain host left-click delivery from
   successful QMP virtual-mouse controls and host wheel scrolling; resolve the
   host input path before assigning unchanged clicks to application widgets.
@@ -751,6 +779,7 @@ paths and fresh source/image hashes when repeating a measurement.
 | Audio / scheduler / wait | build-x86_64/alsapcmrecover/20260716T004850Z-411756 and 004957Z-413956; scheduler-probe/guihd-20260716T021126Z-509286; waitreapstorm/20260716T022613Z-527413 and 022632Z-528884 |
 | VM | chromium-newtab-unlocked-filefault-tailguard-20260616a; chromium-newtab-vmcopy-sparse-20260616a; chromium-newtab-filefault-ra-gated-20260616b; weston-ready-ra-gated-20260616a |
 | Older desktop controls | build-x86_64/alpine-trace/alpine-virgl-behavior-summary.txt; host-gui-proof-verify; chromium-normal-desktop-proof; perf-video-gate/run.log and frame captures |
+| Current desktop responsiveness | [Mouse, selection, resize and menu audit](desktop-responsiveness-audit-20260908.md), with repeated warning clipping and host/QMP first-hover controls |
 | Current Chromium OpenGL | [Normal versus opt-in GPU/WebGL audit](chromium-opengl-audit-20260907.md), including screenshots, WebGL JSON results, launch provenance and cleanup |
 | Current YouTube exploration | [Playback attempt and watch-page controls](chromium-youtube-audit-20260907.md), including audio-renderer failure, separate input routes and same-run evidence |
 | Browser investigation | [Historical YouTube report](../YOUTUBE_KERNEL_GAP_REPORT.md), [retired WebKit overrides](../.github/skills/xv6-debug-gui-runtime/WEBKIT_GAP_MAP.md) |
