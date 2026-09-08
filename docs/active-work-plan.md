@@ -75,6 +75,26 @@ a Linux wallet flag and one completed boot per system qualify the comparison.
 Identify Chromium's active frame consumer and correlate selection/submission/
 acknowledgement timing next; the evidence does not yet establish a kernel cause.
 
+The [subsequent bottleneck investigation](chromium-bottleneck-investigation-20260908.md)
+adds a completed diagnostic boot with Chromium traces and passive timing
+counters. Four valid trials drop 3.19% / 5.05% / 7.60% / 7.14%; both traced
+arms retain their playback windows. Unrelated teardown prints kernel aggregates
+during the two untraced controls, so they are not silent controls. Host vCPU
+runnable wait is small in all arms. The guest task inventory omits Chromium's
+GPU process, preventing a GPU-thread scheduler verdict. Frame correlations
+identify 38/64 selected, already-prepared frames that reach submit attempts but
+never enter frame construction in the retained traces. The active consumer is
+Chromium's `VideoFrameSubmitter`; loss is localized after selection. Internal
+submission guards and compositor ACK state are not traced, so ACK backpressure
+remains a hypothesis. GPU IRQ handling
+already defers reaping to a worker; lack of a Linux-style softirq subsystem is
+not a demonstrated missing completion mechanism. Inclusive GPU post timings
+do not isolate MMIO notification, lock reacquisition or reaping. Capture
+submission rejection reasons/ACK timing and the missing GPU/worker scheduling
+data before changing lock, scheduler, timer or RCU policy. No production kernel
+change follows from these diagnostic aggregates; the VM is reaped and exact
+QEMU inventory is zero.
+
 The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
 the September YouTube audio-renderer failure below. Ordinary AF_UNIX stream
 writes now publish bytes and credentials under one sender lock before waking
