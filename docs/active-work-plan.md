@@ -58,6 +58,23 @@ This repairs a guest registration race without establishing actual host-hang
 recovery or closing media performance and synchronous-timeout lifetime work.
 The normal Chromium launcher policy is unchanged.
 
+The [September 8 local-video investigation](chromium-video-drop-investigation-20260908.md)
+reproduces excess drops with tracing disabled, settled browser focus and no
+captures or console commands during playback. Four valid windowed trials
+report 13.97% / 21.81% / 7.71% / 6.39% in OFF/ON/ON/OFF order; pooled full-load
+drops are 10.19% OFF and 14.76% ON, with substantial variation within each
+setting. Both failing trials remain above 10% after startup. GPU timeout and
+failure counters stay zero, and measured Wayland frame-reply waits stay below
+40 ms, separating this symptom from the repaired multi-second wait race.
+The new fixture records VPQ counters, rVFC metadata, actual timing boundaries
+and visibility independently. Linux controls with the same browser executable,
+clip and fixture report pooled 3.09% OFF and 3.03% ON, with valid accelerated
+OpenGL and FFmpeg clip decoding. Linux's average frame-reply waits are about
+2.5 ms versus xv6's 6.5–10.7 ms. Different viewport heights, native libraries,
+a Linux wallet flag and one completed boot per system qualify the comparison.
+Identify Chromium's active frame consumer and correlate selection/submission/
+acknowledgement timing next; the evidence does not yet establish a kernel cause.
+
 The later [audio fix and verification](chromium-audio-fix-20260907.md) resolves
 the September YouTube audio-renderer failure below. Ordinary AF_UNIX stream
 writes now publish bytes and credentials under one sender lock before waking
@@ -290,6 +307,15 @@ there is no replacement accepted N=2 pair for that final candidate.
   fail the unchanged drop gate at 15.48% and 14.70%, despite near-real-time
   media advance and no HTML video error. There is no matched pre-fix media pair;
   do not attribute the drops to this repair or use these runs as parity proof.
+  The September 8 controlled local-clip investigation also reproduces drops
+  with tracing disabled and without collection traffic during playback; its
+  valid OFF/ON/ON/OFF rates are 13.97%/21.81%/7.71%/6.39%. Startup does not fully
+  explain the failures. Retained client traces show short frame-pacing delays,
+  with no measured xv6 frame-reply wait reaching 40 ms. Completed Linux local
+  controls pool to 3.09% OFF / 3.03% ON with a shorter viewport and native
+  graphics userspace; this does not refresh YouTube/fullscreen parity. Identify
+  the active Chromium frame consumer, correlate frame selection/submission/ACK
+  timing, and repeat across boots with matching geometry before attribution.
   Trace renderer runnable delay, notification latency, present-clock late
   edges and host submission latency only where the new receipt implicates them.
 - [ ] **DESK-04:** Retain the direct-scanout/host-window content gate and

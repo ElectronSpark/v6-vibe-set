@@ -1,0 +1,246 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chromium video drop diagnostic</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #v { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+  #hud { position: fixed; left: 8px; bottom: 8px; margin: 0; color: #0f0;
+    font: 14px/1.3 monospace; background: rgba(0,0,0,.55); padding: 6px 8px;
+    white-space: pre; z-index: 10; }
+</style>
+<video id="v" muted playsinline></video>
+<pre id="hud">Waiting for the host start gate</pre>
+<script>
+'use strict';
+(async () => {
+  const VERSION = 'chromium-video-drops-v1';
+  const RUN_MS = 15000, SAMPLE_MS = 500, MAX_SAMPLES = 34;
+  const trial = new URLSearchParams(location.search).get('trial') || 'unlabeled';
+  const video = document.getElementById('v'), hud = document.getElementById('hud');
+  const samples = [], events = [];
+  const invalid = [];
+  let active = false, finished = false, t0 = null, lastPoll = null;
+  let callbacks = 0, lastCallback = null, latest = null, callbackHandle = null;
+  let intervalMaxGap = 0, intervalMaxJump = 0, metadataSkipped = 0;
+  let maxGap = 0, maxJump = 0, eventOverflow = false, frameAnchor = null;
+  const finite = value => Number.isFinite(value) ? value : null;
+  const counter = value => Number.isSafeInteger(value) && value >= 0;
+  const reason = text => { if (!invalid.includes(text)) invalid.push(text); };
+  const geometry = () => ({inner_width: innerWidth, inner_height: innerHeight,
+    dpr: devicePixelRatio, fullscreen: Boolean(document.fullscreenElement),
+    visibility: document.visibilityState, has_focus: document.hasFocus(),
+    video_rect: {width: video.getBoundingClientRect().width, height: video.getBoundingClientRect().height}});
+
+  async function report(phase, data = {}) {
+    const value = {fixture: VERSION, trial, phase, wall_ms: Date.now(),
+      browser_monotonic_ms: performance.now(), ...data};
+    const body = JSON.stringify(value);
+    if (new TextEncoder().encode(body).length > 65536) throw new Error('report exceeds 64 KiB');
+    const response = await fetch('/media-result', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body,
+      signal: AbortSignal.timeout(5000), cache: 'no-store'});
+    if (!response.ok) throw new Error('report HTTP ' + response.status);
+  }
+
+  for (const name of ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay',
+    'playing', 'waiting', 'stalled', 'pause', 'ended', 'error']) {
+    video.addEventListener(name, () => {
+      if (finished) return;
+      const eventTime = performance.now();
+      const elapsed = t0 === null ? null : eventTime - t0;
+      if (active && name === 'ended' && elapsed < RUN_MS)
+        reason('media ended before measurement deadline');
+      if (events.length >= 64) { eventOverflow = true; return; }
+      events.push({name, browser_monotonic_ms: eventTime,
+        elapsed_ms: elapsed,
+        media_time: finite(video.currentTime), ready_state: video.readyState,
+        network_state: video.networkState, error: video.error ? video.error.code : 0});
+    });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (active && document.hidden) reason('document hidden during measurement');
+  });
+  addEventListener('resize', () => { if (active) reason('viewport resized during measurement'); });
+  addEventListener('blur', () => { if (active) reason('document blurred during measurement'); });
+  for (const name of ['pointerdown', 'keydown', 'wheel'])
+    addEventListener(name, () => { if (active) reason('input during measurement'); }, {passive: true});
+  document.addEventListener('fullscreenchange', () => {
+    if (active) reason('fullscreen changed during measurement');
+  });
+  addEventListener('error', () => { if (active) reason('JavaScript error during measurement'); });
+
+  function onFrame(now, metadata) {
+    if (finished) return;
+    const entered = performance.now();
+    callbacks++;
+    if (lastCallback !== null) {
+      const gap = entered - lastCallback;
+      maxGap = Math.max(maxGap, gap); intervalMaxGap = Math.max(intervalMaxGap, gap);
+    }
+    const count = finite(metadata.presentedFrames);
+    if (!counter(count)) reason('invalid rVFC presentedFrames');
+    for (const field of ['mediaTime', 'presentationTime', 'expectedDisplayTime'])
+      if (!Number.isFinite(metadata[field]) || metadata[field] < 0)
+        reason('invalid rVFC ' + field);
+    if (!counter(metadata.width) || !counter(metadata.height) || !metadata.width || !metadata.height)
+      reason('invalid rVFC dimensions');
+    if (latest && (metadata.mediaTime < latest.media_time ||
+        metadata.presentationTime < latest.presentation_time_ms)) reason('rVFC timestamps regressed');
+    if (latest && count !== null && latest.presented_frames !== null) {
+      const jump = count - latest.presented_frames;
+      if (jump < 0) reason('rVFC presentedFrames regressed');
+      else {
+        maxJump = Math.max(maxJump, jump); intervalMaxJump = Math.max(intervalMaxJump, jump);
+        metadataSkipped += Math.max(0, jump - 1);
+      }
+    }
+    lastCallback = entered;
+    latest = {callback_now_ms: finite(now), callback_entry_ms: entered,
+      presented_frames: count, media_time: finite(metadata.mediaTime),
+      presentation_time_ms: finite(metadata.presentationTime),
+      expected_display_time_ms: finite(metadata.expectedDisplayTime),
+      processing_duration_seconds: finite(metadata.processingDuration),
+      width: finite(metadata.width), height: finite(metadata.height), callback_count: callbacks};
+    if (active && frameAnchor === null) frameAnchor = {...latest};
+    callbackHandle = video.requestVideoFrameCallback(onFrame);
+  }
+
+  function snapshot(now) {
+    const q = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : null;
+    if (!q) reason('playback-quality API unavailable');
+    const total = q ? finite(q.totalVideoFrames) : null;
+    const dropped = q ? finite(q.droppedVideoFrames) : null;
+    if (!counter(total) || !counter(dropped) || dropped > total) reason('invalid playback-quality counters');
+    const previous = samples.length ? samples[samples.length - 1] : null;
+    if (previous && (total < previous.total_frames || dropped < previous.dropped_frames))
+      reason('playback-quality counters regressed');
+    if (previous && video.currentTime < previous.media_time) reason('media time regressed');
+    if (!Number.isFinite(video.currentTime) || video.currentTime < 0) reason('invalid media time');
+    if (video.ended && now - t0 < RUN_MS) reason('media ended before measurement deadline');
+    const value = {sequence: samples.length, elapsed_ms: now - t0,
+      browser_monotonic_ms: now, poll_interval_ms: lastPoll === null ? null : now - lastPoll,
+      timer_lateness_ms: lastPoll === null ? null : Math.max(0, now - lastPoll - SAMPLE_MS),
+      media_time: finite(video.currentTime), ready_state: video.readyState,
+      network_state: video.networkState, paused: video.paused, ended: video.ended,
+      video_error: video.error ? video.error.code : 0,
+      video_width: video.videoWidth, video_height: video.videoHeight,
+      buffered_end: video.buffered.length ? finite(video.buffered.end(video.buffered.length - 1)) : null,
+      total_frames: total, dropped_frames: dropped,
+      quality_creation_ms: q ? finite(q.creationTime) : null,
+      callback_count: callbacks, last_callback_age_ms: lastCallback === null ? null : now - lastCallback,
+      rvfc: latest ? {...latest} : null, max_callback_gap_ms: intervalMaxGap,
+      max_metadata_jump: intervalMaxJump, metadata_skipped: metadataSkipped, ...geometry()};
+    if (samples.length >= MAX_SAMPLES) reason('sample capacity reached');
+    else samples.push(value);
+    intervalMaxGap = 0; intervalMaxJump = 0; lastPoll = now;
+    return value;
+  }
+
+  function delta(first, last) {
+    if (!first || !last) return null;
+    const total = last.total_frames - first.total_frames;
+    const dropped = last.dropped_frames - first.dropped_frames;
+    const wall = (last.browser_monotonic_ms - first.browser_monotonic_ms) / 1000;
+    const valid = [first.total_frames, last.total_frames, first.dropped_frames,
+      last.dropped_frames].every(counter) && total > 0 && dropped >= 0 &&
+      dropped <= total && wall > 0;
+    return {valid, start_ms: first.elapsed_ms, end_ms: last.elapsed_ms,
+      wall_seconds: wall, total_frames: total, dropped_frames: dropped,
+      drop_percent: valid ? 100 * dropped / total : null,
+      non_dropped_frames_per_second: valid ? (total - dropped) / wall : null,
+      callbacks: last.callback_count - first.callback_count,
+      composition_submissions: first.rvfc && last.rvfc &&
+        first.rvfc.presented_frames !== null && last.rvfc.presented_frames !== null ?
+        last.rvfc.presented_frames - first.rvfc.presented_frames : null};
+  }
+
+  try {
+    if (!/^[a-z0-9-]{1,64}$/.test(trial)) throw new Error('invalid trial identifier');
+    await report('ready', {user_agent: navigator.userAgent,
+      hardware_concurrency: navigator.hardwareConcurrency,
+      asset: '/clip.mp4', run_ms: RUN_MS, ...geometry()});
+    const gateDeadline = performance.now() + 120000;
+    for (;;) {
+      if (performance.now() > gateDeadline) throw new Error('start gate deadline');
+      const response = await fetch('/trial-control?trial=' + encodeURIComponent(trial),
+        {cache: 'no-store', signal: AbortSignal.timeout(5000)});
+      if (!response.ok) throw new Error('start gate HTTP ' + response.status);
+      const gate = await response.json();
+      if (gate.abort) throw new Error('host aborted trial');
+      if (gate.start) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    // No control polling, console logging or network reports in the measured interval.
+    await report('started', {run_ms: RUN_MS, asset: '/clip.mp4', ...geometry()});
+    if (!video.requestVideoFrameCallback) reason('rVFC API unavailable');
+    else callbackHandle = video.requestVideoFrameCallback(onFrame);
+    video.src = '/clip.mp4';
+    await video.play();
+    // The old autoplay fullscreen attempt was rejected. Keep its observed windowed mode.
+    const startMedia = video.currentTime;
+    t0 = performance.now(); active = true;
+    if (document.hidden || !document.hasFocus()) reason('measurement began hidden or unfocused');
+    if (document.fullscreenElement) reason('measurement began fullscreen');
+    frameAnchor = latest ? {...latest} : null;
+    const baseline = snapshot(t0);
+    let lastPresented = callbacks;
+    while (performance.now() - t0 < RUN_MS) {
+      await new Promise(resolve => setTimeout(resolve, SAMPLE_MS));
+      const now = performance.now(), oldPoll = lastPoll;
+      const sample = snapshot(now);
+      const instant = (callbacks - lastPresented) / ((now - oldPoll) / 1000);
+      lastPresented = callbacks;
+      hud.textContent = `trial=${trial}\nmedia=${video.currentTime.toFixed(2)}s / ${video.duration.toFixed(2)}s\n` +
+        `callbacks=${callbacks} callbackFPS=${instant.toFixed(1)}\n` +
+        `total=${sample.total_frames} dropped=${sample.dropped_frames}\n` +
+        `wall=${((now - t0) / 1000).toFixed(1)}s err=${sample.video_error}`;
+    }
+    // A single endpoint binds the legacy counters and all diagnostic deltas.
+    const end = snapshot(performance.now()), wallSec = end.elapsed_ms / 1000;
+    const terminalCollectionMs = performance.now() - end.browser_monotonic_ms;
+    const total = end.total_frames ?? 0, dropped = end.dropped_frames ?? 0;
+    const advanced = end.media_time - startMedia;
+    const dropPct = total > 0 ? 100 * dropped / total : 0;
+    const speed = wallSec > 0 ? advanced / wallSec : 0;
+    // Preserve the staged fixture's full-load counters, timing and acceptance threshold.
+    const legacy = {status: speed >= .9 && !video.error && dropPct < 10 ? 'PASS' : 'FAIL',
+      wall_seconds: wallSec, advanced_seconds: advanced, speed,
+      total_frames: total, dropped_frames: dropped, drop_percent: dropPct,
+      callback_count: callbacks, callbacks_per_second: callbacks / wallSec,
+      total_frames_per_second: total / wallSec, video_error: video.error ? video.error.code : 0};
+    const warmup = samples.find(sample => sample.elapsed_ms >= 2000);
+    const whole = delta(baseline, end), startup = delta(baseline, warmup), tail = delta(warmup, end);
+    if (![whole, startup, tail].every(window => window && window.valid)) reason('invalid diagnostic counter window');
+    const frameWindow = {first: frameAnchor, last: latest,
+      first_offset_ms: frameAnchor ? frameAnchor.callback_entry_ms - t0 : null,
+      last_offset_ms: latest ? latest.callback_entry_ms - t0 : null,
+      callbacks: frameAnchor && latest ? latest.callback_count - frameAnchor.callback_count : null,
+      composition_submissions: frameAnchor && latest ? latest.presented_frames - frameAnchor.presented_frames : null};
+    if (!frameAnchor || !latest || callbacks < 2 || frameWindow.callbacks < 1 ||
+        frameWindow.composition_submissions < 1) reason('missing rVFC measurement coverage');
+    if (document.hidden) reason('document hidden at terminal');
+    if (performance.now() - t0 > 16000) reason('measurement exceeded one-second overshoot allowance');
+    if (eventOverflow) reason('event collection truncated');
+    active = false; finished = true;
+    if (callbackHandle !== null) video.cancelVideoFrameCallback(callbackHandle);
+    video.pause();
+    hud.textContent += `\nRESULT ${legacy.status} drop=${dropPct.toFixed(2)}% speed=${speed.toFixed(3)}`;
+    document.title = `video-drops ${trial}: ${legacy.status} ${dropPct.toFixed(2)}%`;
+    await report('complete', {legacy, diagnostic_valid: invalid.length === 0,
+      invalid, samples, events, max_callback_gap_ms: maxGap, max_metadata_jump: maxJump,
+      terminal_collection_ms: terminalCollectionMs,
+      whole_window_delta: whole, startup_delta: startup, after_startup_delta: tail,
+      warmup_boundary_ms: warmup ? warmup.elapsed_ms : null,
+      warmup_overshoot_ms: warmup ? warmup.elapsed_ms - 2000 : null,
+      rvfc_window: frameWindow, ...geometry()});
+  } catch (error) {
+    active = false; finished = true;
+    if (callbackHandle !== null) video.cancelVideoFrameCallback(callbackHandle);
+    video.pause();
+    hud.textContent = 'ERROR: ' + error.message;
+    try { await report('error', {error: String(error), invalid, samples, events, ...geometry()}); }
+    catch (deliveryError) { hud.textContent += '\nReport failed: ' + deliveryError.message; }
+  }
+})();
+</script>
