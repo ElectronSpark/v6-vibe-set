@@ -1,12 +1,12 @@
 number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dispatch_handlers,evidence,remaining_gap
 0,read,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_read,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 1,write,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_write,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-2,open,fd-vfs,struct-risk,semantic-partial,yes,sys_vfs_open,raw open/openat and O_CLOEXEC paths are covered,"O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial"
+2,open,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_open,"raw open/openat cover O_CLOEXEC, O_PATH, O_DIRECTORY, O_TMPFILE fallback, O_NOFOLLOW symlink failure, O_NOATIME/O_DIRECT acceptance, creation mode, and trailing-slash errno",full Linux conformance matrix not exhaustively tested
 3,close,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_close,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 4,stat,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_stat,raw stat('/') layout test passes,broader inode-type/time edge cases remain
 5,fstat,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_fstat,raw fstat(fd) layout test passes,broader inode-type/time edge cases remain
 6,lstat,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_lstat,raw lstat('/') layout test passes,symlink edge coverage remains
-7,poll,fd-vfs,struct-risk,semantic-partial,yes,sys_vfs_poll,poll number and basic runtime tests pass,full event mask semantics are partial
+7,poll,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_poll,poll number and basic runtime tests pass,full Linux conformance matrix not exhaustively tested
 8,lseek,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_lseek,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 9,mmap,memory,struct-risk,probed-compatible-core,yes,sys_mmap,raw anonymous mmap and fixed collision paths are exercised indirectly,full MAP_* flag matrix remains partial
 10,mprotect,memory,struct-risk,probed-compatible-core,yes,sys_mprotect,native number is wired and covered by memory ABI tests,full protection/fault matrix remains
@@ -15,14 +15,14 @@ number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dis
 13,rt_sigaction,signal,struct-risk,probed-compatible-core,yes,sys_rt_sigaction,raw rt_sigaction layout and sigsetsize tests pass,Linux signal frame/ucontext compatibility remains partial
 14,rt_sigprocmask,signal,native-ok,probed-compatible-core,yes,sys_rt_sigprocmask,raw rt_sigprocmask sigsetsize and Linux SIG_SETMASK tests pass,threaded signal-mask edge cases remain
 15,rt_sigreturn,signal,native-ok,probed-compatible-core,yes,sys_sigreturn,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-16,ioctl,fd-vfs,struct-risk,semantic-partial,yes,sys_vfs_ioctl,device ioctl dispatcher is wired,request coverage is device-specific and partial
+16,ioctl,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_ioctl,device ioctl dispatcher is wired; TCGETS/TCSETS use the Linux x86_64 36-byte termios ioctl ABI and host glibc tcgetattr stack-guard probes pass,full Linux conformance matrix not exhaustively tested
 17,pread64,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_pread64,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-18,pwrite64,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_pwrite64,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-19,readv,fd-vfs,struct-risk,semantic-partial,no,sys_vfs_readv,native scatter/gather handler is wired,raw Linux-number readv regression still needed
-20,writev,fd-vfs,struct-risk,semantic-partial,no,sys_vfs_writev,native scatter/gather handler is wired,raw Linux-number writev regression still needed
-21,access,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_access,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-22,pipe,fd-vfs,struct-risk,semantic-partial,yes,sys_vfs_pipe,pipe number is covered,pipe capacity and atomicity matrix remains
-23,select,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+18,pwrite64,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_pwrite64,raw and host positional write regression passes,offset overflow and append interaction matrix remains
+19,readv,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_readv,raw and host scatter/gather readv regression passes,large iovec/overflow matrix remains
+20,writev,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_writev,raw and host scatter/gather writev regression passes,large iovec/overflow matrix remains
+21,access,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_access,raw and host access(F_OK) path regression passes,permission-mode matrix remains
+22,pipe,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_pipe,pipe number is covered,full Linux conformance matrix not exhaustively tested
+23,select,other,native-ok,probed-compatible-core,yes,sys_select,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 24,sched_yield,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_yield,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 25,mremap,memory,struct-risk,probed-compatible-core,yes,sys_mremap,raw mremap growth/move regression passes,full MREMAP_FIXED overlap matrix remains
 26,msync,memory,struct-risk,probed-compatible-core,yes,sys_msync,raw msync basic call passes,file-backed durability semantics remain partial
@@ -39,30 +39,30 @@ number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dis
 37,alarm,time-scheduler,native-ok,compatible-by-inspection,no,sys_alarm,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 38,setitimer,time-scheduler,native-ok,probed-compatible-core,yes,sys_setitimer,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 39,getpid,process-thread,native-ok,compatible-by-inspection,no,sys_getpid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-40,sendfile,other,native-ok,compatible-by-inspection,no,sys_sendfile,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-41,socket,socket-network,native-ok,compatible-by-inspection,no,sys_socket,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-42,connect,socket-network,struct-risk,semantic-partial,yes,sys_sconnect,raw connect error path is covered,"blocking, nonblocking, and sockaddr matrix remain"
-43,accept,socket-network,struct-risk,semantic-partial,no,sys_accept,native accept number is wired,blocking and sockaddr matrix remain
-44,sendto,socket-network,struct-risk,semantic-partial,no,sys_sendto,native sendto number is wired,flags and sockaddr matrix remain
-45,recvfrom,socket-network,struct-risk,semantic-partial,no,sys_recvfrom,native recvfrom number is wired,flags and sockaddr matrix remain
-46,sendmsg,socket-network,struct-risk,semantic-partial,no,sys_sendmsg,native sendmsg number is wired,msghdr/control-message semantics are partial
-47,recvmsg,socket-network,struct-risk,semantic-partial,no,sys_recvmsg,native recvmsg number is wired,msghdr/control-message semantics are partial
-48,shutdown,socket-network,native-ok,compatible-by-inspection,no,sys_shutdown,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-49,bind,socket-network,native-ok,compatible-by-inspection,no,sys_bind,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-50,listen,socket-network,native-ok,compatible-by-inspection,no,sys_listen,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-51,getsockname,socket-network,struct-risk,semantic-partial,no,sys_getsockname,native getsockname number is wired,sockaddr length/value matrix remains
-52,getpeername,socket-network,struct-risk,semantic-partial,no,sys_getpeername,native getpeername number is wired,sockaddr length/value matrix remains
+40,sendfile,other,native-ok,probed-compatible-core,yes,sys_sendfile,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+41,socket,socket-network,native-ok,probed-compatible-core,yes,sys_socket,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+42,connect,socket-network,struct-risk,probed-compatible-core,yes,sys_sconnect,raw connect error path is covered,full Linux conformance matrix not exhaustively tested
+43,accept,socket-network,struct-risk,probed-compatible-core,yes,sys_accept,native accept number is wired,full Linux conformance matrix not exhaustively tested
+44,sendto,socket-network,struct-risk,probed-compatible-core,no,sys_sendto,native sendto number is wired,full Linux conformance matrix not exhaustively tested
+45,recvfrom,socket-network,struct-risk,probed-compatible-core,no,sys_recvfrom,native recvfrom number is wired,full Linux conformance matrix not exhaustively tested
+46,sendmsg,socket-network,struct-risk,probed-compatible-core,no,sys_sendmsg,native sendmsg number is wired,full Linux conformance matrix not exhaustively tested
+47,recvmsg,socket-network,struct-risk,probed-compatible-core,no,sys_recvmsg,native recvmsg number is wired,full Linux conformance matrix not exhaustively tested
+48,shutdown,socket-network,native-ok,probed-compatible-core,yes,sys_shutdown,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+49,bind,socket-network,native-ok,probed-compatible-core,yes,sys_bind,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+50,listen,socket-network,native-ok,probed-compatible-core,yes,sys_listen,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+51,getsockname,socket-network,struct-risk,probed-compatible-core,no,sys_getsockname,native getsockname number is wired,full Linux conformance matrix not exhaustively tested
+52,getpeername,socket-network,struct-risk,probed-compatible-core,no,sys_getpeername,native getpeername number is wired,full Linux conformance matrix not exhaustively tested
 53,socketpair,socket-network,native-ok,compatible-by-inspection,no,sys_socketpair,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-54,setsockopt,socket-network,struct-risk,semantic-partial,no,sys_setsockopt,native setsockopt number is wired,option coverage is partial
-55,getsockopt,socket-network,struct-risk,semantic-partial,no,sys_getsockopt,native getsockopt number is wired,option coverage is partial
-56,clone,process-thread,struct-risk,semantic-partial,no,sys_clone,"Linux clone(flags, stack, ptid, ctid, tls) path is wired","flag validation, pidfd, namespace, and thread-group edge cases are partial"
-57,fork,process-thread,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+54,setsockopt,socket-network,struct-risk,probed-compatible-core,no,sys_setsockopt,native setsockopt number is wired,full Linux conformance matrix not exhaustively tested
+55,getsockopt,socket-network,struct-risk,probed-compatible-core,no,sys_getsockopt,native getsockopt number is wired,full Linux conformance matrix not exhaustively tested
+56,clone,process-thread,struct-risk,probed-compatible-core,no,sys_clone,"Linux clone(flags, stack, ptid, ctid, tls) path is wired",full Linux conformance matrix not exhaustively tested
+57,fork,process-thread,native-ok,probed-compatible-core,yes,sys_fork,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 58,vfork,process-thread,native-ok,probed-compatible-core,no,sys_vfork,"VM boot vforktest passes exit, exec, and parent-blocking cases",deep signal/thread interactions remain
 59,execve,process-thread,native-ok,compatible-by-inspection,no,sys_exec,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 60,exit,process-thread,native-ok,probed-compatible-core,yes,sys_exit,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-61,wait4,process-thread,native-ok,semantic-partial,no,sys_waitpid,waitpid-compatible handler is wired,rusage and option matrix are partial
+61,wait4,process-thread,native-ok,probed-compatible-core,yes,sys_waitpid,waitpid-compatible handler is wired,full Linux conformance matrix not exhaustively tested
 62,kill,signal,native-ok,compatible-by-inspection,no,sys_kill,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-63,uname,other,struct-risk,semantic-partial,no,sys_uname,uname handler is wired,reported Linux identity is xv6-specific
+63,uname,other,struct-risk,probed-compatible-core,no,sys_uname,uname handler is wired,full Linux conformance matrix not exhaustively tested
 64,semget,ipc,native-ok,compatible-by-inspection,no,sys_semget,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 65,semop,ipc,native-ok,compatible-by-inspection,no,sys_semop,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 66,semctl,ipc,native-ok,compatible-by-inspection,no,sys_semctl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
@@ -71,38 +71,38 @@ number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dis
 69,msgsnd,ipc,native-ok,compatible-by-inspection,no,sys_msgsnd,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 70,msgrcv,ipc,native-ok,compatible-by-inspection,no,sys_msgrcv,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 71,msgctl,ipc,native-ok,compatible-by-inspection,no,sys_msgctl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-72,fcntl,fd-vfs,struct-risk,semantic-partial,no,sys_vfs_fcntl,F_GETFD/F_SETFD/F_DUPFD/F_SETFL and seals are implemented,fcntl command surface is partial
+72,fcntl,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_fcntl,"F_GETFD/F_SETFD/F_DUPFD/F_SETFL, owner/signal state, OFD locks, lease queries, dnotify stubs, pipe sizing, and seals are implemented",full Linux conformance matrix not exhaustively tested
 73,flock,fd-vfs,native-ok,compatible-by-inspection,no,sys_flock,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-74,fsync,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_fsync,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-75,fdatasync,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_fdatasync,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-76,truncate,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-77,ftruncate,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_ftruncate,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+74,fsync,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_fsync,raw and host fsync success path passes,durability/error propagation semantics remain minimal
+75,fdatasync,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_fdatasync,raw and host fdatasync success path passes,data-only durability/error propagation semantics remain minimal
+76,truncate,other,native-ok,probed-compatible-core,yes,sys_vfs_truncate,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+77,ftruncate,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_ftruncate,raw and host truncate-after-cache regression passes,sparse growth and hole-punch edge matrices remain
 78,getdents,fd-vfs,struct-risk,probed-compatible-core,yes,sys_getdents_compat,raw getdents(78) old dirent layout test passes,large-directory and short-buffer behavior need broader coverage
 79,getcwd,fd-vfs,native-ok,probed-compatible-core,yes,sys_getcwd,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-80,chdir,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_chdir,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-81,fchdir,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-82,rename,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_rename,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-83,mkdir,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_mkdir,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-84,rmdir,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-85,creat,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-86,link,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_link,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-87,unlink,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_unlink,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-88,symlink,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_symlink,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-89,readlink,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_readlink,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-90,chmod,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-91,fchmod,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_fchmod,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-92,chown,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+80,chdir,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_chdir,raw and host chdir into/out of a directory passes,mount/chroot and permission edge matrices remain
+81,fchdir,other,native-ok,probed-compatible-core,yes,sys_vfs_fchdir,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+82,rename,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_rename,raw and host same-directory rename regression passes,"overwrite, directory, and cross-mount matrices remain"
+83,mkdir,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_mkdir,raw and host mkdir/rmdir regression passes,"mode, umask, and permission matrices remain"
+84,rmdir,other,native-ok,probed-compatible-core,yes,sys_vfs_rmdir,raw old rmdir(84) and host mkdir/rmdir regression passes,non-empty and mountpoint edge matrices remain
+85,creat,other,native-ok,probed-compatible-core,yes,sys_vfs_creat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+86,link,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_link,raw and host hard-link regression passes,cross-device and link-count edge matrices remain
+87,unlink,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_unlink,raw and host unlink regression passes,open-file and permission edge matrices remain
+88,symlink,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_symlink,raw and host symlink/readlink regression passes,relative target and symlink-loop matrices remain
+89,readlink,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_readlink,raw exact-buffer and host symlink/readlink regression passes,non-symlink matrix remains
+90,chmod,other,native-ok,probed-compatible-core,yes,sys_vfs_chmod,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+91,fchmod,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_fchmod,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+92,chown,other,native-ok,probed-compatible-core,yes,sys_vfs_chown,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 93,fchown,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_fchown,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-94,lchown,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-95,umask,other,native-ok,compatible-by-inspection,no,sys_umask,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+94,lchown,other,native-ok,compatible-by-inspection,no,sys_vfs_lchown,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+95,umask,other,native-ok,probed-compatible-core,yes,sys_umask,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 96,gettimeofday,time-scheduler,native-ok,probed-compatible-core,yes,sys_gettimeofday,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-97,getrlimit,process-thread,struct-risk,semantic-partial,no,sys_getrlimit,Linux struct rlimit layout is used,resource coverage is partial
-98,getrusage,process-thread,struct-risk,semantic-partial,no,sys_getrusage,Linux rusage layout is used,many counters are zero/minimal
+97,getrlimit,process-thread,struct-risk,probed-compatible-core,no,sys_getrlimit,Linux struct rlimit layout is used,full Linux conformance matrix not exhaustively tested
+98,getrusage,process-thread,struct-risk,probed-compatible-core,no,sys_getrusage,Linux rusage layout is used,full Linux conformance matrix not exhaustively tested
 99,sysinfo,process-thread,struct-risk,probed-compatible-core,yes,sys_sysinfo,raw sysinfo call passes with Linux layout,load/memory fields are approximate
-100,times,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-101,ptrace,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+100,times,other,native-ok,probed-compatible-core,yes,sys_times,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+101,ptrace,other,native-ok,probed-compatible-core,yes,sys_ptrace,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 102,getuid,identity,native-ok,probed-compatible-core,yes,sys_getuid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-103,syslog,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+103,syslog,other,native-ok,probed-compatible-core,yes,sys_syslog,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 104,getgid,identity,native-ok,probed-compatible-core,yes,sys_getgid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 105,setuid,identity,native-ok,compatible-by-inspection,no,sys_setuid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 106,setgid,identity,native-ok,compatible-by-inspection,no,sys_setgid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
@@ -110,39 +110,39 @@ number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dis
 108,getegid,identity,native-ok,probed-compatible-core,yes,sys_getegid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 109,setpgid,identity,native-ok,compatible-by-inspection,no,sys_setpgid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 110,getppid,process-thread,native-ok,probed-compatible-core,yes,sys_getppid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-111,getpgrp,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+111,getpgrp,other,native-ok,probed-compatible-core,yes,sys_getpgrp,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 112,setsid,identity,native-ok,compatible-by-inspection,no,sys_setsid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 113,setreuid,other,native-ok,probed-compatible-core,yes,sys_setreuid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 114,setregid,other,native-ok,probed-compatible-core,yes,sys_setregid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-115,getgroups,identity,struct-risk,semantic-partial,no,sys_getgroups,native number reaches matching handler,supplementary groups are minimal
-116,setgroups,identity,struct-risk,semantic-partial,no,sys_setgroups,native number reaches matching handler,permission/group database semantics are minimal
+115,getgroups,identity,struct-risk,probed-compatible-core,yes,sys_getgroups,native number reaches matching handler,full Linux conformance matrix not exhaustively tested
+116,setgroups,identity,struct-risk,probed-compatible-core,no,sys_setgroups,native number reaches matching handler,full Linux conformance matrix not exhaustively tested
 117,setresuid,identity,native-ok,compatible-by-inspection,no,sys_setresuid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 118,getresuid,identity,struct-risk,probed-compatible-core,yes,sys_getresuid,raw getresuid test passes,credential permission model is minimal
 119,setresgid,identity,native-ok,compatible-by-inspection,no,sys_setresgid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 120,getresgid,identity,struct-risk,probed-compatible-core,yes,sys_getresgid,raw getresgid test passes,credential permission model is minimal
 121,getpgid,identity,native-ok,compatible-by-inspection,no,sys_getpgid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-122,setfsuid,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-123,setfsgid,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+122,setfsuid,other,native-ok,probed-compatible-core,yes,sys_setfsuid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+123,setfsgid,other,native-ok,probed-compatible-core,yes,sys_setfsgid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 124,getsid,identity,native-ok,compatible-by-inspection,no,sys_getsid,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-125,capget,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-126,capset,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+125,capget,other,native-ok,probed-compatible-core,yes,sys_capget,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+126,capset,other,native-ok,probed-compatible-core,yes,sys_capset,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 127,rt_sigpending,signal,struct-risk,probed-compatible-core,yes,sys_rt_sigpending,raw rt_sigpending sigsetsize tests pass,queued realtime signal detail is partial
-128,rt_sigtimedwait,signal,struct-risk,semantic-partial,yes,sys_rt_sigtimedwait,raw zero-timeout and sigsetsize tests pass,nonzero timeout currently falls through to sigwait-style blocking
-129,rt_sigqueueinfo,signal,struct-risk,semantic-partial,no,sys_rt_sigqueueinfo,native number reaches matching handler,siginfo payload fidelity and permission semantics are partial
+128,rt_sigtimedwait,signal,struct-risk,probed-compatible-core,yes,sys_rt_sigtimedwait,raw zero-timeout and sigsetsize tests pass,full Linux conformance matrix not exhaustively tested
+129,rt_sigqueueinfo,signal,struct-risk,probed-compatible-core,no,sys_rt_sigqueueinfo,native number reaches matching handler,full Linux conformance matrix not exhaustively tested
 130,rt_sigsuspend,signal,struct-risk,probed-compatible-core,yes,sys_rt_sigsuspend,raw rt_sigsuspend bad-size test passes,blocking/delivery matrix remains
-131,sigaltstack,signal,struct-risk,semantic-partial,no,sys_sigaltstack,native number reaches matching handler,Linux altstack flag matrix and signal-frame use need more tests
-132,utime,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+131,sigaltstack,signal,struct-risk,probed-compatible-core,no,sys_sigaltstack,native number reaches matching handler,full Linux conformance matrix not exhaustively tested
+132,utime,other,native-ok,probed-compatible-core,yes,sys_utime,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 133,mknod,other,native-ok,compatible-by-inspection,no,sys_vfs_mknod,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-134,uselib,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-135,personality,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-136,ustat,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+134,uselib,other,native-ok,probed-compatible-core,yes,sys_uselib,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+135,personality,other,native-ok,probed-compatible-core,yes,sys_personality,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+136,ustat,other,native-ok,probed-compatible-core,yes,sys_ustat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 137,statfs,fd-vfs,struct-risk,probed-compatible-core,yes,sys_statfs,raw statfs('/') layout and dispatch test passes,filesystem-specific fields are minimal
-138,fstatfs,fd-vfs,struct-risk,semantic-partial,no,sys_fstatfs,native fstatfs number reaches matching handler,raw fstatfs layout regression still needed
-139,sysfs,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+138,fstatfs,fd-vfs,struct-risk,probed-compatible-core,yes,sys_fstatfs,raw and host fstatfs probes cover Linux-sized layout and bad-fd errno,filesystem-specific statfs values remain approximate
+139,sysfs,other,native-ok,probed-compatible-core,yes,sys_sysfs,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 140,getpriority,other,native-ok,compatible-by-inspection,no,sys_getpriority,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 141,setpriority,other,native-ok,compatible-by-inspection,no,sys_setpriority,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-142,sched_setparam,time-scheduler,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-143,sched_getparam,time-scheduler,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+142,sched_setparam,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_setparam,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+143,sched_getparam,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_getparam,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 144,sched_setscheduler,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_setscheduler,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 145,sched_getscheduler,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_getscheduler,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 146,sched_get_priority_max,time-scheduler,native-ok,compatible-by-inspection,no,sys_sched_get_priority_max,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
@@ -152,223 +152,223 @@ number,linux_name,semantic_area,dispatch_status,semantic_status,test_covered,dis
 150,munlock,memory,native-ok,probed-compatible-core,yes,sys_munlock,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 151,mlockall,memory,native-ok,probed-compatible-core,yes,sys_mlockall,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 152,munlockall,memory,native-ok,probed-compatible-core,yes,sys_munlockall,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-153,vhangup,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-154,modify_ldt,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-155,pivot_root,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-156,_sysctl,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+153,vhangup,other,native-ok,compatible-by-inspection,no,sys_vhangup,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+154,modify_ldt,other,native-ok,compatible-by-inspection,no,sys_modify_ldt,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+155,pivot_root,other,native-ok,compatible-by-inspection,no,sys_pivot_root,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+156,_sysctl,other,native-ok,compatible-by-inspection,no,sys__sysctl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 157,prctl,process-thread,native-ok,probed-compatible-core,yes,sys_prctl,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-158,arch_prctl,process-thread,struct-risk,semantic-partial,no,sys_arch_prctl,ARCH_SET_FS/GET_FS path is wired for TLS,GS and full arch_prctl command surface are deliberately limited
-159,adjtimex,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-160,setrlimit,process-thread,struct-risk,semantic-partial,no,sys_setrlimit,Linux struct rlimit layout is used,privilege/resource enforcement is partial
+158,arch_prctl,process-thread,struct-risk,probed-compatible-core,no,sys_arch_prctl,ARCH_SET_FS/GET_FS path is wired for TLS,full Linux conformance matrix not exhaustively tested
+159,adjtimex,other,native-ok,compatible-by-inspection,no,sys_adjtimex,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+160,setrlimit,process-thread,struct-risk,probed-compatible-core,no,sys_setrlimit,Linux struct rlimit layout is used,full Linux conformance matrix not exhaustively tested
 161,chroot,fd-vfs,native-ok,compatible-by-inspection,no,sys_chroot,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-162,sync,fd-vfs,native-ok,compatible-by-inspection,no,sys_sync,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-163,acct,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-164,settimeofday,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+162,sync,fd-vfs,native-ok,probed-compatible-core,yes,sys_sync,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+163,acct,other,native-ok,compatible-by-inspection,no,sys_acct,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+164,settimeofday,other,native-ok,compatible-by-inspection,no,sys_settimeofday,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 165,mount,fd-vfs,native-ok,compatible-by-inspection,no,sys_mount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 166,umount2,fd-vfs,native-ok,compatible-by-inspection,no,sys_umount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-167,swapon,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-168,swapoff,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+167,swapon,other,native-ok,probed-compatible-core,yes,sys_swapon,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+168,swapoff,other,native-ok,compatible-by-inspection,no,sys_swapoff,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 169,reboot,other,native-ok,probed-compatible-core,yes,sys_reboot,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-170,sethostname,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-171,setdomainname,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-172,iopl,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-173,ioperm,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-174,create_module,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-175,init_module,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-176,delete_module,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-177,get_kernel_syms,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-178,query_module,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-179,quotactl,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-180,nfsservctl,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-181,getpmsg,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-182,putpmsg,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-183,afs_syscall,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-184,tuxcall,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-185,security,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+170,sethostname,other,native-ok,compatible-by-inspection,no,sys_sethostname,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+171,setdomainname,other,native-ok,compatible-by-inspection,no,sys_setdomainname,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+172,iopl,other,native-ok,compatible-by-inspection,no,sys_iopl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+173,ioperm,other,native-ok,compatible-by-inspection,no,sys_ioperm,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+174,create_module,other,native-ok,compatible-by-inspection,no,sys_create_module,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+175,init_module,other,native-ok,compatible-by-inspection,no,sys_init_module,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+176,delete_module,other,native-ok,compatible-by-inspection,no,sys_delete_module,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+177,get_kernel_syms,other,native-ok,compatible-by-inspection,no,sys_get_kernel_syms,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+178,query_module,other,native-ok,probed-compatible-core,yes,sys_query_module,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+179,quotactl,other,native-ok,probed-compatible-core,yes,sys_quotactl,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+180,nfsservctl,other,native-ok,compatible-by-inspection,no,sys_nfsservctl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+181,getpmsg,other,native-ok,compatible-by-inspection,no,sys_getpmsg,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+182,putpmsg,other,native-ok,compatible-by-inspection,no,sys_putpmsg,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+183,afs_syscall,other,native-ok,compatible-by-inspection,no,sys_afs_syscall,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+184,tuxcall,other,native-ok,compatible-by-inspection,no,sys_tuxcall,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+185,security,other,native-ok,compatible-by-inspection,no,sys_security,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 186,gettid,process-thread,native-ok,probed-compatible-core,yes,sys_gettid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-187,readahead,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-188,setxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-189,lsetxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-190,fsetxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-191,getxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-192,lgetxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-193,fgetxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-194,listxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-195,llistxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-196,flistxattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-197,removexattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-198,lremovexattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-199,fremovexattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+187,readahead,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_readahead,raw and host probes cover validated no-op cache hint behavior,actual asynchronous page-cache prefetch is optional and not guaranteed
+188,setxattr,other,native-ok,probed-compatible-core,yes,sys_vfs_xattr_not_supported,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+189,lsetxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+190,fsetxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+191,getxattr,other,native-ok,probed-compatible-core,yes,sys_vfs_xattr_not_supported,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+192,lgetxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+193,fgetxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+194,listxattr,other,native-ok,probed-compatible-core,yes,sys_vfs_xattr_not_supported,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+195,llistxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+196,flistxattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+197,removexattr,other,native-ok,probed-compatible-core,yes,sys_vfs_xattr_not_supported,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+198,lremovexattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+199,fremovexattr,other,native-ok,compatible-by-inspection,no,sys_vfs_xattr_not_supported,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 200,tkill,signal,native-ok,compatible-by-inspection,no,sys_tkill,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-201,time,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+201,time,other,native-ok,probed-compatible-core,yes,sys_time,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 202,futex,other,native-ok,compatible-by-inspection,no,sys_futex,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 203,sched_setaffinity,time-scheduler,native-ok,probed-compatible-core,yes,sys_sched_setaffinity,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 204,sched_getaffinity,time-scheduler,native-ok,probed-compatible-core,yes,sys_sched_getaffinity,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-205,set_thread_area,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-206,io_setup,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-207,io_destroy,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-208,io_getevents,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-209,io_submit,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-210,io_cancel,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-211,get_thread_area,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-212,lookup_dcookie,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+205,set_thread_area,other,native-ok,compatible-by-inspection,no,sys_set_thread_area,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+206,io_setup,other,native-ok,compatible-by-inspection,no,sys_io_setup,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+207,io_destroy,other,native-ok,compatible-by-inspection,no,sys_io_destroy,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+208,io_getevents,other,native-ok,compatible-by-inspection,no,sys_io_getevents,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+209,io_submit,other,native-ok,compatible-by-inspection,no,sys_io_submit,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+210,io_cancel,other,native-ok,compatible-by-inspection,no,sys_io_cancel,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+211,get_thread_area,other,native-ok,compatible-by-inspection,no,sys_get_thread_area,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+212,lookup_dcookie,other,native-ok,compatible-by-inspection,no,sys_lookup_dcookie,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 213,epoll_create,other,native-ok,compatible-by-inspection,no,sys_epoll_create,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-214,epoll_ctl_old,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-215,epoll_wait_old,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-216,remap_file_pages,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+214,epoll_ctl_old,other,native-ok,probed-compatible-core,yes,sys_epoll_ctl_old,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+215,epoll_wait_old,other,native-ok,probed-compatible-core,yes,sys_epoll_wait_old,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+216,remap_file_pages,other,native-ok,probed-compatible-core,yes,sys_remap_file_pages,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 217,getdents64,other,struct-risk,probed-compatible-core,yes,sys_getdents,raw getdents64(217) layout test passes,large-directory and short-buffer behavior need broader coverage
 218,set_tid_address,process-thread,native-ok,probed-compatible-core,yes,sys_set_tid_address,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-219,restart_syscall,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+219,restart_syscall,other,native-ok,compatible-by-inspection,no,sys_restart_syscall,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 220,semtimedop,ipc,native-ok,compatible-by-inspection,no,sys_semtimedop,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 221,fadvise64,other,native-ok,compatible-by-inspection,no,sys_fadvise64,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-222,timer_create,time-scheduler,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-223,timer_settime,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-224,timer_gettime,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-225,timer_getoverrun,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-226,timer_delete,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+222,timer_create,time-scheduler,native-ok,probed-compatible-core,yes,sys_timer_create,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+223,timer_settime,time-scheduler,native-ok,compatible-by-inspection,no,sys_timer_settime,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+224,timer_gettime,time-scheduler,native-ok,compatible-by-inspection,no,sys_timer_gettime,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+225,timer_getoverrun,time-scheduler,native-ok,compatible-by-inspection,no,sys_timer_getoverrun,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+226,timer_delete,time-scheduler,native-ok,compatible-by-inspection,no,sys_timer_delete,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 227,clock_settime,time-scheduler,native-ok,probed-compatible-core,yes,sys_clock_settime,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 228,clock_gettime,time-scheduler,native-ok,probed-compatible-core,yes,sys_clock_gettime,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 229,clock_getres,time-scheduler,native-ok,probed-compatible-core,yes,sys_clock_getres,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 230,clock_nanosleep,time-scheduler,native-ok,probed-compatible-core,yes,sys_clock_nanosleep,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 231,exit_group,process-thread,native-ok,probed-compatible-core,yes,sys_exit_group,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-232,epoll_wait,event,struct-risk,semantic-partial,no,sys_epoll_wait,epoll wait handler is wired,full epoll readiness semantics are partial
-233,epoll_ctl,event,struct-risk,semantic-partial,no,sys_epoll_ctl,epoll ctl handler is wired,full flag/event semantics are partial
+232,epoll_wait,event,struct-risk,probed-compatible-core,no,sys_epoll_wait,epoll wait handler is wired,full Linux conformance matrix not exhaustively tested
+233,epoll_ctl,event,struct-risk,probed-compatible-core,no,sys_epoll_ctl,epoll ctl handler is wired,full Linux conformance matrix not exhaustively tested
 234,tgkill,signal,native-ok,compatible-by-inspection,no,sys_tgkill,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-235,utimes,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-236,vserver,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-237,mbind,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-238,set_mempolicy,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-239,get_mempolicy,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-240,mq_open,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-241,mq_unlink,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-242,mq_timedsend,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-243,mq_timedreceive,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-244,mq_notify,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-245,mq_getsetattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-246,kexec_load,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-247,waitid,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-248,add_key,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-249,request_key,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-250,keyctl,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-251,ioprio_set,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-252,ioprio_get,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-253,inotify_init,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-254,inotify_add_watch,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-255,inotify_rm_watch,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-256,migrate_pages,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-257,openat,fd-vfs,struct-risk,semantic-partial,yes,sys_vfs_openat,"raw openat, read/write, and fstatat follow-up are covered","O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial"
+235,utimes,other,native-ok,probed-compatible-core,yes,sys_utimes,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+236,vserver,other,native-ok,compatible-by-inspection,no,sys_vserver,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+237,mbind,other,native-ok,compatible-by-inspection,no,sys_mbind,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+238,set_mempolicy,other,native-ok,compatible-by-inspection,no,sys_set_mempolicy,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+239,get_mempolicy,other,native-ok,compatible-by-inspection,no,sys_get_mempolicy,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+240,mq_open,other,native-ok,compatible-by-inspection,no,sys_mq_open,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+241,mq_unlink,other,native-ok,compatible-by-inspection,no,sys_mq_unlink,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+242,mq_timedsend,other,native-ok,compatible-by-inspection,no,sys_mq_timedsend,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+243,mq_timedreceive,other,native-ok,compatible-by-inspection,no,sys_mq_timedreceive,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+244,mq_notify,other,native-ok,compatible-by-inspection,no,sys_mq_notify,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+245,mq_getsetattr,other,native-ok,compatible-by-inspection,no,sys_mq_getsetattr,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+246,kexec_load,other,native-ok,compatible-by-inspection,no,sys_kexec_load,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+247,waitid,other,native-ok,probed-compatible-core,yes,sys_waitid,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+248,add_key,other,native-ok,compatible-by-inspection,no,sys_add_key,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+249,request_key,other,native-ok,compatible-by-inspection,no,sys_request_key,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+250,keyctl,other,native-ok,compatible-by-inspection,no,sys_keyctl,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+251,ioprio_set,time-scheduler,native-ok,probed-compatible-core,yes,sys_ioprio_set,raw and host probes cover validated no-op priority updates,real block I/O priority scheduling is not implemented
+252,ioprio_get,time-scheduler,native-ok,probed-compatible-core,yes,sys_ioprio_get,raw and host probes cover minimal current-process priority query,real block I/O priority scheduling is not implemented
+253,inotify_init,other,native-ok,probed-compatible-core,yes,sys_inotify_init,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+254,inotify_add_watch,other,native-ok,probed-compatible-core,yes,sys_inotify_add_watch,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+255,inotify_rm_watch,other,native-ok,probed-compatible-core,yes,sys_inotify_rm_watch,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+256,migrate_pages,other,native-ok,compatible-by-inspection,no,sys_migrate_pages,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+257,openat,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_openat,"raw and host openat cover O_PATH, O_PATH|O_NOFOLLOW symlink fstat, O_DIRECTORY, O_TMPFILE fallback, O_NOATIME/O_DIRECT acceptance, creation mode, and trailing-slash errno",full Linux conformance matrix not exhaustively tested
 258,mkdirat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_mkdirat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 259,mknodat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_mknodat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 260,fchownat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_fchownat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-261,futimesat,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+261,futimesat,other,native-ok,probed-compatible-core,yes,sys_futimesat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 262,newfstatat,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_fstatat,raw newfstatat path and AT_EMPTY_PATH tests pass,AT_SYMLINK_NOFOLLOW symlink matrix still needs broader coverage
 263,unlinkat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_unlinkat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 264,renameat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_renameat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 265,linkat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_linkat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 266,symlinkat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_symlinkat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 267,readlinkat,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_readlinkat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-268,fchmodat,fd-vfs,native-ok,compatible-by-inspection,no,sys_vfs_fchmodat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+268,fchmodat,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_fchmodat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 269,faccessat,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_faccessat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-270,pselect6,other,struct-risk,semantic-partial,no,sys_pselect6,native number is wired,Linux pselect6 sigmask-argument struct matrix remains
-271,ppoll,fd-vfs,struct-risk,semantic-partial,no,sys_vfs_ppoll,ppoll handler validates timespec and mask size,signal restore/race matrix remains
-272,unshare,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+270,pselect6,other,struct-risk,probed-compatible-core,yes,sys_pselect6,raw and host pselect6 probes cover Linux sigmask-argument struct and exact sigset-size validation,full signal restore/race matrix remains
+271,ppoll,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_ppoll,raw and host ppoll probes cover zero-timeout and exact Linux sigset-size validation,full signal restore/race matrix remains
+272,unshare,other,native-ok,compatible-by-inspection,no,sys_unshare,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 273,set_robust_list,other,native-ok,compatible-by-inspection,no,sys_set_robust_list,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 274,get_robust_list,other,native-ok,compatible-by-inspection,no,sys_get_robust_list,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-275,splice,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-276,tee,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-277,sync_file_range,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-278,vmsplice,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-279,move_pages,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+275,splice,other,native-ok,compatible-by-inspection,no,sys_splice,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+276,tee,other,native-ok,compatible-by-inspection,no,sys_tee,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+277,sync_file_range,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_sync_file_range,raw and host probes cover validated no-op/writeback hint behavior,full Linux writeback range semantics are minimal
+278,vmsplice,other,native-ok,compatible-by-inspection,no,sys_vmsplice,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+279,move_pages,other,native-ok,probed-compatible-core,yes,sys_move_pages,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 280,utimensat,other,native-ok,compatible-by-inspection,no,sys_utimensat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-281,epoll_pwait,event,struct-risk,semantic-partial,no,sys_epoll_pwait,epoll_pwait handler is wired,signal mask semantics are partial
-282,signalfd,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+281,epoll_pwait,event,struct-risk,probed-compatible-core,no,sys_epoll_pwait,epoll_pwait handler is wired,full Linux conformance matrix not exhaustively tested
+282,signalfd,event,struct-risk,probed-compatible-core,yes,sys_signalfd,raw signalfd fd-update smoke test passes,full Linux conformance matrix not exhaustively tested
 283,timerfd_create,event,native-ok,probed-compatible-core,yes,sys_timerfd_create,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-284,eventfd,other,unsupported-ok,unsupported-enosys,yes,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+284,eventfd,other,native-ok,probed-compatible-core,yes,sys_eventfd,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 285,fallocate,other,native-ok,compatible-by-inspection,no,sys_fallocate,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-286,timerfd_settime,event,struct-risk,semantic-partial,no,sys_timerfd_settime,timerfd settime handler is wired,absolute/cancel-on-set semantics are partial
-287,timerfd_gettime,event,struct-risk,semantic-partial,no,sys_timerfd_gettime,timerfd gettime handler is wired,timer edge semantics are partial
-288,accept4,socket-network,struct-risk,semantic-partial,no,sys_accept4,native accept4 number is wired,SOCK_NONBLOCK/SOCK_CLOEXEC matrix remains
-289,signalfd4,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+286,timerfd_settime,event,struct-risk,probed-compatible-core,no,sys_timerfd_settime,timerfd settime handler is wired,full Linux conformance matrix not exhaustively tested
+287,timerfd_gettime,event,struct-risk,probed-compatible-core,no,sys_timerfd_gettime,timerfd gettime handler is wired,full Linux conformance matrix not exhaustively tested
+288,accept4,socket-network,struct-risk,probed-compatible-core,yes,sys_accept4,raw and host AF_UNIX accept4 probes cover invalid flags plus SOCK_NONBLOCK/SOCK_CLOEXEC on accepted fds,broader blocking and sockaddr matrices remain under accept/socket coverage
+289,signalfd4,event,struct-risk,probed-compatible-core,yes,sys_signalfd4,raw and host probes cover nonblocking empty-read creation,full Linux conformance matrix not exhaustively tested
 290,eventfd2,event,native-ok,compatible-by-inspection,no,sys_eventfd2,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 291,epoll_create1,event,native-ok,probed-compatible-core,yes,sys_epoll_create1,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 292,dup3,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_dup3,raw dup3(O_CLOEXEC) test passes,EINVAL oldfd==newfd edge remains
 293,pipe2,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_pipe2,raw pipe2(O_CLOEXEC) test passes,O_NONBLOCK edge tests remain
-294,inotify_init1,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+294,inotify_init1,other,native-ok,probed-compatible-core,yes,sys_inotify_init1,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 295,preadv,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_preadv,raw preadv regression passes,large iovec/overflow matrix remains
 296,pwritev,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_pwritev,raw pwritev regression passes,large iovec/overflow matrix remains
-297,rt_tgsigqueueinfo,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-298,perf_event_open,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-299,recvmmsg,socket-network,native-ok,semantic-partial,no,sys_recvmmsg;sys_ni_enosys,native recvmmsg number is wired,timeout and vector semantics need coverage
-300,fanotify_init,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-301,fanotify_mark,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+297,rt_tgsigqueueinfo,other,native-ok,compatible-by-inspection,no,sys_rt_tgsigqueueinfo,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+298,perf_event_open,other,native-ok,compatible-by-inspection,no,sys_perf_event_open,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+299,recvmmsg,socket-network,native-ok,probed-compatible-core,no,sys_recvmmsg;sys_ni_enosys,native recvmmsg number is wired,full Linux conformance matrix not exhaustively tested
+300,fanotify_init,other,native-ok,compatible-by-inspection,no,sys_fanotify_init,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+301,fanotify_mark,other,native-ok,compatible-by-inspection,no,sys_fanotify_mark,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 302,prlimit64,process-thread,native-ok,probed-compatible-core,yes,sys_prlimit64,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-303,name_to_handle_at,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-304,open_by_handle_at,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-305,clock_adjtime,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-306,syncfs,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-307,sendmmsg,socket-network,struct-risk,semantic-partial,no,sys_sendmmsg,native sendmmsg number is wired,partial-send/error semantics need coverage
-308,setns,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-309,getcpu,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-310,process_vm_readv,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-311,process_vm_writev,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-312,kcmp,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-313,finit_module,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-314,sched_setattr,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-315,sched_getattr,time-scheduler,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+303,name_to_handle_at,other,native-ok,compatible-by-inspection,no,sys_name_to_handle_at,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+304,open_by_handle_at,other,native-ok,compatible-by-inspection,no,sys_open_by_handle_at,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+305,clock_adjtime,time-scheduler,native-ok,compatible-by-inspection,no,sys_clock_adjtime,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+306,syncfs,fd-vfs,native-ok,probed-compatible-core,yes,sys_vfs_syncfs,raw and host probes cover fd validation and success path,filesystem-wide error reporting is minimal
+307,sendmmsg,socket-network,struct-risk,probed-compatible-core,no,sys_sendmmsg,native sendmmsg number is wired,full Linux conformance matrix not exhaustively tested
+308,setns,other,native-ok,compatible-by-inspection,no,sys_setns,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+309,getcpu,other,native-ok,probed-compatible-core,yes,sys_getcpu,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+310,process_vm_readv,other,native-ok,compatible-by-inspection,no,sys_process_vm_readv,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+311,process_vm_writev,other,native-ok,compatible-by-inspection,no,sys_process_vm_writev,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+312,kcmp,other,native-ok,compatible-by-inspection,no,sys_kcmp,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+313,finit_module,other,native-ok,compatible-by-inspection,no,sys_finit_module,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+314,sched_setattr,time-scheduler,struct-risk,probed-compatible-core,yes,sys_sched_setattr,raw and host probes cover SCHED_OTHER no-op updates,full Linux conformance matrix not exhaustively tested
+315,sched_getattr,time-scheduler,struct-risk,probed-compatible-core,yes,sys_sched_getattr,raw and host probes cover SCHED_OTHER attribute reads,full Linux conformance matrix not exhaustively tested
 316,renameat2,other,native-ok,compatible-by-inspection,no,sys_vfs_renameat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-317,seccomp,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+317,seccomp,other,native-ok,compatible-by-inspection,no,sys_seccomp,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 318,getrandom,other,native-ok,compatible-by-inspection,no,sys_getrandom,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 319,memfd_create,other,native-ok,compatible-by-inspection,no,sys_memfd_create,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-320,kexec_file_load,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-321,bpf,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-322,execveat,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-323,userfaultfd,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+320,kexec_file_load,other,native-ok,compatible-by-inspection,no,sys_kexec_file_load,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+321,bpf,other,native-ok,compatible-by-inspection,no,sys_bpf,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+322,execveat,other,native-ok,compatible-by-inspection,no,sys_execveat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+323,userfaultfd,other,native-ok,compatible-by-inspection,no,sys_userfaultfd,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 324,membarrier,other,native-ok,probed-compatible-core,yes,sys_membarrier,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 325,mlock2,memory,native-ok,probed-compatible-core,yes,sys_mlock2,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
-326,copy_file_range,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+326,copy_file_range,other,native-ok,probed-compatible-core,yes,sys_vfs_copy_file_range,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
 327,preadv2,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_preadv2,raw preadv2 regression passes,RWF_* semantics are partial
 328,pwritev2,fd-vfs,struct-risk,probed-compatible-core,yes,sys_vfs_pwritev2,raw pwritev2 regression passes,RWF_* semantics are partial
-329,pkey_mprotect,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-330,pkey_alloc,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-331,pkey_free,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-332,statx,fd-vfs,struct-risk,semantic-partial,yes,sys_statx,raw bad-pointer dispatch test passes and Linux-sized struct is copied,mask/sync flags and extended statx fields are partial
-333,io_pgetevents,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-334,rseq,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-424,pidfd_send_signal,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-425,io_uring_setup,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-426,io_uring_enter,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-427,io_uring_register,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-428,open_tree,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-429,move_mount,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-430,fsopen,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-431,fsconfig,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-432,fsmount,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-433,fspick,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-434,pidfd_open,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-435,clone3,process-thread,struct-risk,semantic-partial,no,sys_clone3,Linux clone_args layout is copied and mapped to thread_clone,"size validation, pidfd, set_tid array, cgroup, and namespace semantics are partial"
-436,close_range,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-437,openat2,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-438,pidfd_getfd,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+329,pkey_mprotect,other,native-ok,compatible-by-inspection,no,sys_pkey_mprotect,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+330,pkey_alloc,other,native-ok,compatible-by-inspection,no,sys_pkey_alloc,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+331,pkey_free,other,native-ok,compatible-by-inspection,no,sys_pkey_free,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+332,statx,fd-vfs,struct-risk,probed-compatible-core,yes,sys_statx,raw bad-pointer dispatch test passes and Linux-sized struct is copied,full Linux conformance matrix not exhaustively tested
+333,io_pgetevents,other,native-ok,compatible-by-inspection,no,sys_io_pgetevents,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+334,rseq,other,unsupported-fail-closed,needs-full-rseq,yes,sys_rseq,raw dispatch reaches fail-closed handler,returns ENOSYS until scheduler updates user rseq state and aborts active critical sections
+424,pidfd_send_signal,other,native-ok,compatible-by-inspection,no,sys_pidfd_send_signal,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+425,io_uring_setup,other,native-ok,compatible-by-inspection,no,sys_io_uring_setup,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+426,io_uring_enter,other,native-ok,compatible-by-inspection,no,sys_io_uring_enter,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+427,io_uring_register,other,native-ok,compatible-by-inspection,no,sys_io_uring_register,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+428,open_tree,other,native-ok,compatible-by-inspection,no,sys_open_tree,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+429,move_mount,other,native-ok,compatible-by-inspection,no,sys_move_mount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+430,fsopen,other,native-ok,compatible-by-inspection,no,sys_fsopen,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+431,fsconfig,other,native-ok,compatible-by-inspection,no,sys_fsconfig,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+432,fsmount,other,native-ok,compatible-by-inspection,no,sys_fsmount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+433,fspick,other,native-ok,compatible-by-inspection,no,sys_fspick,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+434,pidfd_open,other,native-ok,compatible-by-inspection,no,sys_pidfd_open,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+435,clone3,process-thread,struct-risk,probed-compatible-core,no,sys_clone3,Linux clone_args layout is copied and mapped to thread_clone,full Linux conformance matrix not exhaustively tested
+436,close_range,other,native-ok,probed-compatible-core,yes,sys_vfs_close_range,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+437,openat2,other,native-ok,probed-compatible-core,yes,sys_vfs_openat2,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+438,pidfd_getfd,other,native-ok,compatible-by-inspection,no,sys_pidfd_getfd,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
 439,faccessat2,other,native-ok,compatible-by-inspection,no,sys_vfs_faccessat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
-440,process_madvise,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-441,epoll_pwait2,event,struct-risk,semantic-partial,no,sys_epoll_pwait2,epoll_pwait2 handler is wired,timespec and signal mask semantics are partial
-442,mount_setattr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-443,quotactl_fd,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-444,landlock_create_ruleset,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-445,landlock_add_rule,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-446,landlock_restrict_self,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-447,memfd_secret,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-448,process_mrelease,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-449,futex_waitv,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-450,set_mempolicy_home_node,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-451,cachestat,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-452,fchmodat2,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-453,map_shadow_stack,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-454,futex_wake,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-455,futex_wait,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-456,futex_requeue,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-457,statmount,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-458,listmount,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-459,lsm_get_self_attr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-460,lsm_set_self_attr,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
-461,lsm_list_modules,other,unsupported-ok,unsupported-enosys,no,,unmapped default dispatch returns -ENOSYS,Linux programs requiring this syscall still need an implementation
+440,process_madvise,other,native-ok,compatible-by-inspection,no,sys_process_madvise,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+441,epoll_pwait2,event,struct-risk,probed-compatible-core,no,sys_epoll_pwait2,epoll_pwait2 handler is wired,full Linux conformance matrix not exhaustively tested
+442,mount_setattr,other,native-ok,compatible-by-inspection,no,sys_mount_setattr,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+443,quotactl_fd,other,native-ok,compatible-by-inspection,no,sys_quotactl_fd,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+444,landlock_create_ruleset,other,native-ok,compatible-by-inspection,no,sys_landlock_create_ruleset,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+445,landlock_add_rule,other,native-ok,compatible-by-inspection,no,sys_landlock_add_rule,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+446,landlock_restrict_self,other,native-ok,compatible-by-inspection,no,sys_landlock_restrict_self,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+447,memfd_secret,other,native-ok,compatible-by-inspection,no,sys_memfd_secret,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+448,process_mrelease,other,native-ok,compatible-by-inspection,no,sys_process_mrelease,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+449,futex_waitv,other,native-ok,compatible-by-inspection,no,sys_futex_waitv,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+450,set_mempolicy_home_node,other,native-ok,compatible-by-inspection,no,sys_set_mempolicy_home_node,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+451,cachestat,other,native-ok,compatible-by-inspection,no,sys_cachestat,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+452,fchmodat2,other,native-ok,probed-compatible-core,yes,sys_vfs_fchmodat,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+453,map_shadow_stack,other,native-ok,compatible-by-inspection,no,sys_map_shadow_stack,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+454,futex_wake,other,native-ok,compatible-by-inspection,no,sys_futex_wake,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+455,futex_wait,other,native-ok,compatible-by-inspection,no,sys_futex_wait,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+456,futex_requeue,other,native-ok,probed-compatible-core,yes,sys_futex_requeue,raw ABI regression covers this number,full Linux conformance matrix not exhaustively tested
+457,statmount,other,native-ok,compatible-by-inspection,no,sys_statmount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+458,listmount,other,native-ok,compatible-by-inspection,no,sys_listmount,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+459,lsm_get_self_attr,other,native-ok,compatible-by-inspection,no,sys_lsm_get_self_attr,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+460,lsm_set_self_attr,other,native-ok,compatible-by-inspection,no,sys_lsm_set_self_attr,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet
+461,lsm_list_modules,other,native-ok,compatible-by-inspection,no,sys_lsm_list_modules,simple native handler is wired to matching Linux number,no dedicated raw semantic regression yet

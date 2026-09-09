@@ -1,0 +1,86 @@
+#!/usr/bin/env expect
+
+set timeout 240
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/ttm-sg-table-proof"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/ttm-sg-table-proof.fs.img"
+set empty "$outdir/empty-startup"
+
+exec rm -f $runlog $tmpimg $empty
+exec cp $fsimg $tmpimg
+exec touch $empty
+catch { exec debugfs -w -R "rm /etc/startup" $tmpimg >/dev/null 2>@1 }
+exec debugfs -w -R "write $empty /etc/startup" $tmpimg >/dev/null 2>@1
+
+set env(DISPLAY_MODE) "gtk"
+set env(USE_KVM) "1"
+set env(QEMU_GPU) "virtio-vga-gl-primary"
+set env(QEMU_INPUT) "virtio"
+set env(QEMU_NET) "0"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 glsmoke=0 desktop=0 video=1280x800 ttm_sg_table_proof=1"
+
+log_file -a $runlog
+
+spawn timeout --foreground 240 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {root:/#} {}
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nTTM-SG-TABLE-FAIL crash log=$runlog"
+        exit 2
+    }
+    timeout {
+        puts "\nTTM-SG-TABLE-FAIL no-prompt log=$runlog"
+        exit 3
+    }
+    eof {
+        puts "\nTTM-SG-TABLE-FAIL early-eof log=$runlog"
+        exit 4
+    }
+}
+
+set saw_sg 0
+set saw_ok 0
+send {ttmtest; echo TTM_SG_TABLE_RC=$?; /bin/shutdown}
+send "\r"
+
+expect {
+    -re {ttmtest: ttm_sg_table_matrix[^\r\n]*status=PASS} {
+        set saw_sg 1
+        exp_continue
+    }
+    -re {ttmtest: ok[^\r\n]*} {
+        set saw_ok 1
+        exp_continue
+    }
+    -re {TTM_SG_TABLE_RC=0} {
+        if {$saw_sg && $saw_ok} {
+            puts "\nTTM-SG-TABLE-PASS log=$runlog"
+            catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+            exit 0
+        }
+        puts "\nTTM-SG-TABLE-FAIL missing-proof sg=$saw_sg ok=$saw_ok log=$runlog"
+        exit 5
+    }
+    -re {TTM_SG_TABLE_RC=[1-9][0-9]*} {
+        puts "\nTTM-SG-TABLE-FAIL rc log=$runlog"
+        exit 6
+    }
+    -re {panic|fatal page fault|coredump: generating} {
+        puts "\nTTM-SG-TABLE-FAIL crash log=$runlog"
+        exit 7
+    }
+    timeout {
+        puts "\nTTM-SG-TABLE-FAIL timeout log=$runlog"
+        exit 8
+    }
+    eof {
+        puts "\nTTM-SG-TABLE-FAIL eof log=$runlog"
+        exit 9
+    }
+}

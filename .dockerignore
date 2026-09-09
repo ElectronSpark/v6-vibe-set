@@ -8,10 +8,13 @@ cmake-build-*/
 **/CMakeFiles/
 **/CMakeCache.txt
 **/cmake_install.cmake
+ports/webkit/sysroot/
 *.o
 *.a
 *.so
 *.so.*
+!.docker-webkit-ref-sysroot/**/*.so
+!.docker-webkit-ref-sysroot/**/*.so.*
 *.img
 *.iso
 *.cpio

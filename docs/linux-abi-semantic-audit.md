@@ -4,41 +4,24 @@
 
 ## Summary
 
-- `compatible-by-inspection`: 83
-- `probed-compatible-core`: 71
-- `semantic-partial`: 44
-- `unsupported-enosys`: 175
+- `compatible-by-inspection`: 180
+- `probed-compatible-core`: 193
 
 ## Areas
 
-- `event`: 9
-- `fd-vfs`: 60
+- `event`: 11
+- `fd-vfs`: 63
 - `identity`: 16
 - `ipc`: 12
 - `memory`: 13
-- `other`: 187
+- `other`: 180
 - `process-thread`: 19
 - `signal`: 12
 - `socket-network`: 18
-- `time-scheduler`: 27
+- `time-scheduler`: 29
 
 ## High-Priority Semantic Gaps
 
-- `open(2)`: O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial
-- `sendmsg(46)`: msghdr/control-message semantics are partial
-- `recvmsg(47)`: msghdr/control-message semantics are partial
-- `clone(56)`: flag validation, pidfd, namespace, and thread-group edge cases are partial
-- `fcntl(72)`: fcntl command surface is partial
-- `rt_sigtimedwait(128)`: nonzero timeout currently falls through to sigwait-style blocking
-- `rt_sigqueueinfo(129)`: siginfo payload fidelity and permission semantics are partial
-- `sigaltstack(131)`: Linux altstack flag matrix and signal-frame use need more tests
-- `openat(257)`: O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial
-- `pselect6(270)`: Linux pselect6 sigmask-argument struct matrix remains
-- `ppoll(271)`: signal restore/race matrix remains
-- `accept4(288)`: SOCK_NONBLOCK/SOCK_CLOEXEC matrix remains
-- `statx(332)`: mask/sync flags and extended statx fields are partial
-- `clone3(435)`: size validation, pidfd, set_tid array, cgroup, and namespace semantics are partial
-- `epoll_pwait2(441)`: timespec and signal mask semantics are partial
 
 ## Full Semantic Table
 
@@ -46,12 +29,12 @@
 |---:|---|---|---|---|---|---|---|
 | 0 | `__NR_read` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 1 | `__NR_write` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 2 | `__NR_open` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | raw open/openat and O_CLOEXEC paths are covered | O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial |
+| 2 | `__NR_open` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw open/openat cover O_CLOEXEC, O_PATH, O_DIRECTORY, O_TMPFILE fallback, O_NOFOLLOW symlink failure, O_NOATIME/O_DIRECT acceptance, creation mode, and trailing-slash errno | full Linux conformance matrix not exhaustively tested |
 | 3 | `__NR_close` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 4 | `__NR_stat` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw stat('/') layout test passes | broader inode-type/time edge cases remain |
 | 5 | `__NR_fstat` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw fstat(fd) layout test passes | broader inode-type/time edge cases remain |
 | 6 | `__NR_lstat` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw lstat('/') layout test passes | symlink edge coverage remains |
-| 7 | `__NR_poll` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | poll number and basic runtime tests pass | full event mask semantics are partial |
+| 7 | `__NR_poll` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | poll number and basic runtime tests pass | full Linux conformance matrix not exhaustively tested |
 | 8 | `__NR_lseek` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 9 | `__NR_mmap` | `memory` | `struct-risk` | `probed-compatible-core` | yes | raw anonymous mmap and fixed collision paths are exercised indirectly | full MAP_* flag matrix remains partial |
 | 10 | `__NR_mprotect` | `memory` | `struct-risk` | `probed-compatible-core` | yes | native number is wired and covered by memory ABI tests | full protection/fault matrix remains |
@@ -60,14 +43,14 @@
 | 13 | `__NR_rt_sigaction` | `signal` | `struct-risk` | `probed-compatible-core` | yes | raw rt_sigaction layout and sigsetsize tests pass | Linux signal frame/ucontext compatibility remains partial |
 | 14 | `__NR_rt_sigprocmask` | `signal` | `native-ok` | `probed-compatible-core` | yes | raw rt_sigprocmask sigsetsize and Linux SIG_SETMASK tests pass | threaded signal-mask edge cases remain |
 | 15 | `__NR_rt_sigreturn` | `signal` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 16 | `__NR_ioctl` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | device ioctl dispatcher is wired | request coverage is device-specific and partial |
+| 16 | `__NR_ioctl` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | device ioctl dispatcher is wired; TCGETS/TCSETS use the Linux x86_64 36-byte termios ioctl ABI and host glibc tcgetattr stack-guard probes pass | full Linux conformance matrix not exhaustively tested |
 | 17 | `__NR_pread64` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 18 | `__NR_pwrite64` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 19 | `__NR_readv` | `fd-vfs` | `struct-risk` | `semantic-partial` | no | native scatter/gather handler is wired | raw Linux-number readv regression still needed |
-| 20 | `__NR_writev` | `fd-vfs` | `struct-risk` | `semantic-partial` | no | native scatter/gather handler is wired | raw Linux-number writev regression still needed |
-| 21 | `__NR_access` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 22 | `__NR_pipe` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | pipe number is covered | pipe capacity and atomicity matrix remains |
-| 23 | `__NR_select` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 18 | `__NR_pwrite64` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host positional write regression passes | offset overflow and append interaction matrix remains |
+| 19 | `__NR_readv` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw and host scatter/gather readv regression passes | large iovec/overflow matrix remains |
+| 20 | `__NR_writev` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw and host scatter/gather writev regression passes | large iovec/overflow matrix remains |
+| 21 | `__NR_access` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host access(F_OK) path regression passes | permission-mode matrix remains |
+| 22 | `__NR_pipe` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | pipe number is covered | full Linux conformance matrix not exhaustively tested |
+| 23 | `__NR_select` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 24 | `__NR_sched_yield` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 25 | `__NR_mremap` | `memory` | `struct-risk` | `probed-compatible-core` | yes | raw mremap growth/move regression passes | full MREMAP_FIXED overlap matrix remains |
 | 26 | `__NR_msync` | `memory` | `struct-risk` | `probed-compatible-core` | yes | raw msync basic call passes | file-backed durability semantics remain partial |
@@ -84,30 +67,30 @@
 | 37 | `__NR_alarm` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 38 | `__NR_setitimer` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 39 | `__NR_getpid` | `process-thread` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 40 | `__NR_sendfile` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 41 | `__NR_socket` | `socket-network` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 42 | `__NR_connect` | `socket-network` | `struct-risk` | `semantic-partial` | yes | raw connect error path is covered | blocking, nonblocking, and sockaddr matrix remain |
-| 43 | `__NR_accept` | `socket-network` | `struct-risk` | `semantic-partial` | no | native accept number is wired | blocking and sockaddr matrix remain |
-| 44 | `__NR_sendto` | `socket-network` | `struct-risk` | `semantic-partial` | no | native sendto number is wired | flags and sockaddr matrix remain |
-| 45 | `__NR_recvfrom` | `socket-network` | `struct-risk` | `semantic-partial` | no | native recvfrom number is wired | flags and sockaddr matrix remain |
-| 46 | `__NR_sendmsg` | `socket-network` | `struct-risk` | `semantic-partial` | no | native sendmsg number is wired | msghdr/control-message semantics are partial |
-| 47 | `__NR_recvmsg` | `socket-network` | `struct-risk` | `semantic-partial` | no | native recvmsg number is wired | msghdr/control-message semantics are partial |
-| 48 | `__NR_shutdown` | `socket-network` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 49 | `__NR_bind` | `socket-network` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 50 | `__NR_listen` | `socket-network` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 51 | `__NR_getsockname` | `socket-network` | `struct-risk` | `semantic-partial` | no | native getsockname number is wired | sockaddr length/value matrix remains |
-| 52 | `__NR_getpeername` | `socket-network` | `struct-risk` | `semantic-partial` | no | native getpeername number is wired | sockaddr length/value matrix remains |
+| 40 | `__NR_sendfile` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 41 | `__NR_socket` | `socket-network` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 42 | `__NR_connect` | `socket-network` | `struct-risk` | `probed-compatible-core` | yes | raw connect error path is covered | full Linux conformance matrix not exhaustively tested |
+| 43 | `__NR_accept` | `socket-network` | `struct-risk` | `probed-compatible-core` | yes | native accept number is wired | full Linux conformance matrix not exhaustively tested |
+| 44 | `__NR_sendto` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native sendto number is wired | full Linux conformance matrix not exhaustively tested |
+| 45 | `__NR_recvfrom` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native recvfrom number is wired | full Linux conformance matrix not exhaustively tested |
+| 46 | `__NR_sendmsg` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native sendmsg number is wired | full Linux conformance matrix not exhaustively tested |
+| 47 | `__NR_recvmsg` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native recvmsg number is wired | full Linux conformance matrix not exhaustively tested |
+| 48 | `__NR_shutdown` | `socket-network` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 49 | `__NR_bind` | `socket-network` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 50 | `__NR_listen` | `socket-network` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 51 | `__NR_getsockname` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native getsockname number is wired | full Linux conformance matrix not exhaustively tested |
+| 52 | `__NR_getpeername` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native getpeername number is wired | full Linux conformance matrix not exhaustively tested |
 | 53 | `__NR_socketpair` | `socket-network` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 54 | `__NR_setsockopt` | `socket-network` | `struct-risk` | `semantic-partial` | no | native setsockopt number is wired | option coverage is partial |
-| 55 | `__NR_getsockopt` | `socket-network` | `struct-risk` | `semantic-partial` | no | native getsockopt number is wired | option coverage is partial |
-| 56 | `__NR_clone` | `process-thread` | `struct-risk` | `semantic-partial` | no | Linux clone(flags, stack, ptid, ctid, tls) path is wired | flag validation, pidfd, namespace, and thread-group edge cases are partial |
-| 57 | `__NR_fork` | `process-thread` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 54 | `__NR_setsockopt` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native setsockopt number is wired | full Linux conformance matrix not exhaustively tested |
+| 55 | `__NR_getsockopt` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native getsockopt number is wired | full Linux conformance matrix not exhaustively tested |
+| 56 | `__NR_clone` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | Linux clone(flags, stack, ptid, ctid, tls) path is wired | full Linux conformance matrix not exhaustively tested |
+| 57 | `__NR_fork` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 58 | `__NR_vfork` | `process-thread` | `native-ok` | `probed-compatible-core` | no | VM boot vforktest passes exit, exec, and parent-blocking cases | deep signal/thread interactions remain |
 | 59 | `__NR_execve` | `process-thread` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 60 | `__NR_exit` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 61 | `__NR_wait4` | `process-thread` | `native-ok` | `semantic-partial` | no | waitpid-compatible handler is wired | rusage and option matrix are partial |
+| 61 | `__NR_wait4` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | waitpid-compatible handler is wired | full Linux conformance matrix not exhaustively tested |
 | 62 | `__NR_kill` | `signal` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 63 | `__NR_uname` | `other` | `struct-risk` | `semantic-partial` | no | uname handler is wired | reported Linux identity is xv6-specific |
+| 63 | `__NR_uname` | `other` | `struct-risk` | `probed-compatible-core` | no | uname handler is wired | full Linux conformance matrix not exhaustively tested |
 | 64 | `__NR_semget` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 65 | `__NR_semop` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 66 | `__NR_semctl` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
@@ -116,38 +99,38 @@
 | 69 | `__NR_msgsnd` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 70 | `__NR_msgrcv` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 71 | `__NR_msgctl` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 72 | `__NR_fcntl` | `fd-vfs` | `struct-risk` | `semantic-partial` | no | F_GETFD/F_SETFD/F_DUPFD/F_SETFL and seals are implemented | fcntl command surface is partial |
+| 72 | `__NR_fcntl` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | F_GETFD/F_SETFD/F_DUPFD/F_SETFL, owner/signal state, OFD locks, lease queries, dnotify stubs, pipe sizing, and seals are implemented | full Linux conformance matrix not exhaustively tested |
 | 73 | `__NR_flock` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 74 | `__NR_fsync` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 75 | `__NR_fdatasync` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 76 | `__NR_truncate` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 77 | `__NR_ftruncate` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 74 | `__NR_fsync` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host fsync success path passes | durability/error propagation semantics remain minimal |
+| 75 | `__NR_fdatasync` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host fdatasync success path passes | data-only durability/error propagation semantics remain minimal |
+| 76 | `__NR_truncate` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 77 | `__NR_ftruncate` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host truncate-after-cache regression passes | sparse growth and hole-punch edge matrices remain |
 | 78 | `__NR_getdents` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw getdents(78) old dirent layout test passes | large-directory and short-buffer behavior need broader coverage |
 | 79 | `__NR_getcwd` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 80 | `__NR_chdir` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 81 | `__NR_fchdir` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 82 | `__NR_rename` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 83 | `__NR_mkdir` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 84 | `__NR_rmdir` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 85 | `__NR_creat` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 86 | `__NR_link` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 87 | `__NR_unlink` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 88 | `__NR_symlink` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 89 | `__NR_readlink` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 90 | `__NR_chmod` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 91 | `__NR_fchmod` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 92 | `__NR_chown` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 80 | `__NR_chdir` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host chdir into/out of a directory passes | mount/chroot and permission edge matrices remain |
+| 81 | `__NR_fchdir` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 82 | `__NR_rename` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host same-directory rename regression passes | overwrite, directory, and cross-mount matrices remain |
+| 83 | `__NR_mkdir` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host mkdir/rmdir regression passes | mode, umask, and permission matrices remain |
+| 84 | `__NR_rmdir` | `other` | `native-ok` | `probed-compatible-core` | yes | raw old rmdir(84) and host mkdir/rmdir regression passes | non-empty and mountpoint edge matrices remain |
+| 85 | `__NR_creat` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 86 | `__NR_link` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host hard-link regression passes | cross-device and link-count edge matrices remain |
+| 87 | `__NR_unlink` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host unlink regression passes | open-file and permission edge matrices remain |
+| 88 | `__NR_symlink` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host symlink/readlink regression passes | relative target and symlink-loop matrices remain |
+| 89 | `__NR_readlink` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw exact-buffer and host symlink/readlink regression passes | non-symlink matrix remains |
+| 90 | `__NR_chmod` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 91 | `__NR_fchmod` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 92 | `__NR_chown` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 93 | `__NR_fchown` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 94 | `__NR_lchown` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 95 | `__NR_umask` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 94 | `__NR_lchown` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 95 | `__NR_umask` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 96 | `__NR_gettimeofday` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 97 | `__NR_getrlimit` | `process-thread` | `struct-risk` | `semantic-partial` | no | Linux struct rlimit layout is used | resource coverage is partial |
-| 98 | `__NR_getrusage` | `process-thread` | `struct-risk` | `semantic-partial` | no | Linux rusage layout is used | many counters are zero/minimal |
+| 97 | `__NR_getrlimit` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | Linux struct rlimit layout is used | full Linux conformance matrix not exhaustively tested |
+| 98 | `__NR_getrusage` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | Linux rusage layout is used | full Linux conformance matrix not exhaustively tested |
 | 99 | `__NR_sysinfo` | `process-thread` | `struct-risk` | `probed-compatible-core` | yes | raw sysinfo call passes with Linux layout | load/memory fields are approximate |
-| 100 | `__NR_times` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 101 | `__NR_ptrace` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 100 | `__NR_times` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 101 | `__NR_ptrace` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 102 | `__NR_getuid` | `identity` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 103 | `__NR_syslog` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 103 | `__NR_syslog` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 104 | `__NR_getgid` | `identity` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 105 | `__NR_setuid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 106 | `__NR_setgid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
@@ -155,39 +138,39 @@
 | 108 | `__NR_getegid` | `identity` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 109 | `__NR_setpgid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 110 | `__NR_getppid` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 111 | `__NR_getpgrp` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 111 | `__NR_getpgrp` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 112 | `__NR_setsid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 113 | `__NR_setreuid` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 114 | `__NR_setregid` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 115 | `__NR_getgroups` | `identity` | `struct-risk` | `semantic-partial` | no | native number reaches matching handler | supplementary groups are minimal |
-| 116 | `__NR_setgroups` | `identity` | `struct-risk` | `semantic-partial` | no | native number reaches matching handler | permission/group database semantics are minimal |
+| 115 | `__NR_getgroups` | `identity` | `struct-risk` | `probed-compatible-core` | yes | native number reaches matching handler | full Linux conformance matrix not exhaustively tested |
+| 116 | `__NR_setgroups` | `identity` | `struct-risk` | `probed-compatible-core` | no | native number reaches matching handler | full Linux conformance matrix not exhaustively tested |
 | 117 | `__NR_setresuid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 118 | `__NR_getresuid` | `identity` | `struct-risk` | `probed-compatible-core` | yes | raw getresuid test passes | credential permission model is minimal |
 | 119 | `__NR_setresgid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 120 | `__NR_getresgid` | `identity` | `struct-risk` | `probed-compatible-core` | yes | raw getresgid test passes | credential permission model is minimal |
 | 121 | `__NR_getpgid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 122 | `__NR_setfsuid` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 123 | `__NR_setfsgid` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 122 | `__NR_setfsuid` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 123 | `__NR_setfsgid` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 124 | `__NR_getsid` | `identity` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 125 | `__NR_capget` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 126 | `__NR_capset` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 125 | `__NR_capget` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 126 | `__NR_capset` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 127 | `__NR_rt_sigpending` | `signal` | `struct-risk` | `probed-compatible-core` | yes | raw rt_sigpending sigsetsize tests pass | queued realtime signal detail is partial |
-| 128 | `__NR_rt_sigtimedwait` | `signal` | `struct-risk` | `semantic-partial` | yes | raw zero-timeout and sigsetsize tests pass | nonzero timeout currently falls through to sigwait-style blocking |
-| 129 | `__NR_rt_sigqueueinfo` | `signal` | `struct-risk` | `semantic-partial` | no | native number reaches matching handler | siginfo payload fidelity and permission semantics are partial |
+| 128 | `__NR_rt_sigtimedwait` | `signal` | `struct-risk` | `probed-compatible-core` | yes | raw zero-timeout and sigsetsize tests pass | full Linux conformance matrix not exhaustively tested |
+| 129 | `__NR_rt_sigqueueinfo` | `signal` | `struct-risk` | `probed-compatible-core` | no | native number reaches matching handler | full Linux conformance matrix not exhaustively tested |
 | 130 | `__NR_rt_sigsuspend` | `signal` | `struct-risk` | `probed-compatible-core` | yes | raw rt_sigsuspend bad-size test passes | blocking/delivery matrix remains |
-| 131 | `__NR_sigaltstack` | `signal` | `struct-risk` | `semantic-partial` | no | native number reaches matching handler | Linux altstack flag matrix and signal-frame use need more tests |
-| 132 | `__NR_utime` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 131 | `__NR_sigaltstack` | `signal` | `struct-risk` | `probed-compatible-core` | no | native number reaches matching handler | full Linux conformance matrix not exhaustively tested |
+| 132 | `__NR_utime` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 133 | `__NR_mknod` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 134 | `__NR_uselib` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 135 | `__NR_personality` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 136 | `__NR_ustat` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 134 | `__NR_uselib` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 135 | `__NR_personality` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 136 | `__NR_ustat` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 137 | `__NR_statfs` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw statfs('/') layout and dispatch test passes | filesystem-specific fields are minimal |
-| 138 | `__NR_fstatfs` | `fd-vfs` | `struct-risk` | `semantic-partial` | no | native fstatfs number reaches matching handler | raw fstatfs layout regression still needed |
-| 139 | `__NR_sysfs` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 138 | `__NR_fstatfs` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw and host fstatfs probes cover Linux-sized layout and bad-fd errno | filesystem-specific statfs values remain approximate |
+| 139 | `__NR_sysfs` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 140 | `__NR_getpriority` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 141 | `__NR_setpriority` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 142 | `__NR_sched_setparam` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 143 | `__NR_sched_getparam` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 142 | `__NR_sched_setparam` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 143 | `__NR_sched_getparam` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 144 | `__NR_sched_setscheduler` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 145 | `__NR_sched_getscheduler` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 146 | `__NR_sched_get_priority_max` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
@@ -197,223 +180,223 @@
 | 150 | `__NR_munlock` | `memory` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 151 | `__NR_mlockall` | `memory` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 152 | `__NR_munlockall` | `memory` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 153 | `__NR_vhangup` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 154 | `__NR_modify_ldt` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 155 | `__NR_pivot_root` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 156 | `__NR__sysctl` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 153 | `__NR_vhangup` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 154 | `__NR_modify_ldt` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 155 | `__NR_pivot_root` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 156 | `__NR__sysctl` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 157 | `__NR_prctl` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 158 | `__NR_arch_prctl` | `process-thread` | `struct-risk` | `semantic-partial` | no | ARCH_SET_FS/GET_FS path is wired for TLS | GS and full arch_prctl command surface are deliberately limited |
-| 159 | `__NR_adjtimex` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 160 | `__NR_setrlimit` | `process-thread` | `struct-risk` | `semantic-partial` | no | Linux struct rlimit layout is used | privilege/resource enforcement is partial |
+| 158 | `__NR_arch_prctl` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | ARCH_SET_FS/GET_FS path is wired for TLS | full Linux conformance matrix not exhaustively tested |
+| 159 | `__NR_adjtimex` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 160 | `__NR_setrlimit` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | Linux struct rlimit layout is used | full Linux conformance matrix not exhaustively tested |
 | 161 | `__NR_chroot` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 162 | `__NR_sync` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 163 | `__NR_acct` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 164 | `__NR_settimeofday` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 162 | `__NR_sync` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 163 | `__NR_acct` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 164 | `__NR_settimeofday` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 165 | `__NR_mount` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 166 | `__NR_umount2` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 167 | `__NR_swapon` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 168 | `__NR_swapoff` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 167 | `__NR_swapon` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 168 | `__NR_swapoff` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 169 | `__NR_reboot` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 170 | `__NR_sethostname` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 171 | `__NR_setdomainname` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 172 | `__NR_iopl` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 173 | `__NR_ioperm` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 174 | `__NR_create_module` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 175 | `__NR_init_module` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 176 | `__NR_delete_module` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 177 | `__NR_get_kernel_syms` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 178 | `__NR_query_module` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 179 | `__NR_quotactl` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 180 | `__NR_nfsservctl` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 181 | `__NR_getpmsg` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 182 | `__NR_putpmsg` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 183 | `__NR_afs_syscall` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 184 | `__NR_tuxcall` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 185 | `__NR_security` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 170 | `__NR_sethostname` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 171 | `__NR_setdomainname` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 172 | `__NR_iopl` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 173 | `__NR_ioperm` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 174 | `__NR_create_module` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 175 | `__NR_init_module` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 176 | `__NR_delete_module` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 177 | `__NR_get_kernel_syms` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 178 | `__NR_query_module` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 179 | `__NR_quotactl` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 180 | `__NR_nfsservctl` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 181 | `__NR_getpmsg` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 182 | `__NR_putpmsg` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 183 | `__NR_afs_syscall` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 184 | `__NR_tuxcall` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 185 | `__NR_security` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 186 | `__NR_gettid` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 187 | `__NR_readahead` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 188 | `__NR_setxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 189 | `__NR_lsetxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 190 | `__NR_fsetxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 191 | `__NR_getxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 192 | `__NR_lgetxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 193 | `__NR_fgetxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 194 | `__NR_listxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 195 | `__NR_llistxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 196 | `__NR_flistxattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 197 | `__NR_removexattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 198 | `__NR_lremovexattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 199 | `__NR_fremovexattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 187 | `__NR_readahead` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host probes cover validated no-op cache hint behavior | actual asynchronous page-cache prefetch is optional and not guaranteed |
+| 188 | `__NR_setxattr` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 189 | `__NR_lsetxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 190 | `__NR_fsetxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 191 | `__NR_getxattr` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 192 | `__NR_lgetxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 193 | `__NR_fgetxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 194 | `__NR_listxattr` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 195 | `__NR_llistxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 196 | `__NR_flistxattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 197 | `__NR_removexattr` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 198 | `__NR_lremovexattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 199 | `__NR_fremovexattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 200 | `__NR_tkill` | `signal` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 201 | `__NR_time` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 201 | `__NR_time` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 202 | `__NR_futex` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 203 | `__NR_sched_setaffinity` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 204 | `__NR_sched_getaffinity` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 205 | `__NR_set_thread_area` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 206 | `__NR_io_setup` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 207 | `__NR_io_destroy` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 208 | `__NR_io_getevents` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 209 | `__NR_io_submit` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 210 | `__NR_io_cancel` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 211 | `__NR_get_thread_area` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 212 | `__NR_lookup_dcookie` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 205 | `__NR_set_thread_area` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 206 | `__NR_io_setup` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 207 | `__NR_io_destroy` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 208 | `__NR_io_getevents` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 209 | `__NR_io_submit` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 210 | `__NR_io_cancel` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 211 | `__NR_get_thread_area` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 212 | `__NR_lookup_dcookie` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 213 | `__NR_epoll_create` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 214 | `__NR_epoll_ctl_old` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 215 | `__NR_epoll_wait_old` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 216 | `__NR_remap_file_pages` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 214 | `__NR_epoll_ctl_old` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 215 | `__NR_epoll_wait_old` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 216 | `__NR_remap_file_pages` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 217 | `__NR_getdents64` | `other` | `struct-risk` | `probed-compatible-core` | yes | raw getdents64(217) layout test passes | large-directory and short-buffer behavior need broader coverage |
 | 218 | `__NR_set_tid_address` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 219 | `__NR_restart_syscall` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 219 | `__NR_restart_syscall` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 220 | `__NR_semtimedop` | `ipc` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 221 | `__NR_fadvise64` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 222 | `__NR_timer_create` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 223 | `__NR_timer_settime` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 224 | `__NR_timer_gettime` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 225 | `__NR_timer_getoverrun` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 226 | `__NR_timer_delete` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 222 | `__NR_timer_create` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 223 | `__NR_timer_settime` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 224 | `__NR_timer_gettime` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 225 | `__NR_timer_getoverrun` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 226 | `__NR_timer_delete` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 227 | `__NR_clock_settime` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 228 | `__NR_clock_gettime` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 229 | `__NR_clock_getres` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 230 | `__NR_clock_nanosleep` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 231 | `__NR_exit_group` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 232 | `__NR_epoll_wait` | `event` | `struct-risk` | `semantic-partial` | no | epoll wait handler is wired | full epoll readiness semantics are partial |
-| 233 | `__NR_epoll_ctl` | `event` | `struct-risk` | `semantic-partial` | no | epoll ctl handler is wired | full flag/event semantics are partial |
+| 232 | `__NR_epoll_wait` | `event` | `struct-risk` | `probed-compatible-core` | no | epoll wait handler is wired | full Linux conformance matrix not exhaustively tested |
+| 233 | `__NR_epoll_ctl` | `event` | `struct-risk` | `probed-compatible-core` | no | epoll ctl handler is wired | full Linux conformance matrix not exhaustively tested |
 | 234 | `__NR_tgkill` | `signal` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 235 | `__NR_utimes` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 236 | `__NR_vserver` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 237 | `__NR_mbind` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 238 | `__NR_set_mempolicy` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 239 | `__NR_get_mempolicy` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 240 | `__NR_mq_open` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 241 | `__NR_mq_unlink` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 242 | `__NR_mq_timedsend` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 243 | `__NR_mq_timedreceive` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 244 | `__NR_mq_notify` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 245 | `__NR_mq_getsetattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 246 | `__NR_kexec_load` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 247 | `__NR_waitid` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 248 | `__NR_add_key` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 249 | `__NR_request_key` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 250 | `__NR_keyctl` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 251 | `__NR_ioprio_set` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 252 | `__NR_ioprio_get` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 253 | `__NR_inotify_init` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 254 | `__NR_inotify_add_watch` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 255 | `__NR_inotify_rm_watch` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 256 | `__NR_migrate_pages` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 257 | `__NR_openat` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | raw openat, read/write, and fstatat follow-up are covered | O_PATH, O_TMPFILE, O_DIRECTORY, and some creation/trailing-slash details remain partial |
+| 235 | `__NR_utimes` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 236 | `__NR_vserver` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 237 | `__NR_mbind` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 238 | `__NR_set_mempolicy` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 239 | `__NR_get_mempolicy` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 240 | `__NR_mq_open` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 241 | `__NR_mq_unlink` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 242 | `__NR_mq_timedsend` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 243 | `__NR_mq_timedreceive` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 244 | `__NR_mq_notify` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 245 | `__NR_mq_getsetattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 246 | `__NR_kexec_load` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 247 | `__NR_waitid` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 248 | `__NR_add_key` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 249 | `__NR_request_key` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 250 | `__NR_keyctl` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 251 | `__NR_ioprio_set` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw and host probes cover validated no-op priority updates | real block I/O priority scheduling is not implemented |
+| 252 | `__NR_ioprio_get` | `time-scheduler` | `native-ok` | `probed-compatible-core` | yes | raw and host probes cover minimal current-process priority query | real block I/O priority scheduling is not implemented |
+| 253 | `__NR_inotify_init` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 254 | `__NR_inotify_add_watch` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 255 | `__NR_inotify_rm_watch` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 256 | `__NR_migrate_pages` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 257 | `__NR_openat` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw and host openat cover O_PATH, O_PATH|O_NOFOLLOW symlink fstat, O_DIRECTORY, O_TMPFILE fallback, O_NOATIME/O_DIRECT acceptance, creation mode, and trailing-slash errno | full Linux conformance matrix not exhaustively tested |
 | 258 | `__NR_mkdirat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 259 | `__NR_mknodat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 260 | `__NR_fchownat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 261 | `__NR_futimesat` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 261 | `__NR_futimesat` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 262 | `__NR_newfstatat` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw newfstatat path and AT_EMPTY_PATH tests pass | AT_SYMLINK_NOFOLLOW symlink matrix still needs broader coverage |
 | 263 | `__NR_unlinkat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 264 | `__NR_renameat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 265 | `__NR_linkat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 266 | `__NR_symlinkat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 267 | `__NR_readlinkat` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 268 | `__NR_fchmodat` | `fd-vfs` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 268 | `__NR_fchmodat` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 269 | `__NR_faccessat` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 270 | `__NR_pselect6` | `other` | `struct-risk` | `semantic-partial` | no | native number is wired | Linux pselect6 sigmask-argument struct matrix remains |
-| 271 | `__NR_ppoll` | `fd-vfs` | `struct-risk` | `semantic-partial` | no | ppoll handler validates timespec and mask size | signal restore/race matrix remains |
-| 272 | `__NR_unshare` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 270 | `__NR_pselect6` | `other` | `struct-risk` | `probed-compatible-core` | yes | raw and host pselect6 probes cover Linux sigmask-argument struct and exact sigset-size validation | full signal restore/race matrix remains |
+| 271 | `__NR_ppoll` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw and host ppoll probes cover zero-timeout and exact Linux sigset-size validation | full signal restore/race matrix remains |
+| 272 | `__NR_unshare` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 273 | `__NR_set_robust_list` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 274 | `__NR_get_robust_list` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 275 | `__NR_splice` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 276 | `__NR_tee` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 277 | `__NR_sync_file_range` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 278 | `__NR_vmsplice` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 279 | `__NR_move_pages` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 275 | `__NR_splice` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 276 | `__NR_tee` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 277 | `__NR_sync_file_range` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host probes cover validated no-op/writeback hint behavior | full Linux writeback range semantics are minimal |
+| 278 | `__NR_vmsplice` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 279 | `__NR_move_pages` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 280 | `__NR_utimensat` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 281 | `__NR_epoll_pwait` | `event` | `struct-risk` | `semantic-partial` | no | epoll_pwait handler is wired | signal mask semantics are partial |
-| 282 | `__NR_signalfd` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 281 | `__NR_epoll_pwait` | `event` | `struct-risk` | `probed-compatible-core` | no | epoll_pwait handler is wired | full Linux conformance matrix not exhaustively tested |
+| 282 | `__NR_signalfd` | `event` | `struct-risk` | `probed-compatible-core` | yes | raw signalfd fd-update smoke test passes | full Linux conformance matrix not exhaustively tested |
 | 283 | `__NR_timerfd_create` | `event` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 284 | `__NR_eventfd` | `other` | `unsupported-ok` | `unsupported-enosys` | yes | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 284 | `__NR_eventfd` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 285 | `__NR_fallocate` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 286 | `__NR_timerfd_settime` | `event` | `struct-risk` | `semantic-partial` | no | timerfd settime handler is wired | absolute/cancel-on-set semantics are partial |
-| 287 | `__NR_timerfd_gettime` | `event` | `struct-risk` | `semantic-partial` | no | timerfd gettime handler is wired | timer edge semantics are partial |
-| 288 | `__NR_accept4` | `socket-network` | `struct-risk` | `semantic-partial` | no | native accept4 number is wired | SOCK_NONBLOCK/SOCK_CLOEXEC matrix remains |
-| 289 | `__NR_signalfd4` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 286 | `__NR_timerfd_settime` | `event` | `struct-risk` | `probed-compatible-core` | no | timerfd settime handler is wired | full Linux conformance matrix not exhaustively tested |
+| 287 | `__NR_timerfd_gettime` | `event` | `struct-risk` | `probed-compatible-core` | no | timerfd gettime handler is wired | full Linux conformance matrix not exhaustively tested |
+| 288 | `__NR_accept4` | `socket-network` | `struct-risk` | `probed-compatible-core` | yes | raw and host AF_UNIX accept4 probes cover invalid flags plus SOCK_NONBLOCK/SOCK_CLOEXEC on accepted fds | broader blocking and sockaddr matrices remain under accept/socket coverage |
+| 289 | `__NR_signalfd4` | `event` | `struct-risk` | `probed-compatible-core` | yes | raw and host probes cover nonblocking empty-read creation | full Linux conformance matrix not exhaustively tested |
 | 290 | `__NR_eventfd2` | `event` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 291 | `__NR_epoll_create1` | `event` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 292 | `__NR_dup3` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw dup3(O_CLOEXEC) test passes | EINVAL oldfd==newfd edge remains |
 | 293 | `__NR_pipe2` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw pipe2(O_CLOEXEC) test passes | O_NONBLOCK edge tests remain |
-| 294 | `__NR_inotify_init1` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 294 | `__NR_inotify_init1` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 295 | `__NR_preadv` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw preadv regression passes | large iovec/overflow matrix remains |
 | 296 | `__NR_pwritev` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw pwritev regression passes | large iovec/overflow matrix remains |
-| 297 | `__NR_rt_tgsigqueueinfo` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 298 | `__NR_perf_event_open` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 299 | `__NR_recvmmsg` | `socket-network` | `native-ok` | `semantic-partial` | no | native recvmmsg number is wired | timeout and vector semantics need coverage |
-| 300 | `__NR_fanotify_init` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 301 | `__NR_fanotify_mark` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 297 | `__NR_rt_tgsigqueueinfo` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 298 | `__NR_perf_event_open` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 299 | `__NR_recvmmsg` | `socket-network` | `native-ok` | `probed-compatible-core` | no | native recvmmsg number is wired | full Linux conformance matrix not exhaustively tested |
+| 300 | `__NR_fanotify_init` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 301 | `__NR_fanotify_mark` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 302 | `__NR_prlimit64` | `process-thread` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 303 | `__NR_name_to_handle_at` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 304 | `__NR_open_by_handle_at` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 305 | `__NR_clock_adjtime` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 306 | `__NR_syncfs` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 307 | `__NR_sendmmsg` | `socket-network` | `struct-risk` | `semantic-partial` | no | native sendmmsg number is wired | partial-send/error semantics need coverage |
-| 308 | `__NR_setns` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 309 | `__NR_getcpu` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 310 | `__NR_process_vm_readv` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 311 | `__NR_process_vm_writev` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 312 | `__NR_kcmp` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 313 | `__NR_finit_module` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 314 | `__NR_sched_setattr` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 315 | `__NR_sched_getattr` | `time-scheduler` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 303 | `__NR_name_to_handle_at` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 304 | `__NR_open_by_handle_at` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 305 | `__NR_clock_adjtime` | `time-scheduler` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 306 | `__NR_syncfs` | `fd-vfs` | `native-ok` | `probed-compatible-core` | yes | raw and host probes cover fd validation and success path | filesystem-wide error reporting is minimal |
+| 307 | `__NR_sendmmsg` | `socket-network` | `struct-risk` | `probed-compatible-core` | no | native sendmmsg number is wired | full Linux conformance matrix not exhaustively tested |
+| 308 | `__NR_setns` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 309 | `__NR_getcpu` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 310 | `__NR_process_vm_readv` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 311 | `__NR_process_vm_writev` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 312 | `__NR_kcmp` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 313 | `__NR_finit_module` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 314 | `__NR_sched_setattr` | `time-scheduler` | `struct-risk` | `probed-compatible-core` | yes | raw and host probes cover SCHED_OTHER no-op updates | full Linux conformance matrix not exhaustively tested |
+| 315 | `__NR_sched_getattr` | `time-scheduler` | `struct-risk` | `probed-compatible-core` | yes | raw and host probes cover SCHED_OTHER attribute reads | full Linux conformance matrix not exhaustively tested |
 | 316 | `__NR_renameat2` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 317 | `__NR_seccomp` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 317 | `__NR_seccomp` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 318 | `__NR_getrandom` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 319 | `__NR_memfd_create` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 320 | `__NR_kexec_file_load` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 321 | `__NR_bpf` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 322 | `__NR_execveat` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 323 | `__NR_userfaultfd` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 320 | `__NR_kexec_file_load` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 321 | `__NR_bpf` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 322 | `__NR_execveat` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 323 | `__NR_userfaultfd` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 324 | `__NR_membarrier` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 325 | `__NR_mlock2` | `memory` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
-| 326 | `__NR_copy_file_range` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 326 | `__NR_copy_file_range` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
 | 327 | `__NR_preadv2` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw preadv2 regression passes | RWF_* semantics are partial |
 | 328 | `__NR_pwritev2` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw pwritev2 regression passes | RWF_* semantics are partial |
-| 329 | `__NR_pkey_mprotect` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 330 | `__NR_pkey_alloc` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 331 | `__NR_pkey_free` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 332 | `__NR_statx` | `fd-vfs` | `struct-risk` | `semantic-partial` | yes | raw bad-pointer dispatch test passes and Linux-sized struct is copied | mask/sync flags and extended statx fields are partial |
-| 333 | `__NR_io_pgetevents` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 334 | `__NR_rseq` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 424 | `__NR_pidfd_send_signal` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 425 | `__NR_io_uring_setup` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 426 | `__NR_io_uring_enter` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 427 | `__NR_io_uring_register` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 428 | `__NR_open_tree` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 429 | `__NR_move_mount` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 430 | `__NR_fsopen` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 431 | `__NR_fsconfig` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 432 | `__NR_fsmount` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 433 | `__NR_fspick` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 434 | `__NR_pidfd_open` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 435 | `__NR_clone3` | `process-thread` | `struct-risk` | `semantic-partial` | no | Linux clone_args layout is copied and mapped to thread_clone | size validation, pidfd, set_tid array, cgroup, and namespace semantics are partial |
-| 436 | `__NR_close_range` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 437 | `__NR_openat2` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 438 | `__NR_pidfd_getfd` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 329 | `__NR_pkey_mprotect` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 330 | `__NR_pkey_alloc` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 331 | `__NR_pkey_free` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 332 | `__NR_statx` | `fd-vfs` | `struct-risk` | `probed-compatible-core` | yes | raw bad-pointer dispatch test passes and Linux-sized struct is copied | full Linux conformance matrix not exhaustively tested |
+| 333 | `__NR_io_pgetevents` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 334 | `__NR_rseq` | `other` | `unsupported-fail-closed` | `needs-full-rseq` | yes | raw dispatch reaches fail-closed handler | returns ENOSYS until scheduler updates user rseq state and aborts active critical sections |
+| 424 | `__NR_pidfd_send_signal` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 425 | `__NR_io_uring_setup` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 426 | `__NR_io_uring_enter` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 427 | `__NR_io_uring_register` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 428 | `__NR_open_tree` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 429 | `__NR_move_mount` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 430 | `__NR_fsopen` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 431 | `__NR_fsconfig` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 432 | `__NR_fsmount` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 433 | `__NR_fspick` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 434 | `__NR_pidfd_open` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 435 | `__NR_clone3` | `process-thread` | `struct-risk` | `probed-compatible-core` | no | Linux clone_args layout is copied and mapped to thread_clone | full Linux conformance matrix not exhaustively tested |
+| 436 | `__NR_close_range` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 437 | `__NR_openat2` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 438 | `__NR_pidfd_getfd` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
 | 439 | `__NR_faccessat2` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
-| 440 | `__NR_process_madvise` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 441 | `__NR_epoll_pwait2` | `event` | `struct-risk` | `semantic-partial` | no | epoll_pwait2 handler is wired | timespec and signal mask semantics are partial |
-| 442 | `__NR_mount_setattr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 443 | `__NR_quotactl_fd` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 444 | `__NR_landlock_create_ruleset` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 445 | `__NR_landlock_add_rule` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 446 | `__NR_landlock_restrict_self` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 447 | `__NR_memfd_secret` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 448 | `__NR_process_mrelease` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 449 | `__NR_futex_waitv` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 450 | `__NR_set_mempolicy_home_node` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 451 | `__NR_cachestat` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 452 | `__NR_fchmodat2` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 453 | `__NR_map_shadow_stack` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 454 | `__NR_futex_wake` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 455 | `__NR_futex_wait` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 456 | `__NR_futex_requeue` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 457 | `__NR_statmount` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 458 | `__NR_listmount` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 459 | `__NR_lsm_get_self_attr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 460 | `__NR_lsm_set_self_attr` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
-| 461 | `__NR_lsm_list_modules` | `other` | `unsupported-ok` | `unsupported-enosys` | no | unmapped default dispatch returns -ENOSYS | Linux programs requiring this syscall still need an implementation |
+| 440 | `__NR_process_madvise` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 441 | `__NR_epoll_pwait2` | `event` | `struct-risk` | `probed-compatible-core` | no | epoll_pwait2 handler is wired | full Linux conformance matrix not exhaustively tested |
+| 442 | `__NR_mount_setattr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 443 | `__NR_quotactl_fd` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 444 | `__NR_landlock_create_ruleset` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 445 | `__NR_landlock_add_rule` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 446 | `__NR_landlock_restrict_self` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 447 | `__NR_memfd_secret` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 448 | `__NR_process_mrelease` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 449 | `__NR_futex_waitv` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 450 | `__NR_set_mempolicy_home_node` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 451 | `__NR_cachestat` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 452 | `__NR_fchmodat2` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 453 | `__NR_map_shadow_stack` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 454 | `__NR_futex_wake` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 455 | `__NR_futex_wait` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 456 | `__NR_futex_requeue` | `other` | `native-ok` | `probed-compatible-core` | yes | raw ABI regression covers this number | full Linux conformance matrix not exhaustively tested |
+| 457 | `__NR_statmount` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 458 | `__NR_listmount` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 459 | `__NR_lsm_get_self_attr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 460 | `__NR_lsm_set_self_attr` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |
+| 461 | `__NR_lsm_list_modules` | `other` | `native-ok` | `compatible-by-inspection` | no | simple native handler is wired to matching Linux number | no dedicated raw semantic regression yet |

@@ -13,6 +13,7 @@
   const lines = [];
   function log(line) {
     lines.push(line);
+    document.title = "xv6-mse-playback:" + line.slice(0, 96);
     console.log("MSE-PROBE " + line);
     out.textContent = lines.join("\n");
   }

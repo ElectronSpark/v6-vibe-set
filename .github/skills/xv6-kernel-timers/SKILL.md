@@ -15,7 +15,7 @@ argument-hint: 'Describe the timer or timeout symptom'
 ## Source Map
 
 - Generic timer root/node: `kernel/kernel/timer/timer.c`, `kernel/kernel/inc/timer/timer*.h`.
-- Scheduler timebase: `kernel/kernel/timer/sched_timer.c`, `sched_timer_private.h`.
+- Scheduler timebase: `kernel/kernel/timer/sched_timer.c`, `kernel/kernel/inc/timer/sched_timer_private.h`.
 - Architecture ticks: `kernel/arch/x86_64/timer/timer.c`, `kernel/arch/riscv/timer/timer.c`.
 - RTC: `kernel/kernel/timer/goldfish_rtc.c` where applicable.
 - Focused debug skill: `xv6-kernel-timers-scheduler`.
@@ -33,3 +33,4 @@ argument-hint: 'Describe the timer or timeout symptom'
 - Overdue timers can be caused by missing processing even when hardware jiffies advance.
 - Do not mask timer bugs with user-space sleeps or busy polling.
 - Timer callbacks inherit context constraints from their execution path.
+- `sched_timer_set()` / `sched_timer_set_cb()` use caller-owned one-shot nodes, canceled with `sched_timer_done()` before their storage expires. `sched_timer_add()` allocates workqueue-backed callbacks and has no caller cancellation handle; their data must outlive delayed work.

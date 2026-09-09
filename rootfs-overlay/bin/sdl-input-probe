@@ -1,0 +1,3 @@
+#!/bin/bash
+exec /bin/kde-libinput-probe --r9-cursor-contract \
+    --width 1280 --height 800 --timeout-ms 12000

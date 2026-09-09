@@ -1,7 +1,9 @@
 # WebKitGTK Override Retirement Map
 
-Keep active WebKit validation work in `WEBKIT_TODO.md`, and keep GPU/OpenGL
-work in `GPU_OPENGL_PLAN.md`.
+Keep active WebKit and GPU/OpenGL work in the
+[consolidated plan](../../../docs/active-work-plan.md#drm-gpu-and-browser-coverage).
+The [plan archive](../../../docs/archive/plan-consolidation-20260907/README.md)
+preserves the original checklists.
 
 The repo currently carries 0 WebKitGTK source override files under
 `ports/webkit/overrides`, and `ports/webkit/apply-xv6-overrides.sh` no longer

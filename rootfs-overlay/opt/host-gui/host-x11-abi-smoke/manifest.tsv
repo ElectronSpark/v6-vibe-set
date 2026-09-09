@@ -1,0 +1,11 @@
+kind	host_path	guest_path	bytes	sha256
+executable	/tmp/host-x11-abi-smoke	/opt/host-gui/host-x11-abi-smoke/bin/host-x11-abi-smoke	45920	3021d476401021de64cea52b73c1e2cde667ebffcf1e9e25324a70522bdc5dc4
+interpreter	/lib64/ld-linux-x86-64.so.2	/opt/host-gui/host-x11-abi-smoke/lib/ld-linux-x86-64.so.2	236616	1cd555ac46b7887edeaf3c42aac5408c8135e52f6b37870da2cf82d5fe14e829
+library	/lib/x86_64-linux-gnu/libxcb.so.1	/opt/host-gui/host-x11-abi-smoke/lib/libxcb.so.1	162392	7958a0136b121bdc4c708968569ad152a9ed208ab026e2537b1005dde64ca440
+library	/lib/x86_64-linux-gnu/libc.so.6	/opt/host-gui/host-x11-abi-smoke/lib/libc.so.6	2125328	d8db8739a1633c972cec6a4fe0566bdcec6fd088f98723492ab0361f66238f75
+library	/lib/x86_64-linux-gnu/libXau.so.6	/opt/host-gui/host-x11-abi-smoke/lib/libXau.so.6	18696	8040da3f8516c1acfe39f04ff022480cdb273705ba5e7a4ca70bbdb1527cd67a
+library	/lib/x86_64-linux-gnu/libXdmcp.so.6	/opt/host-gui/host-x11-abi-smoke/lib/libXdmcp.so.6	26776	667d97d6da16016400ab10de9f83ef4ab209ceb6adf68ff9650225ec13e723b0
+library	/lib/x86_64-linux-gnu/libbsd.so.0	/opt/host-gui/host-x11-abi-smoke/lib/libbsd.so.0	80888	e86cd4f0019f42c2ba5e60602e0edc8694d2948377d98c3654d0f6bddb5254bb
+library	/lib/x86_64-linux-gnu/libmd.so.0	/opt/host-gui/host-x11-abi-smoke/lib/libmd.so.0	55536	423e18586b6ea740f4465afd64f7a9a4cb7264ed979c8e7256f9085af5345fef
+wrapper	generated	/opt/host-gui/host-x11-abi-smoke/run	799	d77d816cee191d1bc4950078bb110b597e4c78dbef9a5664d14a6db2d789758a
+desktop-script	generated	/root/desktop/imported-host-x11-abi-smoke	44	b160894a024e775319d012a2d4c534e9cfe7af2bf3c34098e35c45c2da597041

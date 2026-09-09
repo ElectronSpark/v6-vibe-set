@@ -1,0 +1,63 @@
+name	path	kind	upstream_ref	original_upstream_url	source_delta_count
+khronos-headers	ports/khronos-headers/egl-registry	data-or-headers	3d7796b 3d7796b3721d main	https://github.com/KhronosGroup/EGL-Registry.git	0
+khronos-headers	ports/khronos-headers/opengl-registry	data-or-headers	9cb90ca 9cb90ca4902d main	https://github.com/KhronosGroup/OpenGL-Registry.git	0
+hwdata	ports/hwdata/src	data-or-headers	local-minimal-hwdata-0.1	local-minimal-hwdata	0
+zlib	ports/zlib/src	imported-source	zlib-1.3.2.1-motley	https://github.com/madler/zlib.git	0
+bzip2	ports/bzip2/src	imported-source	66c46b8 66c46b8c9436 master	https://gitlab.com/bzip2/bzip2.git	0
+xz	ports/xz/src	imported-source	ebb0e67 ebb0e6789cef master	https://github.com/tukaani-project/xz.git	0
+libffi	ports/libffi/src	imported-source	2263d60 2263d6037f8e master	https://github.com/libffi/libffi.git	0
+libexpat	ports/libexpat/src	imported-source	R_2_7_5-110-g1870998e 1870998e114e master	https://github.com/libexpat/libexpat.git	0
+pcre2	ports/pcre2/src	imported-source	ac0eb71 ac0eb7122a0a main	https://github.com/PCRE2Project/pcre2.git	0
+json-c	ports/json-c/src	imported-source	json-c-0.18-20240915 41a55cfcedb5	https://github.com/json-c/json-c.git	0
+sqlite	ports/sqlite/src	imported-source	7539d2f 7539d2f1ba7d master	https://github.com/sqlite/sqlite.git	0
+ncurses	ports/ncurses/src	imported-source	87c2c84 87c2c84cbd23 master	https://github.com/mirror/ncurses.git	0
+readline	ports/readline/src	imported-source	553d6bb 553d6bb272f2 master	https://git.savannah.gnu.org/git/readline.git	0
+openssl	ports/openssl/src	imported-source	1d21d077 1d21d0773b60 v6-port	https://github.com/openssl/openssl.git	0
+curl	ports/curl/src	imported-source	rc-8_20_0-3-17-g961a13e366 961a13e366ea master	https://github.com/curl/curl.git	0
+openssh	ports/openssh/src	imported-source	V_9_9_P2 d76b26751166	https://github.com/openssh/openssh-portable.git	0
+libxml2	ports/libxml2/src	imported-source	v2.15.0-85-ga7511af0 a7511af09f99 master	https://gitlab.gnome.org/GNOME/libxml2.git	0
+libpng	ports/libpng/src	imported-source	v1.6.58-128-g614ab644f 614ab644f809 libpng18	https://github.com/pnggroup/libpng.git	0
+libjpeg-turbo	ports/libjpeg-turbo/src	imported-source	3.1.90-13-g9b09d516 9b09d5164c34 main	https://github.com/libjpeg-turbo/libjpeg-turbo.git	0
+freetype	ports/freetype/src	imported-source	VER-2-14-3-22-g1803559c4 1803559c4ee4 master	https://gitlab.freedesktop.org/freetype/freetype.git	0
+fontconfig	ports/fontconfig/src	imported-source	29f5a46 29f5a469ee74 main	https://gitlab.freedesktop.org/fontconfig/fontconfig.git	0
+pixman	ports/pixman/src	imported-source	6fe11b2 6fe11b29cd20 master	https://gitlab.freedesktop.org/pixman/pixman.git	0
+fribidi	ports/fribidi/src	imported-source	5c85a17 5c85a174650a master	https://github.com/fribidi/fribidi.git	0
+harfbuzz	ports/harfbuzz/src	imported-source	73db8cc 73db8cc1a5fe main	https://github.com/harfbuzz/harfbuzz.git	0
+glib	ports/glib/src	imported-source	eee20d547 eee20d54723c main	https://gitlab.gnome.org/GNOME/glib.git	0
+atk	ports/atk/src	imported-source	df8fb97 df8fb9750779 master	https://gitlab.gnome.org/Archive/atk.git	0
+cairo	ports/cairo/src	imported-source	4ca0d58 4ca0d581cbbb master	https://gitlab.freedesktop.org/cairo/cairo.git	0
+gdk-pixbuf	ports/gdk-pixbuf/src	imported-source	5e6796b 5e6796b2e4d0 master	https://gitlab.gnome.org/GNOME/gdk-pixbuf.git	0
+pango	ports/pango/src	imported-source	668cedc 668cedc2db6b main	https://gitlab.gnome.org/GNOME/pango.git	0
+gtk3	ports/gtk3/src	imported-source	3.24.52-16-g46fd315c73 46fd315c7381 v6-port	https://gitlab.gnome.org/GNOME/gtk.git	0
+libudev	ports/libudev/src	local-shim	local	local	0
+libseat	ports/libseat/src	local-shim	local	local	0
+libevdev	ports/libevdev/src	local-shim	local	local	0
+libinput	ports/libinput/src	local-shim	local	local	0
+libdrm	ports/libdrm/src	imported-source	libdrm-2.4.134-7-g843048a 843048aac648 main	https://gitlab.freedesktop.org/mesa/drm.git	0
+drm_info	ports/drm_info/src	imported-source	v2.10.0 462458e0f292	https://gitlab.freedesktop.org/emersion/drm_info.git	0
+kmscube	ports/kmscube/src	imported-source	c42763b c42763bc2cf5 master	https://gitlab.freedesktop.org/mesa/kmscube.git	0
+libepoxy	ports/libepoxy/src	imported-source	1.5.10-33-g05001ee 05001ee156ca xv6-gpu-runtime	https://github.com/anholt/libepoxy.git	0
+wayland-protocols	ports/wayland-protocols/src	data-or-headers	911ab50 911ab509edf6 main	https://gitlab.freedesktop.org/wayland/wayland-protocols.git	0
+libxkbcommon	ports/libxkbcommon/src	imported-source	151c367 151c367afb21 master	https://github.com/xkbcommon/libxkbcommon.git	0
+xv6-gbm	ports/xv6-gbm	local-shim	local	local	0
+mesa	ports/mesa/src	imported-source	5ca5a64d 5ca5a64d5546 v6-port	https://gitlab.freedesktop.org/mesa/mesa.git	0
+weston	ports/weston/src	imported-source	15.0.1-12-g47630479 47630479175f v6-port	https://gitlab.freedesktop.org/wayland/weston.git	0
+netsurf-buildsystem	ports/netsurf-buildsystem/src	build-wrapper	771d7cb 771d7cb06918 master	git://git.netsurf-browser.org/buildsystem.git	0
+netsurf-libwapcaplet	ports/netsurf-libwapcaplet/src	imported-source	c7c128d c7c128d3eb32 master	git://git.netsurf-browser.org/libwapcaplet.git	0
+netsurf-libparserutils	ports/netsurf-libparserutils/src	imported-source	6b0cbf0 6b0cbf086ca8 master	git://git.netsurf-browser.org/libparserutils.git	0
+netsurf-libcss	ports/netsurf-libcss/src	imported-source	104d87f 104d87fde48b master	git://git.netsurf-browser.org/libcss.git	0
+netsurf-libnsbmp	ports/netsurf-libnsbmp/src	imported-source	ea063c9 ea063c9f46ac master	git://git.netsurf-browser.org/libnsbmp.git	0
+netsurf-libnsgif	ports/netsurf-libnsgif/src	imported-source	24ddb64 24ddb6421c31 master	git://git.netsurf-browser.org/libnsgif.git	0
+netsurf-libnslog	ports/netsurf-libnslog/src	imported-source	9c19d16 9c19d16e196a master	git://git.netsurf-browser.org/libnslog.git	0
+netsurf-libnspsl	ports/netsurf-libnspsl/src	imported-source	82815c2 82815c2bc7fd master	git://git.netsurf-browser.org/libnspsl.git	0
+netsurf-libnsutils	ports/netsurf-libnsutils/src	imported-source	0bd3906 0bd39060740b master	git://git.netsurf-browser.org/libnsutils.git	0
+netsurf-libhubbub	ports/netsurf-libhubbub/src	imported-source	6651b8c 6651b8cf87a4 master	git://git.netsurf-browser.org/libhubbub.git	0
+netsurf-libsvgtiny	ports/netsurf-libsvgtiny/src	imported-source	7ede71b 7ede71b572a1 master	git://git.netsurf-browser.org/libsvgtiny.git	0
+netsurf-nsgenbind	ports/netsurf-nsgenbind/src	imported-source	44c6736 44c6736937ae master	git://git.netsurf-browser.org/nsgenbind.git	0
+netsurf-libdom	ports/netsurf-libdom/src	imported-source	f69781e f69781e1f062 master	git://git.netsurf-browser.org/libdom.git	0
+netsurf	ports/netsurf/src	imported-source	e9578ac e9578ac53f05	git://git.netsurf-browser.org/netsurf.git	0
+cpython	ports/cpython/src	imported-source	v3.12.12-28-gb3247d8a053 b3247d8a0537 v6-3.12	https://github.com/python/cpython.git	0
+vim	ports/vim/src	imported-source	v9.2.0173 e21c4a649a83 master	https://github.com/vim/vim.git	0
+peanut-gb	ports/peanut-gb/src	imported-source	v1.3.0-25-g8e65698 8e656982f086 master	https://github.com/deltabeard/Peanut-GB.git	0
+wayland-src	ports/wayland-src/src	imported-source	2f7f04d 2f7f04d1e9fc v6-port	https://gitlab.freedesktop.org/wayland/wayland.git	0
+wayland	ports/wayland/src	local-shim	local	local	0

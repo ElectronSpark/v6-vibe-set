@@ -1,0 +1,13 @@
+#!/bin/sh
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/wayland-root}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export GDK_BACKEND="${GDK_BACKEND:-wayland}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-wayland}"
+export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+export LD_LIBRARY_PATH="/opt/host-gui/host-gtk-smoke/lib:/lib:/lib64:/usr/lib:/usr/lib64:${LD_LIBRARY_PATH:-}"
+cd "/opt/host-gui/host-gtk-smoke" || exit 127
+exec "/opt/host-gui/host-gtk-smoke/lib/ld-linux-x86-64.so.2" \
+    --library-path "/opt/host-gui/host-gtk-smoke/lib:/lib:/lib64:/usr/lib:/usr/lib64" \
+    "/opt/host-gui/host-gtk-smoke/bin/host-gtk-smoke"  "$@" \
+    >>"/tmp/host-gui-host-gtk-smoke.log" 2>&1

@@ -1,0 +1,53 @@
+diff --git a/base/trace_event/video_bottleneck_diagnostics.h b/base/trace_event/video_bottleneck_diagnostics.h
+--- a/base/trace_event/video_bottleneck_diagnostics.h
++++ b/base/trace_event/video_bottleneck_diagnostics.h
+@@ -11,6 +11,7 @@
+ #include <utility>
+ 
+ #include "base/base_export.h"
++#include "base/memory/raw_ref.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/trace_event/trace_event.h"
+ #include "base/trace_event/traced_value.h"
+@@ -24,16 +25,16 @@
+   explicit VideoBottleneckFields(TracedValue& value) : value_(value) {}
+   template <typename T>
+   void I(const char* name, T value) {
+-    value_.SetString(name, base::NumberToString(value));
++    value_->SetString(name, base::NumberToString(value));
+   }
+-  void B(const char* name, bool value) { value_.SetBoolean(name, value); }
+-  void S(const char* name, const char* value) { value_.SetString(name, value); }
++  void B(const char* name, bool value) { value_->SetBoolean(name, value); }
++  void S(const char* name, const char* value) { value_->SetString(name, value); }
+   void P(const char* name, const void* value) {
+     I(name, reinterpret_cast<uintptr_t>(value));
+   }
+ 
+  private:
+-  TracedValue& value_;
++  raw_ref<TracedValue> value_;
+ };
+ 
+ class BASE_EXPORT VideoBottleneckRecorder {
+@@ -57,12 +58,14 @@
+     // Gate before allocation, formatting, or evaluating any payload lambda.
+     auto value = std::make_unique<TracedValue>();
+     value->SetInteger("schema_version", 1);
+-    VideoBottleneckFields fields(*value);
+-    fields.S("kind", kind);
+-    fields.S("object", object_);
+-    fields.I("instance_id", instance_id_);
+-    fields.I("event_seq", seq);
+-    std::forward<Fill>(fill)(fields);
++    {
++      VideoBottleneckFields fields(*value);
++      fields.S("kind", kind);
++      fields.S("object", object_);
++      fields.I("instance_id", instance_id_);
++      fields.I("event_seq", seq);
++      std::forward<Fill>(fill)(fields);
++    }
+     TRACE_EVENT_INSTANT("disabled-by-default-media.bottleneck",
+                        "VideoBottleneck", timestamp, "bt", std::move(value));
+   }

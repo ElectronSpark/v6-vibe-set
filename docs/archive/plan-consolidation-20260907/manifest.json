@@ -1,0 +1,126 @@
+{
+  "consolidated_on": "2026-09-07",
+  "active_plan": "docs/active-work-plan.md",
+  "entries": [
+    {
+      "original_path": "docs/active-work-plan.md",
+      "archived_path": "docs/active-work-plan.md",
+      "sha256": "3179c6bc4cbd367c0a281b18da866ac354f19f37fac4260d7c0789aee22302b9",
+      "bytes": 60436,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/alpine-virgl-desktop-handoff-plan.md",
+      "archived_path": "docs/alpine-virgl-desktop-handoff-plan.md",
+      "sha256": "d31694841fb367bb0c3fc996d02ea43d7c079a3c7a20ced73e976e3c5bc0c77c",
+      "bytes": 136724,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-abi-compat-plan.md",
+      "archived_path": "docs/linux-abi-compat-plan.md",
+      "sha256": "49c1c0dfdc8e393b7f4bb88cd47a9083ddf1a0761e98a6b30f92a7565c04b1a1",
+      "bytes": 14944,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-drm-abi-compat-plan.md",
+      "archived_path": "docs/linux-drm-abi-compat-plan.md",
+      "sha256": "70c7f3688c68fe843367cf611fc788cd1a9fb1db8c2b4c6e8e4c32aee25f2fde",
+      "bytes": 155482,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-userland-abi-kernel-gap-plan.md",
+      "archived_path": "docs/linux-userland-abi-kernel-gap-plan.md",
+      "sha256": "b9e9a85081addb83f2ebc2a2ffff6b0cdb2e66cbb5b0aefcb08c85869d15865e",
+      "bytes": 36456,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-userland-upstream-depatch-plan.md",
+      "archived_path": "docs/linux-userland-upstream-depatch-plan.md",
+      "sha256": "9734c756dcd074b76847cdbd9315d87a9f287f774e50aa8f336d8ce4424c1ae3",
+      "bytes": 16003,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-vm-abi-compat-plan.md",
+      "archived_path": "docs/linux-vm-abi-compat-plan.md",
+      "sha256": "ed2f697cc1ff619e3e66802b6d424f83359c4ae67c6b2c449e17465f9cd810e7",
+      "bytes": 21055,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "docs/linux-drm-abi-impl-steps.md",
+      "archived_path": "docs/linux-drm-abi-impl-steps.md",
+      "sha256": "d52cddc0cdd1c77929952faad9180257ca3986e21ebc7cb66a4bf0b090aedb7c",
+      "bytes": 28685,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "GPU_REMAINING_GAPS.md",
+      "archived_path": "GPU_REMAINING_GAPS.md",
+      "sha256": "0f208ce562232497813b7c7274d69278961525af9bb60cabebc3f17fa1e462f4",
+      "bytes": 79745,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": ".github/skills/xv6-debug-gui-runtime/GPU_OPENGL_PLAN.md",
+      "archived_path": ".github/skills/xv6-debug-gui-runtime/GPU_OPENGL_PLAN.md",
+      "sha256": "57c0f181e3429d2347e13854a52201ef42ba3d1e8abef750544ae87c47878f32",
+      "bytes": 3404,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": ".github/skills/xv6-debug-gui-runtime/WEBKIT_TODO.md",
+      "archived_path": ".github/skills/xv6-debug-gui-runtime/WEBKIT_TODO.md",
+      "sha256": "29ed1a094bb6b4aab5efff01039fb5559e063259232b6df90cd69f2bc3a060fa",
+      "bytes": 11003,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "MIGRATION.md",
+      "archived_path": "MIGRATION.md",
+      "sha256": "a56e427d4aa0696a364ed53d7fefd736fb786d29ee08c803011424d3c5bddadb",
+      "bytes": 6810,
+      "repository": ".",
+      "repository_head": "7efff75d4fe1b9f027ca44f21c9c5cef3f77656f"
+    },
+    {
+      "original_path": "ports/MIGRATION.md",
+      "archived_path": "ports/MIGRATION.md",
+      "sha256": "99cf499929acd4554c9215e737ef8cee0ca62b06b19cf858683f26b116d59c6d",
+      "bytes": 11670,
+      "repository": "ports",
+      "repository_head": "dffcfd3d6a00dad51e117e8231400d5c40bf33c6"
+    },
+    {
+      "original_path": "kernel/LWIP_PERF_PLAN.md",
+      "archived_path": "kernel/LWIP_PERF_PLAN.md",
+      "sha256": "414d4440283764b7125d7519351e96436d9651cd90e1868167451587924a7702",
+      "bytes": 7763,
+      "repository": "kernel",
+      "repository_head": "73a5d217698f82129260ccb2487707b4b7f6f652"
+    },
+    {
+      "original_path": "kernel/kernel/vfs/VFS_DATA_IO_TODO.md",
+      "archived_path": "kernel/kernel/vfs/VFS_DATA_IO_TODO.md",
+      "sha256": "c87ca24934f874336ead5a2ffc91f014c005beea76a4929f1be0502098ae731a",
+      "bytes": 10480,
+      "repository": "kernel",
+      "repository_head": "73a5d217698f82129260ccb2487707b4b7f6f652"
+    }
+  ]
+}

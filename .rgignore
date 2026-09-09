@@ -1,0 +1,32 @@
+# Defense in depth only. This file is not enforcement: repository agents must
+# use scripts/audit/safe-rg.sh, whose resource caps and rejections are binding.
+**/build/
+**/build-*/
+**/cmake-build-*/
+**/out/
+**/dist/
+**/target/
+**/.git/
+**/CMakeFiles/
+!/scripts/build/
+!/scripts/build/**
+*.[iI][mM][gG]
+*.[rR][aA][wW]
+*.[qQ][cC][oO][wW]
+*.[qQ][cC][oO][wW]2
+*.[vV][hH][dD]
+*.[vV][hH][dD][xX]
+*.[vV][mM][dD][kK]
+*.[iI][sS][oO]
+*.[zZ][iI][pP]
+*.[tT][aA][rR]
+*.[gG][zZ]
+*.[bB][zZ]2
+*.[xX][zZ]
+*.[zZ][sS][tT]
+*.7[zZ]
+*.[rR][aA][rR]
+*.[tT][gG][zZ]
+*.[tT][bB][zZ]
+*.[tT][bB][zZ]2
+*.[tT][xX][zZ]

@@ -1,0 +1,160 @@
+#!/usr/bin/env expect
+
+set timeout 260
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/webkit-typed-url"
+exec mkdir -p $outdir
+set runlog "$outdir/run.log"
+set tmpimg "$outdir/typed-url.fs.img"
+exec sh -c "rm -f $runlog"
+exec cp $fsimg $tmpimg
+
+set start_url "about:blank"
+set target_url "file:///share/webkit/human-button.html"
+set qemu_net "0"
+set post_enter_wait 20
+set artifact_prefix "typed-url"
+if {[info exists env(WEBKIT_TYPED_START_URL)] && $env(WEBKIT_TYPED_START_URL) ne ""} {
+    set start_url $env(WEBKIT_TYPED_START_URL)
+}
+if {[info exists env(WEBKIT_TYPED_TARGET_URL)] && $env(WEBKIT_TYPED_TARGET_URL) ne ""} {
+    set target_url $env(WEBKIT_TYPED_TARGET_URL)
+}
+if {[info exists env(WEBKIT_TYPED_QEMU_NET)] && $env(WEBKIT_TYPED_QEMU_NET) ne ""} {
+    set qemu_net $env(WEBKIT_TYPED_QEMU_NET)
+}
+if {[info exists env(WEBKIT_TYPED_POST_ENTER_WAIT)] && $env(WEBKIT_TYPED_POST_ENTER_WAIT) ne ""} {
+    set post_enter_wait $env(WEBKIT_TYPED_POST_ENTER_WAIT)
+}
+if {[info exists env(WEBKIT_TYPED_ARTIFACT_PREFIX)] && $env(WEBKIT_TYPED_ARTIFACT_PREFIX) ne ""} {
+    set artifact_prefix $env(WEBKIT_TYPED_ARTIFACT_PREFIX)
+}
+regsub -all {[^A-Za-z0-9._-]} $artifact_prefix {_} artifact_prefix
+set host_ppm "$outdir/$artifact_prefix.ppm"
+set host_png "$outdir/$artifact_prefix.png"
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              $qemu_net
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 webkit_log=1 video=1280x800 netsurf=0"
+
+log_file -a $runlog
+
+proc webkit_crash_pattern {} {
+    return {coredump: [^\r\n]*\((MiniBrowser|WebKit[^)]*)\)|signal: [^\r\n]*name='(MiniBrowser|WebKit[^']*)'|waitpid: [^\r\n]*name='(MiniBrowser|WebKit[^']*)'[^\r\n]*wait_status=11}
+}
+
+proc wait_or_webkit_crash {seconds} {
+    set old_timeout $::timeout
+    set ::timeout $seconds
+    expect {
+        -re [webkit_crash_pattern] {
+            puts "\nTYPEDURL-FAIL webkit-crash"
+            exit 6
+        }
+        timeout {}
+        eof {
+            puts "\nTYPEDURL-FAIL eof-during-wait"
+            exit 6
+        }
+    }
+    set ::timeout $old_timeout
+}
+
+spawn timeout --foreground 250 bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+
+expect {
+    -re {\[desktop\] desktop icons are provided by weston-desktop-shell} {}
+    -re {weston-desktop-shell: loaded [0-9]+ desktop entries} {}
+    -re {\[desktop\] desktop icons pid=[0-9]+ source=/root/desktop} {}
+    timeout { puts "\nTYPEDURL-FAIL no-desktop"; exit 2 }
+    eof { puts "\nTYPEDURL-FAIL early-eof"; exit 2 }
+}
+
+send "cp /bin/weston-session /tmp/ws2\r"
+expect {
+    -re {root:/#} {}
+    -re {waitpid: reaping pid=[0-9]+ tgid=[0-9]+ name='cp'} {}
+    timeout {}
+}
+sleep 2
+
+send "/tmp/ws2 --launch-webkit $start_url &\r"
+expect {
+    -re {launch-webkit MiniBrowser pid=([0-9]+) url=} {
+        puts "\nTYPEDURL: MiniBrowser pid=$expect_out(1,string)"
+    }
+    -re {webkit_gpu_policy name=MiniBrowser[^\r\n]*} {}
+    -re {GUI session required} { puts "\nTYPEDURL-FAIL sh-guard"; exit 3 }
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL no-launch"; exit 3 }
+}
+
+wait_or_webkit_crash 10
+send "keyinject chord ctrl+l; keyinject text $target_url; keyinject key enter; echo TYPEDURL_KEYS_DONE\r"
+expect {
+    -re {keyinject: chord ctrl\+l} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL no-ctrl-l"; exit 4 }
+    eof { puts "\nTYPEDURL-FAIL key-eof"; exit 4 }
+}
+expect {
+    -re {keyinject: text len=[0-9]+} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL no-text"; exit 4 }
+    eof { puts "\nTYPEDURL-FAIL text-eof"; exit 4 }
+}
+expect {
+    -re {keyinject: key enter} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL no-enter"; exit 4 }
+    eof { puts "\nTYPEDURL-FAIL enter-eof"; exit 4 }
+}
+expect {
+    -re {TYPEDURL_KEYS_DONE} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL key-command-timeout"; exit 4 }
+    eof { puts "\nTYPEDURL-FAIL key-command-eof"; exit 4 }
+}
+
+wait_or_webkit_crash $post_enter_wait
+send "fbstat ppm-current /typed-url.ppm 0 0 1280 800; sync; echo TYPEDURL_CAPTURE_DONE\r"
+expect {
+    -re {fb_ppm_current path=/typed-url\.ppm screen=1280x800 scanout=1280x800} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    -re {fbstat: [^\r\n]+} { puts "\nTYPEDURL-FAIL fbstat-error"; exit 5 }
+    timeout { puts "\nTYPEDURL-FAIL fbstat-timeout"; exit 5 }
+    eof { puts "\nTYPEDURL-FAIL fbstat-eof"; exit 5 }
+}
+expect {
+    -re {TYPEDURL_CAPTURE_DONE} {}
+    -re [webkit_crash_pattern] { puts "\nTYPEDURL-FAIL webkit-crash"; exit 6 }
+    timeout { puts "\nTYPEDURL-FAIL capture-marker-timeout"; exit 5 }
+    eof { puts "\nTYPEDURL-FAIL capture-marker-eof"; exit 5 }
+}
+
+catch { exec pkill -P [exp_pid] qemu-system-x86_64 }
+sleep 1
+catch { exec rm -f $host_ppm $host_png }
+if {[catch { exec sh -c "debugfs -R 'dump /typed-url.ppm $host_ppm' '$tmpimg' >/dev/null 2>&1" } dump_out]} {
+    puts "\nTYPEDURL-FAIL extract-ppm $dump_out"
+    exit 5
+}
+if {[catch { exec convert $host_ppm $host_png } convert_out]} {
+    puts "\nTYPEDURL-FAIL convert-png $convert_out"
+    exit 5
+}
+set pass_line "TYPEDURL-PASS target=$target_url framebuffer=/typed-url.ppm host_ppm=$host_ppm host_png=$host_png"
+puts "\n$pass_line"
+set pass_log [open $runlog a]
+puts $pass_log $pass_line
+close $pass_log
+exit 0

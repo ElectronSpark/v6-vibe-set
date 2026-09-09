@@ -1,0 +1,13 @@
+kind	host_path	guest_path	bytes	sha256
+executable	/home/es/xv6-os/config-temp/host-x11-shm-smoke/host-x11-shm-smoke	/opt/host-gui/host-x11-shm-smoke/bin/host-x11-shm-smoke	49448	17f3e2ba1eb1840c34e0d51b762cfc319d96705d734f60d2d446e6d15e9dce95
+interpreter	/lib64/ld-linux-x86-64.so.2	/opt/host-gui/host-x11-shm-smoke/lib/ld-linux-x86-64.so.2	236616	1cd555ac46b7887edeaf3c42aac5408c8135e52f6b37870da2cf82d5fe14e829
+library	/lib/x86_64-linux-gnu/libXext.so.6	/opt/host-gui/host-x11-shm-smoke/lib/libXext.so.6	77512	2907e6a996465de5b32a0dd10534d4416b87f1dee5670aaa7b19301a1fc93f44
+library	/lib/x86_64-linux-gnu/libX11.so.6	/opt/host-gui/host-x11-shm-smoke/lib/libX11.so.6	1298088	c5b5d782bd9cab3420a62df88f5c991507edf3331a89f98464ddbc538c37b879
+library	/lib/x86_64-linux-gnu/libc.so.6	/opt/host-gui/host-x11-shm-smoke/lib/libc.so.6	2125328	d8db8739a1633c972cec6a4fe0566bdcec6fd088f98723492ab0361f66238f75
+library	/lib/x86_64-linux-gnu/libxcb.so.1	/opt/host-gui/host-x11-shm-smoke/lib/libxcb.so.1	162392	7958a0136b121bdc4c708968569ad152a9ed208ab026e2537b1005dde64ca440
+library	/lib/x86_64-linux-gnu/libXau.so.6	/opt/host-gui/host-x11-shm-smoke/lib/libXau.so.6	18696	8040da3f8516c1acfe39f04ff022480cdb273705ba5e7a4ca70bbdb1527cd67a
+library	/lib/x86_64-linux-gnu/libXdmcp.so.6	/opt/host-gui/host-x11-shm-smoke/lib/libXdmcp.so.6	26776	667d97d6da16016400ab10de9f83ef4ab209ceb6adf68ff9650225ec13e723b0
+library	/lib/x86_64-linux-gnu/libbsd.so.0	/opt/host-gui/host-x11-shm-smoke/lib/libbsd.so.0	80888	e86cd4f0019f42c2ba5e60602e0edc8694d2948377d98c3654d0f6bddb5254bb
+library	/lib/x86_64-linux-gnu/libmd.so.0	/opt/host-gui/host-x11-shm-smoke/lib/libmd.so.0	55536	423e18586b6ea740f4465afd64f7a9a4cb7264ed979c8e7256f9085af5345fef
+wrapper	generated	/opt/host-gui/host-x11-shm-smoke/run	799	5d63adb3580ba8e716c37028db545df860c68140e3adddaa7f46f23bfed37455
+desktop-script	generated	/root/desktop/imported-host-x11-shm-smoke	44	8a9af2623f082ff3738b6961b8b030f19834fb25f6fa3bd87f6c750781dacf0e

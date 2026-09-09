@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chromium WebGL lifecycle check</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.4 system-ui, sans-serif; background: #101724; color: #e6edf7; }
+  body { margin: 18px auto; max-width: 1180px; padding: 0 16px; }
+  h1 { margin: 0 0 8px; font-size: 25px; }
+  p { margin: 7px 0; }
+  button { font: inherit; padding: 9px 13px; margin: 4px 5px 4px 0; border: 1px solid #91a5c5; border-radius: 5px; background: #263b59; color: white; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  #controls, article { padding: 12px; border: 1px solid #40516d; border-radius: 7px; background: #192335; }
+  #canvases { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; padding: 8px; background: #101724; }
+  #canvases:fullscreen { justify-content: center; align-content: center; overflow: auto; }
+  #fullscreenTools { display: none; flex-basis: 100%; text-align: center; }
+  #canvases:fullscreen #fullscreenTools { display: block; }
+  article { flex: 1; min-width: 300px; max-width: 680px; }
+  h2 { margin: 0 0 5px; font-size: 19px; }
+  canvas { display: block; width: 100%; height: auto; max-height: 390px; object-fit: contain; background: black; }
+  .status { font-weight: 700; }
+  .pass { color: #7ee5a0; } .fail { color: #ff9999; } .waiting { color: #ffe39a; }
+  .detail { font: 13px/1.35 ui-monospace, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+  #log { max-height: 185px; overflow: auto; background: #090e18; padding: 8px; }
+  #summary { font-size: 19px; }
+</style>
+<h1>Chromium WebGL lifecycle check</h1>
+<p>Functional checks for WebGL 1 and 2. Each canvas uses one triangle and at most 640 × 384 pixels. This is not a benchmark.</p>
+<div id="controls">
+  <div id="summary" class="status waiting">Initializing both APIs…</div>
+  <p id="run" class="detail"></p>
+  <button id="start" disabled>Start 60-second soak</button>
+  <button id="stop" disabled>Stop soak</button>
+  <button id="resize" disabled>Resize both canvases</button>
+  <button id="fullscreen">Enter fullscreen</button>
+  <p id="progress">The soak does not inject context loss. Test loss and restoration separately after it stops.</p>
+  <p id="delivery" class="detail">Results: POST /webgl-result</p>
+</div>
+<div id="canvases">
+  <div id="fullscreenTools"><button id="leaveFullscreen">Exit fullscreen</button><button id="fullscreenResize">Resize both canvases</button></div>
+  <article id="panel1">
+    <h2>WebGL 1 <span id="status1" class="status waiting">initializing</span></h2>
+    <canvas id="canvas1" width="320" height="192"></canvas>
+    <p><button id="lose1" disabled>Lose WebGL 1 context</button><button id="restore1" disabled>Restore WebGL 1 context</button></p>
+    <div id="detail1" class="detail"></div>
+  </article>
+  <article id="panel2">
+    <h2>WebGL 2 <span id="status2" class="status waiting">initializing</span></h2>
+    <canvas id="canvas2" width="320" height="192"></canvas>
+    <p><button id="lose2" disabled>Lose WebGL 2 context</button><button id="restore2" disabled>Restore WebGL 2 context</button></p>
+    <div id="detail2" class="detail"></div>
+  </article>
+</div>
+<div id="log" class="detail" aria-live="polite"></div>
+<script>
+'use strict';
+(() => {
+  const VERSION = 'chromium-webgl-lifecycle-v2';
+  const SOAK_MS = 60000, STALL_MS = 5000, OPERATION_MS = 5000;
+  const COLORS = [[51, 204, 102, 255], [51, 102, 230, 255]];
+  const endpoint = '/webgl-result';
+  const parameters = new URLSearchParams(location.search);
+  const token = (parameters.get('run') || 'unlabeled').slice(0, 128);
+  // Observation preserves pending callbacks after a gap, but never turns a
+  // failed progress bound into PASS. The existing 60-second deadline remains.
+  const observeStalls = parameters.get('observe') === '1';
+  const opened = performance.now();
+  const $ = id => document.getElementById(id);
+  const states = [];
+  const events = [];
+  let sequence = 0, sent = 0, deliveryFailures = 0, inflight = 0;
+  let soak = null, lastSoak = null, timer = 0, stopTimer = 0, raf = 0;
+  let resizeLarge = false, globalErrors = 0;
+
+  function event(kind, details = {}) {
+    events.push({kind, wall: Date.now(), monotonic_ms: Math.round(performance.now() - opened), ...details});
+    if (events.length > 32) events.shift();
+    $('log').textContent = events.slice(-12).map(e => JSON.stringify(e)).join('\n');
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  function stateResult(s) {
+    return {
+      api: s.api, state: s.state, generation: s.generation,
+      width: s.canvas.width, height: s.canvas.height,
+      frames: s.frames, checks: s.checks, errors: s.errors.slice(-8),
+      renderer: s.renderer, vendor: s.vendor, version: s.version,
+      context_attributes: s.attributes, loss_extension: Boolean(s.loss),
+      expected_losses: s.expectedLosses, unexpected_losses: s.unexpectedLosses,
+      restorations: s.restorations, restoration: s.restoration,
+      last_pixels: s.lastPixels, recent_checks: s.samples.slice(-4),
+      is_context_lost: s.gl ? s.gl.isContextLost() : null
+    };
+  }
+
+  function report(phase, details = {}) {
+    const payload = {
+      fixture: VERSION, run: token, sequence: ++sequence, phase,
+      wall_ms: Date.now(), monotonic_ms: Math.round(performance.now() - opened),
+      visibility: document.visibilityState, fullscreen: Boolean(document.fullscreenElement),
+      has_focus: document.hasFocus(), observe_stalls: observeStalls,
+      global_errors: globalErrors, contexts: states.map(stateResult),
+      soak: soak ? soakResult('RUNNING') : lastSoak,
+      controls: {start_enabled: !$('start').disabled, resize_enabled: !$('resize').disabled},
+      delivery: {sent, failures: deliveryFailures}, events: events.slice(-6), ...details
+    };
+    // At most two requests and two 3-second timers may be in flight.
+    if (inflight >= 2) {
+      deliveryFailures++;
+      $('delivery').textContent = `Result delivery failed: busy; failures=${deliveryFailures}`;
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    inflight++;
+    fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload), signal: controller.signal, cache: 'no-store'})
+      .then(response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); sent++; })
+      .catch(error => { deliveryFailures++; event('report-delivery-failed', {phase, error: String(error)}); })
+      .finally(() => {
+        clearTimeout(timeout); inflight--;
+        $('delivery').textContent = `Results: ${sent} delivered, ${deliveryFailures} failed, ${inflight} pending; sequence=${sequence}`;
+      });
+  }
+
+  function setState(s, value) {
+    s.state = value;
+    const label = $(`status${s.index}`);
+    label.textContent = value;
+    label.className = 'status ' + (value === 'ready' ? 'pass' : value === 'failed' ? 'fail' : 'waiting');
+  }
+
+  function refresh() {
+    const ready = states.length === 2 && states.every(s => s.state === 'ready');
+    $('start').disabled = Boolean(soak) || !ready;
+    $('stop').disabled = !soak;
+    $('resize').disabled = !ready;
+    $('fullscreenResize').disabled = !ready;
+    for (const s of states) {
+      $(`lose${s.index}`).disabled = Boolean(soak) || s.state !== 'ready' || !s.loss;
+      $(`restore${s.index}`).disabled = Boolean(soak) || !s.loss ||
+        !['lost-expected', 'lost-unexpected'].includes(s.state);
+      $(`detail${s.index}`).textContent =
+        `${s.renderer || 'Renderer unavailable'}\n${s.version || ''}\n` +
+        `generation=${s.generation} draws=${s.frames} pixel checks=${s.checks} errors=${s.errors.length}\n` +
+        `losses expected=${s.expectedLosses} unexpected=${s.unexpectedLosses}; restorations=${s.restorations}; ${s.canvas.width}×${s.canvas.height}\n` +
+        `last pixels=${s.lastPixels ? JSON.stringify(s.lastPixels) : 'none'}`;
+    }
+  }
+
+  function fail(s, reason) {
+    reason = String(reason).slice(0, 1200);
+    if (s.errors.length < 32) s.errors.push(reason);
+    setState(s, 'failed');
+    event('context-failure', {api: s.api, reason});
+    if (soak) finishSoak('FAIL', `${s.api}: ${reason}`);
+    else { $('summary').textContent = `FAIL: ${s.api}: ${reason}`; $('summary').className = 'status fail'; }
+    refresh();
+    report('failure');
+  }
+
+  function checkErrors(s, where) {
+    const codes = [];
+    for (let i = 0; i < 8; i++) {
+      const code = s.gl.getError();
+      if (code === s.gl.NO_ERROR) break;
+      codes.push(`0x${code.toString(16)}`);
+    }
+    if (codes.length) throw new Error(`${where}: GL errors ${codes.join(',')}`);
+  }
+
+  function build(s) {
+    const gl = s.gl;
+    const shaders = [];
+    let program = null, buffer = null, vao = null;
+    try {
+      const vertex = s.index === 2 ?
+        '#version 300 es\nin vec2 position; void main(){gl_Position=vec4(position,0.,1.);}' :
+        'attribute vec2 position; void main(){gl_Position=vec4(position,0.,1.);}';
+      const fragment = s.index === 2 ?
+        '#version 300 es\nprecision mediump float; uniform vec4 color; out vec4 outColor; void main(){outColor=color;}' :
+        'precision mediump float; uniform vec4 color; void main(){gl_FragColor=color;}';
+      for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]]) {
+        const shader = gl.createShader(type);
+        if (!shader) throw new Error('createShader returned null');
+        shaders.push(shader); gl.shaderSource(shader, source); gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) || 'shader compile failed');
+      }
+      program = gl.createProgram();
+      if (!program) throw new Error('createProgram returned null');
+      shaders.forEach(shader => gl.attachShader(program, shader));
+      gl.bindAttribLocation(program, 0, 'position'); gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) || 'link failed');
+      shaders.forEach(shader => { gl.detachShader(program, shader); gl.deleteShader(shader); });
+      shaders.length = 0;
+      buffer = gl.createBuffer();
+      if (!buffer) throw new Error('createBuffer returned null');
+      if (s.index === 2) { vao = gl.createVertexArray(); if (!vao) throw new Error('createVertexArray returned null'); gl.bindVertexArray(vao); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-.85, -.75, .85, -.75, 0, .85]), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      const uniform = gl.getUniformLocation(program, 'color');
+      if (uniform === null) throw new Error('color uniform unavailable');
+      s.resources = {program, buffer, vao, uniform};
+      gl.disable(gl.DITHER); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
+      checkErrors(s, 'resource creation');
+      s.generation++;
+    } catch (error) {
+      shaders.forEach(shader => gl.deleteShader(shader));
+      if (program) gl.deleteProgram(program);
+      if (buffer) gl.deleteBuffer(buffer);
+      if (vao) gl.deleteVertexArray(vao);
+      s.resources = null;
+      throw error;
+    }
+  }
+
+  function draw(s, sample = false) {
+    if (s.state !== 'ready') return;
+    const gl = s.gl, r = s.resources;
+    if (gl.isContextLost()) throw new Error('context lost before event delivery');
+    const color = COLORS[Math.floor(s.frames / 30) % COLORS.length];
+    gl.viewport(0, 0, s.canvas.width, s.canvas.height);
+    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(r.program);
+    if (s.index === 2) gl.bindVertexArray(r.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, r.buffer);
+    gl.uniform4f(r.uniform, color[0] / 255, color[1] / 255, color[2] / 255, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    s.frames++;
+    if (!sample) return;
+    // Readback is deliberately periodic, never a per-frame gl.finish loop.
+    const center = new Uint8Array(4), corner = new Uint8Array(4);
+    gl.readPixels(Math.floor(s.canvas.width / 2), Math.floor(s.canvas.height / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, center);
+    gl.readPixels(2, 2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, corner);
+    checkErrors(s, 'draw/readback');
+    s.lastPixels = {center: Array.from(center), corner: Array.from(corner), expected: color.slice()};
+    const correct = center.every((value, i) => Math.abs(value - color[i]) <= 2) &&
+      corner.every((value, i) => Math.abs(value - [0, 0, 0, 255][i]) <= 2);
+    s.checks++;
+    s.samples.push({frame: s.frames, generation: s.generation, pass: correct, ...s.lastPixels});
+    if (s.samples.length > 40) s.samples.shift();
+    if (!correct) throw new Error(`pixel mismatch: ${JSON.stringify(s.lastPixels)}`);
+  }
+
+  function drawChecked(s, sample) {
+    try { draw(s, sample); } catch (error) { fail(s, String(error)); }
+  }
+
+  function cancelOperation(s) { clearTimeout(s.operationTimer); s.operationTimer = 0; }
+
+  function requestLoss(s) {
+    if (soak || s.state !== 'ready' || !s.loss) return;
+    s.expectedLoss = true;
+    s.restoration = 'not requested';
+    setState(s, 'loss-requested');
+    s.operationStarted = Date.now();
+    event('loss-requested', {api: s.api});
+    s.operationTimer = setTimeout(() => {
+      s.expectedLoss = false;
+      fail(s, 'context-loss event deadline exceeded');
+    }, OPERATION_MS);
+    try { s.loss.loseContext(); } catch (error) { cancelOperation(s); s.expectedLoss = false; fail(s, String(error)); }
+    refresh(); report('loss-requested');
+  }
+
+  function requestRestore(s) {
+    if (soak || !s.loss || !['lost-expected', 'lost-unexpected'].includes(s.state)) return;
+    setState(s, 'restoring'); s.restoration = 'pending'; s.operationStarted = Date.now();
+    event('restore-requested', {api: s.api});
+    s.operationTimer = setTimeout(() => { s.restoration = 'FAIL'; fail(s, 'context-restoration event deadline exceeded'); }, OPERATION_MS);
+    try { s.loss.restoreContext(); } catch (error) { cancelOperation(s); s.restoration = 'FAIL'; fail(s, String(error)); }
+    refresh(); report('restore-requested');
+  }
+
+  function initialize(index) {
+    const s = {index, api: index === 2 ? 'webgl2' : 'webgl', canvas: $(`canvas${index}`),
+      state: 'initializing', gl: null, loss: null, resources: null, generation: 0,
+      frames: 0, checks: 0, errors: [], samples: [], lastPixels: null,
+      expectedLoss: false, expectedLosses: 0, unexpectedLosses: 0,
+      restorations: 0, restoration: 'not requested', operationTimer: 0, operationStarted: 0};
+    states.push(s);
+    s.canvas.addEventListener('webglcontextlost', e => {
+      e.preventDefault(); cancelOperation(s);
+      const expected = s.expectedLoss && s.state === 'loss-requested' && Date.now() - s.operationStarted <= OPERATION_MS;
+      s.expectedLoss = false; s.resources = null;
+      if (expected) { s.expectedLosses++; setState(s, 'lost-expected'); }
+      else { s.unexpectedLosses++; fail(s, 'unexpected context loss'); setState(s, 'lost-unexpected'); }
+      event('context-lost', {api: s.api, expected}); refresh(); report('context-lost', {expected});
+    });
+    s.canvas.addEventListener('webglcontextrestored', () => {
+      cancelOperation(s);
+      if (s.state !== 'restoring' || Date.now() - s.operationStarted > OPERATION_MS) {
+        s.restoration = 'FAIL'; fail(s, 'unexpected or late context-restoration event'); return;
+      }
+      try {
+        build(s); setState(s, 'ready'); draw(s, true);
+        s.restorations++; s.restoration = 'PASS';
+        s.loss = s.gl.getExtension('WEBGL_lose_context');
+        event('context-restored', {api: s.api, generation: s.generation, resources_rebuilt: true});
+      } catch (error) { s.restoration = 'FAIL'; fail(s, String(error)); }
+      refresh(); report('context-restored');
+    });
+    $(`lose${index}`).onclick = () => requestLoss(s);
+    $(`restore${index}`).onclick = () => requestRestore(s);
+    try {
+      s.gl = s.canvas.getContext(s.api, {alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false});
+      if (!s.gl) throw new Error('getContext returned null');
+      const debug = s.gl.getExtension('WEBGL_debug_renderer_info');
+      s.renderer = s.gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : s.gl.RENDERER);
+      s.vendor = s.gl.getParameter(debug ? debug.UNMASKED_VENDOR_WEBGL : s.gl.VENDOR);
+      s.version = s.gl.getParameter(s.gl.VERSION); s.attributes = s.gl.getContextAttributes();
+      s.loss = s.gl.getExtension('WEBGL_lose_context');
+      build(s); setState(s, 'ready'); draw(s, true);
+      event('initialized', {api: s.api, renderer: s.renderer, loss_extension: Boolean(s.loss)});
+    } catch (error) { fail(s, String(error)); }
+  }
+
+  function soakResult(status, reason = '') {
+    const current = performance.now();
+    return {status, reason, target_ms: SOAK_MS, elapsed_wall_ms: Date.now() - soak.startWall,
+      elapsed_monotonic_ms: Math.round(current - soak.startMono),
+      last_frame_gap_ms: Math.round(current - soak.lastFrame),
+      timing: {callbacks: soak.callbacks, timer_ticks: soak.timerTicks,
+        callback_entry_age_ms: Math.round(current - soak.lastCallbackEntry),
+        callback_exit_age_ms: Math.round(current - soak.lastCallbackExit),
+        max_callback_entry_gap_ms: Math.round(soak.maxCallbackGap),
+        max_callback_duration_ms: Math.round(soak.maxCallbackDuration),
+        max_timer_gap_ms: Math.round(soak.maxTimerGap),
+        raf_timestamp_offset_ms: Math.round(soak.timestampOffset),
+        max_raf_timestamp_offset_ms: Math.round(soak.maxTimestampOffset),
+        stall_count: soak.stallCount, resume_count: soak.resumeCount,
+        stall_active: soak.stallActive, observations: soak.observations.slice()},
+      contexts: states.map((s, i) => ({api: s.api, draws: s.frames - soak.frames[i],
+        checks: s.checks - soak.checks[i], errors: s.errors.length - soak.errors[i],
+        unexpected_losses: s.unexpectedLosses - soak.losses[i]}))};
+  }
+
+  function finishSoak(status, reason) {
+    if (!soak) return;
+    clearInterval(timer); clearTimeout(stopTimer); cancelAnimationFrame(raf);
+    if (status === 'PASS') {
+      const elapsed = Date.now() - soak.startWall;
+      const lastProgress = observeStalls ? soak.lastCallbackEntry : soak.lastFrame;
+      if (soak.stallCount) { status = 'FAIL'; reason = 'observation completed with animation gaps'; }
+      else if (performance.now() - lastProgress > STALL_MS) { status = 'FAIL'; reason = 'animation stale at terminal deadline'; }
+      else if (elapsed < SOAK_MS || elapsed > SOAK_MS + STALL_MS) { status = 'FAIL'; reason = 'wall deadline missed'; }
+      else if (states.some((s, i) => s.state !== 'ready' || s.frames - soak.frames[i] < 10 ||
+        s.checks - soak.checks[i] < 20 || s.errors.length !== soak.errors[i] || s.unexpectedLosses !== soak.losses[i])) {
+        status = 'FAIL'; reason = 'insufficient progress or context errors';
+      }
+    }
+    lastSoak = soakResult(status, reason); soak = null;
+    $('summary').textContent = `Soak ${status}: ${reason}`;
+    $('summary').className = 'status ' + (status === 'PASS' ? 'pass' : 'fail');
+    $('progress').textContent = `${lastSoak.elapsed_wall_ms} ms; ${lastSoak.contexts.map(c => `${c.api}: ${c.draws} draws, ${c.checks} checks`).join('; ')}`;
+    event('soak-complete', lastSoak); refresh(); report('soak-complete');
+  }
+
+  function observeGap(current, gap) {
+    if (soak.stallActive) return;
+    soak.stallActive = true; soak.stallCount++;
+    const detail = {kind: 'gap-detected', elapsed_ms: Math.round(current - soak.startMono),
+      entry_gap_ms: Math.round(gap), callbacks: soak.callbacks};
+    if (soak.observations.length < 16) soak.observations.push(detail);
+    $('summary').textContent = 'OBSERVING: animation gap detected; callbacks remain pending until 60 seconds';
+    $('summary').className = 'status waiting';
+    event('animation-gap', detail); report('animation-gap');
+  }
+
+  function frame(now) {
+    if (!soak) return;
+    const entered = performance.now(), entryGap = entered - soak.lastCallbackEntry;
+    soak.maxCallbackGap = Math.max(soak.maxCallbackGap, entryGap);
+    if (observeStalls) {
+      if (entryGap > STALL_MS) observeGap(entered, entryGap);
+      if (soak.stallActive) {
+        soak.stallActive = false; soak.resumeCount++;
+        const detail = {kind: 'callbacks-resumed', elapsed_ms: Math.round(entered - soak.startMono),
+          entry_gap_ms: Math.round(entryGap), callbacks: soak.callbacks + 1};
+        if (soak.observations.length < 16) soak.observations.push(detail);
+        event('animation-resumed', detail);
+      }
+    } else if (now - soak.lastFrame > STALL_MS) { finishSoak('FAIL', 'animation stalled for more than 5 seconds'); return; }
+    soak.callbacks++; soak.lastCallbackEntry = entered;
+    soak.timestampOffset = entered - now;
+    soak.maxTimestampOffset = Math.max(soak.maxTimestampOffset, soak.timestampOffset);
+    soak.lastFrame = now;
+    const sample = now - soak.lastSample >= 2000;
+    if (sample) soak.lastSample = now;
+    for (const s of states) { drawChecked(s, sample); if (!soak) return; }
+    if (sample) refresh();
+    soak.lastCallbackExit = performance.now();
+    soak.maxCallbackDuration = Math.max(soak.maxCallbackDuration, soak.lastCallbackExit - entered);
+    raf = requestAnimationFrame(frame);
+  }
+
+  function start() {
+    if (soak || !states.every(s => s.state === 'ready') || document.hidden) return;
+    const now = performance.now();
+    soak = {startWall: Date.now(), startMono: now, lastFrame: now, lastSample: now,
+      callbacks: 0, timerTicks: 0, lastCallbackEntry: now, lastCallbackExit: now,
+      maxCallbackGap: 0, maxCallbackDuration: 0, lastTimer: now, maxTimerGap: 0,
+      timestampOffset: 0, maxTimestampOffset: 0,
+      stallActive: false, stallCount: 0, resumeCount: 0, observations: [],
+      frames: states.map(s => s.frames), checks: states.map(s => s.checks),
+      errors: states.map(s => s.errors.length), losses: states.map(s => s.unexpectedLosses)};
+    $('summary').textContent = observeStalls ? 'OBSERVING: 60 seconds, including any animation gaps' :
+      'RUNNING: 60-second animation and periodic pixel checks';
+    $('summary').className = 'status waiting';
+    event('soak-started'); refresh(); report('soak-started');
+    raf = requestAnimationFrame(frame);
+    let lastReport = now;
+    timer = setInterval(() => {
+      if (!soak) return;
+      const current = performance.now(), elapsed = Date.now() - soak.startWall;
+      soak.timerTicks++;
+      soak.maxTimerGap = Math.max(soak.maxTimerGap, current - soak.lastTimer);
+      soak.lastTimer = current;
+      const progressGap = current - (observeStalls ? soak.lastCallbackEntry : soak.lastFrame);
+      if (progressGap > STALL_MS) {
+        if (observeStalls) observeGap(current, progressGap);
+        else { finishSoak('FAIL', 'animation stopped progressing'); return; }
+      }
+      $('progress').textContent = `${Math.floor(elapsed / 1000)} / 60 seconds; ${states.map((s, i) => `${s.api}: ${s.frames - soak.frames[i]} draws`).join('; ')}`;
+      if (current - lastReport >= 2000) { lastReport = current; report('soak-progress'); }
+    }, 250);
+    stopTimer = setTimeout(() => finishSoak('PASS', 'bounded animation and pixel checks completed'), SOAK_MS);
+  }
+
+  $('start').onclick = start;
+  $('stop').onclick = () => finishSoak('INCOMPLETE', 'operator stopped the soak');
+  $('resize').onclick = () => {
+    if (!states.every(s => s.state === 'ready')) return;
+    resizeLarge = !resizeLarge;
+    for (const s of states) { s.canvas.width = resizeLarge ? 640 : 320; s.canvas.height = resizeLarge ? 384 : 192; drawChecked(s, true); }
+    event('canvases-resized', {width: resizeLarge ? 640 : 320, height: resizeLarge ? 384 : 192});
+    refresh(); report('canvases-resized');
+  };
+  $('fullscreen').onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await $('canvases').requestFullscreen();
+    } catch (error) { globalErrors++; event('fullscreen-failed', {error: String(error)}); report('fullscreen-failed'); }
+  };
+  $('leaveFullscreen').onclick = () => $('fullscreen').click();
+  $('fullscreenResize').onclick = () => $('resize').click();
+  document.addEventListener('fullscreenchange', () => {
+    $('fullscreen').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen';
+    event('fullscreen-changed', {active: Boolean(document.fullscreenElement)});
+    for (const s of states) drawChecked(s, true);
+    refresh(); report('fullscreen-changed');
+  });
+  document.addEventListener('visibilitychange', () => {
+    event('visibility-changed', {state: document.visibilityState});
+    if (document.hidden && soak) finishSoak('INCOMPLETE', 'page hidden during soak');
+    report('visibility-changed');
+  });
+  for (const type of ['focus', 'blur']) window.addEventListener(type, () => {
+    event('window-' + type, {has_focus: document.hasFocus()});
+    report('window-' + type);
+  });
+  window.addEventListener('error', e => {
+    globalErrors++; event('javascript-error', {message: e.message});
+    if (soak) finishSoak('FAIL', 'JavaScript error');
+    report('javascript-error');
+  });
+  $('run').textContent = `Fixture ${VERSION}; run=${token}; ${location.origin}`;
+  if (observeStalls) $('start').textContent = 'Observe 60 seconds';
+  initialize(1); initialize(2); refresh();
+  if (states.every(s => s.state === 'ready')) {
+    $('summary').textContent = 'READY: both APIs passed initial drawing and pixel checks';
+    $('summary').className = 'status pass';
+  }
+  report('initialized');
+})();
+</script>
+</html>

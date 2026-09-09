@@ -1,0 +1,605 @@
+/*
+ * poll-notify-probe: reducer for the N5 poll notify-full-wait lost-wakeup
+ * defects (timerfd / pipe / inotify producer-side missing knote notifies).
+ *
+ * Boot the kernel with poll_notify_full_wait=1 so blocking poll() parks in
+ * the no-rescan kqueue wait path (timeout=-1 -> waits forever on a lost
+ * wakeup).  Each test deadlocks on a pre-fix kernel (watchdog SIGALRM
+ * kills the hung child -> FAIL line) and completes post-fix.
+ *
+ *   1. pipe-blocking-write: poller parks on an empty pipe (poll -1);
+ *      writer then issues one write() far larger than the pipe ring and
+ *      blocks on the full ring.  Pre-fix the readable notify only fires
+ *      when write() returns, so the poll-only reader never drains the
+ *      ring: deadlock.
+ *   2. timerfd-repeat: 20ms interval timer, poll(-1) + read until 10
+ *      expirations.  Guards the repeating-timer/notify path end to end.
+ *   3. inotify-multi-watcher: two independent inotify fds watch the same
+ *      file from two children, both parked in poll(-1); parent modifies
+ *      the file; BOTH children must wake.  Pre-fix only the first
+ *      matching watcher's fd was knote-notified.
+ *
+ * Output: POLL-NOTIFY-PROBE: <test> PASS|FAIL(detail) per test and a
+ * final POLL-NOTIFY-PROBE: RESULT=PASS|FAIL summary line.
+ */
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/inotify.h>
+#include <sys/socket.h>
+#include <sys/timerfd.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+#define WRITE_TOTAL (1u << 20) /* 1 MiB: far beyond any pipe ring size */
+#define WATCHDOG_SECS 15
+
+static int g_failures;
+
+static void report(const char *test, int ok, const char *detail)
+{
+    if (ok) {
+        printf("POLL-NOTIFY-PROBE: %s PASS\n", test);
+    } else {
+        printf("POLL-NOTIFY-PROBE: %s FAIL(%s)\n", test, detail);
+        g_failures++;
+    }
+    fflush(stdout);
+}
+
+/* waitpid with a coarse deadline; returns 0 if child exited 0. */
+static int wait_child(pid_t pid, int secs, const char *who)
+{
+    for (int i = 0; i < secs * 10; i++) {
+        int status = 0;
+        pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid) {
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+                return 0;
+            fprintf(stderr, "poll-notify-probe: %s exited status=%d\n",
+                    who, status);
+            return -1;
+        }
+        if (r < 0)
+            return -1;
+        struct timespec ts = {0, 100 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+    fprintf(stderr, "poll-notify-probe: %s HUNG, killing\n", who);
+    kill(pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+    return -1;
+}
+
+/* ── test 1: pipe blocking write vs poll-only reader ─────────────────── */
+static void test_pipe_blocking_write(void)
+{
+    int fds[2];
+    if (pipe(fds) < 0) {
+        report("pipe-blocking-write", 0, "pipe");
+        return;
+    }
+
+    pid_t reader = fork();
+    if (reader == 0) {
+        /* poll-only reader: never issues a blocking read */
+        close(fds[1]);
+        alarm(WATCHDOG_SECS);
+        fcntl(fds[0], F_SETFL, O_NONBLOCK);
+        size_t total = 0;
+        int eof = 0;
+        char buf[65536];
+        while (total < WRITE_TOTAL && !eof) {
+            struct pollfd p = {.fd = fds[0], .events = POLLIN};
+            int pr = poll(&p, 1, -1); /* -1: no rescan safety net */
+            if (pr < 0)
+                _exit(2);
+            for (;;) {
+                ssize_t n = read(fds[0], buf, sizeof(buf));
+                if (n > 0) {
+                    total += (size_t)n;
+                    continue;
+                }
+                if (n == 0) { /* writer exited, all write ends closed */
+                    eof = 1;
+                    break;
+                }
+                if (errno == EAGAIN)
+                    break;
+                _exit(3);
+            }
+        }
+        _exit(total == WRITE_TOTAL ? 0 : 6);
+    }
+
+    pid_t writer = fork();
+    if (writer == 0) {
+        close(fds[0]);
+        alarm(WATCHDOG_SECS);
+        /* let the reader park inside poll() first */
+        struct timespec ts = {0, 300 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+        char *buf = malloc(WRITE_TOTAL);
+        if (buf == NULL)
+            _exit(4);
+        memset(buf, 0x5a, WRITE_TOTAL);
+        ssize_t n = write(fds[1], buf, WRITE_TOTAL); /* blocks on full ring */
+        _exit(n == (ssize_t)WRITE_TOTAL ? 0 : 5);
+    }
+
+    close(fds[0]);
+    close(fds[1]);
+    int ok = wait_child(writer, WATCHDOG_SECS + 3, "pipe-writer") == 0;
+    ok &= wait_child(reader, WATCHDOG_SECS + 3, "pipe-reader") == 0;
+    report("pipe-blocking-write", ok, "deadlock-or-error");
+}
+
+/* ── test 2: repeating timerfd via poll(-1) ──────────────────────────── */
+static void test_timerfd_repeat(void)
+{
+    pid_t pid = fork();
+    if (pid == 0) {
+        alarm(WATCHDOG_SECS);
+        int tfd = timerfd_create(CLOCK_MONOTONIC, 0);
+        if (tfd < 0)
+            _exit(2);
+        struct itimerspec its = {
+            .it_interval = {0, 20 * 1000 * 1000},
+            .it_value = {0, 20 * 1000 * 1000},
+        };
+        if (timerfd_settime(tfd, 0, &its, NULL) < 0)
+            _exit(3);
+        uint64_t seen = 0;
+        while (seen < 10) {
+            struct pollfd p = {.fd = tfd, .events = POLLIN};
+            if (poll(&p, 1, -1) < 0)
+                _exit(4);
+            uint64_t exp = 0;
+            if (read(tfd, &exp, sizeof(exp)) != sizeof(exp))
+                _exit(5);
+            seen += exp;
+        }
+        _exit(0);
+    }
+    int ok = wait_child(pid, WATCHDOG_SECS + 3, "timerfd") == 0;
+    report("timerfd-repeat", ok, "deadlock-or-error");
+}
+
+/* ── test 3: two inotify fds watching the same inode ─────────────────── */
+static int inotify_watch_child(const char *path, int ready_fd)
+{
+    alarm(WATCHDOG_SECS);
+    int ifd = inotify_init1(0);
+    if (ifd < 0)
+        _exit(2);
+    if (inotify_add_watch(ifd, path, IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE) < 0)
+        _exit(3);
+    /* signal readiness AFTER the watch exists */
+    if (write(ready_fd, "R", 1) != 1)
+        _exit(4);
+    close(ready_fd);
+    struct pollfd p = {.fd = ifd, .events = POLLIN};
+    if (poll(&p, 1, -1) < 0) /* pre-fix: 2nd watcher hangs here */
+        _exit(5);
+    char buf[4096];
+    if (read(ifd, buf, sizeof(buf)) <= 0)
+        _exit(6);
+    _exit(0);
+}
+
+static void test_inotify_multi_watcher(void)
+{
+    const char *path = "/tmp/poll-notify-probe-inotify";
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        report("inotify-multi-watcher", 0, "create");
+        return;
+    }
+    close(fd);
+
+    int ready[2];
+    if (pipe(ready) < 0) {
+        report("inotify-multi-watcher", 0, "pipe");
+        return;
+    }
+
+    pid_t kids[2];
+    for (int i = 0; i < 2; i++) {
+        kids[i] = fork();
+        if (kids[i] == 0) {
+            close(ready[0]);
+            inotify_watch_child(path, ready[1]);
+        }
+    }
+    close(ready[1]);
+
+    /* both watches registered? */
+    char c;
+    int got = 0;
+    while (got < 2 && read(ready[0], &c, 1) == 1)
+        got++;
+    close(ready[0]);
+    if (got != 2) {
+        report("inotify-multi-watcher", 0, "readiness");
+        for (int i = 0; i < 2; i++)
+            kill(kids[i], SIGKILL);
+        return;
+    }
+    /* let both park inside poll() */
+    struct timespec ts = {0, 300 * 1000 * 1000};
+    nanosleep(&ts, NULL);
+
+    fd = open(path, O_WRONLY | O_TRUNC, 0644);
+    if (fd >= 0) {
+        (void)!write(fd, "x", 1);
+        close(fd); /* IN_MODIFY + IN_CLOSE_WRITE */
+    }
+
+    int ok = 1;
+    for (int i = 0; i < 2; i++)
+        ok &= wait_child(kids[i], WATCHDOG_SECS + 3,
+                         i == 0 ? "inotify-child0" : "inotify-child1") == 0;
+    unlink(path);
+    report("inotify-multi-watcher", ok, "deadlock-or-error");
+}
+
+/* ── test 4: poll() parked ON an epoll fd (KWin libinput-thread shape) ─ */
+static void test_epoll_in_poll(void)
+{
+    int fds[2];
+    if (pipe(fds) < 0) {
+        report("epoll-in-poll", 0, "pipe");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(fds[1]);
+        alarm(WATCHDOG_SECS);
+        int epfd = epoll_create1(0);
+        if (epfd < 0)
+            _exit(2);
+        struct epoll_event ev = {.events = EPOLLIN, .data.fd = fds[0]};
+        if (epoll_ctl(epfd, EPOLL_CTL_ADD, fds[0], &ev) < 0)
+            _exit(3);
+        /* the frozen desktop shape: blocking poll ON the epoll fd */
+        struct pollfd p = {.fd = epfd, .events = POLLIN};
+        if (poll(&p, 1, -1) < 0)
+            _exit(4);
+        struct epoll_event out[4];
+        if (epoll_wait(epfd, out, 4, 0) < 1)
+            _exit(5);
+        char c;
+        if (read(fds[0], &c, 1) != 1)
+            _exit(6);
+        _exit(0);
+    }
+
+    close(fds[0]);
+    struct timespec ts = {0, 300 * 1000 * 1000};
+    nanosleep(&ts, NULL); /* let the child park in poll(epfd) first */
+    if (write(fds[1], "x", 1) != 1) {
+        report("epoll-in-poll", 0, "write");
+        kill(pid, SIGKILL);
+        return;
+    }
+    int ok = wait_child(pid, WATCHDOG_SECS + 3, "epoll-in-poll") == 0;
+    close(fds[1]);
+    report("epoll-in-poll", ok, "deadlock-or-error");
+}
+
+/* ── test 5: cross-process eventfd wakeup via poll(-1) ───────────────── */
+static void test_eventfd_cross_process(void)
+{
+    int efd = eventfd(0, 0);
+    if (efd < 0) {
+        report("eventfd-cross-process", 0, "eventfd");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        alarm(WATCHDOG_SECS);
+        struct pollfd p = {.fd = efd, .events = POLLIN};
+        if (poll(&p, 1, -1) < 0)
+            _exit(2);
+        uint64_t v = 0;
+        if (read(efd, &v, sizeof(v)) != sizeof(v) || v == 0)
+            _exit(3);
+        _exit(0);
+    }
+
+    struct timespec ts = {0, 300 * 1000 * 1000};
+    nanosleep(&ts, NULL); /* let the child park in poll(efd) first */
+    uint64_t one = 1;
+    if (write(efd, &one, sizeof(one)) != sizeof(one)) {
+        report("eventfd-cross-process", 0, "write");
+        kill(pid, SIGKILL);
+        return;
+    }
+    int ok = wait_child(pid, WATCHDOG_SECS + 3, "eventfd-cross") == 0;
+    close(efd);
+    report("eventfd-cross-process", ok, "deadlock-or-error");
+}
+
+/* ── test 6: SCM_RIGHTS eventfd wakeup through epoll(-1) ─────────────── */
+static void test_eventfd_scm_epoll(void)
+{
+    int sv[2];
+    int ready[2];
+    int efd = eventfd(0, 0);
+
+    if (efd < 0 || socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0 ||
+        pipe(ready) < 0) {
+        if (efd >= 0)
+            close(efd);
+        report("eventfd-scm-epoll", 0, "setup");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        char payload;
+        char control[CMSG_SPACE(sizeof(int))];
+        struct iovec iov = {.iov_base = &payload, .iov_len = 1};
+        struct msghdr msg = {
+            .msg_iov = &iov,
+            .msg_iovlen = 1,
+            .msg_control = control,
+            .msg_controllen = sizeof(control),
+        };
+
+        alarm(WATCHDOG_SECS);
+        close(sv[0]);
+        close(ready[0]);
+        close(efd); /* the receiver must rely only on SCM_RIGHTS */
+        memset(control, 0, sizeof(control));
+        if (recvmsg(sv[1], &msg, 0) != 1)
+            _exit(2);
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+        if (cmsg == NULL || cmsg->cmsg_level != SOL_SOCKET ||
+            cmsg->cmsg_type != SCM_RIGHTS ||
+            cmsg->cmsg_len < CMSG_LEN(sizeof(int)))
+            _exit(3);
+        int received = -1;
+        memcpy(&received, CMSG_DATA(cmsg), sizeof(received));
+        if (received < 0)
+            _exit(4);
+
+        int epfd = epoll_create1(0);
+        struct epoll_event ev = {
+            .events = EPOLLIN | EPOLLET,
+            .data.fd = received,
+        };
+        if (epfd < 0 || epoll_ctl(epfd, EPOLL_CTL_ADD, received, &ev) < 0)
+            _exit(5);
+        if (write(ready[1], "R", 1) != 1)
+            _exit(6);
+        close(ready[1]);
+
+        struct epoll_event out;
+        if (epoll_wait(epfd, &out, 1, -1) != 1 ||
+            !(out.events & EPOLLIN))
+            _exit(7);
+        uint64_t value = 0;
+        if (read(received, &value, sizeof(value)) != sizeof(value) ||
+            value != 1)
+            _exit(8);
+        _exit(0);
+    }
+
+    close(sv[1]);
+    close(ready[1]);
+    char control[CMSG_SPACE(sizeof(int))];
+    char payload = 'E';
+    struct iovec iov = {.iov_base = &payload, .iov_len = 1};
+    struct msghdr msg = {
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = control,
+        .msg_controllen = sizeof(control),
+    };
+    memset(control, 0, sizeof(control));
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &efd, sizeof(efd));
+
+    int ok = sendmsg(sv[0], &msg, 0) == 1;
+    char marker = 0;
+    ok &= read(ready[0], &marker, 1) == 1 && marker == 'R';
+    if (ok) {
+        uint64_t one = 1;
+        ok = write(efd, &one, sizeof(one)) == sizeof(one);
+    }
+    if (!ok)
+        kill(pid, SIGKILL);
+    ok &= wait_child(pid, WATCHDOG_SECS + 3, "eventfd-scm-epoll") == 0;
+    close(ready[0]);
+    close(sv[0]);
+    close(efd);
+    report("eventfd-scm-epoll", ok, "deadlock-or-error");
+}
+
+/*
+ * The first Wayland-client ordering used by KWin.  A client connects and
+ * sends display.get_registry + display.sync before the compositor accepts.
+ * The compositor adds that already-readable fd to an inner epoll instance,
+ * then blocks in poll() on the epoll fd.  Linux reports it immediately.
+ */
+static int unix_preaccept_worker(void)
+{
+    char path[96];
+    int ready[2] = {-1, -1};
+    int listener = -1;
+    int accepted = -1;
+    int epfd = -1;
+    pid_t client = -1;
+    int rc = 2;
+
+    alarm(WATCHDOG_SECS);
+    snprintf(path, sizeof(path), "/tmp/poll-notify-wayland-%ld",
+             (long)getpid());
+    unlink(path);
+
+    listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (listener < 0 || pipe(ready) < 0) {
+        rc = 20;
+        goto out;
+    }
+
+    struct sockaddr_un sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", path);
+    if (bind(listener, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        fprintf(stderr, "poll-notify-probe: unix bind: %s\n",
+                strerror(errno));
+        rc = 21;
+        goto out;
+    }
+    if (listen(listener, 4) < 0) {
+        fprintf(stderr, "poll-notify-probe: unix listen: %s\n",
+                strerror(errno));
+        rc = 21;
+        goto out;
+    }
+
+    client = fork();
+    if (client < 0) {
+        rc = 22;
+        goto out;
+    }
+    if (client == 0) {
+        static const unsigned char first_wayland_batch[24] = {
+            /* wl_display.get_registry(new_id=2) */
+            1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0,
+            /* wl_display.sync(new_id=3) */
+            1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0,
+        };
+        close(ready[0]);
+        close(listener);
+        alarm(WATCHDOG_SECS);
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0 ||
+            connect(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0 ||
+            send(fd, first_wayland_batch, sizeof(first_wayland_batch), 0) !=
+                (ssize_t)sizeof(first_wayland_batch) ||
+            write(ready[1], "R", 1) != 1)
+            _exit(10);
+        close(ready[1]);
+        char ack = 0;
+        if (recv(fd, &ack, 1, 0) != 1 || ack != 'A')
+            _exit(11);
+        close(fd);
+        _exit(0);
+    }
+
+    close(ready[1]);
+    ready[1] = -1;
+    char marker = 0;
+    if (read(ready[0], &marker, 1) != 1 || marker != 'R') {
+        rc = 23;
+        goto out;
+    }
+
+    accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (accepted < 0) {
+        rc = 24;
+        goto out;
+    }
+    epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (epfd < 0) {
+        rc = 25;
+        goto out;
+    }
+    struct epoll_event ev = {
+        .events = EPOLLIN | EPOLLET,
+        .data.fd = accepted,
+    };
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, accepted, &ev) < 0) {
+        rc = 26;
+        goto out;
+    }
+
+    struct pollfd outer = {.fd = epfd, .events = POLLIN};
+    if (poll(&outer, 1, -1) != 1 || !(outer.revents & POLLIN)) {
+        rc = 27;
+        goto out;
+    }
+    struct epoll_event observed;
+    if (epoll_wait(epfd, &observed, 1, 0) != 1 ||
+        !(observed.events & EPOLLIN)) {
+        rc = 28;
+        goto out;
+    }
+    unsigned char request[24];
+    if (recv(accepted, request, sizeof(request), 0) !=
+        (ssize_t)sizeof(request)) {
+        rc = 29;
+        goto out;
+    }
+    if (send(accepted, "A", 1, 0) != 1) {
+        rc = 30;
+        goto out;
+    }
+    rc = wait_child(client, WATCHDOG_SECS,
+                    "unix-preaccept-client") == 0 ? 0 : 12;
+    client = -1;
+
+out:
+    if (client > 0) {
+        kill(client, SIGKILL);
+        waitpid(client, NULL, 0);
+    }
+    if (epfd >= 0)
+        close(epfd);
+    if (accepted >= 0)
+        close(accepted);
+    if (listener >= 0)
+        close(listener);
+    if (ready[0] >= 0)
+        close(ready[0]);
+    if (ready[1] >= 0)
+        close(ready[1]);
+    unlink(path);
+    return rc;
+}
+
+static void test_unix_preaccept_epoll_in_poll(void)
+{
+    pid_t pid = fork();
+    if (pid == 0)
+        _exit(unix_preaccept_worker());
+    int ok = pid > 0 &&
+        wait_child(pid, WATCHDOG_SECS + 3,
+                   "unix-preaccept-worker") == 0;
+    report("unix-preaccept-epoll-in-poll", ok, "deadlock-or-error");
+}
+
+int main(void)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("POLL-NOTIFY-PROBE: start\n");
+    test_pipe_blocking_write();
+    test_timerfd_repeat();
+    test_inotify_multi_watcher();
+    test_epoll_in_poll();
+    test_eventfd_cross_process();
+    test_eventfd_scm_epoll();
+    test_unix_preaccept_epoll_in_poll();
+    printf("POLL-NOTIFY-PROBE: RESULT=%s failures=%d\n",
+           g_failures == 0 ? "PASS" : "FAIL", g_failures);
+    return g_failures == 0 ? 0 : 1;
+}

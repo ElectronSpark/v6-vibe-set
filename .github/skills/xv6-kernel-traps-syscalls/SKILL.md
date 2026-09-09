@@ -31,3 +31,5 @@ argument-hint: 'Describe the trap/syscall failure or paste the fault output'
 - x86_64 and RISC-V register ABI details differ; do not transfer trapframe assumptions between them.
 - A bad return-to-user path may look like an unrelated scheduler or signal bug.
 - Do not hold sleeping locks or call blocking code from hard interrupt context.
+- The normal x86_64 target is host-glibc Linux userland: native syscall numbers, arguments in `rdi/rsi/rdx/r10/r8/r9`, and negative errno in `rax`. Keep legacy aliases explicitly gated and never install a generic number that collides with another Linux syscall.
+- Run `scripts/audit/linux_abi_audit.py` and the matching raw-number regression when changing dispatch; zero wrong-dispatch/native-missing/unsupported-bad is the invariant. Dispatch coverage alone does not prove struct, flag, signal-frame or lifetime compatibility.

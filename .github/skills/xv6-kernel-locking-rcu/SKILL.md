@@ -30,5 +30,6 @@ argument-hint: 'Describe the lock, deadlock, or lifetime issue'
 ## Pitfalls
 
 - VFS lock order is `superblock_lock` before `inode_lock` before `file_lock`.
-- Event callbacks under kqueue locks are a lock-order risk.
+- File/cdev poll callbacks run outside `kq->lock`, with pinned objects and registration-generation validation on relock. Preserve this boundary when changing event notification or lifetime; see `xv6-kernel-event-wait`.
 - RCU protects lifetime, not arbitrary mutable state consistency.
+- User VM rwsems use writer priority to prevent starvation. Reduce measured critical sections or improve object locking rather than restoring reader priority to hide a convoy.

@@ -20,6 +20,7 @@
   const lines = [];
   function log(line) {
     lines.push(line);
+    document.title = "xv6-mse-mp4:" + line.slice(0, 96);
     console.log("MSE-MP4 " + line);
     out.textContent = lines.join("\n");
   }

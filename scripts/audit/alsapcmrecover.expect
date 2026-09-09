@@ -1,0 +1,265 @@
+#!/usr/bin/env expect
+
+set timeout 150
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set base_img "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format %Y%m%dT%H%M%SZ]
+set token "xv6-alsarecover-$stamp-[pid]"
+set outdir "$build/alsapcmrecover/$stamp-[pid]"
+set scratch "$outdir/trial.fs.img"
+set empty "$outdir/empty-startup"
+set monitor "$outdir/monitor.sock"
+set pidfile "$outdir/qemu.pid"
+set runlog "$outdir/run.log"
+set wav "$outdir/qemu-audio.wav"
+set qemu_pid 0
+set qemu_start 0
+set qemu_reaped 0
+set pulse_perf 0
+if {[info exists env(ALSA_PCM_DIRECT_PULSE)] &&
+    $env(ALSA_PCM_DIRECT_PULSE) eq "1"} {
+    set pulse_perf 1
+}
+
+proc exact_inventory {} {
+    global root
+    return [exec "$root/scripts/launch/qemu-exact-inventory.sh"]
+}
+
+proc owned_identity {pid token} {
+    set script {
+        pid="$1"; token="$2"
+        [[ -r "/proc/$pid/exe" && -r "/proc/$pid/stat" &&
+           -r "/proc/$pid/cmdline" ]] || exit 2
+        exe=$(readlink -f "/proc/$pid/exe") || exit 2
+        case "${exe##*/}" in qemu-system-x86*|qemu-kvm) ;; *) exit 3 ;; esac
+        stat_line=$(<"/proc/$pid/stat")
+        rest=${stat_line##*) }
+        read -r -a fields <<<"$rest"
+        [[ "${fields[2]}" == "$pid" ]] || exit 4
+        mapfile -d '' -t args <"/proc/$pid/cmdline"
+        [[ " ${args[*]} " == *" xv6-$token "* ]] || exit 5
+        printf 'start=%s pgid=%s exe=%s\n' "${fields[19]}" "${fields[2]}" "$exe"
+    }
+    return [exec bash -c $script _ $pid $token]
+}
+
+proc reap_owned {} {
+    global root qemu_pid qemu_start token qemu_reaped timeout
+    if {$qemu_reaped} { return }
+    if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"] && $qemu_start > 0} {
+        catch {exec "$root/scripts/launch/cleanup-owned-qemu.sh" \
+            $qemu_pid $qemu_start $token} cleanup
+    }
+    set prior $timeout
+    set timeout 20
+    catch {expect eof}
+    catch {wait}
+    set timeout $prior
+    set qemu_reaped 1
+}
+
+proc finish {code reason} {
+    global outdir monitor
+    reap_owned
+    file delete -force $monitor
+    set inventory [exact_inventory]
+    set fh [open "$outdir/final-qemu-inventory.txt" w]
+    puts $fh $inventory
+    close $fh
+    if {![regexp {exact_x86_qemu_count=0} $inventory]} {
+        puts stderr "ALSAPCMRECOVER status=FAIL reason=owned-x86-remains original=$reason evidence=$outdir"
+        exit 12
+    }
+    puts "ALSAPCMRECOVER status=[expr {$code == 0 ? {PASS} : {FAIL}}] reason=$reason evidence=$outdir"
+    exit $code
+}
+
+file mkdir $outdir
+set preflight [exact_inventory]
+set fh [open "$outdir/preflight-qemu-inventory.txt" w]
+puts $fh $preflight
+close $fh
+
+exec cp --reflink=auto --sparse=always -- $base_img $scratch
+close [open $empty w]
+catch {exec debugfs -w -R "rm /etc/startup" $scratch 2>@1}
+if {[catch {exec debugfs -w -R "write $empty /etc/startup" $scratch 2>@1} stage]} {
+    puts stderr "ALSAPCMRECOVER status=FAIL reason=stage-startup output=$stage"
+    exit 2
+}
+if {$pulse_perf} {
+    set pulse_helper "$root/scripts/audit/pulsealsaperf-guest.sh"
+    catch {exec debugfs -w -R "rm /pulsealsaperf-guest.sh" $scratch 2>@1}
+    if {[catch {exec debugfs -w -R "write $pulse_helper /pulsealsaperf-guest.sh" $scratch 2>@1} stage]} {
+        puts stderr "ALSAPCMRECOVER status=FAIL reason=stage-pulse-helper output=$stage"
+        exit 2
+    }
+    if {[catch {exec debugfs -w -R "sif /pulsealsaperf-guest.sh mode 0100755" $scratch 2>@1} stage]} {
+        puts stderr "ALSAPCMRECOVER status=FAIL reason=chmod-pulse-helper output=$stage"
+        exit 2
+    }
+}
+
+set env(DISPLAY_MODE) nographic
+set env(USE_KVM) 1
+set env(QEMU_REQUIRE_KVM) 1
+set env(QEMU_GPU) none
+set env(QEMU_INPUT) none
+set env(QEMU_NET) 0
+set env(QEMU_AUDIO) virtio
+set env(QEMU_AUDIO_STREAMS) 1
+set env(QEMU_AUDIO_BACKEND) "wav,path=$wav"
+set env(QEMU_AUDIO_WAV_PATH) $wav
+set env(QEMU_CPUS) 6
+set env(QEMU_MEMORY) 4G
+set env(QEMU_DISK_FORMAT) raw
+set env(QEMU_RUN_TOKEN) $token
+set env(QEMU_PIDFILE) $pidfile
+set qemu_append "root=/dev/disk0 netsurf=0 webkit=0 video=80x25"
+if {[info exists env(ALSA_PCM_IOCTL_TRACE)] &&
+    $env(ALSA_PCM_IOCTL_TRACE) eq "1"} {
+    append qemu_append " alsa_ioctl_trace=1"
+}
+set env(QEMU_APPEND) $qemu_append
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+# Filesystem staging may safely coexist with the external VM.  Once staging is
+# complete, wait for every QEMU process to exit naturally, then gate the exact
+# /proc inventory again immediately before spawning our owned QEMU.
+set natural_rc [catch {exec "$root/scripts/launch/qemu-wait-natural-zero.sh"} natural]
+set fh [open "$outdir/natural-zero-inventory.txt" w]
+puts $fh $natural
+close $fh
+if {$natural_rc != 0} {
+    puts stderr "ALSAPCMRECOVER status=SKIP reason=qemu-natural-wait-timeout evidence=$outdir"
+    exit 75
+}
+set prelaunch_rc [catch {exec "$root/scripts/launch/qemu-exact-inventory.sh" --require-zero} prelaunch]
+set fh [open "$outdir/prelaunch-qemu-inventory.txt" w]
+puts $fh $prelaunch
+close $fh
+if {$prelaunch_rc != 0} {
+    puts stderr "ALSAPCMRECOVER status=SKIP reason=qemu-appeared-before-spawn evidence=$outdir"
+    exit 75
+}
+
+log_file -a $runlog
+spawn setsid --wait bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $scratch
+for {set attempt 0} {$attempt < 100 && ![file isfile $pidfile]} {incr attempt} { after 100 }
+if {![file isfile $pidfile]} { finish 6 qemu-pidfile-timeout }
+set fh [open $pidfile r]
+set qemu_pid [string trim [read $fh]]
+close $fh
+if {[catch {owned_identity $qemu_pid $token} identity] ||
+    ![regexp {start=([0-9]+)} $identity -> qemu_start]} {
+    finish 6 owned-identity-failed
+}
+set fh [open "$outdir/owned-process.txt" w]
+puts $fh "pid=$qemu_pid token=$token $identity"
+close $fh
+
+expect {
+    -re {root:/# } {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+        finish 7 guest-crash-before-probe
+    }
+    timeout { finish 8 prompt-timeout }
+    eof { finish 9 prompt-eof }
+}
+
+# Leading assignment accounts for the console's known first-byte drop.
+send "[format {x=0;m=ALSARECOVERDONE_;m=${m}%d;/bin/alsapcmpoll recover && /bin/alsapcmpoll pace;echo ALSARECOVER_RC=$?;echo $m} [pid]]\r"
+set passed 0
+set rc_pass 0
+set paced 0
+set paced_elapsed_ms 0
+set paced_nominal_ms 0
+expect {
+    -re {ALSAPCMPOLL_RECOVER_RESULT.*result=PASS} {
+        set passed 1
+        exp_continue
+    }
+    -re {ALSAPCMPOLL_PACE_RESULT[^\r\n]*elapsed_ms=([0-9]+) nominal_audio_ms=([0-9]+)[^\r\n]*result=PASS} {
+        set paced_elapsed_ms $expect_out(1,string)
+        set paced_nominal_ms $expect_out(2,string)
+        if {$paced_nominal_ms == 6000 &&
+            $paced_elapsed_ms >= 5700 && $paced_elapsed_ms <= 7200} {
+            set paced 1
+        }
+        exp_continue
+    }
+    -re {ALSARECOVER_RC=0} {
+        if {!$passed} { finish 10 pass-row-missing }
+        set rc_pass 1
+        exp_continue
+    }
+    -re "ALSARECOVERDONE_[pid]" {}
+    -re {ALSAPCMPOLL_RECOVER_FAIL|ALSAPCMPOLL_SUSTAIN_RESULT.*result=FAIL|PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+        finish 11 reducer-or-guest-failure
+    }
+    timeout { finish 13 probe-timeout }
+    eof { finish 14 probe-eof }
+}
+if {!$passed || !$rc_pass || !$paced} {
+    puts stderr "ALSAPCMRECOVER pacing=FAIL elapsed_ms=$paced_elapsed_ms nominal_ms=$paced_nominal_ms"
+    finish 15 probe-failed
+}
+
+if {$pulse_perf} {
+    # The reducer marker is printed before bash redraws its bracketed-paste
+    # prompt.  Consume that fresh prompt before sending the next command;
+    # otherwise serial output and input can interleave and leave the command
+    # visible but unexecuted.
+    set prior_timeout $timeout
+    set timeout 20
+    expect {
+        -re {root:/# } {}
+        -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+            finish 16 guest-failure-before-pulse-reducer
+        }
+        timeout { finish 17 pulse-reducer-prompt-timeout }
+        eof { finish 18 pulse-reducer-prompt-eof }
+    }
+    set timeout $prior_timeout
+    set marker "PULSEALSAPERFDONE_[pid]"
+    send "[format {x=0;m=PULSEALSAPERFDONE_;m=${m}%d;/bin/bash /pulsealsaperf-guest.sh;echo PULSEALSAPERF_RC=$?;echo $m} [pid]]\r"
+    set pulse_pass 0
+    set pulse_rc 0
+    set pulse_played 0
+    set timeout 90
+    expect {
+        -re {PULSE_ALSA_PERF_RESULT schema=1 status=PASS[^\r\n]*reducer_rc=0[^\r\n]*played_bytes_delta=([0-9]+) notify_ticks_before=} {
+            set pulse_played $expect_out(1,string)
+            if {$pulse_played >= 3600000} { set pulse_pass 1 }
+            exp_continue
+        }
+        -re {PULSEALSAPERF_RC=0} {
+            set pulse_rc 1
+            exp_continue
+        }
+        -re $marker {}
+        -re {PULSE_ALSA_PERF_RESULT schema=1 status=FAIL|PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+            finish 16 pulse-alsa-reducer-or-guest-failure
+        }
+        timeout { finish 17 pulse-alsa-reducer-timeout }
+        eof { finish 18 pulse-alsa-reducer-eof }
+    }
+    if {!$pulse_pass || !$pulse_rc} {
+        puts stderr "ALSAPCMRECOVER pulse_alsa=FAIL played_bytes_delta=$pulse_played"
+        finish 19 pulse-alsa-result-missing
+    }
+}
+
+catch {exec sh -c "printf 'quit\\n' | nc -U -w 8 -q 1 '$monitor' >/dev/null 2>&1"}
+set timeout 30
+expect {
+    eof {
+        catch {wait}
+        set qemu_reaped 1
+    }
+    timeout { reap_owned }
+}
+finish 0 completed

@@ -1,6 +1,6 @@
 ---
 name: xv6-kernel-vfs-data-io
-description: 'Use when: implementing or debugging xv6-os regular-file data I/O separation, generic VFS/page-cache read/write helpers, address-space block mapping, readahead, writeback, mmap file faults, xv6fs/ext4fs data path conversion, or VFS_DATA_IO_TODO.md updates.'
+description: 'Use when: implementing or debugging xv6-os regular-file data I/O separation, generic VFS/page-cache read/write helpers, address-space block mapping, readahead, writeback, mmap file faults, xv6fs/ext4fs data path conversion, or the consolidated VFS plan updates.'
 argument-hint: 'Describe the regular-file data I/O change or bug'
 ---
 
@@ -15,8 +15,9 @@ argument-hint: 'Describe the regular-file data I/O change or bug'
 
 ## Source Map
 
-- Plan and progress tracker: `kernel/kernel/vfs/VFS_DATA_IO_TODO.md`.
+- Plan and progress tracker: `docs/active-work-plan.md#vfs-data-io`.
 - Public mapping contract: `kernel/kernel/inc/vfs/address_space.h`.
+- Checked mapping/lifecycle wrappers: `kernel/kernel/vfs/address_space.c`.
 - VFS inode/file types: `kernel/kernel/inc/vfs/vfs_types.h`.
 - VFS file dispatch: `kernel/kernel/vfs/file.c`, `vfs_syscall.c`.
 - Page cache: `kernel/kernel/mm/pcache.c`, `kernel/kernel/inc/mm/pcache*.h`.
@@ -32,7 +33,7 @@ argument-hint: 'Describe the regular-file data I/O change or bug'
 4. Keep block drivers pure BIO executors. Do not push file offsets, EOF, sparse behavior, inode state, or user-copy into blkdev or hardware drivers.
 5. Preserve lock ordering. xv6fs writes that allocate blocks must be able to begin a transaction before inode locking.
 6. Do not remove existing filesystem-local data paths until generic helpers and the corresponding mapping hooks are tested for that filesystem.
-7. After every implementation slice, update `VFS_DATA_IO_TODO.md` in the same change to mark completed items and record new follow-up items.
+7. When a change advances migration status or exposes follow-up work, update the VFS section of `docs/active-work-plan.md` with the actual evidence. The archived checklist records an older snapshot; audit current source before treating unchecked steps as missing.
 
 ## Correctness Checks
 

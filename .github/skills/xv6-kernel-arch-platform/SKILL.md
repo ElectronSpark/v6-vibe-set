@@ -16,8 +16,8 @@ argument-hint: 'Describe the arch/platform symptom or file path'
 
 - x86_64: `kernel/arch/x86_64/entry.S`, `start.c`, `ap_trampoline.S`, `platform_x86.c`, `irq/`, `mm/`, `timer/`.
 - RISC-V: `kernel/arch/riscv/entry.S`, `start.c`, `platform_riscv.c`, `boot/`, `irq/`, `mm/`, `timer/`.
-- Generic contracts: `kernel/kernel/inc/arch`, `kernel/kernel/inc/smp`, `kernel/kernel/ipi/ipi.c`.
-- Debug hooks: `arch/*/backtrace.c`, `arch/*/gdbstub_arch.c`.
+- Generic contracts: `kernel/kernel/inc/arch`, `kernel/kernel/inc/smp`, `kernel/kernel/ipi/ipi.c`; architecture IPI backends: `kernel/arch/*/ipi/ipi.c`.
+- Debug hooks: `kernel/arch/*/backtrace.c`, `kernel/arch/*/gdbstub_arch.c`.
 
 ## Workflow
 
@@ -32,3 +32,4 @@ argument-hint: 'Describe the arch/platform symptom or file path'
 - xv6-tmp is RISC-V and OrangePi-oriented; its boot, PLIC, timer, and device details are not authoritative for x86_64/QEMU.
 - Trapframe, context, and signal trampoline layout mismatches often compile cleanly but fail at runtime.
 - Do not move sleeping operations into interrupt, IPI, or early boot context.
+- For x86 TLB shootdowns, preserve per-target publication tickets and monotonic acknowledgements. A receiver acknowledges only the request captured before its flush; an older completion must not overwrite a newer acknowledgement. PCID remains opt-in until the full invalidation path is proven on the target workload.

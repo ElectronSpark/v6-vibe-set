@@ -4,4 +4,7 @@
 # Tokens are split on whitespace; no quoting or shell expansion.
 # Each entry is fork()+exec()'d as an independent process.
 
-GST_PLUGIN_SYSTEM_PATH_1_0=/lib/gstreamer-1.0:/usr/lib/gstreamer-1.0 GST_PLUGIN_PATH_1_0=/usr/lib/gstreamer-1.0:/lib/gstreamer-1.0 GST_PLUGIN_SCANNER_1_0=/libexec/gstreamer-1.0/gst-plugin-scanner /bin/desktop
+/bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-system.conf --nofork --nopidfile
+/bin/dbus-daemon-host --config-file=/usr/share/dbus-1/xv6-session.conf --nofork --nopidfile
+DBUS_SYSTEM_BUS_ADDRESS=unix:abstract=xv6_system_bus /bin/xv6-login1-shim
+XV6_DESKTOP_DEFAULT=kde /bin/xv6-desktop-session

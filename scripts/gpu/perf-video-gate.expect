@@ -1,0 +1,135 @@
+#!/usr/bin/env expect
+# Drive an xv6 WebKit fullscreen high-res/high-FPS local-video performance gate.
+# Captures a live QEMU monitor screendump during playback and records the
+# page-reported avgFPS / dropPct / advanced RESULT line.
+
+set timeout 360
+set root      [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+# Allow override via env; default to repo layout.
+if {[info exists env(REPO_ROOT)]} { set root $env(REPO_ROOT) }
+
+set build   "$root/build-x86_64"
+set kernel  "$build/kernel/build/kernel/xv6.bin"
+set fsimg   "$build/fs.img"
+set outdir  "$build/perf-video-gate"
+if {[info exists env(PERF_VIDEO_GATE_OUTDIR)] && $env(PERF_VIDEO_GATE_OUTDIR) ne ""} {
+    set outdir $env(PERF_VIDEO_GATE_OUTDIR)
+}
+exec mkdir -p $outdir
+set shot    "$outdir/perf-video-live.ppm"
+set guest_frame "/perf-video-frame.ppm"
+set host_frame "$outdir/perf-video-frame.ppm"
+set host_frame_png "$outdir/perf-video-frame.png"
+set monsock "$outdir/qemu-monitor.sock"
+set runlog  "$outdir/run.log"
+set tmpimg  "$outdir/perf-video-gate.fs.img"
+set startup_override "$outdir/startup-no-dbus"
+exec sh -c "rm -f $shot $shot.nc.log $host_frame $host_frame_png $monsock $runlog $tmpimg"
+exec cp $fsimg $tmpimg
+exec sh -c "printf '%s\n' '# Temporary perf-video gate startup: skip optional host D-Bus helpers.' '/bin/weston-session' > '$startup_override'"
+exec sh -c "printf '%s\n' 'rm /etc/startup' 'write $startup_override /etc/startup' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+set fsimg $tmpimg
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_AUDIO)            "none"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=1 webkit_accel=1 webkit_api_smoke=1 webkit_url=file:///share/webkit/perf-video.html webkit_log=1 webkit_timeout_ms=45000 desktop_exit_after_smoke=1 weston=1 video=1280x800"
+if {[info exists env(PERF_VIDEO_EXTRA_APPEND)] && $env(PERF_VIDEO_EXTRA_APPEND) ne ""} {
+    append env(QEMU_APPEND) " " $env(PERF_VIDEO_EXTRA_APPEND)
+}
+set env(QEMU_EXTRA) "-monitor unix:$monsock,server,nowait"
+
+log_file -a $runlog
+
+proc screendump {sock dst} {
+    catch { exec sh -c "printf 'screendump $dst\\n' | nc -U -w 4 -q 1 $sock >>$dst.nc.log 2>&1 || echo nc-failed >>$dst.nc.log" }
+}
+
+proc finish {code label} {
+    global qemu_pid fsimg guest_frame host_frame host_frame_png runlog fb_done
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    sleep 1
+
+    if {$code == 0} {
+        if {!$fb_done} {
+            puts "\nGATE-FAIL no-frame-marker log=$runlog"
+            exit 6
+        }
+        if {[catch { exec sh -c "debugfs -R 'dump $guest_frame $host_frame' '$fsimg' >/dev/null 2>&1" } dump_out]} {
+            puts "\nGATE-FAIL frame-extract $dump_out log=$runlog"
+            exit 7
+        }
+        if {[catch { exec convert $host_frame $host_frame_png } convert_out]} {
+            puts "\nGATE-FAIL frame-convert $convert_out log=$runlog"
+            exit 8
+        }
+        puts "\n$label frame_ppm=$host_frame frame_png=$host_frame_png log=$runlog"
+        exit 0
+    }
+
+    puts "\n$label log=$runlog"
+    exit $code
+}
+
+spawn timeout --foreground 320 bash scripts/launch/run-qemu.sh x86_64 $kernel $fsimg
+set qemu_pid [exp_pid]
+
+set shot_done   0
+set result_seen 0
+set result_pass 0
+set fb_sent     0
+set fb_done     0
+
+# NOTE: init starts a concurrent /bin/sh on the same console, so a bare
+# root:/# prompt is NOT a completion signal. Wait for real video markers.
+# Capture the framebuffer DURING live playback; after RESULT the desktop tears down
+# (desktop_exit_after_smoke=1) so the scanout is no longer representative.
+expect {
+    -re {xv6-perf-video:tick time=([0-9]+)\.[0-9]+[^']*} {
+        set t $expect_out(1,string)
+        if {!$shot_done && $t >= 4} { screendump $monsock $shot; set shot_done 1 }
+        if {!$fb_sent && $t >= 5} {
+            send "fbstat ppm-current $guest_frame 0 0 1280 800; sync; echo XV6_FBSHOT_DONE\r"
+            set fb_sent 1
+        }
+        exp_continue
+    }
+    -re {XV6_FBSHOT_DONE} { set fb_done 1; exp_continue }
+    -re {xv6-perf-video:RESULT pass[^']*} {
+        if {!$shot_done} { screendump $monsock $shot; set shot_done 1 }
+        set result_seen 1
+        set result_pass 1
+        exp_continue
+    }
+    -re {xv6-perf-video:RESULT fail[^']*} {
+        if {!$shot_done} { screendump $monsock $shot; set shot_done 1 }
+        set result_seen 1
+        set result_pass 0
+        exp_continue
+    }
+    -re {panic|fatal page fault|coredump: generating|virtio_failure|WebKit smoke failed} {
+        finish 3 "GATE-FAIL crash-marker"
+    }
+    -re {__WEBKIT_API_SMOKE_DONE_0__|desktop: exiting after smoke} {
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
+        exp_continue
+    }
+    timeout {
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
+        finish 4 "GATE-FAIL timeout"
+    }
+    eof {
+        if {$result_seen && $result_pass} { finish 0 "GATE-PASS" }
+        if {$result_seen} { finish 9 "GATE-FAIL video-result" }
+        finish 5 "GATE-FAIL eof"
+    }
+}

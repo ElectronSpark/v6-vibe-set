@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>chromium-audio-smoke:boot</title>
+<body>
+<script>
+(async function () {
+  try {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const osc = new OscillatorNode(ctx, { frequency: 880, type: "square" });
+    const gain = new GainNode(ctx, { gain: 0.12 });
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    await ctx.resume();
+    document.title = "chromium-audio-smoke:playing";
+    console.log("CHROMIUM-AUDIO-SMOKE playing state=" + ctx.state);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks++;
+      const current = ctx.currentTime.toFixed(3);
+      document.title = "chromium-audio-smoke:t=" + current;
+      console.log("CHROMIUM-AUDIO-SMOKE tick=" + ticks +
+                  " currentTime=" + current + " state=" + ctx.state);
+      if (ticks >= 30) clearInterval(timer);
+    }, 1000);
+  } catch (e) {
+    document.title = "chromium-audio-smoke:error:" + e.name;
+    console.log("CHROMIUM-AUDIO-SMOKE error " + e.stack);
+  }
+})();
+</script>
+</body>

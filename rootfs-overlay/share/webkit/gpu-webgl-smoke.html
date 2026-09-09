@@ -218,7 +218,24 @@ try {
         setStatus("webgl ready");
 
         var frame = 0;
-        var maxFrames = 180;
+        var maxFrames = 24;
+        function scheduleDraw() {
+            var fired = false;
+            var timer = 0;
+            window.requestAnimationFrame(function(ts) {
+                if (fired)
+                    return;
+                fired = true;
+                window.clearTimeout(timer);
+                draw(ts || Date.now());
+            });
+            timer = window.setTimeout(function() {
+                if (fired)
+                    return;
+                fired = true;
+                draw(Date.now());
+            }, 250);
+        }
         function draw(ts) {
             var t = ts / 1000;
             var model = rotate(t);
@@ -234,12 +251,14 @@ try {
             if (frame === 1)
                 setStatus("webgl spherical poly");
             if (frame < maxFrames) {
-                window.requestAnimationFrame(draw);
+                scheduleDraw();
             } else {
                 setStatus("webgl spherical poly complete");
             }
         }
-        window.requestAnimationFrame(draw);
+        window.setTimeout(function () {
+            scheduleDraw();
+        }, 100);
     }
 } catch (e) {
     setStatus("webgl error " + e.message);

@@ -1,91 +1,128 @@
 ---
 name: xv6-os-debugging
-description: 'Use when: working in this xv6-os repo on QEMU boot, kernel symbols, GUI/Wayland ports, NetSurf, OpenSSL/OpenSSH, rootfs images, or nested submodule commit/push workflows.'
+description: 'Use when: working in xv6-os on QEMU boot, KDE/Wayland GUI audits, virgl or Hyper-V GPU diagnostics, kernel symbols, Linux GUI ABI, rootfs images, port builds, or nested submodule workflows.'
 argument-hint: 'Describe the xv6-os build, runtime, or port symptom'
 ---
 
 # xv6-os Debugging
 
-## Authority
+## Authority and scope
 
-The real repo skill files live under `.github/skills`. Repo-local `.codex/skills` entries are redirects only; migrate durable content here and keep `.codex` from becoming a second source of truth.
+The authoritative repository skills live under `.github/skills`; `.codex/skills`
+contains redirects. Use [the index](../INDEX.md) to select a narrow subsystem.
+Read `docs/active-work-plan.md` for current progress and evidence. Historical
+plans are under `docs/archive/plan-consolidation-20260907/`.
 
-## Fast Workflow
+Match the user's task: a graphical audit calls for operating the existing VM
+image and recording observations. A request to fix an ABI failure may require
+a reducer and an implementation change. Documentation review alone needs no
+build or VM. Report image provenance so an older image is not presented as
+proof of the current dirty source tree.
 
-- Build a single port from the configured tree, for example:
-  - `cmake --build build-x86_64/ports --target port-netsurf -j2`
-  - `cmake --build build-x86_64/ports --target port-openssl port-openssh -j2` is not portable to all Make versions; invoke one target at a time if needed.
-- Refresh an image directly when testing sysroot/rootfs changes:
-  - `scripts/make-rootfs.sh build-x86_64/sysroot /tmp/xv6-test.img 1536 build-x86_64/toolchain/x86_64/phase2/x86_64-xv6-linux-musl/lib`
-- If that libdir does not exist, find the local musl dynamic linker with:
-  - `find build-x86_64/toolchain -path '*lib/ld-musl*'`
-- Run GUI tests headlessly with:
-  - `DISPLAY_MODE=nographic QEMU_NET=0 FSIMG=/tmp/xv6-test.img bash scripts/launch-gui.sh`
-- Check whether `build-x86_64/fs.img` actually changed with `stat`; a running QEMU session or stale image can hide a successful rebuild.
+## Host and VM safety
 
-## Kernel Symbols
+Root `AGENTS.md` is binding. Repeat its search, process-wait, serial-console,
+`pgrep`, and QEMU-cleanup rules verbatim or by explicit reference in every
+worker prompt. In particular:
 
-- A healthy boot log includes embedded symbol loading and `Kernel symbols initialized: ... entries`.
-- If backtraces show missing symbols, inspect the kernel artifact passed to QEMU and GDB before chasing runtime unwind code.
-- Prefer the ELF kernel with symbols for GDB and the boot artifact with embedded symbols for QEMU.
+- Use `/home/es/.local/bin/rg` for repository searches. Never bypass the guarded
+  wrapper or recursively search binary/build/image/archive artifact trees.
+  Recursive `-a`, `-u`, `--no-ignore*`, and `--binary` forms are forbidden.
+  For named regular artifacts use `scripts/audit/safe-rg-artifact.sh PATTERN FILE...`;
+  its repository containment, symlink-parent, type, extension, and 64 MiB
+  checks must pass. Output limits do not bound resource use.
+- Only one potentially large search may run across workers. Wait synchronously
+  on every returned process/session/cell handle before another search or heavy
+  command. Do not replace the real wait with an unowned monitor.
+- Authorize at most one VM lane; mark other lanes no-boot. Before dispatch,
+  require no active VM worker and run
+  `scripts/launch/qemu-exact-inventory.sh --require-zero`, which scans exact
+  `/proc/*/exe` identities. Never use `pgrep` for VM ownership or cleanup.
+- Use an owned PID/process group with synchronous reap, bounded cleanup, and a
+  final exact zero-QEMU check. Never leave QEMU running. Finish cleanup before
+  authorizing the next VM lane; guest memory is not capped by this rule.
+- Serial commands must be short, marker-delimited, and synchronously completed.
+  Account for the bracketed-paste first-character drop. Serial silence is not
+  completion; check VM state and obtain a fresh prompt after a timeout.
+- Keep at most three completed generated build/image iterations. Before a
+  fourth, remove only the oldest confirmed-unused iteration; preserve active
+  disks, Docker data, deployed images, sources, and the newest good rollback.
 
-## Kernel Static Analysis
+## Current GUI launch and evidence
 
-- Use `cmake --build build-x86_64 --target kernel-sparse -j2` to run Sparse over the kernel compile database.
-- The Sparse target is a developer-time check: it uses `kernel/scripts/run_sparse.py`, enables `__CHECKER__`, and activates lock/context annotations from `compiler.h`.
-- Fresh containers include the `sparse` host package. On a host without it, install `sparse` or run with `SPARSE=/path/to/sparse`.
-- Sparse context annotations currently cover spinlocks, page locks, page ref unlocked helpers, and RCU read sections. Use this before long GUI/WebKit VM runs when changing pcache, VM, RCU, or page-table code.
+Use [GUI runtime](../xv6-debug-gui-runtime/SKILL.md) for interactive audits and
+capture details; use [Linux GUI ABI](../xv6-linux-gui-abi/SKILL.md) for failures
+that implicate Linux compatibility.
 
-## NetSurf, TLS, and Fetch Errors
+- `scripts/launch/launch-gui.sh` selects `XV6_RECEIPT`, then a complete latest
+  reproduction receipt, then the configured `build-x86_64` fallback. Pass
+  `KERNEL` and `FSIMG` explicitly when auditing particular artifacts. Keep
+  `AUTO_BUILD=0` when auditing an existing image.
+- The GUI wrapper defaults to SDL, `QEMU_GPU=virtio-vga-gl-primary`, 6 CPUs,
+  8 GiB, and `QEMU_INPUT=virtio`. The lower-level launcher has different
+  defaults. Inspect the resolved command and `display-contract` receipt;
+  record any frontend, input, geometry, or module override.
+- The wrapper delegates to `scripts/launch/run-owned-qemu.sh`, which protects
+  the base image with a temporary qcow2 overlay by default and records process
+  ownership. Wait for it to finish and verify its cleanup. Emergency cleanup
+  uses `scripts/launch/cleanup-owned-qemu.sh PID START_TICKS RUN_TOKEN` with the
+  captured identity, never a name-wide kill.
+- `rootfs-overlay/etc/startup` selects KDE through `xv6-desktop-session` and
+  `kde-session`. The current compositor is KWin. Legacy `wlcomp` traces and
+  generated-source instructions apply only to an explicitly identified older
+  image; use [the bridge skill](../xv6-wayland-kernel-bridge/SKILL.md).
+- VM virgl enablement, compositor acceleration, browser acceleration, visible
+  input response, media/audio output, and performance are separate claims.
+  Require evidence for each requested layer from the same run.
 
-- NetSurf is expected to build with:
-  - `NETSURF_USE_CURL := YES`
-  - `NETSURF_USE_OPENSSL := YES`
-- `ports/netsurf/CMakeLists.txt` should explicitly depend on `port-curl` and `port-openssl`; do not rely on incidental sysroot build order.
-- `ports/curl/CMakeLists.txt` links libcurl to OpenSSL using static `libcrypto.a` and `libssl.a` from `${XV6_SYSROOT}`.
-- NetSurf links these statically. `readelf -d build-x86_64/sysroot/bin/netsurf` should not be expected to show `libssl.so` or `libcrypto.so`; use `nm` to look for `Curl_ssl_openssl`, `EVP_*`, or other OpenSSL symbols.
-- For NetSurf `Error occurred fetching page`, separate layers:
-  - browser mapped and title changed in `wlcomp` logs;
-  - socket creation/connect in kernel logs;
-  - DNS config in `/etc/resolv.conf` inside the rootfs;
-  - TLS/OpenSSL symbols in the binary;
-  - CA/certificate path and NetSurf resource staging.
-- In QEMU user networking, the fallback DNS server is `10.0.2.3`.
+## Build and image selection
 
-## OpenSSL and OpenSSH Ports
+For implementation work, inspect dirty state and build only the affected layer.
+Read [build reproduction](../xv6-debug-build-repro/SKILL.md) for container and
+immutable-receipt workflows. In an already configured mutable build tree:
 
-- OpenSSL is not only a library port: `ports/openssl/CMakeLists.txt` should stage `/bin/openssl` as well as headers and static libs.
-- OpenSSH lives under `ports/openssh` and stages `ssh`, `sshd`, `ssh-keygen`, `ssh-keyscan`, `scp`, `sftp`, and `libexec/sshd-session`.
-- OpenSSH config/build should use the already-staged OpenSSL sysroot and disable unsupported platform integrations such as PAM, SELinux, libedit, zlib, utmp/wtmp/lastlog, PKCS#11, and security keys.
-- If OpenSSH configure complains that m4 files are newer than `configure`, build from a copied source tree and touch the copied `configure`; keep the submodule source clean.
+- Kernel iteration: `cmake --build build-x86_64 --target kernel -j2`.
+- Focused port iteration: `cmake --build build-x86_64/ports --target port-netsurf -j2`
+  or the verified target for the changed port.
+- Staged runtime/overlay refresh: `cmake --build build-x86_64 --target rootfs-refresh -j2`.
+  This uses existing payloads and configured overlays; it does not rebuild a
+  changed port. Do not overwrite an immutable receipt or an active VM disk.
+- Direct image construction is `scripts/image/make-rootfs.sh SYSROOT OUT_IMG auto`.
+  It expects host-glibc Linux userland. Preserve the configured
+  `ROOTFS_EXTRA_OVERLAYS` when reproducing the normal desktop image; the old
+  fourth musl-libdir argument is obsolete.
 
-## Rootfs Runtime Setup
+Record the kernel/rootfs paths, hashes or receipt, image refresh method, and
+source revisions/dirty state. File timestamps help find stale staging but do
+not prove that an image contains current source.
 
-- `scripts/make-rootfs.sh` mirrors the sysroot and overlays `rootfs-overlay`.
-- Runtime files for network clients and SSH belong in the rootfs image, not only the sysroot: `/etc/hosts`, `/etc/resolv.conf`, `/etc/passwd`, `/etc/group`, `/etc/shadow`, `/etc/shells`, `/etc/ssh`, `/var/empty`, and `/var/run`.
-- Host-generated SSH keys must be root-owned in the ext4 image, with private keys at `0600`; `mke2fs -d` preserves the host UID/GID, so use `debugfs` fixups when building as a normal user.
-- `/etc/daemons` is what init reads. Include `/bin/sshd -D -e` there when validating SSH startup.
+## Symbols and focused checks
 
-## NetSurf and Wayland
+- A healthy boot reports embedded kernel symbol initialization. If backtraces
+  lack symbols, first compare the artifact booted by QEMU with the ELF loaded
+  into GDB. See [kernel debugging](../xv6-kernel-debugging/SKILL.md) and
+  [live GDB](../xv6-debug-live-gdb/SKILL.md).
+- For locking/page-cache/VM/RCU implementation changes,
+  `cmake --build build-x86_64 --target kernel-sparse -j2` is a focused static
+  check. It uses `kernel/scripts/run_sparse.py`, `__CHECKER__`, and compiler
+  lock/context annotations. Check tool availability before claiming a pass.
+- Test mapping alignment by syscall and ABI; do not apply blanket rounding to
+  `mmap`, `mprotect`, `munmap`, `msync`, `madvise`, or `mremap`. Page-aligned VMA
+  bounds and byte-granular `brk` state are distinct. Follow the memory and
+  syscall skills for source-specific localization.
 
-- In TCG mode NetSurf should launch by default; `USE_KVM=1` or `QEMU_NETSURF=0` can append `netsurf=0`.
-- Useful compositor logs include `wlcomp: client app_id: netsurf` and `wlcomp: client title: ... NetSurf`.
-- GTK Wayland shared memory needs a tmpfs-backed `/tmp`; ext4-backed `/tmp` can make `ftruncate()` growth fail.
-- On xv6, prefer libc wrappers for port syscalls when available. Raw Linux syscall numbers from upstream headers may not match xv6 musl.
-- If the taskbar lacks a NetSurf button, inspect xdg toplevel app-id/title handling before assuming the surface never mapped.
-- For Wayland EOF noise, clean client disconnects should be silent. Keep logs for socket errors, nonzero child exits, and signal kills.
+## Conditional references
 
-## WebKit and VM Faults
+- [Hyper-V GPU contracts](references/hyperv-gpu.md): DXG/D3DKMT ownership,
+  publication, fences, native display admission, and backend-specific proof.
+- [Port and rootfs diagnostics](references/ports-and-rootfs.md): NetSurf,
+  TLS/OpenSSH packaging, and legacy Wayland launch distinctions.
 
-- A healthy WebKit smoke boot reaches `wlcomp: client title: WebKitGTK MiniBrowser`, then usually a page title such as `Google`.
-- Musl clean exits often show PCs near `_Exit` or `__clone`; do not treat them as faults unless paired with `fatal page fault`, a coredump, or nonzero status.
-- `vma_alloc: FAIL unaligned va=...` after WebKit or `brk()` activity is suspicious. Check that mmap free-range search uses page-aligned bounds and that byte-precise heap break values are not fed directly to VMA allocation.
-- For unaligned `mprotect`, `munmap`, `msync`, `madvise`, and `mremap` ranges, normalize by rounding the start down and the end up so the covered byte interval is not truncated.
-- `MAP_FIXED` addresses should remain page-aligned; reject unaligned fixed mappings instead of silently rounding them to a different address.
+## Nested repositories
 
-## Submodules
-
-- Commit and push from deepest changed submodules upward: for example `ports/openssh/src`, then `ports`, then the top-level repo.
-- Do not rewrite unrelated dirty state. Check each repo with `git status --short` before staging.
-- After committing a submodule, commit the parent pointer update in the containing repo.
-- Push submodule branches before pushing the parent pointer. If a submodule remote is upstream-only and rejects pushes, call that out explicitly rather than pretending all submodules are published.
+Check `git status --short` in the root and each affected submodule before edits
+or staging. Preserve unrelated dirty state. When commits/pushes are requested,
+work from the deepest changed submodule upward, commit parent pointer updates,
+and publish submodule commits before their parent pointers. Report any
+unpublished dependency or rejected remote honestly; this skill does not itself
+request a commit or push.

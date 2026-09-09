@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "status": "producer patch prepared; source application validated; compilation and runtime validation pending",
+  "category": "disabled-by-default-media.bottleneck",
+  "event_name": "VideoBottleneck",
+  "payload_path": "args.bt",
+  "integer_encoding": "All integral payload values except schema_version are decimal strings; booleans remain JSON booleans. Trace envelope ts/pid/tid use exporter-native types.",
+  "common_required": [
+    "schema_version",
+    "kind",
+    "object",
+    "instance_id",
+    "event_seq"
+  ],
+  "instance_key": [
+    "pid",
+    "object",
+    "instance_id"
+  ],
+  "ordering": "event_seq increases on every instrumentation call, even with category disabled; gaps or missing lifecycle anchors invalidate reconstructed history. Instance IDs are process-local construction sequences, not pointers or wire IDs.",
+  "submitter_snapshot": [
+    "reset_epoch",
+    "pending_ack",
+    "sink_valid",
+    "sink_client_id",
+    "sink_id",
+    "sink_bound",
+    "bundle_valid",
+    "bundle_client_id",
+    "bundle_id",
+    "surface_visible",
+    "page_visible",
+    "force_submit",
+    "force_begin_frames",
+    "is_rendering",
+    "last_frame_id_valid",
+    "last_frame_id",
+    "current_width",
+    "current_height",
+    "binding_epoch",
+    "bundle_alive"
+  ],
+  "attempt_fields": [
+    "attempt_id",
+    "entry_epoch",
+    "origin",
+    "unique_frame_id",
+    "pts_us",
+    "natural_width",
+    "natural_height",
+    "previous_width",
+    "previous_height",
+    "guard_stage",
+    "output_computed",
+    "size_change_evaluated",
+    "should_submit_evaluated"
+  ],
+  "attempt_optional": [
+    "output_width",
+    "output_height",
+    "rotation",
+    "mirrored",
+    "size_changed",
+    "frame_token",
+    "reason",
+    "phase"
+  ],
+  "attempt_key": [
+    "pid",
+    "object",
+    "instance_id",
+    "attempt_id"
+  ],
+  "attempt_origins": [
+    "OnBeginFrame",
+    "SubmitSingleFrame",
+    "unspecified"
+  ],
+  "return_reasons": [
+    "no_sink",
+    "not_visible",
+    "duplicate_frame",
+    "empty_output",
+    "pending_ack",
+    "accepted"
+  ],
+  "guard_stages": [
+    "entry",
+    "sink_visibility",
+    "duplicate",
+    "output",
+    "pending_ack",
+    "accepted"
+  ],
+  "reset_semantics": "reset_epoch starts at zero and increases only when the submitter pending counter is reset by context loss or empty submission. GenerateNewSurfaceId emits frame_id.reset without changing reset_epoch. attempt_id is monotonic across resets; entry_epoch is captured once, reset_epoch is current state.",
+  "counter_fields": [
+    "pending_before",
+    "pending_after",
+    "cause",
+    "reset_epoch"
+  ],
+  "counter_change_causes": [
+    "submit",
+    "ack"
+  ],
+  "counter_reset_causes": [
+    "context_lost",
+    "empty_submit"
+  ],
+  "counter_reset_extra": [
+    "previous_epoch"
+  ],
+  "batch_fields": [
+    "batch_id",
+    "bundle_client_id",
+    "bundle_id",
+    "ack_count",
+    "reclaim_count",
+    "begin_frame_count"
+  ],
+  "entry_fields": [
+    "batch_id",
+    "entry_kind",
+    "entry_index",
+    "sink_client_id",
+    "sink_id",
+    "resource_count"
+  ],
+  "entry_kinds": [
+    "ack",
+    "reclaim",
+    "begin_frame"
+  ],
+  "entry_delivery_fields": [
+    "client_found"
+  ],
+  "batch_join": "Local batch_id values identify only their own producer. Cross-process matching requires independently validated existing Mojo flow linkage and unique enclosing send/receive boundary records; never equal local batch IDs or PTS.",
+  "kinds": {
+    "instance.begin": "Construction/initial state anchor.",
+    "instance.end": "Destruction boundary; no later events from the instance are valid.",
+    "state.before": "State before a setter/lifecycle action; cause names the action.",
+    "state.after": "State after a setter/lifecycle action; cause names the action.",
+    "frame_id.reset": "last-frame ID reset without a pending-count reset; cause=surface_id.",
+    "submit.entry": "Attempt entry with current submitter state.",
+    "submit.construct": "phase=enter/exit brackets actual CreateCompositorFrame.",
+    "submit.send": "phase=enter/exit brackets application SubmitCompositorFrame, which may enqueue a bundle rather than send IPC.",
+    "submit.return": "Exact return reason with current state; output/size fields exist only after original evaluation.",
+    "counter.change": "Actual pending-count mutation after submit work or ACK reclaim; cause=submit/ack and attempt_id/callback_id respectively.",
+    "counter.reset": "Actual pending-count reset; cause=context_lost/empty_submit, previous_epoch and reset_epoch.",
+    "ack.enter": "Submitter callback entry with callback_id and resource_count, before reclaim.",
+    "ack.reclaim_done": "Same callback_id after ReclaimResources returns, before pending guard/decrement.",
+    "ack.exit": "Same callback_id after decrement or zero-count handling; applied boolean.",
+    "reclaim.enter": "Resource-reclaim callback entry with reclaim_id/resource_count.",
+    "reclaim.exit": "Same reclaim_id after callback body.",
+    "empty.enter": "Empty-submission attempt with empty_id.",
+    "empty.exit": "Same empty_id with submitted boolean; actual counter reset is separately recorded.",
+    "bundle.client.add": "Client registration boundary with sink IDs and client_address; does not prove successful remote initialization.",
+    "bundle.client.remove": "Client removal with sink IDs.",
+    "bundle.enqueue": "Entry queued for later notification delivery; entry_kind, sink IDs, queue_index/resource_count. FIFO relation must be checked against flush membership.",
+    "bundle.send.enter": "Notification IPC call boundary after queue extraction, before method call; counts include zero-ACK batches.",
+    "bundle.send.entry": "One ordered ACK/reclaim/begin-frame member of the outgoing call.",
+    "bundle.send.exit": "Return from notification IPC method call, not kernel transport completion.",
+    "bundle.receive.enter": "Client FlushNotifications entry with counts and local batch_id.",
+    "bundle.receive.entry": "Per-member dispatch before callback, or skipped entry with client_found=false.",
+    "bundle.receive.entry_done": "Per-member callback return with client_found=true; absent for skipped entries.",
+    "bundle.receive.exit": "Client FlushNotifications return boundary.",
+    "service.admit": "Service pending-count increment with sink identity, pending_before/after, frame_token and surface_frame_trace_id; not proof of final SubmitResult acceptance.",
+    "service.ack.ready": "Support SendCompositorFrameAck entry; no protocol frame ID is introduced.",
+    "service.ack.emit": "Service pending decrement and selected route=ack/reclaim/no_client, with resource count and local callback_id.",
+    "service.ack.done": "Return from service notification call for callback_id.",
+    "surface.ack.ready": "FrameData first ACK-ready transition before exact client callback, with callback_id, captured frame_token/surface_frame_trace_id/frame_index/client_address/client_present/called. This callback ID is local observation identity.",
+    "frame.prepare.begin": "Video-only preparation input unique_frame_id/PTS and decoder_address.",
+    "frame.prepare.end": "Video-only preparation input/output identity relation; output_valid=false for cancellation.",
+    "frame.select": "Selected VideoFrame unique_frame_id/PTS with compositor_address. Address is not lifetime identity.",
+    "surface.ack.done": "Paired surface callback completion using only pre-call captured values, even if FrameData/client was destroyed. Null-client ready/done has called=false."
+  },
+  "source_stream_objects": [
+    "surface_ack",
+    "preparation",
+    "selection"
+  ],
+  "source_stream_note": "These three object kinds use thread-local observation streams, not per-source-object lifetime IDs; addresses are attributes only. Frame unique IDs and explicitly emitted input/output relationships provide frame joins.",
+  "validation": "No C++ compilation or runtime evidence is asserted by this schema. Missing/duplicate records, category toggles, event loss, reset races, skipped clients and ambiguous nesting remain explicit failures or unresolved joins. Runtime buffer bounds and loss counters are required.",
+  "binding_epoch_semantics": "Increments at StartSubmitting entry; identifies a new local binding attempt, not remote creation success. Independent of the pending-counter reset epoch.",
+  "source_field_note": "surface_frame_trace_id is signed int64 frame.metadata.begin_frame_ack.trace_id, with -1 meaning unset, matching pinned CompositorFrameSinkSupport Graphics.Pipeline producer at lines721-734; it is not an ACK protocol frame ID and unset cannot establish trace/flow identity.",
+  "boolean_attempt_fields": [
+    "output_computed",
+    "size_change_evaluated",
+    "should_submit_evaluated"
+  ],
+  "surface_callback_fields": [
+    "callback_id",
+    "frame_token",
+    "surface_frame_trace_id",
+    "frame_index",
+    "client_address",
+    "client_present",
+    "called"
+  ]
+}

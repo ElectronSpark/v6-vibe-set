@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "scope": "source audit only; no completed executable/dependency closure or deployment/runtime proof",
+  "chromium_commit": "782af9cb30a53f54487e5d2e44738645a8ec457c",
+  "sources": [
+    {
+      "path": "chrome/installer/linux/BUILD.gn",
+      "bytes": 17790,
+      "sha256": "0d6297a07bef17385b79c77d0dd950ed971224a954c04420347cc69c7f5a1f56",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/chrome/installer/linux/BUILD.gn"
+    },
+    {
+      "path": "chrome/installer/linux/common/installer.py",
+      "bytes": 40934,
+      "sha256": "e361de90bc2986ca7800d79047edcf3ce185ced7db10765c7bc0928089950bed",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/chrome/installer/linux/common/installer.py"
+    },
+    {
+      "path": "third_party/devtools-frontend/src/BUILD.gn",
+      "bytes": 5691,
+      "sha256": "b895c798eb30bdc853a79423bf2f49717e5383ade8662ba3ed2cefb4a96cc8bf",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/third_party/devtools-frontend/src/BUILD.gn"
+    },
+    {
+      "path": "content/browser/devtools/BUILD.gn",
+      "bytes": 5787,
+      "sha256": "0b1e77d364acea68da32dbd23e2a23b3a3e1d0907f1537ac3731ab6f677b2d55",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/content/browser/devtools/BUILD.gn"
+    },
+    {
+      "path": "chrome/browser/resources/BUILD.gn",
+      "bytes": 15623,
+      "sha256": "8b64dd5d2f95cbd353ae1b197714bbdcb42a6b529451cd1e982a7bd388f853c4",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/chrome/browser/resources/BUILD.gn"
+    },
+    {
+      "path": "chrome/chrome_paks.gni",
+      "bytes": 34319,
+      "sha256": "e6ffa00205935275ce6827cf87b8da14406d4b875abfa2a8877c1dc9fee84148",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/chrome/chrome_paks.gni"
+    },
+    {
+      "path": "third_party/blink/public/BUILD.gn",
+      "bytes": 21366,
+      "sha256": "134f27f34657fc96ca6fda5369fee7889dec1b0481950d31904df51c6f2c03fb",
+      "local_path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/third_party/blink/public/BUILD.gn"
+    }
+  ],
+  "observed_gn_args": {
+    "path": "/home/es/xv6-os/build-chromium-diagnostics-151.0.7922.34/chromium/src/out/BottleneckRelease/args.gn",
+    "sha256": "3b4bf1faf6bef8dce93e75a2bcddd208d53e08a01a0bfb7eaa388c9520b3fbfb",
+    "text": "is_debug = false\nis_component_build = false\nis_official_build = false\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\nuse_thin_lto = false\nchrome_pgo_phase = 0\nconcurrent_links = 1\nuse_remoteexec = false\nuse_siso = true\ntarget_os = \"linux\"\ntarget_cpu = \"x64\"\nuse_sysroot = true\nproprietary_codecs = true\nffmpeg_branding = \"Chrome\"\nozone_platform_wayland = true\ndcheck_always_on = false\n"
+  },
+  "claims": {
+    "devtools_repack_chain": [
+      "third_party/devtools-frontend/src/BUILD.gn:128-190",
+      "content/browser/devtools/BUILD.gn:25-50",
+      "chrome/browser/resources/BUILD.gn:402-479",
+      "chrome/chrome_paks.gni:120,228"
+    ],
+    "deployment_artifact_policy": "chrome/installer/linux/common/installer.py:457-695",
+    "conditional_libraries": "chrome/installer/linux/BUILD.gn:65-127"
+  }
+}

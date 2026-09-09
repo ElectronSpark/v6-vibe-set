@@ -1,72 +1,79 @@
 ---
 name: xv6-debug-build-repro
-description: 'Use when: debugging xv6-os fresh clones, Docker/container builds, copied prebuilt toolchains, CMake/Ninja stamp files, toolchain byproducts, submodule SHAs, clean build reproducibility, or build-vs-runtime mismatch.'
+description: 'Use when: debugging xv6-os fresh clones, Docker/container builds, CMake/Ninja dependencies, nested submodule identity, clean build reproducibility, or build-versus-runtime mismatches. Covers the current x86_64 host-glibc/KDE image and distinguishing legacy cross-toolchain artifacts.'
 argument-hint: 'Describe the build environment and failing target'
 ---
+# xv6 Build and Reproduction Debugging
 
-# xv6 Build Repro Debugging
-
-## Fluidity Notice
-
-This skill is provisional. It records lessons from recent build and container experiments, not guaranteed project policy. It is not ground truth and can become deprecated without notice as CMake, Docker, or toolchain import paths are fixed.
-
-## When to Use
-
-- A fresh clone or container build fails differently from the working tree.
-- A copied toolchain exists but CMake/Ninja still tries to rebuild GCC/binutils/musl.
-- Submodule commits are local, dirty, or not pushed when the parent repo is committed.
-- VS Code CMake Tools disagrees with the existing configured build tree.
+Establish which source produced the failing artifact before rebuilding. A build
+log, current checkout and running image can describe different states. Use
+[the active plan](../../../docs/active-work-plan.md) for current runtime policy.
 
 ## Workflow
 
-1. Capture the exact build tree and generator before changing files:
-   - source root, build root, generator, `XV6_ARCH`, `XV6_PARALLEL_JOBS`, and toolchain path.
-2. For copied prebuilt toolchains, verify executable byproducts and CMake graph state together. A copied `toolchain/x86_64` directory alone may not satisfy target dependencies.
-3. Inspect target stamp files and CMake complete files when trying to skip toolchain phases. Missing or mismatched stamps can cause `build_gcc_toolchain` to rerun.
-4. Use dry runs when available:
-   - `ninja -C <build> -n toolchain`
-   - Check whether the dry run mentions toolchain build scripts.
-5. For kernel-only validation in the existing workspace, prefer the known configured tree:
-   - `cmake --build build-x86_64 --target kernel -j2`
-6. If VS Code CMake Tools configure fails but the existing tree builds, record both facts; do not treat one as proof that the other path is broken.
-7. To validate that all non-toolchain programs build in Docker without an outside repo, run the dev image and mount the local prebuilt toolchain read-only:
-   - `docker run --rm --workdir /src/xv6-os -e XV6_SOURCE_DIR=/src/xv6-os -e XV6_BUILD_DIR=/src/xv6-os/build-x86_64-container-prebuilt -e XV6_ARCH=x86_64 -e XV6_PARALLEL_JOBS=2 -e XV6_PREBUILT_TOOLCHAIN_PREFIX=/opt/xv6-prebuilt-toolchain -v /home/es/xv6-os:/src/xv6-os -v /home/es/xv6-os/build-toolchain-x86_64:/opt/xv6-prebuilt-toolchain:ro xv6-os:dev-validate bash -lc 'cmake -S /src/xv6-os -B /src/xv6-os/build-x86_64-container-prebuilt -G Ninja -DXV6_ARCH=x86_64 -DXV6_PARALLEL_JOBS=2 -DXV6_PREBUILT_TOOLCHAIN_PREFIX=/opt/xv6-prebuilt-toolchain && cmake --build /src/xv6-os/build-x86_64-container-prebuilt --target toolchain -j2 && cmake --build /src/xv6-os/build-x86_64-container-prebuilt --target world -j2'`
-   - After it finishes, verify `fs.img`, `kernel/kernel.elf`, `.ksymbols`, `.ksymbols_idx`, and expected staged programs such as `bin/wlcomp`, `bin/netsurf`, `bin/ssh`, and `bin/openssl`.
-   - Confirm the build tree did not create `build-x86_64-container-prebuilt/toolchain`, proving the toolchain phase was skipped rather than rebuilt.
+1. Preserve existing work. Record source root, branch/commit, dirty state, nested
+   submodule SHAs and dirty state, build directory, generator, `XV6_ARCH`, compiler,
+   relevant cache values, container image identity and job limit. Do not reset,
+   clean, commit, or publish merely to simplify a reproduction.
+2. Apply root `AGENTS.md`: guarded `/home/es/.local/bin/rg`, no banned recursive
+   options or generated-tree content searches, explicit eligible artifact files
+   through `scripts/audit/safe-rg-artifact.sh`, and the global search lock. Wait
+   synchronously for each exact build/tool handle before new searches or heavy
+   commands. Inspect only the cache/log/stamp files needed for this failure.
+3. Check current first-party owners: `CMakeLists.txt`, `cmake/`,
+   `scripts/build/reproduce-in-container.sh`,
+   `scripts/build/validate-reproduction.sh`, and
+   `scripts/container/reproduce-workspace.sh`. Current x86_64 userland uses the
+   host compiler/glibc and staged KDE/browser runtime; old custom-musl toolchain,
+   `wlcomp`, and userland override recipes are not current build requirements.
+4. Choose the smallest action within the user's scope. Read-only diagnosis does
+   not require a build. For an authorized kernel-only change in an already
+   configured matching tree, use `cmake --build build-x86_64 --target kernel -j2`.
+   `rootfs-refresh` refreshes the image from the existing sysroot; it does not
+   rebuild changed userland. The rootfs implementation is
+   `scripts/image/make-rootfs.sh`. Inspect dependencies before choosing `image`.
+5. For an explicitly requested clean full-workspace reproduction, the host
+   entrypoint is `scripts/container/reproduce-workspace.sh`. It rebuilds the dev
+   container, replaces the mutable build tree after ownership checks, stages the
+   current image, validates it, and publishes an immutable local receipt under
+   `build-reproductions/x86_64/`. This is a substantial rebuild, not a harmless
+   diagnostic or a remote publish. Read its current cleanup scope before use.
+6. Preserve at most the three newest completed generated iterations. Before a
+   fourth, remove only the oldest confirmed-unused candidate through the owned
+   workflow. Active disks, Docker data, deployed runtime images, source and the
+   newest known-good rollback are never automatic cleanup candidates. Never
+   bypass locks or host process-ownership checks from inside a container.
+7. Retain the actual commands, exit status, source/dirty-state manifest and
+   artifact hashes. Distinguish clean-clone reproducibility from reproducing a
+   dirty bind-mounted workspace. A timestamp alone cannot bind symbols, kernel
+   and image; launch only the matching receipt when runtime validation is within
+   scope. An old VM can document old behavior but cannot validate a new kernel.
 
-## Methodology
+## Dependency and submodule pitfalls
 
-- Debug reproducibility as a dependency graph problem, not a file-copy problem. Check targets, byproducts, stamps, cache variables, and submodule SHAs together.
-- Compare dirty working-tree builds against a clean clone by naming every intentional difference: copied toolchain, preseeded stamps, local submodule commit, Docker image, and generator.
-- Use dry runs before expensive builds to see what the graph believes is missing.
-- Keep host and container evidence separate. A path that exists on the host may be absent, mounted differently, or cached differently inside Docker.
-- When skipping a build phase, prove both sides: the final executable byproducts exist and the build graph no longer schedules that phase.
-- Commit and push submodules before treating a top-level commit as reproducible.
+- CMake/Ninja build edges depend on declared outputs/byproducts and stamp state.
+  A copied executable alone does not satisfy a missing dependency. On a legacy
+  branch with a custom toolchain target, inspect its declared byproducts and use
+  `ninja -C <matching-build> -n toolchain` to inspect scheduling; do not assume
+  that target exists in the current x86_64 build or forge stamps to hide failure.
+- Check the current failing target before reacting to a stale VS Code task or
+  cached error. Rootfs-only staging, kernel compilation and a full image build
+  establish different things. Do not use successful staging as proof of ABI
+  or graphical runtime behavior.
+- A top-level submodule SHA may be unreachable from a fresh clone. Record that
+  limitation and check the relevant remote/ref without publishing changes.
+  When commits/pushes are already authorized, publish from the deepest changed
+  submodule outward so parent pointers reference available commits; inspect
+  actual branches/remotes rather than assuming historical branch names.
+- Optional reference sysroots are explicit inputs. On matching legacy WebKit
+  work, propagate `XV6_WEBKIT_REF_SYSROOT` consistently through environment,
+  cache and nested configure; do not depend on a developer's absolute path.
+  `ports/webkit/sysroot` is a staged runtime input when used, not an automatic
+  cleanup candidate. Do not revive retired userland patches as a build shortcut.
 
-## Common Problems
-
-- **Toolchain directory fallacy**: copied compiler binaries exist, but Ninja still rebuilds because stamps or expected byproducts are missing.
-- **Cache mismatch**: CMake was configured before the copied toolchain or with a different build root.
-- **Generator mismatch**: Makefile and Ninja build trees are compared without accounting for different target graphs.
-- **Submodule invisibility**: the parent points at commits that have not been pushed from `kernel` or `ports`.
-- **Partial Docker success**: the base image builds, but the image/rootfs target fails later in project-specific phases.
-- **Build/runtime mismatch**: a successful build is tested against an older running QEMU session.
-- **Stale rootfs image**: sysroot binaries can be newer than `/bin/*` inside `build-x86_64/fs.img`; verify with `debugfs` or dump the image binary and run `strings` before trusting a runtime test.
-- **Image target must include rootfs**: GUI launches boot `build-x86_64/fs.img`, not the legacy `boot.img`. The umbrella `image` target should depend on `rootfs`; otherwise `cmake --build <build> --target image` can leave the tested GUI image stale even though the legacy boot image was refreshed.
-- **Optional WebKit runtime**: `ports/webkit` stages MiniBrowser/WebKit only from an explicit `XV6_WEBKIT_REF_SYSROOT` CMake/env setting, or from the repo-local `ports/webkit/sysroot` if populated. Fresh clones without a WebKit runtime skip staging and remove stale WebKit files; `scripts/make-rootfs.sh` must copy `libexec/` as well as `lib/` when a runtime is present, because MiniBrowser and the WebKit helper processes live under `/libexec/webkit2gtk-4.1`. When intentionally testing a reference runtime, the environment variable should override a stale cached CMake value.
-- **No external WebKit dependency**: container builds should not rely on `/home/es/xv6/xv6-tmp` or any host-only WebKit sysroot. A cache value of `/src/xv6-os/ports/webkit/sysroot` is repo-local; if that directory is absent or lacks WebKitGTK, `port-webkit` should complete by skipping runtime staging.
-- **WebKit runtime cleanup boundary**: generated `build-*` directories under port source checkouts are disposable, but `ports/webkit/sysroot` is a staged runtime input. Its `.so` files are required for self-contained container/rootfs builds and should not be removed as ordinary object-file cleanup.
-- **Host/container WebKit parity**: the umbrella `cmake/BuildPorts.cmake` should pass `XV6_WEBKIT_REF_SYSROOT` into the nested `ports` configure as both a `-D` value and an environment variable. The nested `ports/webkit` logic treats host-only `xv6-tmp` paths as unsafe unless they were intentionally supplied through the environment; missing env propagation makes the parent cache and ports cache disagree.
-- **WebKit source porting provenance**: xv6-specific WebKitGTK 2.42.5 source overrides live in `ports/webkit/overrides/webkitgtk-2.42.5`, with `ports/webkit/apply-xv6-overrides.sh` to apply them to a clean source tree. Do not keep fixes only in `build-x86*/webkit-stack` or `/home/es/xv6/xv6-tmp`; promote them into this override set or the in-tree port.
-
-## Submodule Commit Rule
-
-- Commit changed submodules first, then commit the parent repo so the parent records real submodule SHAs.
-- Push submodule branches before pushing the parent branch, otherwise a fresh clone of the parent can point at unavailable commits.
-- For this workspace, common branches are `kernel` on `v6-kernel`, `ports` on `v6-port`, and top-level `/home/es/xv6-os` on `main`.
-
-## Pitfalls
-
-- A parent commit with unpublished submodule SHAs is not reproducible for other clones.
-- A successful base Docker image build does not prove the full image target can build.
-- Toolchain phase stamps are build-graph facts, not just cosmetic files.
+For runtime work follow [GUI runtime](../xv6-debug-gui-runtime/SKILL.md).
+The VM owner must verify exact zero QEMU before dispatch, use token/PID-owned
+launch and bounded cleanup, synchronously reap, and verify exact zero afterward;
+all other lanes are NO-BOOT. Avoid `pgrep` self-matches. If serial inspection is
+needed, use short marker commands, handle first-character drop, and wait for the
+actual command and fresh prompt. Build completion alone is not VM authorization.

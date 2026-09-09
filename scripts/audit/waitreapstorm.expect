@@ -1,0 +1,177 @@
+#!/usr/bin/env expect
+
+set timeout 150
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set base_img "$build/fs.img"
+set stamp [clock format [clock seconds] -gmt 1 -format %Y%m%dT%H%M%SZ]
+set token "xv6-waitreap-$stamp-[pid]"
+set outdir "$build/waitreapstorm/$stamp-[pid]"
+set scratch "$outdir/trial.fs.qcow2"
+set monitor "$outdir/monitor.sock"
+set pidfile "$outdir/qemu.pid"
+set runlog "$outdir/run.log"
+set qemu_pid 0
+set qemu_start 0
+set qemu_reaped 0
+
+proc exact_inventory {} {
+    global root
+    return [exec "$root/scripts/launch/qemu-exact-inventory.sh"]
+}
+
+proc owned_identity {pid token} {
+    set script {
+        pid="$1"; token="$2"
+        [[ -r "/proc/$pid/exe" && -r "/proc/$pid/stat" &&
+           -r "/proc/$pid/cmdline" ]] || exit 2
+        exe=$(readlink -f "/proc/$pid/exe") || exit 2
+        case "${exe##*/}" in qemu-system-x86*|qemu-kvm) ;; *) exit 3 ;; esac
+        stat_line=$(<"/proc/$pid/stat")
+        rest=${stat_line##*) }
+        read -r -a fields <<<"$rest"
+        [[ "${fields[2]}" == "$pid" ]] || exit 4
+        mapfile -d '' -t args <"/proc/$pid/cmdline"
+        [[ " ${args[*]} " == *" xv6-$token "* ]] || exit 5
+        printf 'start=%s pgid=%s exe=%s\n' "${fields[19]}" "${fields[2]}" "$exe"
+    }
+    return [exec bash -c $script _ $pid $token]
+}
+
+proc reap_owned {} {
+    global root qemu_pid qemu_start token qemu_reaped timeout
+    if {$qemu_reaped} { return }
+    if {$qemu_pid > 0 && [file exists "/proc/$qemu_pid/stat"] && $qemu_start > 0} {
+        catch {exec "$root/scripts/launch/cleanup-owned-qemu.sh" \
+            $qemu_pid $qemu_start $token} cleanup
+    }
+    set prior $timeout
+    set timeout 20
+    catch {expect eof}
+    catch {wait}
+    set timeout $prior
+    set qemu_reaped 1
+}
+
+proc finish {code reason} {
+    global outdir monitor scratch
+    reap_owned
+    file delete -force $monitor
+    file delete -force $scratch
+    set inventory [exact_inventory]
+    set fh [open "$outdir/final-qemu-inventory.txt" w]
+    puts $fh $inventory
+    close $fh
+    if {![regexp {exact_x86_qemu_count=0} $inventory]} {
+        puts stderr "WAITREAPSTORM status=FAIL reason=owned-x86-remains original=$reason evidence=$outdir"
+        exit 12
+    }
+    puts "WAITREAPSTORM status=[expr {$code == 0 ? {PASS} : {FAIL}}] reason=$reason evidence=$outdir"
+    exit $code
+}
+
+file mkdir $outdir
+if {[catch {
+    exec qemu-img create -q -f qcow2 -F raw -b $base_img $scratch
+} stage]} {
+    puts stderr "WAITREAPSTORM status=FAIL reason=create-overlay output=$stage"
+    exit 2
+}
+
+# Creating the private copy-on-write overlay does not launch or alter a VM.
+# Wait for every exact QEMU executable to exit naturally.  This helper never
+# signals a VM and is therefore safe for the user's external VM.
+set preflight_rc [catch {
+    exec "$root/scripts/launch/qemu-wait-natural-zero.sh" 120
+} preflight]
+set fh [open "$outdir/preflight-qemu-inventory.txt" w]
+puts $fh $preflight
+close $fh
+if {$preflight_rc != 0} {
+    file delete -force $scratch
+    puts stderr "WAITREAPSTORM status=SKIP reason=qemu-natural-wait-timeout evidence=$outdir"
+    exit 75
+}
+
+set env(DISPLAY_MODE) nographic
+set env(USE_KVM) 1
+set env(QEMU_REQUIRE_KVM) 1
+set env(QEMU_GPU) none
+set env(QEMU_INPUT) none
+set env(QEMU_NET) 0
+set env(QEMU_AUDIO) none
+set env(QEMU_CPUS) 6
+set env(QEMU_MEMORY) 4G
+set env(QEMU_DISK_FORMAT) qcow2
+set env(QEMU_RUN_TOKEN) $token
+set env(QEMU_PIDFILE) $pidfile
+set env(QEMU_APPEND) "root=/dev/disk0 netsurf=0 webkit=0 video=80x25"
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+set launch_preflight_rc [catch {
+    exec "$root/scripts/launch/qemu-exact-inventory.sh" --require-zero
+} launch_preflight]
+set fh [open "$outdir/prelaunch-qemu-inventory.txt" w]
+puts $fh $launch_preflight
+close $fh
+if {$launch_preflight_rc != 0} {
+    puts stderr "WAITREAPSTORM status=SKIP reason=qemu-appeared-before-launch evidence=$outdir"
+    exit 75
+}
+
+log_file -a $runlog
+spawn setsid --wait bash "$root/scripts/launch/run-qemu.sh" x86_64 $kernel $scratch
+for {set attempt 0} {$attempt < 100 && ![file isfile $pidfile]} {incr attempt} { after 100 }
+if {![file isfile $pidfile]} { finish 6 qemu-pidfile-timeout }
+set fh [open $pidfile r]
+set qemu_pid [string trim [read $fh]]
+close $fh
+if {[catch {owned_identity $qemu_pid $token} identity] ||
+    ![regexp {start=([0-9]+)} $identity -> qemu_start]} {
+    finish 6 owned-identity-failed
+}
+set fh [open "$outdir/owned-process.txt" w]
+puts $fh "pid=$qemu_pid token=$token $identity"
+close $fh
+
+expect {
+    -re {root:/# } {}
+    -re {PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+        finish 7 guest-crash-before-probe
+    }
+    timeout { finish 8 prompt-timeout }
+    eof { finish 9 prompt-eof }
+}
+
+# Leading assignment accounts for the console's known first-byte drop.
+send [format {x=0;m=WAITREAPDONE_;m=${m}%d;/bin/waitreapstorm;echo WAITREAP_RC=$?;echo $m} [pid]]
+set passed 0
+expect {
+    -re {waitreapstorm: PASS} {
+        set passed 1
+        exp_continue
+    }
+    -re {WAITREAP_RC=0} {
+        if {!$passed} { finish 10 pass-row-missing }
+        exp_continue
+    }
+    -re "WAITREAPDONE_[pid]" {}
+    -re {waitreapstorm: FAIL|PANIC|panic:|fatal page fault|spin_lock reentry|kernel trap|coredump: generating|Out of memory} {
+        finish 11 reducer-or-guest-failure
+    }
+    timeout { finish 13 probe-timeout }
+    eof { finish 14 probe-eof }
+}
+if {!$passed} { finish 15 probe-failed }
+
+catch {exec sh -c "printf 'quit\\n' | nc -U -w 8 -q 1 '$monitor' >/dev/null 2>&1"}
+set timeout 30
+expect {
+    eof {
+        catch {wait}
+        set qemu_reaped 1
+    }
+    timeout { reap_owned }
+}
+finish 0 completed

@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>xv6 WebKit input smoke</title>
+<style>
+  body {
+    margin: 48px;
+    background: #111;
+    color: white;
+    font: 28px sans-serif;
+  }
+  input {
+    width: 720px;
+    font: 48px sans-serif;
+  }
+</style>
+<input id="probe" autofocus>
+<script>
+const probe = document.getElementById("probe");
+function publish() {
+  document.title = "typed:" + probe.value;
+}
+probe.focus();
+probe.addEventListener("input", publish);
+setTimeout(() => probe.focus(), 250);
+</script>

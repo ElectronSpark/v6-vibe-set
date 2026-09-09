@@ -1,0 +1,7 @@
+FAKE_1.0 {
+    global:
+        pa_*;
+        fake_untargeted;
+    local:
+        *;
+};

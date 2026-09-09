@@ -1,0 +1,171 @@
+#!/usr/bin/env expect
+
+set timeout 180
+set root [exec sh -c "cd [file dirname [info script]]/../.. && pwd"]
+set build "$root/build-x86_64"
+set kernel "$build/kernel/build/kernel/xv6.bin"
+set fsimg "$build/fs.img"
+set outdir "$build/chromium-menu-proof"
+exec mkdir -p $outdir
+
+set runlog "$outdir/run.log"
+set monitor "$outdir/qemu-monitor.sock"
+set tmpimg "$outdir/chromium-menu.fs.img"
+set artifact_prefix [expr {[info exists env(CHROMIUM_ARTIFACT_PREFIX)] ? $env(CHROMIUM_ARTIFACT_PREFIX) : "chromium-menu"}]
+set backend [expr {[info exists env(CHROMIUM_BACKEND)] ? $env(CHROMIUM_BACKEND) : "wayland"}]
+set click_x [expr {[info exists env(CHROMIUM_MENU_CLICK_X)] ? $env(CHROMIUM_MENU_CLICK_X) : "60300"}]
+set click_y [expr {[info exists env(CHROMIUM_MENU_CLICK_Y)] ? $env(CHROMIUM_MENU_CLICK_Y) : "8600"}]
+set menu_diff_min [expr {[info exists env(CHROMIUM_MENU_DIFF_MIN)] ? $env(CHROMIUM_MENU_DIFF_MIN) : "50000"}]
+set chromium_url [expr {[info exists env(CHROMIUM_URL)] ? $env(CHROMIUM_URL) : "about:blank"}]
+set extra_flags [expr {[info exists env(CHROMIUM_EXTRA_FLAGS)] ? $env(CHROMIUM_EXTRA_FLAGS) : "--disable-quic"}]
+
+regsub -all {[^A-Za-z0-9._-]} $artifact_prefix {_} artifact_prefix
+regsub -all {[^A-Za-z0-9._~:/?#@!$&'()*+,;=%-]} $chromium_url {_} chromium_url
+
+set ppm "$outdir/$artifact_prefix.ppm"
+set png "$outdir/$artifact_prefix.png"
+set before_ppm "$outdir/$artifact_prefix-before.ppm"
+set before_png "$outdir/$artifact_prefix-before.png"
+set artifact_runlog "$outdir/$artifact_prefix.run.log"
+set guest_ppm "/chromium-menu.ppm"
+set guest_before_ppm "/chromium-menu-before.ppm"
+
+exec sh -c "rm -f '$runlog' '$artifact_runlog' '$monitor' '$tmpimg' '$ppm' '$png' '$before_ppm' '$before_png'"
+exec cp $fsimg $tmpimg
+set startup_override "$outdir/startup-no-dbus"
+exec sh -c "printf '%s\n' '# Temporary Chromium menu proof startup: skip host D-Bus helpers.' '/bin/weston-session' > '$startup_override'"
+exec sh -c "printf '%s\n' 'rm /etc/startup' 'write $startup_override /etc/startup' | debugfs -w '$tmpimg' >/dev/null 2>&1"
+
+set env(DISPLAY_MODE)          "gtk"
+set env(USE_KVM)               "1"
+set env(QEMU_GPU)              "virtio-vga-gl-primary"
+set env(QEMU_INPUT)            "virtio"
+set env(QEMU_NET)              "0"
+set env(QEMU_AUDIO)            "none"
+set env(QEMU_ALLOW_WSL_SDL_GL) "1"
+set env(QEMU_VIRTIO_GPU_XRES)  "1280"
+set env(QEMU_VIRTIO_GPU_YRES)  "800"
+set env(QEMU_APPEND) "root=/dev/disk0 weston=1 video=1280x800 netsurf=0 webkit=0 host_chromium=1 host_chromium_url=$chromium_url host_chromium_backend=$backend host_chromium_multiprocess=1 host_chromium_extra_flags=$extra_flags host_chromium_evidence=1 host_chromium_evidence_lines=240 host_chromium_evidence_timers=2 host_chromium_surface_trace=1 chrome_poll_summary=0 chrome_drm_ioctl_trace=0"
+set env(QEMU_EXTRA) "-monitor unix:$monitor,server,nowait"
+
+proc finish {code label} {
+    global qemu_pid runlog artifact_runlog tmpimg ppm png before_ppm before_png
+    global guest_ppm guest_before_ppm
+    global menu_diff_min
+
+    catch { exec pkill -P $qemu_pid qemu-system-x86_64 }
+    catch { exec kill $qemu_pid }
+    sleep 1
+
+    catch { exec sh -c "debugfs -R 'dump $guest_ppm $ppm' '$tmpimg' >/dev/null 2>&1" }
+    catch { exec sh -c "debugfs -R 'dump $guest_before_ppm $before_ppm' '$tmpimg' >/dev/null 2>&1" }
+    if {[file exists $before_ppm]} {
+        catch { exec convert $before_ppm $before_png }
+    }
+    if {$code == 0 && ![file exists $ppm]} {
+        set label "CHROMIUM-MENU-PROOF-FAIL extract-ppm"
+        set code 6
+    }
+    if {$code == 0 && [catch { exec convert $ppm $png } convert_out]} {
+        set label "CHROMIUM-MENU-PROOF-FAIL convert-png $convert_out"
+        set code 7
+    }
+    if {$code == 0 && [file exists $before_ppm] && [file exists $ppm]} {
+        set diff_pixels 0
+        if {[catch { exec sh -c "compare -metric AE '$before_ppm' '$ppm' null: 2>&1 || true" } diff_out]} {
+            set label "CHROMIUM-MENU-PROOF-FAIL compare $diff_out"
+            set code 8
+        } elseif {[regexp {([0-9]+)} $diff_out -> diff_pixels] == 0 ||
+                  $diff_pixels < $menu_diff_min} {
+            set label "CHROMIUM-MENU-PROOF-FAIL menu-not-visible diff_pixels=$diff_pixels min=$menu_diff_min"
+            set code 9
+        }
+    }
+
+    set line "$label log=$artifact_runlog host_ppm=$ppm host_png=$png before_ppm=$before_ppm before_png=$before_png"
+    set out [open $runlog a]
+    puts $out $line
+    close $out
+    catch { exec cp $runlog $artifact_runlog }
+    puts "\n$line"
+    exit $code
+}
+
+proc wait_prompt {fail_label} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 35
+    expect {
+        -re {root:/# } {
+            set timeout $old_timeout
+            return 1
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 4 $fail_label
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "$fail_label eof"
+        }
+    }
+}
+
+proc wait_text {text fail_label} {
+    global timeout
+
+    set old_timeout $timeout
+    set timeout 20
+    expect {
+        -re $text {
+            set timeout $old_timeout
+            return 1
+        }
+        timeout {
+            set timeout $old_timeout
+            finish 4 $fail_label
+        }
+        eof {
+            set timeout $old_timeout
+            finish 5 "$fail_label eof"
+        }
+    }
+}
+
+log_user 0
+log_file -a $runlog
+spawn timeout --foreground $timeout bash scripts/launch/run-qemu.sh x86_64 $kernel $tmpimg
+set qemu_pid [exp_pid]
+
+expect {
+    -re "Chromium evidence end reason=timer-0" {
+        after 1500
+        send "\r"
+        wait_prompt "CHROMIUM-MENU-PROOF-FAIL initial-prompt"
+        send "fbstat ppm-current $guest_before_ppm 0 0 1280 800; sync\r"
+        wait_text "fbstat ppm-current $guest_before_ppm" "CHROMIUM-MENU-PROOF-FAIL before-capture-echo"
+        wait_prompt "CHROMIUM-MENU-PROOF-FAIL before-capture"
+        send "mouseinject $click_x $click_y 0; mouseinject $click_x $click_y 1; mouseinject $click_x $click_y 0\r"
+        wait_text "mouseinject: absolute x=$click_x y=$click_y" "CHROMIUM-MENU-PROOF-FAIL click-output"
+        wait_prompt "CHROMIUM-MENU-PROOF-FAIL click"
+        after 2500
+        send "fbstat ppm-current $guest_ppm 0 0 1280 800; sync\r"
+        wait_text "fbstat ppm-current $guest_ppm" "CHROMIUM-MENU-PROOF-FAIL after-capture-echo"
+        wait_prompt "CHROMIUM-MENU-PROOF-FAIL after-capture"
+        send "cat /tmp/weston.log\r"
+        wait_text "cat /tmp/weston.log" "CHROMIUM-MENU-PROOF-FAIL weston-log-echo"
+        wait_prompt "CHROMIUM-MENU-PROOF-FAIL weston-log"
+        after 500
+        finish 0 "CHROMIUM-MENU-PROOF-DONE"
+    }
+    -re {panic|fatal page fault|coredump: generating|virtio_gpu: async command} {
+        finish 3 "CHROMIUM-MENU-PROOF-FAIL crash"
+    }
+    timeout {
+        finish 4 "CHROMIUM-MENU-PROOF-FAIL timeout"
+    }
+    eof {
+        finish 5 "CHROMIUM-MENU-PROOF-FAIL eof"
+    }
+}
