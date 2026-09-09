@@ -1,0 +1,121 @@
+{
+  "chromium_tag": "151.0.7922.34",
+  "sources": [
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_submitter.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-bottleneck-source-20260908/video_frame_submitter.cc",
+      "sha256": "8678fc2ba15dc55dd6956bc70bc1bc73e4af54da987620cac1aa5aec22bb42a9",
+      "bytes": 39466,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/platform/graphics/video_frame_submitter.cc?format=TEXT"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/media/video_frame_compositor.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-bottleneck-source-20260908/video_frame_compositor.cc",
+      "sha256": "df07b3ea5da3546a1737c6e320715f2536cdab95d814df9ef7e93a48d9c107c1",
+      "bytes": 18132,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/platform/media/video_frame_compositor.cc?format=TEXT"
+    },
+    {
+      "path": "media/filters/decoder_stream.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-bottleneck-source-20260908/decoder_stream.cc",
+      "sha256": "98e135a998014434dcc10e0c57fe2126818f54f76262d9e05765a60b082e7edb",
+      "bytes": 41622,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/media/filters/decoder_stream.cc?format=TEXT"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/third_party__blink__renderer__platform__graphics__video_frame_sink_bundle.cc",
+      "sha256": "371a7c136351630259f4974fa2b950656e7fe1be893c098f0f43cec418e4ad19",
+      "bytes": 10205,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc?format=TEXT"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/frame_sink_bundle_impl.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/components__viz__service__frame_sinks__frame_sink_bundle_impl.cc",
+      "sha256": "acc963e14346d5ba6ca84418449e245357ba35b1aa9c086bf83a1041d6fc4b56",
+      "bytes": 16035,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/components/viz/service/frame_sinks/frame_sink_bundle_impl.cc?format=TEXT"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/compositor_frame_sink_support.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/components__viz__service__frame_sinks__compositor_frame_sink_support.cc",
+      "sha256": "12c1ccb8fbdf9e758872f854fe42495bbcdd9d117e2ccda0d1a057aa06fb8baa",
+      "bytes": 72714,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/components/viz/service/frame_sinks/compositor_frame_sink_support.cc?format=TEXT"
+    },
+    {
+      "path": "components/viz/service/surfaces/surface.cc",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/components__viz__service__surfaces__surface.cc",
+      "sha256": "786eb99b78ed3ad3692ac51b13a4423bfb4d75c7fb4a932abf5d208e7ee9a099",
+      "bytes": 38947,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/components/viz/service/surfaces/surface.cc?format=TEXT"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_submitter.h",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/third_party__blink__renderer__platform__graphics__video_frame_submitter.h",
+      "sha256": "bdd37fd179b63d78fe44d0b130f910d2f8d90a1b8073d8248fde49b8110fd0fc",
+      "bytes": 12320,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/platform/graphics/video_frame_submitter.h?format=TEXT"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/third_party__blink__renderer__platform__graphics__video_frame_sink_bundle.h",
+      "sha256": "7426f654c971c83e59d4874d4b9d855a8d4ef616fc69258f03fc6196897ee307",
+      "bytes": 7150,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h?format=TEXT"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/compositor_frame_sink_support.h",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/components__viz__service__frame_sinks__compositor_frame_sink_support.h",
+      "sha256": "f0d52a8bebcfa5df7e6f39640eb7ddd7f6666c411fac3ade96f0bd0881c715fe",
+      "bytes": 24247,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/components/viz/service/frame_sinks/compositor_frame_sink_support.h?format=TEXT"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/frame_sink_bundle_impl.h",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/components__viz__service__frame_sinks__frame_sink_bundle_impl.h",
+      "sha256": "9fb0a99426c7094b83e3ce9386f700e4138fe4b6e169c2d9eefd3edee2670c5c",
+      "bytes": 4865,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/components/viz/service/frame_sinks/frame_sink_bundle_impl.h?format=TEXT"
+    },
+    {
+      "path": "base/BUILD.gn",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/base__BUILD.gn",
+      "sha256": "91cf5b05649863a3f74f88938fd971725cf270c28062027b142af3f6502db0ed",
+      "bytes": 229534,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/base/BUILD.gn?format=TEXT"
+    },
+    {
+      "path": "base/trace_event/builtin_categories.h",
+      "retained_source": "build-x86_64/gui-progress-audit/chromium-ack-boundary-source-20260908/diagnostic-inputs/base__trace_event__builtin_categories.h",
+      "sha256": "7a5f386f4ae1f06386976569dfd0285e03dec4c75a06d8c5ea9b38fc60303341",
+      "bytes": 27146,
+      "url": "https://chromium.googlesource.com/chromium/src/+/151.0.7922.34/base/trace_event/builtin_categories.h?format=TEXT"
+    }
+  ],
+  "new_files": [
+    "base/trace_event/video_bottleneck_diagnostics.cc",
+    "base/trace_event/video_bottleneck_diagnostics.h"
+  ],
+  "patched_sha256": {
+    "base/BUILD.gn": "f69d9a74c131d83ec796e598f95aa393b8e0bc75c201676ca0420b21196a3758",
+    "base/trace_event/builtin_categories.h": "0794467cece2b278dbefaeefec1541183732c2df00d88902feaf2ffc044afdaa",
+    "base/trace_event/video_bottleneck_diagnostics.cc": "485d6246cd2cb7625e9facfb8201c3a9d9c4cc8ebdc64873c71ba5d8f986ddde",
+    "base/trace_event/video_bottleneck_diagnostics.h": "8bff12cf61efbb873ff2b41c9f63aa1884d2187a004e71ff0d38111782e141f5",
+    "components/viz/service/frame_sinks/compositor_frame_sink_support.cc": "34a179ed62fe35bb968bffa59b7caecad60426645afc06d5564825c40eb3614d",
+    "components/viz/service/frame_sinks/compositor_frame_sink_support.h": "687d132a1734c30ef5ec0045d59276ed9d2919a3d7f88f4d38cb0dcf462613d8",
+    "components/viz/service/frame_sinks/frame_sink_bundle_impl.cc": "2545b3e9400fd28144bc0faadab41b0adcd146d972ddc73fa4e9878e64c3fa43",
+    "components/viz/service/frame_sinks/frame_sink_bundle_impl.h": "1df4033a16497fae57131c04190cb8f70b213951e7827d07202193d9c7ef7b5a",
+    "components/viz/service/surfaces/surface.cc": "46ddff4e73fe9280831083fc834f36913c20cc7a31e0106ce8a030fcf1d0ba11",
+    "media/filters/decoder_stream.cc": "43dabdc67cde4a9f38f4ee3a2121fdedf174f69a3b3714fba900a97f7d5e8512",
+    "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc": "b89d9c84464d81736aa7c88250be764ed7c0dab86fbee56a66cda723c5b2c64b",
+    "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h": "18cccceda6e6be6b90e0e3d8ce3dd9aec590f24967ba6fbfabe18240c8e7c130",
+    "third_party/blink/renderer/platform/graphics/video_frame_submitter.cc": "61b36761dc5ff98ea70b7126c3742c1d1895e986106a117d5204c2d8d126864b",
+    "third_party/blink/renderer/platform/graphics/video_frame_submitter.h": "c5b3067a85d77c96dc6fd426e61da831e401215688d6daddfe2213fed3258050",
+    "third_party/blink/renderer/platform/media/video_frame_compositor.cc": "a89b6f61010dc4d5ffe46c24988959212b4d425989ebdf231b9dcff5f15df808"
+  },
+  "patch_file": "video-bottleneck-151.0.7922.34.patch",
+  "patch_sha256": "9439dc724c94d34c18d2836605724b57c63d39bd99cf2ff95475111954db3075",
+  "compile_status": "not compiled; pinned source application validation only",
+  "chromium_commit": "782af9cb30a53f54487e5d2e44738645a8ec457c"
+}

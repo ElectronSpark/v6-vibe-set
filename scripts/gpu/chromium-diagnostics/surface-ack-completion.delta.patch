@@ -1,0 +1,40 @@
+diff --git a/components/viz/service/surfaces/surface.cc b/components/viz/service/surfaces/surface.cc
+--- a/components/viz/service/surfaces/surface.cc
++++ b/components/viz/service/surfaces/surface.cc
+@@ -488,15 +488,29 @@
+     frame_acked = true;
+     static thread_local base::trace_event::VideoBottleneckRecorder bt(
+         "surface_ack", true);
+-    bt.Record("surface.ack.ready", [&](auto& d) {
+-      d.P("client_address", client);
+-      d.B("client_present", !!client);
+-      d.I("frame_token", frame.metadata.frame_token);
+-      d.I("surface_frame_trace_id", frame.metadata.begin_frame_ack.trace_id);
+-      d.I("frame_index", frame_index);
+-    });
++    static thread_local uint64_t bt_next_callback_id = 0;
++    const auto bt_callback_id = ++bt_next_callback_id;
++    const void* const bt_client_address = client;
++    const bool bt_client_present = !!client;
++    const auto bt_frame_token = frame.metadata.frame_token;
++    const auto bt_frame_trace_id = frame.metadata.begin_frame_ack.trace_id;
++    const auto bt_frame_index = frame_index;
++    auto bt_record = [&](const char* kind) {
++      bt.Record(kind, [&](auto& d) {
++        d.I("callback_id", bt_callback_id);
++        d.P("client_address", bt_client_address);
++        d.B("client_present", bt_client_present);
++        d.B("called", bt_client_present);
++        d.I("frame_token", bt_frame_token);
++        d.I("surface_frame_trace_id", bt_frame_trace_id);
++        d.I("frame_index", bt_frame_index);
++      });
++    };
++    bt_record("surface.ack.ready");
+     if (client)
+       client->SendCompositorFrameAck();
++    // Do not access this, frame, or client after the callback.
++    bt_record("surface.ack.done");
+   }
+ }
+ 

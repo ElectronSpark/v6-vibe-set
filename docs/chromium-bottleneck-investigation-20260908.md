@@ -13,6 +13,20 @@ latency. Outstanding compositor acknowledgements are a plausible gate, but
 their state is not recorded. This identifies a bottleneck stage, not a proven
 defect in softirq, locking, scheduling or RCU.
 
+The [September 9 capture checkpoint](chromium-bottleneck-checkpoint-20260909.md)
+retains the latest completed VM results: each traced trial has six prepared,
+selected frames without construction and seven browser-reported drops. The
+[historical submission/ACK instrumentation work](chromium-submission-instrumentation-20260909.md)
+defined exact return reasons, anchored pending-count histories and ACK
+production/batching/delivery/application boundaries. All nine requested real
+object outputs compiled, but the user stopped the browser build before
+completion. No new producer fields were validated in a VM. The active work
+uses the unchanged host-copied browser and a [kernel-only workqueue correction](chromium-kernel-workqueue-investigation-20260909.md).
+Its source fix and opt-in regression are implemented; runtime validation is
+pending. Browser-build cleanup is complete. See [the active plan](active-work-plan.md).
+The historical browser-build approach
+must not be resumed for this task.
+
 ## Source-derived hypotheses
 
 | Candidate | What the current implementation actually does | Discriminating evidence |
@@ -395,3 +409,9 @@ operation-lock reacquisition. Keep IRQ-disabled duration as a nested metric,
 and export after playback. Complete GPU/kernel-worker task coverage before
 attributing a long interval to scheduling or RCU. No production policy or
 kernel implementation changes are made on the basis of these aggregate data.
+
+The [continued ACK-boundary investigation](chromium-ack-boundary-investigation-20260908.md)
+adds enhanced bundled-message traces, repairs GPU-process task selection using
+executable identity, and records two further diagnostic boots. It supersedes
+the collection gaps above for its stated scope; exact per-sink ACK contents
+and submission rejection state remain open.

@@ -95,6 +95,103 @@ data before changing lock, scheduler, timer or RCU policy. No production kernel
 change follows from these diagnostic aggregates; the VM is reaped and exact
 QEMU inventory is zero.
 
+The [continued ACK-boundary investigation](chromium-ack-boundary-investigation-20260908.md)
+adds two diagnostic boots and restores the collector/analyzers as maintained
+scripts. GPU processes use `/proc/self/exe` as argv[0]; executable/start identity
+now retains their tasks, plus 53 generically identified kernel threads. A
+34.75%-drop trace contains 218 prepared, selected frames that never reach
+construction and 1,544 video-thread bundle notifications. Unique actual message
+flows connect 1,543 notifications to the GPU Viz thread (median 1.045 ms,
+p95 8.809 ms); their opaque payloads do not expose ACK entries. The repeated
+OFF/ON/ON/OFF boot reports 7.56% / 7.08% / 13.04% / 7.15%, retaining the large
+within-setting variation. Its traced arms have zero serial bytes between report
+receipts and lose 54/86 prepared, selected frames before construction. Their
+complete oversized exports are preserved and verified through bounded JSON
+event parts; the OFF arms and all first-boot arms overlap asynchronous aggregates.
+Visible/forced begin-frame activity does not establish the internal submission
+visibility guard. Capture per-sink rejection/ACK/reset state and queue-specific
+worker latency before assigning a kernel cause. No production/kernel change is
+made; both VMs are reaped, overlays removed and independent exact inventory is
+zero. See the audit for trace export/coverage qualifications.
+The new kernel inventory also exposes `tty_input`'s 1-ms empty-ring polling:
+input publication does not notify the feeder. The repeat traced arms record
+3.34/4.06 seconds of selected time in that thread over wider snapshot windows.
+Measure idle-loop and wake/dispatch cost, then use a wait-registration reducer
+before considering an event-driven replacement; this is not yet a video-drop
+cause or an isolated CPU-cost measurement.
+
+**Next checkpoint — DESK-03 / deeper bottleneck evidence (open):** follow the
+[collection checklist](chromium-ack-boundary-investigation-20260908.md#investigation-checkpoint--deeper-evidence-collection).
+The missing rejection/ACK/reset fields remain open under the unchanged-browser
+policy. The current next step is the [kernel workqueue regression and comparison](chromium-kernel-workqueue-investigation-20260909.md),
+followed by timing the implicated notification, worker, timer and dispatch
+boundaries. Measure console polling separately and reconcile losses before
+selection. Source findings do not complete those measurements.
+
+The requested [next GUI capture](chromium-bottleneck-checkpoint-20260909.md)
+launches through `scripts/launch/launch-gui.sh` with the same frozen diagnostic
+configuration. All four trials are usable at 1.206% / 0.770% / 0.770% / 1.098%
+drops. Each traced arm selects 902 frames, constructs 896 and has six prepared,
+selected frames never constructed, alongside seven reported drops. The lower
+rates do not establish a fix; rejection/ACK state remains absent. The
+[producer map](chromium-bottleneck-field-map-20260908.md) now identifies missing
+browser/kernel hooks, including Chromium-excluding timerfd logging and the
+need to distinguish console sleep requests from successful timer sleeps.
+Both oversized traces are preserved and fully reconstructed in bounded parts.
+Every arm overlaps asynchronous serial output, so none is a silent tracing
+control; ON1's successful endpoint cohort also varies by one frame within its
+alignment uncertainty, while its six-frame lost cohort is unchanged.
+The VM is reaped, overlay removed and worker/conductor exact QEMU checks are
+zero. A validated offline ledger adds six prepared-but-unselected candidates
+per trace (one prepared before the baseline and five beyond the selected PTS
+tail), and observes named presentation endpoints for all 899/898 whole-trace
+constructions. These are qualified observations, not six extra drops or
+scanout proof. Eighteen focused ledger tests pass. BT-01 emission validation
+and BT-02 through BT-07 remain open.
+
+The user explicitly stopped the [Chromium source-build attempt](chromium-submission-instrumentation-20260909.md):
+**use the host-copied browser and fix the kernel**. The owned build was stopped
+and reaped; no diagnostic runtime/image was staged or booted. Cleanup is
+complete: 38,433,316,864 allocated bytes (35.79 GiB) were removed and
+18,759,680 bytes retained. The [final cleanup receipt](../build-chromium-diagnostics-151.0.7922.34/receipts/user-cleanup-final.json)
+records zero build/QEMU processes and preserved host browser, frozen kernel
+and rootfs.
+Do not resume the browser build. Source/parser research remains historical.
+
+The [active kernel candidate](chromium-kernel-workqueue-investigation-20260909.md)
+corrects workqueue idle-worker dispatch: the
+manager counts an executing callback as available to dequeue pending work,
+which can leave a second worker asleep while work waits. The minimal predicate
+fix and a focused opt-in kernel regression are implemented and source-reviewed.
+Both kernel-only builds pass; Sparse exits zero with context warnings retained.
+The original predicate reproduces the exact one-running/one-idle/one-pending
+starvation case and drains after release. The fixed kernel passes all four
+cases with complete hash-verified kernel-ring records; serial interleaving
+and early-network collection failures are retained. The host-copied Chromium
+baseline completes all four trials at 1.98/3.74/1.98/2.09% drops. The first
+candidate capture completes two playback trials at 1.21/1.32%, then times out
+waiting for ON1 browser exit. That incomplete run is retained separately.
+A repeat with bounded post-playback exit observation completes all four arms
+at 1.98/2.64/2.20/2.88%, with all browser and observer exits zero; the earlier
+timeout does not recur. Complete-boot pooled drops are 2.448% baseline and
+2.424% candidate, with untraced rates worse and traced rates better. This
+confirms the workqueue correctness fix without establishing media improvement.
+One complete boot per kernel and asynchronous serial overlap qualify the
+comparison. All finished VMs are reaped with exact QEMU zero; Chromium and
+the rootfs remain unchanged. The next checkpoint collects timerfd expiration,
+work enqueue/start, notification and consumer-dispatch boundaries in bounded
+kernel memory, then exports after playback.
+The current untraced video sample (2.428% full-load drops) is in the range of
+the recorded Linux control (3.085%), using the same browser, clip and fixture.
+Linux's earlier boot, shorter viewport and native graphics libraries, plus
+xv6's current diagnostic serial traffic, prevent a faster-than-Linux or
+general parity claim. Today's callback latency has not been remeasured against
+Linux; the workqueue audit records this comparison and its limits.
+This is a concrete scheduling defect, not yet proof of the measured frame-drop
+cause. The new checkpoint also retains separate timerfd periodic-overrun,
+stale-rearm and callback-lifetime source findings for isolated reducers. Keep
+the other scheduler, lock, RCU and console hypotheses qualified.
+
 The [September 8 desktop responsiveness audit](desktop-responsiveness-audit-20260908.md)
 adds repeated mouse oscillation, held selection, window movement and resize,
 file-view changes and overlapping-window checks on the progress-wait candidate.
@@ -354,11 +451,14 @@ there is no replacement accepted N=2 pair for that final candidate.
   explain the failures. Retained client traces show short frame-pacing delays,
   with no measured xv6 frame-reply wait reaching 40 ms. Completed Linux local
   controls pool to 3.09% OFF / 3.03% ON with a shorter viewport and native
-  graphics userspace; this does not refresh YouTube/fullscreen parity. Identify
-  the active Chromium frame consumer, correlate frame selection/submission/ACK
-  timing, and repeat across boots with matching geometry before attribution.
-  Trace renderer runnable delay, notification latency, present-clock late
-  edges and host submission latency only where the new receipt implicates them.
+  graphics userspace; this does not refresh YouTube/fullscreen parity. The
+  continued investigation identifies `VideoFrameSubmitter`, repairs GPU-task
+  coverage and reproduces 54/86 prepared, selected frames lost before
+  construction in the cleaner repeat. Complete the
+  [deeper evidence checkpoint](chromium-ack-boundary-investigation-20260908.md#investigation-checkpoint--deeper-evidence-collection)
+  to capture rejection/ACK/reset state and correlate implicated kernel latency.
+  Repeat across boots with matching geometry before attribution; retain the
+  separate Linux/xv6 windowed/fullscreen parity requirement above.
 - [ ] **DESK-04:** Retain the direct-scanout/host-window content gate and
   semantic hover/menu/input checks; broaden long-lived desktop observation.
   Cold QML/tooltip delay remains coverage, not grounds for a broad scheduler

@@ -1,0 +1,88 @@
+{
+  "chromium_tag": "151.0.7922.34",
+  "from_full_patch_sha256": "bcc2f21bcebc26c9e0bdfb8e450c8e78c6ae5f0f1f3ad1e8769430b140150477",
+  "to_full_patch_sha256": "088f104777511e052ccead2d6e1b9bb3a7745a77f8f580e087e33d11e2c353ec",
+  "patch_file": "surface-ack-completion.delta.patch",
+  "patch_sha256": "d30d2bae174d4e36bdc8d2fb32dcbcaf13d84085d1a597a10b985012832d10eb",
+  "sources": [
+    {
+      "path": "base/BUILD.gn",
+      "sha256": "f69d9a74c131d83ec796e598f95aa393b8e0bc75c201676ca0420b21196a3758"
+    },
+    {
+      "path": "base/trace_event/builtin_categories.h",
+      "sha256": "0794467cece2b278dbefaeefec1541183732c2df00d88902feaf2ffc044afdaa"
+    },
+    {
+      "path": "base/trace_event/video_bottleneck_diagnostics.cc",
+      "sha256": "485d6246cd2cb7625e9facfb8201c3a9d9c4cc8ebdc64873c71ba5d8f986ddde"
+    },
+    {
+      "path": "base/trace_event/video_bottleneck_diagnostics.h",
+      "sha256": "f269a17ff4b0234df768fd3829e5f26970f3d33c2374d5186c9312dc33e0a723"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/compositor_frame_sink_support.cc",
+      "sha256": "34a179ed62fe35bb968bffa59b7caecad60426645afc06d5564825c40eb3614d"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/compositor_frame_sink_support.h",
+      "sha256": "687d132a1734c30ef5ec0045d59276ed9d2919a3d7f88f4d38cb0dcf462613d8"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/frame_sink_bundle_impl.cc",
+      "sha256": "2545b3e9400fd28144bc0faadab41b0adcd146d972ddc73fa4e9878e64c3fa43"
+    },
+    {
+      "path": "components/viz/service/frame_sinks/frame_sink_bundle_impl.h",
+      "sha256": "1df4033a16497fae57131c04190cb8f70b213951e7827d07202193d9c7ef7b5a"
+    },
+    {
+      "path": "components/viz/service/surfaces/surface.cc",
+      "sha256": "00e5c9839f3dd42b3c592fade4636205ef3117f200bb90cef21c20f2480ed57c"
+    },
+    {
+      "path": "media/filters/decoder_stream.cc",
+      "sha256": "43dabdc67cde4a9f38f4ee3a2121fdedf174f69a3b3714fba900a97f7d5e8512"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc",
+      "sha256": "b89d9c84464d81736aa7c88250be764ed7c0dab86fbee56a66cda723c5b2c64b"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h",
+      "sha256": "18cccceda6e6be6b90e0e3d8ce3dd9aec590f24967ba6fbfabe18240c8e7c130"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_submitter.cc",
+      "sha256": "61b36761dc5ff98ea70b7126c3742c1d1895e986106a117d5204c2d8d126864b"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/graphics/video_frame_submitter.h",
+      "sha256": "c5b3067a85d77c96dc6fd426e61da831e401215688d6daddfe2213fed3258050"
+    },
+    {
+      "path": "third_party/blink/renderer/platform/media/video_frame_compositor.cc",
+      "sha256": "a89b6f61010dc4d5ffe46c24988959212b4d425989ebdf231b9dcff5f15df808"
+    }
+  ],
+  "new_files": [],
+  "patched_sha256": {
+    "base/BUILD.gn": "f69d9a74c131d83ec796e598f95aa393b8e0bc75c201676ca0420b21196a3758",
+    "base/trace_event/builtin_categories.h": "0794467cece2b278dbefaeefec1541183732c2df00d88902feaf2ffc044afdaa",
+    "base/trace_event/video_bottleneck_diagnostics.cc": "485d6246cd2cb7625e9facfb8201c3a9d9c4cc8ebdc64873c71ba5d8f986ddde",
+    "base/trace_event/video_bottleneck_diagnostics.h": "f269a17ff4b0234df768fd3829e5f26970f3d33c2374d5186c9312dc33e0a723",
+    "components/viz/service/frame_sinks/compositor_frame_sink_support.cc": "34a179ed62fe35bb968bffa59b7caecad60426645afc06d5564825c40eb3614d",
+    "components/viz/service/frame_sinks/compositor_frame_sink_support.h": "687d132a1734c30ef5ec0045d59276ed9d2919a3d7f88f4d38cb0dcf462613d8",
+    "components/viz/service/frame_sinks/frame_sink_bundle_impl.cc": "2545b3e9400fd28144bc0faadab41b0adcd146d972ddc73fa4e9878e64c3fa43",
+    "components/viz/service/frame_sinks/frame_sink_bundle_impl.h": "1df4033a16497fae57131c04190cb8f70b213951e7827d07202193d9c7ef7b5a",
+    "components/viz/service/surfaces/surface.cc": "46ddff4e73fe9280831083fc834f36913c20cc7a31e0106ce8a030fcf1d0ba11",
+    "media/filters/decoder_stream.cc": "43dabdc67cde4a9f38f4ee3a2121fdedf174f69a3b3714fba900a97f7d5e8512",
+    "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc": "b89d9c84464d81736aa7c88250be764ed7c0dab86fbee56a66cda723c5b2c64b",
+    "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h": "18cccceda6e6be6b90e0e3d8ce3dd9aec590f24967ba6fbfabe18240c8e7c130",
+    "third_party/blink/renderer/platform/graphics/video_frame_submitter.cc": "61b36761dc5ff98ea70b7126c3742c1d1895e986106a117d5204c2d8d126864b",
+    "third_party/blink/renderer/platform/graphics/video_frame_submitter.h": "c5b3067a85d77c96dc6fd426e61da831e401215688d6daddfe2213fed3258050",
+    "third_party/blink/renderer/platform/media/video_frame_compositor.cc": "a89b6f61010dc4d5ffe46c24988959212b4d425989ebdf231b9dcff5f15df808"
+  },
+  "compile_status": "not compiled; source delta only"
+}

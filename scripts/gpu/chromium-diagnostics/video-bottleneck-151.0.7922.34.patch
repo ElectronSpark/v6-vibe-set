@@ -1,0 +1,1375 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2557,6 +2557,8 @@
+     "trace_event/typed_macros_embedder_support.h",
+     "trace_event/user_action.cc",
+     "trace_event/user_action.h",
++    "trace_event/video_bottleneck_diagnostics.cc",
++    "trace_event/video_bottleneck_diagnostics.h",
+     "tracing/perfetto_platform.cc",
+     "tracing/perfetto_platform.h",
+     "tracing/perfetto_task_runner.cc",
+diff --git a/base/trace_event/builtin_categories.h b/base/trace_event/builtin_categories.h
+--- a/base/trace_event/builtin_categories.h
++++ b/base/trace_event/builtin_categories.h
+@@ -169,6 +169,8 @@
+     perfetto::Category("log"),
+     perfetto::Category("login"),
+     perfetto::Category("media").SetTags("video"),
++    perfetto::Category(TRACE_DISABLED_BY_DEFAULT("media.bottleneck"))
++      .SetDescription("Opt-in scalar video submission and ACK diagnostics."),
+     perfetto::Category("mediastream").SetTags("audio"),
+     perfetto::Category("media_router"),
+     perfetto::Category("memory"),
+diff --git a/base/trace_event/video_bottleneck_diagnostics.cc b/base/trace_event/video_bottleneck_diagnostics.cc
+new file mode 100644
+--- /dev/null
++++ b/base/trace_event/video_bottleneck_diagnostics.cc
+@@ -0,0 +1,24 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "base/trace_event/video_bottleneck_diagnostics.h"
++
++#include <atomic>
++
++namespace base::trace_event {
++namespace {
++// One exported implementation gives all component DSOs a common process-local
++// ID allocator. Allocation happens once per object, not per traced event.
++std::atomic<uint64_t> g_video_bottleneck_instance{0};
++}  // namespace
++
++VideoBottleneckRecorder::VideoBottleneckRecorder(const char* object, bool stream)
++    : object_(object),
++      instance_id_(g_video_bottleneck_instance.fetch_add(
++                       1, std::memory_order_relaxed) + 1) {
++  if (stream)
++    Record("instance.begin", [](auto& d) { d.B("observation_stream", true); });
++}
++
++}  // namespace base::trace_event
+diff --git a/base/trace_event/video_bottleneck_diagnostics.h b/base/trace_event/video_bottleneck_diagnostics.h
+new file mode 100644
+--- /dev/null
++++ b/base/trace_event/video_bottleneck_diagnostics.h
+@@ -0,0 +1,140 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef BASE_TRACE_EVENT_VIDEO_BOTTLENECK_DIAGNOSTICS_H_
++#define BASE_TRACE_EVENT_VIDEO_BOTTLENECK_DIAGNOSTICS_H_
++
++#include <stdint.h>
++
++#include <memory>
++#include <utility>
++
++#include "base/base_export.h"
++#include "base/memory/raw_ref.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/trace_event/trace_event.h"
++#include "base/trace_event/traced_value.h"
++
++namespace base::trace_event {
++
++// Scalar-only diagnostic records. Integer strings preserve full 64-bit IDs in
++// JSON consumers. No resource arrays, payload copies or unbounded side maps.
++class VideoBottleneckFields {
++ public:
++  explicit VideoBottleneckFields(TracedValue& value) : value_(value) {}
++  template <typename T>
++  void I(const char* name, T value) {
++    value_->SetString(name, base::NumberToString(value));
++  }
++  void B(const char* name, bool value) { value_->SetBoolean(name, value); }
++  void S(const char* name, const char* value) { value_->SetString(name, value); }
++  void P(const char* name, const void* value) {
++    I(name, reinterpret_cast<uintptr_t>(value));
++  }
++
++ private:
++  raw_ref<TracedValue> value_;
++};
++
++class BASE_EXPORT VideoBottleneckRecorder {
++ public:
++  explicit VideoBottleneckRecorder(const char* object, bool stream = false);
++  VideoBottleneckRecorder(const VideoBottleneckRecorder&) = delete;
++  VideoBottleneckRecorder& operator=(const VideoBottleneckRecorder&) = delete;
++
++  template <typename Fill>
++  void Record(const char* kind, Fill&& fill) {
++    // Advance even while disabled, so category toggles cannot silently bridge
++    // missing history. Instances are sequence-confined; construction may occur
++    // before ownership is transferred to the eventual sequence.
++    const uint64_t seq = ++event_seq_;
++    bool enabled = false;
++    TRACE_EVENT_CATEGORY_GROUP_ENABLED(
++        "disabled-by-default-media.bottleneck", &enabled);
++    if (!enabled)
++      return;
++    const auto timestamp = TRACE_TIME_TICKS_NOW();
++    // Gate before allocation, formatting, or evaluating any payload lambda.
++    auto value = std::make_unique<TracedValue>();
++    value->SetInteger("schema_version", 1);
++    {
++      VideoBottleneckFields fields(*value);
++      fields.S("kind", kind);
++      fields.S("object", object_);
++      fields.I("instance_id", instance_id_);
++      fields.I("event_seq", seq);
++      std::forward<Fill>(fill)(fields);
++    }
++    TRACE_EVENT_INSTANT("disabled-by-default-media.bottleneck",
++                       "VideoBottleneck", timestamp, "bt", std::move(value));
++  }
++
++ private:
++  const char* const object_;
++  const uint64_t instance_id_;
++  uint64_t event_seq_ = 0;
++};
++
++template <typename Id>
++void VideoBottleneckBundle(VideoBottleneckFields& d, const Id& id) {
++  d.I("bundle_client_id", id.client_id());
++  d.I("bundle_id", id.bundle_id());
++}
++
++inline void VideoBottleneckSink(VideoBottleneckFields& d,
++                                uint32_t client_id,
++                                uint32_t sink_id) {
++  d.I("sink_client_id", client_id);
++  d.I("sink_id", sink_id);
++}
++
++// Scalar membership records describe the three protocol arrays in their own
++// order. batch_id is local observation identity, never an added wire field.
++// The original Mojo call must remain between the matching enter/exit records.
++template <typename Id, typename Acks, typename Begins, typename Reclaims>
++void VideoBottleneckSendBegin(VideoBottleneckRecorder& recorder,
++                             uint64_t batch_id,
++                             const Id& id,
++                             const Acks& acks,
++                             const Begins& begins,
++                             const Reclaims& reclaims) {
++  recorder.Record("bundle.send.enter", [&](auto& d) {
++    VideoBottleneckBundle(d, id);
++    d.I("batch_id", batch_id);
++    d.I("ack_count", acks.size());
++    d.I("begin_frame_count", begins.size());
++    d.I("reclaim_count", reclaims.size());
++  });
++  auto entries = [&](const auto& list, const char* kind) {
++    uint64_t index = 0;
++    for (const auto& entry : list) {
++      recorder.Record("bundle.send.entry", [&](auto& d) {
++        VideoBottleneckBundle(d, id);
++        VideoBottleneckSink(d, id.client_id(), entry->sink_id);
++        d.I("batch_id", batch_id);
++        d.S("entry_kind", kind);
++        d.I("entry_index", index);
++        d.I("resource_count", entry->resources.size());
++      });
++      ++index;
++    }
++  };
++  entries(acks, "ack");
++  entries(reclaims, "reclaim");
++  entries(begins, "begin_frame");
++}
++
++template <typename Id>
++void VideoBottleneckSendEnd(VideoBottleneckRecorder& recorder,
++                           uint64_t batch_id,
++                           const Id& id) {
++  recorder.Record("bundle.send.exit", [&](auto& d) {
++    VideoBottleneckBundle(d, id);
++    d.I("batch_id", batch_id);
++  });
++}
++
++}  // namespace base::trace_event
++
++#endif  // BASE_TRACE_EVENT_VIDEO_BOTTLENECK_DIAGNOSTICS_H_
+diff --git a/components/viz/service/frame_sinks/compositor_frame_sink_support.cc b/components/viz/service/frame_sinks/compositor_frame_sink_support.cc
+--- a/components/viz/service/frame_sinks/compositor_frame_sink_support.cc
++++ b/components/viz/service/frame_sinks/compositor_frame_sink_support.cc
+@@ -145,6 +145,7 @@
+       surface_resource_holder_(this),
+       is_root_(is_root),
+       allow_copy_output_requests_(is_root) {
++  bt_.Record("instance.begin", [&](auto& d) { TraceBottleneckState(d); });
+   // This may result in SetBeginFrameSource() being called.
+   frame_sink_manager_->RegisterCompositorFrameSinkSupport(frame_sink_id_, this);
+ }
+@@ -199,6 +200,7 @@
+       bundle->RemoveFrameSink(this);
+     }
+   }
++  bt_.Record("instance.end", [&](auto& d) { TraceBottleneckState(d); });
+ }
+ 
+ FrameTimingDetailsMap CompositorFrameSinkSupport::TakeFrameTimingDetailsMap() {
+@@ -376,6 +378,7 @@
+ }
+ 
+ void CompositorFrameSinkSupport::SendCompositorFrameAck() {
++  bt_.Record("service.ack.ready", [&](auto& d) { TraceBottleneckState(d); });
+   DidReceiveCompositorFrameAck();
+ }
+ 
+@@ -750,7 +753,15 @@
+   CHECK(callback_received_receive_ack_);
+ 
+   begin_frame_tracker_.ReceivedAck(frame.metadata.begin_frame_ack);
++  const auto bt_pending_before = pending_frames_;
+   pending_frames_++;
++  bt_.Record("service.admit", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("pending_before", bt_pending_before);
++    d.I("pending_after", pending_frames_);
++    d.I("frame_token", frame.metadata.frame_token);
++    d.I("surface_frame_trace_id", frame.metadata.begin_frame_ack.trace_id);
++  });
+ 
+   base::TimeTicks now_time = base::TimeTicks::Now();
+   pending_received_frame_times_.emplace(
+@@ -1026,20 +1037,44 @@
+ 
+ void CompositorFrameSinkSupport::DidReceiveCompositorFrameAck() {
+   CHECK_GT(pending_frames_, 0);
++  const auto bt_callback = ++bt_ack_id_;
++  const auto bt_pending_before = pending_frames_;
+   pending_frames_--;
++  auto bt_emit = [&](const char* route) {
++    bt_.Record("service.ack.emit", [&](auto& d) {
++      TraceBottleneckState(d);
++      d.I("callback_id", bt_callback);
++      d.I("pending_before", bt_pending_before);
++      d.I("pending_after", pending_frames_);
++      d.I("resource_count", surface_returned_resources_.size());
++      d.S("route", route);
++    });
++  };
++  auto bt_done = [&] {
++    bt_.Record("service.ack.done", [&](auto& d) {
++      TraceBottleneckState(d);
++      d.I("callback_id", bt_callback);
++    });
++  };
+ 
+   if (!client_) {
++    bt_emit("no_client");
++    bt_done();
+     return;
+   }
+ 
+   if (no_compositor_frame_acks_) {
++    bt_emit("reclaim");
+     client_->ReclaimResources(std::move(surface_returned_resources_));
+     surface_returned_resources_.clear();
++    bt_done();
+     return;
+   }
+ 
++  bt_emit("ack");
+   client_->DidReceiveCompositorFrameAck(std::move(surface_returned_resources_));
+   surface_returned_resources_.clear();
++  bt_done();
+ }
+ 
+ void CompositorFrameSinkSupport::DidPresentCompositorFrame(
+@@ -1858,4 +1893,14 @@
+   frame_id_ = frame_id;
+ }
+ 
++void CompositorFrameSinkSupport::TraceBottleneckState(
++    base::trace_event::VideoBottleneckFields& d) const {
++  base::trace_event::VideoBottleneckSink(
++      d, frame_sink_id_.client_id(), frame_sink_id_.sink_id());
++  d.I("service_pending", pending_frames_);
++  d.B("client_present", !!client_);
++  d.B("no_compositor_frame_acks", no_compositor_frame_acks_);
++  d.P("surface_client_address", static_cast<const SurfaceClient*>(this));
++}
++
+ }  // namespace viz
+diff --git a/components/viz/service/frame_sinks/compositor_frame_sink_support.h b/components/viz/service/frame_sinks/compositor_frame_sink_support.h
+--- a/components/viz/service/frame_sinks/compositor_frame_sink_support.h
++++ b/components/viz/service/frame_sinks/compositor_frame_sink_support.h
+@@ -12,6 +12,7 @@
+ #include <vector>
+ 
+ #include "base/containers/circular_deque.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/containers/flat_set.h"
+ #include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
+@@ -290,6 +291,9 @@
+       base::OnceCallback<void()> callback);
+ 
+  private:
++  base::trace_event::VideoBottleneckRecorder bt_{"service_sink"};
++  uint64_t bt_ack_id_ = 0;
++  void TraceBottleneckState(base::trace_event::VideoBottleneckFields& d) const;
+   friend class AckOnSurfaceActivationWhenInteractiveTest;
+   friend class CompositorFrameSinkSupportTestBase;
+   friend class DisplayTest;
+diff --git a/components/viz/service/frame_sinks/frame_sink_bundle_impl.cc b/components/viz/service/frame_sinks/frame_sink_bundle_impl.cc
+--- a/components/viz/service/frame_sinks/frame_sink_bundle_impl.cc
++++ b/components/viz/service/frame_sinks/frame_sink_bundle_impl.cc
+@@ -38,12 +38,20 @@
+             FrameSinkBundleImpl& bundle,
+             BeginFrameSource& source,
+             mojom::FrameSinkBundleClient& client)
+-      : manager_(manager), bundle_(bundle), source_(source), client_(client) {}
++      : manager_(manager), bundle_(bundle), source_(source), client_(client) {
++    bt_.Record("instance.begin", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, bundle_->id());
++      d.P("begin_frame_source_address", &source_.get());
++    });
++  }
+ 
+   ~SinkGroup() override {
+     if (is_observing_begin_frame_) {
+       source_->RemoveObserver(this);
+     }
++    bt_.Record("instance.end", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, bundle_->id());
++    });
+   }
+ 
+   bool IsEmpty() const { return frame_sinks_.empty(); }
+@@ -90,6 +98,8 @@
+   void EnqueueDidReceiveCompositorFrameAck(
+       uint32_t sink_id,
+       std::vector<ReturnedResource> resources) {
++    TraceBottleneckEnqueue("ack", sink_id, pending_received_frame_acks_.size(),
++                           resources.size());
+     pending_received_frame_acks_.push_back(
+         mojom::BundledReturnedResources::New(sink_id, std::move(resources)));
+ 
+@@ -110,6 +120,8 @@
+       const BeginFrameArgs& args,
+       const base::flat_map<uint32_t, FrameTimingDetails>& details,
+       std::vector<ReturnedResource> resources) {
++    TraceBottleneckEnqueue("begin_frame", sink_id, pending_on_begin_frames_.size(),
++                           resources.size());
+     pending_on_begin_frames_.push_back(mojom::BeginFrameInfo::New(
+         sink_id, args, details, std::move(resources)));
+     if (!defer_on_begin_frames_) {
+@@ -121,6 +133,8 @@
+                                std::vector<ReturnedResource> resources) {
+     // We always defer ReclaimResources until the next flush, whether it's done
+     // for frame acks or OnBeginFrames.
++    TraceBottleneckEnqueue("reclaim", sink_id,
++                           pending_reclaimed_resources_.size(), resources.size());
+     pending_reclaimed_resources_.push_back(
+         mojom::BundledReturnedResources::New(sink_id, std::move(resources)));
+   }
+@@ -168,15 +182,37 @@
+     if (!pending_received_frame_acks.empty() ||
+         !pending_on_begin_frames.empty() ||
+         !pending_reclaimed_resources.empty()) {
++      const auto bt_batch = ++bt_batch_id_;
++      base::trace_event::VideoBottleneckSendBegin(
++          bt_, bt_batch, bundle_->id(), pending_received_frame_acks,
++          pending_on_begin_frames, pending_reclaimed_resources);
+       client_->FlushNotifications(std::move(pending_received_frame_acks),
+                                   std::move(pending_on_begin_frames),
+                                   std::move(pending_reclaimed_resources));
++      base::trace_event::VideoBottleneckSendEnd(bt_, bt_batch, bundle_->id());
+     }
+   }
+ 
+   void DidFinishFrame() { source_->DidFinishFrame(this); }
+ 
+  private:
++  base::trace_event::VideoBottleneckRecorder bt_{"service_group"};
++  uint64_t bt_batch_id_ = 0;
++
++  void TraceBottleneckEnqueue(const char* kind, uint32_t sink_id,
++                              uint64_t queue_index, uint64_t resources) {
++    bt_.Record("bundle.enqueue", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, bundle_->id());
++      base::trace_event::VideoBottleneckSink(
++          d, bundle_->id().client_id(), sink_id);
++      d.S("entry_kind", kind);
++      d.I("queue_index", queue_index);
++      d.I("resource_count", resources);
++      d.B("deferred", true);
++      d.I("unacked_sinks", unacked_submissions_.size());
++    });
++  }
++
+   void UpdateBeginFrameObservation() {
+     bool should_observe_begin_frame = !frame_sinks_needing_begin_frame_.empty();
+     if (should_observe_begin_frame && !is_observing_begin_frame_) {
+@@ -225,11 +261,18 @@
+       id_(id),
+       receiver_(this, std::move(receiver)),
+       client_(std::move(client)) {
++  bt_.Record("instance.begin", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++  });
+   receiver_.set_disconnect_handler(base::BindOnce(
+       &FrameSinkBundleImpl::OnDisconnect, base::Unretained(this)));
+ }
+ 
+-FrameSinkBundleImpl::~FrameSinkBundleImpl() = default;
++FrameSinkBundleImpl::~FrameSinkBundleImpl() {
++  bt_.Record("instance.end", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++  });
++}
+ 
+ void FrameSinkBundleImpl::SetSinkNeedsBeginFrame(uint32_t sink_id,
+                                                  bool needs_begin_frame) {
+@@ -350,7 +393,20 @@
+     std::vector<mojom::BundledReturnedResourcesPtr> acks;
+     acks.push_back(
+         mojom::BundledReturnedResources::New(sink_id, std::move(resources)));
++    const auto bt_batch = ++bt_batch_id_;
++    bt_.Record("bundle.enqueue", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, id_);
++      base::trace_event::VideoBottleneckSink(d, id_.client_id(), sink_id);
++      d.S("entry_kind", "ack");
++      d.I("queue_index", 0);
++      d.I("resource_count", acks.front()->resources.size());
++      d.B("deferred", false);
++    });
++    base::trace_event::VideoBottleneckSendBegin(
++        bt_, bt_batch, id_, acks,
++        std::vector<mojom::BeginFrameInfoPtr>{}, std::vector<mojom::BundledReturnedResourcesPtr>{});
+     client_->FlushNotifications(std::move(acks), {}, {});
++    base::trace_event::VideoBottleneckSendEnd(bt_, bt_batch, id_);
+   }
+ }
+ 
+@@ -367,7 +423,20 @@
+     std::vector<mojom::BeginFrameInfoPtr> begin_frames;
+     begin_frames.push_back(mojom::BeginFrameInfo::New(sink_id, args, details,
+                                                       std::move(resources)));
++    const auto bt_batch = ++bt_batch_id_;
++    bt_.Record("bundle.enqueue", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, id_);
++      base::trace_event::VideoBottleneckSink(d, id_.client_id(), sink_id);
++      d.S("entry_kind", "begin_frame");
++      d.I("queue_index", 0);
++      d.I("resource_count", begin_frames.front()->resources.size());
++      d.B("deferred", false);
++    });
++    base::trace_event::VideoBottleneckSendBegin(
++        bt_, bt_batch, id_, std::vector<mojom::BundledReturnedResourcesPtr>{},
++        begin_frames, std::vector<mojom::BundledReturnedResourcesPtr>{});
+     client_->FlushNotifications({}, std::move(begin_frames), {});
++    base::trace_event::VideoBottleneckSendEnd(bt_, bt_batch, id_);
+   }
+ }
+ 
+@@ -382,7 +451,20 @@
+     std::vector<mojom::BundledReturnedResourcesPtr> reclaims;
+     reclaims.push_back(
+         mojom::BundledReturnedResources::New(sink_id, std::move(resources)));
++    const auto bt_batch = ++bt_batch_id_;
++    bt_.Record("bundle.enqueue", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, id_);
++      base::trace_event::VideoBottleneckSink(d, id_.client_id(), sink_id);
++      d.S("entry_kind", "reclaim");
++      d.I("queue_index", 0);
++      d.I("resource_count", reclaims.front()->resources.size());
++      d.B("deferred", false);
++    });
++    base::trace_event::VideoBottleneckSendBegin(
++        bt_, bt_batch, id_, std::vector<mojom::BundledReturnedResourcesPtr>{},
++        std::vector<mojom::BeginFrameInfoPtr>{}, reclaims);
+     client_->FlushNotifications({}, {}, std::move(reclaims));
++    base::trace_event::VideoBottleneckSendEnd(bt_, bt_batch, id_);
+   }
+ }
+ 
+@@ -442,6 +524,10 @@
+ }
+ 
+ void FrameSinkBundleImpl::OnDisconnect() {
++  bt_.Record("state.before", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++    d.S("cause", "disconnect");
++  });
+   manager_->DestroyFrameSinkBundle(id_);
+ }
+ 
+diff --git a/components/viz/service/frame_sinks/frame_sink_bundle_impl.h b/components/viz/service/frame_sinks/frame_sink_bundle_impl.h
+--- a/components/viz/service/frame_sinks/frame_sink_bundle_impl.h
++++ b/components/viz/service/frame_sinks/frame_sink_bundle_impl.h
+@@ -11,6 +11,7 @@
+ #include <vector>
+ 
+ #include "base/containers/flat_map.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/memory/raw_ref.h"
+ #include "build/build_config.h"
+ #include "components/viz/common/frame_sinks/begin_frame_source.h"
+@@ -87,6 +88,8 @@
+                                                          uint32_t sequence_id);
+ 
+  private:
++  base::trace_event::VideoBottleneckRecorder bt_{"service_bundle"};
++  uint64_t bt_batch_id_ = 0;
+   class SinkGroup;
+ 
+   void RemoveFrameSinkImpl(BeginFrameSource* source, uint32_t sink_id);
+diff --git a/components/viz/service/surfaces/surface.cc b/components/viz/service/surfaces/surface.cc
+--- a/components/viz/service/surfaces/surface.cc
++++ b/components/viz/service/surfaces/surface.cc
+@@ -15,6 +15,7 @@
+ #include <vector>
+ 
+ #include "base/debug/alias.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/debug/crash_logging.h"
+ #include "base/debug/dump_without_crashing.h"
+ #include "base/memory/raw_ptr.h"
+@@ -485,8 +486,31 @@
+ void Surface::FrameData::SendAckIfNeeded(SurfaceClient* client) {
+   if (!frame_acked) {
+     frame_acked = true;
++    static thread_local base::trace_event::VideoBottleneckRecorder bt(
++        "surface_ack", true);
++    static thread_local uint64_t bt_next_callback_id = 0;
++    const auto bt_callback_id = ++bt_next_callback_id;
++    const void* const bt_client_address = client;
++    const bool bt_client_present = !!client;
++    const auto bt_frame_token = frame.metadata.frame_token;
++    const auto bt_frame_trace_id = frame.metadata.begin_frame_ack.trace_id;
++    const auto bt_frame_index = frame_index;
++    auto bt_record = [&](const char* kind) {
++      bt.Record(kind, [&](auto& d) {
++        d.I("callback_id", bt_callback_id);
++        d.P("client_address", bt_client_address);
++        d.B("client_present", bt_client_present);
++        d.B("called", bt_client_present);
++        d.I("frame_token", bt_frame_token);
++        d.I("surface_frame_trace_id", bt_frame_trace_id);
++        d.I("frame_index", bt_frame_index);
++      });
++    };
++    bt_record("surface.ack.ready");
+     if (client)
+       client->SendCompositorFrameAck();
++    // Do not access this, frame, or client after the callback.
++    bt_record("surface.ack.done");
+   }
+ }
+ 
+diff --git a/media/filters/decoder_stream.cc b/media/filters/decoder_stream.cc
+--- a/media/filters/decoder_stream.cc
++++ b/media/filters/decoder_stream.cc
+@@ -7,6 +7,7 @@
+ #include <utility>
+ 
+ #include "base/feature_list.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
+ #include "base/location.h"
+@@ -38,6 +39,11 @@
+ perfetto::NamedTrack GetTracingTrack(
+     const DecoderStream<DemuxerStream::AUDIO>* stream) {
+   return perfetto::NamedTrack::FromPointer("AudioDecoderStream", stream);
++}
++base::trace_event::VideoBottleneckRecorder& VideoBottleneckPreparationTrace() {
++  static thread_local base::trace_event::VideoBottleneckRecorder recorder(
++      "preparation", true);
++  return recorder;
+ }
+ }  // namespace
+ 
+@@ -1106,6 +1112,14 @@
+                     perfetto::StaticString(GetPrepareTraceString<StreamType>()),
+                     GetTracingTrack(this), "timestamp_us",
+                     output->timestamp().InMicroseconds());
++  if constexpr (StreamType == DemuxerStream::VIDEO) {
++    auto& bt = VideoBottleneckPreparationTrace();
++    bt.Record("frame.prepare.begin", [&](auto& d) {
++      d.P("decoder_address", this);
++      d.I("unique_frame_id", output->unique_id().GetUnsafeValue());
++      d.I("pts_us", output->timestamp().InMicroseconds());
++    });
++  }
+   preparing_output_ = true;
+   prepare_cb_.Run(
+       output, base::BindOnce(&DecoderStream<StreamType>::OnPreparedOutputReady,
+@@ -1149,6 +1163,23 @@
+ template <DemuxerStream::Type StreamType>
+ void DecoderStream<StreamType>::CompletePrepare(const Output* output) {
+   DCHECK(preparing_output_);
++  if constexpr (StreamType == DemuxerStream::VIDEO) {
++    auto& bt = VideoBottleneckPreparationTrace();
++    bt.Record("frame.prepare.end", [&](auto& d) {
++      d.P("decoder_address", this);
++      d.B("input_valid", !unprepared_outputs_.empty());
++      if (!unprepared_outputs_.empty()) {
++        const auto& input = unprepared_outputs_.front();
++        d.I("input_unique_frame_id", input->unique_id().GetUnsafeValue());
++        d.I("input_pts_us", input->timestamp().InMicroseconds());
++      }
++      d.B("output_valid", !!output);
++      if (output) {
++        d.I("output_unique_frame_id", output->unique_id().GetUnsafeValue());
++        d.I("output_pts_us", output->timestamp().InMicroseconds());
++      }
++    });
++  }
+   TRACE_EVENT_END(
+       "media", GetTracingTrack(this), "timestamp_us",
+       (output ? output->timestamp() : kNoTimestamp).InMicroseconds());
+diff --git a/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc b/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc
+--- a/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc
++++ b/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.cc
+@@ -35,6 +35,9 @@
+ VideoFrameSinkBundle::VideoFrameSinkBundle(base::PassKey<VideoFrameSinkBundle>,
+                                            uint32_t client_id)
+     : id_(GenerateFrameSinkBundleId(client_id)) {
++  bt_.Record("instance.begin", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++  });
+   mojo::Remote<mojom::blink::EmbeddedFrameSinkProvider> host_provider;
+   mojom::blink::EmbeddedFrameSinkProvider* provider;
+   if (g_frame_sink_provider_override) {
+@@ -51,7 +54,11 @@
+       &VideoFrameSinkBundle::OnDisconnected, base::Unretained(this)));
+ }
+ 
+-VideoFrameSinkBundle::~VideoFrameSinkBundle() = default;
++VideoFrameSinkBundle::~VideoFrameSinkBundle() {
++  bt_.Record("instance.end", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++  });
++}
+ 
+ // static
+ VideoFrameSinkBundle& VideoFrameSinkBundle::GetOrCreateSharedInstance(
+@@ -112,6 +119,12 @@
+       frame_sink_id, id_, receiver.BindNewPipeAndPassRemote(),
+       remote.BindNewPipeAndPassReceiver());
+   clients_.Set(frame_sink_id.sink_id(), client);
++  bt_.Record("bundle.client.add", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++    base::trace_event::VideoBottleneckSink(
++        d, frame_sink_id.client_id(), frame_sink_id.sink_id());
++    d.P("client_address", client);
++  });
+ 
+   // This serves as a second synchronization barrier, this time blocking the
+   // bundle from receiving any new messages until the service-side
+@@ -121,6 +134,11 @@
+ }
+ 
+ void VideoFrameSinkBundle::RemoveClient(const viz::FrameSinkId& frame_sink_id) {
++  bt_.Record("bundle.client.remove", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++    base::trace_event::VideoBottleneckSink(
++        d, frame_sink_id.client_id(), frame_sink_id.sink_id());
++  });
+   clients_.erase(frame_sink_id.sink_id());
+ }
+ 
+@@ -198,18 +216,59 @@
+     Vector<viz::mojom::blink::BeginFrameInfoPtr> begin_frames,
+     Vector<viz::mojom::blink::BundledReturnedResourcesPtr>
+         reclaimed_resources) {
++  const auto bt_batch = ++bt_batch_id_;
++  auto bt_weak = weak_ptr_factory_.GetWeakPtr();
++  bt_.Record("bundle.receive.enter", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++    d.I("batch_id", bt_batch);
++    d.I("ack_count", acks.size());
++    d.I("begin_frame_count", begin_frames.size());
++    d.I("reclaim_count", reclaimed_resources.size());
++  });
++  auto bt_entry = [&](const char* kind, const char* entry_kind, uint64_t index,
++                      uint32_t sink_id, uint64_t resource_count,
++                      bool client_found, const void* client_address) {
++    bt_.Record(kind, [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, id_);
++      base::trace_event::VideoBottleneckSink(d, id_.client_id(), sink_id);
++      d.I("batch_id", bt_batch);
++      d.S("entry_kind", entry_kind);
++      d.I("entry_index", index);
++      d.I("resource_count", resource_count);
++      d.B("client_found", client_found);
++      d.P("client_address", client_address);
++    });
++  };
++  uint64_t bt_ack_index = 0;
+   for (const auto& entry : acks) {
++    const auto bt_index = bt_ack_index++;
++    const auto bt_resources = entry->resources.size();
+     auto it = clients_.find(entry->sink_id);
++    const bool bt_found = it != clients_.end();
++    const void* bt_client = bt_found ? it->value : nullptr;
++    bt_entry("bundle.receive.entry", "ack", bt_index, entry->sink_id,
++             bt_resources, bt_found, bt_client);
+     if (it == clients_.end())
+       continue;
+     it->value->DidReceiveCompositorFrameAck(std::move(entry->resources));
+-  }
+-
++    bt_entry("bundle.receive.entry_done", "ack", bt_index, entry->sink_id,
++             bt_resources, true, bt_client);
++  }
++
++  uint64_t bt_reclaim_index = 0;
+   for (const auto& entry : reclaimed_resources) {
++    const auto bt_index = bt_reclaim_index++;
++    const auto bt_resources = entry->resources.size();
+     auto it = clients_.find(entry->sink_id);
++    const bool bt_found = it != clients_.end();
++    const void* bt_client = bt_found ? it->value : nullptr;
++    bt_entry("bundle.receive.entry", "reclaim", bt_index, entry->sink_id,
++             bt_resources, bt_found, bt_client);
+     if (it == clients_.end())
+       continue;
+     it->value->ReclaimResources(std::move(entry->resources));
++    bt_entry("bundle.receive.entry_done", "reclaim", bt_index, entry->sink_id,
++             bt_resources, true, bt_client);
+   }
+ 
+   // When OnBeginFrame() is invoked on each client, the client will typically
+@@ -219,12 +278,21 @@
+   // Then a single batch IPC is sent with all of these at the end, via
+   // FlushMessages() below.
+   defer_submissions_ = true;
++  uint64_t bt_begin_frame_index = 0;
+   for (auto& entry : begin_frames) {
++    const auto bt_index = bt_begin_frame_index++;
++    const auto bt_resources = entry->resources.size();
+     auto it = clients_.find(entry->sink_id);
++    const bool bt_found = it != clients_.end();
++    const void* bt_client = bt_found ? it->value : nullptr;
++    bt_entry("bundle.receive.entry", "begin_frame", bt_index, entry->sink_id,
++             bt_resources, bt_found, bt_client);
+     if (it == clients_.end())
+       continue;
+     it->value->OnBeginFrame(std::move(entry->args), std::move(entry->details),
+                             std::move(entry->resources));
++    bt_entry("bundle.receive.entry_done", "begin_frame", bt_index, entry->sink_id,
++             bt_resources, true, bt_client);
+   }
+   defer_submissions_ = false;
+ 
+@@ -232,6 +300,13 @@
+ 
+   if (begin_frame_observer_ && begin_frames.size())
+     begin_frame_observer_->OnBeginFrameCompletion();
++  // The observer may destroy the bundle. A missing exit is retained as such.
++  if (bt_weak) {
++    bt_.Record("bundle.receive.exit", [&](auto& d) {
++      base::trace_event::VideoBottleneckBundle(d, id_);
++      d.I("batch_id", bt_batch);
++    });
++  }
+ }
+ 
+ void VideoFrameSinkBundle::OnBeginFramePausedChanged(uint32_t sink_id,
+@@ -254,6 +329,10 @@
+ }
+ 
+ void VideoFrameSinkBundle::OnDisconnected() {
++  bt_.Record("state.before", [&](auto& d) {
++    base::trace_event::VideoBottleneckBundle(d, id_);
++    d.S("cause", "disconnect");
++  });
+   if (disconnect_handler_for_testing_) {
+     std::move(disconnect_handler_for_testing_).Run();
+   }
+diff --git a/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h b/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h
+--- a/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h
++++ b/third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h
+@@ -10,6 +10,7 @@
+ #include <optional>
+ 
+ #include "base/functional/callback.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/types/pass_key.h"
+ #include "build/build_config.h"
+@@ -135,6 +136,8 @@
+       uint32_t sequence_id) override;
+ 
+  private:
++  base::trace_event::VideoBottleneckRecorder bt_{"client_bundle"};
++  uint64_t bt_batch_id_ = 0;
+   void OnDisconnected();
+   void FlushMessages();
+ 
+diff --git a/third_party/blink/renderer/platform/graphics/video_frame_submitter.cc b/third_party/blink/renderer/platform/graphics/video_frame_submitter.cc
+--- a/third_party/blink/renderer/platform/graphics/video_frame_submitter.cc
++++ b/third_party/blink/renderer/platform/graphics/video_frame_submitter.cc
+@@ -101,6 +101,11 @@
+     }
+   }
+ 
++  const viz::FrameSinkBundleId& diagnostic_bundle_id() const {
++    return bundle_id_;
++  }
++  bool diagnostic_bundle_alive() const { return !!bundle_; }
++
+   // viz::mojom::Blink::CompositorFrameSink:
+   void SetNeedsBeginFrame(bool needs_begin_frame) override {
+     if (!bundle_) {
+@@ -166,6 +171,7 @@
+       roughness_reporter_(std::make_unique<cc::VideoPlaybackRoughnessReporter>(
+           std::move(roughness_reporting_callback))),
+       frame_trackers_(false) {
++  TraceBottleneckLifecycle("instance.begin", "construct");
+   frame_sorter_.AddObserver(&frame_trackers_);
+   DETACH_FROM_THREAD(thread_checker_);
+ }
+@@ -180,6 +186,7 @@
+   }
+ 
+   resource_provider_.reset();
++  TraceBottleneckLifecycle("instance.end", "destroy");
+ }
+ 
+ void VideoFrameSubmitter::StopUsingProvider() {
+@@ -192,7 +199,9 @@
+ void VideoFrameSubmitter::StartRendering() {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+   DCHECK(!is_rendering_);
++  TraceBottleneckLifecycle("state.before", "StartRendering");
+   is_rendering_ = true;
++  TraceBottleneckLifecycle("state.after", "StartRendering");
+ 
+   if (compositor_frame_sink_) {
+     compositor_frame_sink_->SetNeedsBeginFrame(IsDrivingFrameUpdates());
+@@ -206,7 +215,9 @@
+   DCHECK(is_rendering_);
+   DCHECK(video_frame_provider_);
+ 
++  TraceBottleneckLifecycle("state.before", "StopRendering");
+   is_rendering_ = false;
++  TraceBottleneckLifecycle("state.after", "StopRendering");
+ 
+   frame_trackers_.StopSequence(cc::FrameSequenceTrackerType::kVideo);
+   frame_sorter_.Reset(/*reset_fcp=*/false);
+@@ -275,7 +286,9 @@
+ 
+ void VideoFrameSubmitter::SetTransform(media::VideoTransformation transform) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  TraceBottleneckLifecycle("state.before", "SetTransform");
+   transform_ = transform;
++  TraceBottleneckLifecycle("state.after", "SetTransform");
+ }
+ 
+ void VideoFrameSubmitter::EnableSubmission(viz::SurfaceId surface_id) {
+@@ -283,7 +296,9 @@
+ 
+   // TODO(lethalantidote): Set these fields earlier in the constructor. Will
+   // need to construct VideoFrameSubmitter later in order to do this.
++  TraceBottleneckLifecycle("state.before", "EnableSubmission");
+   frame_sink_id_ = surface_id.frame_sink_id();
++  TraceBottleneckLifecycle("state.after", "EnableSubmission");
+   child_local_surface_id_allocator_.UpdateFromParent(
+       surface_id.local_surface_id());
+   if (resource_provider_->IsInitialized())
+@@ -292,29 +307,38 @@
+ 
+ void VideoFrameSubmitter::SetIsSurfaceVisible(bool is_visible) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  TraceBottleneckLifecycle("state.before", "SetIsSurfaceVisible");
+   is_surface_visible_ = is_visible;
++  TraceBottleneckLifecycle("state.after", "SetIsSurfaceVisible");
+   UpdateSubmissionState();
+ }
+ 
+ void VideoFrameSubmitter::SetIsPageVisible(bool is_visible) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  TraceBottleneckLifecycle("state.before", "SetIsPageVisible");
+   is_page_visible_ = is_visible;
++  TraceBottleneckLifecycle("state.after", "SetIsPageVisible");
+   UpdateSubmissionState();
+ }
+ 
+ void VideoFrameSubmitter::SetForceBeginFrames(bool force_begin_frames) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  TraceBottleneckLifecycle("state.before", "SetForceBeginFrames");
+   force_begin_frames_ = force_begin_frames;
++  TraceBottleneckLifecycle("state.after", "SetForceBeginFrames");
+   UpdateSubmissionState();
+ }
+ 
+ void VideoFrameSubmitter::SetForceSubmit(bool force_submit) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  TraceBottleneckLifecycle("state.before", "SetForceSubmit");
+   force_submit_ = force_submit;
++  TraceBottleneckLifecycle("state.after", "SetForceSubmit");
+   UpdateSubmissionState();
+ }
+ 
+ void VideoFrameSubmitter::OnContextLost() {
++  TraceBottleneckLifecycle("state.before", "context_lost");
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+   receiver_.reset();
+ 
+@@ -326,8 +350,18 @@
+     shared_image_interface_.reset();
+   }
+ 
++  const auto bt_pending_before = waiting_for_compositor_ack_;
++  const auto bt_previous_epoch = bt_epoch_;
+   waiting_for_compositor_ack_ = 0;
+   last_frame_id_.reset();
++  ++bt_epoch_;
++  bt_.Record("counter.reset", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.S("cause", "context_lost");
++    d.I("previous_epoch", bt_previous_epoch);
++    d.I("pending_before", bt_pending_before);
++    d.I("pending_after", waiting_for_compositor_ack_);
++  });
+ 
+   if (video_frame_provider_)
+     video_frame_provider_->OnContextLost();
+@@ -339,6 +373,7 @@
+   compositor_frame_sink_ = nullptr;
+   remote_frame_sink_.reset();
+   bundle_proxy_.reset();
++  TraceBottleneckLifecycle("state.after", "context_lost");
+ 
+   context_provider_callback_.Run(
+       context_provider_,
+@@ -372,15 +407,43 @@
+ void VideoFrameSubmitter::DidReceiveCompositorFrameAck(
+     Vector<viz::ReturnedResource> resources) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  const auto bt_callback = ++bt_ack_id_;
++  bt_.Record("ack.enter", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("callback_id", bt_callback);
++    d.I("resource_count", resources.size());
++  });
+   ReclaimResources(std::move(resources));
++  bt_.Record("ack.reclaim_done", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("callback_id", bt_callback);
++  });
+ 
+   // `waiting_for_compositor_ack_` may be set to zero during SubmitEmptyFrame()
+   // or upon ContextLost().
+   if (waiting_for_compositor_ack_ == 0) {
+-    return;
+-  }
+-
++    bt_.Record("ack.exit", [&](auto& d) {
++      TraceBottleneckState(d);
++      d.I("callback_id", bt_callback);
++      d.B("applied", false);
++    });
++    return;
++  }
++
++  const auto bt_pending_before = waiting_for_compositor_ack_;
+   --waiting_for_compositor_ack_;
++  bt_.Record("counter.change", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.S("cause", "ack");
++    d.I("callback_id", bt_callback);
++    d.I("pending_before", bt_pending_before);
++    d.I("pending_after", waiting_for_compositor_ack_);
++  });
++  bt_.Record("ack.exit", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("callback_id", bt_callback);
++    d.B("applied", true);
++  });
+ }
+ 
+ void VideoFrameSubmitter::OnBeginFrame(
+@@ -555,7 +618,8 @@
+   // We do have a new frame that we could display.  See if we're supposed to
+   // actually submit a frame or not, and try to submit one.
+   auto video_frame = video_frame_provider_->GetCurrentFrame();
+-  if (!SubmitFrame(current_begin_frame_ack, std::move(video_frame))) {
++  if (!SubmitFrame(current_begin_frame_ack, std::move(video_frame),
++                   "OnBeginFrame")) {
+     compositor_frame_sink_->DidNotProduceFrame(current_begin_frame_ack);
+     frame_sorter_.AddFrameResult(
+         args,
+@@ -575,6 +639,12 @@
+ void VideoFrameSubmitter::ReclaimResources(
+     Vector<viz::ReturnedResource> resources) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
++  const auto bt_reclaim = ++bt_reclaim_id_;
++  bt_.Record("reclaim.enter", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("reclaim_id", bt_reclaim);
++    d.I("resource_count", resources.size());
++  });
+   resource_provider_->ReceiveReturnsFromParent(std::move(resources));
+ 
+   // We've already submitted an empty frame so post a delayed task to clear
+@@ -587,6 +657,10 @@
+                        weak_ptr_factory_.GetWeakPtr()),
+         base::Seconds(5));
+   }
++  bt_.Record("reclaim.exit", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("reclaim_id", bt_reclaim);
++  });
+ }
+ 
+ void VideoFrameSubmitter::OnReceivedContextProvider(
+@@ -654,6 +728,8 @@
+ }
+ 
+ void VideoFrameSubmitter::StartSubmitting() {
++  TraceBottleneckLifecycle("state.before", "StartSubmitting");
++  ++bt_binding_epoch_;
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+   DCHECK(frame_sink_id_.is_valid());
+ 
+@@ -694,6 +770,7 @@
+   compositor_frame_sink_->SetThreads(threads);
+ #endif
+ 
++  TraceBottleneckLifecycle("state.after", "StartSubmitting");
+   UpdateSubmissionState();
+ }
+ 
+@@ -766,13 +843,69 @@
+ 
+ bool VideoFrameSubmitter::SubmitFrame(
+     const viz::BeginFrameAck& begin_frame_ack,
+-    scoped_refptr<media::VideoFrame> video_frame) {
++    scoped_refptr<media::VideoFrame> video_frame,
++    const char* origin) {
+   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+   DCHECK(video_frame);
+   TRACE_EVENT1("media", "VideoFrameSubmitter::SubmitFrame", "frame",
+                video_frame->AsHumanReadableString());
+ 
++  const auto bt_attempt = ++bt_attempt_id_;
++  const auto bt_entry_epoch = bt_epoch_;
++  const auto bt_frame_id = video_frame->unique_id().GetUnsafeValue();
++  const auto bt_pts = video_frame->timestamp().InMicroseconds();
++  const auto bt_natural = video_frame->natural_size();
++  const auto bt_previous = frame_size_;
++  std::optional<gfx::Size> bt_output;
++  std::optional<media::VideoTransformation> bt_transform;
++  std::optional<bool> bt_size_changed;
++  std::optional<uint32_t> bt_frame_token;
++  const char* bt_guard = "entry";
++  bool bt_should_submit_evaluated = false;
++  auto bt_attempt_record = [&](const char* kind, const char* reason,
++                               const char* phase) {
++    bt_.Record(kind, [&](auto& d) {
++      TraceBottleneckState(d);
++      d.I("attempt_id", bt_attempt);
++      d.I("entry_epoch", bt_entry_epoch);
++      d.S("origin", origin);
++      d.I("unique_frame_id", bt_frame_id);
++      d.I("pts_us", bt_pts);
++      d.I("natural_width", bt_natural.width());
++      d.I("natural_height", bt_natural.height());
++      d.I("previous_width", bt_previous.width());
++      d.I("previous_height", bt_previous.height());
++      d.S("guard_stage", bt_guard);
++      d.B("output_computed", bt_output.has_value());
++      d.B("size_change_evaluated", bt_size_changed.has_value());
++      if (bt_output) {
++        d.I("output_width", bt_output->width());
++        d.I("output_height", bt_output->height());
++        d.I("rotation", static_cast<int>(bt_transform->rotation));
++        d.B("mirrored", bt_transform->mirrored);
++      }
++      if (bt_size_changed)
++        d.B("size_changed", *bt_size_changed);
++      if (bt_frame_token)
++        d.I("frame_token", *bt_frame_token);
++      if (reason)
++        d.S("reason", reason);
++      if (phase)
++        d.S("phase", phase);
++      // ShouldSubmit is not called by diagnostics. This bit describes whether
++      // the original short-circuit expression could evaluate that operand.
++      d.B("should_submit_evaluated",
++          bt_should_submit_evaluated);
++    });
++  };
++  bt_attempt_record("submit.entry", nullptr, nullptr);
++  bt_guard = "sink_visibility";
++  bt_should_submit_evaluated = !!compositor_frame_sink_;
++
+   if (!compositor_frame_sink_ || !ShouldSubmit()) {
++    bt_attempt_record("submit.return",
++                      compositor_frame_sink_ ? "not_visible" : "no_sink",
++                      nullptr);
+     return false;
+   }
+ 
+@@ -780,7 +913,9 @@
+   // not building up unused remote side resources. See https://crbug.com/830828.
+   //
+   // Similarly we don't submit the same frame multiple times.
++  bt_guard = "duplicate";
+   if (last_frame_id_ == video_frame->unique_id()) {
++    bt_attempt_record("submit.return", "duplicate_frame", nullptr);
+     return false;
+   }
+ 
+@@ -793,11 +928,15 @@
+     frame_size = gfx::Size(frame_size.height(), frame_size.width());
+   }
+ 
++  bt_guard = "output";
++  bt_output = frame_size;
++  bt_transform = transform;
+   if (frame_size.IsEmpty()) {
+     // We're not supposed to get 0x0 frames.  For now, just ignore it until we
+     // track down where they're coming from.  Creating a CompositorFrame with an
+     // empty output rectangle isn't allowed.
+     // crbug.com/979564
++    bt_attempt_record("submit.return", "empty_output", nullptr);
+     return false;
+   }
+ 
+@@ -811,9 +950,13 @@
+ 
+   // We can't delay frame size changes even if we have a pending compositor ACK
+   // because a relayout signal is already in flight on the main thread.
++  bt_guard = "pending_ack";
++  bt_size_changed = frame_size_changed;
+   if (waiting_for_compositor_ack_ > 0 && !frame_size_changed) {
++    bt_attempt_record("submit.return", "pending_ack", nullptr);
+     return false;
+   }
++  bt_guard = "accepted";
+ 
+   last_frame_id_ = video_frame->unique_id();
+ 
+@@ -828,8 +971,11 @@
+     roughness_reporter_->FrameSubmitted(frame_token, *video_frame.get(),
+                                         last_begin_frame_args_.interval);
+   }
++  bt_frame_token = frame_token;
++  bt_attempt_record("submit.construct", nullptr, "enter");
+   auto compositor_frame = CreateCompositorFrame(
+       frame_token, begin_frame_ack, std::move(video_frame), transform);
++  bt_attempt_record("submit.construct", nullptr, "exit");
+ 
+   std::vector<viz::ResourceId> resources;
+   const auto& quad_list = compositor_frame.render_pass_list.back()->quad_list;
+@@ -846,14 +992,26 @@
+ 
+   // We can pass nullptr for the HitTestData as the CompositorFram will not
+   // contain any SurfaceDrawQuads.
++  bt_attempt_record("submit.send", nullptr, "enter");
+   compositor_frame_sink_->SubmitCompositorFrame(
+       child_local_surface_id_allocator_.GetCurrentLocalSurfaceId(),
+       std::move(compositor_frame), std::nullopt, 0);
++  bt_attempt_record("submit.send", nullptr, "exit");
+   resource_provider_->ReleaseFrameResources();
+ 
+   NotifyOpacityIfNeeded(new_opacity);
+ 
++  const auto bt_pending_before = waiting_for_compositor_ack_;
+   ++waiting_for_compositor_ack_;
++  bt_.Record("counter.change", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.S("cause", "submit");
++    d.I("attempt_id", bt_attempt);
++    d.I("entry_epoch", bt_entry_epoch);
++    d.I("pending_before", bt_pending_before);
++    d.I("pending_after", waiting_for_compositor_ack_);
++  });
++  bt_attempt_record("submit.return", "accepted", nullptr);
+   return true;
+ }
+ 
+@@ -862,11 +1020,22 @@
+   DCHECK(compositor_frame_sink_ && !ShouldSubmit());
+   DCHECK(!frame_size_.IsEmpty());
+   TRACE_EVENT0("media", "VideoFrameSubmitter::SubmitEmptyFrame");
++  const auto bt_empty = ++bt_empty_id_;
++  bt_.Record("empty.enter", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("empty_id", bt_empty);
++  });
+ 
+   // If there's nothing to submit to or we've already submitted an empty frame,
+   // don't submit another one.
+-  if (!compositor_frame_sink_ || !last_frame_id_.has_value())
+-    return;
++  if (!compositor_frame_sink_ || !last_frame_id_.has_value()) {
++    bt_.Record("empty.exit", [&](auto& d) {
++      TraceBottleneckState(d);
++      d.I("empty_id", bt_empty);
++      d.B("submitted", false);
++    });
++    return;
++  }
+ 
+   last_frame_id_.reset();
+   auto begin_frame_ack = viz::BeginFrameAck::CreateManualAckWithDamage();
+@@ -881,7 +1050,24 @@
+ 
+   // We set `waiting_for_compositor_ack_` to zero here since we want to allow a
+   // subsequent real frame to replace it at any time if needed.
++  const auto bt_pending_before = waiting_for_compositor_ack_;
++  const auto bt_previous_epoch = bt_epoch_;
+   waiting_for_compositor_ack_ = 0;
++  ++bt_epoch_;
++  bt_.Record("counter.reset", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.S("cause", "empty_submit");
++    d.I("empty_id", bt_empty);
++    d.I("previous_epoch", bt_previous_epoch);
++    d.I("pending_before", bt_pending_before);
++    d.I("pending_after", waiting_for_compositor_ack_);
++  });
++  bt_.Record("empty.exit", [&](auto& d) {
++    TraceBottleneckState(d);
++    d.I("empty_id", bt_empty);
++    d.I("frame_token", frame_token);
++    d.B("submitted", true);
++  });
+ }
+ 
+ void VideoFrameSubmitter::SubmitSingleFrame() {
+@@ -900,7 +1086,7 @@
+     return;
+ 
+   if (SubmitFrame(viz::BeginFrameAck::CreateManualAckWithDamage(),
+-                  std::move(video_frame))) {
++                  std::move(video_frame), "SubmitSingleFrame")) {
+     video_frame_provider_->PutCurrentFrame();
+   }
+ }
+@@ -993,7 +1179,9 @@
+ }
+ 
+ void VideoFrameSubmitter::GenerateNewSurfaceId() {
++  TraceBottleneckLifecycle("state.before", "surface_id");
+   last_frame_id_.reset();
++  TraceBottleneckLifecycle("frame_id.reset", "surface_id");
+ 
+   // We need a new id in the event of context loss.
+   child_local_surface_id_allocator_.GenerateId();
+@@ -1022,4 +1210,46 @@
+   resource_provider_->ClearFrameResources();
+ }
+ 
++void VideoFrameSubmitter::TraceBottleneckState(
++    base::trace_event::VideoBottleneckFields& d) const {
++  d.I("reset_epoch", bt_epoch_);
++  d.I("binding_epoch", bt_binding_epoch_);
++  d.I("pending_ack", waiting_for_compositor_ack_);
++  d.B("sink_valid", frame_sink_id_.is_valid());
++  base::trace_event::VideoBottleneckSink(
++      d, frame_sink_id_.client_id(), frame_sink_id_.sink_id());
++  d.B("sink_bound", !!compositor_frame_sink_);
++  d.P("client_address",
++      static_cast<const viz::mojom::blink::CompositorFrameSinkClient*>(this));
++  d.B("bundle_valid", !!bundle_proxy_);
++  d.B("bundle_alive",
++      bundle_proxy_ && bundle_proxy_->diagnostic_bundle_alive());
++  if (bundle_proxy_) {
++    base::trace_event::VideoBottleneckBundle(
++        d, bundle_proxy_->diagnostic_bundle_id());
++  } else {
++    d.I("bundle_client_id", 0);
++    d.I("bundle_id", 0);
++  }
++  d.B("surface_visible", is_surface_visible_);
++  d.B("page_visible", is_page_visible_);
++  d.B("force_submit", force_submit_);
++  d.B("force_begin_frames", force_begin_frames_);
++  d.B("is_rendering", is_rendering_);
++  d.B("last_frame_id_valid", last_frame_id_.has_value());
++  d.I("last_frame_id", last_frame_id_ ? last_frame_id_->GetUnsafeValue() : 0);
++  d.I("current_width", frame_size_.width());
++  d.I("current_height", frame_size_.height());
++  d.I("default_rotation", static_cast<int>(transform_.rotation));
++  d.B("default_mirrored", transform_.mirrored);
++}
++
++void VideoFrameSubmitter::TraceBottleneckLifecycle(const char* kind,
++                                                   const char* cause) {
++  bt_.Record(kind, [&](auto& d) {
++    TraceBottleneckState(d);
++    d.S("cause", cause);
++  });
++}
++
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/platform/graphics/video_frame_submitter.h b/third_party/blink/renderer/platform/graphics/video_frame_submitter.h
+--- a/third_party/blink/renderer/platform/graphics/video_frame_submitter.h
++++ b/third_party/blink/renderer/platform/graphics/video_frame_submitter.h
+@@ -9,6 +9,7 @@
+ #include <optional>
+ 
+ #include "base/memory/raw_ptr.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/memory/read_only_shared_memory_region.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/threading/thread_checker.h"
+@@ -95,6 +96,15 @@
+   }
+ 
+  private:
++  base::trace_event::VideoBottleneckRecorder bt_{"submitter"};
++  uint64_t bt_epoch_ = 0;
++  uint64_t bt_binding_epoch_ = 0;
++  uint64_t bt_attempt_id_ = 0;
++  uint64_t bt_ack_id_ = 0;
++  uint64_t bt_reclaim_id_ = 0;
++  uint64_t bt_empty_id_ = 0;
++  void TraceBottleneckState(base::trace_event::VideoBottleneckFields& d) const;
++  void TraceBottleneckLifecycle(const char* kind, const char* cause);
+   friend class VideoFrameSubmitterTest;
+   friend class VideoFrameSubmitterMockTimeTest;
+   class FrameSinkBundleProxy;
+@@ -140,7 +150,9 @@
+   void SubmitEmptyFrameIfNeeded();
+ 
+   // Returns whether a frame was submitted.
+-  bool SubmitFrame(const viz::BeginFrameAck&, scoped_refptr<media::VideoFrame>);
++  bool SubmitFrame(const viz::BeginFrameAck&,
++                   scoped_refptr<media::VideoFrame>,
++                   const char* origin = "unspecified");
+ 
+   // SubmitEmptyFrame() is used to force the remote CompositorFrameSink to
+   // release resources for the last submission; saving a significant amount of
+diff --git a/third_party/blink/renderer/platform/media/video_frame_compositor.cc b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
+--- a/third_party/blink/renderer/platform/media/video_frame_compositor.cc
++++ b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
+@@ -7,6 +7,7 @@
+ #include <memory>
+ 
+ #include "base/synchronization/waitable_event.h"
++#include "base/trace_event/video_bottleneck_diagnostics.h"
+ #include "base/task/bind_post_task.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/time/default_tick_clock.h"
+@@ -181,6 +182,13 @@
+   TRACE_EVENT1("media", "VideoFrameCompositor::SetCurrentFrame", "frame",
+                frame->AsHumanReadableString());
+   current_frame_lock_.AssertAcquired();
++  static thread_local base::trace_event::VideoBottleneckRecorder bt(
++      "selection", true);
++  bt.Record("frame.select", [&](auto& d) {
++    d.P("compositor_address", this);
++    d.I("unique_frame_id", frame->unique_id().GetUnsafeValue());
++    d.I("pts_us", frame->timestamp().InMicroseconds());
++  });
+   current_frame_ = std::move(frame);
+   last_presentation_time_ = tick_clock_->NowTicks();
+   last_expected_display_time_ = expected_display_time;
